@@ -51,13 +51,6 @@ expected_producers:
     meta_file: test-meta.json
     requires_checkout_attestation: true
     junit_collection_floor: 5000  # basis: run 29569282094 collected 5673 (5643 passed + 30 skipped); 5000 leaves variance headroom while making an empty/gutted producer impossible
-  engine:
-    junit_artifact: engine-junit
-    junit_file: engine-junit.xml
-    meta_artifact: engine-meta
-    meta_file: engine-meta.json
-    requires_checkout_attestation: true
-    junit_collection_floor: 11
   nats-boundary:
     junit_artifact: nats-boundary-junit
     junit_file: nats-boundary-junit.xml

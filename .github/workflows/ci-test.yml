@@ -415,106 +415,31 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  engine:
-    name: GStreamer live engine
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    steps:
-      - name: Checkout
-        # ws3 claims-evidence (D3): explicit PR-head checkout, same rationale
-        # as the test job above.
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Emit producer meta (ws3 claims-evidence D3)
-        run: python3 scripts/policy/emit_producer_meta.py --job-id engine --out engine-meta.json
-
-      # NB: deliberately NOT actions/setup-python ??? apt `python3-gi` targets the
-      # system python3 (ubuntu-24.04 ships 3.12), and the runner script builds its
-      # venv from that with --system-site-packages so gi is importable. A setup-python
-      # interpreter would not see the apt-installed gi.
-      - name: Install GStreamer + gi (the live engine's runtime)
-        # TEST-001 (Stage-1 re-open audit, Critical): the GStreamer engine harness
-        # (tests/egress/test_gst_engine_wsl.py) used to skip on every CI run because no
-        # runner had gi/GStreamer ??? engine.reload_program shipped with no regression
-        # gate. This job installs the stack so the harness actually RUNS, and the floor
-        # step below fails loud if it ever silently drops back to skipped.
-        timeout-minutes: 15
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # Bounded for the same dpkg-lock reason as the media-prereq step above.
-          APT=(sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3)
-          timeout 300 "${APT[@]}" update
-          timeout 600 "${APT[@]}" install -y \
-            python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
-            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
-            ffmpeg
-          gst-launch-1.0 --version | head -n 1
-          ffprobe -version | head -n 1
-
-      - name: Run the live engine harness (junit)
-        run: |
-          bash tests/egress/run_wsl_engine_tests.sh \
-            --junitxml=engine-junit.xml -o junit_family=xunit2
-
-      - name: Assert the engine tests actually ran (no silent skip)
-        if: always()
-        run: |
-          if [ ! -f engine-junit.xml ]; then
-            echo "::error::engine-junit.xml missing ??? the engine harness did not run."
-            exit 1
-          fi
-          python <<'PYEOF'
-          import sys, xml.etree.ElementTree as ET
-
-          tree = ET.parse("engine-junit.xml")
-          ran = skipped = 0
-          for case in tree.iter("testcase"):
-              if not case.get("classname", "").startswith("tests.egress.test_gst_engine_wsl"):
-                  continue
-              if case.find("skipped") is not None:
-                  skipped += 1
-                  continue
-              if case.find("failure") is not None or case.find("error") is not None:
-                  print(f"::error::Engine test {case.get('name')} failed.")
-                  sys.exit(1)
-              ran += 1
-
-          floor = 11
-          print(f"Live engine tests passed: {ran} (skipped: {skipped}; floor: {floor})")
-          if ran < floor:
-              print(
-                  f"::error::Engine pass count {ran} < floor {floor}. The GStreamer "
-                  "engine is unproven on this run (gi/GStreamer missing or tests skipped)."
-              )
-              sys.exit(1)
-          PYEOF
-
-      - name: Upload junit (ws3 claims-evidence D3/D7)
-        if: always()
-        uses: actions/upload-artifact@v7.0.1
-        timeout-minutes: 10
-        with:
-          name: engine-junit
-          path: engine-junit.xml
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload producer meta (ws3 claims-evidence D3/D7)
-        if: always()
-        uses: actions/upload-artifact@v7.0.1
-        timeout-minutes: 10
-        with:
-          name: engine-meta
-          path: engine-meta.json
-          if-no-files-found: warn
-          retention-days: 1
+  # ---------------------------------------------------------------------
+  # REMOVED 2026-08-20: the `engine` job (GStreamer live engine).
+  #
+  # It ran `bash tests/egress/run_wsl_engine_tests.sh` against an
+  # apt-installed Linux GStreamer 1.28.4 stack. Both are gone from this repo
+  # by design -- the native product ships GStreamer 1.28.5 as pinned
+  # `gstreamer-*` PyPI wheels, so that job proved a runtime this product does
+  # not use, on a platform it does not run on. Its script was deliberately not
+  # migrated, so the job could only ever fail with
+  # "run_wsl_engine_tests.sh: No such file or directory".
+  #
+  # KNOWN COVERAGE GAP, stated plainly rather than left implied: there is now
+  # NO per-PR gate on civiccast/egress/gst/* . The suite that covers it,
+  # tests/egress/test_gst_engine_wsl.py, runs natively on Windows but only
+  # when CIVICCAST_GSTREAMER_RUNTIME_ROOT points at a PROVISIONED runtime
+  # tree (see its _windows_bundled_gstreamer_available) -- pip-installing the
+  # wheels is not sufficient. Building that job means running
+  # scripts/provision_native_runtime_dependencies.py in CI first; that is real
+  # work, tracked separately, not folded in here.
+  #
+  # What still proves the engine today: the Windows Sandbox clean-box harness
+  # exercised the real native GStreamer playout end to end (TSDuck-clean,
+  # 20 real caption cues), and native-beta-candidate-artifacts builds and
+  # signs the runtime pack on every release-branch push. Neither runs per-PR.
+  # ---------------------------------------------------------------------
 
   nats-boundary:
     name: NATS JetStream real-boundary
@@ -661,7 +586,7 @@ jobs:
     # per-producer result evaluation below is the fail-closed rule the spec
     # requires ??? a job that `needs` a skipped/failed job would otherwise be
     # skipped itself, silently evading verification (D3).
-    needs: [test, engine, nats-boundary]
+    needs: [test, nats-boundary]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -709,7 +634,6 @@ jobs:
           # fail-closed evaluation D3 requires (a skipped/failed producer
           # must fail the verifier, never silently skip it).
           CLAIMS_PRODUCER_RESULT_TEST: ${{ needs.test.result }}
-          CLAIMS_PRODUCER_RESULT_ENGINE: ${{ needs.engine.result }}
           CLAIMS_PRODUCER_RESULT_NATS_BOUNDARY: ${{ needs['nats-boundary'].result }}
           CLAIMS_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -719,7 +643,6 @@ jobs:
 
           results = {
               "test": os.environ["CLAIMS_PRODUCER_RESULT_TEST"],
-              "engine": os.environ["CLAIMS_PRODUCER_RESULT_ENGINE"],
               "nats-boundary": os.environ["CLAIMS_PRODUCER_RESULT_NATS_BOUNDARY"],
           }
           print(json.dumps(results, indent=2))
