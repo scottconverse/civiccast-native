@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">CivicCast channel egress proof architecture</title>
+  <desc id="desc">Meeting source, fallback slate, live takeover, caption decode-back, FileSink, and SRT receiver proof path.</desc>
+  <defs>
+    <style>
+      .bg{fill:#f8faf9}.lane{fill:#edf4ee}.box{fill:#fff;stroke:#263445;stroke-width:2}.proof{fill:#f7f5ff;stroke:#5b4aa0;stroke-width:2}.warn{fill:#fff7df;stroke:#96720a;stroke-width:2}.title{font:700 26px Arial,sans-serif;fill:#1f2734}.label{font:700 17px Arial,sans-serif;fill:#1f2734}.small{font:14px Arial,sans-serif;fill:#506070}.arrow{stroke:#2458a6;stroke-width:3;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2458a6"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1280" height="640"/>
+  <text class="title" x="58" y="54">CivicCast: local channel egress proof path</text>
+  <text class="small" x="58" y="82">The release proves CivicCast-owned continuity and instrumentation, not downstream cable-headend acceptance.</text>
+
+  <rect class="lane" x="42" y="120" width="1170" height="170" rx="16"/>
+  <text class="label" x="70" y="154">Program path</text>
+  <rect class="box" x="78" y="184" width="178" height="70" rx="8"/>
+  <text class="label" x="104" y="214">Meeting source</text>
+  <text class="small" x="104" y="238">Camera or file</text>
+  <rect class="warn" x="314" y="184" width="178" height="70" rx="8"/>
+  <text class="label" x="340" y="214">Fallback slate</text>
+  <text class="small" x="340" y="238">No dead air claim</text>
+  <rect class="box" x="550" y="184" width="178" height="70" rx="8"/>
+  <text class="label" x="576" y="214">Live takeover</text>
+  <text class="small" x="576" y="238">Boundary proof</text>
+  <rect class="box" x="786" y="184" width="178" height="70" rx="8"/>
+  <text class="label" x="812" y="214">Encoder profile</text>
+  <text class="small" x="812" y="238">MPEG-TS evidence</text>
+  <rect class="proof" x="1022" y="184" width="178" height="70" rx="8"/>
+  <text class="label" x="1048" y="214">Continuity JSON</text>
+  <text class="small" x="1048" y="238">Timestamps, frames</text>
+
+  <path class="arrow" d="M256 219 H314"/>
+  <path class="arrow" d="M492 219 H550"/>
+  <path class="arrow" d="M728 219 H786"/>
+  <path class="arrow" d="M964 219 H1022"/>
+
+  <rect class="lane" x="42" y="342" width="1170" height="170" rx="16"/>
+  <text class="label" x="70" y="376">Output and validation path</text>
+  <rect class="proof" x="78" y="406" width="178" height="70" rx="8"/>
+  <text class="label" x="104" y="436">FileSink</text>
+  <text class="small" x="104" y="460">Local TS file proof</text>
+  <rect class="proof" x="314" y="406" width="178" height="70" rx="8"/>
+  <text class="label" x="340" y="436">Loopback SRT</text>
+  <text class="small" x="340" y="460">Local receiver proof</text>
+  <rect class="proof" x="550" y="406" width="178" height="70" rx="8"/>
+  <text class="label" x="576" y="436">Caption check</text>
+  <text class="small" x="576" y="460">Decode-back before claim</text>
+  <rect class="proof" x="786" y="406" width="178" height="70" rx="8"/>
+  <text class="label" x="812" y="436">Portal controls</text>
+  <text class="small" x="812" y="460">Operator UI proof</text>
+  <rect class="warn" x="1022" y="406" width="178" height="70" rx="8"/>
+  <text class="label" x="1048" y="436">Field proof</text>
+  <text class="small" x="1048" y="460">Headend/hardware later</text>
+
+  <path class="arrow" d="M875 254 C854 310 258 330 167 406"/>
+  <path class="arrow" d="M875 254 C862 318 472 330 403 406"/>
+  <path class="arrow" d="M875 254 C842 332 669 348 639 406"/>
+  <path class="arrow" d="M1111 254 V406"/>
+  <path class="arrow" d="M964 441 H1022"/>
+</svg>
