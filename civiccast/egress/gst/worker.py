@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Per-channel GStreamer playout worker (WSL/Linux). Runs as a subprocess.
+"""Per-channel GStreamer playout worker. Runs as a subprocess.
+
+Ships and runs on native Windows (the product's shipped platform, via the bundled
+GStreamer runtime and the D2 named-pipe control-channel seam) and on WSL/Linux
+(a system GStreamer install, via the POSIX FIFO control channel below) — see the
+D2 Windows worker-pipe seam note further down for how the control channel differs
+per platform.
 
 Reads a serialized ``PlayoutGraph`` (JSON, ``argv[1]``), builds + runs
 ``GstPlayoutEngine``, then force-exits so it can never hang.
@@ -11,7 +17,8 @@ Reads a serialized ``PlayoutGraph`` (JSON, ``argv[1]``), builds + runs
 - Smoke/test: set ``SWAPS`` to run a fixed program↔role swap schedule.
 
 Launched by file path (not ``-m``) so it needs only ``gi`` + the sibling
-``graph``/``engine`` modules — never the full civiccast package (no pydantic in WSL).
+``graph``/``engine`` modules — never the full civiccast package (no pydantic in the
+worker process, on either platform).
 
 Usage:  python3 worker.py <graph.json>
 """
