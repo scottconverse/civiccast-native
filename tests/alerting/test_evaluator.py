@@ -199,16 +199,68 @@ class TestQuietHours:
 
 
 class TestEvaluatorDedupeAndDispatch:
-    def test_first_off_air_creates_event_no_dispatch_no_channels(
+    def test_first_off_air_no_channels_fires_event_and_logs_suppressed_delivery(
         self, db_session: Session, evaluator: AlertEvaluator, dispatched: list
     ) -> None:
+        """C1 regression: a rule with zero live channels must still fire the
+        AlertEvent (so the runtime safe-to-air banner turns red) AND record a
+        suppressed AlertEventDelivery documenting the gap (spec §6.2: "never a
+        silent drop"). Previously the evaluator silently `return`ed with no
+        delivery row at all — a fresh install could go off-air and leave zero
+        trace that no one was notified.
+        """
         _make_rule(db_session, "off-air")
         evaluator.evaluate_channel("ch1", "STOPPED", now=_NOW)
+
         events = get_alert_events(db_session, state="firing")
         assert len(events) == 1
         assert events[0].condition == "off-air"
         assert events[0].occurrence_count == 1
-        # No channel_ids configured on the rule → no dispatch call
+
+        # No channel_ids configured on the rule → no real send, but the gap
+        # itself is never silent: no external dispatch call happened...
+        assert dispatched == []
+        # ...but a suppressed delivery row proves the evaluator tried and
+        # documents *why* nothing was sent, so support bundles / self-test /
+        # the deliveries drawer can all detect the unreachable-operator gap.
+        deliveries = get_event_deliveries(db_session, events[0].event_id)
+        assert len(deliveries) == 1
+        assert deliveries[0].status == "suppressed"
+        assert deliveries[0].alert_channel_id == "unconfigured"
+        assert "off-air" in deliveries[0].last_error
+        assert "no enabled alert channel" in deliveries[0].last_error.lower()
+
+    def test_repeated_no_channel_off_air_logs_one_suppressed_delivery_per_send(
+        self, db_session: Session, evaluator: AlertEvaluator, dispatched: list
+    ) -> None:
+        """The no-channel gap is re-logged on the same notify-on-first-failure /
+        re-alert cadence as a real send would use — it does not spam once per
+        health-sample tick, and it does not vanish after the first occurrence."""
+        rule = AlertRule(
+            rule_id="default:off-air",
+            condition="off-air",  # type: ignore[arg-type]
+            severity="critical",
+            channel_ids=[],
+            re_alert_after_seconds=300,
+            updated_at=_NOW,
+            updated_by="test",
+        )
+        upsert_alert_rule(db_session, rule)
+
+        evaluator.evaluate_channel("ch1", "STOPPED", now=_NOW)
+        # Same-window repeat: bumps occurrence_count, no new suppressed row.
+        evaluator.evaluate_channel("ch1", "STOPPED", now=_NOW + timedelta(seconds=60))
+        events = get_alert_events(db_session, state="firing")
+        assert len(events) == 1
+        assert events[0].occurrence_count == 2
+        deliveries = get_event_deliveries(db_session, events[0].event_id)
+        assert len(deliveries) == 1
+
+        # Past re_alert_after_seconds: a fresh suppressed delivery is logged.
+        evaluator.evaluate_channel("ch1", "STOPPED", now=_NOW + timedelta(seconds=301))
+        deliveries = get_event_deliveries(db_session, events[0].event_id)
+        assert len(deliveries) == 2
+        assert all(d.status == "suppressed" for d in deliveries)
         assert dispatched == []
 
     def test_first_off_air_with_channel_dispatches(
@@ -329,6 +381,38 @@ class TestEvaluatorDedupeAndDispatch:
 
         resolved_events = get_alert_events(db_session, state="resolved")
         assert len(resolved_events) == 1
+
+    def test_resolve_no_channels_logs_suppressed_delivery_not_silence(
+        self, db_session: Session, evaluator: AlertEvaluator, dispatched: list
+    ) -> None:
+        """C1 resolve-path regression: the same no-silent-drop contract applies
+        when a no-channel condition later clears. The operator never learns the
+        channel recovered, and that gap must be visible too."""
+        rule = AlertRule(
+            rule_id="default:off-air",
+            condition="off-air",  # type: ignore[arg-type]
+            severity="critical",
+            channel_ids=[],
+            notify_on_resolve=True,
+            updated_at=_NOW,
+            updated_by="test",
+        )
+        upsert_alert_rule(db_session, rule)
+
+        evaluator.evaluate_channel("ch1", "STOPPED", now=_NOW)
+        recovery_time = _NOW + timedelta(minutes=5)
+        evaluator.evaluate_channel(
+            "ch1", "ON_AIR", encoder_fps=29.97, encoder_bitrate_kbps=8000.0, now=recovery_time
+        )
+        assert dispatched == []  # no real channel to dispatch to
+
+        resolved_events = get_alert_events(db_session, state="resolved")
+        assert len(resolved_events) == 1
+        deliveries = get_event_deliveries(db_session, resolved_events[0].event_id)
+        # One suppressed delivery for the firing gap, one for the resolve gap.
+        assert len(deliveries) == 2
+        assert all(d.status == "suppressed" for d in deliveries)
+        assert all(d.alert_channel_id == "unconfigured" for d in deliveries)
 
     def test_resolve_no_notify_no_dispatch(
         self, db_session: Session, evaluator: AlertEvaluator, dispatched: list

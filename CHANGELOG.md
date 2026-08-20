@@ -74,6 +74,16 @@ came across and what deliberately did not.
   new `civiccast.installer.station_state.read_station_timezone()`) when
   `CIVICCAST_STATION_TZ` is unset; the env var still works as an explicit
   override.
+- **C1 — a fresh station install could never call for help.**
+  `civiccast/alerting/evaluator.py`'s dispatch path silently `return`ed with
+  no record at all when an `AlertRule` had zero live channels — the exact
+  state every migration-`0039`-seeded default rule ships in (an install
+  cannot fabricate operator SMTP/SMS/webhook credentials). The alert event
+  itself still fired, but the delivery attempt vanished without a trace: no
+  suppressed-delivery row, nothing for the deliveries drawer to show, no way
+  to tell "nowhere to send it" from "alerting is broken." Fixed to log a
+  visible suppressed `AlertEventDelivery` on the no-channel gap (fire and
+  resolve paths), per spec §6.2's "never a silent drop" contract.
 
 ### Known gaps
 

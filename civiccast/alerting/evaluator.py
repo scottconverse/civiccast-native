@@ -24,7 +24,7 @@ Server-crash detection (startup path) is handled separately via
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
 
@@ -149,6 +149,36 @@ def _window_end_dt(now: datetime, end: str) -> datetime:
 
 
 # ---------------------------------------------------------------------------
+# No-channel sentinel (C1 fix)
+# ---------------------------------------------------------------------------
+
+# A rule can legitimately have zero live channels wired to it — a fresh
+# install seeds every §6.2 default rule with ``channel_ids: []`` because it
+# cannot fabricate operator credentials (SMTP/SMS/webhook secrets). That is
+# expected, NOT a bug. What is a bug (C1) is treating the gap as *nothing
+# happened*: spec §6.2 requires "a rule with no live channel of its default
+# kind logs a suppressed delivery so the gap is visible ... never a silent
+# drop." This sentinel channel_id marks that delivery row as a
+# no-live-channel gap rather than a real per-channel attempt.
+_NO_CHANNEL_SENTINEL_ID = "unconfigured"
+# Every §6.2 default-rule row recommends email as (part of) its default
+# channel kind, so "email" is the least-surprising placeholder kind for a
+# delivery row that, by definition, has no real channel to report a kind
+# for. ``AlertEventDelivery.kind`` is a closed Literal (email/sms/webhook)
+# so the sentinel must be one of them to round-trip through the pydantic
+# conversion the read APIs use.
+_NO_CHANNEL_SENTINEL_KIND = "email"
+
+
+def _no_channel_error(condition: str) -> str:
+    return (
+        f"No enabled alert channel is configured for condition '{condition}'. "
+        "This alert could not be pushed to an operator; configure an email, "
+        "SMS, or webhook alert channel in Alert Settings to receive it."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Delivery gating logic
 # ---------------------------------------------------------------------------
 
@@ -193,6 +223,57 @@ def _should_send(
     last = _last_sent_at(session, event_db.event_id)
     if last is None:
         return True
+    elapsed = (now - last).total_seconds()
+    return elapsed >= rule.re_alert_after_seconds
+
+
+def _last_delivery_at_for_channel(
+    session: Session, event_id: str, channel_id: str
+) -> datetime | None:
+    """Return dispatched_at of the most recent delivery row for *event_id* on
+    *channel_id*, regardless of status.
+
+    Used only to rate-limit the C1 no-channel-gap delivery: ``_last_sent_at``
+    deliberately only counts ``status="sent"`` rows (the real-channel
+    dispatch contract), which a no-channel gap can never produce — anchoring
+    on that would make ``_should_send`` return True on every occurrence
+    (since no "sent" delivery ever exists), writing a fresh suppressed row on
+    every health-sample tick instead of once per re_alert_after_seconds
+    window like a real send.
+    """
+    row = session.execute(
+        select(AlertEventDeliveryDb)
+        .where(
+            AlertEventDeliveryDb.event_id == event_id,
+            AlertEventDeliveryDb.alert_channel_id == channel_id,
+        )
+        .order_by(AlertEventDeliveryDb.dispatched_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    dt = row.dispatched_at
+    if dt is not None and dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
+
+
+def _should_log_no_channel_gap(
+    session: Session,
+    event_db: AlertEventDb,
+    rule: AlertRule,
+    now: datetime,
+) -> bool:
+    """Same notify-on-first-failure cadence as ``_should_send``, anchored on
+    the no-channel sentinel delivery: log the gap once, then again only after
+    ``re_alert_after_seconds`` (never on every tick), matching a one-shot
+    rule's single-log contract when ``re_alert_after_seconds == 0``.
+    """
+    last = _last_delivery_at_for_channel(session, event_db.event_id, _NO_CHANNEL_SENTINEL_ID)
+    if last is None:
+        return True
+    if rule.re_alert_after_seconds == 0:
+        return False
     elapsed = (now - last).total_seconds()
     return elapsed >= rule.re_alert_after_seconds
 
@@ -331,20 +412,41 @@ class AlertEvaluator:
         if not _should_send(session, event_db, matched_rule, now):
             return
 
-        # Dispatch to each wired channel.
-        if not matched_rule.channel_ids:
-            return
-
-        channels = (
-            session.execute(
-                select(AlertChannelDb).where(
-                    AlertChannelDb.channel_id.in_(matched_rule.channel_ids),
-                    AlertChannelDb.enabled == True,  # noqa: E712
+        # Dispatch to each wired, enabled channel.
+        channels: Sequence[AlertChannelDb] = []
+        if matched_rule.channel_ids:
+            channels = (
+                session.execute(
+                    select(AlertChannelDb).where(
+                        AlertChannelDb.channel_id.in_(matched_rule.channel_ids),
+                        AlertChannelDb.enabled == True,  # noqa: E712
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
+
+        if not channels:
+            # C1 fix: a rule with no live channel (empty channel_ids, or every
+            # wired channel_id missing/disabled) must NEVER be a silent drop
+            # (spec §6.2). Record a suppressed delivery so the gap is visible
+            # via the deliveries drawer / support bundle instead of vanishing
+            # without a trace — this is what let a fresh install "never call
+            # for help" undetectably. Gated on the same notify-on-first-failure
+            # cadence as a real send (§6.3) so a persistent gap logs once, then
+            # again only after re_alert_after_seconds — not once per tick.
+            if _should_log_no_channel_gap(session, event_db, matched_rule, now):
+                self._write_delivery(
+                    session,
+                    event_db.event_id,
+                    _NO_CHANNEL_SENTINEL_ID,
+                    _NO_CHANNEL_SENTINEL_KIND,
+                    "suppressed",
+                    now,
+                    None,
+                    last_error=_no_channel_error(event_db.condition),
+                )
+            return
 
         for ch_db in channels:
             ch = alert_channel_from_db(ch_db)
@@ -380,19 +482,35 @@ class AlertEvaluator:
                 break
         if matched_rule is None or not matched_rule.notify_on_resolve:
             return
-        if not matched_rule.channel_ids:
-            return
 
-        channels = (
-            session.execute(
-                select(AlertChannelDb).where(
-                    AlertChannelDb.channel_id.in_(matched_rule.channel_ids),
-                    AlertChannelDb.enabled == True,  # noqa: E712
+        channels: Sequence[AlertChannelDb] = []
+        if matched_rule.channel_ids:
+            channels = (
+                session.execute(
+                    select(AlertChannelDb).where(
+                        AlertChannelDb.channel_id.in_(matched_rule.channel_ids),
+                        AlertChannelDb.enabled == True,  # noqa: E712
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
+
+        if not channels:
+            # C1 fix: same no-silent-drop contract applies to the resolve
+            # notification — the operator never learns the channel recovered
+            # either, and that gap must be visible too.
+            self._write_delivery(
+                session,
+                event_db.event_id,
+                _NO_CHANNEL_SENTINEL_ID,
+                _NO_CHANNEL_SENTINEL_KIND,
+                "suppressed",
+                now,
+                None,
+                last_error=_no_channel_error(event_db.condition),
+            )
+            return
 
         for ch_db in channels:
             ch = alert_channel_from_db(ch_db)
@@ -427,6 +545,7 @@ class AlertEvaluator:
         status: str,
         now: datetime,
         next_attempt_at: datetime | None,
+        last_error: str = "",
     ) -> str:
         delivery_id = f"del-{uuid.uuid4().hex}"
         row = AlertEventDeliveryDb(
@@ -437,7 +556,7 @@ class AlertEvaluator:
             status=status,
             attempts=1 if status == "sent" else 0,
             next_attempt_at=next_attempt_at,
-            last_error="",
+            last_error=last_error,
             dispatched_at=now,
         )
         session.add(row)
