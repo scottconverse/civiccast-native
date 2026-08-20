@@ -472,7 +472,7 @@ def row_power_loss_resume(base: Path, boundary_seam: str) -> RowResult:
     ctx_dir = root  # worker & parent derive the same synthetic root from this dir
 
     # 1) spawn the worker; it blocks at the target seam after writing the sentinel.
-    worker = subprocess.Popen(  # noqa: S603 - fixed argv (our own interpreter + this file), no shell
+    worker = subprocess.Popen(  # fixed argv (our own interpreter + this file), no shell
         [
             sys.executable,
             str(_HERE),
