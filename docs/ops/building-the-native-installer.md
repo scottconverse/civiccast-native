@@ -186,10 +186,44 @@ Not pinned:
 
 One caveat about `/Brepro`: `reproducible_build_environment` sets `CL` and
 `LINK` to `/Brepro`, but `build_minimal_ffmpeg` deliberately pops both before
-configuring FFmpeg (stray flags in `CL` break configure's compile probes). The
-REPRO debug entry above shows FFmpeg's own build still links reproducibly, so
-this is not the cause — but it does mean the wrapper's determinism settings do
-not reach the FFmpeg build the way they reach PyAV's.
+configuring FFmpeg (stray flags in `CL` break configure's compile probes). It
+passes them back through configure instead, which is the right way — the
+configure string embedded in both DLLs is byte-identical and ends:
+
+```
+--extra-cflags='/Brepro @civiccast-cl.rsp' --extra-ldflags=/Brepro
+```
+
+### The build already does everything reasonable
+
+This matters for what the fix can be. `civiccast-cl.rsp` is written per-build
+as:
+
+```
+/experimental:deterministic
+"/pathmap:<source_dir>=C:\CivicCast\FFmpegSource"
+```
+
+So the FFmpeg build already: links with `/Brepro`, compiles with
+`/experimental:deterministic`, normalises the source path with `/pathmap` so
+the build directory cannot leak in, assembles with `nasm --reproducible`, and
+pins `SOURCE_DATE_EPOCH`. The embedded configure strings confirm all of it
+reached the compiler.
+
+The output still differs between machines. That rules out the usual causes —
+paths, timestamps, assembler nondeterminism — and leaves two candidates, both
+outside what the lock can currently pin:
+
+1. **The Windows SDK servicing level**, which nothing checks (above).
+2. **`/experimental:deterministic` not being complete.** It is experimental by
+   name; MSVC does not promise bit-identical output across toolset and SDK
+   internals.
+
+Either way, the remedy is not more flags. It is to pin the SDK servicing build
+alongside the compiler, or to stop asserting a byte-exact hash for an artifact
+this toolchain cannot guarantee byte-exactly and verify it some other way —
+for example by checking the FFmpeg configure string, exported symbols and
+licence posture, which is what the wheel pin is really trying to protect.
 
 ### What this means
 
