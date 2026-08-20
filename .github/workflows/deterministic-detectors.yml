@@ -203,11 +203,46 @@ jobs:
               | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           else
+            # Both lists are FILTERED AGAINST DISK, not hardcoded.
+            #
+            # mutmut resolves every source_path with strict=True, so ONE name
+            # that is not on disk aborts the whole run with
+            # `FileNotFoundError: No such file or directory: 'prototype'` --
+            # which is exactly what happened when this repo arrived without
+            # `prototype`, `deploy`, `docker`, `tester-handoff`, `.agent-runs`
+            # or `next-cleanup.md`. A hardcoded path list is a promise about a
+            # tree that changes; this asks the tree.
+            #
+            # Dropped names are printed to the step summary rather than
+            # silently skipped: a shrinking mutation surface is a real loss of
+            # coverage and someone has to be able to see it happen.
+            keep_existing() {
+              local kept="" dropped=""
+              for name in "$@"; do
+                if [ -e "$name" ]; then
+                  kept="${kept:+$kept, }\"$name\""
+                else
+                  dropped="${dropped:+$dropped }$name"
+                fi
+              done
+              if [ -n "$dropped" ]; then
+                # stderr fallback so a missing summary file cannot turn a
+                # dropped-path notice into a redirect error.
+                echo "NOT PRESENT, excluded from mutmut config: $dropped" >> "${GITHUB_STEP_SUMMARY:-/dev/stderr}"
+              fi
+              printf '[%s]' "$kept"
+            }
+            SOURCE_PATHS="$(keep_existing civiccast scripts prototype tools alembic)"
+            ALSO_COPY="$(keep_existing .agent-runs .github .pipelines deploy docker docs security tester-handoff tests alembic.ini .pre-commit-config.yaml AGENTS.md ARCHITECTURE.md CAPABILITIES.md CHANGELOG.md CLAUDE.md CODE_OF_CONDUCT.md CODE_SIGNING_POLICY.md CONTRIBUTING.md FAQ.md INSTALL-WINDOWS.md LEGAL-NOTICES.md LICENSE LICENSE-CODE LICENSE-DOCS Makefile native-windows-build-toolchain.lock.json native-windows-ollama-models.lock.json native-windows-runtime-dependencies.lock.json next-cleanup.md README.md requirements-native-app-build.in requirements-native-app-build.txt requirements-native-app.txt requirements-native-pyav-build.in requirements-native-pyav-build.txt requirements-native-runtime.in requirements-native-runtime.txt SECURITY.md SUPPORT.md uv.lock)"
+            if [ "$SOURCE_PATHS" = "[]" ]; then
+              echo "No mutation source path exists. Refusing to report a mutation score of nothing."                 | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
             {
               echo ""
               echo "[tool.mutmut]"
-              echo 'source_paths = ["civiccast", "scripts", "prototype", "tools", "alembic"]'
-              echo 'also_copy = [".agent-runs", ".github", ".pipelines", "deploy", "docker", "docs", "security", "tester-handoff", "tests", "alembic.ini", ".pre-commit-config.yaml", "AGENTS.md", "ARCHITECTURE.md", "CAPABILITIES.md", "CHANGELOG.md", "CLAUDE.md", "CODE_OF_CONDUCT.md", "CODE_SIGNING_POLICY.md", "CONTRIBUTING.md", "FAQ.md", "INSTALL-WINDOWS.md", "LEGAL-NOTICES.md", "LICENSE", "LICENSE-CODE", "LICENSE-DOCS", "Makefile", "native-windows-build-toolchain.lock.json", "native-windows-ollama-models.lock.json", "native-windows-runtime-dependencies.lock.json", "next-cleanup.md", "README.md", "requirements-native-app-build.in", "requirements-native-app-build.txt", "requirements-native-app.txt", "requirements-native-pyav-build.in", "requirements-native-pyav-build.txt", "requirements-native-runtime.in", "requirements-native-runtime.txt", "SECURITY.md", "SUPPORT.md", "uv.lock"]'
+              echo "source_paths = $SOURCE_PATHS"
+              echo "also_copy = $ALSO_COPY"
               echo 'runner = "pytest -q --tb=no -x"'
               # These modules bind safety claims to the exact source tree.
               # Deliberate source mutations must make their assertions fail, so normal

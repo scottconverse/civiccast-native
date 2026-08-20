@@ -211,7 +211,34 @@ def test_release_identity_rejects_main_rs_constant_drifting_from_the_native_vers
 
 def test_release_identity_accepts_matching_health_example_version(tmp_path: Path) -> None:
     """TW-E: docs/technical-ops-reference.md's `/health` example must show the
-    same version civiccast/_version.py reports."""
+    version a NATIVE station reports -- civiccast/_native_version.py's, not
+    civiccast/_version.py's, which belongs to the retired WSL line."""
+    _write_aligned_release_identity_fixture(tmp_path)
+    _write(
+        tmp_path / "docs" / "technical-ops-reference.md",
+        "```bash\ncurl -s http://127.0.0.1:8000/health\n"
+        '{"status":"degraded","version":"0.11.0-beta.1","schema":"not-configured"}\n```\n',
+    )
+
+    assert evaluate_release_identity(tmp_path) == []
+
+
+def test_release_identity_rejects_the_wsl_lines_version_in_the_health_example(
+    tmp_path: Path,
+) -> None:
+    """The specific regression this check now guards.
+
+    A native station's /health reports the NATIVE version: station_runtime
+    sets CIVICCAST_NATIVE_REPORTED_VERSION from civiccast/_native_version.py
+    and app.py's _reported_version() prefers it over the module __version__.
+    An example showing the retired WSL line's number tells an operator to
+    expect something their station never prints -- and the old check actively
+    REQUIRED that wrong number, because it was anchored to
+    civiccast/_version.py.
+
+    The fixture's two versions differ on purpose (0.10.0 vs 0.11.0-beta.1), so
+    neither this nor the accepting test above can pass by coincidence.
+    """
     _write_aligned_release_identity_fixture(tmp_path)
     _write(
         tmp_path / "docs" / "technical-ops-reference.md",
@@ -219,14 +246,16 @@ def test_release_identity_accepts_matching_health_example_version(tmp_path: Path
         '{"status":"degraded","version":"0.10.0","schema":"not-configured"}\n```\n',
     )
 
-    assert evaluate_release_identity(tmp_path) == []
+    assert evaluate_release_identity(tmp_path) == [
+        "docs/technical-ops-reference.md's /health example shows version '0.10.0', "
+        "expected '0.11.0-beta.1' (from civiccast/_native_version.py)."
+    ]
 
 
 def test_release_identity_rejects_stale_health_example_version(tmp_path: Path) -> None:
-    """TW-E regression guard: docs/technical-ops-reference.md's `/health`
-    JSON example named `1.0.0-rc17` while civiccast/_version.py had already
-    moved to `1.0.0-rc18`. FAILS red against that exact stale-doc shape;
-    PASSES once the example is updated to name the current version."""
+    """TW-E regression guard: the `/health` JSON example naming a version that
+    is nobody's current one. FAILS red against that stale-doc shape; PASSES
+    once the example names what a native station actually reports."""
     _write_aligned_release_identity_fixture(tmp_path)
     _write(
         tmp_path / "docs" / "technical-ops-reference.md",
@@ -235,5 +264,6 @@ def test_release_identity_rejects_stale_health_example_version(tmp_path: Path) -
     )
 
     assert evaluate_release_identity(tmp_path) == [
-        "docs/technical-ops-reference.md's /health example shows version '0.9.0', expected '0.10.0'."
+        "docs/technical-ops-reference.md's /health example shows version '0.9.0', "
+        "expected '0.11.0-beta.1' (from civiccast/_native_version.py)."
     ]
