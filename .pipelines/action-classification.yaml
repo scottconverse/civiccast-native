@@ -1,0 +1,333 @@
+# SPDX-License-Identifier: Apache-2.0
+# Action classification — maps every executor tool call to one of four
+# risk classes. The judge layer (v0.4) routes each action by class:
+#
+#   read_only         → execute immediately, log to judge-log.yaml
+#   reversible_write  → execute immediately, log to judge-log.yaml
+#   external_facing   → STOP, spawn judge subagent, wait for verdict
+#   high_risk         → STOP, spawn judge subagent, wait for verdict,
+#                       if judge ALLOWs also require human confirmation
+#
+# Rules are evaluated top-to-bottom within each class. First match wins.
+# Unmatched actions default to reversible_write (the safer assumption
+# for any unclassified write-like action).
+#
+# This file is opt-in: if `.pipelines/action-classification.yaml` does
+# NOT exist in your project, the orchestrator runs the executor stage
+# with the original Handler 3 (no judge interception). If it DOES exist,
+# Handler 3a is used and every executor action is classified and routed.
+#
+# Customize for your project by adding rules under the appropriate class
+# (e.g. your specific deploy command goes under high_risk; your local
+# preview-server command goes under reversible_write).
+
+classification:
+
+  # ------------------------------------------------------------------
+  # high_risk — irreversible, externally visible, or affects shared
+  # state. Always judged. If judge ALLOWs, ALSO requires human confirm.
+  # ------------------------------------------------------------------
+  high_risk:
+
+    - pattern: 'rm\s+-rf'
+      tool: bash
+      note: "Recursive force-delete. Irreversible filesystem destruction."
+
+    - pattern: 'rm\s+-r\s'
+      tool: bash
+      note: "Recursive delete. Irreversible unless target is empty."
+
+    - pattern: '\bshred\b'
+      tool: bash
+      note: "Secure overwrite. Irreversible by design."
+
+    - pattern: 'git\s+push\b.*\bmain\b'
+      tool: bash
+      note: "Push to main branch. Affects shared remote state and triggers CI."
+
+    - pattern: 'git\s+push\b.*\bmaster\b'
+      tool: bash
+      note: "Push to master branch. Affects shared remote state and triggers CI."
+
+    - pattern: 'git\s+push\b.*--force\b'
+      tool: bash
+      note: "Force push. Can destroy remote history; not recoverable from clone."
+
+    - pattern: 'git\s+tag\b.*-d\b'
+      tool: bash
+      note: "Delete local tag. May be a precursor to a tag-move; verify intent."
+
+    - pattern: 'git\s+branch\b.*-D\b'
+      tool: bash
+      note: "Force-delete local branch. Discards unmerged commits."
+
+    - pattern: '\bnpm\s+publish\b'
+      tool: bash
+      note: "Publish to npm registry. Externally visible; difficult to unpublish."
+
+    - pattern: '\btwine\s+upload\b'
+      tool: bash
+      note: "Upload to PyPI. Externally visible; PyPI does not allow re-upload of same version."
+
+    - pattern: '\bcargo\s+publish\b'
+      tool: bash
+      note: "Publish to crates.io. Externally visible; cannot be un-published."
+
+    - pattern: '\bchmod\b'
+      tool: bash
+      note: "Change file permissions. Security-relevant; can expose or lock out."
+
+    - pattern: '\bchown\b'
+      tool: bash
+      note: "Change file ownership. Security-relevant; can break service access."
+
+    - pattern: '\bssh-keygen\b'
+      tool: bash
+      note: "Generate or modify SSH keys. Credential-touching."
+
+    - pattern: '\bDROP\s+TABLE\b'
+      tool: bash
+      note: "Database DDL drop. Destroys table data."
+
+    - pattern: '\bDROP\s+DATABASE\b'
+      tool: bash
+      note: "Database DDL drop. Destroys an entire database."
+
+    - pattern: '\bTRUNCATE\b'
+      tool: bash
+      note: "Database truncate. Destroys all rows in a table."
+
+    - pattern: '\bDELETE\s+FROM\b'
+      tool: bash
+      note: "Database delete. Can destroy rows; check WHERE clause."
+
+    - pattern: 'export\s+\w*KEY='
+      tool: bash
+      note: "Export an env var matching *KEY=. Likely credential material."
+
+    - pattern: 'export\s+\w*SECRET='
+      tool: bash
+      note: "Export an env var matching *SECRET=. Likely credential material."
+
+    - pattern: 'export\s+\w*TOKEN='
+      tool: bash
+      note: "Export an env var matching *TOKEN=. Likely credential material."
+
+    - pattern: 'export\s+\w*PASSWORD='
+      tool: bash
+      note: "Export an env var matching *PASSWORD=. Credential material."
+
+  # ------------------------------------------------------------------
+  # external_facing — leaves the local machine, affects external
+  # systems (issue trackers, container registries, message endpoints).
+  # Always judged. Human confirm not required after ALLOW.
+  # ------------------------------------------------------------------
+  external_facing:
+
+    - pattern: 'git\s+push\b(?!.*\b(main|master)\b)(?!.*--force\b)'
+      tool: bash
+      note: "Push to a non-main, non-force remote. External state change."
+
+    - pattern: '\bgh\s+pr\s+create\b'
+      tool: bash
+      note: "Open a pull request via gh CLI. Visible to reviewers and CI."
+
+    - pattern: '\bgh\s+issue\s+create\b'
+      tool: bash
+      note: "Open an issue via gh CLI. Externally visible."
+
+    - pattern: '\bgh\s+release\s+create\b'
+      tool: bash
+      note: "Create a GitHub release. Externally visible; triggers downstream consumers."
+
+    - pattern: 'curl\b.*-X\s+POST'
+      tool: bash
+      note: "HTTP POST. Writes to an external endpoint."
+
+    - pattern: 'curl\b.*-X\s+PUT'
+      tool: bash
+      note: "HTTP PUT. Writes to an external endpoint."
+
+    - pattern: 'curl\b.*-X\s+PATCH'
+      tool: bash
+      note: "HTTP PATCH. Writes to an external endpoint."
+
+    - pattern: 'curl\b.*-X\s+DELETE'
+      tool: bash
+      note: "HTTP DELETE. Removes external resource."
+
+    - pattern: 'curl\b.*--data\b'
+      tool: bash
+      note: "curl with --data implies a POST body. External write."
+
+    - pattern: 'wget\b.*--post'
+      tool: bash
+      note: "wget POST. External write."
+
+    - pattern: '\bsendmail\b'
+      tool: bash
+      note: "Send email. External delivery."
+
+    - pattern: '\bslack-cli\b'
+      tool: bash
+      note: "Post to Slack. Externally visible to workspace members."
+
+    - pattern: '\bdocker\s+push\b'
+      tool: bash
+      note: "Push container image. Externally visible; difficult to retract."
+
+    - pattern: '\bkubectl\s+apply\b'
+      tool: bash
+      note: "Apply Kubernetes manifest. Changes cluster state."
+
+    - pattern: '\bkubectl\s+delete\b'
+      tool: bash
+      note: "Delete Kubernetes resource. Changes cluster state."
+
+  # ------------------------------------------------------------------
+  # reversible_write — local-only writes that are recoverable via
+  # git, undo, or re-download. Execute immediately; log only.
+  # ------------------------------------------------------------------
+  reversible_write:
+
+    - tool: str_replace_editor
+      note: "Local file edit. Reversible via git."
+
+    - tool: create_file
+      note: "Create local file. Reversible via git rm."
+
+    - pattern: '\s>\s'
+      tool: bash
+      note: "Shell redirect to file. Reversible via git."
+
+    - pattern: '\s>>\s'
+      tool: bash
+      note: "Shell append to file. Reversible via git."
+
+    - pattern: '\btee\b'
+      tool: bash
+      note: "tee writes stdout to file. Reversible via git."
+
+    - pattern: '\bcp\s'
+      tool: bash
+      note: "Copy file. Reversible via rm of the new copy."
+
+    - pattern: '\bmv\s'
+      tool: bash
+      note: "Rename or move file. Reversible via git or by moving back."
+
+    - pattern: '\bmkdir\b'
+      tool: bash
+      note: "Create directory. Reversible via rmdir."
+
+    - pattern: '\brm\s(?!-r)(?!-rf)'
+      tool: bash
+      note: "Delete a single file (non-recursive). Reversible via git for tracked files."
+
+    - pattern: '\bgit\s+add\b'
+      tool: bash
+      note: "Stage changes. Reversible via git restore --staged."
+
+    - pattern: '\bgit\s+commit\b'
+      tool: bash
+      note: "Local commit. Reversible via git reset before push."
+
+    - pattern: '\bgit\s+stash\b'
+      tool: bash
+      note: "Stash changes. Reversible via git stash pop."
+
+    - pattern: '\bgit\s+checkout\b'
+      tool: bash
+      note: "Switch branch or restore file. Reversible by switching back."
+
+    - pattern: '\bgit\s+branch\s(?!.*-D\b)(?!.*-d\b)'
+      tool: bash
+      note: "Create branch (not delete). Reversible via git branch -d."
+
+    - pattern: '\bpip\s+install\b'
+      tool: bash
+      note: "Install Python package into venv. Reversible via pip uninstall."
+
+    - pattern: '\bnpm\s+install\b(?!\s+--global\b)'
+      tool: bash
+      note: "Install node packages locally. Reversible via rm node_modules + reinstall."
+
+  # ------------------------------------------------------------------
+  # read_only — observation only. No state change. Execute immediately;
+  # log only.
+  # ------------------------------------------------------------------
+  read_only:
+
+    - pattern: '^cat\s'
+      tool: bash
+      note: "Print file contents. No state change."
+
+    - pattern: '^less\s'
+      tool: bash
+      note: "Page through file. No state change."
+
+    - pattern: '^head\s'
+      tool: bash
+      note: "Print head of file. No state change."
+
+    - pattern: '^tail\s'
+      tool: bash
+      note: "Print tail of file. No state change."
+
+    - pattern: '\bgrep\b'
+      tool: bash
+      note: "Pattern search. No state change."
+
+    - pattern: '^find\s'
+      tool: bash
+      note: "Filesystem traversal. No state change."
+
+    - pattern: '^ls\b'
+      tool: bash
+      note: "List directory. No state change."
+
+    - pattern: '^wc\s'
+      tool: bash
+      note: "Word/line count. No state change."
+
+    - pattern: '^diff\s'
+      tool: bash
+      note: "Compare files. No state change."
+
+    - pattern: '\bgit\s+log\b'
+      tool: bash
+      note: "Show commit history. No state change."
+
+    - pattern: '\bgit\s+diff\b'
+      tool: bash
+      note: "Show changes. No state change."
+
+    - pattern: '\bgit\s+status\b'
+      tool: bash
+      note: "Show working-tree state. No state change."
+
+    - pattern: '\bgit\s+show\b'
+      tool: bash
+      note: "Show a commit or object. No state change."
+
+    - pattern: 'python\s+-c\b'
+      tool: bash
+      note: "Run a short Python expression. Typically read-only; classify as reversible_write if your project's -c usage writes files."
+
+    - pattern: '\bpytest\b'
+      tool: bash
+      note: "Run tests. Test artifacts are gitignored or scoped; no production state change."
+
+    - pattern: '\bruff\s+check\b'
+      tool: bash
+      note: "Lint check. No state change."
+
+    - pattern: '\bmypy\b'
+      tool: bash
+      note: "Type check. No state change."
+
+# Default class for unmatched actions. Set to reversible_write so unknown
+# write-like actions are still safely executed and logged, but unknown
+# external/destructive actions are caught conservatively because their
+# patterns above are broad.
+default_class: reversible_write

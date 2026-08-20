@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+# CivicCast pipeline run manifest — copy to .agent-runs/<run-id>/manifest.yaml
+# and fill in every field. Empty strings and empty lists are NOT defaults;
+# they cause the run to refuse to start.
+#
+# This manifest is the contract every downstream agent (researcher,
+# planner, test-writer, executor, verifier, manager) reads. If a field
+# is wrong here, the wrong work gets done.
+
+pipeline_run:
+  # Run id: ISO date + task slug, e.g. "2026-05-08-portal-darkmode-toggle".
+  # Becomes the directory name under .agent-runs/. Must be lowercase,
+  # ASCII, kebab-case after the date.
+  id: ""
+
+  # Pipeline type: must be one of feature | bugfix | testgen | refactor.
+  # Selects which YAML in .pipelines/ governs the stage sequence.
+  type: feature
+
+  # Branch the run will commit to. Conventionally rung/0.X-<name> for
+  # rung work or fix/<name> for bugfixes off main.
+  branch: ""
+
+  # One sentence, user-facing. The thing a release-notes reader will see.
+  # Not "implement Foo" — say what Foo does for the user.
+  goal: ""
+
+  # Path prefixes this run is allowed to touch. Anything outside is
+  # blocked by scripts/policy/check_allowed_paths.py at the policy stage.
+  # Be specific: "civiccast/vod/" not "civiccast/".
+  #
+  # Reminder: list sibling root-level files explicitly when the work needs
+  # them. Adding "alembic/" lets the run touch the alembic directory but
+  # does NOT cover the sibling "alembic.ini" config file at the repo root.
+  # If a migration plan needs to register new version_locations, list both
+  # "alembic/" AND "alembic.ini". Same pattern for "pyproject.toml",
+  # "uv.lock", "CHANGELOG.md", etc. — sibling files at the repo root never
+  # come along for free with a directory entry.
+  allowed_paths: []
+
+  # Path prefixes this run must NOT touch even if listed under
+  # allowed_paths via a parent. Common entries: "docs/adr/" (use a new
+  # ADR file instead), "civiccast/_version.py" (release-engineer only).
+  forbidden_paths: []
+
+  # Things explicitly out of scope. Each item is one short sentence.
+  # If an executor finds itself reaching toward a non-goal, REPLAN.
+  non_goals: []
+
+  # What artifacts and behaviors must exist when the run completes.
+  # Each item is testable: a file path, a passing test name, an HTTP
+  # endpoint that returns 200, an axe rule that passes.
+  expected_outputs: []
+
+  # Required gates — flipped to satisfied as the pipeline advances.
+  # Do not remove any of these from a real run; if a gate is genuinely
+  # not applicable, write the reason in non_goals and let the verifier
+  # mark it NOT APPLICABLE.
+  required_gates:
+    - human_approval_manifest
+    - human_approval_plan
+    - policy_passed
+    - tests_passed
+    - pre_push_verification_passed
+    - human_approval_merge
+
+  # Required pre-push verification suite. A verifier may mark an item
+  # NOT APPLICABLE only when the repo lacks the matching surface (for example,
+  # no frontend package yet). Skipped-but-required checks are NOT MET unless
+  # the verifier records an environmental blocker and the manager blocks push.
+  pre_push_verification:
+    - full_pytest_no_unexpected_skips
+    - real_postgres_tests_with_docker
+    - docs_render_with_pandoc
+    - frontend_lint_build_e2e_a11y
+    - smoke_tests
+    - cleanroom_from_scratch
+    - documentation_gate
+
+  # Risk: low | medium | high. Drives how aggressively the verifier and
+  # manager scrutinize cross-cutting concerns. Anything touching the
+  # streaming origin, the public portal, the asset store, or any spec §4
+  # non-negotiable is at least medium.
+  risk: low
+
+  # If this work is reverted, what's the procedure? Concrete commands
+  # if possible (e.g., "git revert <merge-commit>; redeploy"). For
+  # database migrations: name the down-migration. For ADRs: name the
+  # superseding ADR or "no rollback needed — additive only."
+  rollback_plan: ""
+
+  # One paragraph naming the precise bar the work clears. Cited by
+  # verifier-report.md §1 line by line. If you can't write this in
+  # one paragraph, the manifest is too large; split the work.
+  definition_of_done: ""
+
+  # Control-loop contract. The runner may not send a final response during an
+  # authorized run unless this state records a valid stop condition and the
+  # checker passes.
+  control_loop:
+    active_control_state: ".agent-runs/<run-id>/active-control-state.md"
+    stop_condition_required_for_final_response: true
+    open_caveats_block_completion: true
+    post_push_ci_follow_through_required: true
+    execute_recommended_next_action_when_authorized: true
+    final_response_allowed_without_stop_condition: false

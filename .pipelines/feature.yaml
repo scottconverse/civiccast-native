@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: Apache-2.0
+# Feature pipeline - full sequence for new functionality.
+#
+# Each stage runs in a fresh Codex Desktop App session given:
+#   - the role file at .pipelines/roles/<role>.md
+#   - the manifest at .agent-runs/<run-id>/manifest.yaml
+#   - all prior artifacts in .agent-runs/<run-id>/
+# and produces a single named artifact.
+#
+# Gates marked human_approval require the human director to sign off
+# before the pipeline advances. Pipeline gates (e.g., policy) are
+# automated.
+
+pipeline: feature
+
+control_loop:
+  active_control_state_required: true
+  checker_command: python scripts/policy/check_pipeline_control_loop.py --run {run_id}
+  final_response_gate: python scripts/policy/final_response_gate.py --require-active-run
+  decision_gate: python scripts/policy/agent_decision_gate.py --intent {intent} --claimed-stop-condition {condition} --write-ledger
+  continue_command: python scripts/policy/pipeline_continue.py
+  open_caveats_block_completion: true
+  post_push_ci_follow_through_required: true
+  execute_recommended_next_action_when_authorized: true
+  invalid_stop_conditions:
+    - successful_push
+    - green_ci
+    - recommended_next_action
+    - open_caveats
+    - release_or_tag_after_gates_pass
+    - pr_draft_status
+    - unverified_blocker_or_risk
+  valid_stop_conditions:
+    - human_approval_gate
+    - failed_gate_needs_user_direction
+    - destructive_action
+    - credential_or_secret_required
+    - scope_conflict
+    - external_system_unavailable_after_retry
+    - user_explicitly_paused_or_stopped
+
+stages:
+  - name: manifest
+    role: human
+    artifact: manifest.yaml
+    gate: human_approval
+
+  - name: research
+    role: researcher
+    artifact: research.md
+
+  - name: plan
+    role: planner
+    artifact: plan.md
+    gate: human_approval
+
+  - name: test-write
+    role: test-writer
+    artifact: failing-tests-report.md
+
+  - name: execute
+    role: executor
+    artifact: implementation-report.md
+
+  - name: policy
+    role: pipeline
+    command: python scripts/policy/run_all.py --run {run_id}
+    artifact: policy-report.md
+
+  - name: verify
+    role: verifier
+    artifact: verifier-report.md
+
+  - name: drift-detect
+    role: drift-detector
+    artifact: drift-report.md
+
+  - name: critique
+    role: critic
+    artifact: critic-report.md
+
+  - name: auto-promote
+    role: pipeline
+    command: python scripts/policy/auto_promote.py --run {run_id}
+    artifact: auto-promote-report.md
+    optional_artifact: true
+
+  - name: manager
+    role: manager
+    artifact: manager-decision.md
+    gate: human_approval
+    auto_promote_aware: true
