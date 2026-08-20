@@ -15,8 +15,9 @@ permissions:
 jobs:
   lint:
     name: Lint and type check
-    # Windows, because this is a Windows product and mypy's answer is
-    # platform-dependent. Same commit, same command, same 621 source files:
+    # workflow-cost: windows-pr-justification -- mypy's result is
+    # platform-dependent for this product and only the Windows answer is
+    # actionable. Same commit, same command, same 621 source files:
     #
     #   ubuntu-latest   112 errors in 17 files
     #   windows-latest   23 errors in 11 files

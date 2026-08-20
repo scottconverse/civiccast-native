@@ -110,7 +110,11 @@ def _assert_installer_modes(workflow: dict[str, object]) -> None:
     assert compile_steps["cargo test (compile guard + unit tests)"]["run"] == (
         "cargo test --locked"
     )
-    assert compile_steps["Pester (headless-bootstrap.ps1 unit tests)"]["shell"] == "pwsh"
+    # The Pester step is gone with headless-bootstrap.ps1 and its suite (the
+    # WSL2 install lane). This assertion referenced the STEP NAME, not the
+    # file, so grepping for HeadlessBootstrap before removing the step did
+    # not surface it -- the same one-form-of-the-reference miss as the e2e
+    # heading rename earlier. cargo test above still guards the job.
 
     frontend = jobs["installer-frontend"]
     assert frontend["runs-on"] == FRONTEND_RUNNER
@@ -171,7 +175,14 @@ def test_ci_lint_is_standard_main_only_without_release_reuse() -> None:
     assert "source_sha" not in text
     assert workflow["concurrency"]["group"] == "${{ github.workflow }}-${{ github.ref }}"
     assert set(workflow["jobs"]) == {"lint", "workflows"}
-    assert all(job["runs-on"] == "ubuntu-latest" for job in workflow["jobs"].values())
+    # Was: every ci-lint job on ubuntu-latest. The lint job moved to Windows
+    # deliberately -- mypy's answer is platform-dependent and only the
+    # Windows one is actionable for a Windows product. The workflows job
+    # stays on ubuntu: it lints workflow TEXT and fetches actionlint
+    # through process substitution. Pin the split rather than dropping the
+    # check, so neither job drifts platform silently.
+    assert workflow["jobs"]["lint"]["runs-on"] == "windows-latest"
+    assert workflow["jobs"]["workflows"]["runs-on"] == "ubuntu-latest"
 
 
 def test_mutations_reject_linux_jobs_and_mixed_gate_dependencies() -> None:
