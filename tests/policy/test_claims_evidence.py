@@ -1249,7 +1249,7 @@ def test_ws3r3_005_session0_still_binds_its_committed_demo_graph() -> None:
     fixtures = entry.inputs["fixtures"]
     assert isinstance(fixtures, list)
     fixture_paths = {rf.path for rf in fixtures}
-    assert fixture_paths == {".agent-runs/native-windows/spike-session0/evidence/demo-graph.json"}
+    assert fixture_paths == {"docs/evidence/session0-demo-graph.json"}
 
 
 @pytest.mark.parametrize(
