@@ -400,7 +400,7 @@ def _database_exists(psql_path: str, context: ProvisionContext, plan: ProvisionP
         "--tuples-only",
         "--no-align",
         "-c",
-        f"SELECT 1 FROM pg_database WHERE datname = '{plan.database_name}'",  # noqa: S608
+        f"SELECT 1 FROM pg_database WHERE datname = '{plan.database_name}'",  # noqa: S608  # nosec B608 - identifier validated by _IDENTIFIER_RE
     ]
     # C2: file-backed capture + hard deadline (psql contacts the postgres
     # server process family; capture_output pipes are the proven hang).
@@ -645,7 +645,7 @@ def _verify_adoptable_cluster(
         psql_path,
         context,
         plan,
-        f"SELECT rolsuper FROM pg_roles WHERE rolname = '{plan.database_username}'",  # noqa: S608
+        f"SELECT rolsuper FROM pg_roles WHERE rolname = '{plan.database_username}'",  # noqa: S608  # nosec B608 - identifier validated by _IDENTIFIER_RE
     )
     if role_is_super != "t":
         raise AdoptionForeignClusterError(
@@ -657,7 +657,7 @@ def _verify_adoptable_cluster(
         psql_path,
         context,
         plan,
-        f"SELECT 1 FROM pg_database WHERE datname = '{plan.database_name}'",  # noqa: S608
+        f"SELECT 1 FROM pg_database WHERE datname = '{plan.database_name}'",  # noqa: S608  # nosec B608 - identifier validated by _IDENTIFIER_RE
     )
     if database_present != "1":
         raise AdoptionForeignClusterError(
