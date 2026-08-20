@@ -119,6 +119,25 @@ async function openWithRecordBackend(
       }),
     })
   })
+  // A-1 first-run seeding added this fetch after these mocks were written.
+  // Unmocked it reaches the preview server, returns 401, and the browser logs
+  // "Failed to load resource: 401" -- which failed this test's
+  // expect(errors).toEqual([]) console-clean assertion. In a real signed-in
+  // session the call succeeds; the gap was the mock set, not the app.
+  await page.route('**/api/staff/installer/sample-seed-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'dismissed',
+        sample_content_enabled: false,
+        initial_schedule_enabled: false,
+        dismissed: true,
+        message: 'Sample content seeding was not requested for this station.',
+        next_step: 'Nothing to do.',
+      }),
+    })
+  })
   await page.route('**/api/staff/assets', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) })
   })
