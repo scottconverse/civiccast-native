@@ -422,7 +422,7 @@ entries:
       # goes red and requires another current-source external proof.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 7986a134b352424d9c0672f8c53a08507365d511
+          blob: 73e45ac972668945eeff43ed35334795609f538a
         - path: civiccast/egress/gst/engine.py
           blob: 9d3a7c91b86da09f087759521075cd225f644706
         - path: civiccast/egress/gst/graph.py
@@ -551,7 +551,7 @@ entries:
       # goes red and requires another current-source session-0 proof.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 7986a134b352424d9c0672f8c53a08507365d511
+          blob: 73e45ac972668945eeff43ed35334795609f538a
         - path: civiccast/egress/gst/engine.py
           blob: 9d3a7c91b86da09f087759521075cd225f644706
         - path: civiccast/egress/gst/graph.py
