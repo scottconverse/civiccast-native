@@ -129,24 +129,86 @@ verified as matching the reviewed identities:
 `build_native_pyav_wheel.py` requires the wheel it just compiled to be
 **byte-identical** to a pinned SHA-256. This machine's is 123 bytes different.
 
-Everything the build controls was eliminated as the cause:
+### Where the difference actually is
 
-* compiler `19.50.35730` and linker `14.50.35730.0` — pinned and matching
-* Windows SDK `10.0.26100.0` — the only SDK present, and the one
-  `Windows11SDK.26100` names
-* `/Brepro` on both compiler and linker, `SOURCE_DATE_EPOCH`, `PYTHONHASHSEED=0`
-* `delvewheel==1.13.0`, hash-pinned
-* the PyAV source archive and the FFmpeg binaries, both hash-pinned
+A copy of the reviewed wheel exists on this workstation
+(`sandbox-lab/hoststore/install/runtime/WHEELS/`), so the two were unpacked and
+compared file by file rather than guessed about.
+
+**All seven FFmpeg DLLs differ in content while being byte-for-byte identical
+in size:**
+
+| DLL | bytes | pinned sha256 (16) | this build (16) |
+| --- | ---: | --- | --- |
+| avcodec-62 | 3,514,880 | `1b8a35bf0bd28b3f` | `a8553288873154e4` |
+| avdevice-62 | 107,008 | `5f0e7e212e01d810` | `7be1228dd23aafe6` |
+| avfilter-11 | 254,976 | `18b4c7562251d5b3` | `03688250e4d600f0` |
+| avformat-62 | 708,096 | `d3549e7b0207d77e` | `62f70c7e6a2ba107` |
+| avutil-60 | 1,126,912 | `d78abe5993aa05b7` | `5c762295f9eaa780` |
+| swresample-6 | 231,936 | `64fdc591075021be` | `986cd78fbbdd46b6` |
+| swscale-9 | 1,175,040 | `6d2f4546dfa64584` | `0bee8162081880b5` |
+
+Everything else follows from that. `delvewheel` mangles each DLL's filename
+with a hash of its content, so all seven names change; every `.pyd` embeds
+those names in its import table, so all 44 extension modules change while
+keeping their exact sizes; `RECORD` changes because the names did. The 123-byte
+total delta is the zip and RECORD bookkeeping around a much larger content
+difference.
+
+Comparing `avutil` byte-wise: 170,697 differing bytes in 7,055 runs, mostly
+one- and two-byte deltas in address operands, many of them a constant `0x70`
+apart. That is shifted code layout, not metadata.
+
+Both DLLs carry a `IMAGE_DEBUG_TYPE_REPRO` (type 13) debug entry, so both were
+reproducibly linked and their `TimeDateStamp` is a content hash rather than a
+clock reading — `0x38e86ec9` against `0x9e72ac9b`. The difference is real
+compiled output.
+
+### What is and is not pinned
+
+Pinned, verified, and matching on this machine:
+
+* compiler `19.50.35730`, linker `14.50.35730.0`
+* MSYS2 base, and `diffutils`, `make` and `nasm` — every FFmpeg build tool,
+  by SHA-256
+* the FFmpeg source archive and the PyAV source, by SHA-256
+* `delvewheel==1.13.0`
+* `SOURCE_DATE_EPOCH`, `PYTHONHASHSEED=0`
 * the repacked provenance notice, which is entirely constants
 
-So the reviewed wheel hash **is not reproducible from the reviewed toolchain
-specification alone**. Something outside that specification contributed to the
-recorded hash. Until that input is identified and pinned, this build cannot be
-completed by following its own recipe on a clean machine — and the same pin
-will fail in CI whenever the `windows-latest` image drifts.
+Not pinned:
 
-This has not been observed in CI, because the native candidate workflow has
-never completed a run in this repository.
+* **the Windows SDK's servicing level.** `Windows11SDK.26100` names a component
+  and `10.0.26100.0` is a directory name; nothing checks which servicing build
+  of the ucrt/um headers and libraries is inside it. This is the best-supported
+  remaining hypothesis for the divergence, and it is a hypothesis, not a
+  finding.
+
+One caveat about `/Brepro`: `reproducible_build_environment` sets `CL` and
+`LINK` to `/Brepro`, but `build_minimal_ffmpeg` deliberately pops both before
+configuring FFmpeg (stray flags in `CL` break configure's compile probes). The
+REPRO debug entry above shows FFmpeg's own build still links reproducibly, so
+this is not the cause — but it does mean the wrapper's determinism settings do
+not reach the FFmpeg build the way they reach PyAV's.
+
+### What this means
+
+The reviewed wheel hash **is not reproducible from the reviewed toolchain
+specification**. Every input that specification names was verified identical
+here, and the output still differs.
+
+Corroboration that this machine is not simply unstable: an earlier, unrelated
+build on this same workstation
+(`civiccast-tester-dispatch/tester-handoff/native-caption-r7/controller/artifacts/`)
+produced a wheel **byte-identical** to this one — 4,346,817 bytes, SHA-256
+`2eb68720311d463c…`. Two independent builds here agree with each other and
+disagree with the pin, so the divergence is between machines, not between runs.
+
+Until the missing input is identified and pinned, this build cannot be
+completed by following its own recipe on a clean machine, and the same pin will
+fail in CI whenever the `windows-latest` image drifts. That has not been
+observed in CI only because the native candidate workflow has never completed a
+run in this repository.
 
 ## Signing
 
