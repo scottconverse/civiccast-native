@@ -321,7 +321,7 @@ station needs.
 #### Identity, storage, and first-run
 
 - **`CIVICCAST_STATION_ID`** — Short station identifier used in evidence files and headend handoff.
-- **`CIVICCAST_STATION_TZ`** — IANA timezone (e.g. `America/New_York`) for schedules and as-run reports.
+- **`CIVICCAST_STATION_TZ`** — IANA timezone (e.g. `America/New_York`) for schedules and as-run reports. Optional override: normally the service reads the timezone the operator chose during first-admin setup (persisted in the local station-state file); set this only to force a different zone without re-running setup.
 - **`CIVICCAST_ROOT`** — Override for the durable-data root. Default: the installer-managed path.
 - **`CIVICCAST_CONFIG_DIR`** — Config-file root. Default: under `CIVICCAST_ROOT`.
 - **`CIVICCAST_MANAGED_STORAGE_DIR`** — Where SQLite durable storage lives when no `DATABASE_URL` is set.
