@@ -395,31 +395,41 @@ class TestReleaseArtifactBuilderContracts:
 
         kinds = {entry["kind"] for entry in manifest["artifacts"]}
         assert {
-            "deb-package",
-            "rpm-package",
             "macos-pkg",
             "windows-tauri-installer",
-            "windows-wsl2-bootstrap-manifest",
-            "container-manifest",
             "portable-archive",
         } <= kinds
+        # Guard the removals, not just the survivors: deb-package, rpm-package,
+        # windows-wsl2-bootstrap-manifest and container-manifest went with the
+        # Linux/WSL2/Docker lanes. A manifest that advertises an artifact this
+        # product cannot build is worse than one that omits it.
+        assert not ({
+            "deb-package",
+            "rpm-package",
+            "windows-wsl2-bootstrap-manifest",
+            "container-manifest",
+        } & kinds)
         assert all(entry["sha256"] for entry in manifest["artifacts"] if entry["status"] == "ok")
         assert all(entry["sidecar"] for entry in manifest["artifacts"] if entry["status"] == "ok")
         assert any(entry["status"] == "blocked" for entry in manifest["artifacts"])
         assert any(
             "tooling unavailable" in entry["proof"].lower() for entry in manifest["artifacts"]
         )
-        bootstrap_entry = next(
-            entry
-            for entry in manifest["artifacts"]
-            if entry["kind"] == "windows-wsl2-bootstrap-manifest"
+        # Was: read the WSL2 bootstrap manifest's sidecar and assert it
+        # registered a civiccast-egress@.service systemd unit. Both the entry
+        # and that unit are gone. The portable archive is the one entry here
+        # that is always built regardless of available tooling, so it is what
+        # this assertion can rely on.
+        portable_entry = next(
+            entry for entry in manifest["artifacts"] if entry["kind"] == "portable-archive"
         )
-        sidecar = tmp_path / str(bootstrap_entry["sidecar"])
+        sidecar = tmp_path / str(portable_entry["sidecar"])
         payload = json.loads(sidecar.read_text(encoding="utf-8"))
-        egress = payload["install_manifest"]["additional_services"][0]
-        assert egress["service_name"] == "civiccast-egress@.service"
-        assert egress["restart_policy"] == "always"
-        assert egress["host_service"] is False
+        install_manifest = payload["install_manifest"]
+        # A native station supervises egress as a child of the Windows service,
+        # so there is no second registered service to declare.
+        assert install_manifest["additional_services"] == []
+        assert install_manifest["service"]["manager"] == "none"
 
     def test_builder_wheelhouse_manifest_hashes_application_and_dependency_wheels(
         self, tmp_path: Path, monkeypatch

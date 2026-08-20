@@ -260,7 +260,7 @@ class JobObjectController:
         handle = self.ensure_job()
         try:
             self._api.assign_process(handle, pid)
-        except Exception as exc:  # noqa: BLE001 -- see below; re-raised unless positively handled
+        except Exception as exc:  # see below; re-raised unless positively handled
             # The catch is deliberately by winerror, NOT by exception type.
             # ``pywintypes.error`` is NOT an ``OSError`` subclass (MRO: error ->
             # Exception -> BaseException), which ``core.py``'s CC-WS5-015 comment
