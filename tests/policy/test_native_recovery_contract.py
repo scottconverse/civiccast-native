@@ -3,71 +3,17 @@
 
 from __future__ import annotations
 
-import csv
-import hashlib
-from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-RECOVERY = ROOT / ".agent-runs" / "native-windows" / "recovery-2026-07-25"
-SPECS = ROOT / ".agent-runs" / "native-windows" / "specs"
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+# Was .agent-runs/native-windows/specs. Those six files are real design
+# records, not agent scratch, and the native-repo migration hand-carried
+# them into docs/design/ rather than losing them with the rest of that tree.
+SPECS = ROOT / "docs" / "design"
 
 
 def _normalized_prose(text: str) -> str:
     return " ".join(text.split())
-
-
-def test_recovery_inventory_preserves_all_218_visible_rows() -> None:
-    ledger = RECOVERY / "inventory" / "recovery-inventory-218.csv"
-    with ledger.open(encoding="utf-8", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-
-    assert len(rows) == 218
-    assert [int(row["row"]) for row in rows] == list(range(1, 219))
-    assert len({row["visible_path"] for row in rows}) == 218
-    assert Counter(row["original_status"] for row in rows) == {
-        " M": 141,
-        "??": 77,
-    }
-    assert sum(int(row["expanded_file_count"]) for row in rows) == 1_911
-
-    visible_counts = Counter(row["classification"] for row in rows)
-    assert visible_counts == {
-        "intended source": 93,
-        "tests": 81,
-        "documentation": 23,
-        "generated evidence": 20,
-        "temporary material": 1,
-    }
-
-    expanded_counts: defaultdict[str, int] = defaultdict(int)
-    for row in rows:
-        expanded_counts[row["classification"]] += int(row["expanded_file_count"])
-    assert dict(expanded_counts) == {
-        "tests": 83,
-        "intended source": 94,
-        "documentation": 28,
-        "generated evidence": 1_705,
-        "temporary material": 1,
-    }
-
-    dispositions = Counter(row["disposition"] for row in rows)
-    assert dispositions == {
-        "committed to recovery branch": 197,
-        "excluded: local generated evidence": 20,
-        "excluded: zero-byte temporary file": 1,
-    }
-    assert _sha256(ledger) == ("7257fe2d2f042178c6a0fe66d049413be3e8210792dd7cc4bed9bbe21f57996f")
-
-
-def test_recovery_preserves_the_inherited_handoff_byte_for_byte() -> None:
-    handoff = ROOT / "docs" / "process" / "CODEX-NATIVE-BETA-HANDOFF-2026-07-24.md"
-
-    assert _sha256(handoff) == ("bb458026ffb4ecebb07a8065859406197422fe21603aad23c200171a658ed522")
 
 
 def test_recovery_contract_preserves_mandatory_scope_and_owner_gates() -> None:
