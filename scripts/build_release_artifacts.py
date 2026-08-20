@@ -28,7 +28,6 @@ from pathlib import Path
 from packaging.version import InvalidVersion, Version
 
 from civiccast import __version__
-from civiccast.egress.service_unit import build_egress_systemd_unit
 from civiccast.installer.models import ModelBundleRequest
 from civiccast.installer.service import build_model_bundle_manifest
 
@@ -386,125 +385,6 @@ def build_model_manifest(out_dir: Path, version: str) -> Artifact:
     target = out_dir / f"civiccast-{version}-model-bundle-manifest.json"
     target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return Artifact(target, "model-bundle-manifest")
-
-
-def build_deb(out_dir: Path, version: str) -> Artifact:
-    if shutil.which("dpkg-deb") is None:
-        raise RuntimeError("dpkg-deb is required for the .deb artifact")
-    target = out_dir / f"civiccast_{version}_all.deb"
-    with tempfile.TemporaryDirectory(prefix="civiccast-debroot-") as temp:
-        pkg_root = Path(temp) / "root"
-        debian = pkg_root / "DEBIAN"
-        bindir = pkg_root / "usr" / "bin"
-        docdir = pkg_root / "usr" / "share" / "doc" / "civiccast"
-        systemd_dir = pkg_root / "lib" / "systemd" / "system"
-        debian.mkdir(parents=True)
-        bindir.mkdir(parents=True)
-        docdir.mkdir(parents=True)
-        systemd_dir.mkdir(parents=True)
-        debian.chmod(0o755)
-        (debian / "control").write_text(
-            "\n".join(
-                [
-                    "Package: civiccast",
-                    f"Version: {version}",
-                    "Section: video",
-                    "Priority: optional",
-                    "Architecture: all",
-                    "Maintainer: The CivicCast Authors <maintainers@civiccast.org>",
-                    "Depends: python3 (>= 3.12)",
-                    "Description: Self-hostable civic broadcast platform",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
-        wrapper = bindir / "civiccast"
-        wrapper.write_text('#!/usr/bin/env sh\npython3 -m civiccast.cli "$@"\n', encoding="utf-8")
-        wrapper.chmod(0o755)
-        egress_unit = build_egress_systemd_unit()
-        (systemd_dir / egress_unit.service_name).write_text(
-            egress_unit.unit_text,
-            encoding="utf-8",
-        )
-        shutil.copy2(ROOT / "README.md", docdir / "README.md")
-        shutil.copy2(ROOT / "docs" / "USER-MANUAL.md", docdir / "USER-MANUAL.md")
-        _run(["dpkg-deb", "--build", str(pkg_root), str(target)])
-    return Artifact(target, "debian-package")
-
-
-def _rpm_version_fields(version: str) -> tuple[str, str, str]:
-    rpm_version = version.replace("-", "~", 1) if "-" in version else version
-    rpm_release = "1"
-    filename_version = version
-    if "-" in version:
-        public_version, prerelease = version.split("-", 1)
-        rpm_version = public_version
-        rpm_release = f"1.{prerelease.replace('-', '.')}"
-        filename_version = f"{public_version}-{rpm_release}"
-    return rpm_version, rpm_release, filename_version
-
-
-def build_rpm(out_dir: Path, version: str) -> Artifact:
-    if shutil.which("rpmbuild") is None:
-        raise RuntimeError("rpmbuild is required for the .rpm artifact")
-    out_dir = out_dir.resolve()
-    rpm_version, rpm_release, _filename_version = _rpm_version_fields(version)
-    top = out_dir / "_rpmbuild"
-    if top.exists():
-        shutil.rmtree(top)
-    for name in ("BUILD", "BUILDROOT", "RPMS", "SOURCES", "SPECS", "SRPMS"):
-        (top / name).mkdir(parents=True)
-    source = build_source_archive(top / "SOURCES", version).path
-    spec = top / "SPECS" / "civiccast.spec"
-    spec.write_text(
-        f"""Name: civiccast
-Version: {rpm_version}
-Release: {rpm_release}%{{?dist}}
-Summary: Self-hostable civic broadcast platform
-License: Apache-2.0
-BuildArch: noarch
-Source0: {source.name}
-
-%description
-CivicCast release-candidate package wrapper and documentation.
-
-%prep
-%setup -q -n civiccast-{version}
-
-%build
-
-%install
-mkdir -p %{{buildroot}}/usr/bin
-mkdir -p %{{buildroot}}/usr/share/doc/civiccast
-cat > %{{buildroot}}/usr/bin/civiccast <<'EOF'
-#!/usr/bin/env sh
-python3 -m civiccast.cli "$@"
-EOF
-chmod 0755 %{{buildroot}}/usr/bin/civiccast
-cp README.md %{{buildroot}}/usr/share/doc/civiccast/README.md
-cp docs/USER-MANUAL.md %{{buildroot}}/usr/share/doc/civiccast/USER-MANUAL.md
-mkdir -p %{{buildroot}}/lib/systemd/system
-cat > %{{buildroot}}/lib/systemd/system/civiccast-egress@.service <<'EOF'
-{build_egress_systemd_unit().unit_text.rstrip()}
-EOF
-
-%files
-/usr/bin/civiccast
-/lib/systemd/system/civiccast-egress@.service
-/usr/share/doc/civiccast/README.md
-/usr/share/doc/civiccast/USER-MANUAL.md
-""",
-        encoding="utf-8",
-    )
-    _run(["rpmbuild", "--define", f"_topdir {top}", "-bb", str(spec.resolve())])
-    rpms = sorted((top / "RPMS").rglob("*.rpm"))
-    if not rpms:
-        raise RuntimeError("rpmbuild completed but no RPM was produced")
-    target = out_dir / rpms[0].name
-    shutil.copy2(rpms[0], target)
-    shutil.rmtree(top)
-    return Artifact(target, "rpm-package")
 
 
 def build_pkg(out_dir: Path, version: str) -> Artifact:
@@ -1285,7 +1165,6 @@ def _installer_artifact_entry(
     attestation = (
         sigstore_bundle.relative_to(out_dir).as_posix() if sigstore_bundle.exists() else None
     )
-    egress_unit = build_egress_systemd_unit()
     sidecar_payload = {
         "sha256": digest,
         "attestation": attestation,
@@ -1296,16 +1175,9 @@ def _installer_artifact_entry(
                 "name": "civiccast",
                 "host_service": False,
             },
-            "additional_services": [
-                {
-                    "manager": egress_unit.manager,
-                    "name": "civiccast-egress",
-                    "service_name": egress_unit.service_name,
-                    "host_service": False,
-                    "restart_policy": egress_unit.restart_policy,
-                    "recovery_window_seconds": egress_unit.recovery_window_seconds,
-                }
-            ],
+            # Native stations run the egress worker as a child of the
+            # Windows supervisor, not as a second registered service.
+            "additional_services": [],
             "bootstrap": {"package_kind": package_kind},
         },
     }
@@ -1593,7 +1465,6 @@ def main() -> int:
         action="store_true",
         help="build Linux x64 dependency wheelhouse for air-gapped installs",
     )
-    parser.add_argument("--linux-native", action="store_true", help="build .deb and .rpm")
     parser.add_argument("--macos-native", action="store_true", help="build .pkg")
     parser.add_argument(
         "--windows-installer",
@@ -1631,7 +1502,7 @@ def main() -> int:
     artifacts: list[Artifact] = []
 
     try:
-        if args.all_portable or not (args.python or args.linux_native or args.macos_native):
+        if args.all_portable or not (args.python or args.macos_native):
             artifacts.append(build_source_archive(args.out_dir, args.version))
             artifacts.append(build_model_manifest(args.out_dir, args.version))
             artifacts.append(build_container_manifest(args.out_dir, args.version))
@@ -1641,9 +1512,6 @@ def main() -> int:
         if args.wheelhouse:
             artifacts.append(build_python_wheelhouse(args.out_dir, args.version))
             wheelhouse_built = True
-        if args.linux_native:
-            artifacts.append(build_deb(args.out_dir, args.version))
-            artifacts.append(build_rpm(args.out_dir, args.version))
         if args.macos_native:
             artifacts.append(build_pkg(args.out_dir, args.version))
         if args.windows_installer:
