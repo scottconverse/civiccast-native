@@ -10,11 +10,13 @@ and the downgrade removes all alerting tables without touching prior tables.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.orm import Session
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
@@ -147,3 +149,68 @@ def test_migration_0039_downgrade_preserves_prior_tables(tmp_path: Path) -> None
     assert _PRIOR_TABLE in tables, (
         f"0039 downgrade removed {_PRIOR_TABLE} — it must not touch prior tables"
     )
+
+
+def test_fresh_install_seeded_rule_fires_and_logs_visible_gap_not_silence(
+    tmp_path: Path,
+) -> None:
+    """C1 regression: a station install runs nothing but ``alembic upgrade head``
+    and never touches Alert Settings — exactly what ships out of the box. The
+    0039 seed leaves every default rule's ``channel_ids`` empty (§6.2: "operator
+    configures actual channels post-install"). Prove that on this real,
+    migration-built database (not the ORM ``create_all`` shortcut the other
+    alerting tests use) an off-air condition still:
+
+    1. Fires a real, queryable ``AlertEvent`` (state="firing") — this is what
+       drives the runtime safe-to-air banner red, independent of delivery.
+    2. Logs a ``suppressed`` ``AlertEventDelivery`` explaining *why* no operator
+       was paged, instead of the pre-fix silent ``return`` that left zero trace
+       an alert was even attempted.
+
+    Before the C1 fix this second assertion failed: the evaluator returned
+    early on ``if not matched_rule.channel_ids`` and wrote nothing at all,
+    so a fresh install's off-air condition vanished without a trace anyone
+    (or any self-test / support bundle) could detect.
+    """
+    # Import here (not at module scope) so this file's alembic-only tests keep
+    # working even if the alerting service package changes its import graph.
+    from civiccast.alerting.evaluator import AlertEvaluator
+    from civiccast.alerting.store import get_alert_events, get_event_deliveries
+
+    url = f"sqlite:///{tmp_path / 'm0039_fresh_install.sqlite'}"
+    cfg = _cfg(url)
+    command.upgrade(cfg, "head")
+
+    # ORM models are declared against the "civiccast" schema (Base.metadata.schema),
+    # but SQLite cannot enforce schema qualifiers, so the migration ran with
+    # version_table_schema=None and created unqualified table names (see
+    # alembic/env.py). schema_translate_map is the established repo pattern
+    # (civiccast/app.py, civiccast/dr/backup.py, tests/live/test_finalization_retry.py,
+    # among others) for pointing schema-qualified ORM queries at an unqualified
+    # SQLite database in tests.
+    engine = create_engine(url, future=True).execution_options(
+        schema_translate_map={"civiccast": None}
+    )
+    try:
+        now = datetime(2026, 6, 15, 10, 0, 0, tzinfo=UTC)
+        with Session(engine) as session:
+            evaluator = AlertEvaluator(lambda: Session(engine))
+            # No alert channel was ever created — this is the out-of-the-box
+            # state; only the 0039 seed's rules exist.
+            evaluator.evaluate_channel("government", "STOPPED", now=now)
+
+            firing = get_alert_events(session, state="firing")
+            assert len(firing) == 1
+            assert firing[0].condition == "off-air"
+            assert firing[0].rule_id == "default:off-air"
+
+            deliveries = get_event_deliveries(session, firing[0].event_id)
+            assert len(deliveries) == 1, (
+                "a fresh, never-configured install must log a visible "
+                "suppressed-delivery record, never silently drop the alert"
+            )
+            assert deliveries[0].status == "suppressed"
+            assert deliveries[0].alert_channel_id == "unconfigured"
+            assert "off-air" in deliveries[0].last_error
+    finally:
+        engine.dispose()
