@@ -126,9 +126,7 @@ NVIDIA_ATTRIBUTION_NOTICE: Final[str] = (
 #: pack this builder produces -- see the module doc and Category 8's header
 #: in ``civiccast.native.runtime_licenses`` for why.
 CUDA_TOOLKIT_EULA_URL: Final[str] = "https://docs.nvidia.com/cuda/eula"
-CUDNN_EULA_URL: Final[str] = (
-    "https://docs.nvidia.com/deeplearning/cudnn/latest/reference/eula.html"
-)
+CUDNN_EULA_URL: Final[str] = "https://docs.nvidia.com/deeplearning/cudnn/latest/reference/eula.html"
 
 _PYPI_API_HOST: Final[str] = "pypi.org"
 _PYPI_FILE_HOST: Final[str] = "files.pythonhosted.org"

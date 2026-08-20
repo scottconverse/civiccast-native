@@ -125,8 +125,7 @@ def load_manifest(path: Path) -> tuple[dict, list[str]]:
         tag = entry.get("tag")
         if not isinstance(tag, str) or not tag:
             raise ManifestShapeError(
-                f"manifest entry {entry!r} must have a non-empty string 'tag' "
-                f"(got {tag!r})"
+                f"manifest entry {entry!r} must have a non-empty string 'tag' (got {tag!r})"
             )
 
     problems: list[str] = []
@@ -141,8 +140,7 @@ def load_manifest(path: Path) -> tuple[dict, list[str]]:
         successor = entry.get("superseded_by")
         if successor is not None and successor not in tags:
             problems.append(
-                f"manifest: {tag}: superseded_by {successor!r} does not name an "
-                "existing entry tag"
+                f"manifest: {tag}: superseded_by {successor!r} does not name an existing entry tag"
             )
         if status in REQUIRES_SUCCESSOR and not successor:
             problems.append(
@@ -228,7 +226,7 @@ def check_readme(manifest: dict, path: Path) -> list[str]:
             continue
         tag = entry["tag"]
         for match in re.finditer(re.escape(tag), text):
-            window = text[max(0, match.start() - NEARBY): match.end() + NEARBY]
+            window = text[max(0, match.start() - NEARBY) : match.end() + NEARBY]
             if not re.search(r"withdrawn|supersede", window, re.IGNORECASE):
                 drift.append(
                     f"DRIFT: {path.name} mentions withdrawn {tag} at offset "
@@ -260,9 +258,7 @@ def main() -> int:
             raw_releases = json.loads(args.releases_json.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             return fail_setup(f"cannot load releases fixture: {error}")
-        if not isinstance(raw_releases, list) or not all(
-            isinstance(r, dict) for r in raw_releases
-        ):
+        if not isinstance(raw_releases, list) or not all(isinstance(r, dict) for r in raw_releases):
             return fail_setup("releases fixture must be a JSON list of release objects")
         releases = raw_releases
     elif args.live:

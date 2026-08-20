@@ -169,7 +169,9 @@ def _verified_closure_metadata(closure_root: Path) -> tuple[dict[str, Path], dic
         raise AppPayloadPackBuildError(
             f"GStreamer closure manifest is missing or malformed: {manifest_path}"
         ) from exc
-    if len(lock_sha256) != 64 or any(character not in "0123456789abcdef" for character in lock_sha256):
+    if len(lock_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in lock_sha256
+    ):
         raise AppPayloadPackBuildError("GStreamer closure runtime lock SHA-256 is invalid")
     sources = _collect_payload_sources(closure_root)
     entries = [
@@ -201,7 +203,9 @@ def _compose_payload_with_closure(payload_root: Path, closure_root: Path) -> Pat
         try:
             destination.resolve().relative_to(composed.resolve())
         except ValueError as exc:
-            raise AppPayloadPackBuildError("GStreamer closure copy resolves outside app payload") from exc
+            raise AppPayloadPackBuildError(
+                "GStreamer closure copy resolves outside app payload"
+            ) from exc
         if destination.exists():
             raise AppPayloadPackBuildError(
                 f"GStreamer closure overlaps the app payload at {destination.relative_to(composed)}"
@@ -239,7 +243,9 @@ def build_app_payload_pack(
     source_sha = require_source_sha(source_sha)
     payload_root = _require_real_directory(payload_root, label="app payload tree")
     if gstreamer_closure is None:
-        raise AppPayloadPackBuildError("GStreamer closure is required for a release app payload pack")
+        raise AppPayloadPackBuildError(
+            "GStreamer closure is required for a release app payload pack"
+        )
     closure_root = _require_real_directory(gstreamer_closure, label="GStreamer closure")
     _, closure_metadata = _verified_closure_metadata(closure_root)
 

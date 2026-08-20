@@ -93,9 +93,7 @@ def load_ed25519_private_key(path: Path) -> Ed25519PrivateKey:
     return key
 
 
-def acquire_ollama_pack_sources(
-    cache: Path, *, lock_path: Path = LOCK_PATH
-) -> tuple[Path, Path]:
+def acquire_ollama_pack_sources(cache: Path, *, lock_path: Path = LOCK_PATH) -> tuple[Path, Path]:
     """Acquire only the reviewed Ollama archive and its separately pinned license."""
 
     lock = load_lock(lock_path)
@@ -188,7 +186,9 @@ def _runtime_sources(ollama_root: Path) -> dict[str, Path]:
         details = candidate.lstat()
         attributes = int(getattr(details, "st_file_attributes", 0))
         if candidate.is_symlink() or attributes & _REPARSE_POINT:
-            raise OllamaPackBuildError(f"Ollama runtime contains a link or reparse point: {candidate}")
+            raise OllamaPackBuildError(
+                f"Ollama runtime contains a link or reparse point: {candidate}"
+            )
         if candidate.is_dir():
             continue
         if not stat.S_ISREG(details.st_mode):
@@ -365,13 +365,9 @@ def main() -> int:
                 raise OllamaPackBuildError(
                     "--acquire is mutually exclusive with --ollama-root/--license"
                 )
-            ollama_root, license_path = acquire_ollama_pack_sources(
-                args.cache, lock_path=args.lock
-            )
+            ollama_root, license_path = acquire_ollama_pack_sources(args.cache, lock_path=args.lock)
         elif args.ollama_root is None or args.license is None:
-            raise OllamaPackBuildError(
-                "pass --acquire or both --ollama-root and --license"
-            )
+            raise OllamaPackBuildError("pass --acquire or both --ollama-root and --license")
         else:
             ollama_root, license_path = args.ollama_root, args.license
 

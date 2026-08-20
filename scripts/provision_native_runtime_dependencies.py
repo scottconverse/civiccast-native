@@ -69,7 +69,14 @@ _DOWNLOAD_HOSTS: Final[frozenset[str]] = frozenset(
 _SPDX_RE: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9.-]+")
 _WINDOWS_FORBIDDEN_CHARS: Final[frozenset[str]] = frozenset('<>:"|?*')
 _WINDOWS_RESERVED_NAMES: Final[frozenset[str]] = frozenset(
-    {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{i}" for i in range(1, 10)),
+        *(f"lpt{i}" for i in range(1, 10)),
+    }
 )
 
 
@@ -393,9 +400,7 @@ def _require_windows_safe_archive_path(path: PurePosixPath, *, member_name: str)
             or any(character in _WINDOWS_FORBIDDEN_CHARS for character in part)
             or part.split(".", 1)[0].casefold() in _WINDOWS_RESERVED_NAMES
         ):
-            raise RuntimeDependencyProvisionError(
-                f"unsafe Windows archive member: {member_name}"
-            )
+            raise RuntimeDependencyProvisionError(f"unsafe Windows archive member: {member_name}")
 
 
 def _is_transient(path: PurePosixPath) -> bool:
@@ -422,9 +427,12 @@ def safe_extract_zip(
         handle = zipfile.ZipFile(archive)
     except (OSError, zipfile.BadZipFile) as exc:
         raise RuntimeDependencyProvisionError(f"cannot open reviewed ZIP {archive}: {exc}") from exc
-    with handle, tempfile.TemporaryDirectory(
-        prefix=f".{destination.name}.extract-", dir=destination.parent
-    ) as temporary:
+    with (
+        handle,
+        tempfile.TemporaryDirectory(
+            prefix=f".{destination.name}.extract-", dir=destination.parent
+        ) as temporary,
+    ):
         staging = Path(temporary) / "payload"
         staging.mkdir()
         seen: dict[str, str] = {}

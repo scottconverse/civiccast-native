@@ -259,21 +259,14 @@ def parse_wheelhouse_distributions(
     for entry in wheels:
         filename = entry.get("filename")
         if not isinstance(filename, str):
-            raise InventoryReconciliationError(
-                "WSL wheelhouse entry has no filename"
-            )
+            raise InventoryReconciliationError("WSL wheelhouse entry has no filename")
         try:
             raw_name, version, _build, _tags = parse_wheel_filename(filename)
         except InvalidWheelFilename as error:
-            raise InventoryReconciliationError(
-                f"invalid WSL wheel filename: {filename}"
-            ) from error
+            raise InventoryReconciliationError(f"invalid WSL wheel filename: {filename}") from error
         name = canonicalize_name(raw_name)
         distributions.setdefault(name, set()).add(str(version))
-    return {
-        name: tuple(sorted(versions))
-        for name, versions in sorted(distributions.items())
-    }
+    return {name: tuple(sorted(versions)) for name, versions in sorted(distributions.items())}
 
 
 def _row(
@@ -308,14 +301,10 @@ def _validated_distribution_statuses(
         )
     product_version = distribution_report.get("product_version")
     if not isinstance(product_version, str) or not product_version.strip():
-        raise InventoryReconciliationError(
-            "native distribution report has no product version"
-        )
+        raise InventoryReconciliationError("native distribution report has no product version")
     signing_key_id = distribution_report.get("signing_key_id")
     if not isinstance(signing_key_id, str) or not signing_key_id.strip():
-        raise InventoryReconciliationError(
-            "native distribution report has no signing key identity"
-        )
+        raise InventoryReconciliationError("native distribution report has no signing key identity")
     packs = distribution_report.get("packs")
     if not isinstance(packs, dict) or set(packs) != set(_REQUIRED_DISTRIBUTION_COMPONENTS):
         raise InventoryReconciliationError(
@@ -892,10 +881,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if caption_pack is not None:
             caption_item = raw_packs["captions-large-v3"]
             assert isinstance(caption_item, dict)
-            if (
-                caption_item["bytes"] != caption_pack.get("pack_bytes")
-                or caption_item["sha256"] != caption_pack.get("pack_sha256")
-            ):
+            if caption_item["bytes"] != caption_pack.get("pack_bytes") or caption_item[
+                "sha256"
+            ] != caption_pack.get("pack_sha256"):
                 raise InventoryReconciliationError(
                     "native distribution caption pack differs from its standalone build report"
                 )

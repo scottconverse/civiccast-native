@@ -56,8 +56,7 @@ TRANSFER_ACTIONS = ("actions/upload-artifact", "actions/download-artifact")
 #: job key -> why it legitimately outlives MAX_MINUTES.
 LONG_BY_DESIGN: dict[tuple[str, str], str] = {
     ("six-hour-soak.yml", "six-hour-soak"): (
-        "the six-hour soak IS the test; a shorter ceiling would defeat its "
-        "entire purpose"
+        "the six-hour soak IS the test; a shorter ceiling would defeat its entire purpose"
     ),
 }
 
