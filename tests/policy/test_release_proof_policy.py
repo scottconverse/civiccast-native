@@ -87,13 +87,28 @@ class TestWorkflowRunnerPolicy:
 
     def test_sigstore_verification_binds_the_exact_trigger_ref(self) -> None:
         text = Path(".github/workflows/release-artifacts.yml").read_text(encoding="utf-8")
-        identity = (
-            "https://github.com/scottconverse/civiccast/.github/workflows/release-artifacts.yml@"
-        )
 
-        assert text.count(f'identity="{identity}${{GITHUB_REF}}"') == 2
-        assert f'$identity = "{identity}${{env:GITHUB_REF}}"' in text
-        assert text.count('--certificate-identity "$identity"') == 2
+        # The owner/name half is DERIVED, not written down. It used to be
+        # hard-coded as scottconverse/civiccast, which meant that after the
+        # migration cosign signed as civiccast-native and verified against
+        # civiccast -- verification rejecting its own signatures. Pinning the
+        # derived form keeps a regression back to a literal repo name failing.
+        assert "github.com/scottconverse/civiccast/" not in text
+        identity_tail = "/.github/workflows/release-artifacts.yml@"
+
+        assert (
+            f'identity="https://github.com/${{GITHUB_REPOSITORY}}{identity_tail}${{GITHUB_REF}}"'
+            in text
+        )
+        assert (
+            f'$identity = "https://github.com/${{env:GITHUB_REPOSITORY}}{identity_tail}'
+            f'${{env:GITHUB_REF}}"' in text
+        )
+        # 1, not 2: the bash form appears only in publish-manifest now. The
+        # linux-artifacts job that carried the second one was removed with the
+        # .deb/.rpm lane. The pwsh form in windows-installer is asserted
+        # separately below.
+        assert text.count('--certificate-identity "$identity"') == 1
         assert "--certificate-identity $identity" in text
         assert "certificate-identity-regexp" not in text
 

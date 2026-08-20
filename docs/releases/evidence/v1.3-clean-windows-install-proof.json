@@ -1,0 +1,56 @@
+{
+  "status": "partial",
+  "release_gate": "blocked",
+  "dry_run": false,
+  "will_boot_vm": true,
+  "vm_booted": true,
+  "release_manifest": "artifacts\\release\\v1.3.0\\civiccast-1.3.0-release-artifacts-manifest.json",
+  "generated_at": "2026-05-23T23:23:14Z",
+  "artifact_under_test": {
+    "filename": "civiccast-1.3.0-windows-setup.exe",
+    "sha256": "392c4960d42eb915dc0fd25180ec5ae07e7a72f2283ddcddad664843677ead1c",
+    "size_bytes": 168364263
+  },
+  "isolated_target": {
+    "engine": "VirtualBox 7.2.8",
+    "vm_name": "civiccast-v13-cleanwin",
+    "os": "Windows 11 Enterprise Evaluation",
+    "os_version": "10.0.26200",
+    "isolation_note": "Fresh VirtualBox VM created from the Microsoft Windows 11 Enterprise Evaluation ISO. No product repo files were present in the guest before installer/package transfer."
+  },
+  "attempts": [
+    {
+      "strategy": "virtualbox-clean-windows-installer",
+      "status": "blocked",
+      "vm_booted": true,
+      "steps_completed": [
+        "Booted a Windows 11 Enterprise Evaluation VM.",
+        "Copied the rebuilt v1.3.0 Windows setup executable into the guest.",
+        "Installed the NSIS package silently inside the guest.",
+        "Launched the CivicCast Installer UI.",
+        "Started the WSL2 Ubuntu bootstrap from the installer UI.",
+        "Approved the Microsoft PowerShell elevation prompt.",
+        "Installer enabled Windows WSL components and saved a reboot-required resume state.",
+        "Rebooted the VM and reopened the CivicCast Installer.",
+        "Reran the WSL2 Ubuntu bootstrap from the installer UI.",
+        "Retested the final rebuilt setup executable after WSL bootstrap parser hardening.",
+        "Installer displayed an actionable virtualization/IT-help blocker instead of a generic missing-WSL loop."
+      ],
+      "final_artifact_retest": {
+        "mounted_payload_iso": "C:\\Dev\\Claude\\vm-proof\\civiccast-v13-cleanwin-final\\civiccast-final-installer.iso",
+        "payload_sha256": "392c4960d42eb915dc0fd25180ec5ae07e7a72f2283ddcddad664843677ead1c",
+        "screenshot": "C:\\Dev\\Claude\\vm-proof\\civiccast-v13-cleanwin\\after-runfinal-45s.png"
+      },
+      "blocker_evidence": "The Windows guest reports: WSL2 is unable to start since virtualization is not enabled on this machine; error code Wsl/InstallDistro/Service/RegisterDistro/CreateVm/HCS/HCS_E_HYPERV_NOT_INSTALLED. VirtualBox on this host did not expose nested virtualization to the guest, so the WSL2 distro cannot start and the installer-to-dashboard path cannot complete in this VM.",
+      "operator_visible_result": "Windows installed WSL components, but this machine does not expose virtualization for WSL2. Turn on virtualization or ask IT for help, then rerun CivicCast Installer.",
+      "repo_commitment": "Do not tag or publish v1.3.0 as a public tester release until this lane passes on a nested-virtualization-capable clean Windows target or an equivalent Windows Sandbox/Hyper-V target."
+    },
+    {
+      "strategy": "wsl2-fresh-user",
+      "status": "passed",
+      "vm_booted": false,
+      "command": "wsl.exe -d Ubuntu-24.04 --exec bash -lc '<fresh venv install from artifacts/release/v1.3.0/wheelhouse; import civiccast; print(civiccast.__version__)>'",
+      "result": "The rebuilt wheelhouse installed in a fresh temporary WSL2 user venv and imported CivicCast 1.3.0."
+    }
+  ]
+}

@@ -138,12 +138,14 @@ def test_release_identity_rejects_wsl_tauri_config_drifting_from_the_version_fil
         '{"identifier": "org.civiccast.installer", "version": "0.9.9"}\n',
     )
 
+    # One violation, not two. The second was the headless-bootstrap.ps1
+    # expected-version guard; that script is the WSL2 install lane, deleted
+    # under "no linux", and check_release_identity no longer audits a file this
+    # product does not ship. The WSL/native version-agreement check above it is
+    # untouched and still fires.
     assert evaluate_release_identity(tmp_path) == [
         "civiccast/apps/installer/src-tauri/tauri.conf.json reports WSL product version "
         "0.9.9, expected 0.10.0 (from civiccast/_version.py).",
-        "civiccast/apps/installer/src-tauri/resources/headless-bootstrap.ps1 does not carry "
-        "the bundled bootstrap expected-version guard for the WSL product's own version "
-        "0.9.9 (from civiccast/apps/installer/src-tauri/tauri.conf.json).",
     ]
 
 

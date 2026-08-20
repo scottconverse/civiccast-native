@@ -1,0 +1,24 @@
+{
+  "url": "http://127.0.0.1:8000/operator/?nonce=<redacted>",
+  "title": "CivicCast Operator",
+  "bodyText": "C\nCivicCastv3.0.0-beta1\nNo live meeting broadcast\nLocal\n12:25 PM\n/\nNext\nNo events scheduled\nD\nOP\nCC\nPUBLIC MEETINGS\nCivicCast station\nSETUP\nFirst Setup\nControl Room Setup\nAI Models\nCustom Fields\nRUN MEETING\nLive\nFacility\nControl Room\nRemote Contribution\nChannels\nCG Board\nCG Designer\nToday\n1.4\nSchedule\nAuto-schedule\nProgram Guide\nREVIEW RECORDS\nAssets\nContributors\nReview queue\nSummary review\nAgendas\nMeetings Archive\n1.4\nPUBLISH\nPublish\nPlayback policy\nAnalytics\nReports\nEPG Export\nUnderwriting\nApp Admin\nSubscribers\n1.4\nSYSTEM HEALTH\nReadiness\nAlerts\nEmergency Alerts\nFederation\nOperator-first beta\nSETUP\nFirst setup\n\nCreate the station identity, first local admin, and recovery kit before a public meeting.\n\nSetup complete\n\nCivicCast Installer Proof Station already has a first admin and recovery kit.\n\nSign in with the local admin password if this browser lost its console token.\n\nAdmin sign-in\n\nCreates a fresh console token for this browser.\n\nAdmin username\nAdmin password\nSign in\nUse recovery code\n\nConsumes one printed code and sets a new admin password.\n\nAdmin username\nRecovery code\nNew admin password\nRecover account\nCamera or test media\n\nChoose the equipment in the room, or upload a short clip for a no-camera rehearsal.\n\nNOT SET UP YET\nUSB webcam or HDMI capture\nUse a capture app or encoder that sends a private RTMP feed to CivicCast.\nPhone or tablet broadcast app\nUse a phone app on the same trusted network for a private preflight.\nHardware encoder or AV system\nUse an encoder from the meeting room or public-access control room.\nNDI source\nUse a named NDI source already visible on the meeting network.\nBundled sample video\nLet CivicCast create a short sample video for a private rehearsal.\nUpload a short test video\nUse a local MP4, MOV, MKV, WebM, AVI, or MPEG-TS clip to rehearse without a camera.\n\nCivicCast will generate a two-second sample video, run ingest checks, and add it to Assets.\n\nCreate sample media\nBackup destination\n\nChoose the folder or drive CivicCast should verify before meetings.\n\nBackup folder\nVerify backup\nSign in with the local station admin account, then try again.\nStorage and viewing estimate\n\nA plain estimate for budgeting tester meetings. Actual provider bills may vary.\n\nHours per meeting\nMeetings per month\nAverage viewers\n16 GB\nstored each month\n4000 GB\nviewer bandwidth\n$20.00\nrough CDN estimate\nProvider setup\n\nRequired items protect the local tester path. Optional providers can wait.\n\nSign in with the local station admin account, then try again.",
+  "console": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    }
+  ],
+  "pageErrors": []
+}

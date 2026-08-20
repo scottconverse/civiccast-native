@@ -1,0 +1,12 @@
+{
+  "url": "http://127.0.0.1:8000/",
+  "title": "CivicCast Portal",
+  "bodyText": "CIVICCAST PORTAL\n\nCivicCast public portal\n\nWatch the current broadcast, see upcoming premieres, and replay published meetings from the resident archive.\n\nHome\nRecordings\nSchedule\nLive now\n\nNo live broadcast is on air.\n\nGOV-CH12\n\nCivicCast is ready\n\nNo meeting is live right now. The next scheduled broadcast will start here.\n\nNext broadcast: Public Meetings test broadcast\n\nView published recordings\nBroadcast status\nState\nOffline\nChannel\nNone yet\nStarted\nTime to be announced\nNothing is posted yet. Check back after the station schedules a premiere or publishes a recording.\nComing up\n\nNo premieres are scheduled.\n\nLatest recordings\nBrowse all recordings\n\nNo published recordings are available.\n\nFollow new recordings\n\nGet a notice when this channel publishes a recording, or subscribe to the public RSS and podcast feeds without sharing personal data.\n\nEmail address\nSubscribe\nChannel RSS feed\nPodcast RSS feed\n\nRSS does not create a subscriber row. Email uses double opt-in, one-click unsubscribe, and no tracking pixels.\n\nSubmit a program\n\nCommunity producers can send video to the station review queue. Operators review every file before anything airs or publishes.\n\nCommunity media submission agreement\nContributors confirm they have rights to submit the program, consent to operator review, and understand that operators decide what airs or publishes.\nProducer name\nEmail\nOrganization\nProgram title\nDescription\nTags\nRequested air date\nVideo file\nSend to review\nCheck submission status\nReceipt\nStatus token\nCheck status",
+  "console": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+    }
+  ],
+  "pageErrors": []
+}

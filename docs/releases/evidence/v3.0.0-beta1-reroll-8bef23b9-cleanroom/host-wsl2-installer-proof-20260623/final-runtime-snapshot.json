@@ -1,0 +1,123 @@
+{
+    "captured_at":  "2026-06-23T18:26:55.0566046Z",
+    "no_host_reboot_requested":  true,
+    "installer_state":  {
+                            "schema_version":  1,
+                            "current_lane_id":  "runtime",
+                            "status":  "ready",
+                            "message":  "CivicCast prepared storage, started, and opened the dashboard.",
+                            "reboot_required":  false,
+                            "updated_at_unix":  1782238747,
+                            "service_url":  "http://127.0.0.1:8000",
+                            "operator_console_url":  "http://127.0.0.1:8000/operator/?nonce=<redacted>",
+                            "resident_portal_url":  "http://127.0.0.1:8000/"
+                        },
+    "windows_health":  {
+                           "status":  "healthy",
+                           "version":  "3.0.0-beta1",
+                           "schema":  "current"
+                       },
+    "wsl_health_raw":  "{\"status\":\"healthy\",\"version\":\"3.0.0-beta1\",\"schema\":\"current\"}",
+    "uninstall_registry":  {
+                               "DisplayVersion":  "3.0.0-beta1",
+                               "DisplayName":  "CivicCast Installer",
+                               "InstallLocation":  "C:\\Users\\scott\\AppData\\Local\\Temp\\civiccast-installer-proof-7bd5a99143fc475dba42f85a314bd831"
+                           },
+    "installed_exe":  {
+                          "path":  "C:\\Users\\scott\\AppData\\Local\\Temp\\civiccast-installer-proof-7bd5a99143fc475dba42f85a314bd831\\civiccast-installer.exe",
+                          "sha256":  "8153d3ddddf20289636e531a1486cc0afb38a47e3510b213e5b17d93dae36ba5",
+                          "exists":  true
+                      },
+    "processes":  [
+                      {
+                          "Id":  2608,
+                          "ProcessName":  "civiccast-installer",
+                          "StartTime":  "\/Date(1782238710905)\/",
+                          "Path":  null
+                      },
+                      {
+                          "Id":  35552,
+                          "ProcessName":  "civiccast-installer",
+                          "StartTime":  "\/Date(1782083276637)\/",
+                          "Path":  null
+                      }
+                  ],
+    "proof_files":  [
+                        {
+                            "Name":  "cleanup-wsl-civiccast.sh",
+                            "Length":  479,
+                            "LastWriteTime":  "\/Date(1782238629049)\/"
+                        },
+                        {
+                            "Name":  "first-admin-response-redacted.json",
+                            "Length":  3475,
+                            "LastWriteTime":  "\/Date(1782239117740)\/"
+                        },
+                        {
+                            "Name":  "install-process.json",
+                            "Length":  406,
+                            "LastWriteTime":  "\/Date(1782238651056)\/"
+                        },
+                        {
+                            "Name":  "launch.json",
+                            "Length":  460,
+                            "LastWriteTime":  "\/Date(1782238710805)\/"
+                        },
+                        {
+                            "Name":  "operator-console.json",
+                            "Length":  1737,
+                            "LastWriteTime":  "\/Date(1782239086051)\/"
+                        },
+                        {
+                            "Name":  "operator-console.png",
+                            "Length":  92724,
+                            "LastWriteTime":  "\/Date(1782239086045)\/"
+                        },
+                        {
+                            "Name":  "operator-console-after-first-admin.json",
+                            "Length":  3321,
+                            "LastWriteTime":  "\/Date(1782239154182)\/"
+                        },
+                        {
+                            "Name":  "operator-console-after-first-admin.png",
+                            "Length":  154155,
+                            "LastWriteTime":  "\/Date(1782239154176)\/"
+                        },
+                        {
+                            "Name":  "recovery-kit-acknowledge.json",
+                            "Length":  1370,
+                            "LastWriteTime":  "\/Date(1782239142674)\/"
+                        },
+                        {
+                            "Name":  "resident-portal.json",
+                            "Length":  1859,
+                            "LastWriteTime":  "\/Date(1782239176598)\/"
+                        },
+                        {
+                            "Name":  "resident-portal.png",
+                            "Length":  135226,
+                            "LastWriteTime":  "\/Date(1782239176592)\/"
+                        },
+                        {
+                            "Name":  "setup.json",
+                            "Length":  1835,
+                            "LastWriteTime":  "\/Date(1782238580655)\/"
+                        },
+                        {
+                            "Name":  "staff-station-state-after-first-admin.json",
+                            "Length":  1379,
+                            "LastWriteTime":  "\/Date(1782239117741)\/"
+                        },
+                        {
+                            "Name":  "station-state-before-first-admin.json",
+                            "Length":  722,
+                            "LastWriteTime":  "\/Date(1782239117739)\/"
+                        },
+                        {
+                            "Name":  "wsl-cleanup-output.txt",
+                            "Length":  3,
+                            "LastWriteTime":  "\/Date(1782238629122)\/"
+                        }
+                    ]
+}
+

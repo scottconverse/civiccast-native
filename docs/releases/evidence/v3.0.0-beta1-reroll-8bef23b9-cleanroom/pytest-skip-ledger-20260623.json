@@ -1,0 +1,67 @@
+{
+  "release": "v3.0.0-beta1",
+  "source_artifact": "docs/releases/gauntletgate/v3.0.0-beta1-final-all-20260623/artifacts/full-pytest-final.txt",
+  "summary": {
+    "passed": 4323,
+    "skipped": 22
+  },
+  "categories": [
+    {
+      "category": "external_postgres_not_configured",
+      "count": 2,
+      "entries": [
+        "tests/auth/test_staff_token_lifecycle.py:140 - No external Postgres (CIVICCAST_POSTGRES_TEST_URL) configured",
+        "tests/captions/test_review_persistence.py:239 - external Postgres server not configured"
+      ],
+      "release_classification": "closed_by_supplemental_rerun_2_passed"
+    },
+    {
+      "category": "windows_host_cannot_run_posix_pathlib_monkeypatch",
+      "count": 1,
+      "entries": [
+        "tests/egress/test_compliance.py:162 - XDG branch is non-Windows only; monkeypatching os.name='posix' breaks pathlib on Windows"
+      ],
+      "release_classification": "closed_by_wsl_supplemental_rerun_1_passed"
+    },
+    {
+      "category": "live_gstreamer_wsl_runtime_unavailable",
+      "count": 14,
+      "entries": [
+        "tests/egress/test_gst_engine_wsl.py:328 - CC embed elements not installed",
+        "tests/egress/test_gst_engine_wsl.py:420 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:573 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:596 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:609 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:625 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:645 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:669 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:695 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:730 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:738 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:781 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:838 - live GStreamer engine tests require Linux/WSL with gi + GStreamer",
+        "tests/egress/test_gst_engine_wsl.py:854 - live GStreamer engine tests require Linux/WSL with gi + GStreamer"
+      ],
+      "release_classification": "closed_by_provisioned_wsl_gstreamer_shard_14_passed"
+    },
+    {
+      "category": "network_gated_tsduck_pin_check",
+      "count": 2,
+      "entries": [
+        "tests/installer/test_tsduck_install.py:385 - network-gated; set CIVICCAST_TSDUCK_NETWORK_TESTS=1 to verify pins against the live release"
+      ],
+      "release_classification": "closed_by_live_network_supplemental_rerun_2_passed"
+    },
+    {
+      "category": "host_not_inside_wsl2",
+      "count": 3,
+      "entries": [
+        "tests/test_hardware_probe_wsl2_positive.py:58 - Not running inside WSL2; in-environment detection test skipped",
+        "tests/test_hardware_probe_wsl2_positive.py:66 - Not running inside WSL2; in-environment detection test skipped",
+        "tests/test_hardware_probe_wsl2_positive.py:77 - Not running inside WSL2; in-environment detection test skipped"
+      ],
+      "release_classification": "closed_by_wsl_supplemental_rerun_3_passed"
+    }
+  ],
+  "release_decision": "All skipped-test categories from the historical Windows aggregate pytest run were closed by rerunning them on required substrates or with required dependencies. The native GStreamer caption-SEI proof passed with the CivicCast-bundled private GStreamer runtime containing tttocea608, ccconverter, cccombiner, and h264ccinserter. The scoped public beta gate may claim native caption-SEI embedding only when that bundled runtime is extracted and verified; stock Ubuntu 24.04 GStreamer packages alone remain insufficient."
+}

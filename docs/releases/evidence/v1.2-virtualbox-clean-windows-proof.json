@@ -1,0 +1,42 @@
+{
+  "status": "partial",
+  "strategy": "virtualbox-clean-windows-vm",
+  "vm_engine": {
+    "name": "Oracle VirtualBox",
+    "version": "7.2.8r173730",
+    "installed_elevated": true
+  },
+  "guest_os": {
+    "caption": "Microsoft Windows 11 Enterprise Evaluation",
+    "version": "10.0.26200",
+    "architecture": "64-bit"
+  },
+  "windows_iso_sha256": "A61ADEAB895EF5A4DB436E0A7011C92A2FF17BB0357F58B13BBC4062E535E7B9",
+  "initial_installer": {
+    "sha256": "0941200686BE09657728693CBDD691082BEF1566804DE7F8723E756D547EB0EF",
+    "silent_exit_code": 0,
+    "installed_exe": "C:\\Users\\civiccast\\AppData\\Local\\CivicCast Installer\\civiccast-installer.exe",
+    "finding": "Installer installed and launched, but WSL2-missing lane only told the operator to run wsl --install manually."
+  },
+  "rebuilt_installer_action_proof": {
+    "sha256": "00BC095C9AA1B75726B5DFF7842E43A2C6DB2BB64062D984B5D86171A1312539",
+    "silent_exit_code": 0,
+    "installed_exe": "C:\\Users\\civiccast\\AppData\\Local\\CivicCast Installer\\civiccast-installer.exe",
+    "ui_action": "Install WSL2 Ubuntu",
+    "uac_prompt": "Microsoft-verified Windows Subsystem for Linux prompt opened",
+    "wsl_installer_launched": true,
+    "wsl_installed_version": "2.7.3"
+  },
+  "post_vm_code_hardening": {
+    "final_gate_rebuild_sha256": "2D77B47A0BA4EB753506F6CA72458BFB046499825B8C6C7FA3566DB7E47071CF",
+    "distro_detection": "The final Tauri command checks wsl.exe -l -v for Ubuntu before treating the lane as ready, because the VM proof showed wsl.exe --status can pass while no distro is installed.",
+    "retry_behavior": "Retry no longer launches elevation; only the Install WSL2 Ubuntu action starts the Windows WSL installer.",
+    "validation_note": "Verified after VM cleanup by cargo fmt --check, cargo check, npm installer build, Playwright e2e, release artifact build, policy, and docs/manual gates."
+  },
+  "remaining_boundary": {
+    "kind": "nested_virtualization",
+    "wsl_status_exit_code": 0,
+    "wsl_status_summary": "Default Version: 2; WSL2 cannot start because virtualization is not enabled inside the VM; no distributions installed.",
+    "reboot_pending": true
+  }
+}

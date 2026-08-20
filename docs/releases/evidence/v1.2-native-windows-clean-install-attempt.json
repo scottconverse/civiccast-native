@@ -1,0 +1,38 @@
+{
+  "status": "blocked",
+  "generated_at_utc": "2026-05-21T02:58:00Z",
+  "host_os": {
+    "caption": "Microsoft Windows 11 Home",
+    "version": "10.0.26200",
+    "operating_system_sku": 101,
+    "architecture": "64-bit"
+  },
+  "elevated_probe": {
+    "ran_as_administrator": true,
+    "query_only": true,
+    "get_vm": "blocked: Get-VM is not recognized",
+    "windows_sandbox_exe": "blocked: WindowsSandbox.exe is not recognized",
+    "vmms_service": "blocked: vmms service not found",
+    "feature_inventory": {
+      "VirtualMachinePlatform": "Enabled",
+      "Microsoft-Windows-Subsystem-Linux": "Enabled",
+      "HypervisorPlatform": "Disabled",
+      "Microsoft-Hyper-V-All": "Not listed",
+      "Containers-DisposableClientVM": "Not listed"
+    },
+    "dism_feature_info": {
+      "Microsoft-Hyper-V-All": "blocked: feature name unknown",
+      "Containers-DisposableClientVM": "blocked: feature name unknown"
+    }
+  },
+  "elevated_enable_attempt": {
+    "ran_as_administrator": true,
+    "no_restart": true,
+    "Microsoft-Hyper-V-All": "blocked: feature name unknown",
+    "Containers-DisposableClientVM": "blocked: feature name unknown"
+  },
+  "native_target_booted": false,
+  "global_changes_made": false,
+  "reboot_requested": false,
+  "conclusion": "This host cannot run the requested native Hyper-V VM or Windows Sandbox clean-install proof because the installed Windows 11 Home image does not expose the required Hyper-V or Sandbox feature names. The WSL2 fresh-user clean install proof remains the passed Windows beta path on this machine."
+}

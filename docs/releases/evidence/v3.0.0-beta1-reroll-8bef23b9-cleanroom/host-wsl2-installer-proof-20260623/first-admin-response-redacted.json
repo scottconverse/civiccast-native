@@ -1,0 +1,50 @@
+{
+  "captured_at": "2026-06-23T18:25:17.7393254Z",
+  "endpoint": "POST /api/setup/first-admin",
+  "setup_nonce": "<redacted>",
+  "request": {
+    "public_base_url": "http://127.0.0.1:8000/",
+    "recovery_kit_destination": "proof run only, redacted and discarded",
+    "admin_username": "proofadmin",
+    "admin_password": "[redacted]",
+    "station_name": "CivicCast Installer Proof Station",
+    "admin_display_name": "Proof Admin"
+  },
+  "response": {
+    "status": "complete",
+    "profile": {
+      "station_name": "CivicCast Installer Proof Station",
+      "admin_display_name": "Proof Admin",
+      "admin_username": "proofadmin",
+      "default_channel_id": "gov-ch12",
+      "public_base_url": "http://127.0.0.1:8000/",
+      "recovery_kit_id": "rk_1h1CvBlx2QYWj5z",
+      "recovery_kit_generated_at": "2026-06-23T18:25:17.310947Z"
+    },
+    "recovery_kit": {
+      "kit_id": "rk_1h1CvBlx2QYWj5z",
+      "generated_at": "2026-06-23T18:25:17.310947Z",
+      "station_name": "CivicCast Installer Proof Station",
+      "admin_username": "proofadmin",
+      "recovery_codes": [
+        "<redacted-count-8>"
+      ],
+      "instructions": [
+        "Print or save this kit before the first public meeting.",
+        "Keep it somewhere separate from the CivicCast computer.",
+        "Use one recovery code at a time if the admin password is lost.",
+        "If this kit is exposed, rotate the admin password and generate a new kit."
+      ],
+      "excludes": [
+        "staff bearer token values",
+        "provider secret values",
+        "private keys",
+        "resident email addresses",
+        "database passwords"
+      ]
+    },
+    "operator_console_url": "http://127.0.0.1:8000/operator/?nonce=<redacted>",
+    "operator_console_token": "[redacted]",
+    "next_step": "Open System Health, confirm readiness, then run a private rehearsal."
+  }
+}

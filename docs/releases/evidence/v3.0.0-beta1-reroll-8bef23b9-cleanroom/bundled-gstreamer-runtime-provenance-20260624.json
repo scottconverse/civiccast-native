@@ -1,0 +1,24 @@
+{
+  "schema": "civiccast-gstreamer-runtime-provenance-v1",
+  "target": "linux-x86_64-ubuntu-24.04-wsl",
+  "gstreamer": {
+    "repository": "https://gitlab.freedesktop.org/gstreamer/gstreamer.git",
+    "tag": "1.28.4",
+    "commit": "ac267fb521cb9bc8a8450c1f99ee5dc7a914a118"
+  },
+  "gst_plugin_closedcaption": {
+    "crate": "gst-plugin-closedcaption-0.15.2.crate",
+    "url": "https://static.crates.io/crates/gst-plugin-closedcaption/gst-plugin-closedcaption-0.15.2.crate",
+    "sha256": "95af8d6878c6bfc07c01876b19a1b29295e1fca12841080f939c8c0721a6e2d3"
+  },
+  "toolchain": {
+    "meson": "1.9.1",
+    "rust": "1.96.0",
+    "cargo_c": "0.10.23+cargo-0.97.1"
+  },
+  "artifact": {
+    "filename": "gstreamer-runtime-linux-x86_64.tar.gz",
+    "sha256": "1b89a2712d29bfd27cb1c5679d0ab4e423d7f5d86c3f08661aa650d359c579e3",
+    "size_bytes": 73894637
+  }
+}

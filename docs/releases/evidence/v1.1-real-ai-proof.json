@@ -1,0 +1,24 @@
+{
+  "caption": {
+    "local_sanity": {
+      "operator_action": "runtime=faster-whisper model=whisper-large-v3 compute=int8 fixture=civiccast-synthetic-tts-caption",
+      "status": "ok",
+      "wer_percent": 36.36
+    },
+    "operator_action": "Self-hosted RTX caption proof remains post-v1.1 evidence; rerun with CIVICCAST_SELF_HOSTED_RTX=1 when the RTX runner is available.",
+    "status": "hardware_required",
+    "wer_percent": 36.36
+  },
+  "release": "1.1.0",
+  "status": "hardware_required",
+  "summary": {
+    "operator_action": "runtime=ollama model=gemma4:e4b digest=sha256:c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb runtime_version=ollama 0.24.0 manifest_source=http://127.0.0.1:11434/api/tags#gemma4:e4b",
+    "sourced_claim_refusal_pass_rate": 1.0,
+    "status": "ok"
+  },
+  "translation": {
+    "bleu": 5.751391809950023,
+    "operator_action": "runtime=ollama model=translategemma:4b digest=sha256:c49d986b0764f5881c476eb21435bb62b7abc62347aab3d4a6071e811be510a1 runtime_version=ollama 0.24.0 manifest_source=http://127.0.0.1:11434/api/tags#translategemma:4b",
+    "status": "ok"
+  }
+}

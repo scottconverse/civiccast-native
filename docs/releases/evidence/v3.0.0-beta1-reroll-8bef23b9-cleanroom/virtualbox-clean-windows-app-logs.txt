@@ -1,0 +1,114 @@
+===== C:\Users\tester\AppData\Local\CivicCast\bootstrap-wsl2-ubuntu.log =====
+CivicCast WSL2 Ubuntu bootstrap 2026-06-23T10:47:33.9998416-06:00
+== enable-wsl-feature ==
+
+Deployment Image Servicing and Management tool
+Version: 10.0.26100.5074
+
+Image Version: 10.0.26200.6584
+
+Enabling feature(s)
+
+[                           0.1%                           ] 
+
+[=============              22.5%                          ] 
+
+[====================       35.0%                          ] 
+
+[===========================52.0%                          ] 
+
+[===========================69.0%========                  ] 
+
+[===========================70.5%========                  ] 
+
+[===========================70.5%========                  ] 
+
+[==========================100.0%==========================] 
+The operation completed successfully.
+
+== enable-virtual-machine-platform ==
+
+Deployment Image Servicing and Management tool
+Version: 10.0.26100.5074
+
+Image Version: 10.0.26200.6584
+
+Enabling feature(s)
+
+[                           0.1%                           ] 
+
+[=============              22.5%                          ] 
+
+[====================       35.0%                          ] 
+
+[===========================52.0%                          ] 
+
+[===========================69.0%========                  ] 
+
+[===========================70.5%========                  ] 
+
+[===========================70.5%========                  ] 
+
+[==========================100.0%==========================] 
+The operation completed successfully.
+
+== install-wsl-core ==
+The operation completed successfully. 
+
+
+
+== wsl-status-after-core ==
+Default Version: 2
+
+
+
+== install-ubuntu-2404-user-web-download ==
+Downloading: Ubuntu 24.04 LTS
+Installing: Ubuntu 24.04 LTS
+WSL2 is unable to start since virtualization is not enabled on this machine.
+Please ensure the "Virtual Machine Platform" optional component is enabled and virtualization is turned on in your computer's firmware settings.
+
+Enable "Virtual Machine Platform" by running: wsl.exe --install --no-distribution
+
+For information please visit https://aka.ms/enablevirtualization
+Error code: Wsl/InstallDistro/Service/RegisterDistro/CreateVm/HCS/HCS_E_HYPERV_NOT_INSTALLED
+
+== install-ubuntu-2404-user ==
+Downloading: Ubuntu 24.04 LTS
+Installing: Ubuntu 24.04 LTS
+WSL2 is unable to start since virtualization is not enabled on this machine.
+Please ensure the "Virtual Machine Platform" optional component is enabled and virtualization is turned on in your computer's firmware settings.
+
+Enable "Virtual Machine Platform" by running: wsl.exe --install --no-distribution
+
+For information please visit https://aka.ms/enablevirtualization
+Error code: Wsl/InstallDistro/Service/RegisterDistro/CreateVm/HCS/HCS_E_HYPERV_NOT_INSTALLED
+
+
+===== C:\Users\tester\AppData\Local\CivicCast\bootstrap-wsl2-ubuntu-result.txt =====
+STATUS: wsl_core_ready
+REBOOT_REQUIRED: False
+MESSAGE: Windows prepared the helper CivicCast needs. CivicCast will finish setting it up for this Windows user.
+
+
+===== C:\Users\tester\AppData\Local\CivicCast\bootstrap-wsl2-ubuntu.result.json =====
+{
+    "schema_version":  1,
+    "status":  "wsl_core_ready",
+    "reboot_required":  false,
+    "message":  "Windows prepared the helper CivicCast needs. CivicCast will finish setting it up for this Windows user.",
+    "updated_at_unix":  1782211658
+}
+
+===== C:\Users\tester\AppData\Local\CivicCast\installer-state.json =====
+{
+  "schema_version": 1,
+  "current_lane_id": "wsl2",
+  "status": "blocked",
+  "message": "Windows installed part of the helper, but this computer has a required Windows setting turned off. Ask IT to turn on the setting that allows this helper to run, then rerun CivicCast Installer.",
+  "reboot_required": false,
+  "updated_at_unix": 1782233322,
+  "service_url": "http://127.0.0.1:8000",
+  "operator_console_url": "http://127.0.0.1:8000/operator/",
+  "resident_portal_url": "http://127.0.0.1:8000/"
+}

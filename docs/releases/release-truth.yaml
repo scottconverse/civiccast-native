@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+# Release-truth manifest — the SOLE AUTHORED SOURCE for CivicCast release state.
+# (Native-Windows program WS1; charter section 3 in civiccast-audit-control.)
+#
+# Rules:
+# - Human-facing release claims (README, docs, announcements) are checked
+#   AGAINST this file by scripts/policy/check_release_truth.py; never the
+#   reverse. Edit this file first, then the prose.
+# - Exactly one entry has status `current`. Every `withdrawn` entry names its
+#   superseding tag. A live GitHub release whose tag is neither listed here
+#   nor matched by `historical_unlisted_patterns` is DRIFT and must be added.
+# - `staging` = published release whose own page says not to install yet
+#   (assets/verification pending); it flips to `current` when that clears.
+# - This manifest carries release STATE, not release evidence; evidence stays
+#   in docs/releases/ verification documents and release assets.
+
+schema_version: 1
+# Was scottconverse/civiccast. This manifest governs THIS repository's
+# release state; pointing it at the archived repo would have made every
+# release claim here checked against a line this repo does not ship.
+repository: scottconverse/civiccast-native
+
+# The tag that public surfaces may present as the current install target.
+current: v1.0.0-rc15
+
+# Live tags matching these regexes predate this manifest and are exempt from
+# per-entry listing (they remain visible on GitHub as history). Anything else
+# unlisted is drift.
+# Covers the pre-reset era and the old 0.x-2.x numbering; the live line this
+# manifest governs is v1.0.0-rc*. Listed entries always take precedence over
+# these exemptions.
+historical_unlisted_patterns:
+  - '^pre-reset-'
+  - '^v0\.'
+  - '^v1\.[1-9]'
+  - '^v2\.'
+  - '^v3\.'
+  - '^v4\.0\.0-rc\.'
+
+entries:
+  - tag: v1.0.0-rc15
+    status: current
+    notes: >-
+      Public beta; assets and clean-Windows walkthrough proof landed
+      2026-07-17, do-not-install notice cleared, flipped from staging.
+  - tag: v1.0.0-rc14
+    status: superseded
+    superseded_by: v1.0.0-rc15
+    notes: Windows repair public beta; superseded the withdrawn rc13.
+  - tag: v1.0.0-rc13
+    status: withdrawn
+    superseded_by: v1.0.0-rc14
+    notes: >-
+      Withdrawn after a genuinely clean Windows test exposed bootstrap
+      failures the earlier contaminated lab run did not catch. Retained as
+      incident history; release page carries the WITHDRAWN caution.
+  - tag: v1.0.0-rc12
+    status: superseded
+    superseded_by: v1.0.0-rc13
+  - tag: v1.0.0-rc11
+    status: superseded
+    superseded_by: v1.0.0-rc12
+  - tag: v1.0.0-rc10
+    status: superseded
+    superseded_by: v1.0.0-rc11
+  - tag: v1.0.0-rc9
+    status: superseded
+    superseded_by: v1.0.0-rc10
+  - tag: v1.0.0-rc8
+    status: superseded
+    superseded_by: v1.0.0-rc9
+  - tag: v1.0.0-rc7
+    status: superseded
+    superseded_by: v1.0.0-rc8
+    notes: Completed the 41-row readiness ledger (see rc7 verification doc).
+  # NOTE: no v1.0.0-rc6 release exists on GitHub (the rc line runs rc5 -> rc7).
+  - tag: v1.0.0-rc5
+    status: superseded
+    superseded_by: v1.0.0-rc7
+  - tag: v1.0.0-rc4
+    status: superseded
+    superseded_by: v1.0.0-rc5
+  - tag: v1.0.0-rc3
+    status: superseded
+    superseded_by: v1.0.0-rc4
+  - tag: v1.0.0-rc2
+    status: superseded
+    superseded_by: v1.0.0-rc3
+  - tag: v1.0.0-rc1
+    status: superseded
+    superseded_by: v1.0.0-rc2
+    notes: Known first-run dead-end; fixed in rc2.
+  - tag: v0.2.0
+    status: historical
+    notes: Live Delivery at Scale milestone; evidence cited from README.
+  - tag: v0.1.0-rc6
+    status: historical
+    notes: Clean-Windows install + video proof milestone; evidence cited from README.
