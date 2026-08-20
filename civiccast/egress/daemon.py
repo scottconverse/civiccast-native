@@ -414,7 +414,14 @@ class EgressDaemon:
                     self._append_health(channel_id, "FALLBACK_SLATE", sink_connected={})
                     return
                 self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
-                source_plan = self._fallback_source_provider(config)
+                # Annotated because this is the FIRST binding of source_plan and
+                # the fallback provider returns a plain EgressSourcePlan, while
+                # _source_plan_provider below returns EgressSourcePlan | None.
+                # Without it mypy fixed the narrower type here, rejected the
+                # assignment at the `else` branch, and then treated the
+                # `if source_plan is None` slate guard below as unreachable --
+                # leaving the daemon's whole no-plan fallback path unchecked.
+                source_plan: EgressSourcePlan | None = self._fallback_source_provider(config)
                 using_fallback_slate = True
             else:
                 try:
