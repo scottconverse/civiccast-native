@@ -15829,7 +15829,7 @@
           "audio-tracks"
         ],
         "summary": "Public Audio Tracks",
-        "description": "The enabled audio tracks for a channel, for the web/OTT player's track toggle.\n\nSecondary audio PIDs are only emitted by the GStreamer engine, so on the default\nffmpeg engine this returns just the implicit primary program (no secondary tracks) \u2014\nthe player toggle must never advertise a track the running engine cannot emit.",
+        "description": "The enabled audio tracks for a channel, for the web/OTT player's track toggle.\n\nSecondary audio PIDs are only emitted by the GStreamer engine, so on the legacy\nffmpeg-concat engine this returns just the implicit primary program (no secondary\ntracks) \u2014 the player toggle must never advertise a track the running engine\ncannot emit.",
         "operationId": "public_audio_tracks_api_public_channels__channel_id__audio_tracks_get",
         "parameters": [
           {

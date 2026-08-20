@@ -267,7 +267,7 @@ def test_repeated_identical_segments_prepare_once(tmp_path: Path) -> None:
         work_dir=tmp_path,
         ffmpeg_runner=runner,
         loudness_checker=lambda **kwargs: loudness_calls.append(kwargs) or _loudness(),
-        playout_trim_supported=True,  # the production-default ffmpeg-concat wiring
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
     )
 
     report = preparer.prepare(plan, _config())
@@ -315,7 +315,7 @@ def test_aired_before_asset_prepares_with_zero_ffmpeg_work(tmp_path: Path) -> No
         ffmpeg_runner=_counting_runner(calls_1),
         loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(),
         warm_scheduler=lambda job: job(),
-        playout_trim_supported=True,  # the production-default ffmpeg-concat wiring
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
     ).prepare(_untrimmed_plan(tmp_path), _config())
     assert len(calls_1) == 1  # first airing conforms once (into the cache)
 
@@ -325,7 +325,7 @@ def test_aired_before_asset_prepares_with_zero_ffmpeg_work(tmp_path: Path) -> No
         ffmpeg_runner=_counting_runner(calls_2),
         loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(),
         warm_scheduler=lambda job: job(),
-        playout_trim_supported=True,  # the production-default ffmpeg-concat wiring
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
     ).prepare(_untrimmed_plan(tmp_path), _config())
 
     assert calls_2 == []  # zero ffmpeg work on the second airing
@@ -345,7 +345,7 @@ def test_join_in_progress_hits_cache_with_playout_trim(tmp_path: Path) -> None:
         ffmpeg_runner=_counting_runner(calls),
         loudness_checker=lambda **_kwargs: _loudness(),
         warm_scheduler=warm_jobs.append,
-        playout_trim_supported=True,  # the production-default ffmpeg-concat wiring
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
     )
     source = tmp_path / "long-recording.mp4"
     source.write_text("fake long media", encoding="utf-8")
@@ -389,7 +389,7 @@ def test_full_asset_warm_conform_has_no_trim_and_is_single_threaded(tmp_path: Pa
         ffmpeg_runner=_counting_runner(calls),
         loudness_checker=lambda **_kwargs: _loudness(),
         warm_scheduler=warm_jobs.append,
-        playout_trim_supported=True,  # the production-default ffmpeg-concat wiring
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
     )
     preparer.prepare(_source_plan(tmp_path), _config())  # trimmed miss
     warm_jobs[0]()
@@ -410,7 +410,7 @@ def test_duplicate_warms_are_deduped(tmp_path: Path) -> None:
         ffmpeg_runner=_counting_runner([]),
         loudness_checker=lambda **_kwargs: _loudness(),
         warm_scheduler=warm_jobs.append,
-        playout_trim_supported=True,  # the production-default ffmpeg-concat wiring
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
     )
     source = tmp_path / "raw-source.mp4"
 
@@ -442,7 +442,7 @@ def test_corrupt_cache_sidecar_is_treated_as_miss(tmp_path: Path) -> None:
         ffmpeg_runner=_counting_runner(calls),
         loudness_checker=lambda **_kwargs: _loudness(),
         warm_scheduler=lambda job: job(),
-        playout_trim_supported=True,  # the production-default ffmpeg-concat wiring
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
     )
     preparer.prepare(_untrimmed_plan(tmp_path), _config())
     # Corrupt the sidecar: the entry must not be trusted.
@@ -466,7 +466,7 @@ def test_cache_eviction_respects_budget(tmp_path: Path, monkeypatch) -> None:
         ffmpeg_runner=_counting_runner(calls),
         loudness_checker=lambda **_kwargs: _loudness(),
         warm_scheduler=lambda job: job(),
-        playout_trim_supported=True,  # the production-default ffmpeg-concat wiring
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
     )
     with pytest.raises(SourcePrepareError, match="budget"):
         preparer.prepare(_untrimmed_plan(tmp_path), _config())

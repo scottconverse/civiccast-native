@@ -626,15 +626,16 @@ def build_channel_automation(
             session_factory, work_dir=resolved_work_dir
         ),
         # #156: the persistent conform cache emits playout-time trims when the
-        # engine honors them — the default ffmpeg-concat engine does (ffconcat
-        # inpoint/outpoint); the gst engine reads only segment.path, so it gets
-        # the fast stream-copy fallback instead.
+        # engine honors them — the legacy ffmpeg-concat engine does (ffconcat
+        # inpoint/outpoint); the gst engine (default) reads only segment.path, so
+        # it gets the fast stream-copy fallback instead.
         source_preparer=SourcePreparer(
             work_dir=resolved_work_dir,
             playout_trim_supported=not gstreamer_engine_selected(),
         ).prepare,
         resolve_secret=lambda ref: os.environ.get(ref),
-        # S15: ffmpeg-concat (default) or the GStreamer engine, per CIVICCAST_EGRESS_ENGINE.
+        # S15: the GStreamer engine (default) or ffmpeg-concat (legacy), per
+        # CIVICCAST_EGRESS_ENGINE.
         # S11 gap 9: the gst engine gets a per-channel secondary-audio (SAP/descriptive)
         # provider so it can mux extra audio PIDs; the ffmpeg path ignores it.
         encoder_strategy=build_encoder_strategy(

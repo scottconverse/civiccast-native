@@ -3,10 +3,11 @@
 """CEA-608/708 caption decode-back proof + caption_status gate (S11a).
 
 Embedding is engine-specific (GStreamer-native ``cccombiner`` on the 3.0 engine;
-the ffmpeg-concat default ships the sidecar). This decode-back is engine-AGNOSTIC:
-it decodes whatever captions actually survived to the *emitted* TS (via ffmpeg's
-``movie=...[out0+subcc]`` source, which exposes in-band closed captions as a
-subtitle stream), compares them to the expected cues, and persists a proof sample.
+the legacy ffmpeg-concat engine ships the sidecar instead). This decode-back is
+engine-AGNOSTIC: it decodes whatever captions actually survived to the *emitted*
+TS (via ffmpeg's ``movie=...[out0+subcc]`` source, which exposes in-band closed
+captions as a subtitle stream), compares them to the expected cues, and persists
+a proof sample.
 
 ``caption_status`` only ever becomes ``on`` when a real PASS lands within a
 freshness window — stale, missing, or FAIL all read ``not-verified`` (fail-closed,

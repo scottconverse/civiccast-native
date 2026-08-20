@@ -137,10 +137,21 @@ def test_public_audio_tracks_for_web_toggle_on_gst_engine(monkeypatch) -> None:
     assert body[0]["kind"] == "sap"
 
 
-def test_public_audio_tracks_empty_on_default_ffmpeg_engine(monkeypatch) -> None:
-    # The default ffmpeg engine emits a single audio PID, so the player toggle must
-    # NOT advertise secondary tracks it cannot select.
+def test_public_audio_tracks_present_by_default(monkeypatch) -> None:
+    # GStreamer is the default engine (S15) -- an unset CIVICCAST_EGRESS_ENGINE
+    # must behave identically to an explicit "gstreamer", including advertising
+    # secondary audio tracks on the web toggle.
     monkeypatch.delenv("CIVICCAST_EGRESS_ENGINE", raising=False)
+    app, store = _build()
+    _seed_two_tracks(store)
+    body = TestClient(app).get("/api/public/channels/gov/audio-tracks").json()
+    assert [t["track_id"] for t in body] == ["t_sap"]
+
+
+def test_public_audio_tracks_empty_on_legacy_ffmpeg_engine(monkeypatch) -> None:
+    # The legacy ffmpeg-concat engine emits a single audio PID, so the player
+    # toggle must NOT advertise secondary tracks it cannot select.
+    monkeypatch.setenv("CIVICCAST_EGRESS_ENGINE", "ffmpeg-concat")
     app, store = _build()
     _seed_two_tracks(store)
     assert TestClient(app).get("/api/public/channels/gov/audio-tracks").json() == []

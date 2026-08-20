@@ -33,6 +33,22 @@ came across and what deliberately did not.
 
 ### Changed
 
+- **Egress default engine flipped to GStreamer (S15).** `civiccast/egress/engine_select.py`'s
+  `_DEFAULT` moves from `"ffmpeg-concat"` to `"gstreamer"` -- an unset
+  `CIVICCAST_EGRESS_ENGINE` now selects the persistent-pipeline GStreamer engine,
+  matching the native station bootstrap's own runtime contract
+  (`civiccast/native/station_runtime.py`'s `EXPECTED_RUNTIME_CONTRACT`) and fixing
+  the class of bug that continuity bug #151 belonged to (per-segment ffmpeg
+  relaunches resetting the MPEG-TS continuity counter) for every caller that
+  builds an `EncoderStrategy` without an explicit engine. `CIVICCAST_EGRESS_ENGINE=
+  ffmpeg-concat` remains a live, fully-supported override for deployments that
+  still need the legacy engine; the GStreamer -> self-repair -> FFmpeg ->
+  fallback-slate degraded-mode chain (`station_runtime._resolve_gstreamer_egress_
+  environment`, `egress.daemon.EgressDaemon`) is unchanged. Also fixes a latent
+  edge case surfaced while flipping the default: a present-but-blank
+  `CIVICCAST_EGRESS_ENGINE=` now resolves to the same engine as an unset one,
+  instead of silently pinning ffmpeg-concat via its old membership in
+  `_FFMPEG_ALIASES`.
 - **Windows-only by decision.** No `docker/`, no systemd units, no WSL2 install
   target, no Linux GStreamer container build. The native product uses the
   pinned `gstreamer-*==1.28.5` PyPI wheels.
