@@ -94,6 +94,7 @@ ALLOWED_UNSIGNED_CONTEXTS = [
     "unsigned install manifest",  # USER-MANUAL: a tests-only env var
     "unsigned manifests",  # cross-platform-installer: a blocked state
     "builds remain unsigned",  # spec: macOS Gatekeeper (genuinely unsigned)
+    "builds the unsigned installer, then",  # CODE_SIGNING_POLICY: pipeline stage before signing
 ]
 
 
