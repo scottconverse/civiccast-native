@@ -100,7 +100,7 @@ def _assert_embedded_closure_smoke_contract(text: str, job: dict[str, object]) -
     assert names.index(smoke_name) < names.index(
         "Sign the native bootstrap (Azure Artifact Signing)"
     )
-    assert names.index(smoke_name) < names.index("Upload private native-beta candidate artifact")
+    assert names.index(smoke_name) < names.index("Upload the native-beta candidate artifact")
 
 
 def _assert_msvc_install_path_binding(job: dict[str, object]) -> None:
@@ -211,7 +211,7 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert 'Get-Item "artifacts/native-beta/packs/native-cuda-runtime.ccpack"' in checksums
     assert "GetRelativePath($artifactRoot, $asset.FullName)" in checksums
 
-    upload = steps["Upload private native-beta candidate artifact"]
+    upload = steps["Upload the native-beta candidate artifact"]
     assert upload["uses"] == "actions/upload-artifact@v4"
     assert "native-app-payload.ccpack" in upload["with"]["path"]
     assert "native-server-binaries.ccpack" in upload["with"]["path"]
@@ -301,7 +301,7 @@ def test_native_beta_candidate_workflow_keeps_build_scratch_out_of_the_source_tr
 
     upload_paths = [
         line.strip()
-        for line in steps["Upload private native-beta candidate artifact"]["with"][
+        for line in steps["Upload the native-beta candidate artifact"]["with"][
             "path"
         ].splitlines()
         if line.strip()
