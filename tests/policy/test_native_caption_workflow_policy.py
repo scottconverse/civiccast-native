@@ -783,10 +783,24 @@ def test_windows_pr_jobs_state_their_native_justification_and_cache_expensive_do
     )
 
 
-def test_nonrelease_artifacts_expire_after_seven_days() -> None:
+def test_nonrelease_artifacts_expire_after_one_day() -> None:
+    """Every artifact upload must declare retention-days: 1.
+
+    Was 7. Cut to 1 on 2026-08-20 after Actions artifact storage reached 100%
+    of the account's 0.5 GB allowance: 990 live artifacts, 542.5 GB, 93% of it
+    from one workflow storing a 2.3 GB candidate, a 19.5 GB station bundle and
+    a 23 GB kit on EVERY push to the release branch. At 7-day retention
+    nothing aged out before the next push landed.
+
+    The assertion is on the DECLARATION, not the effective value, on purpose:
+    the repo-level cap is also set to 1 and would silently clamp a larger
+    number here, so a workflow could declare 30 and look fine in practice
+    while being wrong the moment that cap is raised.
+    """
+
     for path in WORKFLOWS:
         _text, workflow = _workflow(path)
         for job in workflow["jobs"].values():
             for step in job.get("steps", []):
                 if str(step.get("uses", "")).startswith("actions/upload-artifact"):
-                    assert step["with"]["retention-days"] == "7", path.name
+                    assert step["with"]["retention-days"] == "1", path.name

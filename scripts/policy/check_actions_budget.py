@@ -289,9 +289,14 @@ def validate_workflow(path: Path, text: str) -> list[str]:
         )
 
     if not release_or_tag:
+        # 1 day, not 7. Cut on 2026-08-20 after artifact storage hit 100%
+        # of the account's 0.5 GB allowance -- 990 live artifacts, 542.5 GB,
+        # 93% of it from one workflow storing ~45 GB per push (about half of
+        # that a second copy of its own inputs). At 7 days nothing aged out
+        # before the next push landed.
         for block in _artifact_blocks(text):
-            if not re.search(r"retention-days:\s*7\b", block):
-                violations.append("upload-artifact step is missing retention-days: 7")
+            if not re.search(r"retention-days:\s*1\b", block):
+                violations.append("upload-artifact step is missing retention-days: 1")
 
     return violations
 
