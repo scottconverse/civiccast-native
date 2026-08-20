@@ -1,10 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
 #
-# Produces the native-Windows beta's five co-delivered assets without
-# publishing them.  A release coordinator must verify this private artifact
-# and run the clean-machine gate before manually publishing it to
+# Produces the native-Windows beta's five co-delivered assets without cutting
+# a release. A release coordinator must verify the candidate and run the
+# clean-machine gate before manually publishing it to
 # scottconverse/civiccast-releases.
+#
+# NOT PRIVATE. This header used to call the output "this private artifact",
+# which was wrong and had been wrong for months: workflow artifacts on a
+# public repository are downloadable by any GitHub user for their whole
+# retention window (14 days here). That covers the signed station bundle
+# (~18.6 GB) and the assembled kit (~21.9 GB).
+#
+# Owner-confirmed 2026-08-20 that public is acceptable for these; the comment
+# was the thing that was wrong, not the setup. Said plainly here so nobody
+# treats an unreleased candidate as unreachable on the strength of a stale
+# adjective. "Not yet released" is true. "Private" is not.
 name: native-beta-candidate-artifacts
 
 on:
