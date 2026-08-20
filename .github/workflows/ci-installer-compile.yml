@@ -21,20 +21,16 @@ name: ci-installer-compile
 # real bundle, not for a test build — so no Node/npm step is needed. Path-filtered,
 # so it only runs when the installer actually changes.
 #
-# G-15/T-2: headless-bootstrap.ps1 itself had zero execution tests (only
-# substring/order assertions in tests/policy/test_windows_wsl_bootstrap_script.py).
-# tests/policy/HeadlessBootstrap.Tests.ps1 is a Pester suite that dot-sources
-# the real script (safe — its main body is guarded behind an InvocationName
-# check) and exercises its functions directly. windows-latest ships pwsh;
-# Pester 5+ is installed on the fly since the runner image's built-in Pester
-# is the legacy 3.4 one.
+# The Pester suite that used to run here (tests/policy/HeadlessBootstrap.Tests.ps1)
+# is gone with headless-bootstrap.ps1 itself -- the WSL2 install lane, removed
+# under the owner's "no linux" decision. It dot-sourced that script and
+# exercised its functions, so it had nothing left to test.
 
 on:
   pull_request:
     branches: [main]
     paths:
       - "civiccast/apps/installer/**"
-      - "tests/policy/HeadlessBootstrap.Tests.ps1"
       - ".github/workflows/ci-installer-compile.yml"
   workflow_call:
     inputs:
@@ -83,20 +79,6 @@ jobs:
       - name: cargo test (compile guard + unit tests)
         working-directory: civiccast/apps/installer/src-tauri
         run: cargo test --locked
-
-      - name: Install Pester 5
-        shell: pwsh
-        run: Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -SkipPublisherCheck -Scope CurrentUser
-
-      - name: Pester (headless-bootstrap.ps1 unit tests)
-        shell: pwsh
-        run: |
-          Import-Module Pester -MinimumVersion 5.0.0 -Force
-          $config = New-PesterConfiguration
-          $config.Run.Path = "tests/policy/HeadlessBootstrap.Tests.ps1"
-          $config.Run.Exit = $true
-          $config.Output.Verbosity = "Detailed"
-          Invoke-Pester -Configuration $config
 
   # NF-1: the installer's React state machine (keyboard-activation guard, the
   # optimistic-banner/stale-error reconciliation, the native-read-authoritative
