@@ -221,14 +221,20 @@ rows:
 
   - id: step-13
     kind: build_step
-    title: "24h machine-proven soak (rung 2) — beta1 public soak passed"
+    title: "24h machine-proven soak (rung 2) — not yet proven on the native line"
     source: "master §10 (step 13)"
     disposition: net-new
-    status: built
+    # Downgraded from `built` at the native-repo migration, deliberately.
+    # The evidence this row used to cite was the v3.0.0-beta1 24h public soak
+    # — a WSL-line release. That proof is real and still lives in the archived
+    # scottconverse/civiccast under docs/releases/, but it proves nothing about
+    # the native Windows product, which has not been soaked for 24h. Carrying
+    # the documents across to keep this row green would have made the roadmap
+    # assert a soak this product never had.
+    status: unbuilt
     evidence:
       modules:
-        - docs/releases/evidence/v3.0.0-beta1-local-24h-public-soak.md
-        - docs/releases/v3.0.0-beta1-verification.md
+        - docs/releases/evidence/native-24h-soak/PASS.md
 
   - id: step-14
     kind: build_step
@@ -251,7 +257,12 @@ rows:
     status: built
     evidence:
       modules: [civiccast/cli.py]
-      tests: [tests/test_hardware_probe_wsl2_positive.py]
+      # Was tests/test_hardware_probe_wsl2_positive.py, which covered the
+      # WSL2-detection branch and did not come across. tests/test_hardware_probe.py
+      # exercises the same module (civiccast/platform/hardware.py) on the
+      # platform this product actually ships on, so the claim is still evidenced
+      # — by a native test rather than a WSL one.
+      tests: [tests/test_hardware_probe.py]
 
   - id: S2
     kind: section
