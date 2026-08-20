@@ -669,20 +669,44 @@ def _cg_upcoming_reader(
 def _station_tz() -> tzinfo:
     """The station's local timezone for daypart auto-scheduling.
 
-    Read from ``CIVICCAST_STATION_TZ`` (an IANA name, e.g. ``America/New_York``);
-    defaults to UTC and falls back to UTC (with a warning) on an unknown/invalid
-    zone. S18 dayparts are wall-clock in this zone — without it, "prime time
-    18:00" would fire at 18:00 UTC for an off-UTC station.
+    Resolution order (M3 fix — the installer persists ``station_timezone`` at
+    first-admin setup, but nothing previously propagated it to the running
+    service, so every station silently ran on UTC regardless of what the
+    operator chose):
+
+    1. ``CIVICCAST_STATION_TZ`` (an IANA name, e.g. ``America/New_York``) —
+       kept as an explicit override for support/ops sessions, matching the
+       documented env-var contract (docs/USER-MANUAL.md).
+    2. The ``station_timezone`` persisted into station-state JSON by
+       :func:`civiccast.installer.station_state.complete_first_admin_setup`.
+       This is the normal path: the service reads what the installer wrote
+       instead of the installer having to also copy the value into the
+       service's process environment as a second, driftable source of truth
+       (the same pattern the S13 AI-model first-run override uses via
+       ``read_ai_model_seed``).
+
+    Defaults to UTC (no warning) when neither source names a real zone --
+    including the ``"local"`` sentinel default written before an operator
+    picks a real zone -- and falls back to UTC (with a warning) on an
+    unknown/invalid IANA name. S18 dayparts are wall-clock in this zone —
+    without it, "prime time 18:00" would fire at 18:00 UTC for an off-UTC
+    station.
     """
     name = os.environ.get("CIVICCAST_STATION_TZ")
+    source = "CIVICCAST_STATION_TZ"
     if not name:
+        from civiccast.installer.station_state import read_station_timezone
+
+        name = read_station_timezone()
+        source = "the persisted station_timezone"
+    if not name or name == "local":
         return UTC
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError, OSError):
-        _LOG.warning("CIVICCAST_STATION_TZ=%r is not a valid IANA zone; using UTC.", name)
+        _LOG.warning("%s=%r is not a valid IANA zone; using UTC.", source, name)
         return UTC
 
 

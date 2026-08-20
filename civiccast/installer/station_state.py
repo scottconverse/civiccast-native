@@ -174,6 +174,30 @@ def read_ai_model_seed() -> AiModelSeed | None:
         return None
 
 
+def read_station_timezone() -> str | None:
+    """Return the persisted station timezone, or None before commissioning.
+
+    The first-admin setup wizard persists the operator's chosen IANA zone (or the
+    ``"local"`` sentinel default) onto the station profile at commissioning time
+    (M3). The running service is the actual consumer -- schedules, as-run logs,
+    and program guides are wall-clock in this zone -- so it reads the value
+    straight from station-state rather than requiring the installer to also copy
+    it into the service's process environment as a second, driftable source of
+    truth. Deliberately reads just this one field (not the full
+    :func:`_profile_from_state` validation) so a timezone lookup never fails
+    because an unrelated profile field is missing or malformed.
+    """
+
+    raw = _load_raw_state()
+    station = raw.get("station")
+    if not isinstance(station, dict):
+        return None
+    value = station.get("station_timezone")
+    if not value:
+        return None
+    return str(value)
+
+
 def set_ai_model_override(feature: str, model_key: str | None) -> AiModelSeed:
     """Record (or clear) the operator's first-run override for ``feature``.
 

@@ -65,6 +65,15 @@ came across and what deliberately did not.
 - The GStreamer playout engine's module docstrings no longer claim
   "WSL/Linux-only" — the Windows named-pipe transport ships and its suite runs
   natively.
+- **Station timezone now reaches the running service (M3).** First-admin
+  setup persisted the operator's chosen `station_timezone` into station-state
+  JSON, but nothing propagated it to the running service — S18 daypart
+  auto-scheduling silently ran on UTC for every station, corrupting
+  scheduling, as-run logs, and program guides for any station not in UTC.
+  `civiccast/app.py`'s `_station_tz()` now reads the persisted value (via the
+  new `civiccast.installer.station_state.read_station_timezone()`) when
+  `CIVICCAST_STATION_TZ` is unset; the env var still works as an explicit
+  override.
 - **C1 — a fresh station install could never call for help.**
   `civiccast/alerting/evaluator.py`'s dispatch path silently `return`ed with
   no record at all when an `AlertRule` had zero live channels — the exact
