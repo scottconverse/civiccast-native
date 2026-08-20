@@ -121,5 +121,5 @@ jobs:
           path: |
             docs/releases/evidence/v0.5-caption-benchmark.json
             docs/releases/evidence/v0.5-caption-benchmark-truth.txt
-          retention-days: 7
+          retention-days: 1
           if-no-files-found: error

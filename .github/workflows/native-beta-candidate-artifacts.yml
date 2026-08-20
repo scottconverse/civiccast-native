@@ -496,7 +496,7 @@ jobs:
             artifacts/native-beta/SHA256SUMS.txt
             artifacts/native-beta/candidate-receipt.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   # Produces the signed native STATION BUNDLE the K1 flat-activation fix
   # consumes (scripts/build_native_station_bundle.py: station-index.json +
@@ -703,7 +703,7 @@ jobs:
             artifacts/native-station-bundle/station/**
             artifacts/native-station-bundle/native-station-bundle-build-report.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   # Assembles the INSTALLABLE kit: the signed bootstrap installer with the
   # signed station bundle co-located at `.\station\` next to it, the exact
@@ -791,4 +791,4 @@ jobs:
           name: native-beta-kit-${{ github.sha }}
           path: kit/**
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1

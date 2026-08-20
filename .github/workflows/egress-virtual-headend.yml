@@ -92,6 +92,6 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         timeout-minutes: 10
         with:
-          retention-days: 7
+          retention-days: 1
           name: egress-virtual-headend-proof
           path: .egress-virtual-headend

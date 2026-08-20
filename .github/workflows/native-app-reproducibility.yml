@@ -122,4 +122,4 @@ jobs:
             payload-b/app-payload-manifest.json
             payload-b/SHA256SUMS
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1

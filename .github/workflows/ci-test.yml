@@ -403,7 +403,7 @@ jobs:
             junit.xml
             junit-native-pure.xml
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
       - name: Upload producer meta (ws3 claims-evidence D3/D7)
         if: always()
@@ -413,7 +413,7 @@ jobs:
           name: test-meta
           path: test-meta.json
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 1
 
   engine:
     name: GStreamer live engine
@@ -504,7 +504,7 @@ jobs:
           name: engine-junit
           path: engine-junit.xml
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
       - name: Upload producer meta (ws3 claims-evidence D3/D7)
         if: always()
@@ -514,7 +514,7 @@ jobs:
           name: engine-meta
           path: engine-meta.json
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 1
 
   nats-boundary:
     name: NATS JetStream real-boundary
@@ -570,7 +570,7 @@ jobs:
           name: nats-boundary-junit
           path: nats-boundary-junit.xml
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
       - name: Upload producer meta (ws3 claims-evidence D3/D7)
         if: always()
@@ -580,7 +580,7 @@ jobs:
           name: nats-boundary-meta
           path: nats-boundary-meta.json
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 1
 
   windows-native:
     name: WS4 dual-runtime guard (real Windows probes)
@@ -652,7 +652,7 @@ jobs:
           name: windows-native-junit
           path: junit-native-win.xml
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   claims-verifier:
     name: Claims-evidence verifier

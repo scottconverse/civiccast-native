@@ -74,7 +74,7 @@ jobs:
         with:
           name: playwright-report-public
           path: civiccast/apps/portal-public/playwright-report/
-          retention-days: 7
+          retention-days: 1
 
   a11y-operator:
     name: Accessibility (axe-core) — operator console
@@ -132,4 +132,4 @@ jobs:
         with:
           name: playwright-report-operator
           path: civiccast/apps/portal-operator/playwright-report/
-          retention-days: 7
+          retention-days: 1

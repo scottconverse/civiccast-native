@@ -135,7 +135,7 @@ jobs:
           name: randomized-suite-log
           path: pytest-random.log
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 1
 
   mutation-report:
     # Permanently informational (see header).
