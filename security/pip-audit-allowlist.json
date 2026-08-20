@@ -1,0 +1,11 @@
+{
+  "_comment": "Audit item #27 CI security scanning. Each entry documents a pip-audit finding with no available fix, reviewed and accepted with a dated reason. Every other finding fails the gate.",
+  "allowed": [
+    {
+      "package": "nltk",
+      "id": "PYSEC-2026-597",
+      "reviewed": "2026-07-05",
+      "reason": "Path-traversal read (CVE-2026-12243) in nltk.data.load()/find() when called with an attacker-controlled resource name; no fix version exists upstream yet. nltk is a transitive dependency of rouge-score (dev-only summarization-quality test metric) — civiccast/ never imports nltk, and no runtime or CI path calls nltk.data.load()/find() with any input, let alone untrusted input. No fix version available as of this review; re-check when nltk publishes one."
+    }
+  ]
+}

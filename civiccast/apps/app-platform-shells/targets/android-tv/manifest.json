@@ -1,0 +1,17 @@
+{
+    "target":  "Android TV",
+    "appTarget":  "android_tv",
+    "displayName":  "CivicCast Android TV Shell",
+    "configUrl":  "/api/public/app/config",
+    "entry":  "index.html",
+    "status":  "v1.8.2 shared reference runtime",
+    "capabilities":  [
+                         "station-branding",
+                         "live-playback-metadata",
+                         "vod-smart-playlists",
+                         "schedule-browse",
+                         "captions",
+                         "audio-tracks",
+                         "chapters"
+                     ]
+}

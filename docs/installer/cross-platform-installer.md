@@ -1,0 +1,106 @@
+# Cross-Platform Installer
+
+CivicCast exposes guided installer contracts for Linux, macOS, and two
+distinct Windows product lines. The current public Windows beta is the WSL
+line: its host bootstrapper prepares Ubuntu on WSL2 and its CivicCast services
+run inside that Ubuntu runtime with systemd. The native Windows line is in
+development under ADR 0021 and uses a separate product identity and a
+session-0 Windows service. The two Windows products share a codebase but do
+not install, repair, or remove each other's runtime.
+
+## Platform Matrix
+
+| Platform | Runtime | Package/bootstrap | Service manager | Readiness rule |
+| --- | --- | --- | --- | --- |
+| Linux | Native Linux | `.deb` or `.rpm` | systemd | Ready only when service metadata and package proof are present. |
+| macOS | Native macOS operator host | `.pkg` | launchd | Ready only when `.pkg` metadata and launchd bootstrap proof are present. |
+| Windows 11 - WSL line (current public beta) | Ubuntu on WSL2 | Tauri/NSIS setup app plus WSL2 bootstrap manifest | systemd inside WSL2 | Ready only when the setup app builds, WSL2 Ubuntu exists, and the guided WSL lanes pass. |
+| Windows 11 - native line (in development) | Native Windows | Distinct Tauri/NSIS setup app and native payload | session-0 Windows service | Readiness is governed by ADR 0021 and `.agent-runs/native-windows/specs/spec-installer-lifecycle.md`; development evidence is not a public native-beta claim. |
+
+## Windows Setup App
+
+This section describes the current public WSL-line setup app. Its Windows
+operator entry point is the Tauri setup executable built from
+`civiccast/apps/installer` with `npm run tauri:build`. The setup app gives the
+operator a guided readiness walkthrough, while CivicCast services still run
+inside WSL2 Ubuntu per ADR 0003. ADR 0021 governs the separate native Windows
+product and its installer lifecycle. A valid WSL-line release artifact must be copied from
+Tauri's NSIS bundle output and hashed by `scripts/build_release_artifacts.py
+--windows-installer`; placeholder bytes or a bootstrap manifest alone do not
+satisfy the Windows double-click installer lane.
+
+When WSL2 Ubuntu is missing, the setup app must offer `Install WSL2 Ubuntu` and
+launch the Microsoft WSL installer with Windows elevation. It must not leave a
+non-technical beta tester at a bare terminal command as the only path forward.
+
+## Artifact Verification
+
+Every install artifact must have:
+
+1. Real SHA-256 computed from the artifact bytes.
+2. A `.sidecar.json` file with the same SHA-256.
+3. A signed install manifest.
+4. Service and bootstrap metadata.
+5. The matching Sigstore bundle beside the artifact, with the sidecar naming
+   that exact bundle.
+
+Missing artifacts, hash mismatches, missing sidecars, unsigned manifests,
+missing bundles, and mismatched attestation references are blocked states.
+Operators should download the artifact, sidecar, and bundle together, or
+rebuild the package and rerun verification rather than bypass the proof.
+
+Windows operators should verify the setup `.exe` before running it. The
+operator-facing checklist lives in
+[Windows Release Trust And Verification](../install/windows-release-trust.md)
+and explains the difference between SHA-256 checksums, sidecars, attestations,
+and Authenticode signing.
+
+## Durable Storage Prerequisite
+
+Every operator or beta-test install needs durable storage before staff
+workflows are used. If `DATABASE_URL` is unset, CivicCast creates a local
+durable SQLite database, applies the Alembic migration graph, and reports the
+storage lane ready before first-admin setup. Technical admins can set
+`DATABASE_URL` to use Postgres instead.
+
+If `CIVICCAST_ALLOW_EPHEMERAL_STORES=1` is set, CivicCast can run lightweight
+development and UI checks with in-memory stores, but staff writes are lost on
+restart. That is not a beta-ready operator posture.
+
+## Ollama Runtime Provisioning (Windows)
+
+The Windows WSL2 bootstrap provisions the local Ollama AI runtime as part of
+the guided setup, inside the same charter walls as the rest of the runtime
+install: it detects and reuses a healthy existing Ollama install first, and
+only installs a pinned version (sha-verified, standard `/usr/local` location,
+no CivicCast-owned parallel install tree) when Ollama is genuinely absent from
+the WSL distro. A present-but-unhealthy install is left untouched and refused,
+never forced. Model provisioning (the standard summary and
+translation tags -- a fixed three-tag set on every install, sourced from the same catalog the Setup wizard's own model
+download uses) runs strictly after the operator console is already reachable,
+so a slow or failed model pull never blocks or delays dashboard access; a
+failure surfaces as an honest message on the existing runtime-readiness lane
+rather than reverting the install to an error state. This is designed
+behavior proven against real bash execution with faked tooling in this
+repository's test suite; a real end-to-end run against the real ollama.com
+archive and a real model pull on a clean machine is separately the VM
+gauntlet's job.
+
+## Model Setup
+
+The installer reports model setup as planned, running, progress, complete, cancelled, skipped, unavailable, or blocked. Only hash-verified online downloads or offline bundle imports may report complete proof. Skipped and unavailable models must show `proof_unavailable` and tell the operator to rerun setup or import the offline bundle.
+
+## Air-Gapped Import
+
+Air-gapped imports require offline mode, an operator guide, proof metadata, and real hashes for every artifact in the bundle. If network access is enabled, proof metadata is missing, a file is absent, or a hash mismatches, the import is blocked with the exact file and next operator action.
+
+External provider lanes such as Internet Archive remain credential-gated. Air-gapped proof does not claim those online integrations are verified.
+
+## Beta Tester Handoff
+
+For v1.2 beta testers, the installer summary is paired with
+`civiccast installer beta-handoff --json`. That handoff summary adds the
+release artifact acquisition manifest, clean Windows install proof evidence,
+durable storage setup, dependency/model gates, NATS, mTLS, and external
+provider credentials to the same fail-closed operator view. The detailed tester path lives in
+[Beta Tester Handoff](beta-tester-handoff.md).

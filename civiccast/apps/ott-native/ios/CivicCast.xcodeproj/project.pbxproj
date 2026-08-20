@@ -1,0 +1,275 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1A1A1A1A1A1A1A1A1A10001 /* CivicCastApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A1A1A1A1A1A1A1A1A11001 /* CivicCastApp.swift */; };
+		A1A1A1A1A1A1A1A1A1A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A1A1A1A1A1A1A1A1A11002 /* ContentView.swift */; };
+		A1A1A1A1A1A1A1A1A1A10003 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A1A1A1A1A1A1A1A1A11003 /* PlayerView.swift */; };
+		A1A1A1A1A1A1A1A1A1A10004 /* CivicCastCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A1A1A1A1A1A1A1A1A11004 /* CivicCastCore.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A1A1A1A1A1A1A1A1A1A12001 /* CivicCast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CivicCast.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1A1A1A1A1A1A1A1A1A11001 /* CivicCastApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CivicCastApp.swift; sourceTree = "<group>"; };
+		A1A1A1A1A1A1A1A1A1A11002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A1A1A1A1A1A1A1A1A1A11003 /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		A1A1A1A1A1A1A1A1A1A11004 /* CivicCastCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CivicCastCore.swift; sourceTree = "<group>"; };
+		A1A1A1A1A1A1A1A1A1A11005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A1A1A1A1A1A1A1A1A1A13001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A1A1A1A1A1A1A1A1A1A14001 = {
+			isa = PBXGroup;
+			children = (
+				A1A1A1A1A1A1A1A1A1A14002 /* CivicCast */,
+				A1A1A1A1A1A1A1A1A1A14003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A1A1A1A1A1A1A1A1A1A14002 /* CivicCast */ = {
+			isa = PBXGroup;
+			children = (
+				A1A1A1A1A1A1A1A1A1A11001 /* CivicCastApp.swift */,
+				A1A1A1A1A1A1A1A1A1A11002 /* ContentView.swift */,
+				A1A1A1A1A1A1A1A1A1A11003 /* PlayerView.swift */,
+				A1A1A1A1A1A1A1A1A1A11004 /* CivicCastCore.swift */,
+				A1A1A1A1A1A1A1A1A1A11005 /* Info.plist */,
+			);
+			path = CivicCast;
+			sourceTree = "<group>";
+		};
+		A1A1A1A1A1A1A1A1A1A14003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1A1A1A1A1A1A1A1A1A12001 /* CivicCast.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1A1A1A1A1A1A1A1A1A15001 /* CivicCast */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1A1A1A1A1A1A1A1A1A16001 /* Build configuration list for PBXNativeTarget "CivicCast" */;
+			buildPhases = (
+				A1A1A1A1A1A1A1A1A1A17001 /* Sources */,
+				A1A1A1A1A1A1A1A1A1A13001 /* Frameworks */,
+				A1A1A1A1A1A1A1A1A1A18001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CivicCast;
+			productName = CivicCast;
+			productReference = A1A1A1A1A1A1A1A1A1A12001 /* CivicCast.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A1A1A1A1A1A1A1A1A1A19001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A1A1A1A1A1A1A1A1A1A15001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = A1A1A1A1A1A1A1A1A1A1A001 /* Build configuration list for PBXProject "CivicCast" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A1A1A1A1A1A1A1A1A1A14001;
+			productRefGroup = A1A1A1A1A1A1A1A1A1A14003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1A1A1A1A1A1A1A1A1A15001 /* CivicCast */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A1A1A1A1A1A1A1A1A1A18001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A1A1A1A1A1A1A1A1A1A17001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1A1A1A1A1A1A1A1A1A10001 /* CivicCastApp.swift in Sources */,
+				A1A1A1A1A1A1A1A1A1A10002 /* ContentView.swift in Sources */,
+				A1A1A1A1A1A1A1A1A1A10003 /* PlayerView.swift in Sources */,
+				A1A1A1A1A1A1A1A1A1A10004 /* CivicCastCore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A1A1A1A1A1A1A1A1A1A1B001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A1A1A1A1A1A1A1A1A1A1B002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A1A1A1A1A1A1A1A1A1A1C001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CivicCast/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.civiccast.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A1A1A1A1A1A1A1A1A1A1C002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CivicCast/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.civiccast.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1A1A1A1A1A1A1A1A1A1A001 /* Build configuration list for PBXProject "CivicCast" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1A1A1A1A1A1A1A1A1A1B001 /* Debug */,
+				A1A1A1A1A1A1A1A1A1A1B002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1A1A1A1A1A1A1A1A1A16001 /* Build configuration list for PBXNativeTarget "CivicCast" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1A1A1A1A1A1A1A1A1A1C001 /* Debug */,
+				A1A1A1A1A1A1A1A1A1A1C002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A1A1A1A1A1A1A1A1A1A19001 /* Project object */;
+}

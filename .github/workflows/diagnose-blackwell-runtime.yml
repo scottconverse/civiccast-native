@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+# Manual NVIDIA/Blackwell runtime diagnostic.
+#
+# This workflow exists because normal validation targets the generic
+# `scott-desktop` self-hosted runner and may land on a non-NVIDIA machine.
+# The v0.5 caption release gate needs proof from the runner labeled `rtx5070`.
+
+name: diagnose-blackwell-runtime
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Diagnose Blackwell caption runtime
+    runs-on: [self-hosted, Linux, X64, scott-desktop, rtx5070, ubuntu-2404]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Probe NVIDIA visibility
+        run: |
+          set -euxo pipefail
+          hostname
+          uname -a
+          command -v nvidia-smi
+          nvidia-smi
+          ls -l /usr/lib/wsl/lib/libnvidia-ml.so* || true
+
+      - name: Install caption runtime dependencies
+        # workflow-cost: self-hosted-runtime-diagnostic. Manual-only workflow
+        # pinned to Scott's self-hosted runner; no GitHub-hosted minute spend.
+        run: |
+          set -euxo pipefail
+          python3 -m venv .venv-blackwell
+          . .venv-blackwell/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install ".[captions-runtime]"
+          python -m pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+
+      - name: Run Blackwell verifier
+        run: |
+          set -euxo pipefail
+          . .venv-blackwell/bin/activate
+          SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          export LD_LIBRARY_PATH="${SITE_PACKAGES}/nvidia/cublas/lib:${SITE_PACKAGES}/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
+          python scripts/verify-blackwell-runtime.py

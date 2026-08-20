@@ -1,0 +1,737 @@
+# SPDX-License-Identifier: Apache-2.0
+name: ci-test
+
+# Native-Windows program (WS2): program/** added so PRs targeting the
+# program integration branch get the same execution proof as main-line PRs
+# (the Postgres restore drill's evidence is this workflow's Docker gate).
+on:
+  pull_request:
+    branches: [main, 'program/**', 'release/**']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    # TEST-001 (audit-team v0.3.0 + Scott independent audit Step 2):
+    # The schedule module's btree_gist EXCLUDE conflict-detection contract
+    # is verified exclusively against real Postgres in
+    # tests/schedule/test_real_postgres.py. Through v0.3.0 those 10 tests
+    # silently skipped on every push because no CI runner had Docker
+    # available for testcontainers; CIVICCAST_RUN_POSTGRES_TESTS=1 below
+    # flips the skip into a hard failure if Docker isn't reachable, so a
+    # silent regression cannot ship green.
+    env:
+      CIVICCAST_RUN_POSTGRES_TESTS: "1"
+    steps:
+      - name: Checkout
+        # ws3 claims-evidence (D3): explicit PR-head checkout so this
+        # producer's tested SHA is never the pull_request synthetic merge
+        # commit (GITHUB_SHA). Falls back to github.sha on push/non-PR
+        # events, where there is no separate head to pin to.
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Emit producer meta (ws3 claims-evidence D3)
+        run: python3 scripts/policy/emit_producer_meta.py --job-id test --out test-meta.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install media test prerequisites
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # Hosted runners run unattended-upgrades on boot, which holds the
+          # dpkg/apt locks. Bare `apt-get` waits on that lock FOREVER: on
+          # 2026-08-19 this step sat in_progress for 3h49m on the release
+          # branch and ~2h on PRs #422/#423, silently wedging the whole merge
+          # queue while every other job showed green. Bound it three ways --
+          # apt gives up on the lock, each invocation gives up on the network,
+          # and the step itself gives up -- so a stuck runner fails in minutes
+          # instead of burning the CI clock and blocking merges.
+          APT="sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3"
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            timeout 300 $APT update
+            timeout 300 $APT install -y ffmpeg
+          fi
+          # #151 TS-relay behavioral splice test (skips without tsp).
+          #
+          # GauntletGate T5: this tolerates a failed install with a warning and
+          # has NO junit-floor guard, unlike the four suites above. That is a
+          # DELIBERATE choice, not an oversight: TS-relay splice compliance
+          # belongs to the deferred `civiccast-cable` add-on (CLAUDE.md, closed
+          # architectural decisions), not the WSL lane's ship-critical
+          # streaming core. Cable-add-on CI coverage is intentionally
+          # best-effort until the add-on itself is in scope. If cable ships,
+          # this needs a floor guard matching the pattern used above.
+          if ! command -v tsp >/dev/null 2>&1; then
+            timeout 300 $APT install -y tsduck || echo '::warning::tsduck not installable; TS-relay splice test will skip (best-effort by design; see comment)'
+          fi
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
+      - name: Install project (dev)
+        run: uv sync --all-extras --group dev
+
+      - name: Probe Docker (testcontainers prerequisite)
+        # Fail loud at this step rather than letting testcontainers fall
+        # through with a ResourceWarning ??? easier to diagnose for future
+        # maintainers if the runner image ever drops Docker access.
+        run: |
+          if ! [ -S /var/run/docker.sock ] && [ -z "${DOCKER_HOST:-}" ]; then
+            echo "::error::Docker socket not present; testcontainers cannot spin up Postgres for TEST-001."
+            exit 1
+          fi
+          docker version >/dev/null
+
+      - name: pytest
+        # TEST-001 (audit-team v0.3.0 + Scott independent audit Step 2):
+        # Run the suite with JUnit XML output so the next step can parse
+        # the *actual executed* test count for tests/schedule/test_real_postgres.py.
+        # The earlier --collect-only assertion proved collection only,
+        # not execution; Scott's correction-directive Step 4 required
+        # tightening this.
+        run: |
+          if [ -d tests ] && [ -n "$(find tests -name 'test_*.py' -o -name '*_test.py' 2>/dev/null)" ]; then
+            uv run pytest -v \
+              --ignore=tests/native \
+              --cov=civiccast --cov-report=term-missing \
+              --cov-fail-under=60 \
+              --junitxml=junit.xml
+          else
+            echo "No tests yet ??? placeholder green for Day 0; Sprint 0.1 lands the first tests."
+          fi
+
+      - name: Run tests/native's platform-independent suite (junit)
+        run: uv run pytest tests/native -m "not windows_only" -q --junitxml=junit-native-pure.xml
+      - name: Assert the recording-finalization real-media proofs actually ran
+        # GauntletGate T3. These two tests are the ONLY end-to-end proof that a
+        # finished broadcast finalizes into a real, duration-correct recording
+        # via the app's own worker thread -- the path that turns a live meeting
+        # into the permanent public-record asset (spec non-negotiable §4.6).
+        # Both are gated on ffmpeg/ffprobe being on PATH. Three sibling suites
+        # already have a floor guard for exactly this reason; these did not, so
+        # a renamed apt package or a silently-failing install step on a future
+        # runner image would have dropped the coverage with CI still green.
+        if: always()
+        run: |
+          if [ ! -f junit.xml ]; then
+            echo "::error::junit.xml missing — pytest did not run."
+            exit 1
+          fi
+          python <<'PYFLOOR'
+          import sys, xml.etree.ElementTree as ET
+
+          REQUIRED = {
+              "test_real_media_trim_proof_duration_matches_trim_window",
+              "test_end_broadcast_reaches_completed_via_app_wired_worker",
+          }
+          tree = ET.parse("junit.xml")
+          executed = set()
+          skipped = set()
+          for case in tree.iter("testcase"):
+              if not case.get("classname", "").startswith("tests.live.test_finalization_worker"):
+                  continue
+              name = case.get("name", "")
+              if name not in REQUIRED:
+                  continue
+              if case.find("skipped") is not None:
+                  skipped.add(name)
+                  continue
+              if case.find("failure") is not None or case.find("error") is not None:
+                  print(f"::error::Finalization proof {name} failed.")
+                  sys.exit(1)
+              executed.add(name)
+
+          missing = REQUIRED - executed
+          if missing:
+              print(
+                  f"::error::Recording-finalization real-media proof did not execute: "
+                  f"{sorted(missing)} (skipped={sorted(skipped)}). ffmpeg/ffprobe "
+                  "missing on the runner, or the tests were renamed without "
+                  "updating this guard."
+              )
+              sys.exit(1)
+          print(f"Finalization real-media proofs executed: {sorted(executed)}")
+          PYFLOOR
+
+      - name: Assert the live-HLS playability proof actually ran
+        # 1.0-hardening: the single most important behavioral test in the repo
+        # (real ffmpeg + ffprobe rolling-live-window playability,
+        # tests/egress/test_hls_sink_live_playability.py) previously ran only
+        # incidentally, with nothing failing CI if it silently skipped. Same
+        # junit-floor pattern as the real-Postgres guard below.
+        if: always()
+        run: |
+          if [ ! -f junit.xml ]; then
+            echo "::error::junit.xml missing ??? pytest did not run."
+            exit 1
+          fi
+          python <<'PYFLOOR'
+          import sys, xml.etree.ElementTree as ET
+          tree = ET.parse("junit.xml")
+          ran = skipped = 0
+          for case in tree.iter("testcase"):
+              if not case.get("classname", "").startswith("tests.egress.test_hls_sink_live_playability"):
+                  continue
+              if case.find("skipped") is not None:
+                  skipped += 1
+                  continue
+              if case.find("failure") is not None or case.find("error") is not None:
+                  print(f"::error::Playability test {case.get('name')} failed.")
+                  sys.exit(1)
+              ran += 1
+          if ran < 1:
+              print(f"::error::Live-HLS playability proof did not execute (ran={ran}, skipped={skipped}) ??? ffmpeg/ffprobe missing on the runner?")
+              sys.exit(1)
+          print(f"Playability proof executed: {ran} test(s), {skipped} skipped.")
+          PYFLOOR
+
+      - name: Assert real-Postgres tests actually ran
+        # TEST-009 anti-pattern guard. Parse junit.xml for testcases whose
+        # classname starts with tests.schedule.test_real_postgres and
+        # require status = passed (no skipped, no error). Fail loud if
+        # the count drops below the documented floor.
+        if: always()
+        run: |
+          if [ ! -f junit.xml ]; then
+            echo "::error::junit.xml missing ??? pytest did not run."
+            exit 1
+          fi
+          # Extract the executed real-Postgres pass count.
+          # python is already on the runner via setup-python.
+          python <<'PYEOF'
+          import sys, xml.etree.ElementTree as ET
+
+          tree = ET.parse("junit.xml")
+          ran = 0
+          skipped = 0
+          for case in tree.iter("testcase"):
+              cls = case.get("classname", "")
+              if not cls.startswith("tests.schedule.test_real_postgres"):
+                  continue
+              if case.find("skipped") is not None:
+                  skipped += 1
+                  continue
+              if case.find("failure") is not None or case.find("error") is not None:
+                  print(f"::error::Real-Postgres test {cls}::{case.get('name')} failed.")
+                  sys.exit(1)
+              ran += 1
+
+          floor = 5
+          print(f"Real-Postgres tests passed: {ran} (skipped: {skipped}; floor: {floor})")
+          if ran < floor:
+              print(
+                  f"::error::Real-Postgres pass count {ran} < floor {floor}. "
+                  "TEST-001 is unproven on this run."
+              )
+              sys.exit(1)
+          PYEOF
+
+      - name: Assert the real-Postgres concurrent preflight race passed
+        # Real Postgres must execute the conditional start-preflight update
+        # atomically. Require the exact row-level contention test in the same
+        # JUnit produced by the full suite; collection or a skip is not
+        # execution proof.
+        if: always()
+        run: |
+          if [ ! -f junit.xml ]; then
+            echo "::error::junit.xml missing - pytest did not run."
+            exit 1
+          fi
+          python <<'PYCAS'
+          import sys, xml.etree.ElementTree as ET
+
+          expected_class = (
+              "tests.live.test_real_postgres."
+              "TestRealPostgresLiveSessionStateMachineConcurrency"
+          )
+          expected_name = "test_two_concurrent_start_preflight_exactly_one_wins"
+          matches = [
+              case
+              for case in ET.parse("junit.xml").iter("testcase")
+              if case.get("classname") == expected_class
+              and case.get("name") == expected_name
+          ]
+          if len(matches) != 1:
+              print(
+                  f"::error::Expected exactly one concurrent preflight testcase; "
+                  f"found {len(matches)}."
+              )
+              sys.exit(1)
+          case = matches[0]
+          if case.find("skipped") is not None:
+              print("::error::Concurrent preflight real-Postgres proof was skipped.")
+              sys.exit(1)
+          if case.find("failure") is not None or case.find("error") is not None:
+              print("::error::Concurrent preflight real-Postgres proof failed.")
+              sys.exit(1)
+          print("Concurrent preflight real-Postgres proof executed and passed.")
+          PYCAS
+
+      - name: Assert Postgres restore-drill tests actually ran
+        # WS2 (native-Windows program): same junit-floor pattern as the
+        # real-Postgres guard above. The DR suite hard-fails on missing
+        # Docker under CIVICCAST_RUN_POSTGRES_TESTS=1, but the floor also
+        # catches collection errors and file renames reading as green.
+        if: always()
+        run: |
+          if [ ! -f junit.xml ]; then
+            echo "::error::junit.xml missing - pytest did not run."
+            exit 1
+          fi
+          python <<'PYDR'
+          import sys, xml.etree.ElementTree as ET
+
+          tree = ET.parse("junit.xml")
+          ran = skipped = 0
+          for case in tree.iter("testcase"):
+              cls = case.get("classname", "")
+              if not cls.startswith("tests.dr.test_postgres_restore"):
+                  continue
+              if case.find("skipped") is not None:
+                  skipped += 1
+                  continue
+              if case.find("failure") is not None or case.find("error") is not None:
+                  print(f"::error::Postgres restore-drill test {cls}::{case.get('name')} failed.")
+                  sys.exit(1)
+              ran += 1
+
+          # Floor = the full committed test count in tests/dr/test_postgres_restore.py
+          # (`grep -c "^def test_"` at WS2 round 5, three new report-level
+          # cold-standby negative controls: standby-only membership edge,
+          # PUBLIC table grant difference, GRANT OPTION difference) --
+          # must be bumped to match whenever a test is added to that file, so a
+          # collection error or an accidentally-skipped new test cannot hide
+          # behind a stale, too-low floor.
+          floor = 20
+          print(f"Postgres restore-drill tests passed: {ran} (skipped: {skipped}; floor: {floor})")
+          if ran < floor:
+              print(
+                  f"::error::Postgres restore-drill pass count {ran} < floor {floor}. "
+                  "The WS2 restore drill is unproven on this run."
+              )
+              sys.exit(1)
+          PYDR
+
+      - name: Assert real-Postgres staff-auth tests actually ran
+        if: always()
+        run: |
+          if [ ! -f junit.xml ]; then
+            echo "::error::junit.xml missing - pytest did not run."
+            exit 1
+          fi
+          python <<'PYAUTH'
+          import sys, xml.etree.ElementTree as ET
+
+          tree = ET.parse("junit.xml")
+          ran = skipped = 0
+          for case in tree.iter("testcase"):
+              cls = case.get("classname", "")
+              if not cls.startswith("tests.auth.test_staff_token_lifecycle"):
+                  continue
+              name = case.get("name", "")
+              if not (
+                  name == "test_postgres_audit_order_is_deterministic_under_collisions"
+                  or name == "test_real_postgres_valid_token_survives_shared_ip_failure_budget"
+              ):
+                  continue
+              if case.find("skipped") is not None:
+                  skipped += 1
+                  continue
+              if case.find("failure") is not None or case.find("error") is not None:
+                  print(f"::error::Real-Postgres staff-auth test {cls}::{name} failed.")
+                  sys.exit(1)
+              ran += 1
+
+          floor = 2
+          print(f"Real-Postgres staff-auth tests passed: {ran} (skipped: {skipped}; floor: {floor})")
+          if ran < floor:
+              print(
+                  f"::error::Real-Postgres staff-auth pass count {ran} < floor {floor}. "
+                  "The production auth boundary is unproven on this run."
+              )
+              sys.exit(1)
+          PYAUTH
+
+      - name: Assert tests/native's platform-independent (pure) suite actually ran
+        # WS4 (native-Windows program, slice:ws4-dual-runtime-guard): the
+        # Windows-only real-probe tests (tests/native/test_win_probes.py --
+        # "win" is in every Windows-only test module/name by convention) skip
+        # here on ubuntu; every OTHER tests/native module (the D3 decision
+        # table, GuardMonitor, models, and the CLI orchestration -- all
+        # fully fake/injected, no OS dependency) must actually PASS, not just
+        # collect. Floor = the exact current collection count of
+        # `pytest tests/native -m "not windows_only"`. This WP1 repair
+        # replaces the old name-substring selector; regenerate and bind the
+        # final JUnit identity receipt after candidate freeze.
+        if: always()
+        run: |
+          python scripts/verify_native_junit_floor.py \
+            --junit junit-native-pure.xml \
+            --floor 1429 \
+            --label "tests/native pure suite"
+
+      - name: Upload junit (ws3 claims-evidence D3/D7)
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: test-junit
+          path: |
+            junit.xml
+            junit-native-pure.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload producer meta (ws3 claims-evidence D3/D7)
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: test-meta
+          path: test-meta.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  engine:
+    name: GStreamer live engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        # ws3 claims-evidence (D3): explicit PR-head checkout, same rationale
+        # as the test job above.
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Emit producer meta (ws3 claims-evidence D3)
+        run: python3 scripts/policy/emit_producer_meta.py --job-id engine --out engine-meta.json
+
+      # NB: deliberately NOT actions/setup-python ??? apt `python3-gi` targets the
+      # system python3 (ubuntu-24.04 ships 3.12), and the runner script builds its
+      # venv from that with --system-site-packages so gi is importable. A setup-python
+      # interpreter would not see the apt-installed gi.
+      - name: Install GStreamer + gi (the live engine's runtime)
+        # TEST-001 (Stage-1 re-open audit, Critical): the GStreamer engine harness
+        # (tests/egress/test_gst_engine_wsl.py) used to skip on every CI run because no
+        # runner had gi/GStreamer ??? engine.reload_program shipped with no regression
+        # gate. This job installs the stack so the harness actually RUNS, and the floor
+        # step below fails loud if it ever silently drops back to skipped.
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # Bounded for the same dpkg-lock reason as the media-prereq step above.
+          APT="sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3"
+          timeout 300 $APT update
+          timeout 600 $APT install -y \
+            python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+            ffmpeg
+          gst-launch-1.0 --version | head -n 1
+          ffprobe -version | head -n 1
+
+      - name: Run the live engine harness (junit)
+        run: |
+          bash tests/egress/run_wsl_engine_tests.sh \
+            --junitxml=engine-junit.xml -o junit_family=xunit2
+
+      - name: Assert the engine tests actually ran (no silent skip)
+        if: always()
+        run: |
+          if [ ! -f engine-junit.xml ]; then
+            echo "::error::engine-junit.xml missing ??? the engine harness did not run."
+            exit 1
+          fi
+          python <<'PYEOF'
+          import sys, xml.etree.ElementTree as ET
+
+          tree = ET.parse("engine-junit.xml")
+          ran = skipped = 0
+          for case in tree.iter("testcase"):
+              if not case.get("classname", "").startswith("tests.egress.test_gst_engine_wsl"):
+                  continue
+              if case.find("skipped") is not None:
+                  skipped += 1
+                  continue
+              if case.find("failure") is not None or case.find("error") is not None:
+                  print(f"::error::Engine test {case.get('name')} failed.")
+                  sys.exit(1)
+              ran += 1
+
+          floor = 11
+          print(f"Live engine tests passed: {ran} (skipped: {skipped}; floor: {floor})")
+          if ran < floor:
+              print(
+                  f"::error::Engine pass count {ran} < floor {floor}. The GStreamer "
+                  "engine is unproven on this run (gi/GStreamer missing or tests skipped)."
+              )
+              sys.exit(1)
+          PYEOF
+
+      - name: Upload junit (ws3 claims-evidence D3/D7)
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: engine-junit
+          path: engine-junit.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload producer meta (ws3 claims-evidence D3/D7)
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: engine-meta
+          path: engine-meta.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  nats-boundary:
+    name: NATS JetStream real-boundary
+    # 1.0-hardening: tests/platform/test_nats_broker_real.py silently skipped on
+    # every CI run (CIVICCAST_RUN_NATS_TESTS was never set anywhere). This job
+    # runs it against a real JetStream server so a regression in the broker
+    # integration cannot ship green-by-skip.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        # ws3 claims-evidence (D3): explicit PR-head checkout, same rationale
+        # as the test job above.
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Emit producer meta (ws3 claims-evidence D3)
+        run: python scripts/policy/emit_producer_meta.py --job-id nats-boundary --out nats-boundary-meta.json
+
+      - name: Install project (dev)
+        run: uv sync --all-extras --group dev
+
+      - name: Run the real-boundary test (skip = failure)
+        # The test manages its own JetStream container via testcontainers; the
+        # env flag flips "quietly skip" into a hard failure if Docker or
+        # testcontainers is unavailable ??? same posture as the Postgres guard.
+        env:
+          CIVICCAST_RUN_NATS_TESTS: "1"
+        run: |
+          uv run pytest tests/platform/test_nats_broker_real.py -v \
+            --junitxml=nats-boundary-junit.xml -o junit_family=xunit2
+
+      - name: Upload junit (ws3 claims-evidence D3/D7)
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: nats-boundary-junit
+          path: nats-boundary-junit.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload producer meta (ws3 claims-evidence D3/D7)
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: nats-boundary-meta
+          path: nats-boundary-meta.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  windows-native:
+    name: WS4 dual-runtime guard (real Windows probes)
+    # workflow-cost: windows-pr-justification -- Windows registry, process-table, and WSL probes require a hosted Windows runner.
+    # slice:ws4-dual-runtime-guard -- SDR-001's point that fixture-only proof
+    # is insufficient applies here: tests/native/test_win_probes.py touches
+    # the real registry, the real process table, and real wsl.exe. This job
+    # is that proof running for real, not just "pure" tests/native on ubuntu.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (dev)
+        run: uv sync --group dev
+
+      - name: Run tests/native (junit)
+        run: uv run pytest tests/native -q --junitxml=junit-native-win.xml
+
+      - name: Assert the full tests/native suite ran on Windows -- nothing may skip
+        # windows-latest has no CivicCast WSL distro (wsl.exe itself may even
+        # be absent) -- our probes classify that as readable-negative
+        # (detect_wsl_install False -> A2 "no CivicCast distro registered")
+        # or unreadable (a registered-but-broken distro), never a silent
+        # skip. If wsl.exe is missing entirely, probe_indistro_services'
+        # FileNotFoundError handling must still classify the same way --
+        # verified locally with a PATH-stripped runner stub in
+        # test_win_probes.py's FALSIFICATION test. Floor = the FULL
+        # tests/native collection count (1273 pure + 118 explicitly marked Windows-only)
+        # as of the install-only-refusal fix (2026-07-30); regenerate and
+        # bind the final JUnit identity receipt after candidate freeze. NOTE: this
+        # floor assumes a CLEAN windows-latest
+        # runner with no pre-existing CivicCast WSL install/keeper process --
+        # 3 real-fire tests (test_probe_keeper_positive_for_real_spawned_flag_process_then_negative_after_kill,
+        # test_detect_wsl_install_false_on_this_distro_less_box,
+        # test_probe_indistro_services_real_fire_negative_no_distro_registered)
+        # assert a distro-less/keeper-less box, which CI's ephemeral runner is
+        # but a shared dev box that ALSO runs the live product would not be.
+        if: always()
+        shell: bash
+        run: |
+          python scripts/verify_native_junit_floor.py \
+            --junit junit-native-win.xml \
+            --floor 1565 \
+            --label "tests/native Windows suite"
+
+      - name: Upload Windows native junit
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: windows-native-junit
+          path: junit-native-win.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  claims-verifier:
+    name: Claims-evidence verifier
+    # ws3 claims-evidence (D3/D7): needs == expected_producers keys exactly
+    # (docs/claims/workflow-contract.yaml). if: always() plus explicit
+    # per-producer result evaluation below is the fail-closed rule the spec
+    # requires ??? a job that `needs` a skipped/failed job would otherwise be
+    # skipped itself, silently evading verification (D3).
+    needs: [test, engine, nats-boundary]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (dev)
+        run: uv sync --group dev
+
+      - name: Download producer artifacts
+        uses: actions/download-artifact@v7.0.0
+        timeout-minutes: 10
+        with:
+          path: claims-artifacts
+          pattern: "*-junit"
+
+      - name: Download producer meta artifacts
+        uses: actions/download-artifact@v7.0.0
+        timeout-minutes: 10
+        with:
+          path: claims-artifacts
+          pattern: "*-meta"
+
+      - name: Run claims-evidence verifier (same-run mode)
+        env:
+          # GitHub does not expose needs.*.result as a single JSON blob to
+          # `run:` steps; the explicit per-producer env mapping below is the
+          # fail-closed evaluation D3 requires (a skipped/failed producer
+          # must fail the verifier, never silently skip it).
+          CLAIMS_PRODUCER_RESULT_TEST: ${{ needs.test.result }}
+          CLAIMS_PRODUCER_RESULT_ENGINE: ${{ needs.engine.result }}
+          CLAIMS_PRODUCER_RESULT_NATS_BOUNDARY: ${{ needs['nats-boundary'].result }}
+          CLAIMS_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python - <<'PYEOF' > producer-results.json
+          import json
+          import os
+
+          results = {
+              "test": os.environ["CLAIMS_PRODUCER_RESULT_TEST"],
+              "engine": os.environ["CLAIMS_PRODUCER_RESULT_ENGINE"],
+              "nats-boundary": os.environ["CLAIMS_PRODUCER_RESULT_NATS_BOUNDARY"],
+          }
+          print(json.dumps(results, indent=2))
+          PYEOF
+          cat producer-results.json
+          uv run python scripts/policy/check_claims_evidence.py \
+            --mode same-run \
+            --registry docs/claims/claims.yaml \
+            --schema docs/claims/claims-schema.json \
+            --workflow-contract docs/claims/workflow-contract.yaml \
+            --workflow-file .github/workflows/ci-test.yml \
+            --artifacts-dir claims-artifacts \
+            --producer-results producer-results.json \
+            --ci-safe-controls
+

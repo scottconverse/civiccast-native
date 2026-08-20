@@ -1,0 +1,101 @@
+{
+  "models": {
+    "gemma4-12b": {
+      "component": "summary-gemma4-12b",
+      "config": {
+        "bytes": 548,
+        "sha256": "c805f5b265d8e695c44f4065dfc368206cd8026447604925fef8db57ee32ee23"
+      },
+      "layers": [
+        {
+          "bytes": 7381382048,
+          "media_type": "application/vnd.ollama.image.model",
+          "sha256": "1278394b693672ac2799eadc9a83fd98259a6a88a40acfb1dcaa6c6fc895a606"
+        },
+        {
+          "bytes": 175115584,
+          "media_type": "application/vnd.ollama.image.projector",
+          "sha256": "675ad6e68101ca9413ec806855c452362f0213f2dfc5800996b086fdb8119842"
+        },
+        {
+          "bytes": 10174,
+          "media_type": "application/vnd.ollama.image.license",
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "bytes": 42,
+          "media_type": "application/vnd.ollama.image.params",
+          "sha256": "56380ca2ab89f1f68c283f4d50863c0bcab52ae3f1b9a88e4ab5617b176f71a3"
+        }
+      ],
+      "manifest_bytes": 905,
+      "manifest_sha256": "4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c",
+      "repository": "gemma4",
+      "tag": "12b"
+    },
+    "gemma4-e4b": {
+      "component": "summary-gemma4-e4b",
+      "config": {
+        "bytes": 473,
+        "sha256": "f0988ff50a2458c598ff6b1b87b94d0f5c44d73061c2795391878b00b2285e11"
+      },
+      "layers": [
+        {
+          "bytes": 9608338848,
+          "media_type": "application/vnd.ollama.image.model",
+          "sha256": "4c27e0f5b5adf02ac956c7322bd2ee7636fe3f45a8512c9aba5385242cb6e09a"
+        },
+        {
+          "bytes": 11355,
+          "media_type": "application/vnd.ollama.image.license",
+          "sha256": "7339fa418c9ad3e8e12e74ad0fd26a9cc4be8703f9c110728a992b193be85cb2"
+        },
+        {
+          "bytes": 42,
+          "media_type": "application/vnd.ollama.image.params",
+          "sha256": "56380ca2ab89f1f68c283f4d50863c0bcab52ae3f1b9a88e4ab5617b176f71a3"
+        }
+      ],
+      "manifest_bytes": 709,
+      "manifest_sha256": "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb",
+      "repository": "gemma4",
+      "tag": "e4b"
+    },
+    "translategemma-4b": {
+      "component": "translation-translategemma-4b",
+      "config": {
+        "bytes": 489,
+        "sha256": "37490ee3c3a4ed4437a014611f3f9e9a7bc1d9934db250edaf2f929cd4f1f5b5"
+      },
+      "layers": [
+        {
+          "bytes": 3298866368,
+          "media_type": "application/vnd.ollama.image.model",
+          "sha256": "bdbf939b402e2f88fbe3e918beb777813009335756b4c17be7fe008dfe4815d4"
+        },
+        {
+          "bytes": 358,
+          "media_type": "application/vnd.ollama.image.template",
+          "sha256": "e0a42594d802e5d31cdc786deb4823edb8adff66094d49de8fffe976d753e348"
+        },
+        {
+          "bytes": 8431,
+          "media_type": "application/vnd.ollama.image.license",
+          "sha256": "3e2c24001f9ef57bf7ec959a3658fbb49cdad113cdf394c264da9d16f9bdd132"
+        },
+        {
+          "bytes": 61,
+          "media_type": "application/vnd.ollama.image.params",
+          "sha256": "339e884a40f6708bc761d367f0c08e448d5bb6f16b3961c340e44e0e4835a004"
+        }
+      ],
+      "manifest_bytes": 856,
+      "manifest_sha256": "c49d986b0764f5881c476eb21435bb62b7abc62347aab3d4a6071e811be510a1",
+      "repository": "translategemma",
+      "tag": "4b"
+    }
+  },
+  "ollama_runtime_version": "0.30.6",
+  "registry": "registry.ollama.ai",
+  "schema_version": 1
+}

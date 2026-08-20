@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CivicCast (Native)",
+  "mainBinaryName": "CivicCast Native",
+  "version": "1.0.0-beta.1",
+  "identifier": "org.civiccast.native",
+  "app": {
+    "windows": [
+      {
+        "title": "CivicCast (Native) Setup",
+        "width": 1120,
+        "height": 760,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "CivicCast",
+    "copyright": "© 2026 The CivicCast Authors",
+    "resources": {
+      "resources/vc_redist.x64.exe": "vc_redist.x64.exe"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "nsis-hooks-bootstrap.nsh",
+        "languages": ["English"],
+        "customLanguageFiles": {
+          "English": "nsis-lang-native-english.nsh"
+        },
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "producers": [
+    {"id": 445, "name": "John Militaru", "active": true},
+    {"id": 61, "name": "Tanya Trice", "active": true}
+  ]
+}

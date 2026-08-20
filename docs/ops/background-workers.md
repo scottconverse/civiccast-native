@@ -1,0 +1,304 @@
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
+# Background Workers
+
+CivicCast runs three lifespan-supervised background services when durable
+storage is active. Each follows the same deployment shape: env-selected mode,
+fail-fast settings validation at startup, a loop that survives and logs scan
+errors, clean stop on shutdown.
+
+| Worker | What it does | Mode variable (default) |
+|---|---|---|
+| Recording finalization | Turns ended broadcasts into recorded, packaged VOD assets. Full guide: [Finalization Worker Runbook](finalization-worker-runbook.md). | `CIVICCAST_FINALIZATION_WORKER` (`inline`; also `external`/`off`) |
+| ActivityPub delivery retry | Re-delivers failed follower deliveries with bounded exponential backoff; dead-letters after max attempts. | `CIVICCAST_ACTIVITYPUB_RETRY_WORKER` (`inline`; or `off`) |
+| Retention review | Flags assets whose retention schedule expired into the records-clerk disposition queue. **Never deletes anything.** | `CIVICCAST_RETENTION_WORKER` (`inline`; or `off`) |
+| Offline caption job | Captions a published recording: transcribe → operator review queue → reviewed WebVTT attached to the published VOD. | `CIVICCAST_OFFLINE_CAPTION_JOB` (`inline`; or `off`) |
+
+## ActivityPub delivery retry
+
+A delivery that fails at publish time (network error or HTTP >= 400) is
+queued durably in `activitypub_delivery_retries`. The worker retries due rows
+and records successful retries in the normal delivery log.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CIVICCAST_ACTIVITYPUB_RETRY_POLL_SECONDS` | `60` | Scan interval. |
+| `CIVICCAST_ACTIVITYPUB_RETRY_BACKOFF_SECONDS` | `120` | Base for exponential backoff (120s, 240s, 480s, …). |
+| `CIVICCAST_ACTIVITYPUB_RETRY_MAX_ATTEMPTS` | `8` | Attempts (including the original send) before a row is dead-lettered. |
+
+Dead-lettered rows stay in the table with the last status code and error for
+inspection; they are never rescanned automatically. To replay one after fixing
+the follower-instance issue:
+
+- **Operator console:** the Federation screen's "Delivery retry queue" panel
+  lists pending/dead-lettered deliveries with a **Replay delivery** button.
+- **API:** `GET /api/staff/activitypub/delivery-retries` to inspect the queue;
+  `POST /api/staff/activitypub/delivery-retries/{retry_id}/replay` (409 unless
+  dead-lettered) grants a fresh attempt budget and the worker re-delivers on
+  its next scan.
+
+## Channel automation driver (cable automation)
+
+The app drives enabled egress channels 24/7 — the `civiccast egress run` CLI
+is no longer required for normal operation (it remains for external-process
+deployments). Each poll processes every enabled channel's durable command
+queue and supervises its encoder. Channels with `auto_start` set on their
+egress config are brought back on air automatically after an app or machine
+restart, and join-in-progress source planning resumes the current program at
+the wall-clock offset so the channel stays on its published log. A channel
+on fallback slate is reloaded the moment a scheduled program becomes due.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CIVICCAST_CHANNEL_AUTOMATION` | `inline` | `inline` runs the driver as a lifespan thread; `off` disables it (use the CLI worker instead). |
+| `CIVICCAST_CHANNEL_AUTOMATION_POLL_SECONDS` | `2` | Poll cadence per pass over all enabled channels. |
+| `CIVICCAST_EGRESS_WORK_DIR` | platform default | Directory for prepared segments and generated slates. |
+
+Gaps between scheduled programs fill per the channel's `fill_policy`
+(egress config): `slate` (default) or `bulletins` — a rotation of branded
+slides rendered from the channel's APPROVED community bulletins
+(`/api/staff/cg/channels/{id}/bulletins`). With zero approved bulletins the
+channel falls back to the plain slate; an unchanged board is served from a
+per-slide render cache.
+
+Do not run the inline driver AND a CLI egress worker for the same channels
+at once — two daemons would race on the same command queue.
+
+## Program-log materializer (cable automation)
+
+Operator-defined recurring program slots (`/api/staff/programlog/slots`)
+materialize into real premiere schedule items over a rolling horizon, so a
+cable channel always has upcoming programming for the playout path. Skipped
+occurrences (schedule conflicts, unplayable assets) are recorded with their
+reason and surfaced in the channel log — never retried silently.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CIVICCAST_PROGRAM_LOG_WORKER` | `inline` | `inline` runs the materializer as a lifespan thread; `off` disables it (the `/materialize` endpoint still works on demand). |
+| `CIVICCAST_PROGRAM_LOG_POLL_SECONDS` | `300` | Scan interval. |
+| `CIVICCAST_PROGRAM_LOG_HORIZON_HOURS` | `72` | How far ahead occurrences are materialized. |
+
+## Subscriber webhook delivery retry
+
+A real webhook delivery that fails at dispatch time (network error or HTTP
+>= 400; only possible when `CIVICCAST_PROVIDER_WEBHOOK=real` — the default
+mock never fails) is queued durably in `subscription_webhook_retries`. The
+row carries only the subscription id and the notification payload: the
+webhook URL and per-subscription signing secret stay sealed in the
+subscriptions table and are reopened at send time. A subscription that
+unsubscribed after the failure is dead-lettered without being called.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CIVICCAST_WEBHOOK_RETRY_WORKER` | `inline` | `inline` runs the worker as a lifespan thread; `off` disables it. |
+| `CIVICCAST_WEBHOOK_RETRY_POLL_SECONDS` | `60` | Scan interval. |
+| `CIVICCAST_WEBHOOK_RETRY_BACKOFF_SECONDS` | `120` | Base for exponential backoff (120s, 240s, 480s, …). |
+| `CIVICCAST_WEBHOOK_RETRY_MAX_ATTEMPTS` | `8` | Attempts (including the original send) before a row is dead-lettered. |
+
+Dead-lettered rows stay in the table with the last status code and error for
+inspection; they are never rescanned automatically.
+
+## Retention review
+
+The worker scans `assets.retention_until` and flags expired, non-`permanent`
+assets exactly once into `asset_disposition_reviews`. Records clerks read the
+queue at `GET /api/staff/records/disposition-queue`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CIVICCAST_RETENTION_POLL_SECONDS` | `3600` | Scan interval (hourly is plenty; schedules are measured in days). |
+
+**Disposition is a human decision.** The retention presets ship with
+"confirm with your records officer" disclaimers; automatic purge is an
+explicit pending product decision. When a flagged asset's disposition is
+decided, act per your station's records policy — purge, extend
+`retention_until`, or apply a litigation hold — and keep the disposition
+record with the station's retention files.
+
+## Live caption tap
+
+Beta B6 (product decision #1, option A — egress audio fork). When configured,
+the egress encoder forks a low-bitrate audio-only output of the same ffmpeg
+process: rolling mono 16 kHz s16le WAV segments under
+`CIVICCAST_CAPTION_TAP_DIR/<channel_id>/chunk-NNNNNN.wav`. The caption tap
+worker consumes a segment only once a newer-numbered sibling exists (so a
+half-written file is never read), feeds it through the existing live caption
+seam (pipeline → two-window stabilization → **durable review queue**), then
+moves it to `processed/`; unreadable segments go to `quarantine/` and never
+kill the scan.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CIVICCAST_CAPTION_TAP` | `off` | `inline` runs the worker as a lifespan-supervised thread; `external` means you run `python -m civiccast.captions.tap_worker` as a separate process (same env + `DATABASE_URL`); `off` disables the worker (the egress fork still writes segments if the tap dir is set). |
+| `CIVICCAST_CAPTION_TAP_DIR` | unset | Tap root shared by the egress fork and the worker. Required when the mode is not `off`; setting it also enables the egress fork. |
+| `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
+| `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
+
+**Why off by default:** live transcription needs the local faster-whisper
+model runtime. Enabling `inline` without the model installed fails fast at
+startup rather than silently captioning nothing. Cues land in the operator
+caption review queue (`caption_review_items`) exactly like the proof path —
+review and publication flow is unchanged.
+
+## Offline caption job (published-file captions)
+
+The live tap above is the accessibility path. This one is the **legal**
+path: captions on the file a station publishes. Approving publish for a
+recording queues a durable job in `offline_caption_jobs`; the worker
+transcribes the recording's audio with the station's staged caption model
+and files every cue in the same operator review queue the live path uses.
+
+Every worker tick also runs the retained-audio-evidence retention sweep
+(`CaptionEvidenceRetentionPolicy.from_system`, `civiccast/captions/retention.py`)
+against the same review queue -- the same 90-day/free-space lifecycle the
+live tap's readiness tick already enforced, but previously only from the
+live tap: a station running offline/VOD captioning with no airing live
+channel never pruned these per-cue WAVs (audit finding, MAJOR), so they grew
+unbounded on disk. A sweep *failure* (an exception, including building the
+policy the first time) never fails the caption job it runs alongside; it is
+logged and retried on the next tick.
+
+A clean sweep *result* is a different thing from a failure, and is honored:
+when the sweep reports the storage is not ready (the free-space reserve
+would be breached, or retained evidence is still over the storage cap even
+after pruning everything eligible), `run_once` skips every due job that
+tick -- neither stage-one transcription (which writes new evidence WAVs)
+nor stage-two publish runs -- exactly mirroring
+`CaptionTapWorker.run_once`'s own `if not retention.ready: ...` gate before
+any channel work (audit finding, P1; the result used to be discarded and
+every due job transcribed regardless of what the sweep found).
+
+The sweep's free-space reserve and storage-cap decisions are measured
+against the volume that actually holds this worker's evidence WAVs: the VOD
+package root (`CIVICCAST_VOD_PACKAGE_DIR`, or `CIVICCAST_UPLOAD_DIR` +
+`.civiccast-packages` -- the same resolution
+`civiccast.schedule.paths.resolve_vod_package_root` gives every queued
+job's own `package_dir`), not the live egress work directory
+`CaptionTapWorker` measures (audit finding, P1; those can be different
+filesystems, and reading the wrong one could let free-space or the storage
+cap silently blow out on the volume evidence is actually written to).
+
+Evidence WAVs shared by several cues from the same ASR window (one
+low-confidence chunk that produced multiple cues, so
+`_offline_audio_evidence_factory` / `CaptionTapWorker._audio_evidence_factory`
+attached the same file to each) are retained until the *latest* of those
+cues' resolutions, not the earliest: `_discover_candidates`'s per-path
+coalescing tracks the maximum `resolved_at` across every review row sharing
+a path, order-independent (audit finding, P2; fixed directly rather than
+deferred -- the change only ever delays a prune, never advances one, so it
+cannot make live evidence disappear earlier than before). This is shared
+code path for both the live tap and the offline job.
+
+The job has two stages because operator approval sits between them
+(spec §4.1 — no AI-generated text reaches a public surface unreviewed):
+
+1. `pending` → transcribe and queue for review. **Publishes nothing.**
+2. `awaiting_review` → re-checked each poll. Once every queued cue has an
+   operator decision, the approved/edited text is attached to the packaged
+   VOD: a segmented WebVTT track declared in the multivariant manifest
+   (`captions/<lang>/playlist.m3u8`) plus a flat whole-recording
+   `captions/captions.vtt` for records requests. Both are served by the
+   existing published-gated `/media/vod/{asset_id}/...` route.
+
+Rejected cues are dropped. A queue that is rejected in full completes with
+the recording left uncaptioned rather than publishing text an operator
+refused.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `CIVICCAST_OFFLINE_CAPTION_JOB` | `inline` | `inline` runs the worker as a lifespan thread; `off` disables it. The model is loaded lazily, so an idle queue costs nothing. |
+| `CIVICCAST_OFFLINE_CAPTION_POLL_SECONDS` | `60` | Scan interval. |
+| `CIVICCAST_OFFLINE_CAPTION_BACKOFF_SECONDS` | `300` | Base for exponential backoff (300s, 600s, 1200s, …). |
+| `CIVICCAST_OFFLINE_CAPTION_MAX_ATTEMPTS` | `4` | Attempts per stage before the job is marked `failed` with its reason. |
+| `CIVICCAST_OFFLINE_CAPTION_CHUNK_SECONDS` | `30` | Audio handed to the model per call. Offline has no latency budget, so this is Whisper's own encoder window rather than the live tap's 5 s. |
+
+Model, device, and compute type are **not** configured here — the job builds
+its runtime through the same seam the live path uses, which resolves the
+operator-selected caption tier and inherits the hardware-adaptive
+device/compute-type the native station runtime published
+(`CIVICCAST_WHISPER_DEVICE` / `CIVICCAST_WHISPER_COMPUTE_TYPE` /
+`CIVICCAST_WHISPER_MODEL_PATH`).
+
+A `failed` job stays in the table with its reason; the recording remains
+published and uncaptioned rather than shipping unverified text. Re-approving
+publish for that asset queues a fresh job.
+
+**Operator visibility (staff API):** the router (`civiccast/captions/router.py`)
+has no React screen yet, but exposes:
+
+- `GET /api/staff/captions/offline-jobs` — list jobs, optionally filtered by
+  `asset_id` and/or `state`, with `state`/`attempts`/`last_error` on each row.
+- `POST /api/staff/captions/offline-jobs/{job_id}/retry` — reset a `failed`
+  job to `pending` with a fresh attempt budget, without re-approving publish.
+  Requires the `records_clerk` role. 409 if the job is not currently `failed`,
+  or if a different job is already active (`pending`/`awaiting_review`) for
+  the same asset -- retrying a failed job must not put two active jobs on
+  one asset (audit finding, MAJOR; see the partial-unique index note
+  below).
+
+Only a **Portal** retry (`POST
+/api/staff/publish/assets/{asset_id}/surfaces/portal/retry`) queues offline
+captioning; retrying any other surface (YouTube, Internet Archive, ...) does
+not, even on an asset with no caption job yet, since only Portal success
+makes the recording public. This also means retrying an unrelated surface on
+an asset whose captions already completed never starts a second
+transcription pass for it.
+
+Two concurrent enqueue attempts for the same asset (a publish approval racing
+a retry, for instance) cannot both create an active job: a partial-unique
+index (`ix_offline_caption_jobs_one_active_per_asset`,
+`0075_offline_caption_jobs`) allows at most one `pending`/`awaiting_review`
+row per asset. The loser of that race gets back the winning job instead of a
+duplicate. The manual retry endpoint above is guarded by the same index --
+it pre-checks `active_for_asset` before reopening a `failed` job, and the
+durable store also catches the index's `IntegrityError` on the write itself
+(closing the gap between that check and the write), so a race there ends in
+a clean 409 rather than two active jobs or a raw 500.
+
+### Known follow-ups (out of One v1 scope)
+
+CivicCast One v1 serves uploaded files through the local portal VOD path;
+LIVE broadcast and CDN delivery are deferred to keystone K4. Two gaps below
+are consequences of that scope line, owner-approved to defer rather than
+fix now:
+
+1. **A live-finalized recording would transcribe but fail to attach.**
+   `_queue_offline_captions` (`civiccast/publish/router.py:163`) resolves an
+   asset's package directory with `resolve_vod_package_dir`
+   (`civiccast/schedule/paths.py`), which only knows the **upload**
+   convention: `.civiccast-packages/<asset_id>` under the configured upload
+   root. `LiveFinalizationWorker._package_once`
+   (`civiccast/live/finalization_worker.py`) packages a live-finalized
+   recording somewhere else entirely -- `<recording_path.parent>/<live_session_id>-hls/`,
+   persisted on the finalization row's `local_package_manifest_path` -- and
+   nothing in the offline caption path consults that record. Stage one
+   (transcription) does not depend on the package directory at all, so it
+   would still succeed and queue review rows; stage two
+   (`OfflineCaptionJobWorker._publish_if_reviewed` in
+   `civiccast/captions/vod_job.py`, calling `attach_reviewed_captions`)
+   would fail every attempt against a package directory that was never
+   written, exhaust its retry budget, and land the job in `failed` with the
+   recording permanently uncaptioned. In One v1, offline captioning is only
+   reachable from an uploaded-and-published asset (LIVE is out of scope), so
+   this path is unreachable today -- it becomes reachable the moment K4
+   brings live broadcast back and a live-finalized recording is approved for
+   portal publish. The fix, when K4 lands: resolve the package directory the
+   same way `civiccast/stream/media_router.py`'s `_package_dir_for_asset`
+   already does -- prefer `LiveFinalizationJob.local_package_manifest_path`
+   when present, and fall back to the upload convention otherwise.
+
+2. **Caption attach never re-uploads to a CDN.** `attach_reviewed_captions`
+   (`civiccast/captions/vod.py:439`, called from
+   `civiccast/captions/vod_job.py:553`) rewrites the multivariant manifest
+   and writes the segmented WebVTT track and the flat `captions.vtt` sidecar
+   **only on local disk**, inside the asset's package directory. That is
+   correct and complete for One v1, which serves VOD from the local portal
+   origin. It is a gap only for a CDN-backed deployment (`CIVICCAST_CDN_PROVIDER`,
+   the same adapter `LiveFinalizationWorker._upload_package` uses at initial
+   finalization time): once a package has already been pushed to the CDN,
+   attaching captions afterward updates only the local copy, so a CDN-served
+   viewer never sees the caption track or the rewritten manifest entry that
+   declares it. The fix, when CDN-backed deployments are in scope: re-run
+   (or extend) the finalization worker's CDN upload for the rewritten
+   manifest and the new caption-track files after `attach_reviewed_captions`
+   returns.

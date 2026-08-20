@@ -1,0 +1,456 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+
+[project]
+name = "civiccast"
+dynamic = ["version"]
+description = "Open-source, self-hostable, public-good civic broadcast platform"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE-CODE" }
+authors = [
+  { name = "The CivicCast Authors" },
+]
+keywords = ["civic", "broadcast", "streaming", "hls", "captions", "public-records"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Multimedia :: Sound/Audio :: Capture/Recording",
+  "Intended Audience :: Other Audience",
+]
+dependencies = [
+  # Sprint 0.1 — Foundation: CLI, platform substrate (hardware probe), HTTP API.
+  # Per ADR 0005 (CLI = Typer; GPU probe = nvidia-ml-py) and spec §5.1
+  # (FastAPI / Uvicorn / psutil).
+  "typer>=0.12.5",
+  # FastAPI 0.137.x pulls Starlette 1.3.x, whose TestClient now raises a
+  # StarletteDeprecationWarning under pytest's warnings-as-errors policy unless
+  # httpx2 is installed. Stay on the currently locked 0.136.x line until the
+  # test client migration is intentional.
+  "fastapi>=0.115.0,<0.137.0",
+  "starlette>=0.46.0,<1.4.0",
+  "uvicorn[standard]>=0.32.0",
+  "psutil>=6.1.0",
+  "pydantic>=2.9.0",
+  # nvidia-ml-py is the NVIDIA-maintained NVML binding (imports as `pynvml`).
+  # Graceful no-op on systems without an NVIDIA driver.
+  "nvidia-ml-py>=12.560.0",
+  # httpx: BunnyCDN Storage API client (civiccast.stream.cdn.bunny).
+  # Promoted to main deps at Sprint 0.2; was dev-only in Sprint 0.1.
+  "httpx>=0.27.0",
+  # Sprint 0.3 — DB foundation. Per ADR 0008.
+  "sqlalchemy>=2.0",            # Per ADR 0008 — typed sync ORM + DeclarativeBase
+  "alembic>=1.13",              # Per ADR 0008 — schema migrations, both up + down
+  "psycopg[binary]>=3.2",       # Per ADR 0008 — Postgres driver (binary extra: no system libpq required)
+  # Sprint 0.3 — asset upload. FastAPI Form/UploadFile parsing requires python-multipart.
+  "python-multipart>=0.0.9",
+  "reportlab==4.5.1",
+  "pikepdf==10.6.0",
+  # 4.1.0 Agenda Bridge Phase 2 (PrimeGov) -- bounded PDF-text extraction for
+  # a compiled agenda that ships as PDF only (civiccast/agenda_import/
+  # docparse.py). Pure-Python, ships inline types (py.typed), no mypy
+  # override needed. Pinned floor since only PdfReader.pages/extract_text()
+  # (stable since early 3.x) is used.
+  "pypdf>=5.0",
+  "keyring==25.7.0",
+  # Floor raised 2026-08-06 for PYSEC-2026-3552 / CVE-2026-69247 (Bleichenbacher
+  # oracle in PKCS#7 EnvelopedData decryption, fixed in 50.0.0). We don't use
+  # PKCS#7/S-MIME (Ed25519 pack signing, ActivityPub RSA HTTP signatures, x509
+  # CA only) so the finding wasn't reachable, but a fix exists so we upgrade
+  # rather than allowlist per security/pip-audit-allowlist.json's own rule.
+  "cryptography>=50.0.0",
+  "nats-py>=2.9.0",
+  # asn1crypto is pure-Python and ships an RFC 3161 (`tsp`) module with
+  # TimeStampReq / TimeStampResp / TSTInfo encoders + decoders. We use it
+  # in civiccast/records/rfc3161.py to talk to real RFC 3161 TSAs (the
+  # legal-archive PDF/A timestamping path). No compiled deps; pinned a
+  # generous floor since the API has been stable since 1.5.
+  "asn1crypto>=1.5",
+  "defusedxml>=0.7.1",
+  # WS4 dual-runtime exclusion guard (civiccast/native) -- the Global mutex
+  # (win32event), its security descriptor (win32security), and the D7/D8
+  # registry writes need pywin32 on Windows; ws5's supervisor spec needs it
+  # anyway. Windows-only marker keeps it out of Linux/macOS installs. PSF/BSD
+  # license -- no GPL packaging-closure issue.
+  "pywin32>=311; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+# Cloudflare R2 CDN adapter — alternative to BunnyCDN per ADR 0006.
+# Install with `pip install 'civiccast[cloudflare-r2]'` (or
+# `uv add civiccast[cloudflare-r2]`). Default install does not pull boto3
+# so stations on BunnyCDN keep their dependency tree small.
+cloudflare-r2 = [
+  "boto3>=1.35",
+  "botocore>=1.35",
+]
+# S3-compatible CDN adapters — Fastly Object Storage and Akamai (Linode)
+# Object Storage per ADR 0020. Same boto3 dependency as cloudflare-r2.
+s3-cdn = [
+  "boto3>=1.35",
+  "botocore>=1.35",
+]
+captions-runtime = [
+  "faster-whisper>=1.2.1,<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/scottconverse/civiccast"
+Documentation = "https://github.com/scottconverse/civiccast/tree/main/docs"
+Repository = "https://github.com/scottconverse/civiccast"
+Issues = "https://github.com/scottconverse/civiccast/issues"
+Changelog = "https://github.com/scottconverse/civiccast/blob/main/CHANGELOG.md"
+
+[project.scripts]
+civiccast = "civiccast.cli:main_entrypoint"
+# WS4 dual-runtime exclusion guard: satisfies spec D7/D8's literal
+# `civiccast-runtime cutover-to-native` binary name AND ADR-0005's umbrella
+# `civiccast <verb>` convention (the same runtime_app is also registered as
+# `civiccast runtime <verb>` in civiccast/cli.py).
+civiccast-runtime = "civiccast.native.runtime_cli:main_entrypoint"
+
+# ---------------------------------------------------------------------------
+# Build system
+# ---------------------------------------------------------------------------
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "civiccast/_version.py"
+
+[tool.hatch.build.targets.sdist]
+# Keep the source distribution to actual source. Without this, hatchling
+# default-includes the whole working tree and smudges the LFS-tracked
+# tester-handoff proof binaries in, ballooning the sdist to ~680 MB. These
+# paths are scratch/evidence/proof artifacts, not package source.
+exclude = [
+  "/tester-handoff",
+  "/docs/releases/evidence",
+  "/.agent-runs",
+  "/artifacts",
+  "/target",
+  "/civiccast/apps/installer/src-tauri/target",
+  "/audit-*",
+  "/audit-walkthrough-*",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["civiccast"]
+exclude = [
+  "/civiccast/apps/**",
+  "**/*.cover",
+  "**/*.py,cover",
+]
+artifacts = [
+  "/civiccast/apps/app-platform-shells/scripts/build-targets.mjs",
+  "/civiccast/apps/app-platform-shells/src/**",
+  "/civiccast/apps/app-platform-shells/fixtures/**",
+  "/civiccast/apps/app-platform-shells/targets/**",
+  "/civiccast/apps/portal-operator/dist/**",
+  "/civiccast/apps/portal-public/dist/**",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"civiccast/records/fixtures/DejaVuSans.ttf" = "civiccast/records/fixtures/DejaVuSans.ttf"
+"civiccast/records/fixtures/DejaVuSans-LICENSE.txt" = "civiccast/records/fixtures/DejaVuSans-LICENSE.txt"
+"civiccast/records/fixtures/sRGB.icc" = "civiccast/records/fixtures/sRGB.icc"
+"civiccast/records/fixtures/sRGB-LICENSE.txt" = "civiccast/records/fixtures/sRGB-LICENSE.txt"
+"civiccast/alembic/alembic.ini" = "civiccast/alembic/alembic.ini"
+"civiccast/alembic/env.py" = "civiccast/alembic/env.py"
+"civiccast/alembic/script.py.mako" = "civiccast/alembic/script.py.mako"
+"civiccast/alembic/README.md" = "civiccast/alembic/README.md"
+"civiccast/alembic/versions/.gitkeep" = "civiccast/alembic/versions/.gitkeep"
+
+# ---------------------------------------------------------------------------
+# Dev dependencies (PEP 735)
+# ---------------------------------------------------------------------------
+
+[dependency-groups]
+dev = [
+  "ruff>=0.6.0",
+  "mypy>=1.11.0",
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "pytest-cov>=5.0.0",
+  "hypothesis>=6.112.0",
+  "pre-commit>=3.8.0",
+  # FastAPI's TestClient depends on httpx.
+  "httpx>=0.27.0",
+  # Type stubs for strict mypy.
+  "types-psutil>=6.1.0.20240901",
+  # Sprint 0.3 — real-Postgres test parity per ADR 0008 §Compliance.
+  "testcontainers[postgres]>=4.7",
+  # CloudflareR2Adapter test coverage (mocked S3) per ADR 0006.
+  "boto3>=1.35",
+  "botocore>=1.35",
+  "moto[s3]>=5.0",
+  "types-reportlab>=4.5.0.20260509",
+  "jiwer>=4.0.0",
+  "sacrebleu>=2.6.0",
+  "build>=1.5.0",
+  # YAML parser for the roadmap-status verifier (scripts/roadmap_status.py).
+  # Already present transitively via pre-commit; declared here so the verifier
+  # and its tests have it as a first-class dev dependency.
+  "pyyaml>=6.0",
+  "types-defusedxml>=0.7.0.20260504",
+  # Audit item #27 — CI security scanning (dependency + static analysis).
+  "pip-audit>=2.7.0",
+  "bandit>=1.7.0",
+  "pytest-randomly>=3.15.0",
+  "detect-test-pollution>=1.2.0",
+  # ws5-packaging-closure: PE import-table parsing for the native runtime
+  # closure builder (scripts/build_native_runtime_closure.py). Dev-only --
+  # the closure is a build-time artifact, not a runtime dependency of the
+  # shipped product.
+  "pefile>=2024.8.26",
+]
+
+# ---------------------------------------------------------------------------
+# uv workspace (per ADR 0004)
+#
+# Workspace members are added here as each module rung lands. Until a module
+# directory has its own pyproject.toml, it cannot be a workspace member.
+# Day 0 ships zero members; Sprint 0.1 lands the first one (civiccast/installer
+# or civiccast/platform, whichever comes first).
+# ---------------------------------------------------------------------------
+
+[tool.uv.workspace]
+members = []
+
+# ---------------------------------------------------------------------------
+# Ruff (lint + format)
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [
+  "docs/spec/spec.md",
+  "docs/spec/release-plan.md",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "B",    # flake8-bugbear
+  "C4",   # flake8-comprehensions
+  "UP",   # pyupgrade
+  "N",    # pep8-naming
+  "S",    # flake8-bandit (security)
+  "A",    # flake8-builtins
+  "RET",  # flake8-return
+  "SIM",  # flake8-simplify
+  "PTH",  # flake8-use-pathlib
+  "RUF",  # ruff-specific rules
+]
+ignore = [
+  "E501",  # line-too-long handled by formatter
+  "S101",  # assert is fine in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S", "N"]
+"scripts/**/*.py" = ["S"]
+# FastAPI uses Depends() / Query() / Body() in argument defaults — that is
+# the framework's documented dependency-injection contract, not a B008 bug.
+# Matches production router.py and the *_router.py variants (e.g.
+# playout_router.py). Scoped to the package so tests still get B008.
+"civiccast/**/*router.py" = ["B008"]
+"civiccast/summary/store.py" = ["S608"]
+"civiccast/records/store.py" = ["S608"]
+"civiccast/subscribe/store.py" = ["S608"]
+"civiccast/podcast/store.py" = ["S608"]
+"civiccast/auth/store.py" = ["S105", "S608"]
+"civiccast/subscribe/service.py" = ["S105"]
+"civiccast/subscribe/secrets.py" = ["S105"]
+# Tests for the DB foundation (1) define inline FastAPI routes that use the
+# Depends() default-arg pattern (B008) and (2) import FastAPI symbols whose
+# only role is to construct test apps inside a method (F401 false positive
+# at the module level when the symbol is consumed by a fixture/method).
+"tests/db/test_session.py" = ["B008", "F401"]
+"tests/platform/test_nats_broker_adapter.py" = ["B017", "RUF043"]
+"tests/platform/test_nats_broker_config.py" = ["B017", "RUF043"]
+# Per-module Alembic migration files: long-line tolerance for the
+# generated/hand-written DDL in upgrade()/downgrade() bodies. Lint
+# posture deferred to task 1b by ADR 0008 — settled here.
+"civiccast/*/migrations/versions/*.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+# `alembic` is the third-party Alembic package, not the repo's
+# alembic/ migration directory. Without this, ruff would treat
+# `from alembic import ...` as first-party and re-sort it after the
+# `from civiccast...` block.
+known-third-party = ["alembic"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# ---------------------------------------------------------------------------
+# mypy (strict for service modules)
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_decorators = true
+disallow_any_generics = true
+no_implicit_reexport = true
+show_error_codes = true
+pretty = true
+exclude = [
+  "build/",
+  "dist/",
+  "tests/fixtures/",
+]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = [
+  "boto3.*",
+  "botocore.*",
+  "faster_whisper.*",
+  "pikepdf.*",
+  "reportlab.*",
+  "sacrebleu",
+  "sacrebleu.*",
+  "nats.*",
+  "asn1crypto",
+  "asn1crypto.*",
+  "huggingface_hub",
+  "huggingface_hub.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# pywin32 ships no inline types and no third-party stub package is installed
+# (house pattern for un-stubbed platform-only deps, per civiccast/native's
+# WS4 dual-runtime guard: win32event/win32security drive the
+# Global\CivicCastRuntimeOwner mutex + its security descriptor. WS5
+# supervisor adds win32job (Job Object containment, D3), win32pipe/win32file
+# (the D7 control pipe + D2 worker pipes), and win32process (child process
+# groups / CTRL_BREAK). These modules are only ever imported lazily, inside
+# os.name == "nt"-guarded code paths in civiccast/native/.
+module = ["win32event", "win32event.*", "win32security", "win32security.*", "win32api", "win32api.*", "win32job", "win32job.*", "win32pipe", "win32pipe.*", "win32file", "win32file.*", "win32process", "win32process.*", "pywintypes"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests", "civiccast"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+  "--strict-markers",
+  "--strict-config",
+  "--import-mode=importlib",
+  "-ra",
+  "--showlocals",
+  # Determinism: pytest-randomly is installed for the informational
+  # deterministic-detectors "randomized-suite" job ONLY. Disable it by default so
+  # required jobs (ci-test) run in stable, reproducible order; the randomized job
+  # re-enables it explicitly with `-p randomly`.
+  "-p",
+  "no:randomly",
+]
+markers = [
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "integration: marks tests as integration tests requiring external services",
+  "ai: marks tests that require GPU + AI runtime (Whisper, Ollama)",
+  "wsl2: marks tests that require WSL2-specific behavior",
+  "windows_only: marks tests that require native Windows APIs or binaries",
+]
+filterwarnings = [
+  "error",
+  "ignore::DeprecationWarning:hypothesis.*",
+  # pytest-asyncio calls asyncio.get_event_loop_policy() which is deprecated
+  # in Python 3.14. This is a third-party library issue; ignore until
+  # pytest-asyncio ships a fix (tracked in next-cleanup.md).
+  "ignore:'asyncio.get_event_loop_policy' is deprecated:DeprecationWarning",
+  # Starlette's named deprecation warning was removed in newer releases.
+  # Keep the suppression scoped to Starlette deprecations without requiring
+  # a version-specific warning class to exist at pytest config-parse time.
+  "ignore::DeprecationWarning:starlette.*",
+  # Starlette >=1.1 reclassified StarletteDeprecationWarning under
+  # UserWarning instead of DeprecationWarning (audit item #27's starlette
+  # security bump, PYSEC-2026-161/248/249 + CVE-2026-48817/48818) AND its
+  # `stacklevel=2` attributes the warning to the *importing* module, not
+  # starlette itself, so a `:starlette.*` module-anchored filter can never
+  # match it. Match on the message instead: it's upstream noise (nudging
+  # toward an unreleased `httpx2` package this project has no need for),
+  # not a defect in this repo's own code.
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
+  # Benign SQLite GC artifact: an undisposed test engine's sqlite3.Connection,
+  # when finalized by the garbage collector (rather than explicitly closed via
+  # dispose), emits "Exception ignored in: <sqlite3.Connection ...>". pytest
+  # escalates that to PytestUnraisableExceptionWarning and the "error" policy
+  # above would fail a random unrelated test that happened to be running when GC
+  # fired. Tests that can, dispose their own engines (per-file autouse fixtures
+  # in the eas/recording router tests, inline dispose() in the migration tests,
+  # and the alerting/db/schedule package conftests); but dozens of other test
+  # sites create throwaway engines without disposing, so this filter is the
+  # suite-wide backstop that keeps any one of their GC'd connections from felling
+  # an unrelated test. Scoped strictly to sqlite3.Connection unraisables, so real
+  # defects still fail. The message uses "." for the ":" after "in" because
+  # filterwarnings splits on ":".
+  "ignore:Exception ignored in. <sqlite3.Connection:pytest.PytestUnraisableExceptionWarning",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["civiccast"]
+branch = true
+omit = [
+  "*/tests/*",
+  "*/__main__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
+show_missing = true
+skip_covered = false
+
+# ---------------------------------------------------------------------------
+# Mutation testing (deterministic-detector harness) -- NO [tool.mutmut] SECTION
+# HERE, DELIBERATELY.
+#
+# The CI mutation-report job (.github/workflows/deterministic-detectors.yml)
+# writes its own diff-scoped [tool.mutmut] at runtime and SKIPS ITSELF if one
+# already exists in this file. A permanent section here would therefore switch
+# the CI lane off silently -- the exact "looks configured, actually dark"
+# failure the harness exists to prevent.
+#
+# Local mutation substitutes are intentionally unsupported. The detector
+# contract is randomized and pollution checks locally, with diff-scoped mutmut
+# mutation proof owned by Linux PR CI.
+# ---------------------------------------------------------------------------

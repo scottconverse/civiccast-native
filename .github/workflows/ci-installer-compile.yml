@@ -1,0 +1,146 @@
+# SPDX-License-Identifier: Apache-2.0
+name: ci-installer-compile
+
+# PR-time compile guard for the Tauri installer's Rust crate (#204).
+# workflow-cost: windows-pr-justification -- the installer ships only on Windows.
+#
+# The installer is only *built* in release-artifacts.yml's `windows-installer`
+# job, which is tag/manual-only — so a PR that breaks the installer's Rust
+# compile is not caught until a release tag. The installer's other PR-time tests
+# (tests/policy/test_windows_wsl_bootstrap_script.py) only string-match the
+# bootstrap script; they never compile the app. This guard closes that gap: it
+# `cargo test`s the crate on the release OS (Windows) whenever installer code
+# changes, so both a compile break AND a regression in the installer's pure
+# decision logic (the #[cfg(test)] unit tests in main.rs — WSL classifiers,
+# health-response parsing, URL/PowerShell-quote validation) surface on the PR
+# that introduces it.
+#
+# `cargo test --locked` compiles the crate and runs its unit tests: it fails on a
+# stale Cargo.lock, and (verified locally, tauri 2 / cargo 1.96) it does NOT need
+# the frontend `dist` to exist — tauri-build only requires `frontendDist` for a
+# real bundle, not for a test build — so no Node/npm step is needed. Path-filtered,
+# so it only runs when the installer actually changes.
+#
+# G-15/T-2: headless-bootstrap.ps1 itself had zero execution tests (only
+# substring/order assertions in tests/policy/test_windows_wsl_bootstrap_script.py).
+# tests/policy/HeadlessBootstrap.Tests.ps1 is a Pester suite that dot-sources
+# the real script (safe — its main body is guarded behind an InvocationName
+# check) and exercises its functions directly. windows-latest ships pwsh;
+# Pester 5+ is installed on the fly since the runner image's built-in Pester
+# is the legacy 3.4 one.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "civiccast/apps/installer/**"
+      - "tests/policy/HeadlessBootstrap.Tests.ps1"
+      - ".github/workflows/ci-installer-compile.yml"
+  workflow_call:
+    inputs:
+      native_beta_windows_only:
+        description: Run the native-beta frontend contract on Windows without browser E2E.
+        default: false
+        required: false
+        type: boolean
+      source_sha:
+        description: Exact source commit to validate when called by another workflow.
+        required: false
+        type: string
+
+concurrency:
+  group: ci-installer-compile-reusable-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  installer-compile:
+    name: Installer Rust compile + unit tests (Windows)
+    # Windows is the installer's only ship target (Tauri MSI/NSIS), so the
+    # release OS is where a compile break actually matters. Hosted runner per
+    # Scott's 2026-06-12 directive (scripts/policy/check_workflow_runners.py).
+    runs-on: windows-latest
+    timeout-minutes: 60
+    if: |
+      github.event_name == 'workflow_call' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: civiccast/apps/installer/src-tauri
+
+      - name: cargo test (compile guard + unit tests)
+        working-directory: civiccast/apps/installer/src-tauri
+        run: cargo test --locked
+
+      - name: Install Pester 5
+        shell: pwsh
+        run: Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Pester (headless-bootstrap.ps1 unit tests)
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.0.0 -Force
+          $config = New-PesterConfiguration
+          $config.Run.Path = "tests/policy/HeadlessBootstrap.Tests.ps1"
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = "Detailed"
+          Invoke-Pester -Configuration $config
+
+  # NF-1: the installer's React state machine (keyboard-activation guard, the
+  # optimistic-banner/stale-error reconciliation, the native-read-authoritative
+  # progress logic) had NO CI gate — ci-installer-compile only covered the Rust
+  # crate, so a PR could silently reintroduce the G-5/G-9/T-3 first-run bugs.
+  # This job runs the frontend vitest units + the Playwright e2e suite (which
+  # mocks the Tauri invoke bridge, so no Tauri binary is needed).
+  installer-frontend:
+    name: Installer frontend validation
+    runs-on: ${{ inputs.native_beta_windows_only && 'windows-latest' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    if: |
+      github.event_name == 'workflow_call' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        working-directory: civiccast/apps/installer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: civiccast/apps/installer/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests (vitest)
+        run: npm run test:unit
+
+      - name: Production build (native beta Windows)
+        if: inputs.native_beta_windows_only
+        run: npm run build
+
+      - name: Install Playwright browser
+        if: inputs.native_beta_windows_only != true
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests (Playwright, mocked Tauri bridge)
+        if: inputs.native_beta_windows_only != true
+        run: npm run test:e2e

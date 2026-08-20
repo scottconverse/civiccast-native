@@ -1,0 +1,157 @@
+# SPDX-License-Identifier: Apache-2.0
+# Cleanroom end-to-end gate.
+#
+# Runs the same Dockerfile + runner that operators can run locally
+# (`make cleanroom`). The cleanroom does what no other CI job does:
+#   1. Real ffmpeg installed (the integration tests in ci-test auto-skip).
+#   2. Real packager invocation against a synthetic MP4.
+#   3. Built portal served by vite preview.
+#   4. Headless Chromium loads the locally-encoded HLS asset and asserts
+#      hls.js reaches readyState>=3 with zero console errors.
+#
+# This gate exists because the unit suite (mocked subprocess) cannot catch
+# ffmpeg argument-construction bugs and the a11y suite plays an external
+# manifest, not an asset emerging from our own pipeline. Together those
+# gaps produced commits 94abe97 and 8e924f7 — bugs that only surfaced
+# when real ffmpeg ran.
+#
+# Triggered: every PR + release tag + weekly cron.
+# Drift between manual CI runs is caught weekly (Sundays 03:30 UTC) rather than
+# nightly — daily was burning ~450–700 Linux-equivalent minutes per month on a
+# 2,000-min free tier. PR + tag coverage is unchanged.
+
+name: ci-cleanroom-e2e
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/ci-cleanroom-e2e.yml"
+      - "civiccast/**"
+      - "docker/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  schedule:
+    # Sundays 03:30 UTC — weekly drift catcher. Daily was the previous cadence;
+    # the per-PR cleanroom run already exercises every merged change.
+    - cron: "30 3 * * 0"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cleanroom:
+    name: Cleanroom (Docker, full install gate)
+    # GitHub-hosted runner (stock ubuntu-latest, native dockerd). Earlier
+    # comments here claimed a self-hosted WSL runner — that was stale and
+    # sent a whole debugging session down a Docker-Desktop/WSL2 rabbit
+    # hole for a failure that was actually git's safe.directory ownership
+    # check inside the container (workspace files are uid 1001, the
+    # cleanroom container runs as root). See docker/run-cleanroom.sh's
+    # GIT_CONFIG_* export for the fix.
+    runs-on: ubuntu-latest
+    # Fork-PR security guard: schedule + tag pushes always run; PR jobs
+    # only run when the PR's source is the same repo (i.e., branches
+    # Scott / Codex / Claude push directly, never a fork). A fork PR
+    # silently skips this job rather than executing untrusted code.
+    # Layer 1 (GitHub repo settings: require approval for outside
+    # collaborators) and Layer 3 (no pull_request_target trigger anywhere)
+    # are belt-and-suspenders on top of this.
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    # Budget: a healthy full cleanroom is 7-10 minutes plus image build;
+    # keep enough slack that a slow apt/npm day is not canceled mid-gate.
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build cleanroom image
+        # workflow-cost: rebuilt per run on the ephemeral hosted runner; the
+        # image is intentionally not exported to GitHub cache (heavy, and
+        # base-layer pulls dominate the build time anyway).
+        run: |
+          if docker buildx version; then
+            docker buildx build \
+              --file docker/cleanroom.Dockerfile \
+              --tag civiccast-cleanroom:ci \
+              --load \
+              .
+          else
+            echo "docker buildx unavailable on this runner; falling back to docker build."
+            docker build \
+              --file docker/cleanroom.Dockerfile \
+              --tag civiccast-cleanroom:ci \
+              .
+          fi
+
+      - name: Run cleanroom
+        env:
+          CIVICAST_CI_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        # Mount /var/run/docker.sock so Gate 7 (TEST-002 — real-Postgres
+        # schedule contract) can use testcontainers from inside the
+        # cleanroom container to spawn a sibling postgres:17 against the
+        # host Docker daemon. `--add-host=host.docker.internal:host-gateway`
+        # is required on native Linux runners (Docker Desktop adds this
+        # entry automatically; bare Linux does not) so that the
+        # `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal` setting in
+        # docker/run-cleanroom.sh resolves to the host inside the cleanroom
+        # container.
+        run: |
+          docker version
+          ls -l /var/run/docker.sock
+          docker_sock_gid="$(stat -c '%g' /var/run/docker.sock)"
+          echo "Docker socket group id: ${docker_sock_gid}"
+          docker_workspace="${GITHUB_WORKSPACE}"
+          echo "Docker workspace mount: ${docker_workspace}"
+
+          # Cheap sanity probe: confirm the bind mount actually carries
+          # source files before spending 7-10 minutes on the full gate. A
+          # few retries cost seconds and make the failure mode (empty or
+          # unresolvable mount source) immediately obvious instead of a
+          # cryptic error deep inside run-cleanroom.sh. Note: git failing
+          # against the mounted repo is NOT this failure — that was the
+          # safe.directory ownership refusal, fixed in run-cleanroom.sh.
+          mount_ok=false
+          for attempt in 1 2 3 4 5; do
+            if docker run --rm -v "${docker_workspace}:/probe:ro" busybox \
+                  sh -c 'test -f /probe/pyproject.toml'; then
+              mount_ok=true
+              break
+            fi
+            echo "Attempt ${attempt}/5: bind mount probe found an empty/missing pyproject.toml. Retrying..." >&2
+            sleep 5
+          done
+          if [ "$mount_ok" != true ]; then
+            echo "::error::Docker bind mount ${docker_workspace} -> /probe is empty or missing pyproject.toml after 5 attempts." >&2
+            echo "The Docker daemon cannot see this path; check the runner's workspace layout vs the -v source." >&2
+            exit 1
+          fi
+
+          docker run --rm \
+            -e CIVICAST_CI_SOURCE_SHA="${CIVICAST_CI_SOURCE_SHA}" \
+            --mount "type=bind,source=${docker_workspace},target=/work/civiccast,readonly" \
+            --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
+            --group-add "${docker_sock_gid}" \
+            --add-host=host.docker.internal:host-gateway \
+            civiccast-cleanroom:ci
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: cleanroom-playwright-traces
+          path: |
+            /tmp/cleanroom-work/civiccast/apps/portal-public/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

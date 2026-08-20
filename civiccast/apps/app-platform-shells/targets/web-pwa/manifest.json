@@ -1,0 +1,17 @@
+{
+    "target":  "Web/PWA",
+    "appTarget":  "web_pwa",
+    "displayName":  "CivicCast Web/PWA Shell",
+    "configUrl":  "/api/public/app/config",
+    "entry":  "index.html",
+    "status":  "v1.8.2 shared reference runtime",
+    "capabilities":  [
+                         "station-branding",
+                         "live-playback-metadata",
+                         "vod-smart-playlists",
+                         "schedule-browse",
+                         "captions",
+                         "audio-tracks",
+                         "chapters"
+                     ]
+}

@@ -1,0 +1,95 @@
+[
+  {
+    "EventItemId": 104422,
+    "EventItemAgendaSequence": 1,
+    "EventItemAgendaNumber": null,
+    "EventItemTitle": "\r\n\r\n\r\n",
+    "EventItemMatterId": null,
+    "EventItemMatterFile": null,
+    "EventItemMatterType": null,
+    "EventItemMatterAttachments": []
+  },
+  {
+    "EventItemId": 104423,
+    "EventItemAgendaSequence": 2,
+    "EventItemAgendaNumber": "A.",
+    "EventItemTitle": "CALL TO ORDER",
+    "EventItemMatterId": null,
+    "EventItemMatterFile": null,
+    "EventItemMatterType": null,
+    "EventItemMatterAttachments": []
+  },
+  {
+    "EventItemId": 104436,
+    "EventItemAgendaSequence": 16,
+    "EventItemAgendaNumber": "1.",
+    "EventItemTitle": "A RESOLUTION relating to participation, for 2024 and 2025, on King County Committees, Regional Committees, State Committees, and City of Seattle Committees; and superseding Resolution 32038.",
+    "EventItemMatterId": 14801,
+    "EventItemMatterFile": "Res 32125",
+    "EventItemMatterType": "Resolution (Res)",
+    "EventItemMatterAttachments": [
+      {
+        "MatterAttachmentId": 39819,
+        "MatterAttachmentName": "Summary and Fiscal Note",
+        "MatterAttachmentHyperlink": "https://legistar2.granicus.com/seattle/attachments/e85c31d6-9248-45c1-8060-d61ab69311bb.docx"
+      },
+      {
+        "MatterAttachmentId": 40159,
+        "MatterAttachmentName": "Signed Resolution 32125",
+        "MatterAttachmentHyperlink": "https://legistar2.granicus.com/seattle/attachments/4e8925f0-c9e6-401c-99ca-78dadcf5fa9c.pdf"
+      },
+      {
+        "MatterAttachmentId": 40221,
+        "MatterAttachmentName": "Affidavit of Publication",
+        "MatterAttachmentHyperlink": "https://legistar2.granicus.com/seattle/attachments/45de761b-ada8-447b-b321-8be615e7ca41.pdf"
+      }
+    ]
+  },
+  {
+    "EventItemId": 104458,
+    "EventItemAgendaSequence": 7,
+    "EventItemAgendaNumber": null,
+    "EventItemTitle": "January 9, 2024",
+    "EventItemMatterId": 14812,
+    "EventItemMatterFile": "IRC 418",
+    "EventItemMatterType": "Introduction & Referral Calendar (IRC)",
+    "EventItemMatterAttachments": [
+      {
+        "MatterAttachmentId": 39822,
+        "MatterAttachmentName": "Introduction and Referral Calendar",
+        "MatterAttachmentHyperlink": "https://legistar2.granicus.com/seattle/attachments/968d0128-b2fe-4175-964c-e7349fd8aaed.pdf"
+      }
+    ]
+  },
+  {
+    "EventItemId": 104459,
+    "EventItemAgendaSequence": 11,
+    "EventItemAgendaNumber": "1.",
+    "EventItemTitle": "AN ORDINANCE appropriating money to pay certain claims for the week of December 25, 2023 through December 29, 2023 and ordering the payment thereof; and ratifying and confirming certain prior acts.",
+    "EventItemMatterId": 14807,
+    "EventItemMatterFile": "CB 120736",
+    "EventItemMatterType": "Ordinance (Ord)",
+    "EventItemMatterAttachments": [
+      {
+        "MatterAttachmentId": 40158,
+        "MatterAttachmentName": "Signed Ordinance 126988",
+        "MatterAttachmentHyperlink": "https://legistar2.granicus.com/seattle/attachments/f672c2e3-dcf8-4696-9bb2-8925d5b53de4.pdf"
+      },
+      {
+        "MatterAttachmentId": 40220,
+        "MatterAttachmentName": "Affidavit of Publication",
+        "MatterAttachmentHyperlink": "https://legistar2.granicus.com/seattle/attachments/87e56931-3f5d-46a3-b12e-002e7f4778eb.pdf"
+      }
+    ]
+  },
+  {
+    "EventItemId": 104485,
+    "EventItemAgendaSequence": null,
+    "EventItemAgendaNumber": null,
+    "EventItemTitle": "\r\n\r\n_____________________________________________________\r\nJodee Schwinn, Deputy City Clerk",
+    "EventItemMatterId": null,
+    "EventItemMatterFile": null,
+    "EventItemMatterType": null,
+    "EventItemMatterAttachments": []
+  }
+]

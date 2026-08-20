@@ -1,0 +1,82 @@
+{
+  "artifacts": {
+    "msvc": {
+      "bytes": 5781504,
+      "compiler_version": "19.50.35730",
+      "components": [
+        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+        "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
+        "Microsoft.VisualStudio.Component.Windows11SDK.26100"
+      ],
+      "filename": "vs_BuildTools-18.5.2.exe",
+      "linker_version": "14.50.35730.0",
+      "sha256": "97b2740209702f310a53d1e92ce971e86aafbde916a4d6cd087464e98ff61e2b",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/ef8a1da5-1f31-4995-8be6-cb9800f90516/97b2740209702f310a53d1e92ce971e86aafbde916a4d6cd087464e98ff61e2b/vs_BuildTools.exe",
+      "version": "18.5.2+11723.231"
+    },
+    "node": {
+      "archive": "zip",
+      "bytes": 36465163,
+      "filename": "node-v24.15.0-win-x64.zip",
+      "sha256": "cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62",
+      "strip_prefix": "node-v24.15.0-win-x64",
+      "url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip",
+      "version": "24.15.0"
+    },
+    "npm": {
+      "archive": "tar.gz",
+      "bytes": 2833345,
+      "filename": "npm-11.12.1.tgz",
+      "sha256": "e679850e663b16f5f146ee425d0eb0e3442c1d2bda3d513bbfd7c81f5ee5db38",
+      "strip_prefix": "package",
+      "url": "https://registry.npmjs.org/npm/-/npm-11.12.1.tgz",
+      "version": "11.12.1"
+    },
+    "python": {
+      "archive": "tar.gz",
+      "build_marker": "20260510",
+      "bytes": 21921642,
+      "externally_managed": "[externally-managed]\nError=This Python installation is managed by uv and should not be modified.\n",
+      "filename": "cpython-3.12.13+20260510-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "sha256": "24168aff2e7d93784c6a436124c4ebb79b076a4e289bde4902c08333507b71d0",
+      "strip_prefix": "python",
+      "url": "https://releases.astral.sh/github/python-build-standalone/releases/download/20260510/cpython-3.12.13%2B20260510-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "version": "3.12.13+20260510"
+    },
+    "uv": {
+      "archive": "zip",
+      "bytes": 22872113,
+      "filename": "uv-x86_64-pc-windows-msvc.zip",
+      "sha256": "04b98d414a9000e25e5e0e7c9f53749e66b790cdaffc582829e6f58c544ee11c",
+      "strip_prefix": null,
+      "url": "https://github.com/astral-sh/uv/releases/download/0.11.15/uv-x86_64-pc-windows-msvc.zip",
+      "version": "0.11.15"
+    }
+  },
+  "installed_identities": {
+    "node": {
+      "sha256": "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5",
+      "version": "v24.15.0"
+    },
+    "npm": {
+      "sha256": "21b46c69ad6e2f231f02a9e120f4ba6c8e75fef5a45637103002eab99f888ab8",
+      "tree_sha256": "8b3e116059d650842ae2f263e38ff407bacfee0a4ada4bc9387bbb701d660174",
+      "version": "11.12.1"
+    },
+    "python": {
+      "sha256": "e9f7e4baa0da1c21ffc3c2c2a644459b1a38dced56dfc7846e16f801645d520f",
+      "tree_sha256": "25547ffe58a4fd8f9faa62078c99fe54f79ff3c4a4547ddad61df0eaf6a3d730",
+      "version": "Python 3.12.13"
+    },
+    "python312.dll": {
+      "sha256": "f6ad19fa4d285626f583224699211cdbb28eae9d0fb5415bde94a117543105b7",
+      "version": "3.12.13"
+    },
+    "uv": {
+      "sha256": "d4ffe0b73cbb1fa3d11242567d55c6e9058c4e885fae9272764409583a4e8640",
+      "version": "uv 0.11.15 (3cffe97c2 2026-05-18 x86_64-pc-windows-msvc)"
+    }
+  },
+  "schema_version": 1,
+  "target": "windows-x86_64"
+}

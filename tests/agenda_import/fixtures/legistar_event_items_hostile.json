@@ -1,0 +1,28 @@
+[
+  {
+    "EventItemId": 999001,
+    "EventItemAgendaSequence": 1,
+    "EventItemAgendaNumber": "A.",
+    "EventItemTitle": "CALL TO ORDER",
+    "EventItemMatterId": null,
+    "EventItemMatterFile": null,
+    "EventItemMatterType": null,
+    "EventItemMatterAttachments": []
+  },
+  {
+    "EventItemId": 999002,
+    "EventItemAgendaSequence": 2,
+    "EventItemAgendaNumber": "1.",
+    "EventItemTitle": "A malicious matter with an injected attachment link",
+    "EventItemMatterId": 55555,
+    "EventItemMatterFile": "CB 999999",
+    "EventItemMatterType": "Ordinance (Ord)",
+    "EventItemMatterAttachments": [
+      {
+        "MatterAttachmentId": 1,
+        "MatterAttachmentName": "Hostile link",
+        "MatterAttachmentHyperlink": "javascript:alert(document.cookie)"
+      }
+    ]
+  }
+]

@@ -1,0 +1,239 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+import type { StaffIdentityResponse } from '../types/api.generated'
+import type { PublishDashboardResponse, PublishSurfaceState } from '../types/publish'
+
+vi.mock('../api/client', () => ({
+  ApiError: class ApiError extends Error {
+    status: number
+    detail?: string
+    constructor(message: string, status = 0, detail?: string) {
+      super(message)
+      this.status = status
+      this.detail = detail
+    }
+  },
+  approvePublishAsset: vi.fn(),
+  getStaffIdentity: vi.fn(),
+  listPublishAssets: vi.fn(),
+  retryPublishSurface: vi.fn(),
+}))
+
+import {
+  ApiError,
+  approvePublishAsset,
+  getStaffIdentity,
+  listPublishAssets,
+  retryPublishSurface,
+} from '../api/client'
+import { PublishDashboardScreen } from './PublishDashboardScreen'
+
+afterEach(cleanup)
+
+function dashboard(
+  state: PublishSurfaceState,
+  options: { simulated?: boolean } = {},
+): PublishDashboardResponse {
+  return {
+    summary: {
+      total_assets: 1,
+      draft: 1,
+      portal_live: 0,
+      archive_verified: 0,
+      degraded: 0,
+      needs_operator_action: state === 'blocked' ? 1 : 0,
+    },
+    assets: [
+      {
+        asset_id: 'sample-asset',
+        title: 'Sample asset',
+        dashboard_state: state === 'blocked' ? 'preflight_blocked' : 'draft',
+        dashboard_label: state === 'blocked' ? 'Preflight blocked' : 'Draft',
+        canonical_public: false,
+        archive_verified: false,
+        reach_degraded: false,
+        needs_operator_action: state === 'blocked',
+        public_record_required: true,
+        published_at: null,
+        surfaces: [
+          {
+            id: 'portal',
+            label: 'Portal',
+            kind: 'canonical',
+            state,
+            approval: 'pending',
+            required: true,
+            url: null,
+            last_attempt_at: null,
+            completed_at: null,
+            health: state === 'blocked' ? 'error' : 'unknown',
+            message: state === 'blocked' ? 'The portal cannot publish this asset.' : 'Ready.',
+            next_step: state === 'blocked' ? 'Package the recording first.' : 'Approve publish.',
+            simulated: options.simulated,
+          },
+        ],
+      },
+    ],
+  }
+}
+
+function renderScreen() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <PublishDashboardScreen />
+    </QueryClientProvider>,
+  )
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(getStaffIdentity).mockResolvedValue({
+    operator_id: 'dana',
+    operator_display_name: 'Dana',
+    roles: ['publish_operator'],
+  } as StaffIdentityResponse)
+})
+
+describe('PublishDashboardScreen safety feedback', () => {
+  it('disables approval while a selected surface is blocked', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(dashboard('blocked'))
+    const { findByRole, findByText } = renderScreen()
+
+    const publish = await findByRole('button', { name: 'Approve and Publish selected' })
+
+    expect(publish.hasAttribute('disabled')).toBe(true)
+    expect(await findByText(/selected surface is blocked/i)).toBeTruthy()
+  })
+
+  it('shows the exact safe API detail when publication fails', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(dashboard('pending'))
+    vi.mocked(approvePublishAsset).mockRejectedValue(
+      new ApiError(
+        'Conflict',
+        409,
+        'Publish preflight blocked: package the recording before approving Portal.',
+      ),
+    )
+    const { findByRole, findByText } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
+
+    await waitFor(() => expect(approvePublishAsset).toHaveBeenCalled())
+    expect(
+      await findByText(
+        /Publish preflight blocked: package the recording before approving Portal/i,
+      ),
+    ).toBeTruthy()
+  })
+
+  it('shows the exact safe API detail when a surface retry fails', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(dashboard('failed'))
+    vi.mocked(retryPublishSurface).mockRejectedValue(
+      new ApiError(
+        'Conflict',
+        409,
+        'Internet Archive credentials are not configured.',
+      ),
+    )
+    const { findByRole, findByText } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: 'Retry this surface' }))
+
+    await waitFor(() => expect(retryPublishSurface).toHaveBeenCalled())
+    expect(
+      await findByText(/Internet Archive credentials are not configured/i),
+    ).toBeTruthy()
+  })
+
+  it('shows the simulated-archive warning when a surface is simulated', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(
+      dashboard('succeeded', { simulated: true }),
+    )
+    const { findByText } = renderScreen()
+
+    expect(await findByText(/nothing was actually archived/i)).toBeTruthy()
+  })
+
+  it('does not show the simulated-archive warning for a real surface', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(dashboard('succeeded'))
+    const { findByText, queryByText } = renderScreen()
+
+    await findByText('Sample asset')
+    expect(queryByText(/nothing was actually archived/i)).toBeNull()
+  })
+})
+
+describe('PublishDashboardScreen state vocabulary', () => {
+  function reachDegradedDashboard(): PublishDashboardResponse {
+    return {
+      summary: {
+        total_assets: 1,
+        draft: 0,
+        portal_live: 1,
+        archive_verified: 0,
+        degraded: 1,
+        needs_operator_action: 0,
+      },
+      assets: [
+        {
+          asset_id: 'reach-degraded-asset',
+          title: 'Council - degraded reach',
+          // Underscore-bearing dashboard_state, per TEST-2: no existing
+          // fixture in this file ever set a state with an underscore, so the
+          // stateLabel(surface.state) render at line 62 had no regression
+          // coverage. dashboard_label is the backend's OLD hand-written
+          // copy -- the guide's own forbidden word -- kept here to prove the
+          // screen no longer reads it.
+          dashboard_state: 'reach_degraded',
+          dashboard_label: 'Reach degraded',
+          canonical_public: true,
+          archive_verified: false,
+          reach_degraded: true,
+          needs_operator_action: false,
+          public_record_required: true,
+          published_at: '2026-06-01T12:00:00Z',
+          surfaces: [
+            {
+              id: 'portal',
+              label: 'Portal',
+              kind: 'canonical',
+              state: 'succeeded',
+              approval: 'approved',
+              required: true,
+              url: 'https://portal.example/c',
+              last_attempt_at: null,
+              completed_at: '2026-06-01T12:00:00Z',
+              health: 'ok',
+              message: 'Published.',
+              next_step: 'None.',
+            },
+          ],
+        },
+      ],
+    }
+  }
+
+  it('shows the shared vocabulary phrase for a reach-degraded asset, never the raw label or the guide\'s forbidden word', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(reachDegradedDashboard())
+    const { findByText, queryByText } = renderScreen()
+
+    expect(await findByText('Reaching fewer places than planned')).toBeTruthy()
+    expect(queryByText('Reach degraded')).toBeNull()
+    expect(queryByText(/degraded/i)).toBeNull()
+  })
+
+  it('derives the "Reach degraded" filter chip label from the same shared vocabulary as the pill', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(reachDegradedDashboard())
+    const { findByRole } = renderScreen()
+
+    // Same phrase, same source: if the chip label ever drifts back to its
+    // own hardcoded string, this stops matching even though the pill (tested
+    // above) still passes.
+    expect(
+      await findByRole('tab', { name: 'Reaching fewer places than planned' }),
+    ).toBeTruthy()
+  })
+})

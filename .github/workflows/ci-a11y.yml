@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+# Accessibility CI gate. Runs axe-core via Playwright against the built
+# public portal AND the built operator console. Blocks merge on any
+# serious or critical WCAG 2.0/2.1/2.2 A/AA violation. Per CivicCast
+# spec §4.1 and CLAUDE.md non-negotiables.
+
+name: ci-a11y
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  a11y-public:
+    name: Accessibility (axe-core) — public portal
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        working-directory: civiccast/apps/portal-public
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect portal presence
+        id: portal-check
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -f "civiccast/apps/portal-public/package.json" ]; then
+            echo "portal_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "portal_present=false" >> "$GITHUB_OUTPUT"
+            echo "Public portal not yet present — gate is a no-op for this commit."
+          fi
+
+      - name: Set up Node 20
+        if: steps.portal-check.outputs.portal_present == 'true'
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: civiccast/apps/portal-public/package-lock.json
+
+      - name: Install dependencies
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm ci
+
+      - name: Install Playwright browsers
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Build portal
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm run build
+
+      - name: Run axe-core via Playwright
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm run test:a11y
+
+      - name: Upload Playwright report on failure
+        if: failure() && steps.portal-check.outputs.portal_present == 'true'
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: playwright-report-public
+          path: civiccast/apps/portal-public/playwright-report/
+          retention-days: 7
+
+  a11y-operator:
+    name: Accessibility (axe-core) — operator console
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        working-directory: civiccast/apps/portal-operator
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect operator portal presence
+        id: portal-check
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -f "civiccast/apps/portal-operator/package.json" ]; then
+            echo "portal_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "portal_present=false" >> "$GITHUB_OUTPUT"
+            echo "Operator portal not yet present — gate is a no-op for this commit."
+          fi
+
+      - name: Set up Node 20
+        if: steps.portal-check.outputs.portal_present == 'true'
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: civiccast/apps/portal-operator/package-lock.json
+
+      - name: Install dependencies
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm ci
+
+      - name: Install Playwright browsers
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Build operator portal
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm run build
+
+      - name: Run axe-core via Playwright
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm run test:a11y
+
+      - name: Upload Playwright report on failure
+        if: failure() && steps.portal-check.outputs.portal_present == 'true'
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: playwright-report-operator
+          path: civiccast/apps/portal-operator/playwright-report/
+          retention-days: 7

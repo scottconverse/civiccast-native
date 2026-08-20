@@ -1,0 +1,51 @@
+[package]
+name = "civiccast-installer"
+version = "1.0.0-rc18"
+edition = "2021"
+
+[features]
+default = []
+native-packs = []
+
+[dependencies]
+base64 = "0.22"
+ed25519-dalek = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = [] }
+url = "2"
+zip = { version = "4.6", default-features = false }
+winreg = "0.55"
+# Pinned to the exact version winreg 0.55 already pulls in transitively (see
+# Cargo.lock) so adding this as a DIRECT dependency resolves against an
+# already-vendored version rather than fetching a new one -- used only for
+# RegSetKeySecurity/RegGetKeySecurity + SDDL conversion, which the `winreg`
+# crate itself does not expose (CivicCast (Native) DatabaseUrl registry-key
+# ACL hardening, see native_service_registration.rs).
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+] }
+# Native hardware inventory (task #hardware-inventory): DXGI GPU enumeration
+# (IDXGIFactory1::EnumAdapters1 / DXGI_ADAPTER_DESC1) needs COM-interface
+# vtable support that `windows-sys` above does not provide for DXGI in the
+# vendored 0.59 release (checked: its Graphics module carries no Dxgi
+# submodule at all -- confirmed against the local registry cache before
+# adding this). The higher-level `windows` crate does, and is ALREADY
+# resolved transitively at 0.61.3 (see Cargo.lock, pulled in by another
+# dependency), so this adds it as a direct dependency at the same version
+# rather than fetching anything new.
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

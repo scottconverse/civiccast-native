@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+name: loudness-compliance
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  loudness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run loudness compliance
+        run: python scripts/check_loudness.py
+      - name: Upload loudness proof
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: v1.1-loudness-proof
+          path: docs/releases/evidence/v1.1-loudness-proof.md
+          retention-days: 7

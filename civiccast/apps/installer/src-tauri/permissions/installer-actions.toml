@@ -1,0 +1,31 @@
+[[permission]]
+identifier = "allow-installer-actions"
+description = "Allows the installer window to invoke local CivicCast setup commands."
+# EVERY name in `main.rs`'s `tauri::generate_handler![...]` block must appear
+# here in BOTH forms -- the snake_case name Tauri derives from the Rust
+# function and the camelCase name `api.ts`'s `invokeNativeInstallerAny`
+# fallback list also tries. A registered command that is missing here is not a
+# warning: the Tauri ACL DENIES the invoke at runtime, and the frontend sees a
+# plain rejected promise. `tests/installer/test_tauri_permissions.py` derives
+# the expected set from `main.rs` and asserts exact equality with this list, so
+# adding a command without adding it here fails CI.
+commands.allow = [
+  "cancelAcquisition",
+  "cancel_acquisition",
+  "nativeHardwareInventory",
+  "native_hardware_inventory",
+  "openInstallerLog",
+  "open_installer_log",
+  "openOperatorConsole",
+  "open_operator_console",
+  "readLocalInstallerState",
+  "read_local_installer_state",
+  "resetLocalInstallerState",
+  "reset_local_installer_state",
+  "retryAcquisitionComponent",
+  "retry_acquisition_component",
+  "runLocalInstallerAction",
+  "run_local_installer_action",
+  "startAcquisition",
+  "start_acquisition",
+]

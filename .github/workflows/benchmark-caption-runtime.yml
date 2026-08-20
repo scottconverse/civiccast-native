@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+# Manual empirical caption runtime benchmark for Sprint 0.5 evidence.
+#
+# This workflow is pinned to the RTX 5070 self-hosted runner. It bootstraps a
+# tiny speech WAV fixture on the runner, executes the same faster-whisper
+# adapter used by live captions, and uploads JSON evidence for WER, latency,
+# transcript text, and GPU memory samples.
+
+name: benchmark-caption-runtime
+
+on:
+  workflow_dispatch:
+    # paths: manual-only workflow; dispatch is limited by human selection and
+    # the job is pinned to the RTX 5070 self-hosted runner.
+    inputs:
+      model:
+        description: "faster-whisper model name/path"
+        required: true
+        default: "large-v3"
+      compute_type:
+        description: "CTranslate2 compute type"
+        required: true
+        default: "int8_float16"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Benchmark caption runtime
+    runs-on: [self-hosted, Linux, X64, scott-desktop, rtx5070, ubuntu-2404]
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Probe NVIDIA visibility
+        run: |
+          set -euxo pipefail
+          hostname
+          uname -a
+          command -v nvidia-smi
+          nvidia-smi
+
+      - name: Cache pip downloads
+        uses: actions/cache@v4.2.4
+        with:
+          path: ~/.cache/pip
+          key: caption-runtime-pip-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          restore-keys: |
+            caption-runtime-pip-${{ runner.os }}-
+
+      - name: Install system audio fixture tools
+        # workflow-cost: self-hosted-runtime-benchmark. Manual-only workflow
+        # pinned to Scott's self-hosted runner; no GitHub-hosted minute spend.
+        run: |
+          set -euxo pipefail
+          if ! command -v espeak-ng >/dev/null || ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends espeak-ng ffmpeg
+          fi
+
+      - name: Install caption runtime dependencies
+        # workflow-cost: self-hosted-runtime-benchmark. Manual-only workflow
+        # pinned to Scott's self-hosted runner; no GitHub-hosted minute spend.
+        run: |
+          set -euxo pipefail
+          python3 -m venv .venv-blackwell
+          . .venv-blackwell/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install ".[captions-runtime]"
+          python -m pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+
+      - name: Create benchmark fixture
+        run: |
+          set -euxo pipefail
+          mkdir -p docs/releases/evidence
+          printf '%s\n' 'Motion carries seven to zero. Councilmember Rivera requests the zoning hearing continue next Tuesday.' \
+            > docs/releases/evidence/v0.5-caption-benchmark-truth.txt
+          espeak-ng \
+            -v en-us \
+            -s 145 \
+            -p 45 \
+            -f docs/releases/evidence/v0.5-caption-benchmark-truth.txt \
+            -w docs/releases/evidence/v0.5-caption-benchmark-source.wav
+          test -s docs/releases/evidence/v0.5-caption-benchmark-source.wav
+          ffmpeg -y \
+            -i docs/releases/evidence/v0.5-caption-benchmark-source.wav \
+            -ac 1 \
+            -ar 16000 \
+            -sample_fmt s16 \
+            docs/releases/evidence/v0.5-caption-benchmark.wav
+
+      - name: Run caption runtime benchmark
+        run: |
+          set -euxo pipefail
+          . .venv-blackwell/bin/activate
+          SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          export LD_LIBRARY_PATH="${SITE_PACKAGES}/nvidia/cublas/lib:${SITE_PACKAGES}/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
+          python scripts/verify-blackwell-runtime.py
+          python scripts/benchmark-caption-runtime.py \
+            --audio docs/releases/evidence/v0.5-caption-benchmark.wav \
+            --truth docs/releases/evidence/v0.5-caption-benchmark-truth.txt \
+            --output docs/releases/evidence/v0.5-caption-benchmark.json \
+            --model "${{ inputs.model }}" \
+            --device cuda \
+            --compute-type "${{ inputs.compute_type }}" \
+            --language en \
+            --vocabulary-term "Councilmember Rivera" \
+            --initial-prompt "This is a local civic meeting transcript with motions, votes, zoning hearings, and councilmember names."
+
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: v0.5-caption-runtime-benchmark
+          path: |
+            docs/releases/evidence/v0.5-caption-benchmark.json
+            docs/releases/evidence/v0.5-caption-benchmark-truth.txt
+          retention-days: 7
+          if-no-files-found: error

@@ -1,0 +1,107 @@
+{
+  "artifacts": {
+    "ffmpeg": {
+      "archive": "zip",
+      "bytes": 70708853,
+      "expected_executables": [
+        "bin/ffmpeg.exe",
+        "bin/ffprobe.exe"
+      ],
+      "filename": "ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1.zip",
+      "sha256": "375df631ddf38bf38feb7bbd67259c454045b8ea75b96af62c33a440ba799f48",
+      "spdx_license": "LGPL-3.0-or-later",
+      "strip_prefix": "ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-12-13-15/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1.zip",
+      "version": "n8.1.2-34-g9b6c8969e0"
+    },
+    "nats": {
+      "archive": "zip",
+      "bytes": 7032736,
+      "expected_executables": [
+        "nats-server.exe"
+      ],
+      "filename": "nats-server-v2.14.3-windows-amd64.zip",
+      "sha256": "94e338d742761272e31eab1efb1f767eac3a2e56e4c05a7933c65a73fe95a27b",
+      "spdx_license": "Apache-2.0",
+      "strip_prefix": "nats-server-v2.14.3-windows-amd64",
+      "url": "https://github.com/nats-io/nats-server/releases/download/v2.14.3/nats-server-v2.14.3-windows-amd64.zip",
+      "version": "2.14.3"
+    },
+    "node": {
+      "archive": "zip",
+      "bytes": 36465163,
+      "expected_executables": [
+        "node.exe"
+      ],
+      "filename": "node-v24.15.0-win-x64.zip",
+      "include": [
+        "node.exe",
+        "LICENSE"
+      ],
+      "sha256": "cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62",
+      "spdx_license": "MIT",
+      "strip_prefix": "node-v24.15.0-win-x64",
+      "url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip",
+      "version": "24.15.0"
+    },
+    "ollama": {
+      "archive": "zip",
+      "bytes": 1456569673,
+      "expected_executables": [
+        "ollama.exe"
+      ],
+      "filename": "ollama-windows-amd64-v0.30.6.zip",
+      "license_notice": {
+        "bytes": 1058,
+        "filename": "ollama-LICENSE-v0.30.6.txt",
+        "sha256": "5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226",
+        "url": "https://raw.githubusercontent.com/ollama/ollama/v0.30.6/LICENSE"
+      },
+      "sha256": "563f37062efba941e2cd689475a1156e23cca8aedec27bd33e05e44606b3c425",
+      "spdx_license": "MIT",
+      "strip_prefix": ".",
+      "url": "https://github.com/ollama/ollama/releases/download/v0.30.6/ollama-windows-amd64.zip",
+      "version": "0.30.6"
+    },
+    "postgres": {
+      "archive": "zip",
+      "bytes": 333927270,
+      "expected_executables": [
+        "bin/initdb.exe",
+        "bin/pg_ctl.exe",
+        "bin/pg_dump.exe",
+        "bin/pg_restore.exe",
+        "bin/postgres.exe",
+        "bin/psql.exe"
+      ],
+      "filename": "postgresql-17.10-2-windows-x64-binaries.zip",
+      "include": [
+        "bin/**",
+        "lib/**",
+        "share/**",
+        "commandlinetools_3rd_party_licenses.txt",
+        "server_license.txt"
+      ],
+      "sha256": "ef9b1e5e23d2e8a83914ba13d9dc536a72210fba53fd1808ff1f7e06bb22b106",
+      "spdx_license": "PostgreSQL",
+      "strip_prefix": "pgsql",
+      "url": "https://get.enterprisedb.com/postgresql/postgresql-17.10-2-windows-x64-binaries.zip",
+      "version": "17.10-2"
+    },
+    "tsduck": {
+      "archive": "zip",
+      "bytes": 38476542,
+      "expected_executables": [
+        "bin/tsp.exe"
+      ],
+      "filename": "TSDuck-Win64-3.44-4676-Portable.zip",
+      "sha256": "b0ca0f963fcd77488b8c32d6f9d85030daa891ed753c36e57bbb458807a44eb1",
+      "spdx_license": "BSD-2-Clause",
+      "strip_prefix": "TSDuck",
+      "url": "https://github.com/tsduck/tsduck/releases/download/v3.44-4676/TSDuck-Win64-3.44-4676-Portable.zip",
+      "version": "3.44-4676"
+    }
+  },
+  "schema_version": 2,
+  "target": "windows-x86_64"
+}

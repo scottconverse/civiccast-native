@@ -1,0 +1,261 @@
+# SPDX-License-Identifier: Apache-2.0
+# Mechanical guard against committing large binaries (and against reintroducing
+# Git LFS) to this repository.
+#
+# Why this exists: between 2026-05-26 and 2026-05-28 the release-proof
+# automation committed the Windows tester package (334 MB), the installer
+# (168 MB), and the proof kit (168 MB) through Git LFS on nearly every
+# heartbeat commit -- 106 objects / 17.25 GB parked in this repo's LFS
+# storage. Removing the files from the branch later freed NOTHING: pushed LFS
+# objects are permanent until a GitHub Support purge. The rule ("build
+# artifacts go to Releases or local disk, never into git") already existed;
+# what was missing was a check that could not be forgotten.
+#
+# Runs on pull requests to EVERY branch on purpose -- a guard that only
+# protects main lets the mistake land on an integration branch first.
+
+name: ci-blob-size-guard
+
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  blob-size:
+    name: Reject oversized blobs and LFS reintroduction
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so the merge-base with the target branch resolves.
+          fetch-depth: 0
+
+      - name: Check blobs added or modified by this PR
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # 5 MiB. Nothing legitimate in this repo's source tree approaches
+          # this; installers and tester packages are Release assets.
+          MAX_BLOB_BYTES: "5242880"
+          ALLOWLIST_FILE: ".github/large-blob-allowlist.txt"
+        run: |
+          set -euo pipefail
+
+          merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          echo "Comparing $merge_base..$HEAD_SHA (limit: $MAX_BLOB_BYTES bytes)"
+
+          # Allowlist: one shell glob per line, '#' starts a comment. Adding an
+          # entry is a deliberate, reviewable act -- that is the point.
+          allowlist=()
+          if [ -f "$ALLOWLIST_FILE" ]; then
+            while IFS= read -r raw || [ -n "$raw" ]; do
+              entry="${raw%%#*}"
+              entry="${entry#"${entry%%[![:space:]]*}"}"
+              entry="${entry%"${entry##*[![:space:]]}"}"
+              if [ -n "$entry" ]; then
+                allowlist+=("$entry")
+              fi
+            done < "$ALLOWLIST_FILE"
+          fi
+
+          is_allowed() {
+            local candidate="$1" pattern
+            for pattern in ${allowlist[@]+"${allowlist[@]}"}; do
+              # shellcheck disable=SC2053  # glob match is intended
+              if [[ "$candidate" == $pattern ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          oversized=()
+          lfs_pointers=()
+          lfs_tracking=()
+          allowed_large=()
+
+          while IFS= read -r -d '' path; do
+            size="$(git cat-file -s "$HEAD_SHA:$path" 2>/dev/null || echo 0)"
+
+            if [ "$size" -gt "$MAX_BLOB_BYTES" ]; then
+              if is_allowed "$path"; then
+                allowed_large+=("$path ($size bytes)")
+              else
+                oversized+=("$path ($size bytes)")
+              fi
+            fi
+
+            # An LFS pointer is a ~130-byte text stub. Reading small blobs only
+            # keeps this cheap even on large PRs.
+            if [ "$size" -gt 0 ] && [ "$size" -lt 1024 ]; then
+              content="$(git cat-file blob "$HEAD_SHA:$path" 2>/dev/null || true)"
+              case "$content" in
+                "version https://git-lfs.github.com/spec/"*)
+                  lfs_pointers+=("$path")
+                  ;;
+              esac
+            fi
+
+            # A .gitattributes touched by this PR that turns LFS on is the
+            # upstream cause of the 17 GB -- catch the tracking rule itself,
+            # not just its output.
+            case "$path" in
+              .gitattributes|*/.gitattributes)
+                attrs="$(git cat-file blob "$HEAD_SHA:$path" 2>/dev/null || true)"
+                case "$attrs" in
+                  *filter=lfs*)
+                    lfs_tracking+=("$path")
+                    ;;
+                esac
+                ;;
+            esac
+          done < <(git diff --name-only --diff-filter=AM -z "$merge_base" "$HEAD_SHA")
+
+          {
+            echo "## Blob size guard"
+            echo ""
+            echo "Limit: 5 MiB per file. Range: \`${merge_base:0:12}..${HEAD_SHA:0:12}\`"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          failed=0
+
+          if [ "${#oversized[@]}" -gt 0 ]; then
+            failed=1
+            {
+              echo "### Oversized files (blocked)"
+              echo ""
+              for item in "${oversized[@]}"; do
+                echo "- \`$item\`"
+              done
+              echo ""
+              echo "Build artifacts belong in a GitHub **Release**, or on local disk"
+              echo "referenced by path + hash from a committed text log -- never as a"
+              echo "committed file. If this file genuinely belongs in the tree, add it to"
+              echo "\`.github/large-blob-allowlist.txt\` in this PR with a dated reason."
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "${#lfs_pointers[@]}" -gt 0 ]; then
+            failed=1
+            {
+              echo "### Git LFS pointer files (blocked)"
+              echo ""
+              for item in "${lfs_pointers[@]}"; do
+                echo "- \`$item\`"
+              done
+              echo ""
+              echo "LFS objects pushed to GitHub are permanent -- deleting the file later"
+              echo "does not reclaim the storage. Do not reintroduce LFS here."
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "${#lfs_tracking[@]}" -gt 0 ]; then
+            failed=1
+            {
+              echo "### Git LFS tracking rules (blocked)"
+              echo ""
+              for item in "${lfs_tracking[@]}"; do
+                echo "- \`$item\` contains a \`filter=lfs\` rule"
+              done
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "${#allowed_large[@]}" -gt 0 ]; then
+            {
+              echo "### Allowlisted large files (permitted)"
+              echo ""
+              for item in "${allowed_large[@]}"; do
+                echo "- \`$item\`"
+              done
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$failed" -eq 0 ]; then
+            echo "No oversized blobs, LFS pointers, or LFS tracking rules added." \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "PASS: no oversized blobs, LFS pointers, or LFS tracking rules added."
+            exit 0
+          fi
+
+          echo "FAIL: see the job summary for the blocked paths." >&2
+          exit 1
+
+  # workflow-cost: windows-pr-justification -- native beta ships only on Windows.
+  native-beta-pack-contract:
+    name: Native beta Python and pack contract
+    if: github.event.pull_request.base.ref == 'release/native-beta-1.0.0-beta.1-rc1'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact PR source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (dev)
+        run: uv sync --group dev
+
+      - name: Run exact native beta pack contract tests
+        shell: pwsh
+        run: |
+          uv run pytest -q tests/native `
+            tests/installer/test_native_packs.py `
+            tests/installer/test_native_distribution.py `
+            tests/installer/test_native_distribution_builder.py `
+            tests/installer/test_stage_native_server_pack.py `
+            tests/policy/test_native_beta_candidate_workflow.py `
+            tests/test_collect_source_state.py `
+            tests/policy/test_native_beta_pr_gate_workflow.py
+
+  native-beta-installer:
+    if: github.event.pull_request.base.ref == 'release/native-beta-1.0.0-beta.1-rc1'
+    uses: ./.github/workflows/ci-installer-compile.yml
+    with:
+      native_beta_windows_only: true
+      source_sha: ${{ github.event.pull_request.head.sha }}
+
+  native-beta-pr-gate:
+    name: Native beta Windows PR gate
+    if: ${{ always() && github.event.pull_request.base.ref == 'release/native-beta-1.0.0-beta.1-rc1' }}
+    needs: [native-beta-pack-contract, native-beta-installer]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fail unless every required native-beta gate succeeded
+        shell: pwsh
+        run: |
+          $results = @(
+            "python=${{ needs.native-beta-pack-contract.result }}"
+            "installer=${{ needs.native-beta-installer.result }}"
+          )
+          foreach ($result in $results) {
+            $name, $status = $result -split "=", 2
+            if ($status -ne "success") {
+              Write-Error "Native beta Windows PR gate blocked: $name=$status"
+              exit 1
+            }
+          }

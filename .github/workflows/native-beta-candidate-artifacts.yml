@@ -1,0 +1,785 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+#
+# Produces the native-Windows beta's five co-delivered assets without
+# publishing them.  A release coordinator must verify this private artifact
+# and run the clean-machine gate before manually publishing it to
+# scottconverse/civiccast-releases.
+name: native-beta-candidate-artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/native-beta-1.0.0-beta.1-rc1
+
+concurrency:
+  group: native-beta-candidate-artifacts
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-native-beta:
+    name: Build and sign native-beta candidate assets
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      PACK_PUBLIC_KEY_BASE64: ${{ vars.CIVICCAST_PACK_PUBLIC_KEY_BASE64 }}
+      PACK_SIGNING_KEY_ID: ${{ vars.CIVICCAST_PACK_SIGNING_KEY_ID }}
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+
+      - name: Bind reviewed MSVC install location
+        shell: pwsh
+        run: |
+          $msvcInstall = Join-Path $env:RUNNER_TEMP "civiccast-msvc-build-tools"
+          "CIVICCAST_MSVC_INSTALLATION_PATH=$msvcInstall" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Provision the reviewed native build toolchain
+        shell: pwsh
+        run: |
+          $toolchainCache = Join-Path $env:RUNNER_TEMP "civiccast-toolchain-cache"
+          python -I -B scripts/provision_native_build_toolchain.py `
+            --cache $toolchainCache `
+            --output build/wp1-native-toolchain `
+            --msvc-install $env:CIVICCAST_MSVC_INSTALLATION_PATH
+          # Put BOTH provisioned tool directories on PATH, not just node.
+          #
+          # scripts/build_native_runtime_closure.py::stage_upstream_wheels
+          # shells out to a BARE `uv` (subprocess.run(["uv", "pip", "install",
+          # ...])), and windows-latest images do not carry uv. Adding only
+          # node's directory here is why candidate run 31133746679 died at
+          # "Build and verify signed component packs" with
+          #   FileNotFoundError: [WinError 2] The system cannot find the file
+          #   specified
+          # -- the same wire-up gap as the reviewed-interpreter defect this
+          # branch fixes, one directory over. provision_native_build_toolchain
+          # itself already computes a node/uv/python PATH prefix and exports
+          # CIVICCAST_UV_EXE; the workflow was using neither.
+          #
+          # The reviewed python is deliberately NOT added here: it reaches PATH
+          # via the build venv in the next step, which is what makes
+          # sys._base_executable resolve to the reviewed interpreter while
+          # still carrying the project's dependencies.
+          $toolchainRoot = (Resolve-Path "build/wp1-native-toolchain").Path
+          foreach ($tool in @("node", "uv")) {
+            $toolBin = Join-Path $toolchainRoot $tool
+            if (-not (Test-Path -LiteralPath $toolBin)) {
+              throw "Provisioned toolchain is missing its $tool directory: $toolBin"
+            }
+            $toolBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+      - name: Bootstrap the reviewed Python build environment
+        shell: pwsh
+        run: |
+          # The `python` the later pack-build steps invoke bare must BE the
+          # reviewed toolchain interpreter `verify_app_build_toolchain()`
+          # hashes (scripts/build_native_app_payload.py resolves
+          # sys._base_executable / sys.base_prefix, not a PATH lookup) --
+          # AND it must have this project + its dev-group build tools
+          # (pefile, packaging, cryptography, ...) installed. Neither the
+          # bootstrap interpreter from actions/setup-python (unreviewed) nor
+          # a bare PATH-prepend of the provisioned python (has no project
+          # deps) satisfies both at once. `uv sync --python <reviewed>`
+          # creates a venv seeded FROM the reviewed interpreter (its
+          # pyvenv.cfg "home" points back to it, so _base_executable /
+          # base_prefix resolve to the reviewed build) with the project
+          # installed on top -- the exact mechanism
+          # scripts/prove_native_app_reproducible.py already uses to pass
+          # this same check in the reproducibility workflow.
+          $toolchain = (Resolve-Path "build/wp1-native-toolchain").Path
+          $toolchainPython = Join-Path $toolchain "python\python.exe"
+          $toolchainUv = Join-Path $toolchain "uv\uv.exe"
+          $buildVenv = Join-Path $env:RUNNER_TEMP "civiccast-build-venv"
+          $env:UV_PYTHON = $toolchainPython
+          $env:UV_PYTHON_DOWNLOADS = "never"
+          $env:UV_PROJECT_ENVIRONMENT = $buildVenv
+          & $toolchainUv sync --frozen --all-groups --python $toolchainPython --project .
+          if ($LASTEXITCODE -ne 0) { throw "Could not sync the reviewed Python build environment." }
+          $venvPython = Join-Path $buildVenv "Scripts\python.exe"
+          if (-not (Test-Path -LiteralPath $venvPython)) {
+            throw "uv sync did not produce a build-venv Python: $venvPython"
+          }
+          (Join-Path $buildVenv "Scripts") | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Acquire the pinned CPython payload interpreter
+        shell: pwsh
+        run: |
+          $pythonEmbedZip = Join-Path $env:RUNNER_TEMP "civiccast-python-3.12.10-embed-amd64.zip"
+          Invoke-WebRequest `
+            -Uri "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip" `
+            -OutFile $pythonEmbedZip
+          $size = (Get-Item -LiteralPath $pythonEmbedZip).Length
+          if ($size -ne 11133606) {
+            throw "Embeddable Python size $size does not match reviewed 11133606"
+          }
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $pythonEmbedZip).Hash.ToLowerInvariant()
+          $expected = "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
+          if ($actual -ne $expected) {
+            throw "Embeddable Python SHA-256 $actual does not match reviewed $expected"
+          }
+
+      - name: Recover the exact reviewed VC++ redistributable
+        shell: pwsh
+        run: |
+          $carrier = Join-Path $env:RUNNER_TEMP "CivicCast.Native._1.0.0-rc15_x64-setup.exe"
+          Invoke-WebRequest `
+            -Uri "https://github.com/scottconverse/civiccast-releases/releases/download/shakedown-a63455fa/CivicCast.Native._1.0.0-rc15_x64-setup.exe" `
+            -OutFile $carrier
+          $carrierHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $carrier).Hash.ToLowerInvariant()
+          if ($carrierHash -ne "90a01dc38a188d57a50c4cf6ea9e8a0a97c760e6097c7c499aaf3a5e2ae20eda") {
+            throw "Reviewed VC++ carrier hash mismatch: $carrierHash"
+          }
+          $redistDir = Join-Path $env:RUNNER_TEMP "civiccast-vc-redist"
+          New-Item -ItemType Directory -Force -Path $redistDir | Out-Null
+          & 7z e $carrier "-o$redistDir" vc_redist.x64.exe -y
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract vc_redist.x64.exe from reviewed carrier." }
+          $redist = Join-Path $redistDir "vc_redist.x64.exe"
+          $size = (Get-Item -LiteralPath $redist).Length
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $redist).Hash.ToLowerInvariant()
+          if ($size -ne 25635768 -or $hash -ne "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b") {
+            throw "Extracted VC++ redistributable does not match the bootstrap's reviewed identity."
+          }
+          "VC_REDIST_X64=$redist" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install the reviewed VC++ runtime on the runner
+        shell: pwsh
+        run: |
+          # The server pack's live bootstrap proof launches the PACKED PostgreSQL
+          # (initdb + a real server). Every pinned PostgreSQL executable imports
+          # VCRUNTIME140.dll, icuuc67.dll imports MSVCP140.dll, and TSDuck's
+          # tsp.exe/tscore.dll/tsduck.dll additionally need VCRUNTIME140_1.dll --
+          # verified by a pefile import-table walk AND independently by
+          # `dumpbin /dependents`.
+          #
+          # CORRECTED DIAGNOSIS (2026-08-07, PR #368's on-runner probe):
+          # candidate runs 31143881561 and 31154873108 both died in the
+          # bootstrap proof with exit 3221225781 (0xC0000135), and the FIRST
+          # diagnosis -- "the runner has no VC++ runtime" -- was WRONG. This
+          # very step answered 1638 ("same-or-newer already present") on run
+          # 31154873108, and the runner image manifests 14.51 installed. The
+          # real cause: initdb re-execs itself under a restricted token
+          # (Administrators deny-only) that cannot read the proof's scratch
+          # tree under the runner's ACLs; the loader then dies before initdb's
+          # first print. Fixed where it belongs, in prove_postgres_bootstrap
+          # (scripts/build_native_server_pack.py), with an explicit user-SID
+          # grant on the scratch tree -- probe legs A (no grant, 0xC0000135)
+          # and C (grant, initdb runs) proved both directions on the runner.
+          #
+          # This step STAYS despite the corrected diagnosis: real stations get
+          # this same reviewed vc_redist installed before any pack is staged,
+          # so installing it here keeps CI matching station ordering, and on
+          # runner images that already carry the runtime it is a no-op (1638).
+          #
+          # We do NOT bundle Microsoft's runtime DLLs into the pack to solve
+          # this: that is a redistribution question, and the product already
+          # installs this same reviewed vc_redist.x64.exe on real stations
+          # (nsis-hooks-bootstrap.nsh NSIS_HOOK_POSTINSTALL) BEFORE any pack is
+          # staged. Installing it on the runner makes CI match the real station
+          # ordering instead of testing a configuration no station ever has.
+          #
+          # SCOPE NOTE, deliberately explicit: after this step the bootstrap
+          # proof shows "the packed selection works given the VC++ runtime, as
+          # on a real station". It does NOT claim the pack is self-contained
+          # without that runtime -- it never was, and no station runs without it.
+          #
+          # Exit codes mirror the installer's own hard-won handling: 0 = success,
+          # 3010 = ERROR_SUCCESS_REBOOT_REQUIRED, 1638 = a same-or-newer runtime
+          # is already present (that last one hard-failed a real-hardware run on
+          # 2026-08-01 before the installer learned to accept it).
+          $proc = Start-Process -FilePath $env:VC_REDIST_X64 `
+            -ArgumentList "/install", "/quiet", "/norestart" `
+            -Wait -PassThru
+          $code = $proc.ExitCode
+          switch ($code) {
+            0     { "VC++ runtime installed." }
+            3010  { "VC++ runtime installed; a restart is pending (not required for this job)." }
+            1638  { "A same-or-newer VC++ runtime is already present." }
+            default { throw "VC++ runtime install failed with exit code $code" }
+          }
+
+      - name: Assert clean source tree before pack build
+        shell: pwsh
+        run: |
+          $dirty = @(git status --porcelain=v1 -uall)
+          if ($LASTEXITCODE -ne 0) { throw "Could not inspect the source tree before pack build." }
+          if ($dirty.Count -ne 0) {
+            throw "Refusing to build packs from a dirty source tree:`n$($dirty -join "`n")"
+          }
+
+      - name: Bind packs to the checked-out source commit
+        shell: pwsh
+        run: |
+          $sourceSha = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Could not resolve the source commit before pack build." }
+          if ($sourceSha -notmatch "^[0-9a-f]{40}$") { throw "Resolved source commit is not a lowercase full SHA: $sourceSha" }
+          if ($sourceSha -ne "${{ github.sha }}") { throw "Resolved source commit $sourceSha does not match GitHub candidate ${{ github.sha }}" }
+          "SOURCE_SHA=$sourceSha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build and verify signed component packs
+        shell: pwsh
+        env:
+          PACK_SIGNING_PRIVATE_KEY: ${{ secrets.CIVICCAST_PACK_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PACK_PUBLIC_KEY_BASE64)) { throw "Pack public key variable is missing." }
+          if ([string]::IsNullOrWhiteSpace($env:PACK_SIGNING_KEY_ID)) { throw "Pack signing key-id variable is missing." }
+          if ([string]::IsNullOrWhiteSpace($env:PACK_SIGNING_PRIVATE_KEY)) { throw "Pack signing private-key secret is missing." }
+          New-Item -ItemType Directory -Force -Path artifacts/native-beta/packs | Out-Null
+          $keyPath = Join-Path $env:RUNNER_TEMP "civiccast-pack-signing-key.pem"
+          $appPayload = Join-Path $env:RUNNER_TEMP "civiccast-app-payload"
+          $appScratch = Join-Path $env:RUNNER_TEMP "civiccast-app-payload-scratch"
+          $gstreamerStage = Join-Path $env:RUNNER_TEMP "civiccast-gstreamer-stage"
+          $gstreamerClosure = Join-Path $env:RUNNER_TEMP "civiccast-gstreamer-closure"
+          $pythonEmbedZip = Join-Path $env:RUNNER_TEMP "civiccast-python-3.12.10-embed-amd64.zip"
+          $serverPackCache = Join-Path $env:RUNNER_TEMP "civiccast-server-pack-cache"
+          $ffmpegPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ffmpeg-pack-cache"
+          $ollamaPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ollama-pack-cache"
+          $cudaPackCache = Join-Path $env:RUNNER_TEMP "civiccast-cuda-pack-cache"
+          [System.IO.File]::WriteAllText($keyPath, $env:PACK_SIGNING_PRIVATE_KEY, [System.Text.UTF8Encoding]::new($false))
+          try {
+            python -I -B scripts/build_native_runtime_closure.py --stage $gstreamerStage --out $gstreamerClosure
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -I -B scripts/verify_native_runtime_closure.py --tree $gstreamerClosure
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -I -B scripts/build_native_app_payload_pack.py `
+              --output artifacts/native-beta/packs/native-app-payload.ccpack `
+              --payload-out $appPayload `
+              --build-scratch $appScratch `
+              --interpreter-zip $pythonEmbedZip `
+              --signing-private-key $keyPath `
+              --signing-key-id $env:PACK_SIGNING_KEY_ID `
+              --source-sha $env:SOURCE_SHA `
+              --gstreamer-closure $gstreamerClosure `
+              --report artifacts/native-beta/native-app-payload-report.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -I -B scripts/build_native_server_pack.py `
+              --output artifacts/native-beta/packs/native-server-binaries.ccpack `
+              --acquire `
+              --cache $serverPackCache `
+              --signing-private-key $keyPath `
+              --signing-key-id $env:PACK_SIGNING_KEY_ID `
+              --source-sha $env:SOURCE_SHA `
+              --report artifacts/native-beta/native-server-binaries-report.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -I -B scripts/build_native_ffmpeg_pack.py `
+              --output artifacts/native-beta/packs/native-ffmpeg-runtime.ccpack `
+              --acquire `
+              --cache $ffmpegPackCache `
+              --signing-private-key $keyPath `
+              --signing-key-id $env:PACK_SIGNING_KEY_ID `
+              --report artifacts/native-beta/native-ffmpeg-runtime-report.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -I -B scripts/build_native_ollama_pack.py `
+              --output artifacts/native-beta/packs/native-ollama-runtime.ccpack `
+              --acquire `
+              --cache $ollamaPackCache `
+              --signing-private-key $keyPath `
+              --signing-key-id $env:PACK_SIGNING_KEY_ID `
+              --report artifacts/native-beta/native-ollama-runtime-report.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            # native-cuda-runtime is OPTIONAL at install time (native_pack_staging::
+            # DEFAULT_OPTIONAL_COMPONENTS, never DEFAULT_REQUIRED_COMPONENTS) -- built,
+            # signed, and checksummed here exactly like every other sidecar so the
+            # published release carries a real asset for the download-plan catalog to
+            # fetch, but never counted toward the required-sidecar disk estimate below.
+            python -I -B scripts/build_native_cuda_pack.py `
+              --output artifacts/native-beta/packs/native-cuda-runtime.ccpack `
+              --acquire `
+              --cache $cudaPackCache `
+              --signing-private-key $keyPath `
+              --signing-key-id $env:PACK_SIGNING_KEY_ID `
+              --report artifacts/native-beta/native-cuda-runtime-report.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            if (Test-Path -LiteralPath $keyPath) {
+              [System.IO.File]::Delete($keyPath)
+            }
+          }
+          if (Test-Path -LiteralPath $keyPath) { throw "Pack signing key cleanup failed." }
+
+      - name: Verify installer disk estimate covers built sidecars
+        shell: pwsh
+        run: |
+          [long]$requiredBytes = 0
+          foreach ($reportPath in @(
+            "artifacts/native-beta/native-app-payload-report.json",
+            "artifacts/native-beta/native-server-binaries-report.json",
+            "artifacts/native-beta/native-ffmpeg-runtime-report.json",
+            "artifacts/native-beta/native-ollama-runtime-report.json"
+          )) {
+            $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+            $requiredBytes += [long]$report.pack_bytes + [long]$report.payload_bytes
+          }
+          $hooks = Get-Content -LiteralPath "civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh" -Raw
+          $match = [regex]::Match($hooks, '!define\s+CIVICCAST_ADDSIZE_PACKS_KB\s+"(\d+)"')
+          if (-not $match.Success) { throw "Installer sidecar AddSize declaration is missing." }
+          [long]$estimatedBytes = [long]$match.Groups[1].Value * 1KB
+          if ($requiredBytes -gt $estimatedBytes) {
+            throw "Built sidecars require $requiredBytes bytes, exceeding installer estimate $estimatedBytes bytes."
+          }
+
+      - name: Import reviewed MSVC environment for the Tauri build
+        shell: pwsh
+        run: |
+          $vcvars = (Resolve-Path "$env:CIVICCAST_MSVC_INSTALLATION_PATH/VC/Auxiliary/Build/vcvars64.bat").Path
+          $captured = & cmd.exe /d /c "call `"$vcvars`" >nul && set"
+          if ($LASTEXITCODE -ne 0) { throw "Could not initialize the reviewed MSVC environment." }
+          foreach ($line in $captured) {
+            $pair = $line -split "=", 2
+            if ($pair.Count -eq 2 -and $pair[0] -match "^(INCLUDE|LIB|LIBPATH|Path|PATH|VCINSTALLDIR|VCToolsInstallDir|WindowsSdkDir|WindowsSDKVersion|UCRTVersion|UniversalCRTSdkDir)$") {
+              "$($pair[0])=$($pair[1])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
+          }
+
+      - name: Build the native bootstrap with the release trust root
+        shell: pwsh
+        run: |
+          python -I -B scripts/build_native_bootstrap.py `
+            --pack-public-key-base64 $env:PACK_PUBLIC_KEY_BASE64 `
+            --pack-signing-key-id $env:PACK_SIGNING_KEY_ID `
+            --vc-redist-x64 $env:VC_REDIST_X64 `
+            --report artifacts/native-beta/native-bootstrap-report.json
+          $setup = Get-ChildItem "civiccast/apps/installer/src-tauri/target/release/bundle/nsis/CivicCast (Native)_*_x64-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw "Native setup executable is missing." }
+          Copy-Item -LiteralPath $setup.FullName -Destination "artifacts/native-beta/$($setup.Name)"
+
+      - name: Verify the compiled bootstrap trusts the freshly signed packs
+        shell: pwsh
+        run: |
+          $bootstrap = Get-ChildItem "civiccast/apps/installer/src-tauri/target/release/CivicCast Native.exe" | Select-Object -First 1
+          if (-not $bootstrap) { throw "Native bootstrap executable is missing." }
+          $sideload = "artifacts/native-beta"
+          $installRoot = "artifacts/native-beta/trust-bridge-install"
+          # The bootstrap is a GUI-subsystem executable. `& exe` in pwsh does
+          # NOT wait for GUI processes and leaves $LASTEXITCODE untouched
+          # ($null), and `$null -ne 0` is $true -- so run 31157720773 threw
+          # "rejected its freshly signed sidecar packs" ~2 s in, while the
+          # bootstrap was still staging (real staging takes ~26 s; the
+          # instrumented rerun 31159936381 on the SAME commit passed all
+          # three calls with exit 0 once actually awaited). Start-Process
+          # -Wait gives a real exit code, and the redirects capture the
+          # stdout/stderr a GUI-subsystem exe otherwise drops -- printed win
+          # or lose so the NEXT trust-bridge failure names itself instead of
+          # failing silently.
+          function Invoke-BootstrapCaptured {
+            param([string[]]$Arguments, [string]$Label)
+            $outFile = "artifacts/native-beta/$Label-stdout.txt"
+            $errFile = "artifacts/native-beta/$Label-stderr.txt"
+            $proc = Start-Process -FilePath $bootstrap.FullName -ArgumentList $Arguments `
+              -Wait -PassThru -NoNewWindow `
+              -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            Write-Host "=== $Label exit code: $($proc.ExitCode) ==="
+            Write-Host "--- $Label stdout ---"
+            Get-Content $outFile | Write-Host
+            Write-Host "--- $Label stderr ---"
+            Get-Content $errFile | Write-Host
+            return $proc.ExitCode
+          }
+          $code = Invoke-BootstrapCaptured -Label "stage-packs" -Arguments @(
+            "--civiccast-stage-packs", $sideload,
+            "--install-root", $installRoot,
+            "--require-component", "native-server-binaries",
+            "--require-component", "native-app-payload",
+            "--require-component", "native-ffmpeg-runtime"
+            "--require-component", "native-ollama-runtime",
+            "--optional-component", "native-cuda-runtime"
+          )
+          if ($code -ne 0) { throw "Compiled bootstrap rejected its freshly signed sidecar packs (exit $code; see captured output above)." }
+          $code = Invoke-BootstrapCaptured -Label "verify-server" -Arguments @("--civiccast-verify-pack-tree", "$installRoot/packs/native-server-binaries.ccpack", "--destination", "$installRoot/packs/native-server-binaries/payload", "--expected-component", "native-server-binaries")
+          if ($code -ne 0) { throw "Compiled bootstrap could not re-verify native-server-binaries (exit $code)." }
+          $code = Invoke-BootstrapCaptured -Label "verify-payload" -Arguments @("--civiccast-verify-pack-tree", "$installRoot/packs/native-app-payload.ccpack", "--destination", "$installRoot/runtime", "--expected-component", "native-app-payload")
+          if ($code -ne 0) { throw "Compiled bootstrap could not re-verify native-app-payload (exit $code)." }
+          $code = Invoke-BootstrapCaptured -Label "verify-ffmpeg" -Arguments @("--civiccast-verify-pack-tree", "$installRoot/packs/native-ffmpeg-runtime.ccpack", "--destination", "$installRoot/dependencies/ffmpeg", "--expected-component", "native-ffmpeg-runtime")
+          if ($code -ne 0) { throw "Compiled bootstrap could not re-verify native-ffmpeg-runtime (exit $code)." }
+          $code = Invoke-BootstrapCaptured -Label "verify-ollama" -Arguments @("--civiccast-verify-pack-tree", "$installRoot/packs/native-ollama-runtime.ccpack", "--destination", "$installRoot/dependencies/ollama", "--expected-component", "native-ollama-runtime")
+          if ($code -ne 0) { throw "Compiled bootstrap could not re-verify native-ollama-runtime (exit $code)." }
+          # native-cuda-runtime was passed to stage-packs above as --optional-component,
+          # not --require-component: proves the SAME compiled bootstrap can stage,
+          # extract, and re-verify the optional pack end to end, without making it a
+          # condition of "setup succeeded" the way the required sidecars are.
+          $code = Invoke-BootstrapCaptured -Label "verify-cuda" -Arguments @("--civiccast-verify-pack-tree", "$installRoot/packs/native-cuda-runtime.ccpack", "--destination", "$installRoot/dependencies/cuda", "--expected-component", "native-cuda-runtime")
+          if ($code -ne 0) { throw "Compiled bootstrap could not re-verify native-cuda-runtime (exit $code)." }
+
+      - name: Smoke the installed GStreamer closure through the product worker
+        shell: pwsh
+        run: |
+          $installRoot = "artifacts/native-beta/trust-bridge-install"
+          & "$installRoot/runtime/python.exe" -m civiccast.native.installed_gstreamer_smoke `
+            --version-root "$installRoot/runtime" `
+            --output "artifacts/native-beta/installed-gstreamer-smoke.ts" `
+            --report "artifacts/native-beta/installed-gstreamer-smoke-report.json"
+          if ($LASTEXITCODE -ne 0) { throw "Installed GStreamer product smoke failed." }
+
+      - name: Sign the native bootstrap (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: https://wcus.codesigning.azure.net
+          signing-account-name: scottconverse-signing
+          certificate-profile-name: ScottConversePublic
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          files-folder: artifacts/native-beta
+          files-folder-filter: exe
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+
+      - name: Verify signed candidate and write checksums
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "artifacts/native-beta/CivicCast (Native)_*_x64-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw "Native setup executable is missing." }
+          $signature = Get-AuthenticodeSignature $setup.FullName
+          if ($signature.Status -ne "Valid") { throw "Native setup signature is not Valid: $($signature.Status)" }
+          # No trailing commas: in PowerShell they splice the next line into
+          # ONE Get-Item call whose path array includes the literal string
+          # "Get-Item" -- run 31209319382 died here on this step's first-ever
+          # execution, AFTER the Authenticode check had already passed.
+          # Newline-separated statements inside @() each contribute output.
+          $assets = @(
+            Get-Item "artifacts/native-beta/$($setup.Name)"
+            Get-Item "artifacts/native-beta/packs/native-app-payload.ccpack"
+            Get-Item "artifacts/native-beta/packs/native-server-binaries.ccpack"
+            Get-Item "artifacts/native-beta/packs/native-ffmpeg-runtime.ccpack"
+            Get-Item "artifacts/native-beta/packs/native-ollama-runtime.ccpack"
+            Get-Item "artifacts/native-beta/packs/native-cuda-runtime.ccpack"
+          )
+          $artifactRoot = (Resolve-Path "artifacts/native-beta").Path
+          $lines = foreach ($asset in $assets) {
+            $relative = [System.IO.Path]::GetRelativePath($artifactRoot, $asset.FullName).Replace('\', '/')
+            "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 $asset.FullName).Hash.ToLowerInvariant(), $relative
+          }
+          $lines | Set-Content -LiteralPath artifacts/native-beta/SHA256SUMS.txt -Encoding utf8
+          [ordered]@{
+            source_sha = "${{ github.sha }}"
+            pack_signing_key_id = $env:PACK_SIGNING_KEY_ID
+            authenticode_status = $signature.Status.ToString()
+            signer_subject = $signature.SignerCertificate.Subject
+            assets = @($assets | ForEach-Object { [System.IO.Path]::GetRelativePath($artifactRoot, $_.FullName).Replace('\', '/') })
+          } | ConvertTo-Json | Set-Content -LiteralPath artifacts/native-beta/candidate-receipt.json -Encoding utf8
+
+      - name: Upload private native-beta candidate artifact
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 45
+        with:
+          name: native-beta-candidate-${{ github.sha }}
+          path: |
+            artifacts/native-beta/CivicCast (Native)_*_x64-setup.exe
+            artifacts/native-beta/packs/native-app-payload.ccpack
+            artifacts/native-beta/packs/native-server-binaries.ccpack
+            artifacts/native-beta/packs/native-ffmpeg-runtime.ccpack
+            artifacts/native-beta/packs/native-ollama-runtime.ccpack
+            artifacts/native-beta/packs/native-cuda-runtime.ccpack
+            artifacts/native-beta/*-report.json
+            artifacts/native-beta/SHA256SUMS.txt
+            artifacts/native-beta/candidate-receipt.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # Produces the signed native STATION BUNDLE the K1 flat-activation fix
+  # consumes (scripts/build_native_station_bundle.py: station-index.json +
+  # every required component pack, side-loadable at $EXEDIR\station\). A
+  # separate job, not a step folded into build-native-beta above, for two
+  # reasons: (1) its inputs are Ollama model exports and a Whisper snapshot,
+  # not the Tauri/MSVC toolchain build-native-beta exists for, so it needs
+  # none of that job's reviewed-toolchain machinery; (2) disk. The four
+  # required pack roots are ~21 GB of raw model bytes (gemma4:12b ~7.6 GB,
+  # gemma4:e4b ~9.1 GB, translategemma:4b ~3.1 GB, faster-whisper-medium
+  # ~1.5 GB) and packing duplicates that into signed .ccpack payloads
+  # alongside the raw roots -- a real risk on a shared hosted runner even
+  # before build-native-beta's own toolchain/app-payload disk use is
+  # considered. Running on its own runner avoids competing with that job's
+  # disk footprint at all; within this job, the provisioning cache is freed
+  # right after each pinned root is verified and staged, and the raw
+  # provisioned roots are freed right after packing, before upload -- see the
+  # "Free ..." steps below.
+  build-native-station-bundle:
+    name: Provision and sign the native station bundle (K1)
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      PACK_SIGNING_KEY_ID: ${{ vars.CIVICCAST_PACK_SIGNING_KEY_ID }}
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (captions-runtime extra)
+        run: uv sync --frozen --extra captions-runtime
+
+      - name: Resolve the native product version
+        shell: pwsh
+        run: |
+          # build_native_station_bundle.py's --product-version has no
+          # default (unlike its sibling pack builders, which all default to
+          # civiccast._native_version.__version__) -- resolve it explicitly
+          # here from the SAME single source of truth rather than a second,
+          # hand-typed literal.
+          # `uv run`, not bare `python`: unlike build-native-beta above,
+          # this job never adds a venv's Scripts directory to GITHUB_PATH --
+          # `uv run` is this repo's standard way to resolve the uv-synced
+          # project venv (see ci-test.yml's identical convention).
+          $productVersion = (uv run python -I -B -c "from civiccast._native_version import __version__; print(__version__)").Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Could not resolve the native product version." }
+          if ([string]::IsNullOrWhiteSpace($productVersion)) { throw "Resolved native product version is empty." }
+          "STATION_PRODUCT_VERSION=$productVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Provision the pinned Ollama model exports (summary + translation)
+        shell: pwsh
+        run: |
+          # scripts/provision_native_ollama_models.py hash-verifies every
+          # manifest and blob against native-windows-ollama-models.lock.json
+          # (the reviewed lock; presigned R2/registry allowlist, resumable,
+          # offline-capable cache) before it is ever trusted -- never an
+          # unpinned download. Its per-model output directory name IS the
+          # component id (summary-gemma4-12b, summary-gemma4-e4b,
+          # translation-translategemma-4b), which is exactly what
+          # build_native_station_bundle.py's --gemma4-12b-root /
+          # --gemma4-e4b-root / --translategemma-4b-root expect.
+          #
+          # Retried for the same reason as the captions-floor step below: a
+          # multi-gigabyte network fetch dying on one dropped socket should
+          # not cost a release candidate. Safe because the download is pinned
+          # and hash-verified against native-windows-ollama-models.lock.json,
+          # and the cache is explicitly resumable -- a retry continues rather
+          # than restarting.
+          $ollamaModelCache = Join-Path $env:RUNNER_TEMP "civiccast-station-ollama-model-cache"
+          $provisioned = $false
+          foreach ($attempt in 1..3) {
+            uv run python -I -B scripts/provision_native_ollama_models.py `
+              --cache $ollamaModelCache `
+              --output build/native-ollama-models
+            if ($LASTEXITCODE -eq 0) { $provisioned = $true; break }
+            Write-Host "::warning::Ollama model provisioning attempt $attempt failed (exit $LASTEXITCODE)"
+            if ($attempt -lt 3) { Start-Sleep -Seconds (15 * $attempt) }
+          }
+          if (-not $provisioned) { throw "Could not provision the pinned Ollama model exports after 3 attempts." }
+          # Disk mitigation: the cache and the output tree share bytes via
+          # os.link on the same volume (provision_native_ollama_models.py::
+          # stage_model), so freeing the cache here reclaims real disk, not
+          # a copy -- the verified models remain intact under
+          # build/native-ollama-models.
+          Remove-Item -Recurse -Force $ollamaModelCache
+
+      - name: Provision the pinned captions-floor bundle root
+        shell: pwsh
+        run: |
+          # scripts/provision_native_caption_floor_root.py (new: no CI-
+          # runnable pinned provisioning existed for this fixture before
+          # this workflow) hash-verifies the Systran/faster-whisper-medium
+          # snapshot against civiccast.native.caption_tiers.
+          # CAPTION_TIER_REGISTRY and the JFK self-test fixture against the
+          # same identity scripts/build_native_caption_pack.py pins -- never
+          # an unpinned download -- then assembles the exact
+          # --captions-floor-root shape build_native_station_bundle.py
+          # requires.
+          #
+          # Retried because the Hugging Face fetch is a network call with no
+          # ceiling on the other end's behaviour. On 2026-08-19 run
+          # 32314864434 this step -- and with it the whole installable-kit
+          # build -- died on a single transient
+          #   ConnectError: [WinError 10054] An existing connection was
+          #   forcibly closed by the remote host
+          # from huggingface_hub. One dropped socket should not cost a
+          # release candidate.
+          #
+          # Retrying is safe precisely BECAUSE the download is pinned: the
+          # script hash-verifies every snapshot against CAPTION_TIER_REGISTRY
+          # before assembling the root, so an attempt either produces the
+          # exact pinned bytes or fails. The cache is deliberately kept
+          # between attempts so a retry resumes rather than restarting, and
+          # is removed only after success.
+          $captionsFloorCache = Join-Path $env:RUNNER_TEMP "civiccast-station-captions-floor-cache"
+          $provisioned = $false
+          foreach ($attempt in 1..3) {
+            uv run python -I -B scripts/provision_native_caption_floor_root.py `
+              --cache $captionsFloorCache `
+              --output build/native-captions-floor-root
+            if ($LASTEXITCODE -eq 0) { $provisioned = $true; break }
+            Write-Host "::warning::captions-floor provisioning attempt $attempt failed (exit $LASTEXITCODE)"
+            if ($attempt -lt 3) { Start-Sleep -Seconds (15 * $attempt) }
+          }
+          if (-not $provisioned) { throw "Could not provision the pinned captions-floor bundle root after 3 attempts." }
+          Remove-Item -Recurse -Force $captionsFloorCache
+
+      - name: Build and sign the native station bundle
+        shell: pwsh
+        env:
+          PACK_SIGNING_PRIVATE_KEY: ${{ secrets.CIVICCAST_PACK_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PACK_SIGNING_KEY_ID)) { throw "Pack signing key-id variable is missing." }
+          if ([string]::IsNullOrWhiteSpace($env:PACK_SIGNING_PRIVATE_KEY)) { throw "Pack signing private-key secret is missing." }
+          New-Item -ItemType Directory -Force -Path artifacts/native-station-bundle | Out-Null
+          $keyPath = Join-Path $env:RUNNER_TEMP "civiccast-station-pack-signing-key.pem"
+          [System.IO.File]::WriteAllText($keyPath, $env:PACK_SIGNING_PRIVATE_KEY, [System.Text.UTF8Encoding]::new($false))
+          try {
+            uv run python -I -B scripts/build_native_station_bundle.py `
+              --output-dir artifacts/native-station-bundle/station `
+              --captions-floor-root build/native-captions-floor-root `
+              --gemma4-12b-root build/native-ollama-models/summary-gemma4-12b `
+              --gemma4-e4b-root build/native-ollama-models/summary-gemma4-e4b `
+              --translategemma-4b-root build/native-ollama-models/translation-translategemma-4b `
+              --signing-private-key $keyPath `
+              --signing-key-id $env:PACK_SIGNING_KEY_ID `
+              --product-version $env:STATION_PRODUCT_VERSION `
+              --channel beta `
+              --report artifacts/native-station-bundle/native-station-bundle-build-report.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            if (Test-Path -LiteralPath $keyPath) {
+              [System.IO.File]::Delete($keyPath)
+            }
+          }
+          if (Test-Path -LiteralPath $keyPath) { throw "Pack signing key cleanup failed." }
+
+      - name: Free the raw provisioned model roots before upload
+        shell: pwsh
+        run: |
+          # Disk mitigation: the signed station/ directory this job uploads
+          # is self-contained -- every required byte is already packed and
+          # signed inside it. The raw provisioned roots (~21 GB combined)
+          # are dead weight once packed, so they are freed here, before the
+          # upload step, rather than left for the runner's own teardown to
+          # reclaim.
+          Remove-Item -Recurse -Force build/native-ollama-models
+          Remove-Item -Recurse -Force build/native-captions-floor-root
+
+      - name: Verify the signed station bundle and write checksums
+        shell: pwsh
+        run: |
+          $stationDir = "artifacts/native-station-bundle/station"
+          $index = Get-Item (Join-Path $stationDir "station-index.json")
+          $packs = @(Get-ChildItem (Join-Path $stationDir "*.ccpack"))
+          if (-not $index) { throw "Signed station bundle is missing station-index.json." }
+          if ($packs.Count -eq 0) { throw "Signed station bundle produced no component packs." }
+          $assets = @($index) + $packs
+          $artifactRoot = (Resolve-Path $stationDir).Path
+          $lines = foreach ($asset in $assets) {
+            $relative = [System.IO.Path]::GetRelativePath($artifactRoot, $asset.FullName).Replace('\', '/')
+            "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 $asset.FullName).Hash.ToLowerInvariant(), $relative
+          }
+          $lines | Set-Content -LiteralPath (Join-Path $stationDir "SHA256SUMS.txt") -Encoding utf8
+
+      - name: Upload the native station bundle artifact
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 45
+        with:
+          name: native-station-bundle-${{ github.sha }}
+          path: |
+            artifacts/native-station-bundle/station/**
+            artifacts/native-station-bundle/native-station-bundle-build-report.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # Assembles the INSTALLABLE kit: the signed bootstrap installer with the
+  # signed station bundle co-located at `.\station\` next to it, the exact
+  # `$EXEDIR\station\station-index.json` layout the mandatory K1 activation
+  # hook (nsis-hooks-bootstrap.nsh, step d4-activate-station) side-loads.
+  # This is what "wire bundle production into the shipped kit" means: the two
+  # heavy build jobs above deliberately produce the installer and the station
+  # bundle as SEPARATE artifacts (different toolchains, ~21 GB of model bytes
+  # on their own runner -- see build-native-station-bundle's header), and this
+  # light job is the single seam that co-locates them so a clean-machine
+  # install has the bundle present and activation is not a fail-loud dead end.
+  # The activation hook stays mandatory (fail-loud on a MISSING bundle is the
+  # owner-ruled correct behavior -- never a silent success that leaves a
+  # station that can never activate); this job removes the reason it would be
+  # missing on a real install of the shipped kit.
+  assemble-native-beta-kit:
+    name: Assemble the installable native-beta kit (installer + station bundle)
+    needs: [build-native-beta, build-native-station-bundle]
+    runs-on: windows-latest
+    # This job only downloads two artifacts its dependencies already built,
+    # co-locates them, and re-uploads. It has no business running for hours.
+    # Without this it inherited the 360-minute default and, on 2026-08-20, run
+    # 32316394055 sat over an hour inside a hung download-artifact with no
+    # ceiling in sight -- see the per-step timeouts below.
+    timeout-minutes: 45
+    steps:
+      - name: Download the native-beta candidate (installer + component packs)
+        timeout-minutes: 15
+        uses: actions/download-artifact@v4
+        timeout-minutes: 10
+        with:
+          name: native-beta-candidate-${{ github.sha }}
+          path: candidate
+
+      - name: Download the signed native station bundle
+        timeout-minutes: 15
+        uses: actions/download-artifact@v4
+        timeout-minutes: 10
+        with:
+          name: native-station-bundle-${{ github.sha }}
+          path: station-bundle
+
+      - name: Co-locate the installer and station bundle into one kit
+        shell: pwsh
+        run: |
+          # Defensive against actions/upload-artifact's common-ancestor path
+          # stripping: locate each asset by name under its download root rather
+          # than assuming the exact nested layout.
+          $ErrorActionPreference = "Stop"
+          $kit = "kit"
+          New-Item -ItemType Directory -Force -Path $kit | Out-Null
+
+          $setup = Get-ChildItem -Path candidate -Recurse -Filter "CivicCast (Native)_*_x64-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw "Kit assembly: candidate installer setup.exe not found under candidate/." }
+          Copy-Item -LiteralPath $setup.FullName -Destination (Join-Path $kit $setup.Name)
+
+          # Component packs the installer side-loads next to itself ($EXEDIR\packs).
+          $packSource = Get-ChildItem -Path candidate -Recurse -Filter "*.ccpack"
+          if ($packSource.Count -eq 0) { throw "Kit assembly: no component .ccpack files found under candidate/." }
+          $kitPacks = Join-Path $kit "packs"
+          New-Item -ItemType Directory -Force -Path $kitPacks | Out-Null
+          foreach ($p in $packSource) { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path $kitPacks $p.Name) }
+
+          # The signed station bundle the mandatory K1 hook consumes at
+          # $EXEDIR\station\station-index.json. Copy its whole directory verbatim.
+          $index = Get-ChildItem -Path station-bundle -Recurse -Filter "station-index.json" | Select-Object -First 1
+          if (-not $index) { throw "Kit assembly: station-index.json not found under station-bundle/." }
+          $bundleDir = $index.Directory.FullName
+          $kitStation = Join-Path $kit "station"
+          New-Item -ItemType Directory -Force -Path $kitStation | Out-Null
+          Copy-Item -Path (Join-Path $bundleDir '*') -Destination $kitStation -Recurse
+
+          # Verify the invariant the installer relies on: index sits directly
+          # under .\station\ next to the setup.exe.
+          $placed = Join-Path $kitStation "station-index.json"
+          if (-not (Test-Path -LiteralPath $placed)) {
+            throw "Kit assembly: station-index.json is not co-located at .\station\ next to the installer."
+          }
+          $stationPacks = @(Get-ChildItem -Path $kitStation -Filter "*.ccpack")
+          if ($stationPacks.Count -eq 0) { throw "Kit assembly: the co-located station bundle carries no component packs." }
+          Write-Host "Assembled kit: $($setup.Name) + .\station\station-index.json + $($stationPacks.Count) station pack(s) + $($packSource.Count) installer pack(s)."
+
+      - name: Upload the installable native-beta kit
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 45
+        with:
+          name: native-beta-kit-${{ github.sha }}
+          path: kit/**
+          if-no-files-found: error
+          retention-days: 14

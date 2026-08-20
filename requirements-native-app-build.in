@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: Apache-2.0
+# Reproducible build backend for the CivicCast native application wheel.
+hatchling==1.27.0

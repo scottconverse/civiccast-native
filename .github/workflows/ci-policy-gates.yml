@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+# Runs two policy gates that previously only ran in the agent pipeline
+# (scripts/policy/run_all.py), never in CI:
+#
+#   - check_ffmpeg_wrapper  -- ADR 0007: ffmpeg is invoked only from
+#                              civiccast/stream/_ffmpeg.py.
+#   - check_public_copy_legal -- third-party incumbent-vendor names are contained
+#                                to the legal/research allowlist; no vendor
+#                                replacement/parity positioning copy ships.
+#
+# These land as ORDINARY (non-required) checks on purpose. Wiring them so they
+# run on every PR is the coordinator's job; promoting either to a REQUIRED
+# status check is a branch-protection change and stays the repo owner's call
+# (see the owner note in the PRs that made these gates green). A red job here is
+# visible and actionable without blocking merge until that promotion happens.
+
+name: ci-policy-gates
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ffmpeg-wrapper:
+    name: ffmpeg wrapper policy (ADR 0007)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: check_ffmpeg_wrapper
+        run: python scripts/policy/check_ffmpeg_wrapper.py
+
+  public-copy-legal:
+    name: public copy legal policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        # git ls-files drives the scan; a normal shallow checkout is enough.
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: check_public_copy_legal
+        run: python scripts/policy/check_public_copy_legal.py

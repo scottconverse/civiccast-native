@@ -1,0 +1,868 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright (c) The CivicCast Authors */
+
+@import "../../portal-operator/src/civiccast-tokens.css";
+
+:root {
+  color-scheme: light;
+  --bg: var(--cc-paper);
+  --fg: var(--cc-ink);
+  --muted: var(--cc-ink-2);
+  --line: var(--cc-line);
+  --panel: var(--cc-surface);
+  --good: #17643a;
+  --good-bg: var(--cc-ok-soft);
+  --warn: #7a5100;
+  --warn-bg: var(--cc-warn-soft);
+  --bad: var(--cc-err);
+  --bad-bg: var(--cc-err-soft);
+  --info: var(--cc-brand);
+  --info-bg: var(--cc-brand-soft);
+  --focus: var(--cc-brand);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.45 var(--cc-font-sans);
+}
+
+button,
+.button-link {
+  align-items: center;
+  border: 1px solid var(--fg);
+  border-radius: 6px;
+  display: inline-flex;
+  font-weight: 750;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  text-decoration: none;
+  transition:
+    background-color 120ms var(--cc-ease),
+    border-color 120ms var(--cc-ease),
+    box-shadow 120ms var(--cc-ease),
+    color 120ms var(--cc-ease),
+    transform 120ms var(--cc-ease);
+}
+
+button,
+.button-link {
+  background: var(--fg);
+  color: white;
+}
+
+button:disabled {
+  background: #e3e8e4;
+  border-color: #c5cec7;
+  color: #657069;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  button:not(:disabled):hover,
+  .button-link:hover {
+    box-shadow: var(--cc-shadow-sm);
+    filter: brightness(0.96);
+    transform: translateY(-1px);
+  }
+
+  .step:not(:disabled):hover {
+    background: var(--cc-surface-2);
+    border-color: var(--info);
+  }
+}
+
+button:not(:disabled):active,
+.button-link:active,
+.step:not(:disabled):active {
+  filter: brightness(0.92);
+  transform: translateY(1px) scale(0.99);
+}
+
+.shell {
+  margin: 0 auto;
+  max-width: 1220px;
+  min-height: 100vh;
+  padding: 28px;
+}
+
+/* F-08. The first-run screens are a FIXED-height column, not a page that
+   grows: header on top, one explicitly scrolling region in the middle, and
+   the primary action in a footer that is outside that region and therefore
+   cannot be scrolled away at any window size the installer can be shown at.
+
+   The walkthrough reached "What We'll Download" at the configured default
+   1120x760 window with Continue below the fold, and then could not scroll:
+   wheel, PageDown, End, dragging the scrollbar and clicking the page all
+   failed, and only Tab reached the button (because moving focus scrolls the
+   document as a side effect). Whatever swallowed those inputs, an operator
+   whose scroll fails for ANY reason is dead-ended by a layout that requires
+   scrolling to act. This removes the requirement rather than betting on the
+   input path, and gives the content a real `overflow-y: auto` scroller of
+   its own instead of depending on the WebView2 document scroller. */
+.shell-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-height: 100vh;
+}
+
+/* The action row is the one thing that never gives ground. Everything above
+   it stays shrinkable (the flex default), so on a short window the header and
+   the overall bar compress and the scroll region collapses toward zero --
+   rather than the footer being pushed off-screen, which is the failure this
+   whole layout exists to prevent. */
+.shell-frame > .shell-actions {
+  flex: 0 0 auto;
+}
+
+.shell-scroll {
+  flex: 1 1 auto;
+  /* Load-bearing: a flex item defaults to `min-height: auto`, which refuses
+     to shrink below its content -- so without this the "scroll" region grows
+     to fit the plan rows and pushes the footer off-screen instead of
+     scrolling, which is the exact shape of the defect. */
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Keeps the focus ring on the last row clear of the scrollbar gutter. */
+  padding-right: 4px;
+}
+
+/* The scroll region is a real tab stop (it carries tabindex=0 so PageDown,
+   End and the arrow keys work on it), so it must show that it has focus. */
+.shell-scroll:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+
+.shell-actions {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.shell-actions .plan-footer,
+.shell-actions .status-message {
+  margin-top: 0;
+}
+
+.shell-actions > .plan-footer {
+  flex: 1 1 auto;
+}
+
+.topbar {
+  align-items: start;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding-bottom: 20px;
+}
+
+h1 {
+  font-size: 2rem;
+  letter-spacing: 0;
+  line-height: 1.1;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.35rem;
+  letter-spacing: 0;
+  line-height: 1.2;
+  margin: 10px 0 0;
+}
+
+.lead {
+  color: var(--muted);
+  margin: 8px 0 0;
+  max-width: 64ch;
+}
+
+.handoff {
+  align-items: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.ready-pill,
+.blocked-pill {
+  align-items: center;
+  border-radius: 6px;
+  display: inline-flex;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 112px;
+  padding: 0 12px;
+}
+
+.ready-pill {
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.blocked-pill {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.platform-band {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 16px 0;
+}
+
+.phase-strip {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  padding: 16px 0 0;
+}
+
+.phase-strip div {
+  background: var(--cc-surface);
+  border: 1px solid var(--cc-line);
+  border-radius: 6px;
+  color: var(--cc-ink-2);
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 10px;
+}
+
+.phase-strip .phase-active {
+  background: var(--cc-brand-soft);
+  border-color: var(--cc-brand);
+  color: var(--cc-brand-2);
+}
+
+.resume-panel {
+  align-items: center;
+  background: var(--cc-info-soft);
+  border: 1px solid var(--cc-info);
+  border-radius: 6px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding: 12px;
+}
+
+.resume-panel p {
+  color: var(--cc-ink-2);
+  margin: 3px 0 0;
+}
+
+.initial-activity,
+.windows-setup-activity {
+  background: var(--cc-info-soft);
+  border: 1px solid var(--cc-info);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px;
+}
+
+.initial-activity span,
+.windows-setup-activity p {
+  color: var(--cc-ink-2);
+  margin: 0;
+}
+
+.activity-facts {
+  display: flex;
+  flex-wrap: wrap;
+  font-weight: 700;
+  gap: 8px 20px;
+  justify-content: space-between;
+}
+
+.windows-setup-activity progress,
+.initial-activity progress {
+  accent-color: var(--cc-brand);
+}
+
+.platform-band span,
+.lane-head span,
+.progress span {
+  color: var(--muted);
+}
+
+.status-message {
+  background: var(--info-bg);
+  border: 1px solid #bdd0ea;
+  border-radius: 6px;
+  color: #173a68;
+  font-weight: 650;
+  margin: 16px 0 0;
+  padding: 12px 14px;
+}
+
+/* The downloading screen's role="alert" region: a real failure (the native
+   download driver refused to start, or nothing has moved at all), not the
+   informational retry/status line the base class carries. Uses the same
+   error tokens the lane states already use rather than a new colour. */
+.status-message-error {
+  background: var(--bad-bg);
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.wizard {
+  align-items: start;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(320px, 1.4fr);
+  margin-top: 22px;
+}
+
+/* F-23: the license/attribution line at the foot of the wizard shell. */
+.license-footer {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin-top: 28px;
+  padding-top: 16px;
+}
+
+.license-footer p {
+  margin: 0;
+}
+
+.steps {
+  display: grid;
+  gap: 10px;
+}
+
+.progress {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+progress {
+  accent-color: var(--good);
+  height: 12px;
+  width: 100%;
+}
+
+.step {
+  align-items: center;
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--fg);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 34px 1fr;
+  justify-content: start;
+  min-height: 70px;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.step[aria-current="step"] {
+  border-color: var(--info);
+  box-shadow: inset 0 0 0 2px var(--info);
+}
+
+.step-number {
+  align-items: center;
+  background: var(--info-bg);
+  border-radius: 999px;
+  color: var(--info);
+  display: inline-flex;
+  font-weight: 800;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.step strong,
+.step em {
+  display: block;
+  font-style: normal;
+}
+
+.step em {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin-top: 2px;
+}
+
+.step-detail {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--warn);
+  border-radius: 8px;
+  min-height: 360px;
+  padding: 22px;
+}
+
+.lane-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.lane-head strong {
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+
+.step-detail p {
+  color: var(--muted);
+  margin: 14px 0 0;
+}
+
+.detail-primary-action {
+  margin-top: 14px;
+  min-width: min(100%, 260px);
+}
+
+.step-detail .next {
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.activitypub-setup {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.setup-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+}
+
+.setup-grid > div {
+  background: var(--cc-surface-2);
+  border: 1px solid var(--cc-line);
+  border-radius: var(--cc-r-md);
+  padding: 0.85rem;
+}
+
+.setup-grid span {
+  align-items: center;
+  background: var(--cc-brand-soft);
+  border-radius: var(--cc-r-pill);
+  color: var(--cc-brand-2);
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 700;
+  height: 1.5rem;
+  justify-content: center;
+  margin-bottom: 0.55rem;
+  width: 1.5rem;
+}
+
+.setup-grid strong {
+  display: block;
+}
+
+.setup-grid p {
+  color: var(--cc-ink-2);
+  font-size: 0.84rem;
+  margin: 0.25rem 0 0;
+}
+
+.actions {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.more-actions {
+  min-width: 220px;
+}
+
+.more-actions summary {
+  align-items: center;
+  border: 1px solid var(--cc-line);
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 750;
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+.more-actions div {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.secondary-action {
+  background: var(--cc-surface);
+  border-color: var(--cc-line);
+  color: var(--cc-ink);
+}
+
+.lane-success {
+  border-left-color: var(--good);
+}
+
+.lane-success .lane-head strong {
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.lane-error {
+  border-left-color: var(--bad);
+}
+
+.lane-error .lane-head strong {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.lane-blocked .lane-head strong,
+.lane-partial .lane-head strong,
+.lane-progress .lane-head strong,
+.lane-credential_gated .lane-head strong,
+.lane-hardware_required .lane-head strong,
+.lane-empty .lane-head strong,
+.lane-loading .lane-head strong,
+.lane-unavailable .lane-head strong,
+.lane-cancelled .lane-head strong {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+@media (max-width: 760px) {
+  .shell {
+    padding: 18px;
+  }
+
+  .topbar {
+    display: block;
+  }
+
+  .handoff {
+    justify-content: flex-start;
+    margin-top: 14px;
+  }
+
+  .wizard {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* -------------------------------------------------------------------- */
+/* Download experience: machine check, plan, downloading (download-ux-spec) */
+/* -------------------------------------------------------------------- */
+
+.hardware-facts {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  margin-top: 18px;
+}
+
+.hardware-facts > div {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--cc-r-md);
+  padding: 12px 14px;
+}
+
+.hardware-facts span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.84rem;
+}
+
+.hardware-facts strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.recommendation-banner {
+  background: var(--info-bg);
+  border: 1px solid var(--cc-info);
+  border-radius: var(--cc-r-md);
+  margin-top: 16px;
+  padding: 14px;
+}
+
+.recommendation-banner p {
+  color: #173a68;
+  font-weight: 650;
+  margin: 0;
+}
+
+.disk-block-banner {
+  background: var(--bad-bg);
+  border: 1px solid var(--bad);
+  border-radius: var(--cc-r-md);
+  margin-top: 16px;
+  padding: 14px;
+}
+
+.disk-block-banner strong {
+  color: var(--bad);
+}
+
+.disk-block-banner p {
+  color: var(--fg);
+  margin: 6px 0 0;
+}
+
+.plan-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 20px 0 0;
+  padding: 0;
+}
+
+.plan-row {
+  align-items: start;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--cc-r-md);
+  display: grid;
+  gap: 14px;
+  /* F-20 fix: this column holds either a 20x20 checkbox (.plan-row-check
+     input) or the "Not included" / "Included" status pill
+     (.plan-row-unavailable-pill / .plan-row-required-pill). The pill's text
+     is wider than a fixed 40px track -- CSS Grid does not clip an
+     overflowing item into the next column, so a hard 40px first column let
+     the pill visually collide with the row's own heading
+     (.plan-row-body strong) in the column beside it. minmax(40px, auto)
+     keeps the checkbox case unchanged (its natural size is well under
+     40px) while letting the pill's track grow to fit its own content, so
+     nothing overlaps. */
+  grid-template-columns: minmax(40px, auto) 1fr auto;
+  padding: 14px;
+}
+
+.plan-row-optional {
+  border-left: 4px solid var(--cc-accent);
+}
+
+.plan-row-check {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.plan-row-check input[type="checkbox"] {
+  height: 20px;
+  width: 20px;
+}
+
+.plan-row-required-pill {
+  background: var(--good-bg);
+  border-radius: var(--cc-r-pill);
+  color: var(--good);
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.plan-row-unavailable-pill {
+  background: var(--line);
+  border-radius: var(--cc-r-pill);
+  color: var(--muted);
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.plan-row-body strong {
+  display: block;
+}
+
+.plan-row-body p {
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
+.plan-row-explanation {
+  font-size: 0.88rem;
+}
+
+.plan-row-facts {
+  min-width: 96px;
+  text-align: right;
+}
+
+.plan-row-facts strong {
+  display: block;
+}
+
+.plan-row-facts span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.plan-footer {
+  align-items: center;
+  background: var(--cc-surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--cc-r-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding: 16px;
+}
+
+.plan-footer > div {
+  display: grid;
+  gap: 2px;
+}
+
+.plan-footer span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.plan-footer p {
+  color: var(--muted);
+  flex-basis: 100%;
+  font-size: 0.84rem;
+  margin: 0;
+}
+
+.overall-progress {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--cc-r-md);
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 14px;
+}
+
+.download-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+
+.download-row {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--cc-r-md);
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.download-row-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.download-row-head span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.download-row.is-complete {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.download-row.is-complete span {
+  color: var(--good);
+  font-weight: 700;
+}
+
+.download-row.is-error {
+  border-color: var(--bad);
+}
+
+.download-row.is-error p {
+  color: var(--fg);
+  margin: 0;
+}
+
+/* G011.3: a stop the operator asked for is not a failure, so a canceled row
+   deliberately does NOT borrow .is-error's --bad border. It is a resting
+   state with a Resume affordance, and it should look like one. */
+.download-row.is-canceled {
+  border-color: var(--line);
+}
+
+.download-row.is-canceled p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.what-is-this summary {
+  color: var(--info);
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.what-is-this p {
+  color: var(--muted);
+  margin: 6px 0 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* F-15: the one-time, explained re-baseline of the download total. Stated in
+   normal text, not as an alert -- nothing is wrong, a number simply became
+   exact and the operator is owed the reason. */
+.total-rebaseline {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin: 8px 0 0;
+}

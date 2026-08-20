@@ -1,0 +1,29 @@
+{
+  "meta": {"offset": 0, "pageSize": 200, "count": 3},
+  "scheduleItems": [
+    {
+      "id": 1087848,
+      "channel": 2,
+      "show": 73411,
+      "runDateTime": "2026-07-11T20:00:00-07:00",
+      "runStatus": 0,
+      "deleted": false
+    },
+    {
+      "id": 1087849,
+      "channel": 2,
+      "show": 73410,
+      "runDateTime": "2026-07-10T09:00:00-07:00",
+      "runStatus": 0,
+      "deleted": false
+    },
+    {
+      "id": 340402,
+      "channel": 1,
+      "show": -1,
+      "runDateTime": "2005-10-21T09:00:00-07:00",
+      "runStatus": 0,
+      "deleted": false
+    }
+  ]
+}

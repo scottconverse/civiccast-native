@@ -1,0 +1,261 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+"""Caption processing pipeline from runtime hypotheses to review items."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from hashlib import sha256
+from typing import TYPE_CHECKING
+
+from civiccast.captions.hls import (
+    CaptionHlsTrack,
+    CaptionHlsTrackOutput,
+    attach_caption_tracks_to_package,
+)
+from civiccast.captions.models import AudioChunk, CaptionCue, CaptionHypothesis, CustomVocabulary
+from civiccast.captions.review import CaptionReviewItemCreate
+from civiccast.captions.runtime import CaptionRuntime
+from civiccast.captions.stabilize import CaptionStabilizer
+from civiccast.stream.config import HLS_SEGMENT_DURATION
+from civiccast.stream.packager import SlateOnlyResult, VodPackageResult
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from civiccast.translate import TranslationProvider, TranslationTarget
+
+
+@dataclass(frozen=True)
+class CaptionPipelineResult:
+    """Artifacts produced by one caption pipeline pass."""
+
+    hypotheses: list[CaptionHypothesis]
+    committed_cues: list[CaptionCue]
+    review_items: list[CaptionReviewItemCreate]
+    expired_unconfirmed_cues: list[CaptionCue] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CaptionHlsPipelineResult:
+    """Caption processing result plus any HLS files written."""
+
+    caption_result: CaptionPipelineResult
+    hls_outputs: list[CaptionHlsTrackOutput]
+
+
+class CaptionPipeline:
+    """Run a caption runtime through stabilization and review preparation."""
+
+    def __init__(
+        self,
+        runtime: CaptionRuntime,
+        *,
+        stabilizer: CaptionStabilizer | None = None,
+    ) -> None:
+        self._runtime = runtime
+        self._stabilizer = stabilizer or CaptionStabilizer()
+
+    def process(
+        self,
+        chunks: list[AudioChunk],
+        *,
+        asset_id: str,
+        vocabulary: CustomVocabulary | None = None,
+        reviewer_note: str | None = None,
+    ) -> CaptionPipelineResult:
+        """Transcribe chunks and prepare stable cue review rows.
+
+        The pipeline keeps the stabilizer instance alive across calls, so a
+        live worker can pass one small batch at a time while the two-window
+        stability contract still holds.
+        """
+        hypotheses = list(self._runtime.transcribe(chunks, vocabulary=vocabulary))
+        committed_cues: list[CaptionCue] = []
+        expired_before = self._stabilizer.expired_unconfirmed_count
+        for hypothesis in hypotheses:
+            committed_cues.extend(self._stabilizer.observe(hypothesis))
+        expired_unconfirmed_cues = self._stabilizer.expired_unconfirmed()[expired_before:]
+
+        # Expired-unconfirmed cues never air (never enter committed_cues /
+        # the active track) but still land in the same review queue as any
+        # other low-confidence commit, so a drop is never silent.
+        review_items = [
+            CaptionReviewItemCreate(
+                review_item_id=_review_item_id(asset_id, cue),
+                asset_id=asset_id,
+                cue=cue,
+                reviewer_note=reviewer_note,
+            )
+            for cue in (*committed_cues, *expired_unconfirmed_cues)
+        ]
+        return CaptionPipelineResult(
+            hypotheses=hypotheses,
+            committed_cues=committed_cues,
+            review_items=review_items,
+            expired_unconfirmed_cues=expired_unconfirmed_cues,
+        )
+
+    def process_and_publish_hls(
+        self,
+        chunks: list[AudioChunk],
+        *,
+        asset_id: str,
+        package: VodPackageResult | SlateOnlyResult,
+        vocabulary: CustomVocabulary | None = None,
+        reviewer_note: str | None = None,
+        language: str = "en",
+        name: str = "English",
+        translation_provider: TranslationProvider | None = None,
+        translation_targets: list[TranslationTarget] | None = None,
+        translation_glossary: Mapping[str, str] | None = None,
+        segment_duration: int = HLS_SEGMENT_DURATION,
+    ) -> CaptionHlsPipelineResult:
+        """Process chunks and attach committed captions to an HLS package.
+
+        If this pass does not commit any new cues, no HLS files are rewritten.
+        Once a cue commits, the package is rewritten with every committed cue
+        known to this pipeline instance so repeated live-worker calls keep the
+        caption track complete.
+        """
+        caption_result = self.process(
+            chunks,
+            asset_id=asset_id,
+            vocabulary=vocabulary,
+            reviewer_note=reviewer_note,
+        )
+        if not caption_result.committed_cues:
+            return CaptionHlsPipelineResult(caption_result=caption_result, hls_outputs=[])
+
+        tracks = [
+            CaptionHlsTrack(
+                cues=self.committed(),
+                language=language,
+                name=name,
+            )
+        ]
+        if translation_provider is not None:
+            from civiccast.translate import translate_caption_cues, translated_hls_track
+
+            for target in translation_targets or []:
+                result = translate_caption_cues(
+                    self.committed(),
+                    provider=translation_provider,
+                    target=target,
+                    glossary=translation_glossary,
+                )
+                tracks.append(translated_hls_track(result))
+
+        hls_outputs = attach_caption_tracks_to_package(
+            package,
+            tracks,
+            segment_duration=segment_duration,
+        )
+        return CaptionHlsPipelineResult(caption_result=caption_result, hls_outputs=hls_outputs)
+
+    def flush(
+        self,
+        *,
+        asset_id: str,
+        reviewer_note: str | None = None,
+    ) -> CaptionPipelineResult:
+        """Commit every cue still pending at end-of-stream/channel-stop.
+
+        There is no second transcription pass once audio has ended, so any
+        hypothesis that has not yet earned full re-confirmation must be
+        committed now or lost forever. Flushed cues flow through the exact
+        same downstream construction as a normal commit -- they land in
+        ``committed_cues`` (and therefore :meth:`committed` / the active
+        caption track) and get review rows -- they are just flagged
+        low-confidence when they never earned re-confirmation. Safe to call
+        repeatedly: once pending is empty, later calls return an empty
+        result.
+        """
+
+        committed_cues = self._stabilizer.flush()
+        review_items = [
+            CaptionReviewItemCreate(
+                review_item_id=_review_item_id(asset_id, cue),
+                asset_id=asset_id,
+                cue=cue,
+                reviewer_note=reviewer_note,
+            )
+            for cue in committed_cues
+        ]
+        return CaptionPipelineResult(
+            hypotheses=[],
+            committed_cues=committed_cues,
+            review_items=review_items,
+            expired_unconfirmed_cues=[],
+        )
+
+    def flush_and_publish_hls(
+        self,
+        *,
+        asset_id: str,
+        package: VodPackageResult | SlateOnlyResult,
+        reviewer_note: str | None = None,
+        language: str = "en",
+        name: str = "English",
+        translation_provider: TranslationProvider | None = None,
+        translation_targets: list[TranslationTarget] | None = None,
+        translation_glossary: Mapping[str, str] | None = None,
+        segment_duration: int = HLS_SEGMENT_DURATION,
+    ) -> CaptionHlsPipelineResult:
+        """Flush end-of-stream cues and republish the HLS caption track.
+
+        Mirrors :meth:`process_and_publish_hls`: if flush produces no new
+        cues, the package is left untouched.
+        """
+
+        caption_result = self.flush(asset_id=asset_id, reviewer_note=reviewer_note)
+        if not caption_result.committed_cues:
+            return CaptionHlsPipelineResult(caption_result=caption_result, hls_outputs=[])
+
+        tracks = [
+            CaptionHlsTrack(
+                cues=self.committed(),
+                language=language,
+                name=name,
+            )
+        ]
+        if translation_provider is not None:
+            from civiccast.translate import translate_caption_cues, translated_hls_track
+
+            for target in translation_targets or []:
+                result = translate_caption_cues(
+                    self.committed(),
+                    provider=translation_provider,
+                    target=target,
+                    glossary=translation_glossary,
+                )
+                tracks.append(translated_hls_track(result))
+
+        hls_outputs = attach_caption_tracks_to_package(
+            package,
+            tracks,
+            segment_duration=segment_duration,
+        )
+        return CaptionHlsPipelineResult(caption_result=caption_result, hls_outputs=hls_outputs)
+
+    def committed(self) -> list[CaptionCue]:
+        """Return all stable cues committed by this pipeline instance."""
+        return self._stabilizer.committed()
+
+    def expired_unconfirmed(self) -> list[CaptionCue]:
+        """Return every pending cue this pipeline's stabilizer expired.
+
+        These never entered :meth:`committed` and never air; exposed so a
+        caller (or an operator dashboard) can see the drop is never silent.
+        """
+        return self._stabilizer.expired_unconfirmed()
+
+
+def _review_item_id(asset_id: str, cue: CaptionCue) -> str:
+    natural_id = f"{asset_id}:{cue.cue_id}"
+    if len(natural_id) <= 160:
+        return natural_id
+
+    digest = sha256(natural_id.encode("utf-8")).hexdigest()[:12]
+    asset_prefix = asset_id[: max(1, 160 - len(cue.cue_id) - len(digest) - 3)]
+    return f"{asset_prefix}:{cue.cue_id}:{digest}"

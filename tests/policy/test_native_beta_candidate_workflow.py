@@ -1,0 +1,558 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+"""Contract for the branch-gated, non-publishing native-beta artifact producer."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from scripts.policy.check_actions_budget import validate_workflow
+
+WORKFLOW = Path(".github/workflows/native-beta-candidate-artifacts.yml")
+CATALOG = Path("civiccast/apps/installer/src-tauri/src/acquisition_catalog.rs")
+
+
+def _workflow() -> tuple[str, dict[str, object]]:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    return text, yaml.load(text, Loader=yaml.BaseLoader)
+
+
+def _job_from_text(text: str) -> dict[str, object]:
+    workflow = yaml.load(text, Loader=yaml.BaseLoader)
+    return workflow["jobs"]["build-native-beta"]
+
+
+def _powershell_lines(script: str) -> tuple[str, ...]:
+    return tuple(line.strip() for line in script.splitlines() if line.strip())
+
+
+def _assert_cpython_handoff(job: dict[str, object]) -> None:
+    steps = {step["name"]: step for step in job["steps"]}
+    assignment = (
+        '$pythonEmbedZip = Join-Path $env:RUNNER_TEMP "civiccast-python-3.12.10-embed-amd64.zip"'
+    )
+    producer = _powershell_lines(steps["Acquire the pinned CPython payload interpreter"]["run"])
+    consumer = _powershell_lines(steps["Build and verify signed component packs"]["run"])
+
+    assert producer.count(assignment) == 1
+    assert "-OutFile $pythonEmbedZip" in producer
+    assert consumer.count(assignment) == 1
+    assert "--interpreter-zip $pythonEmbedZip `" in consumer
+
+
+def _assert_fail_closed_pack_guard(job: dict[str, object]) -> None:
+    step_names = [step["name"] for step in job["steps"]]
+    guard_name = "Assert clean source tree before pack build"
+    bind_name = "Bind packs to the checked-out source commit"
+    pack_name = "Build and verify signed component packs"
+    assert step_names.index(guard_name) == step_names.index(bind_name) - 1
+    assert step_names.index(bind_name) == step_names.index(pack_name) - 1
+
+    steps = {step["name"]: step for step in job["steps"]}
+    assert _powershell_lines(steps[guard_name]["run"]) == (
+        "$dirty = @(git status --porcelain=v1 -uall)",
+        'if ($LASTEXITCODE -ne 0) { throw "Could not inspect the source tree before pack build." }',
+        "if ($dirty.Count -ne 0) {",
+        'throw "Refusing to build packs from a dirty source tree:`n$($dirty -join "`n")"',
+        "}",
+    )
+
+
+def _assert_source_sha_binding(job: dict[str, object]) -> None:
+    steps = {step["name"]: step for step in job["steps"]}
+    step_names = [step["name"] for step in job["steps"]]
+    guard_name = "Assert clean source tree before pack build"
+    bind_name = "Bind packs to the checked-out source commit"
+    pack_name = "Build and verify signed component packs"
+    assert step_names.index(bind_name) == step_names.index(guard_name) + 1
+    assert step_names.index(pack_name) == step_names.index(bind_name) + 1
+
+    assert _powershell_lines(steps[bind_name]["run"]) == (
+        "$sourceSha = (git rev-parse HEAD).Trim()",
+        'if ($LASTEXITCODE -ne 0) { throw "Could not resolve the source commit before pack build." }',
+        'if ($sourceSha -notmatch "^[0-9a-f]{40}$") { throw "Resolved source commit is not a lowercase full SHA: $sourceSha" }',
+        'if ($sourceSha -ne "${{ github.sha }}") { throw "Resolved source commit $sourceSha does not match GitHub candidate ${{ github.sha }}" }',
+        '"SOURCE_SHA=$sourceSha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
+    )
+
+    pack_build = steps[pack_name]["run"]
+    assert pack_build.count("--source-sha $env:SOURCE_SHA `") == 2
+
+
+def _assert_embedded_closure_smoke_contract(text: str, job: dict[str, object]) -> None:
+    steps = job["steps"]
+    names = [step["name"] for step in steps]
+    pack = next(
+        step for step in steps if step["name"] == "Build and verify signed component packs"
+    )["run"]
+    assert "scripts/build_native_runtime_closure.py" in pack
+    assert "scripts/verify_native_runtime_closure.py" in pack
+    assert "--gstreamer-closure $gstreamerClosure" in pack
+    assert "native-gstreamer-runtime.ccpack" not in text
+    smoke_name = "Smoke the installed GStreamer closure through the product worker"
+    assert smoke_name in names
+    assert names.index(smoke_name) > names.index(
+        "Verify the compiled bootstrap trusts the freshly signed packs"
+    )
+    assert names.index(smoke_name) < names.index(
+        "Sign the native bootstrap (Azure Artifact Signing)"
+    )
+    assert names.index(smoke_name) < names.index("Upload private native-beta candidate artifact")
+
+
+def _assert_msvc_install_path_binding(job: dict[str, object]) -> None:
+    assert "CIVICCAST_MSVC_INSTALLATION_PATH" not in job["env"]
+
+    step_names = [step["name"] for step in job["steps"]]
+    binding_name = "Bind reviewed MSVC install location"
+    provision_name = "Provision the reviewed native build toolchain"
+    assert step_names.index(binding_name) < step_names.index(provision_name)
+
+    steps = {step["name"]: step for step in job["steps"]}
+    binding = steps[binding_name]
+    assert binding["shell"] == "pwsh"
+    assert _powershell_lines(binding["run"]) == (
+        '$msvcInstall = Join-Path $env:RUNNER_TEMP "civiccast-msvc-build-tools"',
+        '"CIVICCAST_MSVC_INSTALLATION_PATH=$msvcInstall" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append',
+    )
+
+
+def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishing() -> None:
+    text, workflow = _workflow()
+    triggers = workflow.get("on", workflow.get(True))
+
+    assert set(triggers) == {"push", "workflow_dispatch"}
+    assert triggers["push"]["branches"] == ["release/native-beta-1.0.0-beta.1-rc1"]
+    assert workflow["concurrency"] == {
+        "group": "native-beta-candidate-artifacts",
+        "cancel-in-progress": "false",
+    }
+    assert workflow["permissions"] == {"contents": "read", "id-token": "write"}
+
+    job = workflow["jobs"]["build-native-beta"]
+    assert job["runs-on"] == "windows-latest"
+    # Was "360" -- GitHub's own default, pinned here only because that is what
+    # the workflow happened to say. Two successful candidate builds measured
+    # 36m (run 32307731262) and 30m (run 32294680736), so 180 is 5x headroom
+    # and 360 was five hours of runway for a wedge. See
+    # scripts/policy/check_workflow_timeouts.py, which now enforces the cap
+    # across every workflow.
+    assert job["timeout-minutes"] == "180"
+    assert job["env"]["PACK_PUBLIC_KEY_BASE64"] == "${{ vars.CIVICCAST_PACK_PUBLIC_KEY_BASE64 }}"
+    assert job["env"]["PACK_SIGNING_KEY_ID"] == "${{ vars.CIVICCAST_PACK_SIGNING_KEY_ID }}"
+    assert "PACK_SIGNING_PRIVATE_KEY" not in job["env"]
+
+    steps = {step["name"]: step for step in job["steps"]}
+    pack_step = steps["Build and verify signed component packs"]
+    assert pack_step["env"]["PACK_SIGNING_PRIVATE_KEY"] == (
+        "${{ secrets.CIVICCAST_PACK_SIGNING_PRIVATE_KEY }}"
+    )
+
+    pack_build = pack_step["run"]
+    assert "scripts/build_native_app_payload_pack.py" in pack_build
+    assert "scripts/build_native_server_pack.py" in pack_build
+    assert "scripts/build_native_ffmpeg_pack.py" in pack_build
+    assert "scripts/build_native_ollama_pack.py" in pack_build
+    assert "scripts/build_native_cuda_pack.py" in pack_build
+    assert "--output artifacts/native-beta/packs/native-app-payload.ccpack `" in pack_build
+    assert "--output artifacts/native-beta/packs/native-server-binaries.ccpack `" in pack_build
+    assert "--output artifacts/native-beta/packs/native-ffmpeg-runtime.ccpack `" in pack_build
+    assert "--acquire `" in pack_build
+    assert "--cache $ffmpegPackCache `" in pack_build
+    assert "--output artifacts/native-beta/packs/native-ollama-runtime.ccpack `" in pack_build
+    assert "--cache $ollamaPackCache `" in pack_build
+    assert "--output artifacts/native-beta/packs/native-cuda-runtime.ccpack `" in pack_build
+    assert "--cache $cudaPackCache `" in pack_build
+    assert "--allow-development-key" not in pack_build
+    assert "--signing-private-key $keyPath" in pack_build
+    assert "--signing-key-id $env:PACK_SIGNING_KEY_ID" in pack_build
+    assert pack_build.count("--source-sha $env:SOURCE_SHA `") == 2
+    assert "[System.IO.File]::Delete($keyPath)" in pack_build
+    assert "${{ secrets.CIVICCAST_PACK_SIGNING_PRIVATE_KEY }}" not in pack_build
+
+    bootstrap = steps["Build the native bootstrap with the release trust root"]["run"]
+    assert "scripts/build_native_bootstrap.py" in bootstrap
+    assert "--pack-public-key-base64 $env:PACK_PUBLIC_KEY_BASE64" in bootstrap
+    assert "--pack-signing-key-id $env:PACK_SIGNING_KEY_ID" in bootstrap
+
+    trust_bridge = steps["Verify the compiled bootstrap trusts the freshly signed packs"][
+        "run"
+    ]
+    assert '$sideload = "artifacts/native-beta"' in trust_bridge
+    assert "Copy-Item" not in trust_bridge
+    assert '"--require-component", "native-ffmpeg-runtime"' in trust_bridge
+    assert (
+        '"$installRoot/dependencies/ffmpeg", "--expected-component", '
+        '"native-ffmpeg-runtime"' in trust_bridge
+    )
+    assert '"--require-component", "native-ollama-runtime"' in trust_bridge
+    assert (
+        '"$installRoot/dependencies/ollama", "--expected-component", '
+        '"native-ollama-runtime"' in trust_bridge
+    )
+    # native-cuda-runtime is OPTIONAL (native_pack_staging::DEFAULT_OPTIONAL_
+    # COMPONENTS), so it is passed with --optional-component, never
+    # --require-component -- setup must never be conditioned on obtaining it.
+    assert '"--optional-component", "native-cuda-runtime"' in trust_bridge
+    assert '"--require-component", "native-cuda-runtime"' not in trust_bridge
+    assert (
+        '"$installRoot/dependencies/cuda", "--expected-component", '
+        '"native-cuda-runtime"' in trust_bridge
+    )
+
+    sign = steps["Sign the native bootstrap (Azure Artifact Signing)"]
+    assert sign["uses"] == "azure/artifact-signing-action@v2"
+    assert sign["with"]["azure-client-secret"] == "${{ secrets.AZURE_CLIENT_SECRET }}"
+
+    checksums = steps["Verify signed candidate and write checksums"]["run"]
+    assert 'Get-Item "artifacts/native-beta/packs/native-ffmpeg-runtime.ccpack"' in checksums
+    assert 'Get-Item "artifacts/native-beta/packs/native-ollama-runtime.ccpack"' in checksums
+    assert 'Get-Item "artifacts/native-beta/packs/native-cuda-runtime.ccpack"' in checksums
+    assert "GetRelativePath($artifactRoot, $asset.FullName)" in checksums
+
+    upload = steps["Upload private native-beta candidate artifact"]
+    assert upload["uses"] == "actions/upload-artifact@v4"
+    assert "native-app-payload.ccpack" in upload["with"]["path"]
+    assert "native-server-binaries.ccpack" in upload["with"]["path"]
+    assert "native-ffmpeg-runtime.ccpack" in upload["with"]["path"]
+    assert "native-ollama-runtime.ccpack" in upload["with"]["path"]
+    assert "native-cuda-runtime.ccpack" in upload["with"]["path"]
+    assert "CivicCast (Native)_*_x64-setup.exe" in upload["with"]["path"]
+    upload_paths = {
+        line.strip() for line in upload["with"]["path"].splitlines() if line.strip()
+    }
+    for component in (
+        "native-app-payload",
+        "native-server-binaries",
+        "native-ffmpeg-runtime",
+        "native-ollama-runtime",
+    ):
+        assert f"artifacts/native-beta/packs/{component}.ccpack" in upload_paths
+    # native-cuda-runtime is OPTIONAL at install time (never in the loop
+    # above's required-sidecar set) but is still built, signed, checksummed,
+    # and uploaded here exactly like every other pack -- a published release
+    # needs a real asset for the download-plan catalog to fetch.
+    assert "artifacts/native-beta/packs/native-cuda-runtime.ccpack" in upload_paths
+
+    assert "gh release" not in text
+    assert "gh api" not in text
+
+
+def test_native_beta_candidate_workflow_checks_real_pack_sizes_against_addsize() -> None:
+    _, workflow = _workflow()
+    steps = {step["name"]: step for step in workflow["jobs"]["build-native-beta"]["steps"]}
+    check = steps["Verify installer disk estimate covers built sidecars"]["run"]
+
+    for component in (
+        "native-app-payload",
+        "native-server-binaries",
+        "native-ffmpeg-runtime",
+        "native-ollama-runtime",
+    ):
+        assert f'"artifacts/native-beta/{component}-report.json"' in check
+    # native-cuda-runtime is OPTIONAL and never staged into $INSTDIR by
+    # default (native_pack_staging::DEFAULT_OPTIONAL_COMPONENTS): its bytes
+    # must NOT count toward the installer's REQUIRED-sidecar AddSize
+    # declaration, which sizes only what a fresh install unconditionally lays
+    # down.
+    assert "native-cuda-runtime-report.json" not in check
+    assert "$report.pack_bytes + [long]$report.payload_bytes" in check
+    assert "CIVICCAST_ADDSIZE_PACKS_KB" in check
+    assert "$requiredBytes -gt $estimatedBytes" in check
+    assert "exceeding installer estimate" in check
+
+
+def test_native_beta_candidate_workflow_keeps_build_scratch_out_of_the_source_tree() -> None:
+    """The pack builder's clean-source guard must see no CI-generated files."""
+    text, workflow = _workflow()
+    job = workflow["jobs"]["build-native-beta"]
+    steps = {step["name"]: step for step in job["steps"]}
+
+    _assert_msvc_install_path_binding(job)
+
+    toolchain = steps["Provision the reviewed native build toolchain"]["run"]
+    assert '$toolchainCache = Join-Path $env:RUNNER_TEMP "civiccast-toolchain-cache"' in toolchain
+    assert "--cache $toolchainCache" in toolchain
+    assert "--output build/wp1-native-toolchain" in toolchain
+    assert "--msvc-install $env:CIVICCAST_MSVC_INSTALLATION_PATH" in toolchain
+    assert 'Resolve-Path "build/wp1-native-toolchain"' in toolchain
+    assert '"node", "uv"' in toolchain
+
+    pack_build = steps["Build and verify signed component packs"]["run"]
+    assert '$appPayload = Join-Path $env:RUNNER_TEMP "civiccast-app-payload"' in pack_build
+    assert '$appScratch = Join-Path $env:RUNNER_TEMP "civiccast-app-payload-scratch"' in pack_build
+    assert (
+        '$serverPackCache = Join-Path $env:RUNNER_TEMP "civiccast-server-pack-cache"' in pack_build
+    )
+    assert (
+        '$ffmpegPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ffmpeg-pack-cache"'
+        in pack_build
+    )
+    assert (
+        '$ollamaPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ollama-pack-cache"'
+        in pack_build
+    )
+    assert "--payload-out $appPayload" in pack_build
+    assert "--build-scratch $appScratch" in pack_build
+    assert "--interpreter-zip $pythonEmbedZip" in pack_build
+    assert "--cache $serverPackCache" in pack_build
+    assert "--cache $ffmpegPackCache" in pack_build
+    assert "--cache $ollamaPackCache" in pack_build
+
+    msvc_import = steps["Import reviewed MSVC environment for the Tauri build"]["run"]
+    assert "$env:CIVICCAST_MSVC_INSTALLATION_PATH/VC/Auxiliary/Build/vcvars64.bat" in msvc_import
+
+    upload_paths = [
+        line.strip()
+        for line in steps["Upload private native-beta candidate artifact"]["with"][
+            "path"
+        ].splitlines()
+        if line.strip()
+    ]
+    assert all(path.startswith("artifacts/native-beta/") for path in upload_paths)
+
+    assert "--allow-dirty-source" not in text
+
+
+def test_native_beta_candidate_workflow_binds_cpython_producer_to_consumer() -> None:
+    _, workflow = _workflow()
+    _assert_cpython_handoff(workflow["jobs"]["build-native-beta"])
+
+
+def test_native_beta_candidate_workflow_has_fail_closed_immediate_pack_guard() -> None:
+    _, workflow = _workflow()
+    _assert_fail_closed_pack_guard(workflow["jobs"]["build-native-beta"])
+
+
+def test_native_beta_candidate_workflow_binds_both_source_built_packs_to_github_sha() -> None:
+    _, workflow = _workflow()
+    _assert_source_sha_binding(workflow["jobs"]["build-native-beta"])
+
+
+def test_native_beta_candidate_workflow_embeds_verified_closure_and_smokes_before_signing() -> None:
+    # tampercheck: allow the builder test while forbidding a standalone GStreamer sidecar
+    text, workflow = _workflow()
+    _assert_embedded_closure_smoke_contract(text, workflow["jobs"]["build-native-beta"])
+
+
+def test_native_beta_candidate_workflow_contract_rejects_standalone_gstreamer_pack_or_late_smoke() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    third_pack = text.replace(
+        "native-server-binaries.ccpack\n",
+        "native-server-binaries.ccpack\n            native-gstreamer-runtime.ccpack\n",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        _assert_embedded_closure_smoke_contract(third_pack, _job_from_text(third_pack))
+    late_smoke = text.replace(
+        "      - name: Smoke the installed GStreamer closure through the product worker\n",
+        "      - name: Sign the native bootstrap (Azure Artifact Signing)\n",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        _assert_embedded_closure_smoke_contract(late_smoke, _job_from_text(late_smoke))
+
+
+def test_native_beta_candidate_workflow_contract_rejects_cpython_consumer_drift() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace(
+        "--interpreter-zip $pythonEmbedZip `",
+        "--interpreter-zip python-3.12.10-embed-amd64.zip `",
+        1,
+    )
+    assert mutated != text
+
+    with pytest.raises(AssertionError):
+        _assert_cpython_handoff(_job_from_text(mutated))
+
+
+def test_native_beta_candidate_workflow_contract_rejects_guard_semantic_bypass() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace(
+        "$dirty = @(git status --porcelain=v1 -uall)",
+        "$dirty = @()\n          git status --porcelain=v1 -uall | Out-Null",
+        1,
+    )
+    assert mutated != text
+
+    with pytest.raises(AssertionError):
+        _assert_fail_closed_pack_guard(_job_from_text(mutated))
+
+
+def test_native_beta_candidate_workflow_contract_rejects_source_sha_substitution() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace("--source-sha $env:SOURCE_SHA `", "--source-sha deadbeef `", 1)
+    assert mutated != text
+
+    with pytest.raises(AssertionError):
+        _assert_source_sha_binding(_job_from_text(mutated))
+
+
+def test_native_beta_candidate_workflow_contract_rejects_job_level_runner_context() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace(
+        "    env:\n      PACK_PUBLIC_KEY_BASE64:",
+        "    env:\n      CIVICCAST_MSVC_INSTALLATION_PATH: ${{ runner.temp }}\\civiccast-msvc-build-tools\n      PACK_PUBLIC_KEY_BASE64:",
+        1,
+    )
+    assert mutated != text
+
+    with pytest.raises(AssertionError):
+        _assert_msvc_install_path_binding(_job_from_text(mutated))
+
+
+def test_native_beta_default_pack_source_points_to_its_frozen_release_tag() -> None:
+    assert "native-beta-1.0.0-beta.1-rc1" in CATALOG.read_text(encoding="utf-8")
+
+
+def test_native_beta_candidate_workflow_is_a_valid_release_candidate_budget_lane() -> None:
+    text, _workflow_data = _workflow()
+    assert validate_workflow(WORKFLOW, text) == []
+
+
+def _assert_reviewed_python_seeds_the_bare_python_command(job: dict[str, object]) -> None:
+    """The `python` bare pack-build steps invoke must BE the reviewed
+    toolchain interpreter (build_native_app_payload.verify_app_build_toolchain
+    hashes sys._base_executable / sys.base_prefix -- a PATH lookup alone
+    cannot satisfy that), and it must have this project + its dev-group
+    build tools (pefile, packaging, cryptography, ...) installed. A plain
+    ``pip install -e .`` into the actions/setup-python bootstrap interpreter
+    (interpreter A) can never pass the hash check pinned to the provisioned
+    toolchain's interpreter (interpreter B) -- confirmed locally: it fails
+    with "python executable SHA-256 <A> != reviewed <B>". uv-syncing a venv
+    from the provisioned toolchain python is the same mechanism
+    scripts/prove_native_app_reproducible.py already uses successfully.
+    """
+    step_names = [step["name"] for step in job["steps"]]
+    provision_name = "Provision the reviewed native build toolchain"
+    bootstrap_name = "Bootstrap the reviewed Python build environment"
+    pack_name = "Build and verify signed component packs"
+    assert bootstrap_name in step_names
+    assert step_names.index(bootstrap_name) == step_names.index(provision_name) + 1
+    assert step_names.index(bootstrap_name) < step_names.index(pack_name)
+
+    steps = {step["name"]: step for step in job["steps"]}
+    bootstrap = _powershell_lines(steps[bootstrap_name]["run"])
+    joined = "\n".join(bootstrap)
+
+    # The pack build's toolchain check resolves the reviewed interpreter from
+    # build/wp1-native-toolchain/python -- the venv must be seeded from
+    # exactly that path, not some other python.
+    assert '$toolchainPython = Join-Path $toolchain "python\\python.exe"' in bootstrap
+    assert "--python $toolchainPython" in joined
+    # --frozen: use the committed uv.lock as-is, no silent re-resolution.
+    # --all-groups: pulls in the dev-group pefile/mypy/etc the pack build
+    # scripts import directly (e.g. build_native_runtime_closure.py).
+    assert "sync --frozen --all-groups --python $toolchainPython --project ." in joined
+    # The venv must land on PATH so every later bare `python -I -B ...`
+    # invocation in this job resolves to it, not the setup-python bootstrap.
+    assert 'Join-Path $buildVenv "Scripts") | Out-File -FilePath $env:GITHUB_PATH' in joined
+
+
+def test_native_beta_candidate_workflow_seeds_pack_build_python_from_reviewed_toolchain() -> None:
+    _, workflow = _workflow()
+    _assert_reviewed_python_seeds_the_bare_python_command(workflow["jobs"]["build-native-beta"])
+
+
+def test_native_beta_candidate_workflow_contract_rejects_unreviewed_bootstrap_interpreter() -> None:
+    """Regression test for the hidden CI defect: the workflow must never go
+    back to installing the project into the actions/setup-python bootstrap
+    interpreter and relying on it (or a bare PATH-prepend of the provisioned
+    python, with no project deps) to run the pack build -- that interpreter
+    can never pass verify_app_build_toolchain()'s pinned-hash check.
+    """
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "pip install -e ." not in text
+    assert "Install packaging dependencies" not in text
+
+    mutated = text.replace(
+        '$toolchainPython = Join-Path $toolchain "python\\python.exe"',
+        '$toolchainPython = "python.exe"',
+        1,
+    )
+    assert mutated != text
+    with pytest.raises(AssertionError):
+        _assert_reviewed_python_seeds_the_bare_python_command(_job_from_text(mutated))
+
+
+def test_native_beta_candidate_workflow_puts_uv_on_path_for_the_closure_walker() -> None:
+    """Regression guard for candidate run 31133746679.
+
+    ``scripts/build_native_runtime_closure.py::stage_upstream_wheels`` shells
+    out to a BARE ``uv`` (``subprocess.run(["uv", "pip", "install", ...])``),
+    and windows-latest images do not carry uv.  The provisioning step used to
+    add only node's directory to ``GITHUB_PATH``, so the pack build died with
+    ``FileNotFoundError: [WinError 2]`` -- the first candidate build ever to
+    get past the missing-pefile wall.
+
+    Asserting the PATH wire-up rather than the absence of the symptom, because
+    the symptom only appears on a runner without a stray uv on PATH.
+    """
+
+    _, workflow = _workflow()
+    steps = {step["name"]: step for step in workflow["jobs"]["build-native-beta"]["steps"]}
+    toolchain = steps["Provision the reviewed native build toolchain"]["run"]
+
+    assert "GITHUB_PATH" in toolchain
+    for tool in ("node", "uv"):
+        assert f'"{tool}"' in toolchain, (
+            f"the provisioned {tool} directory must reach GITHUB_PATH; the closure "
+            "walker and the Tauri build both invoke their tools bare"
+        )
+    # Fail loudly at provision time rather than 10 minutes later inside a
+    # subprocess with an opaque WinError 2.
+    assert "is missing its $tool directory" in toolchain
+
+
+def test_native_beta_candidate_workflow_installs_the_vc_runtime_before_the_pack_build() -> None:
+    """Regression guard for candidate run 31143881561.
+
+    The server pack's live bootstrap proof launches the PACKED PostgreSQL.
+    Every pinned PostgreSQL executable imports ``VCRUNTIME140.dll`` (verified by
+    a pefile import walk and independently by ``dumpbin /dependents``), and a
+    clean ``windows-latest`` runner has no VC++ runtime -- so the proof died
+    with exit 3221225781 (``0xC0000135``, ``STATUS_DLL_NOT_FOUND``).
+
+    Developer machines hide this entirely: the Windows system directory already
+    holds ``vcruntime140.dll``, so the identical build passes locally. Asserting
+    the WORKFLOW ORDERING rather than the absence of the symptom, because the
+    symptom is invisible on any machine that happens to have the runtime.
+
+    The product installs this same reviewed redistributable on real stations
+    before staging any pack, so this makes CI match the station, not paper over
+    a gap.
+    """
+
+    _, workflow = _workflow()
+    steps = workflow["jobs"]["build-native-beta"]["steps"]
+    names = [step["name"] for step in steps]
+
+    install_name = "Install the reviewed VC++ runtime on the runner"
+    assert install_name in names, (
+        "the VC++ runtime must be installed on the runner; without it the packed "
+        "PostgreSQL cannot start and the bootstrap proof fails with 0xC0000135"
+    )
+
+    recover_idx = names.index("Recover the exact reviewed VC++ redistributable")
+    install_idx = names.index(install_name)
+    pack_idx = names.index("Build and verify signed component packs")
+
+    assert recover_idx < install_idx, "cannot install the redistributable before recovering it"
+    assert install_idx < pack_idx, (
+        "the VC++ runtime must be installed BEFORE the pack build, whose bootstrap "
+        "proof launches the packed PostgreSQL"
+    )
+
+    install_step = steps[install_idx]["run"]
+    assert "$env:VC_REDIST_X64" in install_step, "must install the reviewed, hash-checked binary"
+    # Mirrors nsis-hooks-bootstrap.nsh: 1638 means a same-or-newer runtime is
+    # already present, which hard-failed a real-hardware run on 2026-08-01
+    # before the installer learned to accept it. Do not regress that lesson.
+    for code in ("3010", "1638"):
+        assert code in install_step, (
+            f"exit code {code} must be treated as success, matching the installer's "
+            "own hard-won handling in nsis-hooks-bootstrap.nsh"
+        )

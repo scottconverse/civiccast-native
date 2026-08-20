@@ -1,0 +1,679 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+#
+# CivicCast 3.0 — repo-verified roadmap status manifest.
+# =====================================================
+# One row per build step (0-14, master §10) and per spec section (S1-S26,
+# master §11). Each row ASSERTS a status and lists the machine-checkable
+# EVIDENCE that proves it. `scripts/roadmap_status.py` computes the *actual*
+# status from the repo and enforces the single rule:
+#
+#       actual >= asserted        (ordered  unbuilt < partial < built)
+#
+# so the verifier catches both a status claimed higher than the evidence
+# supports (a false "built") and a regression (a built thing whose evidence
+# later vanished). To ADVANCE a row, raise its `status` AND add the proving
+# evidence in the SAME commit — status can never drift ahead of the code.
+#
+# HONEST LIMITS (do not over-read this file):
+#   * It checks EXISTENCE, not correctness. `built` means "the code + tests are
+#     present", not "bug-free". /audit-team and the 24h soak still do quality.
+#   * Proof-RUN gates (the soak steps 2/13 and the LPM headend step 14) cannot
+#     be fully machine-verified from repo files; their run-proof is external.
+#     Steps 2 and 13 have beta1 run evidence recorded in release docs. Step 14
+#     remains field-pending at the LPM headend.
+#   * Previously-known stub-internals (now SHIPPED on the finish-line sprint,
+#     2026-06-18 — none remain as stubs):
+#     D2 ✓ = civiccast/records/rfc3161.py ships a real RFC-3161 HTTP client
+#       (FreeTSA default; env opt-in via CIVICCAST_TSA_URL). Verified by
+#       tests/records/test_rfc3161.py (18 cases).
+#     D3 ✓ = civiccast/alerting/delivery.py AlertSmsSender talks the real
+#       Twilio REST API with HTTP Basic auth + form body. Verified by
+#       tests/alerting/test_delivery.py::TestAlertSmsSender (9 cases).
+#     D1 ✓ = civiccast/apps/ott-native/ ships starter native app source
+#       trees for all 6 OTT targets (Roku, iOS, tvOS, android-mobile,
+#       android-tv, fire-tv). 83 files / ~3700 LOC across the toolchains.
+#       Polish-to-store-ready follow-ups documented per-target.
+#
+# `source:` on every row cites master §10/§11 so this file is diffable against
+# the canonical spec, not anyone's memory.
+
+version: 1
+
+rows:
+  # ----------------------------------------------------------------------- #
+  # Build order — master §10 (steps 0-14)
+  # ----------------------------------------------------------------------- #
+  - id: step-0
+    kind: build_step
+    title: "Prototype — GstInterpipe/input-selector seamless source-swap (S15)"
+    source: "master §10 (step 0)"
+    disposition: net-new
+    status: built
+    evidence:
+      modules: [civiccast/egress/gst/engine.py, civiccast/egress/gst/graph.py]
+      tests: [tests/egress/test_gst_engine_wsl.py]
+
+  - id: step-1
+    kind: build_step
+    title: "GStreamer playout engine — persistent pipeline + hot-swap (S15)"
+    source: "master §10 (step 1)"
+    disposition: net-new
+    status: built
+    evidence:
+      modules: [civiccast/egress/gst/engine.py, civiccast/egress/service.py]
+      symbols: [{file: civiccast/egress/gst/engine.py, name: GstPlayoutEngine}]
+
+  - id: step-2
+    kind: build_step
+    title: "4h soak on the GStreamer engine (#151 re-test) — rung-2 confidence"
+    source: "master §10 (step 2)"
+    disposition: net-new
+    status: built
+    evidence:
+      # The soak *capability* is committed; the 4h RUN proof is external (release evidence).
+      modules: [civiccast/egress/gst/worker.py]
+      tests: [tests/egress/test_gst_engine_wsl.py]
+
+  - id: step-3
+    kind: build_step
+    title: "Reliability hardening + process identity/supervision (S9)"
+    source: "master §10 (step 3)"
+    disposition: net-new
+    status: built
+    evidence:
+      migrations: [0038_reliability_fields]
+      modules: [civiccast/egress/service.py]
+
+  - id: step-4
+    kind: build_step
+    title: "Operational alerting + runtime safe-to-air (S8)"
+    source: "master §10 (step 4)"
+    disposition: net-new
+    status: built
+    evidence:
+      migrations: [0039_alerting_and_sinkhealth]
+      modules: [civiccast/alerting/router.py]
+
+  - id: step-5
+    kind: build_step
+    title: "SDI output path — DESCOPED 2026-06-14 (3.0 is IP-only), not pending"
+    source: "master §10 (step 5)"
+    disposition: optional
+    status: unbuilt
+    evidence:
+      migrations: [none]
+
+  - id: step-6
+    kind: build_step
+    title: "Commit-to-Air gate (S4) + Software Force Matrix (S5) [+ S19 autoschedule]"
+    source: "master §10 (step 6)"
+    disposition: net-new
+    status: built
+    evidence:
+      migrations: [0040_commit_to_air_reports, 0042_takeover_audit_and_command_action]
+      modules: [civiccast/facility/router.py]
+
+  - id: step-7
+    kind: build_step
+    title: "CG: WPE rich-CG + optional CasparCG premium co-process (S6/S15)"
+    source: "master §10 (step 7)"
+    disposition: net-new
+    status: built
+    evidence:
+      migrations: [0044_cg_board_designer, 0045_cg_depth, 0046_cg_feed_source_tags]
+      modules: [civiccast/cg/service.py]
+
+  - id: step-8
+    kind: build_step
+    title: "OTT apps (S12) — code + native app source for all 6 targets shipped 2026-06-18"
+    source: "master §10 (step 8)"
+    disposition: net-new
+    # FLIPPED to built 2026-06-18 — civiccast/apps/ott-native/ ships starter
+    # native app source trees for Roku, iOS, tvOS, android-mobile,
+    # android-tv, and fire-tv. Polish-to-store-ready (branded artwork,
+    # store metadata, age-gating, accessibility) is the documented
+    # per-target follow-up but the "native source absent" D1 gap is
+    # closed.
+    status: built
+    evidence:
+      modules:
+        - civiccast/app_platform/router.py
+        - civiccast/app_platform/build_orchestrator.py
+      symbols:
+        - {file: civiccast/apps/ott-native/roku/source/main.brs, name: Main}
+        - {file: civiccast/apps/ott-native/ios/CivicCast/CivicCastApp.swift, name: CivicCastApp}
+        - {file: civiccast/apps/ott-native/tvos/CivicCast/CivicCastApp.swift, name: CivicCastApp}
+        - {file: civiccast/apps/ott-native/android-mobile/app/src/main/java/com/civiccast/mobile/MainActivity.kt, name: MainActivity}
+        - {file: civiccast/apps/ott-native/android-tv/app/src/main/java/com/civiccast/tv/MainActivity.kt, name: MainActivity}
+        - {file: civiccast/apps/ott-native/fire-tv/app/src/main/java/com/civiccast/firetv/MainActivity.kt, name: MainActivity}
+
+  - id: step-9
+    kind: build_step
+    title: "Production & Control Room (S16) + Remote Contribution (S17) — optional tiers"
+    source: "master §10 (step 9)"
+    disposition: optional
+    status: built
+    evidence:
+      migrations: [0047_production_control, 0048_remote_contribution]
+      modules: [civiccast/control_room/service.py, civiccast/live/contribution/service.py]
+
+  - id: step-10
+    kind: build_step
+    title: "Captions CEA-708 + per-sink loudness + EAS software layer (S11)"
+    source: "master §10 (step 10)"
+    disposition: net-new
+    status: built
+    evidence:
+      migrations:
+        - 0049_per_sink_loudness
+        - 0050_caption_proof_samples
+        - 0051_public_safety_eas
+        - 0052_secondary_audio
+      modules: [civiccast/eas/service.py, civiccast/egress/loudness_plan.py]
+
+  - id: step-11
+    kind: build_step
+    title: "AI model-selection (S13 done) + Analytics (S14 done) + as-run/EPG/franchise (S23 done)"
+    source: "master §10 (step 11)"
+    disposition: net-new
+    status: built
+    evidence:
+      # S13 (0053 + dispatch) done; S23 (0055 + reporting/) done; S14 audience reports
+      # (analytics/audience_reports.py) shipped 2026-07-08 — see the S14 row for its
+      # honest scope (the fuller master §11 S14 dashboard/Postgres epic is a follow-on).
+      migrations: [0053_ai_model_configuration, 0055_asrun_and_epg]
+      modules:
+        - civiccast/ai_models/dispatch.py
+        - civiccast/analytics/router.py
+        - civiccast/reporting/router.py
+        - civiccast/reporting/service.py
+        - civiccast/reporting/epg.py
+
+  - id: step-12
+    kind: build_step
+    title: "Commissioning (S3) + Media lifecycle (S7) + parity adds S21/S22/S24/S25/S26"
+    source: "master §10 (step 12)"
+    disposition: net-new
+    # FLIPPED to built 2026-06-18 when S21 (scheduled-recording) shipped
+    # as the sibling off 0055, closing the LAST S18 capability gap. The chain
+    # merged at 0060_recording_paywall_merge; later subsystem migrations
+    # extend the single global chain through 0072_normalize_recording_file_uris.
+    # Every S18 gap that ships software is on disk.
+    status: built
+    evidence:
+      # S3/S7 base + S22 (0054) + S24 (0057) + S25 (0058) + S26 (0059) + S21 (0056 + merge 0060)
+      migrations:
+        - 0054_custom_metadata_fields
+        - 0056_scheduled_recording
+        - 0057_underwriting_spots
+        - 0058_meeting_agenda
+        - 0059_paywall_access
+        - 0060_recording_paywall_merge
+      modules:
+        - civiccast/installer/service.py       # S3 base
+        - civiccast/schedule/router.py         # S7 base
+        - civiccast/metadata/service.py        # S22
+        - civiccast/underwriting/service.py    # S24
+        - civiccast/agenda/service.py          # S25
+        - civiccast/paywall/service.py         # S26 (default-off optional)
+        - civiccast/recording/service.py       # S21 (engine seam = injected Protocols)
+
+  - id: step-13
+    kind: build_step
+    title: "24h machine-proven soak (rung 2) — beta1 public soak passed"
+    source: "master §10 (step 13)"
+    disposition: net-new
+    status: built
+    evidence:
+      modules:
+        - docs/releases/evidence/v3.0.0-beta1-local-24h-public-soak.md
+        - docs/releases/v3.0.0-beta1-verification.md
+
+  - id: step-14
+    kind: build_step
+    title: "Headend-proven (rung 4): first-station beta at the LPM lab (not yet)"
+    source: "master §10 (step 14)"
+    disposition: net-new
+    status: unbuilt
+    evidence:
+      modules: [docs/releases/evidence/lpm-headend/PASS.md]
+
+  # ----------------------------------------------------------------------- #
+  # Section-spec index — master §11 (S1-S26)
+  # ----------------------------------------------------------------------- #
+  - id: S1
+    kind: section
+    title: "Reference station & StationBoxProfile (doctor, hardware tiers)"
+    source: "master §11 (S1) — extend"
+    disposition: extend
+    owning_step: 0
+    status: built
+    evidence:
+      modules: [civiccast/cli.py]
+      tests: [tests/test_hardware_probe_wsl2_positive.py]
+
+  - id: S2
+    kind: section
+    title: "Headend handoff matrix (headend.py + readiness)"
+    source: "master §11 (S2) — extend"
+    disposition: extend
+    owning_step: 2
+    status: built
+    evidence:
+      modules: [civiccast/egress/headend.py, civiccast/cable/router.py]
+
+  - id: S3
+    kind: section
+    title: "Commissioning wizard (11-screen installer) — no migration"
+    source: "master §11 (S3) — extend"
+    disposition: extend
+    owning_step: 12
+    status: built
+    evidence:
+      modules: [civiccast/installer/service.py, civiccast/installer/router.py]
+
+  - id: S4
+    kind: section
+    title: "Playout core & commit-to-air"
+    source: "master §11 (S4) — net-new over programlog"
+    disposition: net-new
+    owning_step: 6
+    status: built
+    evidence:
+      migrations: [0040_commit_to_air_reports, 0041_commit_rollback_fields]
+      modules: [civiccast/programlog/router.py]
+
+  - id: S5
+    kind: section
+    title: "Software force matrix (runtime arbitration + takeover audit)"
+    source: "master §11 (S5) — wire existing + net-new audit"
+    disposition: net-new
+    owning_step: 6
+    status: built
+    evidence:
+      migrations: [0042_takeover_audit_and_command_action]
+      modules: [civiccast/facility/router.py]
+
+  - id: S6
+    kind: section
+    title: "CG / bulletin-board designer (persistence + designer)"
+    source: "master §11 (S6) — net-new persistence + designer"
+    disposition: net-new
+    owning_step: 7
+    status: built
+    evidence:
+      migrations: [0044_cg_board_designer, 0046_cg_feed_source_tags]
+      modules: [civiccast/cg/service.py, civiccast/cg/router.py]
+
+  - id: S7
+    kind: section
+    title: "Media lifecycle & readiness (base — scheduled-recording add is S21)"
+    source: "master §11 (S7) — extend"
+    disposition: extend
+    owning_step: 12
+    status: built
+    evidence:
+      modules: [civiccast/live/finalization.py, civiccast/schedule/router.py]
+
+  - id: S8
+    kind: section
+    title: "Health alerting / support updates"
+    source: "master §11 (S8) — net-new alerting"
+    disposition: net-new
+    owning_step: 4
+    status: built
+    evidence:
+      migrations: [0039_alerting_and_sinkhealth]
+      modules: [civiccast/alerting/router.py, civiccast/alerting/delivery.py]
+
+  - id: S9
+    kind: section
+    title: "Reliability & process identity"
+    source: "master §11 (S9) — net-new (audit watchlist)"
+    disposition: net-new
+    owning_step: 3
+    status: built
+    evidence:
+      migrations: [0038_reliability_fields]
+      modules: [civiccast/egress/service.py]
+
+  - id: S10
+    kind: section
+    title: "Field certification & proof ladder (process/doc — formalize §5)"
+    source: "master §11 (S10) — formalize §5"
+    disposition: extend
+    owning_step: 14
+    status: built
+    evidence:
+      modules: [docs/spec/3.0/sections/S10-field-certification-and-proof-ladder.md]
+
+  - id: S11
+    kind: section
+    title: "Captions / loudness / EAS compliance"
+    source: "master §11 (S11) — extend + net-new"
+    disposition: net-new
+    owning_step: 10
+    status: built
+    evidence:
+      migrations:
+        - 0049_per_sink_loudness
+        - 0050_caption_proof_samples
+        - 0051_public_safety_eas
+        - 0052_secondary_audio
+      modules: [civiccast/eas/service.py, civiccast/egress/loudness_plan.py]
+      symbols: [{file: civiccast/egress/gst/engine.py, name: GstPlayoutEngine}]
+
+  - id: S12
+    kind: section
+    title: "OTT apps (feed/manifest/build + native source for 6 targets — shipped 2026-06-18)"
+    source: "master §11 (S12) — net-new (off app_platform/) + native trees off civiccast/apps/ott-native/"
+    disposition: net-new
+    owning_step: 8
+    # FLIPPED to built 2026-06-18 — D1 (native OTT app source absent)
+    # is closed by civiccast/apps/ott-native/ shipping starter source
+    # for Roku/iOS/tvOS/android-mobile/android-tv/fire-tv. 83 files,
+    # ~3700 LOC. Polish-to-store-ready (artwork, store metadata,
+    # accessibility, search interfaces) is the documented per-target
+    # follow-up; the "native source absent" claim is no longer true.
+    status: built
+    evidence:
+      modules:
+        - civiccast/app_platform/router.py
+        - civiccast/app_platform/build_orchestrator.py
+      symbols:
+        - {file: civiccast/apps/ott-native/roku/source/main.brs, name: Main}
+        - {file: civiccast/apps/ott-native/ios/CivicCast/CivicCastApp.swift, name: CivicCastApp}
+        - {file: civiccast/apps/ott-native/tvos/CivicCast/CivicCastApp.swift, name: CivicCastApp}
+        - {file: civiccast/apps/ott-native/android-mobile/app/src/main/java/com/civiccast/mobile/MainActivity.kt, name: MainActivity}
+        - {file: civiccast/apps/ott-native/android-tv/app/src/main/java/com/civiccast/tv/MainActivity.kt, name: MainActivity}
+        - {file: civiccast/apps/ott-native/fire-tv/app/src/main/java/com/civiccast/firetv/MainActivity.kt, name: MainActivity}
+
+  - id: S13
+    kind: section
+    title: "AI model-selection surface — operator chooses local/cloud per feature"
+    source: "master §11 (S13) — net-new wiring"
+    disposition: net-new
+    owning_step: 11
+    status: built
+    evidence:
+      migrations: [0053_ai_model_configuration]
+      modules:
+        - civiccast/ai_models/service.py
+        - civiccast/ai_models/dispatch.py
+        - civiccast/ai_models/router.py
+      symbols:
+        - {file: civiccast/apps/portal-operator/src/screens/AiModelsScreen.tsx, name: AiModelsScreen}
+      tests: [tests/ai_models]
+
+  - id: S14
+    kind: section
+    title: "Analytics / audience measurement — packaged audience reports (CSV/XML) over the existing store"
+    source: "master §11 (S14) — extend module + net-new reports"
+    disposition: extend
+    owning_step: 11
+    status: built
+    evidence:
+      modules: [civiccast/analytics/router.py, civiccast/analytics/store.py]
+      symbols: [{file: civiccast/analytics/audience_reports.py, name: build_audience_report}]
+      tests: [tests/analytics/test_audience_reports.py]
+    # HONEST SCOPE (this row only — see gaps below): build_audience_report
+    # packages the EXISTING aggregate AnalyticsStore.report() output
+    # (per-asset views, live concurrency, geography/device/platform/
+    # caption/audio/subscription/podcast dimensions) into a franchise-
+    # deliverable AudienceReport — per-channel totals, top-N assets,
+    # average_view_seconds — with JSON/CSV/XML export behind
+    # GET /api/staff/analytics/reports/audience (role-gated,
+    # ALL_OPERATOR_ROLES). Moved from civiccast/reporting/audience.py to
+    # this pinned path 2026-07-08 (same code, correct home).
+    #
+    # STILL OPEN (the fuller master §11 S14 build, NOT implied by "built"
+    # here): durable Postgres-backed ViewershipEvent/ViewershipRollup
+    # tables (the store is still the single JSON file), the VOD-24h /
+    # Live-30-min rollup cadence, the four-panel dashboard UI, a
+    # board-ready PDF export, year-over-year trend, and OTT/embedded
+    # beacon parity. Tracked as a follow-on, not silently dropped.
+    #
+    # HONEST GAP: no true watch-*duration distribution* (a histogram of
+    # individual view lengths) — only average_view_seconds (a mean).
+    # AnalyticsStore.report() only exposes per-(asset, day) aggregates,
+    # not the per-event granularity a real histogram needs; documented in
+    # audience_reports.py's module docstring rather than faked.
+
+  - id: S15
+    kind: section
+    title: "Playout engine (GStreamer) — replaces the ffmpeg-relay"
+    source: "master §11 (S15) — net-new engine"
+    disposition: net-new
+    owning_step: 1
+    status: built
+    evidence:
+      modules: [civiccast/egress/gst/engine.py, civiccast/egress/gst/graph.py]
+      symbols: [{file: civiccast/egress/gst/engine.py, name: GstPlayoutEngine}]
+
+  - id: S16
+    kind: section
+    title: "Production control room (TSR over OBS/vMix/ATEM) — optional tier"
+    source: "master §11 (S16) — net-new, optional tier"
+    disposition: optional
+    owning_step: 9
+    status: built
+    evidence:
+      migrations: [0047_production_control]
+      modules: [civiccast/control_room/service.py, civiccast/control_room/router.py]
+
+  - id: S17
+    kind: section
+    title: "Remote contribution (VDO.Ninja guests) — optional tier"
+    source: "master §11 (S17) — net-new, optional tier"
+    disposition: optional
+    owning_step: 9
+    status: built
+    evidence:
+      migrations: [0048_remote_contribution]
+      modules: [civiccast/live/contribution/service.py, civiccast/live/contribution/router.py]
+
+  - id: S18
+    kind: section
+    title: "PEG automation coverage gap closure (parity RECORD — closures fold into owners)"
+    source: "master §11 (S18) — parity record"
+    disposition: net-new
+    owning_step: 0
+    status: built
+    evidence:
+      modules: [docs/spec/3.0/sections/S18-*.md]
+
+  - id: S19
+    kind: section
+    title: "Scheduling automation — query-driven auto-schedule + block/daypart"
+    source: "master §11 (S19) — net-new (0049→shipped as 0043)"
+    disposition: net-new
+    owning_step: 6
+    status: built
+    evidence:
+      migrations: [0043_scheduling_automation]
+      modules: [civiccast/schedule/router.py]
+      symbols:
+        - {file: civiccast/apps/portal-operator/src/screens/AutoScheduleScreen.tsx, name: AutoScheduleScreen}
+
+  - id: S20
+    kind: section
+    title: "Accessibility (WCAG 2.1 AA / ADA Title II) — axe gates + DC-4 contrast gate"
+    source: "master §11 (S20) — net-new, release gate (no migration)"
+    disposition: net-new
+    owning_step: 11
+    status: built
+    evidence:
+      modules:
+        - .github/workflows/ci-a11y.yml
+        - civiccast/apps/portal-operator/e2e/a11y.spec.ts
+        - civiccast/apps/portal-public/e2e/contrast.spec.ts
+      symbols: [{file: civiccast/apps/portal-operator/e2e/contrast.spec.ts, name: test}]
+      tests:
+        - civiccast/apps/portal-operator/e2e/contrast.spec.ts
+        - civiccast/apps/portal-public/e2e/contrast.spec.ts
+    # DC-4 (this row's pin): contrast.spec.ts computes real foreground/
+    # background contrast from the rendered DOM/CSSOM (WCAG 2.1 AA 4.5:1 /
+    # 3:1) on both portals — a sibling gate exists in portal-public/e2e/
+    # (branding/theme colors render there too). Both specs carry the
+    # honesty guard the ledger comment names (an empty scanned-element set
+    # throws instead of silently reporting zero violations) AND a
+    # permanent regression test that injects a synthetic low-contrast
+    # element and asserts the gate detects it — falsification proven, not
+    # just claimed. `test` is exported as `base.extend(...)` (a Playwright
+    # fixture) carrying the `scanContrast` helper, satisfying the pinned
+    # symbol while being genuinely reusable. Both specs are auto-picked-up
+    # by the existing `npm run test:a11y` step already wired into
+    # ci-a11y.yml (playwright's testDir is e2e/; no new CI step needed).
+    #
+    # DC-1 (axe-core 0 violations): pre-existing (a11y.spec.ts, both
+    # portals). DC-1's "Lighthouse a11y score >= 95" half: DELIBERATELY
+    # NOT added as a separate CI step — Lighthouse's accessibility
+    # category audits run on axe-core internally, so a hard zero-
+    # violation axe gate (already enforced) is a strictly stronger floor
+    # than a >=95 score threshold on the same underlying engine; adding a
+    # second Lighthouse CI job would be redundant ceremony, not a
+    # meaningfully higher bar. Documented as a deliberate equivalence, not
+    # a silently-skipped gap.
+    # DC-2 (keyboard-only walkthrough): covered piecemeal by existing e2e
+    # specs (schedule.spec.ts drawer Escape/focus, a11y.spec.ts drawer
+    # Escape) — no single dedicated "full task keyboard walkthrough" spec.
+    # DC-3 (screen-reader/NVDA/VoiceOver walkthrough): MANUAL / BETA —
+    # not automated in this pass; belongs in the master §12 release
+    # `/walkthrough`, honestly recorded as open, not faked.
+    # DC-5 (caption/audio-track toggles): covered by portal-public's
+    # existing a11y.spec.ts caption-toggle test.
+    # DC-6 (release gate fails on any AA violation): true today — ci-a11y
+    # blocks merge on any axe violation on both portals.
+    # DC-7 (no "ADA compliant" guarantee copy): no such string exists in
+    # the app; not machine-gated here (a grep-based guard would be next).
+
+  - id: S21
+    kind: section
+    title: "Scheduled recording from inputs/streams"
+    source: "master §11 (S21) — net-new"
+    disposition: net-new
+    owning_step: 12
+    # The LAST S18 capability gap (gap 2). S21 ships as a sibling off 0055
+    # (the long-reserved 0056 slot per RECONCILIATION's chain-shape
+    # footer); the merge revision 0060_recording_paywall_merge unifies
+    # 0056 with 0059 so the global Alembic chain stays single-headed.
+    # Capture pipeline + asset finalizer + alert sink are injected
+    # Protocols — production wires them to S15/S7/S8 in follow-up; the
+    # data layer + service + API + UI are complete in S21 itself.
+    status: built
+    evidence:
+      migrations: [0056_scheduled_recording, 0060_recording_paywall_merge]
+      modules:
+        - civiccast/recording/models.py
+        - civiccast/recording/store.py
+        - civiccast/recording/service.py
+        - civiccast/recording/router.py
+      symbols:
+        - {file: civiccast/recording/service.py, name: RecordingService}
+      tests: [tests/recording]
+
+  - id: S22
+    kind: section
+    title: "User-defined custom metadata fields"
+    source: "master §11 (S22) — net-new (spec planned 0051; shipped as 0054_custom_metadata_fields)"
+    disposition: net-new
+    owning_step: 12
+    status: built
+    evidence:
+      migrations: [0054_custom_metadata_fields]
+      modules:
+        - civiccast/metadata/service.py
+        - civiccast/metadata/store.py
+        - civiccast/metadata/router.py
+      symbols: [{file: civiccast/metadata/service.py, name: CustomFieldService}]
+      tests: [tests/metadata]
+
+  - id: S23
+    kind: section
+    title: "As-run + EPG export + franchise hours reporting"
+    source: "master §11 (S23) — shipped on migration 0055_asrun_and_epg"
+    disposition: net-new
+    owning_step: 11
+    status: built
+    evidence:
+      migrations: [0055_asrun_and_epg]
+      modules:
+        - civiccast/reporting/models.py
+        - civiccast/reporting/store.py
+        - civiccast/reporting/service.py
+        - civiccast/reporting/epg.py
+        - civiccast/reporting/router.py
+        - civiccast/reporting/schedule_adapter.py
+        - civiccast/reporting/asrun_recorder.py
+        - civiccast/egress/asrun.py
+      symbols:
+        - {file: civiccast/reporting/service.py, name: ReportingService}
+        - {file: civiccast/reporting/epg.py, name: EpgExporter}
+      tests: [tests/reporting, tests/egress/test_asrun_capture.py]
+
+  - id: S24
+    kind: section
+    title: "Underwriting spot management + affidavits"
+    source: "master §11 (S24) — shipped on migration 0057_underwriting_spots (renumbered from planned 0055 per RECONCILIATION D17 after S23 took 0055; 0056 reserved for S21)"
+    disposition: net-new
+    owning_step: 12
+    status: built
+    evidence:
+      migrations: [0057_underwriting_spots]
+      modules:
+        - civiccast/underwriting/models.py
+        - civiccast/underwriting/store.py
+        - civiccast/underwriting/service.py
+        - civiccast/underwriting/router.py
+      symbols:
+        - {file: civiccast/underwriting/service.py, name: TraffickingCompiler}
+        - {file: civiccast/underwriting/service.py, name: AffidavitService}
+      tests: [tests/underwriting]
+
+  - id: S25
+    kind: section
+    title: "Meeting-agenda integration + video-timecode chapters"
+    source: "master §11 (S25) — shipped on migration 0058_meeting_agenda (renumbered from planned 0056 per RECONCILIATION D18 after S23 took 0055)"
+    disposition: net-new
+    owning_step: 12
+    status: built
+    # DC-4 (optional PDF beside the player) is satisfied at the data layer
+    # via the public projection's source_doc_url path (absent PDF degrades
+    # to source_doc_url:null cleanly). Player-side PDF pane is documented
+    # at the MeetingAgendaSidebar integration seam; tracked under the
+    # GauntletGate S25 Full lane UI deep-dive.
+    evidence:
+      migrations: [0058_meeting_agenda]
+      modules:
+        - civiccast/agenda/models.py
+        - civiccast/agenda/store.py
+        - civiccast/agenda/service.py
+        - civiccast/agenda/router.py
+      symbols:
+        - {file: civiccast/agenda/service.py, name: AgendaService}
+      tests: [tests/agenda]
+
+  - id: S26
+    kind: section
+    title: "Subscription paywall (Stripe) — optional / V1.x"
+    source: "master §11 (S26) — net-new, optional"
+    disposition: optional
+    owning_step: 12
+    # DEFAULT OFF — a station that never enables the paywall sees empty
+    # tables + zero behavior change (DC-1). Card data never touches
+    # CivicCast — Stripe-hosted Checkout + Customer Portal only (PCI
+    # SAQ-A scope, DC-4). Magic-link tokens are HMAC-signed + single-use
+    # + short-lived (DC-5). Webhook signature verification enforced at
+    # the router (DC-3).
+    status: built
+    evidence:
+      migrations: [0059_paywall_access]
+      modules:
+        - civiccast/paywall/models.py
+        - civiccast/paywall/store.py
+        - civiccast/paywall/service.py
+        - civiccast/paywall/router.py
+      symbols:
+        - {file: civiccast/paywall/service.py, name: PaywallService}
+      tests: [tests/paywall]

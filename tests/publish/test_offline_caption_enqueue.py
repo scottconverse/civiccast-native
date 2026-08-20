@@ -1,0 +1,315 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+"""Publishing a recording queues its offline captions (keystone K3).
+
+The gap K3 names is that nothing connected a published asset to the caption
+engine. These are the contract tests for that connection: approving publish
+must leave a queued caption job pointing at the recording's real source file
+and its real package directory -- and must not pretend to have queued one
+when it cannot.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from civiccast.app import create_app
+from civiccast.captions.vod_job import (
+    OFFLINE_CAPTION_JOB_STATE_COMPLETE,
+    OFFLINE_CAPTION_JOB_STATE_PENDING,
+    InMemoryOfflineCaptionJobStore,
+)
+from civiccast.publish.router import get_caption_job_store, get_publish_store
+from civiccast.publish.store import InMemoryPublishStore
+from civiccast.schedule.models import StaffAssetRow
+from civiccast.schedule.router import get_postgres_store
+
+_ASSET_ID = "council-2026-08-16"
+_STAFF_HEADERS = {"Authorization": "Bearer operator-token-a"}
+_APPROVAL = {"operator_id": "staff-1", "operator_display_name": "Avery Operator"}
+
+
+class FakeAssetStore:
+    def __init__(self, assets: list[StaffAssetRow]) -> None:
+        self._assets = assets
+
+    def list_all(self) -> list[StaffAssetRow]:
+        return self._assets
+
+    def get_staff_row(self, asset_id: str) -> StaffAssetRow | None:
+        return next((asset for asset in self._assets if asset.asset_id == asset_id), None)
+
+    def mark_published(self, asset_id: str, *, published_at: datetime) -> StaffAssetRow:
+        asset = self.get_staff_row(asset_id)
+        assert asset is not None
+        updated = asset.model_copy(update={"published_at": published_at})
+        self._assets[self._assets.index(asset)] = updated
+        return updated
+
+
+@pytest.fixture
+def upload_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "uploads"
+    root.mkdir()
+    monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(root))
+    return root
+
+
+@pytest.fixture
+def source_file(upload_root: Path) -> Path:
+    path = upload_root / f"{_ASSET_ID}.mp4"
+    path.write_bytes(b"not really video")
+    return path
+
+
+@pytest.fixture
+def job_store() -> InMemoryOfflineCaptionJobStore:
+    return InMemoryOfflineCaptionJobStore()
+
+
+def _asset(source_file: Path | None) -> StaffAssetRow:
+    return StaffAssetRow(
+        asset_id=_ASSET_ID,
+        title="Council - August 16, 2026",
+        state="validated",
+        manifest_url=f"/media/vod/{_ASSET_ID}/playlist.m3u8",
+        file_path=str(source_file) if source_file is not None else None,
+        retention_policy="meeting",
+        version=1,
+    )
+
+
+@pytest.fixture
+def client(
+    source_file: Path,
+    job_store: InMemoryOfflineCaptionJobStore,
+) -> Iterator[TestClient]:
+    app = create_app()
+    app.dependency_overrides[get_postgres_store] = lambda: FakeAssetStore([_asset(source_file)])
+    app.dependency_overrides[get_publish_store] = lambda: InMemoryPublishStore()
+    app.dependency_overrides[get_caption_job_store] = lambda: job_store
+    with TestClient(app, headers=_STAFF_HEADERS) as test_client:
+        yield test_client
+
+
+class TestPublishEnqueuesOfflineCaptions:
+    def test_approval_queues_a_job_for_the_recording(
+        self,
+        client: TestClient,
+        job_store: InMemoryOfflineCaptionJobStore,
+        source_file: Path,
+        upload_root: Path,
+    ) -> None:
+        response = client.post(f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL)
+
+        assert response.status_code == 200
+        job = job_store.active_for_asset(_ASSET_ID)
+        assert job is not None
+        assert job.state == OFFLINE_CAPTION_JOB_STATE_PENDING
+        assert Path(job.source_path) == source_file
+        # The package directory the job will caption must be the same one
+        # the packager wrote and /media/vod serves.
+        assert Path(job.package_dir) == (upload_root / ".civiccast-packages" / _ASSET_ID).resolve()
+
+    def test_reapproving_does_not_requeue_work_an_operator_is_reviewing(
+        self,
+        client: TestClient,
+        job_store: InMemoryOfflineCaptionJobStore,
+    ) -> None:
+        client.post(f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL)
+        first = job_store.active_for_asset(_ASSET_ID)
+        client.post(f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL)
+        second = job_store.active_for_asset(_ASSET_ID)
+
+        assert first is not None and second is not None
+        assert first.job_id == second.job_id
+
+    def test_a_portal_retry_also_queues_captions(
+        self,
+        client: TestClient,
+        job_store: InMemoryOfflineCaptionJobStore,
+    ) -> None:
+        """A portal retry that actually publishes an uncaptioned asset enqueues."""
+        response = client.post(
+            f"/api/staff/publish/assets/{_ASSET_ID}/surfaces/portal/retry",
+            json=_APPROVAL,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["canonical_public"] is True
+        assert job_store.active_for_asset(_ASSET_ID) is not None
+
+    def test_a_portal_retry_that_fails_to_publish_does_not_queue_captions(
+        self,
+        source_file: Path,
+        job_store: InMemoryOfflineCaptionJobStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Refines audit finding 5: ``surface_id == "portal"`` alone is not enough.
+
+        Checking only ``staff_asset.published_at`` (set by an *earlier*
+        successful publish) is also not enough -- an asset can already be
+        public from a prior approval, and *this* retry's own
+        ``asset_store.mark_published`` write can still fail (mirrors
+        ``test_portal_visibility_failure_is_recorded_and_remains_private``
+        in tests/publish/test_router.py, the first-approval version of this
+        failure). ``published_at`` stays set to its old value in that case
+        -- ``_apply_portal_visibility`` returns the unchanged ``staff_asset``
+        on a ``mark_published`` failure -- so only the *record's* portal
+        surface state (``"succeeded"`` only when this call's write actually
+        landed) can tell a real re-publish apart from a no-op failed retry.
+        Queueing captions on the no-op would start a transcription pass
+        that isn't owed by anything this retry actually did.
+        """
+        asset_store = FakeAssetStore([_asset(source_file)])
+        app = create_app()
+        app.dependency_overrides[get_postgres_store] = lambda: asset_store
+        app.dependency_overrides[get_publish_store] = lambda: InMemoryPublishStore()
+        app.dependency_overrides[get_caption_job_store] = lambda: job_store
+
+        with TestClient(app, headers=_STAFF_HEADERS) as test_client:
+            # First, a real successful publish -- the asset is genuinely
+            # public and its (first) caption job is queued and completed.
+            approved = test_client.post(
+                f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL
+            )
+            assert approved.status_code == 200
+            first_job = job_store.active_for_asset(_ASSET_ID)
+            assert first_job is not None
+            job_store.save(
+                first_job.model_copy(
+                    update={"state": OFFLINE_CAPTION_JOB_STATE_COMPLETE, "next_attempt_at": None}
+                )
+            )
+            assert asset_store.get_staff_row(_ASSET_ID).published_at is not None  # type: ignore[union-attr]
+
+            # Now a portal retry whose own visibility write fails -- the
+            # asset stays public from the earlier approval, but this retry
+            # made nothing newly public.
+            def _fail_visibility(asset_id: str, *, published_at: datetime) -> StaffAssetRow:
+                del asset_id, published_at
+                raise OSError("database write failed")
+
+            monkeypatch.setattr(asset_store, "mark_published", _fail_visibility)
+
+            retry = test_client.post(
+                f"/api/staff/publish/assets/{_ASSET_ID}/surfaces/portal/retry",
+                json=_APPROVAL,
+            )
+
+        assert retry.status_code == 200
+        body = retry.json()
+        portal = next(surface for surface in body["surfaces"] if surface["id"] == "portal")
+        assert portal["state"] == "failed"
+        # published_at is still non-None -- it survives from the earlier
+        # successful approval -- which is exactly why a naive
+        # ``published_at is not None`` check is not sufficient here.
+        assert asset_store.get_staff_row(_ASSET_ID).published_at is not None  # type: ignore[union-attr]
+        assert job_store.active_for_asset(_ASSET_ID) is None
+
+    def test_retrying_a_non_portal_surface_does_not_requeue_an_already_captioned_asset(
+        self,
+        source_file: Path,
+        job_store: InMemoryOfflineCaptionJobStore,
+    ) -> None:
+        """Audit finding 5: an unrelated surface retry (e.g. YouTube) on an
+        asset whose captions already completed must not start a brand-new
+        transcription pass. Portal success is what starts the caption
+        obligation; ``active_for_asset`` only matches pending/
+        awaiting_review, so a naive unconditional queue call on any retry
+        would re-transcribe a `complete` asset every time an operator
+        retries an unrelated surface.
+
+        Uses its own app/asset-store (rather than the module ``client``
+        fixture) because the scenario needs ``published_at`` to survive
+        from the approval request into the later retry request -- the
+        shared fixture's asset store is rebuilt fresh per request, which
+        would mask this finding behind an unrelated ``published_at is
+        None`` no-op instead of exercising the surface-id gate.
+        """
+
+        asset_store = FakeAssetStore([_asset(source_file)])
+        app = create_app()
+        app.dependency_overrides[get_postgres_store] = lambda: asset_store
+        app.dependency_overrides[get_publish_store] = lambda: InMemoryPublishStore()
+        app.dependency_overrides[get_caption_job_store] = lambda: job_store
+
+        with TestClient(app, headers=_STAFF_HEADERS) as test_client:
+            approved = test_client.post(
+                f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL
+            )
+            assert approved.status_code == 200
+            queued = job_store.active_for_asset(_ASSET_ID)
+            assert queued is not None
+            # Simulate the worker having already finished captioning this asset.
+            job_store.save(
+                queued.model_copy(
+                    update={"state": OFFLINE_CAPTION_JOB_STATE_COMPLETE, "next_attempt_at": None}
+                )
+            )
+            assert asset_store.get_staff_row(_ASSET_ID).published_at is not None  # type: ignore[union-attr]
+
+            retry = test_client.post(
+                f"/api/staff/publish/assets/{_ASSET_ID}/surfaces/youtube-vod/retry",
+                json=_APPROVAL,
+            )
+
+        assert retry.status_code == 200
+        assert job_store.active_for_asset(_ASSET_ID) is None
+
+    def test_a_queueing_failure_never_breaks_the_publish_response(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import civiccast.publish.router as publish_router
+
+        def _boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("caption queue unavailable")
+
+        monkeypatch.setattr(publish_router, "enqueue_offline_caption_job", _boom)
+
+        response = client.post(f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL)
+
+        assert response.status_code == 200
+
+
+class TestPublishWithoutCaptionableSource:
+    def test_an_asset_with_no_local_file_is_skipped_not_queued(
+        self,
+        source_file: Path,
+        job_store: InMemoryOfflineCaptionJobStore,
+    ) -> None:
+        app = create_app()
+        app.dependency_overrides[get_postgres_store] = lambda: FakeAssetStore([_asset(None)])
+        app.dependency_overrides[get_publish_store] = lambda: InMemoryPublishStore()
+        app.dependency_overrides[get_caption_job_store] = lambda: job_store
+
+        with TestClient(app, headers=_STAFF_HEADERS) as test_client:
+            response = test_client.post(
+                f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL
+            )
+
+        assert response.status_code == 200
+        assert job_store.active_for_asset(_ASSET_ID) is None
+
+    def test_no_caption_job_store_configured_is_survivable(
+        self,
+        source_file: Path,
+    ) -> None:
+        app = create_app()
+        app.dependency_overrides[get_postgres_store] = lambda: FakeAssetStore([_asset(source_file)])
+        app.dependency_overrides[get_publish_store] = lambda: InMemoryPublishStore()
+        app.dependency_overrides[get_caption_job_store] = lambda: None
+
+        with TestClient(app, headers=_STAFF_HEADERS) as test_client:
+            response = test_client.post(
+                f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL
+            )
+
+        assert response.status_code == 200

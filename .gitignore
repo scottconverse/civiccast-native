@@ -1,0 +1,211 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# uv
+.uv/
+# uv.lock IS committed (deterministic lockfile per ADR 0004 / CI uses uv sync)
+
+# Testing & coverage
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+
+# Type stubs
+.mypy_cache/
+
+# Node / frontend
+node_modules/
+.npm/
+.yarn/
+.pnp.*
+.parcel-cache/
+.next/
+.nuxt/
+.cache/
+civiccast/apps/installer/src-tauri/target/
+civiccast/apps/installer/src-tauri/target-*/
+# Release builds may set CARGO_TARGET_DIR at the repository root to isolate an
+# exact candidate from stale or locked Tauri output. Keep those disposable
+# directories out of Git provenance and generated release manifests.
+/target/
+/target-*/
+civiccast/apps/installer/src-tauri/gen/
+civiccast/apps/installer/src-tauri/resources/*
+!civiccast/apps/installer/src-tauri/resources/.gitkeep
+!civiccast/apps/installer/src-tauri/resources/headless-bootstrap.ps1
+tools/ndi-ffmpeg-sender/target/
+dist-ssr/
+*.local
+.vite/
+
+# Build outputs
+*.tsbuildinfo
+.eslintcache
+artifacts/
+
+# IDE & editor
+.vscode/
+!.vscode/settings.json.example
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# WSL2
+.wslconfig
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Release-evidence cleanroom logs are intentionally tracked so each
+# tag-candidate's local Windows cleanroom proof is durable. Per the
+# release-close directive (Codex audit-team verification protocol),
+# these logs are part of the v0.X.Y verification record.
+!docs/releases/evidence/*.log
+
+# Secrets and local config
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+credentials/
+*.credentials.json
+.netrc
+
+# CivicCast-specific
+# HANDOFF.md is gitignored — used for private session handoffs (always current,
+# never committed). next-cleanup.md IS committed (CLAUDE.md treats it as a
+# tracked artifact for layered-audit Minor/Nit collection).
+HANDOFF.md
+.civiccast-local/
+
+# Agentic pipeline run artifacts (local only, never committed) — EXCEPT
+# .agent-runs/native-windows/, the native-Windows program's committed audit
+# trail (requests, evidence, verdict pointers; see its README).
+.agent-runs/*
+!.agent-runs/native-windows/
+# Keep generic machine-local run state out of the committed evidence tree.
+.agent-runs/native-windows/**/*.local
+# ...and evidence transcripts ARE committed despite the global *.log rule
+# (including per-run subfolders like evidence/gauntlet-run17/ -- the
+# single-level pattern silently dropped 6-7 logs per gauntlet run)
+!.agent-runs/native-windows/**/evidence/*.log
+!.agent-runs/native-windows/**/evidence/**/*.log
+# ...and the WS4 WSL-keeper-patch cargo transcript (CC-WS4-008 root cause:
+# the round-1 build's committed-path claim for this exact file silently
+# failed against the blanket *.log rule above with no negation for
+# wsl-keeper-patch/ -- that is WHY it was "absent from the committed tree"
+# per the round-1 auditor finding; this negation is the actual fix)
+!.agent-runs/native-windows/**/wsl-keeper-patch/*.log
+streams/
+recordings/
+captions-cache/
+whisper-models/
+ollama-models/
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+postgres-data/
+
+# Media test fixtures (large)
+tests/fixtures/media/*.mp4
+tests/fixtures/media/*.mkv
+tests/fixtures/media/*.ts
+tests/fixtures/media/*.m4s
+
+# Pandoc output
+*.pdf
+*.docx
+!docs/USER-MANUAL.pdf
+!docs/USER-MANUAL.docx
+!docs/spec/*.pdf
+!docs/spec/*.docx
+!tests/agenda_import/fixtures/*.pdf
+
+# Pre-commit
+.pre-commit-trash/
+
+# Docs site builds
+site/
+docs/_build/
+
+# Proof-kit installer binaries must not be committed (they bloated the repo via
+# LFS by ~640 MB). Distribute them as GitHub Release assets instead.
+tester-handoff/**/*.zip
+tester-handoff/**/*.exe
+tester-handoff/**/*.msi
+tester-handoff/**/civiccast-*-release-artifacts-manifest.json
+.fablize/
+
+# AntiStall sprint state — per-session, never shared
+.claude/sprint-gate-*.json
+.claude/sprint-stop-request.json
+.claude/.antistall-block-count-*
+
+# rigor-goals per-session story state — process artifact, never shared
+.rigor/
+.pytest-tmp-*/
+.tmp-pytest-root/

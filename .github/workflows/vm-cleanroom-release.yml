@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+name: vm-cleanroom-release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vm-cleanroom:
+    runs-on: [self-hosted, linux, x64, scott-desktop, vm]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run VM cleanroom preflight
+        # workflow-cost: local-docker-cache; paths: manual dispatch only.
+        run: python scripts/run_vm_cleanroom_release.py
+      - name: Upload VM proof
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 30
+        with:
+          name: v1.1-vm-cleanroom-proof
+          path: docs/releases/evidence/v1.1-vm-cleanroom-proof.md
+          retention-days: 14

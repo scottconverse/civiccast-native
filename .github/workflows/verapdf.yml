@@ -1,0 +1,92 @@
+name: veraPDF signed-record validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "civiccast/records/**"
+      - "civiccast/summary/**"
+      - "tests/records/**"
+      - ".github/workflows/verapdf.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verapdf:
+    name: veraPDF PDF/A-3B signed-record validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Python dependencies
+        run: uv sync --all-extras --group dev --frozen
+
+      - name: Download, verify, and install veraPDF
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://repo.maven.apache.org/maven2/org/verapdf/apps/installer/1.28.2/installer-1.28.2-installer.zip"
+          # Maven Central serves this immutable 1.28.2 installer with this SHA256 as of 2026-05-16.
+          expected="f56a10354460486a08c6793a1e5d19bfdc2a1324b4b0867843b3fa12e51547f5"
+          curl -fsSL "$url" -o verapdf-installer.zip
+          actual="$(sha256sum verapdf-installer.zip | awk '{print $1}')"
+          test "$actual" = "$expected"
+          python -m zipfile -e verapdf-installer.zip verapdf-installer
+          installer_dir="$(find verapdf-installer -maxdepth 1 -type d -name 'verapdf-greenfield-*' | head -n 1)"
+          install_dir="$PWD/.verapdf"
+          cat > auto-install.xml <<EOF
+          <AutomatedInstallation langpack="eng">
+            <com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>
+            <com.izforge.izpack.panels.target.TargetPanel id="install_dir">
+              <installpath>${install_dir}</installpath>
+            </com.izforge.izpack.panels.target.TargetPanel>
+            <com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select">
+              <pack name="veraPDF GUI" index="0" selected="true"/>
+              <pack name="veraPDF Mac and *nix Scripts" index="1" selected="true"/>
+              <pack name="veraPDF Validation model" index="2" selected="true"/>
+              <pack name="veraPDF Documentation" index="3" selected="false"/>
+              <pack name="veraPDF Sample Plugins" index="4" selected="false"/>
+            </com.izforge.izpack.panels.packs.PacksPanel>
+            <com.izforge.izpack.panels.install.InstallPanel id="install"/>
+            <com.izforge.izpack.panels.finish.FinishPanel id="finish"/>
+          </AutomatedInstallation>
+          EOF
+          chmod +x "$installer_dir/verapdf-install"
+          "$installer_dir/verapdf-install" "$PWD/auto-install.xml"
+          verapdf_bin="$(find "$install_dir" -maxdepth 4 -type f -name verapdf -perm -111 | head -n 1)"
+          test -n "$verapdf_bin"
+          dirname "$verapdf_bin" >> "$GITHUB_PATH"
+
+      - name: Run signed-record veraPDF tests
+        env:
+          CIVICCAST_VERAPDF_ARTIFACT_DIR: ${{ github.workspace }}
+        run: uv run pytest tests/records/test_pdfa_verapdf.py -q
+
+      - name: Upload veraPDF diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: verapdf-diagnostics
+          path: |
+            test_*.pdf
+            verapdf-*.xml
+          if-no-files-found: warn
+          retention-days: 7

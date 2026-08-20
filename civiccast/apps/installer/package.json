@@ -1,0 +1,29 @@
+{
+  "name": "@civiccast/installer",
+  "version": "1.0.0-rc18",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "tauri:build": "node scripts/verify-bundle-resources.mjs && tauri build",
+    "tauri:build:exe": "tauri build --no-bundle",
+    "preview": "vite preview --host 127.0.0.1",
+    "test:e2e": "playwright test",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.46.0",
+    "@tauri-apps/cli": "^2.11.2",
+    "@vitejs/plugin-react": "^6.0.2",
+    "jsdom": "^25.0.1",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9"
+  }
+}

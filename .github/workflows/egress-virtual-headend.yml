@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: egress-virtual-headend
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/egress-virtual-headend.yml"
+      - "civiccast/egress/**"
+      - "tests/egress/**"
+      - "pyproject.toml"
+      - "uv.lock"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  virtual-headend:
+    name: Egress virtual-headend gate
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify netem tooling
+        run: |
+          command -v tc
+          tc -V
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest pytest-asyncio ruff
+
+      - name: Run E.2 virtual-headend tests
+        run: |
+          python -m pytest \
+            tests/egress/test_virtual_headend_gate.py \
+            tests/egress/test_virtual_headend_media.py \
+            tests/egress/test_virtual_headend_receiver.py \
+            tests/egress/test_virtual_headend_impairment.py \
+            tests/egress/test_virtual_headend_scenario.py \
+            tests/egress/test_virtual_headend_lifecycle.py \
+            tests/egress/test_daemon.py \
+            tests/egress/test_encoder_strategy.py \
+            -q
+
+      - name: Lint E.2 egress gate
+        run: |
+          python -m ruff check \
+            civiccast/egress \
+            tests/egress
+
+      - name: Run E.2 SRT impairment matrix
+        run: |
+          sudo -n true
+          mkdir -p .egress-virtual-headend
+          sudo -n env PATH="$PATH" python scripts/run_egress_virtual_headend_proof.py \
+            --work-dir .egress-virtual-headend/matrix \
+            --receiver-input-url generated:sequence-srt \
+            --srt-loopback-port 19151 \
+            --netem-interface lo \
+            --impairment-matrix \
+            --boundary-count 50 \
+            --process-restart-probe \
+            --ffmpeg-child-restart-probe \
+            --verify-loudness \
+            --verify-caption-decode-back | tee .egress-virtual-headend/matrix-summary.json
+
+      - name: Clean E.2 netem qdisc
+        if: always()
+        run: |
+          sudo -n tc qdisc delete dev lo root || true
+
+      - name: Upload E.2 virtual-headend proof reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          retention-days: 7
+          name: egress-virtual-headend-proof
+          path: .egress-virtual-headend

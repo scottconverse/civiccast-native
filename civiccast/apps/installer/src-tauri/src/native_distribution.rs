@@ -1,0 +1,1639 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) The CivicCast Authors
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
+use ed25519_dalek::{Signature, Verifier};
+use reqwest::blocking::{Client, Response};
+use reqwest::header::{ACCEPT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, RANGE};
+use reqwest::redirect::Policy;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use url::Url;
+
+use crate::native_packs::PackTrust;
+use crate::native_packs::{self, VerifiedPack};
+
+const DISTRIBUTION_SCHEMA_VERSION: u32 = 1;
+const DISTRIBUTION_PRODUCT: &str = "civiccast-native";
+// Owner decision (Scott Converse, 2026-08-07, ratified): the caption FLOOR
+// tier (`medium` / `captions-floor`) is the mandatory baseline for station
+// activation; `captions-large-v3` is an optional quality add-on, verified
+// when present and simply absent when not. `captions-floor` is the SAME
+// component id the GUI acquisition flow already uses on disk
+// (`acquisition_catalog.rs`'s `captions-floor` staging directory,
+// `station_runtime.py`'s `FLOOR_TIER_ID` model-root prefix) -- never a
+// second, invented convention for the same tier.
+const REQUIRED_COMPONENTS: [&str; 5] = [
+    "core",
+    "captions-floor",
+    "summary-gemma4-12b",
+    "summary-gemma4-e4b",
+    "translation-translategemma-4b",
+];
+// `captions-large-v3` is intentionally NOT in `REQUIRED_COMPONENTS`: it is
+// an optional quality add-on (owner decision 2026-08-07), verified when a
+// distribution carries it and simply absent when it does not. See
+// `native_activation.rs::OPTIONAL_COMPONENTS` for the staging/manifest side
+// of this same decision.
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VerifiedDistribution {
+    pub sha256: String,
+    pub kind: String,
+    pub channel: String,
+    pub product_version: String,
+    pub compatible_core: String,
+    pub signing_key_id: String,
+    pub created_epoch: u64,
+    pub packs: Vec<DistributionPack>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DistributionPack {
+    pub component: String,
+    pub filename: String,
+    pub bytes: u64,
+    pub sha256: String,
+    pub required: bool,
+    pub urls: Vec<String>,
+}
+
+pub struct TransferResponse {
+    pub status: u16,
+    pub content_range: Option<String>,
+    pub content_length: Option<u64>,
+    pub body: Box<dyn Read + Send>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AcquiredDistribution {
+    pub index: VerifiedDistribution,
+    pub packs: Vec<AcquiredPack>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AcquiredPack {
+    pub component: String,
+    pub cached_path: PathBuf,
+    pub outer_sha256: String,
+    pub verified: VerifiedPack,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DistributionEnvelope {
+    manifest: Value,
+    signature: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DistributionManifest {
+    schema_version: u32,
+    product: String,
+    kind: String,
+    channel: String,
+    product_version: String,
+    compatible_core: String,
+    signing_key_id: String,
+    created_epoch: u64,
+    packs: Vec<DistributionManifestPack>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DistributionManifestPack {
+    component: String,
+    filename: String,
+    bytes: u64,
+    sha256: String,
+    required: bool,
+    urls: Vec<String>,
+}
+
+pub fn verify_distribution_bytes(
+    raw: &[u8],
+    trust: &PackTrust,
+    expected_kind: Option<&str>,
+    expected_channel: Option<&str>,
+    expected_product_version: Option<&str>,
+    expected_compatible_core: Option<&str>,
+) -> Result<VerifiedDistribution, String> {
+    if raw.len() > 4 * 1024 * 1024 {
+        return Err("Native distribution index is too large.".to_string());
+    }
+    let envelope_value: Value = serde_json::from_slice(raw)
+        .map_err(|error| format!("Native distribution index is invalid JSON: {error}"))?;
+    if canonical_json(&envelope_value)?.as_bytes() != raw {
+        return Err("Native distribution index is not canonical JSON.".to_string());
+    }
+    let envelope: DistributionEnvelope = serde_json::from_value(envelope_value)
+        .map_err(|error| format!("Native distribution envelope is malformed: {error}"))?;
+    if BASE64.encode(
+        BASE64
+            .decode(&envelope.signature)
+            .map_err(|error| format!("Native distribution signature is invalid base64: {error}"))?,
+    ) != envelope.signature
+    {
+        return Err("Native distribution signature is not canonical base64.".to_string());
+    }
+    let signature_bytes = BASE64
+        .decode(&envelope.signature)
+        .map_err(|error| format!("Native distribution signature is invalid base64: {error}"))?;
+    let signature = Signature::from_slice(&signature_bytes)
+        .map_err(|error| format!("Native distribution signature length is invalid: {error}"))?;
+    let manifest_bytes = canonical_json(&envelope.manifest)?;
+    trust
+        .public_key
+        .verify(manifest_bytes.as_bytes(), &signature)
+        .map_err(|_| "Native distribution index signature is invalid.".to_string())?;
+    let manifest: DistributionManifest = serde_json::from_value(envelope.manifest)
+        .map_err(|error| format!("Native distribution manifest is malformed: {error}"))?;
+
+    if manifest.schema_version != DISTRIBUTION_SCHEMA_VERSION
+        || manifest.product != DISTRIBUTION_PRODUCT
+    {
+        return Err("Native distribution schema or product identity is invalid.".to_string());
+    }
+    if !matches!(manifest.kind.as_str(), "channel-index" | "station-index") {
+        return Err("Native distribution kind is invalid.".to_string());
+    }
+    for (field, value) in [
+        ("kind", manifest.kind.as_str()),
+        ("channel", manifest.channel.as_str()),
+        ("product version", manifest.product_version.as_str()),
+        ("compatible core", manifest.compatible_core.as_str()),
+        ("signing key id", manifest.signing_key_id.as_str()),
+    ] {
+        require_identity(field, value)?;
+    }
+    if manifest.signing_key_id != trust.key_id {
+        return Err(
+            "Native distribution signing key id does not match the embedded trust root."
+                .to_string(),
+        );
+    }
+    for (label, observed, expected) in [
+        ("kind", manifest.kind.as_str(), expected_kind),
+        ("channel", manifest.channel.as_str(), expected_channel),
+        (
+            "product version",
+            manifest.product_version.as_str(),
+            expected_product_version,
+        ),
+        (
+            "compatible core",
+            manifest.compatible_core.as_str(),
+            expected_compatible_core,
+        ),
+    ] {
+        if expected.is_some_and(|value| value != observed) {
+            return Err(format!(
+                "Native distribution {label} does not match the bootstrap."
+            ));
+        }
+    }
+    if manifest.packs.is_empty() {
+        return Err("Native distribution has no component packs.".to_string());
+    }
+
+    let mut seen_components = BTreeSet::new();
+    let mut seen_filenames = BTreeSet::new();
+    let mut packs = Vec::with_capacity(manifest.packs.len());
+    for item in manifest.packs {
+        require_component(&item.component)?;
+        if !seen_components.insert(item.component.clone()) {
+            return Err(format!(
+                "Native distribution contains duplicate component: {}",
+                item.component
+            ));
+        }
+        let filename = safe_pack_filename(&item.filename)?;
+        if !seen_filenames.insert(filename.to_lowercase()) {
+            return Err(format!(
+                "Native distribution contains duplicate pack filename: {filename}"
+            ));
+        }
+        if item.bytes == 0 {
+            return Err(format!(
+                "Native distribution pack byte count is invalid: {}",
+                item.component
+            ));
+        }
+        if !is_lower_hex_sha256(&item.sha256) {
+            return Err(format!(
+                "Native distribution pack SHA-256 is invalid: {}",
+                item.component
+            ));
+        }
+        if REQUIRED_COMPONENTS.contains(&item.component.as_str()) && !item.required {
+            return Err(format!(
+                "Native distribution component must be required: {}",
+                item.component
+            ));
+        }
+        validate_urls(&manifest.kind, &item.component, &item.urls)?;
+        packs.push(DistributionPack {
+            component: item.component,
+            filename,
+            bytes: item.bytes,
+            sha256: item.sha256,
+            required: item.required,
+            urls: item.urls,
+        });
+    }
+    let missing: Vec<_> = REQUIRED_COMPONENTS
+        .iter()
+        .filter(|component| !seen_components.contains(**component))
+        .copied()
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Native distribution required component set is incomplete: {}",
+            missing.join(", ")
+        ));
+    }
+    let mut expected_order: Vec<_> = seen_components.iter().cloned().collect();
+    expected_order.sort_by_key(|component| component_sort_key(component));
+    let observed_order: Vec<_> = packs.iter().map(|pack| pack.component.clone()).collect();
+    if observed_order != expected_order {
+        return Err("Native distribution components are not in canonical order.".to_string());
+    }
+
+    Ok(VerifiedDistribution {
+        sha256: format!("{:x}", Sha256::digest(raw)),
+        kind: manifest.kind,
+        channel: manifest.channel,
+        product_version: manifest.product_version,
+        compatible_core: manifest.compatible_core,
+        signing_key_id: manifest.signing_key_id,
+        created_epoch: manifest.created_epoch,
+        packs,
+    })
+}
+
+pub fn download_pack_with<F>(
+    pack: &DistributionPack,
+    cache_root: &Path,
+    mut transfer: F,
+) -> Result<PathBuf, String>
+where
+    F: FnMut(&str, u64) -> Result<TransferResponse, String>,
+{
+    fs::create_dir_all(cache_root)
+        .map_err(|error| format!("Could not create native pack cache: {error}"))?;
+    let final_path = cache_root.join(format!("{}.ccpack", pack.sha256));
+    let partial_path = cache_root.join(format!("{}.partial", pack.sha256));
+
+    if final_path.exists() {
+        if file_matches(&final_path, pack.bytes, &pack.sha256)? {
+            return Ok(final_path);
+        }
+        fs::remove_file(&final_path)
+            .map_err(|error| format!("Could not remove corrupt cached pack: {error}"))?;
+    }
+    if partial_path.exists() {
+        let size = regular_file_size(&partial_path, "partial native pack")?;
+        if size > pack.bytes {
+            fs::remove_file(&partial_path)
+                .map_err(|error| format!("Could not remove oversized partial pack: {error}"))?;
+        } else if size == pack.bytes {
+            if file_matches(&partial_path, pack.bytes, &pack.sha256)? {
+                fs::rename(&partial_path, &final_path)
+                    .map_err(|error| format!("Could not promote verified cached pack: {error}"))?;
+                return Ok(final_path);
+            }
+            fs::remove_file(&partial_path)
+                .map_err(|error| format!("Could not remove corrupt partial pack: {error}"))?;
+        }
+    }
+
+    let mut last_error = "Native component pack has no download locations.".to_string();
+    for location in &pack.urls {
+        let offset = if partial_path.exists() {
+            regular_file_size(&partial_path, "partial native pack")?
+        } else {
+            0
+        };
+        let response = match transfer(location, offset) {
+            Ok(response) => response,
+            Err(error) => {
+                last_error = error;
+                continue;
+            }
+        };
+        match apply_transfer_response(pack, &partial_path, offset, response) {
+            Ok(()) => {
+                if !file_matches(&partial_path, pack.bytes, &pack.sha256)? {
+                    let _ = fs::remove_file(&partial_path);
+                    return Err(format!(
+                        "Downloaded native component pack failed SHA-256 verification: {}",
+                        pack.component
+                    ));
+                }
+                fs::rename(&partial_path, &final_path)
+                    .map_err(|error| format!("Could not promote verified cached pack: {error}"))?;
+                return Ok(final_path);
+            }
+            Err(error) => last_error = error,
+        }
+    }
+    Err(last_error)
+}
+
+pub fn acquire_online_distribution(
+    index_url: &str,
+    cache_root: &Path,
+    trust: &PackTrust,
+    expected_channel: &str,
+    expected_product_version: &str,
+    expected_compatible_core: &str,
+) -> Result<AcquiredDistribution, String> {
+    validate_https_location(index_url, "channel index")?;
+    let client = build_http_client()?;
+    let response = client
+        .get(index_url)
+        .header(ACCEPT_ENCODING, "identity")
+        .send()
+        .map_err(|error| format!("Could not download native channel index: {error}"))?;
+    if response.status().as_u16() != 200 {
+        return Err(format!(
+            "Native channel index server returned HTTP status {}.",
+            response.status().as_u16()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > 4 * 1024 * 1024)
+    {
+        return Err("Native channel index exceeds the maximum signed size.".to_string());
+    }
+    let index_bytes = read_bounded_response(response, 4 * 1024 * 1024)?;
+    let index = verify_distribution_bytes(
+        &index_bytes,
+        trust,
+        Some("channel-index"),
+        Some(expected_channel),
+        Some(expected_product_version),
+        Some(expected_compatible_core),
+    )?;
+    retain_verified_index(cache_root, &index, &index_bytes, "ccindex")?;
+    acquire_verified_distribution(index, cache_root, trust, |pack| {
+        download_pack_with(pack, &cache_root.join("packs"), |location, offset| {
+            send_pack_request(&client, location, offset)
+        })
+    })
+}
+
+pub fn acquire_station_distribution(
+    station_index: &Path,
+    cache_root: &Path,
+    trust: &PackTrust,
+    expected_channel: &str,
+    expected_product_version: &str,
+    expected_compatible_core: &str,
+) -> Result<AcquiredDistribution, String> {
+    let index_bytes =
+        read_regular_file_bounded(station_index, "native station index", 4 * 1024 * 1024)?;
+    let index = verify_distribution_bytes(
+        &index_bytes,
+        trust,
+        Some("station-index"),
+        Some(expected_channel),
+        Some(expected_product_version),
+        Some(expected_compatible_core),
+    )?;
+    retain_verified_index(cache_root, &index, &index_bytes, "ccstation")?;
+    let media_root = station_index
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve native station index: {error}"))?
+        .parent()
+        .ok_or_else(|| "Native station index has no media directory.".to_string())?
+        .to_path_buf();
+    acquire_verified_distribution(index, cache_root, trust, |pack| {
+        copy_station_pack_to_cache(pack, &media_root, &cache_root.join("packs"), trust)
+    })
+}
+
+fn acquire_verified_distribution<F>(
+    index: VerifiedDistribution,
+    cache_root: &Path,
+    trust: &PackTrust,
+    mut obtain: F,
+) -> Result<AcquiredDistribution, String>
+where
+    F: FnMut(&DistributionPack) -> Result<PathBuf, String>,
+{
+    fs::create_dir_all(cache_root)
+        .map_err(|error| format!("Could not create native distribution cache: {error}"))?;
+    let mut acquired = Vec::with_capacity(index.packs.len());
+    for pack in &index.packs {
+        let cached_path = obtain(pack)?;
+        let verified = native_packs::verify_pack(
+            &cached_path,
+            trust,
+            Some(&pack.component),
+            Some(&index.product_version),
+            Some(&index.compatible_core),
+        )?;
+        if verified.sha256 != pack.sha256 {
+            return Err(format!(
+                "Native component pack outer SHA-256 does not match its signed index: {}",
+                pack.component
+            ));
+        }
+        if regular_file_size(&cached_path, "cached native pack")? != pack.bytes {
+            return Err(format!(
+                "Native component pack outer byte count does not match its signed index: {}",
+                pack.component
+            ));
+        }
+        acquired.push(AcquiredPack {
+            component: pack.component.clone(),
+            cached_path,
+            outer_sha256: pack.sha256.clone(),
+            verified,
+        });
+    }
+    Ok(AcquiredDistribution {
+        index,
+        packs: acquired,
+    })
+}
+
+fn build_http_client() -> Result<Client, String> {
+    Client::builder()
+        .redirect(Policy::none())
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(6 * 60 * 60))
+        .user_agent("CivicCast-Native-Bootstrap/1")
+        .build()
+        .map_err(|error| format!("Could not initialize native pack HTTPS client: {error}"))
+}
+
+fn send_pack_request(
+    client: &Client,
+    location: &str,
+    offset: u64,
+) -> Result<TransferResponse, String> {
+    validate_https_location(location, "component pack")?;
+    let mut request = client.get(location).header(ACCEPT_ENCODING, "identity");
+    if offset > 0 {
+        request = request.header(RANGE, format!("bytes={offset}-"));
+    }
+    let response = request
+        .send()
+        .map_err(|error| format!("Could not download native component pack: {error}"))?;
+    let status = response.status().as_u16();
+    let content_range = header_text(&response, CONTENT_RANGE)?;
+    let content_length = header_text(&response, CONTENT_LENGTH)?
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| "Native pack response Content-Length is invalid.".to_string())
+        })
+        .transpose()?;
+    Ok(TransferResponse {
+        status,
+        content_range,
+        content_length,
+        body: Box::new(response),
+    })
+}
+
+fn header_text(
+    response: &Response,
+    name: reqwest::header::HeaderName,
+) -> Result<Option<String>, String> {
+    response
+        .headers()
+        .get(name)
+        .map(|value| {
+            value
+                .to_str()
+                .map(str::to_string)
+                .map_err(|_| "Native pack response contains a non-ASCII header.".to_string())
+        })
+        .transpose()
+}
+
+fn validate_https_location(location: &str, label: &str) -> Result<(), String> {
+    if !location.is_ascii() {
+        return Err(format!("Native {label} location is not portable ASCII."));
+    }
+    let parsed = Url::parse(location)
+        .map_err(|_| format!("Native {label} location is not a valid HTTPS URL."))?;
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+        || parsed.path().is_empty()
+        || parsed.path() == "/"
+    {
+        return Err(format!(
+            "Native {label} location must be unambiguous HTTPS."
+        ));
+    }
+    Ok(())
+}
+
+fn read_bounded_response(mut response: Response, maximum: usize) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    response
+        .by_ref()
+        .take((maximum + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read native channel index: {error}"))?;
+    if bytes.len() > maximum {
+        return Err("Native channel index exceeds the maximum signed size.".to_string());
+    }
+    Ok(bytes)
+}
+
+fn read_regular_file_bounded(path: &Path, label: &str, maximum: u64) -> Result<Vec<u8>, String> {
+    let size = regular_file_size(path, label)?;
+    if size > maximum {
+        return Err(format!("{label} exceeds the maximum signed size."));
+    }
+    let mut input = File::open(path).map_err(|error| format!("Could not open {label}: {error}"))?;
+    let mut bytes = Vec::with_capacity(size as usize);
+    input
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read {label}: {error}"))?;
+    Ok(bytes)
+}
+
+fn retain_verified_index(
+    cache_root: &Path,
+    index: &VerifiedDistribution,
+    bytes: &[u8],
+    extension: &str,
+) -> Result<PathBuf, String> {
+    let index_root = cache_root.join("indexes");
+    fs::create_dir_all(&index_root)
+        .map_err(|error| format!("Could not create native index cache: {error}"))?;
+    let destination = index_root.join(format!("{}.{}", index.sha256, extension));
+    if destination.exists() {
+        if file_matches(&destination, bytes.len() as u64, &index.sha256)? {
+            return Ok(destination);
+        }
+        fs::remove_file(&destination)
+            .map_err(|error| format!("Could not remove corrupt cached index: {error}"))?;
+    }
+    let partial = destination.with_extension(format!("{extension}.partial"));
+    let mut output = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&partial)
+        .map_err(|error| format!("Could not create cached native index: {error}"))?;
+    output
+        .write_all(bytes)
+        .map_err(|error| format!("Could not write cached native index: {error}"))?;
+    output
+        .sync_all()
+        .map_err(|error| format!("Could not flush cached native index: {error}"))?;
+    drop(output);
+    fs::rename(&partial, &destination)
+        .map_err(|error| format!("Could not promote cached native index: {error}"))?;
+    Ok(destination)
+}
+
+fn copy_station_pack_to_cache(
+    pack: &DistributionPack,
+    media_root: &Path,
+    cache_root: &Path,
+    trust: &PackTrust,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(cache_root)
+        .map_err(|error| format!("Could not create native pack cache: {error}"))?;
+    let source = media_root.join(&pack.filename);
+    let canonical_source = source
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve station component pack: {error}"))?;
+    if canonical_source.parent() != Some(media_root) {
+        return Err(format!(
+            "Native station component pack escapes its media directory: {}",
+            pack.filename
+        ));
+    }
+    let (verified, archive) = native_packs::open_and_verify_pack(
+        &canonical_source,
+        trust,
+        Some(&pack.component),
+        None,
+        None,
+    )?;
+    if verified.sha256 != pack.sha256
+        || regular_file_size(&canonical_source, "station pack")? != pack.bytes
+    {
+        return Err(format!(
+            "Native station pack outer identity does not match its signed index: {}",
+            pack.component
+        ));
+    }
+    let final_path = cache_root.join(format!("{}.ccpack", pack.sha256));
+    if final_path.exists() && file_matches(&final_path, pack.bytes, &pack.sha256)? {
+        return Ok(final_path);
+    }
+    if final_path.exists() {
+        fs::remove_file(&final_path)
+            .map_err(|error| format!("Could not remove corrupt cached pack: {error}"))?;
+    }
+    let partial = cache_root.join(format!("{}.partial", pack.sha256));
+    let mut input = archive.into_inner();
+    input
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| format!("Could not rewind verified station pack: {error}"))?;
+    let mut output = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&partial)
+        .map_err(|error| format!("Could not create cached station pack: {error}"))?;
+    let copied = std::io::copy(&mut input, &mut output)
+        .map_err(|error| format!("Could not cache verified station pack: {error}"))?;
+    output
+        .sync_all()
+        .map_err(|error| format!("Could not flush cached station pack: {error}"))?;
+    drop(output);
+    if copied != pack.bytes || !file_matches(&partial, pack.bytes, &pack.sha256)? {
+        let _ = fs::remove_file(&partial);
+        return Err(format!(
+            "Cached station pack failed post-copy verification: {}",
+            pack.component
+        ));
+    }
+    fs::rename(&partial, &final_path)
+        .map_err(|error| format!("Could not promote cached station pack: {error}"))?;
+    Ok(final_path)
+}
+
+fn apply_transfer_response(
+    pack: &DistributionPack,
+    partial_path: &Path,
+    requested_offset: u64,
+    mut response: TransferResponse,
+) -> Result<(), String> {
+    let append = match response.status {
+        206 => {
+            let range = response.content_range.as_deref().ok_or_else(|| {
+                "Resumed native pack response is missing Content-Range.".to_string()
+            })?;
+            let (start, end, total) = parse_content_range(range)?;
+            if start != requested_offset || total != pack.bytes {
+                return Err(format!(
+                    "Native pack Content-Range does not match the requested offset or signed byte count: {range}"
+                ));
+            }
+            let range_length = end
+                .checked_sub(start)
+                .and_then(|value| value.checked_add(1))
+                .ok_or_else(|| "Native pack Content-Range is invalid.".to_string())?;
+            if response
+                .content_length
+                .is_some_and(|length| length != range_length)
+            {
+                return Err("Native pack Content-Length does not match Content-Range.".to_string());
+            }
+            true
+        }
+        200 => {
+            if response.content_range.is_some() {
+                return Err(
+                    "Full native pack response unexpectedly contains Content-Range.".to_string(),
+                );
+            }
+            false
+        }
+        status => {
+            return Err(format!(
+                "Native pack server returned unexpected HTTP status {status}."
+            ));
+        }
+    };
+    let base = if append { requested_offset } else { 0 };
+    let remaining = pack
+        .bytes
+        .checked_sub(base)
+        .ok_or_else(|| "Native pack offset exceeds signed byte count.".to_string())?;
+    if response
+        .content_length
+        .is_some_and(|length| length > remaining)
+    {
+        if !append {
+            let _ = fs::remove_file(partial_path);
+        }
+        return Err(
+            "Native pack response exceeds the signed byte count before writing.".to_string(),
+        );
+    }
+
+    if partial_path.exists() {
+        regular_file_size(partial_path, "partial native pack")?;
+    }
+    let mut options = OpenOptions::new();
+    options.create(true).write(true);
+    if append {
+        options.append(true);
+    } else {
+        options.truncate(true);
+    }
+    let mut output = options
+        .open(partial_path)
+        .map_err(|error| format!("Could not open partial native pack: {error}"))?;
+    let mut response_bytes = 0_u64;
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    loop {
+        let count = response
+            .body
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not read native pack response: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        response_bytes = response_bytes
+            .checked_add(count as u64)
+            .ok_or_else(|| "Native pack response byte count overflowed.".to_string())?;
+        if response_bytes > remaining {
+            drop(output);
+            let _ = fs::remove_file(partial_path);
+            return Err("Native pack response exceeds the signed byte count.".to_string());
+        }
+        output
+            .write_all(&buffer[..count])
+            .map_err(|error| format!("Could not write partial native pack: {error}"))?;
+    }
+    output
+        .sync_all()
+        .map_err(|error| format!("Could not flush partial native pack: {error}"))?;
+    drop(output);
+    if response
+        .content_length
+        .is_some_and(|length| length != response_bytes)
+    {
+        return Err("Native pack response ended before its Content-Length.".to_string());
+    }
+    let observed = regular_file_size(partial_path, "partial native pack")?;
+    if observed != pack.bytes {
+        return Err(format!(
+            "Native pack response is incomplete: received {observed} of {} signed bytes.",
+            pack.bytes
+        ));
+    }
+    Ok(())
+}
+
+// `pub(crate)`: `component_acquisition.rs` reuses this exact Content-Range
+// parser for its own generic (non-pack) resumable downloads rather than
+// re-implementing the same "bytes start-end/total" grammar a second time.
+pub(crate) fn parse_content_range(value: &str) -> Result<(u64, u64, u64), String> {
+    let remainder = value
+        .strip_prefix("bytes ")
+        .ok_or_else(|| "Native pack Content-Range is invalid.".to_string())?;
+    let (range, total) = remainder
+        .split_once('/')
+        .ok_or_else(|| "Native pack Content-Range is invalid.".to_string())?;
+    let (start, end) = range
+        .split_once('-')
+        .ok_or_else(|| "Native pack Content-Range is invalid.".to_string())?;
+    let start = start
+        .parse::<u64>()
+        .map_err(|_| "Native pack Content-Range start is invalid.".to_string())?;
+    let end = end
+        .parse::<u64>()
+        .map_err(|_| "Native pack Content-Range end is invalid.".to_string())?;
+    let total = total
+        .parse::<u64>()
+        .map_err(|_| "Native pack Content-Range total is invalid.".to_string())?;
+    if end < start || end >= total || total == 0 {
+        return Err("Native pack Content-Range bounds are invalid.".to_string());
+    }
+    Ok((start, end, total))
+}
+
+fn regular_file_size(path: &Path, label: &str) -> Result<u64, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Could not inspect {label}: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(format!("{label} must be a regular non-link file."));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return Err(format!("{label} must not be a reparse point."));
+        }
+    }
+    Ok(metadata.len())
+}
+
+fn file_matches(path: &Path, expected_bytes: u64, expected_sha256: &str) -> Result<bool, String> {
+    if regular_file_size(path, "cached native pack")? != expected_bytes {
+        return Ok(false);
+    }
+    let mut input =
+        File::open(path).map_err(|error| format!("Could not open cached native pack: {error}"))?;
+    let mut digest = Sha256::new();
+    let mut observed = 0_u64;
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    loop {
+        let count = input
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not hash cached native pack: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        observed += count as u64;
+        digest.update(&buffer[..count]);
+    }
+    Ok(observed == expected_bytes && format!("{:x}", digest.finalize()) == expected_sha256)
+}
+
+fn validate_urls(kind: &str, component: &str, urls: &[String]) -> Result<(), String> {
+    if kind == "station-index" {
+        if !urls.is_empty() {
+            return Err("Native station index must not contain network locations.".to_string());
+        }
+        return Ok(());
+    }
+    if urls.is_empty() {
+        return Err(format!(
+            "Native online index requires an HTTPS location: {component}"
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for location in urls {
+        if !location.is_ascii() || !seen.insert(location) {
+            return Err(format!(
+                "Native online index contains an invalid HTTPS location: {component}"
+            ));
+        }
+        let parsed = Url::parse(location).map_err(|_| {
+            format!("Native online index contains an invalid HTTPS location: {component}")
+        })?;
+        if parsed.scheme() != "https"
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.fragment().is_some()
+            || parsed.path().is_empty()
+            || parsed.path() == "/"
+        {
+            return Err(format!(
+                "Native online index requires unambiguous HTTPS locations: {component}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn require_identity(field: &str, value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.trim() != value
+        || !value
+            .bytes()
+            .all(|character| (0x20..=0x7e).contains(&character))
+    {
+        return Err(format!(
+            "Native distribution identity field is invalid: {field}"
+        ));
+    }
+    Ok(())
+}
+
+fn require_component(value: &str) -> Result<(), String> {
+    let valid = !value.is_empty()
+        && value.len() <= 64
+        && value.is_ascii()
+        && value.bytes().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == b'-'
+        })
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && value
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric);
+    if !valid {
+        return Err(format!(
+            "Native distribution component identity is invalid: {value}"
+        ));
+    }
+    Ok(())
+}
+
+fn safe_pack_filename(value: &str) -> Result<String, String> {
+    let reserved = BTreeSet::from([
+        "aux", "clock$", "con", "nul", "prn", "com1", "com2", "com3", "com4", "com5", "com6",
+        "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8",
+        "lpt9",
+    ]);
+    let forbidden = |character: u8| {
+        character < 0x20
+            || character > 0x7e
+            || matches!(
+                character,
+                b'<' | b'>' | b':' | b'"' | b'/' | b'\\' | b'|' | b'?' | b'*'
+            )
+    };
+    let stem = value.split('.').next().unwrap_or_default().to_lowercase();
+    if value.is_empty()
+        || value.trim() != value
+        || value.ends_with([' ', '.'])
+        || value.bytes().any(forbidden)
+        || reserved.contains(stem.as_str())
+        || !value.to_lowercase().ends_with(".ccpack")
+    {
+        return Err("Native distribution pack filename is unsafe.".to_string());
+    }
+    Ok(value.to_string())
+}
+
+fn is_lower_hex_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|character| character.is_ascii_digit() || (b'a'..=b'f').contains(&character))
+}
+
+fn component_sort_key(component: &str) -> (u8, usize, String) {
+    match REQUIRED_COMPONENTS
+        .iter()
+        .position(|required| *required == component)
+    {
+        Some(index) => (0, index, String::new()),
+        None => (1, 0, component.to_string()),
+    }
+}
+
+pub(crate) fn canonical_json(value: &Value) -> Result<String, String> {
+    let mut output = String::new();
+    write_canonical_json(value, &mut output)?;
+    output.push('\n');
+    Ok(output)
+}
+
+fn write_canonical_json(value: &Value, output: &mut String) -> Result<(), String> {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            output.push_str(
+                &serde_json::to_string(value).map_err(|error| {
+                    format!("Could not canonicalize distribution JSON: {error}")
+                })?,
+            );
+        }
+        Value::Array(items) => {
+            output.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                write_canonical_json(item, output)?;
+            }
+            output.push(']');
+        }
+        Value::Object(items) => {
+            output.push('{');
+            let sorted: BTreeMap<_, _> = items.iter().collect();
+            for (index, (key, item)) in sorted.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                output.push_str(&serde_json::to_string(key).map_err(|error| {
+                    format!("Could not canonicalize distribution key: {error}")
+                })?);
+                output.push(':');
+                write_canonical_json(item, output)?;
+            }
+            output.push('}');
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        download_pack_with, verify_distribution_bytes, DistributionPack, TransferResponse,
+    };
+    use crate::native_packs::PackTrust;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use base64::Engine as _;
+    use ed25519_dalek::{Signer, SigningKey};
+    use serde_json::{json, Value};
+    use sha2::{Digest, Sha256};
+    use std::io::{Cursor, Write as _};
+    use std::path::PathBuf;
+
+    fn signed_index(kind: &str) -> (Vec<u8>, PackTrust) {
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        let trust = PackTrust {
+            key_id: "development-test-key".to_string(),
+            public_key: key.verifying_key(),
+        };
+        let urls = |name: &str| {
+            if kind == "channel-index" {
+                json!([format!("https://downloads.civiccast.org/native/{name}")])
+            } else {
+                json!([])
+            }
+        };
+        let manifest = json!({
+            "schema_version": 1,
+            "product": "civiccast-native",
+            "kind": kind,
+            "channel": "beta",
+            "product_version": "1.0.0-rc15",
+            "compatible_core": "1.0.0-rc15",
+            "signing_key_id": "development-test-key",
+            "created_epoch": 1700000000,
+            "packs": [
+                {
+                    "component": "core",
+                    "filename": "core.ccpack",
+                    "bytes": 1,
+                    "sha256": "00".repeat(32),
+                    "required": true,
+                    "urls": urls("core.ccpack"),
+                },
+                {
+                    "component": "captions-floor",
+                    "filename": "captions-floor.ccpack",
+                    "bytes": 2,
+                    "sha256": "11".repeat(32),
+                    "required": true,
+                    "urls": urls("captions-floor.ccpack"),
+                },
+                {
+                    "component": "summary-gemma4-12b",
+                    "filename": "summary-12b.ccpack",
+                    "bytes": 3,
+                    "sha256": "22".repeat(32),
+                    "required": true,
+                    "urls": urls("summary-12b.ccpack"),
+                },
+                {
+                    "component": "summary-gemma4-e4b",
+                    "filename": "summary-e4b.ccpack",
+                    "bytes": 4,
+                    "sha256": "33".repeat(32),
+                    "required": true,
+                    "urls": urls("summary-e4b.ccpack"),
+                },
+                {
+                    "component": "translation-translategemma-4b",
+                    "filename": "translation.ccpack",
+                    "bytes": 5,
+                    "sha256": "44".repeat(32),
+                    "required": true,
+                    "urls": urls("translation.ccpack"),
+                },
+            ],
+        });
+        let manifest_bytes = canonical(&manifest);
+        let signature = BASE64.encode(key.sign(&manifest_bytes).to_bytes());
+        let envelope = json!({"manifest": manifest, "signature": signature});
+        (canonical(&envelope), trust)
+    }
+
+    fn canonical(value: &Value) -> Vec<u8> {
+        let mut rendered = serde_json::to_string(value).expect("JSON");
+        rendered.push('\n');
+        rendered.into_bytes()
+    }
+
+    #[test]
+    fn signed_channel_index_requires_all_mandatory_packs() {
+        let (bytes, trust) = signed_index("channel-index");
+        let verified = verify_distribution_bytes(
+            &bytes,
+            &trust,
+            Some("channel-index"),
+            Some("beta"),
+            Some("1.0.0-rc15"),
+            Some("1.0.0-rc15"),
+        )
+        .expect("valid signed channel index");
+
+        assert_eq!(verified.packs.len(), 5);
+        assert_eq!(verified.packs[1].component, "captions-floor");
+        assert!(verified.packs.iter().all(|pack| pack.required));
+    }
+
+    #[test]
+    fn cryptographically_valid_optional_floor_caption_pack_is_rejected() {
+        let (bytes, trust) = signed_index("channel-index");
+        let mut envelope: Value = serde_json::from_slice(&bytes).expect("envelope");
+        envelope["manifest"]["packs"][1]["required"] = Value::Bool(false);
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        envelope["signature"] =
+            Value::String(BASE64.encode(key.sign(&canonical(&envelope["manifest"])).to_bytes()));
+
+        let error =
+            verify_distribution_bytes(&canonical(&envelope), &trust, None, None, None, None)
+                .expect_err("captions cannot be optional");
+        assert!(error.contains("must be required"));
+    }
+
+    #[test]
+    fn large_v3_caption_pack_may_be_legitimately_optional() {
+        // Owner decision (2026-08-07): large-v3 is an optional quality
+        // add-on, not mandatory -- unlike the floor tier tested above, a
+        // signed index MAY carry large-v3 with `required: false` and it
+        // must verify cleanly.
+        let (bytes, trust) = signed_index("channel-index");
+        let mut envelope: Value = serde_json::from_slice(&bytes).expect("envelope");
+        envelope["manifest"]["packs"]
+            .as_array_mut()
+            .expect("packs array")
+            .push(json!({
+                "component": "captions-large-v3",
+                "filename": "captions-large-v3.ccpack",
+                "bytes": 6,
+                "sha256": "55".repeat(32),
+                "required": false,
+                "urls": json!(["https://downloads.civiccast.org/native/captions-large-v3.ccpack"]),
+            }));
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        envelope["signature"] =
+            Value::String(BASE64.encode(key.sign(&canonical(&envelope["manifest"])).to_bytes()));
+
+        let verified = verify_distribution_bytes(
+            &canonical(&envelope),
+            &trust,
+            Some("channel-index"),
+            Some("beta"),
+            Some("1.0.0-rc15"),
+            Some("1.0.0-rc15"),
+        )
+        .expect("optional large-v3 pack must verify");
+
+        assert_eq!(verified.packs.len(), 6);
+        let large_v3 = verified
+            .packs
+            .iter()
+            .find(|pack| pack.component == "captions-large-v3")
+            .expect("large-v3 pack present");
+        assert!(!large_v3.required);
+    }
+
+    #[test]
+    fn station_index_rejects_network_locations() {
+        let (bytes, trust) = signed_index("station-index");
+        let mut envelope: Value = serde_json::from_slice(&bytes).expect("envelope");
+        envelope["manifest"]["packs"][0]["urls"] =
+            json!(["https://downloads.civiccast.org/native/core.ccpack"]);
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        envelope["signature"] =
+            Value::String(BASE64.encode(key.sign(&canonical(&envelope["manifest"])).to_bytes()));
+
+        let error = verify_distribution_bytes(
+            &canonical(&envelope),
+            &trust,
+            Some("station-index"),
+            None,
+            None,
+            None,
+        )
+        .expect_err("air-gapped index cannot contain URLs");
+        assert!(error.contains("network"));
+    }
+
+    #[test]
+    fn channel_index_rejects_plain_http() {
+        let (bytes, trust) = signed_index("channel-index");
+        let mut envelope: Value = serde_json::from_slice(&bytes).expect("envelope");
+        envelope["manifest"]["packs"][0]["urls"] =
+            json!(["http://downloads.civiccast.org/native/core.ccpack"]);
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        envelope["signature"] =
+            Value::String(BASE64.encode(key.sign(&canonical(&envelope["manifest"])).to_bytes()));
+
+        let error = verify_distribution_bytes(
+            &canonical(&envelope),
+            &trust,
+            Some("channel-index"),
+            None,
+            None,
+            None,
+        )
+        .expect_err("online index requires HTTPS");
+        assert!(error.contains("HTTPS"));
+    }
+
+    fn temporary_root(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "civiccast-native-distribution-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create test cache");
+        root
+    }
+
+    fn download_pack(bytes: &[u8]) -> DistributionPack {
+        DistributionPack {
+            component: "core".to_string(),
+            filename: "core.ccpack".to_string(),
+            bytes: bytes.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+            required: true,
+            urls: vec!["https://downloads.civiccast.org/core.ccpack".to_string()],
+        }
+    }
+
+    #[test]
+    fn resumable_download_appends_only_a_matching_partial_response() {
+        let root = temporary_root("resume");
+        let expected = b"abcdef";
+        let pack = download_pack(expected);
+        std::fs::write(root.join(format!("{}.partial", pack.sha256)), b"abc")
+            .expect("seed partial");
+        let mut calls = Vec::new();
+
+        let downloaded = download_pack_with(&pack, &root, |url, offset| {
+            calls.push((url.to_string(), offset));
+            Ok(TransferResponse {
+                status: 206,
+                content_range: Some("bytes 3-5/6".to_string()),
+                content_length: Some(3),
+                body: Box::new(Cursor::new(b"def".to_vec())),
+            })
+        })
+        .expect("resume succeeds");
+
+        assert_eq!(calls, vec![(pack.urls[0].clone(), 3)]);
+        assert_eq!(std::fs::read(&downloaded).expect("download"), expected);
+        assert!(!root.join(format!("{}.partial", pack.sha256)).exists());
+        std::fs::remove_dir_all(root).expect("clean test cache");
+    }
+
+    #[test]
+    fn server_ignoring_range_restarts_from_zero_without_duplicate_bytes() {
+        let root = temporary_root("range-ignored");
+        let expected = b"abcdef";
+        let pack = download_pack(expected);
+        std::fs::write(root.join(format!("{}.partial", pack.sha256)), b"abc")
+            .expect("seed partial");
+
+        let downloaded = download_pack_with(&pack, &root, |_url, offset| {
+            assert_eq!(offset, 3);
+            Ok(TransferResponse {
+                status: 200,
+                content_range: None,
+                content_length: Some(expected.len() as u64),
+                body: Box::new(Cursor::new(expected.to_vec())),
+            })
+        })
+        .expect("restart succeeds");
+
+        assert_eq!(std::fs::read(&downloaded).expect("download"), expected);
+        std::fs::remove_dir_all(root).expect("clean test cache");
+    }
+
+    #[test]
+    fn mismatched_content_range_is_rejected_before_writing() {
+        let root = temporary_root("bad-range");
+        let expected = b"abcdef";
+        let pack = download_pack(expected);
+        let partial = root.join(format!("{}.partial", pack.sha256));
+        std::fs::write(&partial, b"abc").expect("seed partial");
+
+        let error = download_pack_with(&pack, &root, |_url, _offset| {
+            Ok(TransferResponse {
+                status: 206,
+                content_range: Some("bytes 2-4/6".to_string()),
+                content_length: Some(3),
+                body: Box::new(Cursor::new(b"def".to_vec())),
+            })
+        })
+        .expect_err("wrong range must fail");
+
+        assert!(error.contains("Content-Range"));
+        assert_eq!(std::fs::read(&partial).expect("untouched partial"), b"abc");
+        std::fs::remove_dir_all(root).expect("clean test cache");
+    }
+
+    #[test]
+    fn complete_hash_mismatch_is_deleted_and_never_promoted() {
+        let root = temporary_root("bad-hash");
+        let expected = b"abcdef";
+        let pack = download_pack(expected);
+
+        let error = download_pack_with(&pack, &root, |_url, _offset| {
+            Ok(TransferResponse {
+                status: 200,
+                content_range: None,
+                content_length: Some(6),
+                body: Box::new(Cursor::new(b"abcdeg".to_vec())),
+            })
+        })
+        .expect_err("bad hash must fail");
+
+        assert!(error.contains("SHA-256"));
+        assert!(!root.join(format!("{}.partial", pack.sha256)).exists());
+        assert!(!root.join(format!("{}.ccpack", pack.sha256)).exists());
+        std::fs::remove_dir_all(root).expect("clean test cache");
+    }
+
+    #[test]
+    fn response_larger_than_signed_size_is_bounded_and_rejected() {
+        let root = temporary_root("oversize");
+        let expected = b"abcdef";
+        let pack = download_pack(expected);
+
+        let error = download_pack_with(&pack, &root, |_url, _offset| {
+            Ok(TransferResponse {
+                status: 200,
+                content_range: None,
+                content_length: Some(7),
+                body: Box::new(Cursor::new(b"abcdefg".to_vec())),
+            })
+        })
+        .expect_err("oversize response must fail");
+
+        assert!(error.contains("signed byte count"));
+        assert!(!root.join(format!("{}.partial", pack.sha256)).exists());
+        std::fs::remove_dir_all(root).expect("clean test cache");
+    }
+
+    // ---- K1 follow-up: station-bundle publisher round-trip ----
+    //
+    // `scripts/build_native_station_bundle.py` is the new (Python) publisher
+    // that assembles a signed `station-index.json` plus every component
+    // `.ccpack`, flat in one directory, for side-loading at
+    // `$EXEDIR\station`. Invoking that Python script from a `cargo test` run
+    // has no precedent anywhere in this test suite (checked), so this proves
+    // the SAME schema instead: a fixture built directly in Rust, shaped
+    // byte-for-byte like that publisher's real output (same component set,
+    // same canonical pack-entry order, same station-index "no URLs" rule,
+    // same real signed `.ccpack` files -- not placeholders), consumed by
+    // `acquire_station_distribution` end to end. The publisher's own
+    // `tests/native/test_build_native_station_bundle.py` separately proves
+    // the Python side actually emits this exact shape (component set,
+    // order, per-pack self-verification via `verify_native_pack`).
+
+    /// Mirrors `native_pack_staging.rs`'s own `build_signed_pack` test
+    /// helper (same manifest shape, same `native_packs::canonical_json`
+    /// signing, same ZIP layout) -- a real, verifiable `.ccpack`, not a
+    /// fake placeholder file, so `acquire_station_distribution`'s real
+    /// `native_packs::verify_pack` call has something genuine to check.
+    fn build_signed_pack(
+        pack_path: &std::path::Path,
+        signing_key: &SigningKey,
+        component: &str,
+        payload: &[(&str, &[u8])],
+    ) -> (u64, String) {
+        let mut files_json = Vec::new();
+        let mut total_bytes = 0_u64;
+        for (name, bytes) in payload {
+            files_json.push(json!({
+                "path": name,
+                "bytes": bytes.len(),
+                "sha256": format!("{:x}", Sha256::digest(bytes)),
+            }));
+            total_bytes += bytes.len() as u64;
+        }
+        let manifest_value = json!({
+            "schema_version": 1,
+            "product": "civiccast-native",
+            "component": component,
+            "product_version": "1.0.0-rc15",
+            "compatible_core": "1.0.0-rc15",
+            "signing_key_id": "development-test-key",
+            "file_count": payload.len(),
+            "total_bytes": total_bytes,
+            "files": files_json,
+            "metadata": {},
+        });
+        let manifest_bytes = crate::native_packs::canonical_json(&manifest_value)
+            .expect("canonicalize test pack manifest")
+            .into_bytes();
+        let signature = signing_key.sign(&manifest_bytes);
+        let signature_b64 = BASE64.encode(signature.to_bytes());
+
+        let file = std::fs::File::create(pack_path).expect("create pack file");
+        let mut writer = zip::ZipWriter::new(file);
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("manifest.json", options).expect("start manifest entry");
+        writer.write_all(&manifest_bytes).expect("write manifest");
+        writer.start_file("manifest.sig", options).expect("start signature entry");
+        writer.write_all(signature_b64.as_bytes()).expect("write signature");
+        for (name, bytes) in payload {
+            writer
+                .start_file(format!("payload/{name}"), options)
+                .expect("start payload entry");
+            writer.write_all(bytes).expect("write payload bytes");
+        }
+        writer.finish().expect("finish pack zip");
+
+        let outer_bytes = std::fs::read(pack_path).expect("read finished pack");
+        (outer_bytes.len() as u64, format!("{:x}", Sha256::digest(&outer_bytes)))
+    }
+
+    /// The exact `station-index.json` manifest+entries
+    /// `scripts/build_native_station_bundle.py::_build_station_index` emits
+    /// for `components` (canonical order, `required` flag, empty `urls` --
+    /// see that function's own doc), signed the same way. Shared by both
+    /// tests below so the "index schema" and "full acquisition" proofs stay
+    /// against the identical fixture, never two subtly different ones.
+    fn publisher_shaped_envelope(
+        key: &SigningKey,
+        pack_entries: Vec<Value>,
+    ) -> (Value, Vec<u8>) {
+        let manifest = json!({
+            "schema_version": 1,
+            "product": "civiccast-native",
+            "kind": "station-index",
+            "channel": "beta",
+            "product_version": "1.0.0-rc15",
+            "compatible_core": "1.0.0-rc15",
+            "signing_key_id": "development-test-key",
+            "created_epoch": 1_700_000_000,
+            "packs": pack_entries,
+        });
+        let manifest_bytes = canonical(&manifest);
+        let signature = BASE64.encode(key.sign(&manifest_bytes).to_bytes());
+        let envelope = json!({"manifest": manifest, "signature": signature});
+        let envelope_bytes = canonical(&envelope);
+        (envelope, envelope_bytes)
+    }
+
+    fn pack_entry(component: &str, bytes: u64, sha256: &str) -> Value {
+        json!({
+            "component": component,
+            "filename": format!("{component}.ccpack"),
+            "bytes": bytes,
+            "sha256": sha256,
+            "required": true,
+            // A station (air-gapped) index carries no network locations --
+            // the same rule build_native_station_bundle.py's
+            // _build_station_index enforces on the publisher side.
+            "urls": [],
+        })
+    }
+
+    #[test]
+    fn publisher_shaped_station_index_passes_schema_and_signature_verification() {
+        // Proves the LAYER of acquire_station_distribution that is fully
+        // fixture-testable: verify_distribution_bytes never opens or
+        // verifies a single .ccpack -- it validates only the signed index's
+        // OWN schema, signature, canonical component order, `required`
+        // flags, and (for a station index) that no pack carries a network
+        // location. This is "the contract" this slice's publisher was built
+        // against, and it round-trips cleanly with placeholder outer
+        // bytes/hashes -- no real model weights needed to prove this much.
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        let trust = PackTrust {
+            key_id: "development-test-key".to_string(),
+            public_key: key.verifying_key(),
+        };
+        let pack_entries = vec![
+            pack_entry("core", 11, &"00".repeat(32)),
+            pack_entry("captions-floor", 22, &"11".repeat(32)),
+            pack_entry("summary-gemma4-12b", 33, &"22".repeat(32)),
+            pack_entry("summary-gemma4-e4b", 44, &"33".repeat(32)),
+            pack_entry("translation-translategemma-4b", 55, &"44".repeat(32)),
+        ];
+        let (_manifest, envelope_bytes) = publisher_shaped_envelope(&key, pack_entries);
+
+        let verified = verify_distribution_bytes(
+            &envelope_bytes,
+            &trust,
+            Some("station-index"),
+            Some("beta"),
+            Some("1.0.0-rc15"),
+            Some("1.0.0-rc15"),
+        )
+        .expect("a publisher-shaped station index must verify");
+
+        assert_eq!(verified.packs.len(), 5);
+        assert_eq!(verified.packs[1].component, "captions-floor");
+        assert!(verified.packs.iter().all(|pack| pack.required));
+        assert!(verified.packs.iter().all(|pack| pack.urls.is_empty()));
+    }
+
+    #[test]
+    fn acquire_station_distribution_accepts_the_unlocked_components_and_fails_closed_at_the_reviewed_model_lock_gate(
+    ) {
+        // The FULL acquisition path (index verification PLUS opening and
+        // verifying every referenced .ccpack, native_packs::verify_pack)
+        // cannot be fixture-tested end to end for a complete 5-component
+        // station bundle: native_packs.rs::validate_ollama_model_contract
+        // unconditionally checks summary-gemma4-12b / summary-gemma4-e4b /
+        // translation-translategemma-4b against the EMBEDDED reviewed
+        // model lock (native-windows-ollama-models.lock.json, compiled in
+        // via include_str!) -- real, pinned SHA-256 digests of real,
+        // multi-GB Ollama model blobs that no fixture can forge (this is
+        // the exact supply-chain gate it exists to be). A synthetic pack
+        // claiming one of those three component identities is REJECTED by
+        // design, not a gap in `scripts/build_native_station_bundle.py`.
+        //
+        // What this test proves instead: `core` and `captions-floor` (the
+        // two required components with NO reviewed-model-lock coupling)
+        // DO fully round-trip through real `native_packs::verify_pack`
+        // (real signed `.ccpack` files, not placeholders -- see
+        // `build_signed_pack`), and the overall acquisition still fails
+        // CLOSED, specifically at the reviewed-model-lock gate, rather than
+        // silently accepting the unlocked components and skipping the
+        // locked ones.
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        let trust = PackTrust {
+            key_id: "development-test-key".to_string(),
+            public_key: key.verifying_key(),
+        };
+        let root = std::env::temp_dir().join(format!(
+            "civiccast-station-bundle-roundtrip-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        // "station/" -- the exact side-load directory shape
+        // ($EXEDIR\station) nsis-hooks-bootstrap.nsh's K1 wiring points
+        // --civiccast-import-station at.
+        let media_root = root.join("station");
+        std::fs::create_dir_all(&media_root).expect("create station media root");
+
+        // Canonical component order (native_distribution.rs::REQUIRED_COMPONENTS)
+        // -- the publisher emits packs in exactly this order, and
+        // verify_distribution_bytes fails closed on any other order.
+        let components: [(&str, &str, &[(&str, &[u8])]); 5] = [
+            ("core", "core.ccpack", &[("NOTICE.txt", b"placeholder-only")]),
+            (
+                "captions-floor",
+                "captions-floor.ccpack",
+                &[("models/faster-whisper-medium/model.bin", b"floor-model-bytes")],
+            ),
+            (
+                "summary-gemma4-12b",
+                "summary-gemma4-12b.ccpack",
+                &[("blobs/sha256-twelve", b"twelve")],
+            ),
+            (
+                "summary-gemma4-e4b",
+                "summary-gemma4-e4b.ccpack",
+                &[("blobs/sha256-efficient", b"efficient")],
+            ),
+            (
+                "translation-translategemma-4b",
+                "translation-translategemma-4b.ccpack",
+                &[("blobs/sha256-translate", b"translate")],
+            ),
+        ];
+
+        let mut pack_entries = Vec::new();
+        for (component, filename, payload) in components {
+            let pack_path = media_root.join(filename);
+            let (bytes, sha256) = build_signed_pack(&pack_path, &key, component, payload);
+            pack_entries.push(pack_entry(component, bytes, &sha256));
+        }
+        let (_manifest, envelope_bytes) = publisher_shaped_envelope(&key, pack_entries);
+        let index_path = media_root.join("station-index.json");
+        std::fs::write(&index_path, &envelope_bytes).expect("write station index");
+
+        let cache_root = root.join("cache");
+        let error = super::acquire_station_distribution(
+            &index_path,
+            &cache_root,
+            &trust,
+            "beta",
+            "1.0.0-rc15",
+            "1.0.0-rc15",
+        )
+        .expect_err(
+            "a fixture station bundle cannot satisfy the reviewed Ollama model lock -- \
+             that requires real, pinned model bytes, by design",
+        );
+
+        assert!(
+            error.contains("reviewed model lock") || error.contains("model_name metadata"),
+            "expected the acquisition to fail specifically at the reviewed-model-lock \
+             gate, got: {error}"
+        );
+        // core and captions-floor -- which carry no reviewed-model-lock
+        // coupling -- must have been cached before the gate was ever
+        // reached, proving THEY round-tripped through real
+        // native_packs::verify_pack successfully.
+        assert!(
+            std::fs::read_dir(cache_root.join("packs"))
+                .map(|entries| entries.count() > 0)
+                .unwrap_or(false),
+            "core/captions-floor must have been verified and cached before the \
+             reviewed-model-lock gate stopped the run"
+        );
+
+        std::fs::remove_dir_all(&root).expect("clean roundtrip root");
+    }
+}

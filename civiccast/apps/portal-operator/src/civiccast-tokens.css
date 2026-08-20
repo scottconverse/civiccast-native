@@ -1,0 +1,84 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright (c) The CivicCast Authors */
+
+/*
+ * Shared CivicCast design tokens, @import-ed by the operator index.css,
+ * portal-public, and installer. CASCADE NOTE (UX-006): index.css re-declares
+ * this palette in its own :root AFTER importing this file, so index.css WINS at
+ * runtime for any token defined in both. Treat index.css as AUTHORITATIVE; keep
+ * values here in sync with it. A token used by the portal that is NOT also in
+ * index.css (e.g. --cc-accent-ink) resolves to the value defined here.
+ */
+
+:root {
+  --cc-paper: #fbfaf7;
+  --cc-surface: #ffffff;
+  --cc-surface-2: #f7f5f0;
+  --cc-surface-3: #efebe3;
+  --cc-line: #e0ddd5;
+  --cc-line-strong: #c8c3b8;
+  --cc-ink: #262834;
+  --cc-ink-2: #555765;
+  --cc-ink-3: #666978;
+  --cc-ink-inv: #fbfaf7;
+  --cc-brand: #2458a6;
+  --cc-brand-2: #1f4a8c;
+  --cc-brand-soft: #e8f0fb;
+  --cc-brand-ink: #ffffff;
+  --cc-accent: #c67d1c;
+  --cc-accent-soft: #fbedd7;
+  /* Dark ink for text/icons ON the amber accent. White-on-accent is only
+     3.3:1 (fails WCAG AA); this dark ink measures ~5.5:1. Used for primary
+     buttons (accent background) and accent text on the soft accent surface.
+     Accent stays amber in both themes (the dark block does not redefine it),
+     so one dark ink serves both. */
+  --cc-accent-ink: #1a1206;
+  --cc-live: #c92222;
+  --cc-live-soft: #fee7e3;
+  --cc-ok: #27834f;
+  --cc-ok-soft: #e4f6ea;
+  --cc-warn: #aa7a05;
+  --cc-warn-soft: #fff0c7;
+  --cc-warn-ink: #1a1206;
+  --cc-err: #bd1f31;
+  --cc-err-soft: #fde6e8;
+  --cc-err-ink: #ffffff;
+  --cc-info: #2472a3;
+  --cc-info-soft: #e2f0fa;
+  --cc-r-sm: 4px;
+  --cc-r-md: 6px;
+  --cc-r-lg: 10px;
+  --cc-r-pill: 999px;
+  --cc-font-sans: "Inter Tight", "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --cc-font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --cc-focus: 2px solid var(--cc-brand);
+}
+
+[data-theme="dark"] {
+  --cc-paper: #20222c;
+  --cc-surface: #292b35;
+  --cc-surface-2: #242631;
+  --cc-surface-3: #343743;
+  --cc-line: #444856;
+  --cc-line-strong: #585e6f;
+  --cc-ink: #f4f1e9;
+  --cc-ink-2: #c7c3ba;
+  --cc-ink-3: #9d9a93;
+  --cc-ink-inv: #242631;
+  --cc-brand: #80a7f2;
+  --cc-brand-2: #96b8ff;
+  --cc-brand-soft: #173963;
+  --cc-brand-ink: #111827;
+  --cc-live: #ff746b;
+  --cc-live-soft: #5b2727;
+  --cc-ok: #7bcf98;
+  --cc-ok-soft: #1f5136;
+  --cc-warn: #e6bd4d;
+  --cc-warn-soft: #5c4720;
+  --cc-warn-ink: #1a1206;
+  --cc-err: #ff736f;
+  --cc-err-soft: #5b272b;
+  --cc-err-ink: #111827;
+  --cc-info: #74b9e6;
+  --cc-info-soft: #1c4b66;
+}

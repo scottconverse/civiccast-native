@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+#
+# D3 workflow contract (spec-claims-evidence-rule.md). Consumed by
+# scripts/policy/check_claims_evidence.py in same-run mode. Two fields carry
+# distinct jobs-completeness roles ??? do not conflate them:
+#
+#   workflow_job_inventory  EVERY static job ID in the trusted workflow,
+#                            INCLUDING the verifier itself. Compared exactly
+#                            (as a set) against the job IDs the verifier
+#                            parses out of .github/workflows/ci-test.yml. An
+#                            unlisted live job, or a listed job no longer in
+#                            the workflow, is drift -> exit 1.
+#
+#   expected_producers       Keyed by producer job ID. The verifier's own
+#                            `needs:` in ci-test.yml must equal this
+#                            mapping's keys exactly. The verifier job itself
+#                            must NEVER appear here (D8 group 7).
+#
+# junit_collection_floor is PER PRODUCER on purpose (D3/D8 group 13): a
+# global floor can hide an empty-but-green producer sitting next to a large
+# one. Floors below are conservative lower bounds, not exact counts ??? they
+# exist to catch a collapse to near-zero, not to pin the suite size:
+#   test          full `uv run pytest` run over tests/ (junit.xml), several
+#                 hundred cases across the whole civiccast test tree today;
+#                 500 is comfortably below that and still catches a
+#                 collapse. Individual named-suite floors (Postgres,
+#                 staff-auth, live-HLS playability) are enforced separately
+#                 by ci-test.yml's own existing per-suite steps, unchanged
+#                 by this contract.
+#   engine        matches the pre-existing explicit floor in ci-test.yml's
+#                 "Assert the engine tests actually ran" step (floor = 11).
+#   nats-boundary  tests/platform/test_nats_broker_real.py has exactly one
+#                 real-boundary test function; floor = 1.
+schema_version: 1
+
+trusted_workflow: .github/workflows/ci-test.yml
+
+workflow_job_inventory:
+  - test
+  - engine
+  - nats-boundary
+  - windows-native   # WS4 real-Windows probe job (merged from program branch); NOT a claims producer - the verifier's needs: is unchanged
+  - claims-verifier
+
+expected_producers:
+  test:
+    junit_artifact: test-junit
+    junit_file: junit.xml
+    meta_artifact: test-meta
+    meta_file: test-meta.json
+    requires_checkout_attestation: true
+    junit_collection_floor: 5000  # basis: run 29569282094 collected 5673 (5643 passed + 30 skipped); 5000 leaves variance headroom while making an empty/gutted producer impossible
+  engine:
+    junit_artifact: engine-junit
+    junit_file: engine-junit.xml
+    meta_artifact: engine-meta
+    meta_file: engine-meta.json
+    requires_checkout_attestation: true
+    junit_collection_floor: 11
+  nats-boundary:
+    junit_artifact: nats-boundary-junit
+    junit_file: nats-boundary-junit.xml
+    meta_artifact: nats-boundary-meta
+    meta_file: nats-boundary-meta.json
+    requires_checkout_attestation: true
+    junit_collection_floor: 1
+
+verifier_job: claims-verifier

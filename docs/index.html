@@ -1,0 +1,1078 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CivicCast - Open-source civic meeting publication</title>
+    <meta
+      name="description"
+      content="CivicCast is open-source, self-hostable civic meeting recording and publication software. The rc line proves recorded-sample rehearsal, private packaging, explicit Portal approval, and resident playback; rc18 is the published controlled beta."
+    />
+    <meta property="og:title" content="CivicCast" />
+    <meta
+      property="og:description"
+      content="Record and publish civic meetings on infrastructure you control. rc18 is the published controlled beta; its rc15 foundation passed exact-artifact clean-Windows validation for the bounded recorded-media workflow."
+    />
+    <meta property="og:type" content="website" />
+    <style>
+      :root {
+        --cc-paper: #f7f2ea;
+        --cc-brand: #2458a6;
+        --ink: #101828;
+        --ink-soft: #344054;
+        --muted: #667085;
+        --paper: #f7f2ea;
+        --paper-2: #efe4d3;
+        --surface: #fffaf2;
+        --surface-2: #eef5f6;
+        --line: #d8cdbf;
+        --navy: #14233d;
+        --blue: #2458a6;
+        --sky: #88c7e8;
+        --green: #2f6f5e;
+        --gold: #c58a2b;
+        --gold-ink: #8f6115; /* darker gold for small text (WCAG AA >=4.5:1 on paper) */
+        --coral: #a34434; /* darkened from #b85444 to clear WCAG AA on light bg */
+        --shadow: 0 28px 80px rgba(16, 24, 40, 0.18);
+        --sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+        --display: "Inter Tight", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+        --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+        --mono: "IBM Plex Mono", Consolas, "Liberation Mono", monospace;
+        --max: 1180px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font: 16px/1.6 var(--sans);
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .skip-link {
+        background: var(--ink);
+        color: white;
+        left: 16px;
+        padding: 10px 14px;
+        position: absolute;
+        top: -48px;
+        z-index: 20;
+      }
+
+      .skip-link:focus {
+        top: 16px;
+      }
+
+      .topbar {
+        align-items: center;
+        background: rgba(247, 242, 234, 0.9);
+        border-bottom: 1px solid rgba(16, 24, 40, 0.14);
+        display: flex;
+        gap: 24px;
+        justify-content: space-between;
+        left: 0;
+        padding: 17px max(22px, calc((100vw - var(--max)) / 2));
+        position: fixed;
+        right: 0;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(14px);
+      }
+
+      .brand {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.15em;
+        text-decoration: none;
+        text-transform: uppercase;
+      }
+
+      .brand span {
+        color: var(--blue);
+      }
+
+      .nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        justify-content: flex-end;
+      }
+
+      .nav a {
+        color: var(--ink-soft);
+        font-size: 0.92rem;
+        font-weight: 800;
+        text-decoration: none;
+      }
+
+      .nav a:hover {
+        color: var(--blue);
+      }
+
+      .hero {
+        background:
+          radial-gradient(circle at 78% 20%, rgba(136, 199, 232, 0.32), transparent 26rem),
+          radial-gradient(circle at 12% 28%, rgba(197, 138, 43, 0.18), transparent 25rem),
+          linear-gradient(135deg, #fff8ec 0%, #eef5f6 62%, #e7edf5 100%);
+        min-height: 92vh;
+        overflow: hidden;
+        padding: 112px 22px 56px;
+        position: relative;
+      }
+
+      .hero::after {
+        background-image:
+          linear-gradient(rgba(20, 35, 61, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(20, 35, 61, 0.05) 1px, transparent 1px);
+        background-size: 34px 34px;
+        content: "";
+        inset: 0;
+        pointer-events: none;
+        position: absolute;
+      }
+
+      .hero-inner {
+        align-items: end;
+        display: grid;
+        gap: 46px;
+        grid-template-columns: minmax(0, 1.02fr) minmax(360px, 0.88fr);
+        margin: 0 auto;
+        max-width: var(--max);
+        min-height: calc(92vh - 168px);
+        position: relative;
+        z-index: 1;
+      }
+
+      .eyebrow,
+      .kicker,
+      .tag {
+        font-family: var(--mono);
+        font-size: 0.76rem;
+        font-weight: 800;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow {
+        color: var(--coral);
+        margin: 0 0 18px;
+      }
+
+      /* The headline column, made a container so the display type can size
+         against the column it actually lives in rather than the viewport. */
+      .hero-copy {
+        container-type: inline-size;
+        min-width: 0;
+      }
+
+      h1 {
+        font-family: var(--display);
+        /* Was clamp(3.6rem, 8vw, 7.4rem). The hero grid caps at --max (1180px),
+           so past a ~1180px viewport the column stopped growing while 8vw kept
+           going: at 1560px the type hit 118px and "infrastructure" rendered
+           764px wide inside a 609px column, spilling 155px to the right, under
+           the product shot. cqi tracks the column, so the type cannot outgrow
+           the space it has. The vw line is the fallback for browsers without
+           container queries -- its max is sized to fit the capped column.
+           The floor is 2.6rem, not 3.6rem, so this one rule also serves the
+           narrowest phone column (~284px at a 320px viewport), which is why
+           the separate mobile font-size override below could be removed. */
+        font-size: clamp(2.6rem, 6vw, 5.7rem);
+        font-size: clamp(2.6rem, 15cqi, 7.4rem);
+        /* Last-resort guards only. Do NOT rely on hyphens: the sizing above is
+           what keeps "infrastructure" inside its column -- headless/embedded
+           Chrome often ships without hyphenation dictionaries, so hyphens:auto
+           silently does nothing and break-word takes over, which renders an
+           unhyphenated "infrastructur / e". These exist so a longer word in a
+           future headline degrades instead of escaping the box. */
+        hyphens: auto;
+        overflow-wrap: break-word;
+        letter-spacing: 0;
+        line-height: 0.9;
+        margin: 0;
+        max-width: 850px;
+      }
+
+      .lede {
+        color: var(--ink-soft);
+        font-family: var(--serif);
+        font-size: clamp(1.22rem, 2vw, 1.55rem);
+        line-height: 1.5;
+        margin: 28px 0 0;
+        max-width: 690px;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 32px;
+      }
+
+      .button {
+        align-items: center;
+        border: 1px solid var(--ink);
+        display: inline-flex;
+        font-weight: 850;
+        justify-content: center;
+        min-height: 50px;
+        padding: 13px 19px;
+        text-decoration: none;
+        transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+      }
+
+      .button:hover {
+        transform: translateY(-2px);
+      }
+
+      .button.primary {
+        background: var(--ink);
+        color: white;
+      }
+
+      .button.primary:hover {
+        background: var(--blue);
+        border-color: var(--blue);
+      }
+
+      .button.secondary {
+        background: rgba(255, 250, 242, 0.74);
+        color: var(--ink);
+      }
+
+      /* Download buttons carry the version, size and file type on a second
+         line so nobody has to click to find out what they are getting. */
+      .button:has(.button-sub) {
+        flex-direction: column;
+        gap: 3px;
+        line-height: 1.15;
+        padding: 11px 22px;
+      }
+
+      .button-sub {
+        font-family: var(--mono);
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        opacity: 0.78;
+        text-transform: uppercase;
+      }
+
+      .verify-line {
+        color: var(--ink-soft);
+        font-size: 0.86rem;
+        line-height: 1.65;
+        margin: 16px 0 0;
+      }
+
+      .verify-line code {
+        background: rgba(15, 23, 42, 0.06);
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        overflow-wrap: break-word;
+        padding: 2px 6px;
+      }
+
+      .product-shot {
+        align-self: center;
+        background: var(--navy);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        box-shadow: var(--shadow);
+        color: white;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .product-shot::before {
+        background: linear-gradient(90deg, var(--gold), var(--sky), var(--green));
+        content: "";
+        display: block;
+        height: 6px;
+      }
+
+      .shot-top {
+        align-items: center;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+        display: flex;
+        justify-content: space-between;
+        padding: 18px 20px;
+      }
+
+      .status-dot {
+        align-items: center;
+        display: inline-flex;
+        gap: 8px;
+      }
+
+      .status-dot::before {
+        background: #48d28f;
+        border-radius: 999px;
+        content: "";
+        height: 10px;
+        width: 10px;
+      }
+
+      .shot-main {
+        display: grid;
+        gap: 16px;
+        padding: 22px;
+      }
+
+      .broadcast-card {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        padding: 18px;
+      }
+
+      .broadcast-card h2 {
+        font-size: 1.2rem;
+        margin: 0 0 8px;
+      }
+
+      .broadcast-card p {
+        color: rgba(255, 255, 255, 0.7);
+        margin: 0;
+      }
+
+      .meter-grid {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .meter {
+        background: rgba(255, 255, 255, 0.08);
+        min-height: 92px;
+        padding: 14px;
+      }
+
+      .meter strong {
+        display: block;
+        font-family: var(--display);
+        font-size: 1.45rem;
+        margin-top: 8px;
+      }
+
+      .timeline {
+        display: grid;
+        gap: 10px;
+      }
+
+      .timeline-row {
+        align-items: center;
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 82px 1fr;
+      }
+
+      .bar {
+        background: rgba(255, 255, 255, 0.12);
+        height: 12px;
+        overflow: hidden;
+      }
+
+      .bar span {
+        background: var(--sky);
+        display: block;
+        height: 100%;
+      }
+
+      main {
+        background: var(--paper);
+      }
+
+      .section {
+        margin: 0 auto;
+        max-width: var(--max);
+        padding: 88px 22px;
+      }
+
+      .section-header {
+        display: grid;
+        gap: 26px;
+        grid-template-columns: 210px minmax(0, 1fr);
+        margin-bottom: 42px;
+      }
+
+      .kicker {
+        color: var(--coral);
+        padding-top: 8px;
+      }
+
+      .badge {
+        background: var(--green);
+        border-radius: 999px;
+        color: white;
+        display: inline-block;
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        padding: 3px 10px;
+        text-transform: uppercase;
+        vertical-align: middle;
+      }
+
+      h2 {
+        font-family: var(--display);
+        font-size: clamp(2rem, 4vw, 4.35rem);
+        letter-spacing: 0;
+        line-height: 1;
+        margin: 0;
+      }
+
+      .intro {
+        color: var(--ink-soft);
+        font-family: var(--serif);
+        font-size: 1.24rem;
+        line-height: 1.55;
+        margin: 18px 0 0;
+        max-width: 790px;
+      }
+
+      .feature-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .feature {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        min-height: 230px;
+        padding: 25px;
+      }
+
+      .feature h3 {
+        font-family: var(--display);
+        font-size: 1.55rem;
+        line-height: 1.08;
+        margin: 0 0 14px;
+      }
+
+      .feature p {
+        color: var(--ink-soft);
+        margin: 0;
+      }
+
+      .feature .tag {
+        color: var(--gold-ink);
+        display: block;
+        margin-bottom: 38px;
+      }
+
+      .band {
+        background: var(--navy);
+        color: white;
+      }
+
+      .band .section {
+        max-width: var(--max);
+      }
+
+      .band .kicker {
+        color: var(--sky);
+      }
+
+      .band .intro,
+      .band p {
+        color: rgba(255, 255, 255, 0.74);
+      }
+
+      .workflow {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(5, 1fr);
+      }
+
+      .step {
+        background: rgba(255, 255, 255, 0.08);
+        border-top: 4px solid var(--sky);
+        min-height: 160px;
+        padding: 18px;
+      }
+
+      .step span {
+        color: var(--sky);
+        display: block;
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.13em;
+        margin-bottom: 12px;
+        text-transform: uppercase;
+      }
+
+      .step strong {
+        display: block;
+        font-size: 1.05rem;
+        line-height: 1.25;
+      }
+
+      .audiences {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .audience {
+        background: var(--surface-2);
+        border: 1px solid #d3e1e3;
+        padding: 26px;
+      }
+
+      .audience h3 {
+        font-family: var(--display);
+        font-size: 1.6rem;
+        line-height: 1.08;
+        margin: 0 0 12px;
+      }
+
+      .audience p {
+        color: var(--ink-soft);
+        margin: 0 0 22px;
+      }
+
+      .audience a,
+      .text-link {
+        color: var(--blue);
+        font-weight: 850;
+      }
+
+      .beta {
+        background: linear-gradient(135deg, #fffaf2 0%, #f2eadc 100%);
+        border-bottom: 1px solid var(--line);
+        border-top: 1px solid var(--line);
+      }
+
+      .beta-card {
+        background: var(--surface);
+        border-left: 6px solid var(--green);
+        box-shadow: 0 18px 60px rgba(16, 24, 40, 0.08);
+        max-width: 860px;
+        padding: 30px;
+      }
+
+      .beta-card h2 {
+        font-family: var(--display);
+        font-size: clamp(1.8rem, 3vw, 3rem);
+        line-height: 1;
+        margin: 0 0 16px;
+      }
+
+      .docs-grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(4, 1fr);
+      }
+
+      .doc {
+        background: rgba(255, 250, 242, 0.78);
+        border: 1px solid var(--line);
+        min-height: 132px;
+        padding: 18px;
+        text-decoration: none;
+        transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+      }
+
+      .doc:hover {
+        background: var(--surface);
+        border-color: var(--blue);
+        transform: translateY(-2px);
+      }
+
+      .doc strong {
+        display: block;
+        line-height: 1.24;
+        margin-bottom: 10px;
+      }
+
+      .doc span {
+        color: var(--ink-soft);
+        font-size: 0.92rem;
+      }
+
+      .doc.superseded {
+        /* UI-1 (gate-civiccast): a 0.66 group-opacity faded these still-clickable
+           historical links' description text to ~3.9:1, below WCAG AA. Keep the
+           text at full contrast; the "(superseded)" label in the copy carries the
+           status, plus a subtle ink tint de-emphasises the card without touching
+           text legibility. */
+        background: rgba(52, 64, 84, 0.05);
+      }
+
+      /* Desktop shows the full nav; the mobile download shortcut is hidden here. */
+      .nav-download {
+        display: none;
+      }
+
+      footer {
+        background: var(--ink);
+        color: white;
+        padding: 42px 22px;
+      }
+
+      .footer-inner {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        justify-content: space-between;
+        margin: 0 auto;
+        max-width: var(--max);
+      }
+
+      footer a {
+        color: white;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition: none !important;
+        }
+      }
+
+      @media (max-width: 920px) {
+        .topbar {
+          position: static;
+        }
+
+        .nav {
+          display: none;
+        }
+
+        /* With the nav hidden on mobile, keep a persistent tester shortcut. */
+        .nav-download {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          position: fixed;
+          right: 16px;
+          bottom: 16px;
+          z-index: 50;
+          padding: 12px 18px;
+          border-radius: 999px;
+          background: var(--blue);
+          color: #fff;
+          font-weight: 700;
+          text-decoration: none;
+          box-shadow: var(--shadow);
+        }
+
+        .hero {
+          min-height: auto;
+          padding-top: 44px;
+        }
+
+        .hero-inner,
+        .section-header {
+          grid-template-columns: 1fr;
+        }
+
+        .product-shot {
+          align-self: stretch;
+        }
+
+        .feature-grid,
+        .workflow,
+        .audiences,
+        .docs-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .hero,
+        .section {
+          padding-left: 18px;
+          padding-right: 18px;
+        }
+
+        /* h1 needs no override here: its clamp is container-relative, so it
+           already tracks the stacked single-column width. The old
+           clamp(3rem, 15vw, 4rem) sized off the viewport and produced 56px
+           type in a 339px column, forcing "infrastructure" to break
+           mid-word as "infrastructur / e". */
+
+        .actions {
+          flex-direction: column;
+        }
+
+        .button {
+          width: 100%;
+        }
+
+        .meter-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="topbar" aria-label="Site header">
+      <a class="brand" href="#top">Civic<span>Cast</span></a>
+      <nav class="nav" aria-label="Primary navigation">
+        <a href="#features">Features</a>
+        <a href="#capabilities">Capabilities</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#cost">Cost</a>
+        <a href="#beta">Beta</a>
+        <a href="#docs">Docs</a>
+        <a href="https://github.com/scottconverse/civiccast">GitHub</a>
+      </nav>
+    </header>
+
+    <!-- Body-level (not inside .topbar, whose backdrop-filter would trap a
+         fixed child): mobile-only persistent tester shortcut. -->
+    <!-- The class was already called nav-download; now it actually is one. -->
+    <a class="nav-download" href="https://github.com/scottconverse/civiccast/releases/download/v1.0.0-rc18/civiccast-1.0.0-rc18-windows-setup.exe" aria-label="Download the CivicCast v1.0.0-rc18 Windows installer, 232 MB">Download</a>
+
+    <section class="hero" id="top">
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">Open-source civic meeting software - controlled beta</p>
+          <h1>Record and publish civic meetings on infrastructure you control.</h1>
+          <p class="lede">
+            The bounded local workflow -- create or upload recorded media, rehearse that exact sample privately, package it privately, explicitly approve Portal publication, and confirm resident playback -- was proven end-to-end against rc17's exact bytes on 2026-07-20; rc18 carries the same code path but that full walkthrough has not yet been re-run on rc18's shipped bytes. Live ingest, 24/7 station operation, hardware/headend delivery, external providers, and app stores need separate integration and field proof.
+          </p>
+          <div class="actions">
+            <!-- The download is the reason most visitors are here; it used to
+                 live only in the #beta section three screens down, behind a
+                 button labelled "v1.0.0-rc18" that opened the release listing
+                 rather than downloading anything. -->
+            <a class="button primary" href="https://github.com/scottconverse/civiccast/releases/download/v1.0.0-rc18/civiccast-1.0.0-rc18-windows-setup.exe" aria-label="Download the CivicCast v1.0.0-rc18 Windows installer, 232 MB">Download for Windows<span class="button-sub"><span>v1.0.0-rc18</span> &middot; 232 MB &middot; .exe</span></a>
+            <a class="button secondary" href="#beta">Read candidate status</a>
+            <a class="button secondary" href="https://github.com/scottconverse/civiccast">Browse the source</a>
+            <a class="button secondary" href="USER-MANUAL.pdf">Read the user manual</a>
+            <a class="button secondary" href="https://github.com/scottconverse/civiccast/discussions">Join the beta</a>
+          </div>
+        </div>
+
+        <aside class="product-shot" aria-label="CivicCast product preview">
+          <div class="shot-top">
+            <strong>CivicCast Console</strong>
+            <span class="status-dot">Recorded-media beta</span>
+          </div>
+          <div class="shot-main">
+            <article class="broadcast-card">
+              <h2>June Board Meeting</h2>
+              <p>Private package ready for explicit Portal approval.</p>
+            </article>
+            <div class="meter-grid">
+              <div class="meter"><span class="tag">Live</span><strong>Probe required</strong></div>
+              <div class="meter"><span class="tag">Package</span><strong>Private</strong></div>
+              <div class="meter"><span class="tag">Portal</span><strong>Awaiting approval</strong></div>
+            </div>
+            <div class="timeline" aria-label="Meeting workflow preview">
+              <div class="timeline-row"><span>Setup</span><div class="bar"><span style="width: 100%"></span></div></div>
+              <div class="timeline-row"><span>Broadcast</span><div class="bar"><span style="width: 72%"></span></div></div>
+              <div class="timeline-row"><span>Review</span><div class="bar"><span style="width: 42%"></span></div></div>
+              <div class="timeline-row"><span>Publish</span><div class="bar"><span style="width: 22%"></span></div></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <main id="main">
+      <section class="section" id="features">
+        <div class="section-header">
+          <p class="kicker">What it solves</p>
+          <div>
+            <h2>A bounded beta workflow for recorded meetings and resident playback.</h2>
+            <p class="intro">
+              rc17's stock acceptance run (2026-07-20) covered exact-sample private rehearsal, private packaging, explicit Portal approval, and resident playback; that walkthrough has not yet been re-run on rc18's exact bytes. The broader source inventory below is not a stock acceptance claim.
+            </p>
+          </div>
+        </div>
+        <div class="feature-grid">
+          <article class="feature">
+            <span class="tag">PEG channel</span>
+            <h3>Source inventory for integrated 24/7 operation.</h3>
+            <p>Persistent GStreamer playout, three concurrent channels, query-driven auto-scheduling, the Commit-to-Air gate, and operator takeover controls.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">Records</span>
+            <h3>Make review part of the product.</h3>
+            <p>Captions, sourced summaries, custom metadata, real RFC-3161 timestamped record exports, and a meeting-agenda sidebar synced to the video.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">Reach</span>
+            <h3>Give residents a stable place to watch.</h3>
+            <p>Portal playback was proven in rc17's stock acceptance run (2026-07-20) and has not yet been separately re-verified on rc18's exact bytes. Podcast, Internet Archive, YouTube, and native app distribution require separate provider/store proof.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="capabilities">
+        <div class="section-header">
+          <p class="kicker">Inside CivicCast</p>
+          <div>
+            <h2>The broader source inventory and its remaining proof boundaries.</h2>
+            <p class="intro">
+              These modules exist in the source tree and have repo evidence, but live
+              media, hardware, headends, providers, app stores, and unattended station
+              operation still require separate field acceptance.
+            </p>
+          </div>
+        </div>
+        <div class="feature-grid">
+          <article class="feature">
+            <span class="tag">Playout engine</span>
+            <h3>Persistent GStreamer pipeline.</h3>
+            <p>Three concurrent channels, source hot-swap without TS continuity breaks, and IP-TS / SRT / RTMP / HLS / NDI software paths. SDI/DeckLink remains config-gated and hardware proof pending through the station-supplied relay path.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">Six OTT apps</span>
+            <h3>Native Roku, Apple TV, Fire TV, Android TV, Android mobile, iOS.</h3>
+            <p>Real platform-idiomatic starter source for all six targets that builds with each platform's own toolchain. Store-ready polish (artwork, store metadata, accessibility) is per-target follow-up.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">CG bulletin board</span>
+            <h3>Multi-zone rendering wired; live-video zones under contract.</h3>
+            <p>Approved bulletin slides and multi-zone template rendering (primary, ticker, schedule, and logo/image zones, composited live via the GStreamer overlay leg, with a designer preview that matches what airs) are wired for production use. Live video embedded in a zone and per-channel board background audio remain contract-only until runtime proof lands (spec S15 §5).</p>
+          </article>
+          <article class="feature">
+            <span class="tag">Scheduled recording</span>
+            <h3>Record from inputs or streams.</h3>
+            <p>SDI / HDMI / NDI inputs or RTSP / SRT / HLS / RTMP / MPEG-TS, one-shot or weekly recurrence, arm-record-finalize state machine, an S8 (source-loss) alert on source failure.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">As-run + EPG</span>
+            <h3>Reporting that funders read.</h3>
+            <p>As-run / proof-of-performance logs, XMLTV / X-List / CSV EPG export, franchise hours-by-category, per-underwriter affidavits, and a billing export.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">Underwriting</span>
+            <h3>Real PEG sponsorship trafficking.</h3>
+            <p>Spot-as-asset, rotation rules, break insertion, per-underwriter affidavits via the as-run join - PEG keeps the for-profit underwriting revenue, on the rails.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">Captions &amp; EAS</span>
+            <h3>Caption proofs, loudness, CAP / IPAWS display.</h3>
+            <p>Local faster-whisper captions with fail-closed decode-back status, per-sink loudness target, CAP / IPAWS / NWS / AMBER display, EAS attention-tone stripping on web/OTT egress, SAP / descriptive-audio routing. The native caption runtime is built in software. Recorded-media packaging and playback were proven against rc17's exact bytes on 2026-07-20 and carry into rc18's code path; live ingest remains blocked until a server-side media probe and station egress path are separately verified.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">Meeting agenda</span>
+            <h3>Agenda items synced to video.</h3>
+            <p>Chaptered navigation, public agenda sidebar with seek, plain-text import, optional agenda PDF beside the player.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">AI choice</span>
+            <h3>Operator picks the model.</h3>
+            <p>Per-feature model selection across local Ollama, Ollama Cloud, and OpenRouter; defaults adapt to detected RAM. No vendor lock-in on captions, translation, or summaries.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="band" id="workflow">
+        <div class="section">
+          <div class="section-header">
+            <p class="kicker">Meeting night</p>
+            <div>
+              <h2>Built around the real jobs in the room.</h2>
+              <p class="intro">
+                The admin, operator, clerk, and technical helper get different tools because they
+                have different jobs. CivicCast keeps those paths connected without making everyone
+                learn the same server vocabulary.
+              </p>
+            </div>
+          </div>
+          <div class="workflow">
+            <article class="step"><span>01</span><strong>Set up</strong><p>Create the first admin, save recovery information, prepare storage, and rehearse backup.</p></article>
+            <article class="step"><span>02</span><strong>Rehearse safely</strong><p>Rehearse an exact recorded sample privately (last proven end-to-end on rc17's exact bytes, 2026-07-20; rc18's shipped build has not yet been separately re-walked). Real live use still requires a separately verified server-side media probe.</p></article>
+            <article class="step"><span>03</span><strong>Review</strong><p>Check captions, summaries, timestamps, metadata, and signed record exports.</p></article>
+            <article class="step"><span>04</span><strong>Publish</strong><p>Send approved material to residents, archives, subscribers, and optional provider lanes.</p></article>
+            <article class="step"><span>05</span><strong>Improve</strong><p>Use feedback from real meetings to harden the next release and the next station setup.</p></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="cost">
+        <div class="section-header">
+          <p class="kicker">What it costs</p>
+          <div>
+            <h2>One station was quoted about $48,000 for this work, plus captions by the hour. CivicCast is free.</h2>
+            <p class="intro">
+              In 2025, a Colorado PEG station received a commercial vendor's MSRP quote
+              to refresh a single three-channel playout server, and a companion quote for
+              captioning service. The figures below are taken directly from those quotes, which
+              are on file with the project. CivicCast is free, open-source software doing this
+              class of work on a Windows PC you own. It is also a controlled beta — weigh the
+              proof boundaries above before you retire anything.
+            </p>
+          </div>
+        </div>
+        <div class="feature-grid">
+          <article class="feature">
+            <span class="tag">Their server</span>
+            <h3>$48,537.50 for one refresh.</h3>
+            <p>One three-channel playout server ($30,650), bulletin-board licenses for three channels ($4,650), extended hardware warranty ($4,597.50), and Gold support at $8,640 per year after the included first year.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">Their captions</span>
+            <h3>$6,700 per 1,000 hours — and hours run out.</h3>
+            <p>Captioning sold as prepaid blocks: $6,700 per 1,000 hours, $3,750 per 500. Caption translation is another $3,650 per 1,000 hours. Every meeting draws the balance down; the next block costs the same.</p>
+          </article>
+          <article class="feature">
+            <span class="tag">CivicCast</span>
+            <h3>$0 license. $0 per hour. Hardware you own.</h3>
+            <p>Playout, scheduling, the bulletin board, and on-device Whisper captions are open source: no license fee, no per-hour caption meter, no required support subscription. The station runs on one Windows machine that costs less than a single year of that support contract.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <p class="kicker">Who it is for</p>
+          <div>
+            <h2>Designed for civic teams that have to do the work themselves.</h2>
+          </div>
+        </div>
+        <div class="audiences">
+          <article class="audience">
+            <h3>Clerks and administrators</h3>
+            <p>Own setup, recovery, records, publishing policy, and the public-facing archive.</p>
+            <a href="https://github.com/scottconverse/civiccast/blob/main/docs/admin-guide.md">Admin guide</a>
+          </article>
+          <article class="audience">
+            <h3>Meeting operators</h3>
+            <p>For uploaded recordings, package privately, approve publication, confirm resident playback, and hand the record to the clerk. Live operation requires separately proven ingest.</p>
+            <a href="https://github.com/scottconverse/civiccast/blob/main/docs/meeting-operator-guide.md">Operator guide</a>
+          </article>
+          <article class="audience">
+            <h3>Public-access and PEG stations</h3>
+            <p>Evaluate the broader playout, bulletin, scheduled-recording, underwriting, and reporting source inventory only with separate station-device evidence.</p>
+            <a href="https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">3.0 master spec</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="beta" id="beta">
+        <div class="section">
+          <div class="beta-card">
+            <p class="kicker">Installer status - <span class="badge">controlled beta</span></p>
+            <h2>Download the current Windows controlled beta.</h2>
+            <p>
+              A genuine clean-Windows test exposed concurrent bootstrap,
+              Windows-servicing, and missing-progress-feedback defects in
+              v1.0.0-rc13. It is withdrawn from beta use.
+            </p>
+            <p>
+              v1.0.0-rc18 is the current release. It carries
+              rc15's clean-Windows installer repairs (validated from a
+              WSL-disabled baseline through cold-reboot recovery), rc16's
+              published UI/UX repairs, rc17's beta-blocker fixes, and the sixteen
+              stage-gate fixes. Do not install rc13 — and do not use an older
+              prerelease, a source-code ZIP, or an untagged build.
+            </p>
+            <p>
+              <strong>v1.0.0-rc18 is the approved installer for the controlled
+              beta.</strong> rc18 fixes all sixteen findings a full stage
+              gate raised against the rc17 line, three of them Critical -
+              including a simulated archive that produced a link looking like a
+              genuine archive.org permalink for a meeting that was never
+              archived. Its installer is built from the gate-cleared main branch,
+              Authenticode-signed, and proven on a genuinely clean Windows host,
+              and its stage-gate re-run returned no blocker or critical findings.
+              rc17 remains downloadable from its release page as the rollback
+              target but carries all sixteen findings. rc18's proof boundary is
+              stated at the top of its verification record.
+            </p>
+            <div class="actions">
+              <!-- Links straight at the .exe. This button used to say
+                   "v1.0.0-rc18" and point at the release tag page, where the
+                   installer is one line among 28 assets (20 of them
+                   .sigstore.json) inside a list GitHub collapses -- so a
+                   button labelled Download delivered a directory listing and
+                   testers could not find the installer at all. -->
+              <a class="button primary" href="https://github.com/scottconverse/civiccast/releases/download/v1.0.0-rc18/civiccast-1.0.0-rc18-windows-setup.exe" aria-label="Download the CivicCast v1.0.0-rc18 Windows installer, 232 MB">Download for Windows<span class="button-sub"><span>v1.0.0-rc18</span> &middot; 232 MB &middot; .exe</span></a>
+              <a class="button secondary" href="https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18">Checksum &amp; all files</a>
+              <a class="button secondary" href="https://github.com/scottconverse/civiccast/blob/main/docs/tester/START-HERE.md">Read the tester packet</a>
+              <a class="button secondary" href="https://github.com/scottconverse/civiccast/blob/main/docs/releases/v1.0.0-rc13-verification.md">rc13 incident record</a>
+            </div>
+            <p class="fine-print">
+              A separate native Windows product line is under owner-approved
+              development. Its current development candidate, v1.0.0-beta.1, is an
+              owner-held unpublished candidate - not a public release, and not a
+              successor build of the WSL v1.0.0-rc18 line above.
+            </p>
+            <p class="verify-line">
+              Verify before you run it — SHA-256
+              <code>af4d2017c6287eaed8cb4b1553d539281fc14c3e3863869c0ea5b8d2e73c311b</code>,
+              243,742,408 bytes, Authenticode signed
+              <strong>CN=Scott Converse</strong>. In PowerShell:
+              <code>Get-FileHash .\civiccast-1.0.0-rc18-windows-setup.exe -Algorithm SHA256</code>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="docs">
+        <div class="section-header">
+          <p class="kicker">Start here</p>
+          <div>
+            <h2>Pick the guide that matches the job.</h2>
+            <p class="intro">
+              New user, operator, records, and technical material are separated so people can find
+              the next useful step quickly.
+            </p>
+          </div>
+        </div>
+        <div class="docs-grid">
+          <a class="doc" href="USER-MANUAL.pdf"><strong>User Manual (PDF)</strong><span>Plain-English product guide for the current beta; printable.</span></a>
+          <a class="doc" href="install-windows.html"><strong>Windows Install</strong><span>Setup expectations and when to ask for IT help.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/tester/START-HERE.md"><strong>Tester Packet</strong><span>Walkthroughs, checklist, known limits, and reporting.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/records-clerk-guide.md"><strong>Records Clerk</strong><span>Caption review, summaries, exports, and publish approvals.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/ops/channel-egress-runbook.md"><strong>Channel Runbook</strong><span>Local channel output controls and technical test steps.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/API-REFERENCE.md"><strong>API Reference</strong><span>Developer docs and generated API contracts.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast"><strong>GitHub Repo</strong><span>Source code, releases, issues, and discussions.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md"><strong>3.0 Master Spec</strong><span>Thesis, feature scope, build order, and proof ladder.</span></a>
+          <a class="doc" href="spec/3.0/ROADMAP.status.yaml"><strong>Roadmap Status</strong><span>Repo-verified status manifest. Fail-closed against false claims.</span></a>
+          <a class="doc superseded" href="https://github.com/scottconverse/civiccast/blob/main/docs/spec/release-plan-v1.7.md"><strong>Release Plan (pre-1.0 numbering, superseded)</strong><span>Historical early-adoption/readiness policy from the pre-reset "v1.7" line. It does not describe the current rc18 controlled beta.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/adoption/early-adopter-quickstart.md"><strong>Early Adopter</strong><span>Quickstart for teams evaluating CivicCast in a controlled beta.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/adoption/support-intake.md"><strong>Support Intake</strong><span>What to collect before opening a support request.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/adoption/procurement-legal-brief.md"><strong>Procurement Brief</strong><span>Plain-English notes for procurement, records, and legal review.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/adoption/release-policy.md"><strong>Release Policy</strong><span>How packaged releases, checksums, and claims are handled.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md"><strong>Legal Notices</strong><span>Trademark, non-affiliation, patent, and licensing boundaries.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/legal/patent-watchlist.md"><strong>Patent Risk Notes</strong><span>Watchlist and counsel-review triggers for future commercial work.</span></a>
+          <a class="doc superseded" href="https://github.com/scottconverse/civiccast/blob/main/docs/releases/v1.7-proof-bundle.md"><strong>Proof Bundle (pre-1.0 numbering, superseded)</strong><span>Historical evidence bundle from the pre-reset "v1.7" line. It does not describe the current rc18 controlled beta.</span></a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="footer-inner">
+        <div>
+          <strong>CivicCast - v1.0.0-rc18 Windows controlled beta</strong><br />
+          Open-source PEG broadcast software. Apache 2.0 (code), CC BY 4.0 (docs).
+        </div>
+        <div>
+          <a href="https://github.com/scottconverse/civiccast">GitHub</a> -
+          <a href="https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">3.0 Spec</a> -
+          <a href="https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md">Legal Notices</a> -
+          <a href="https://github.com/scottconverse/civiccast/blob/main/docs/releases/v1.0.0-rc13-verification.md">1.0.0-rc13 incident record</a> -
+          <a href="https://github.com/scottconverse/civiccast/blob/main/docs/releases/v0.2.0-verification.md">0.2.0 verification</a> -
+          <a href="https://github.com/scottconverse/civiccast/discussions">Discussions</a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

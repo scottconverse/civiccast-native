@@ -1,0 +1,601 @@
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# SPDX-License-Identifier: Apache-2.0
+# Build release-candidate artifacts without creating tags.
+
+name: release-artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to upload to when upload_to_release is true"
+        required: false
+        default: ""
+      upload_to_release:
+        description: "Upload artifacts to the existing tag release"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+  push:
+    # NB: GitHub ignores a paths: filter on tag pushes, so none is set here — any
+    # v* tag runs the release. (A paths: filter would have been silently inert.)
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  linux-artifacts:
+    name: Linux, Python, docs, and portable artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system packaging tools
+        # workflow-cost: local-docker-cache. This job is tag/manual
+        # only, never PR-fired, and is the release artifact producer required
+        # by the release readiness audit.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            pandoc \
+            lmodern \
+            texlive-xetex \
+            texlive-fonts-recommended \
+            texlive-latex-recommended \
+            texlive-latex-extra \
+            dpkg-dev \
+            rpm
+
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade build hatchling
+          python -m pip install -e .
+
+      - name: Render user manual
+        run: python scripts/render_user_manual.py --out-dir artifacts/release
+
+      - name: Build release artifacts
+        run: |
+          python scripts/build_release_artifacts.py --out-dir artifacts/release --all-portable
+          python scripts/build_release_artifacts.py --out-dir artifacts/release --python
+          python scripts/build_release_artifacts.py --out-dir artifacts/release --linux-native
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Create and verify Sigstore release attestations
+        env:
+          COSIGN_YES: "true"
+        run: |
+          manifest="$(find artifacts/release -maxdepth 1 -name '*-release-artifacts-manifest.json' | head -n 1)"
+          test -n "$manifest"
+          identity="https://github.com/scottconverse/civiccast/.github/workflows/release-artifacts.yml@${GITHUB_REF}"
+          # Do NOT attest the partial manifest itself: this job publishes only the
+          # OTHER artifacts (each with its own bundle); the complete manifest is
+          # built + attested later by publish-manifest. Attesting the partial here
+          # left an orphan <manifest>.sigstore.json on the release that would, once
+          # the merged manifest publishes under the same name, become a stale
+          # predicate mismatch (cosign verify would fail). See gate-civiccast C2.
+          find artifacts/release -maxdepth 1 -type f ! -name '*.sigstore.json' ! -name '*-release-artifacts-manifest.json' -print0 |
+            while IFS= read -r -d '' artifact; do
+              bundle="${artifact}.sigstore.json"
+              cosign attest-blob \
+                --yes \
+                --oidc-provider github-actions \
+                --predicate "$manifest" \
+                --type custom \
+                --bundle "$bundle" \
+                "$artifact"
+              cosign verify-blob-attestation \
+                --bundle "$bundle" \
+                --type custom \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                --certificate-identity "$identity" \
+                "$artifact"
+            done
+
+      - name: Upload workflow artifact bundle
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 45
+        with:
+          name: civiccast-linux-release-artifacts
+          path: artifacts/release/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload to GitHub Release on tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          upload_asset() {
+            asset="$1"
+            name="$(basename "$asset")"
+            digest="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
+            existing="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
+            if [ "$existing" = "$digest" ]; then
+              echo "$name already uploaded with matching digest"
+              return 0
+            fi
+            for attempt in 1 2 3; do
+              if gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber; then
+                return 0
+              fi
+              sleep $((attempt * 10))
+            done
+            existing="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
+            test "$existing" = "$digest"
+          }
+          for asset in artifacts/release/*; do
+            # the complete release manifest is published solely by the
+            # publish-manifest job (which unions this job's and the Windows
+            # job's artifacts); skip the partial one here.
+            case "$(basename "$asset")" in
+              *-release-artifacts-manifest.json) continue ;;
+            esac
+            upload_asset "$asset"
+          done
+
+      - name: Upload to GitHub Release on manual request
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_to_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -n "${{ inputs.release_tag }}"
+          upload_asset() {
+            asset="$1"
+            name="$(basename "$asset")"
+            digest="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
+            existing="$(gh release view "${{ inputs.release_tag }}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
+            if [ "$existing" = "$digest" ]; then
+              echo "$name already uploaded with matching digest"
+              return 0
+            fi
+            for attempt in 1 2 3; do
+              if gh release upload "${{ inputs.release_tag }}" "$asset" --clobber; then
+                return 0
+              fi
+              sleep $((attempt * 10))
+            done
+            existing="$(gh release view "${{ inputs.release_tag }}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
+            test "$existing" = "$digest"
+          }
+          for asset in artifacts/release/*; do
+            # the complete release manifest is published solely by the
+            # publish-manifest job (which unions this job's and the Windows
+            # job's artifacts); skip the partial one here.
+            case "$(basename "$asset")" in
+              *-release-artifacts-manifest.json) continue ;;
+            esac
+            upload_asset "$asset"
+          done
+
+  windows-installer:
+    name: Windows Tauri installer and clean-windows proof kit
+    # Hosted Windows runner: the only lane needing an MSVC toolchain.
+    # Tag/manual only (same trigger surface as the linux job), never PR-fired.
+    # Hosted runners are the repo standard since Scott's 2026-06-12 directive
+    # (repo public; see scripts/policy/check_workflow_runners.py).
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Fail fast: prove the signing service principal can authenticate BEFORE
+      # the ~1h Rust build, so a bad/expired client secret dies in seconds
+      # instead of after the build. This SP uses client-secret auth (there is no
+      # AZURE_SUBSCRIPTION_ID and no OIDC federated credential), and azure/login
+      # has no client-secret input -- so we hit the token endpoint directly.
+      # Blocks only on a definitive bad-credential error; anything else warns.
+      - name: Signing credential preflight (fail fast)
+        shell: pwsh
+        env:
+          AZ_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZ_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZ_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $body = @{
+            client_id     = $env:AZ_CLIENT_ID
+            client_secret = $env:AZ_CLIENT_SECRET
+            grant_type    = "client_credentials"
+            scope         = "https://codesigning.azure.net/.default"
+          }
+          $uri = "https://login.microsoftonline.com/$($env:AZ_TENANT_ID)/oauth2/v2.0/token"
+          try {
+            $resp = Invoke-RestMethod -Method Post -Uri $uri -Body $body -ContentType "application/x-www-form-urlencoded" -ErrorAction Stop
+            if ($resp.access_token) {
+              Write-Host "Preflight OK: signing service principal acquired a code-signing token."
+              exit 0
+            }
+            Write-Error "Preflight: token endpoint returned no access_token."
+            exit 1
+          } catch {
+            $code = ""
+            try { $code = ($_.ErrorDetails.Message | ConvertFrom-Json).error } catch {}
+            if ($code -in @("invalid_client","unauthorized_client","invalid_grant")) {
+              Write-Error "Preflight FAILED - bad or expired AZURE_CLIENT_SECRET ($code). Fix the secret before rebuilding."
+              exit 1
+            }
+            Write-Warning "Preflight inconclusive ($code): $($_.Exception.Message). Not blocking; the sign step will surface any real auth issue."
+            exit 0
+          }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "24"
+
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip build hatchling uv
+          python -m pip install -e .
+
+      - name: Install frontend dependencies
+        run: |
+          npm ci --prefix civiccast/apps/portal-operator
+          npm ci --prefix civiccast/apps/portal-public
+          npm ci --prefix civiccast/apps/installer
+
+      - name: Stage bundled GStreamer runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $runtimeDir = "artifacts/release/gstreamer-runtime"
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          gh release download v3.0.0-beta1-cleanroom-r7-bootstrap-proof `
+            --repo scottconverse/civiccast `
+            --pattern "gstreamer-runtime-linux-x86_64.tar.gz*" `
+            --dir $runtimeDir `
+            --clobber
+          $archive = Join-Path $runtimeDir "gstreamer-runtime-linux-x86_64.tar.gz"
+          $checksum = Join-Path $runtimeDir "gstreamer-runtime-linux-x86_64.tar.gz.sha256"
+          $expected = "1b89a2712d29bfd27cb1c5679d0ab4e423d7f5d86c3f08661aa650d359c579e3"
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Bundled GStreamer runtime hash mismatch: expected $expected, got $actual"
+          }
+          $sidecarExpected = (Get-Content $checksum -Raw).Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)[0].Trim().ToLowerInvariant()
+          if ($sidecarExpected -ne $expected) {
+            throw "Bundled GStreamer runtime sidecar mismatch: expected $expected, got $sidecarExpected"
+          }
+
+      - name: Build Windows installer artifacts
+        run: python scripts/build_release_artifacts.py --out-dir artifacts/release --python --wheelhouse --windows-installer
+
+      # Sign the installer .exe here - after it is built, before it is bundled,
+      # hashed, and uploaded - so the release asset and every published checksum
+      # are the SIGNED binary. Azure holds the cert in an HSM and performs the
+      # signing; no .pfx or private key touches the runner. Auth is the signing
+      # service principal (client secret) passed straight to the action's azure-*
+      # inputs: this account has no Azure subscription and no OIDC federated
+      # credential, so there is no azure/login step and no subscription-id.
+      - name: Sign the Windows installer (Azure Artifact Signing)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: https://wcus.codesigning.azure.net
+          signing-account-name: scottconverse-signing
+          certificate-profile-name: ScottConversePublic
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # artifacts/release is flat and holds exactly one .exe (the installer);
+          # the filter avoids depending on the version-stamped filename.
+          files-folder: artifacts/release
+          files-folder-filter: exe
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+
+      # Fail closed: if signing silently no-op'd (the classic "it passed but
+      # nothing was signed"), turn the build red here instead of shipping an
+      # unsigned installer that still trips SmartScreen.
+      - name: Verify the installer is Authenticode-signed (fail closed)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem artifacts/release/civiccast-*-windows-setup.exe | Select-Object -First 1
+          if (-not $exe) { Write-Error "No installer .exe found to verify."; exit 1 }
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          Write-Host "File:   $($exe.Name)"
+          Write-Host "Status: $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne "Valid") {
+            Write-Error "Installer signature is NOT Valid ($($sig.Status)). Failing the build."
+            exit 1
+          }
+          Write-Host "OK: installer is validly Authenticode-signed."
+
+      # Issue #253: the first build hashed the installer and wrote its sidecar,
+      # tester-package, proof-kit checksums, and manifest BEFORE signing changed
+      # the bytes. Regenerate them from the now-signed .exe (Tauri build is
+      # skipped via --reuse-installer-exe) so every published checksum describes
+      # the signed binary. Must run AFTER signing and BEFORE upload.
+      - name: Regenerate integrity artifacts from the signed installer (#253)
+        run: python scripts/build_release_artifacts.py --out-dir artifacts/release --python --wheelhouse --windows-installer --reuse-installer-exe
+
+      - name: Re-verify the signed installer survived regeneration (fail closed)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem artifacts/release/civiccast-*-windows-setup.exe | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          if ($sig.Status -ne "Valid") {
+            Write-Error "Signature not Valid after regeneration ($($sig.Status))."
+            exit 1
+          }
+          $exeHash = (Get-FileHash -Algorithm SHA256 $exe.FullName).Hash.ToLower()
+          $sidecar = Get-Content "$($exe.FullName).sidecar.json" -Raw | ConvertFrom-Json
+          Write-Host "exe sha256    : $exeHash"
+          Write-Host "sidecar sha256: $($sidecar.sha256)"
+          if ($sidecar.sha256 -ne $exeHash) {
+            Write-Error "Sidecar sha256 does not match the signed installer -- #253 not fixed."
+            exit 1
+          }
+          Write-Host "OK: sidecar matches the signed installer."
+
+      - name: Install cosign for the Windows installer attestation
+        uses: sigstore/cosign-installer@v4.1.2
+
+      # Rekor's in-toto layer limit is 128 MiB, while the bundled Windows
+      # installer is larger. sign-blob records the executable's SHA-256 in the
+      # transparency log without attempting to upload the executable as a
+      # layer, and verify-blob binds the bundle back to the exact EXE bytes.
+      - name: Create and verify the Windows installer Sigstore blob signature
+        shell: pwsh
+        env:
+          COSIGN_YES: "true"
+        run: |
+          $exe = Get-ChildItem artifacts/release/civiccast-*-windows-setup.exe | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "Installer is missing."
+            exit 1
+          }
+          $bundle = "$($exe.FullName).sigstore.json"
+          $identity = "https://github.com/scottconverse/civiccast/.github/workflows/release-artifacts.yml@${env:GITHUB_REF}"
+          cosign sign-blob `
+            --yes `
+            --oidc-provider github-actions `
+            --bundle $bundle `
+            $exe.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cosign verify-blob `
+            --bundle $bundle `
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" `
+            --certificate-identity $identity `
+            $exe.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Regenerate integrity artifacts with the Sigstore bundle
+        run: python scripts/build_release_artifacts.py --out-dir artifacts/release --python --wheelhouse --windows-installer --reuse-installer-exe
+
+      - name: Verify the final Windows signing metadata (fail closed)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem artifacts/release/civiccast-*-windows-setup.exe | Select-Object -First 1
+          $bundle = "$($exe.FullName).sigstore.json"
+          $sidecar = Get-Content "$($exe.FullName).sidecar.json" -Raw | ConvertFrom-Json
+          $sig = Get-AuthenticodeSignature $exe.FullName
+          if ($sig.Status -ne "Valid") {
+            Write-Error "Signature not Valid after final regeneration ($($sig.Status))."
+            exit 1
+          }
+          if (-not (Test-Path -LiteralPath $bundle)) {
+            Write-Error "Sigstore bundle is missing after final regeneration."
+            exit 1
+          }
+          if ($sidecar.attestation -ne "$($exe.Name).sigstore.json") {
+            Write-Error "Sidecar attestation does not name the real Sigstore bundle."
+            exit 1
+          }
+          if ($sidecar.install_manifest.signed -ne $true) {
+            Write-Error "Sidecar does not report the signed installer truthfully."
+            exit 1
+          }
+
+      - name: Upload workflow artifact bundle
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 45
+        with:
+          name: civiccast-windows-release-artifacts
+          path: |
+            artifacts/release/civiccast-*-windows-setup.exe
+            artifacts/release/civiccast-*-windows-setup.exe.sidecar.json
+            artifacts/release/civiccast-*-windows-setup.exe.sigstore.json
+            artifacts/release/civiccast-*-windows-tester-package.zip
+            artifacts/release/civiccast-*-windows-tester-package.json
+            artifacts/release/civiccast-*-clean-windows-proof-kit.zip
+            artifacts/release/civiccast-*-release-artifacts-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload to GitHub Release on tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          upload_asset() {
+            asset="$1"
+            name="$(basename "$asset")"
+            digest="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
+            existing="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
+            if [ "$existing" = "$digest" ]; then
+              echo "$name already uploaded with matching digest"
+              return 0
+            fi
+            for attempt in 1 2 3; do
+              if gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber; then
+                return 0
+              fi
+              sleep $((attempt * 10))
+            done
+            existing="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
+            test "$existing" = "$digest"
+          }
+          shopt -s nullglob
+          for asset in artifacts/release/civiccast-*-windows-* artifacts/release/civiccast-*-clean-windows-proof-kit.zip; do
+            upload_asset "$asset"
+          done
+
+      - name: Upload to GitHub Release on manual request
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_to_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test -n "${{ inputs.release_tag }}"
+          upload_asset() {
+            asset="$1"
+            name="$(basename "$asset")"
+            digest="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
+            existing="$(gh release view "${{ inputs.release_tag }}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
+            if [ "$existing" = "$digest" ]; then
+              echo "$name already uploaded with matching digest"
+              return 0
+            fi
+            for attempt in 1 2 3; do
+              if gh release upload "${{ inputs.release_tag }}" "$asset" --clobber; then
+                return 0
+              fi
+              sleep $((attempt * 10))
+            done
+            existing="$(gh release view "${{ inputs.release_tag }}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
+            test "$existing" = "$digest"
+          }
+          shopt -s nullglob
+          for asset in artifacts/release/civiccast-*-windows-* artifacts/release/civiccast-*-clean-windows-proof-kit.zip; do
+            upload_asset "$asset"
+          done
+
+  publish-manifest:
+    name: Merge and publish the complete artifact manifest
+    # Runs after BOTH artifact-producing jobs. Each writes only a partial
+    # manifest of the artifacts it built; this job unions them into the single
+    # published ledger so the signed Windows installer (and its sidecar, tester
+    # package, and proof kit) are never silently omitted. Being the last writer,
+    # its --clobber upload supersedes either job's partial manifest.
+    needs: [linux-artifacts, windows-installer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python build dependencies
+        run: python -m pip install -e .
+
+      - name: Download Linux job artifacts
+        uses: actions/download-artifact@v7.0.0
+        timeout-minutes: 30
+        with:
+          name: civiccast-linux-release-artifacts
+          path: merge/linux
+
+      - name: Download Windows job artifacts
+        uses: actions/download-artifact@v7.0.0
+        timeout-minutes: 30
+        with:
+          name: civiccast-windows-release-artifacts
+          path: merge/windows
+
+      - name: Merge the per-job manifests into one complete ledger
+        run: |
+          python scripts/build_release_artifacts.py \
+            --merge-manifests merge/linux merge/windows \
+            --out-dir merge/combined
+          echo "Merged release manifest:"
+          cat merge/combined/civiccast-*-release-artifacts-manifest.json
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      # Attest the COMPLETE (merged) manifest here — the only place it is ever
+      # published — so its .sigstore.json describes the bytes that actually ship.
+      # The linux job deliberately no longer attests its partial manifest, so
+      # there is no stale same-named bundle to collide with this one.
+      - name: Attest the complete manifest (Sigstore)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          shopt -s nullglob
+          identity="https://github.com/scottconverse/civiccast/.github/workflows/release-artifacts.yml@${GITHUB_REF}"
+          for manifest in merge/combined/civiccast-*-release-artifacts-manifest.json; do
+            bundle="${manifest}.sigstore.json"
+            cosign attest-blob \
+              --yes \
+              --oidc-provider github-actions \
+              --predicate "$manifest" \
+              --type custom \
+              --bundle "$bundle" \
+              "$manifest"
+            cosign verify-blob-attestation \
+              --bundle "$bundle" \
+              --type custom \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --certificate-identity "$identity" \
+              "$manifest"
+          done
+
+      - name: Upload the complete manifest (+ its attestation) to GitHub Release on tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          for asset in \
+            merge/combined/civiccast-*-release-artifacts-manifest.json \
+            merge/combined/civiccast-*-release-artifacts-manifest.json.sigstore.json; do
+            gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber
+          done
+
+      - name: Upload the complete manifest (+ its attestation) to GitHub Release on manual request
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_to_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -n "${{ inputs.release_tag }}"
+          shopt -s nullglob
+          for asset in \
+            merge/combined/civiccast-*-release-artifacts-manifest.json \
+            merge/combined/civiccast-*-release-artifacts-manifest.json.sigstore.json; do
+            gh release upload "${{ inputs.release_tag }}" "$asset" --clobber
+          done
+
+      # Candidate gate: assert the owner-held release asset set is complete and
+      # self-consistent (merged manifest present; every *.sigstore.json has its
+      # base file). Catches the class of defect (missing manifest / orphan
+      # attestation) that G-1 shipped, on the real release rather than only in
+      # local build output.
+      - name: Verify the candidate release asset set
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release == 'true')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            phase="--public-beta"
+          else
+            phase="--candidate"
+          fi
+          python scripts/policy/check_published_release_assets.py "$RELEASE_TAG" "$phase"

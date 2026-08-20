@@ -1,0 +1,225 @@
+# Capability ledger — the anti-amnesia record for the native Windows beta.
+#
+# PURPOSE. The audit rule "verdicts never carry across SHAs" is correct for
+# release gating and catastrophic for memory: across sessions it degraded
+# "unproven at the current SHA" into "never done," and agents re-planned and
+# re-built capabilities this project had already proven (full audit:
+# TRUE-STATE-REVIEW-2026-08-08). This file carries the HISTORY so no future
+# session can un-know it. It is additive to docs/claims/claims.yaml and is
+# deliberately NOT validated by scripts/policy/check_claims_evidence.py —
+# claims.yaml binds gate verdicts at exact SHAs; this ledger records, for
+# every beta capability, when it was last proven anywhere and where it
+# stands against the CURRENT candidate.
+#
+# SCHEMA (per entry):
+#   last_proven:      {sha, date, evidence} — most recent proof at ANY sha,
+#                     any venue. evidence is a repo path, a branch-qualified
+#                     path (branch:path), or a local evidence-tree path.
+#   current_candidate_status: proven | stale | never
+#     proven — demonstrated at the CURRENT release head (or a build of it),
+#              with evidence committed in this repo. Nothing less.
+#     stale  — proven at an older sha, an older built candidate, or another
+#              lane; needs re-binding at the current candidate, not
+#              re-building. bound_at names the sha the proof belongs to.
+#     never  — no completed proof exists anywhere (rebuild/prove for real)
+#
+#   NOTE (2026-08-08): release head 99b1ce4b has NO built candidate yet
+#   (its artifact build was cancelled) — so every capability proven on the
+#   923fad14 build lineage is `stale` by this definition and re-binds
+#   automatically when slice-b1 gates the rebuilt candidate. This encoding
+#   is deliberate, per Codex review on PR #382: a `proven` that outruns its
+#   sha is exactly the overclaim this file exists to prevent.
+#   rebind: the beta slice that re-proves it (see
+#           civiccast-lifecycle-workflow/beta/beta-slices.yaml on the host)
+#
+#   NOTE (2026-08-13): PR #389 (the B5 supervisor reconciliation-latch fix)
+#   merged to release/native-beta-1.0.0-beta.1-rc1 as 3e3356dee. This is
+#   deliberately NOT recorded as a new gate_passes/release_head entry below
+#   — no gate has run against it and no capability in this file has direct
+#   evidence AT that sha yet. A candidate build is in flight (workflow run
+#   31687880719); TESTER1's request-0082 Part 1 verify leg targets it.
+#   Every entry below still carries only the sha its OWN evidence names —
+#   per this file's own rule, do not re-bind a row to 3e3356dee without a
+#   proof committed at that sha.
+#
+# RULES. Update this file in the same commit as the evidence that changes a
+# status. A status may only move to `proven` alongside evidence at the
+# candidate sha. Moving a capability to `never` requires a NOT-FOUND search
+# transcript, not an agent's recollection.
+
+updated: 2026-08-13
+candidate_line:
+  gate_passes: [2b41adff, 448c41eb, 923fad14, 6939f3d3]
+  release_head: 8e3179dd  # post-B0; full suite GREEN + Unit tests now a required PR check (owner Option C)
+
+capabilities:
+
+  api-parity-full-surface:
+    last_proven: {sha: 923fad14, date: 2026-08-08, evidence: ".agent-runs/native-windows/beta-evidence-2026-08-08/adv-parity.json (358 live vs 357 expected, 0 missing, rc18)"}
+    current_candidate_status: stale
+    bound_at: 923fad14  # newest BUILT candidate; re-binds at slice-b1 gate
+
+  lifecycle-gate-19-checks:
+    last_proven: {sha: 6939f3d3, date: 2026-08-09, evidence: ".agent-runs/native-windows/beta-evidence-2026-08-09/gate-attempt30-per-check-transcript.json (all 19 checks: id, verdict, timestamp, details digest+excerpt) + gate-result-attempt30-6939f3d3.json + coverage/findings/SHA256SUMS alongside (PASS 19/19; first gate pass on a #381-bearing candidate). Attempts 26-28 evidence alongside in beta-evidence-2026-08-08/"}
+    current_candidate_status: stale
+    bound_at: 6939f3d3  # head moved with B0 (test/CI/timeout pins); final bind at slice-b9
+
+  pack-signature-trust-boundary:
+    last_proven: {sha: 923fad14, date: 2026-08-08, evidence: ".agent-runs/native-windows/beta-evidence-2026-08-08/adv-corrupt-pack-result.json (exit 110, nothing installed)"}
+    current_candidate_status: stale
+    bound_at: 923fad14  # newest BUILT candidate; re-binds at slice-b1 gate
+    note: >-
+      The verdict STRING in that file ("ACCEPTED-CORRUPT-PACK") is a known
+      instrument error (POSTMORTEM-2026-08-08 §5.13); the recorded facts
+      (install exit 110, service absent) show the refusal. Re-verdict at B1.
+
+  health-endpoint-honesty:
+    last_proven: {sha: 923fad14, date: 2026-08-08, evidence: ".agent-runs/native-windows/beta-evidence-2026-08-08/adv-health-db.json (DB killed; 0 healthy claims)"}
+    current_candidate_status: stale
+    bound_at: 923fad14  # newest BUILT candidate; re-binds at slice-b1 gate
+
+  supervisor-scm-restart-ac4:
+    last_proven: {sha: 923fad14, date: 2026-08-08, evidence: ".agent-runs/native-windows/beta-evidence-2026-08-08/adv-ac4.json (new PID in 3s, serving in 7s)"}
+    current_candidate_status: stale
+    bound_at: 923fad14  # newest BUILT candidate; re-binds at slice-b1 gate
+
+  postgres-restart-recovery:
+    last_proven: {sha: 6939f3d3, date: 2026-08-09, evidence: ".agent-runs/native-windows/beta-evidence-2026-08-09/adv-recovery-6939f3d3.json bound to the tested artifact by adv-runs-artifact-binding.json + the committed .wsb mount configs (RECOVERED-from-database-crash: postmaster killed, all 12 processes back, serving healthy). Pre-fix failure: beta-evidence-2026-08-08/adv-recovery.json"}
+    current_candidate_status: stale
+    bound_at: 6939f3d3  # gate-passed built candidate; head moved (B0 test/CI/timeout pins); final bind at slice-b9
+    rebind: slice-b9-full-beta
+
+  session0-service-before-logon:
+    last_proven: {sha: "rc15-era (freeze 9412e625 lineage)", date: 2026-08-02, evidence: "origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/tester2-installer-test-0050c/REPORT-TO-CODER.md (service 6s before first logon); spike: .agent-runs/native-windows/spike-session0/evidence/session0-service-broadcast.md (2026-07-17, 6m14s pre-login broadcast)"}
+    current_candidate_status: stale
+    rebind: hardware_proof (Sandbox venue cannot express it; one failed script
+      attempt at 78c4f0a0 on 2026-08-05 — sc create 1639 — was never re-run)
+
+  acquisition-flow-component-download:
+    last_proven: {sha: dd7f835f, date: 2026-08-02, evidence: "origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/tester1-installer-test-0051c/first-run-wizard-and-download-spot-check.txt (live wizard, hash-verified local components, caption download progressing)"}
+    current_candidate_status: stale
+    note: a component download has NEVER been observed COMPLETING in-product.
+    rebind: slice-b4-captions (completion), slice-b5-local-ai
+
+  published-release-download-verify:
+    last_proven: {sha: 9412e625, date: 2026-08-01, evidence: "origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/tester2-e2e/e1-installer-verification-request-0042b.json (sha256 match from civiccast-releases shakedown)"}
+    current_candidate_status: stale
+    rebind: ship (public restock is an owner action)
+
+  ffmpeg-in-installed-product:
+    last_proven: {sha: null, date: null, evidence: "NEVER. Builder exists (scripts/build_native_ffmpeg_pack.py); 143MB pack build claimed in GO-NO-GO §4.0.1, bound evidence lost with C:\\CivicCastProof. Owner ruling 2026-08-02: does not ship until 7 libx264 call sites fixed."}
+    current_candidate_status: never
+    rebind: slice-b3-ffmpeg
+
+  caption-production-in-installed-product:
+    last_proven: {sha: null, date: null, evidence: "NEVER in an installed product (F4 gated in every product exercise). Caption production per se is proven: 24h/3,711-iteration soak at baa0303a, origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/r7-soak-24h/report.json"}
+    current_candidate_status: never
+    rebind: slice-b4-captions
+
+  ollama-runtime-in-installed-product:
+    last_proven: {sha: 2a91ff45, date: 2026-08-12, evidence: "origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/tester2-b5-inference-0075/tester2-inference-summary.json (TESTER2, 3/3 real chat inferences through packed gemma4:12b via 127.0.0.1:11434 in the installed product, HTTP 200, 34-48s wall-clock each, non-streaming)"}
+    current_candidate_status: stale
+    bound_at: 2a91ff45  # pre-fix candidate; see note — the fix (PR #389) is NOT yet re-verified
+    note: >-
+      Do not read this as "works for a normal user." The Ollama runtime was
+      only running on TESTER2's machine because of an out-of-protocol
+      REBOOT (performed during the earlier request-0073 incident) that
+      happened to work around the reconciliation-latch defect: a skipped
+      optional child never rechecked its prerequisites once the model
+      store landed post-boot (root cause and fix in PR #389, merged as
+      3e3356dee). Request-0075 itself did not reboot
+      (tester2-inference-summary.json: "reboot_used": false) — it just
+      harvested the already-revived state left over from that earlier
+      workaround. What IS proven: the packed runtime, once actually
+      running in the installed product, correctly serves real inference
+      through the product's local API. What is NOT proven: the ordinary
+      no-reboot path (store completes while supervisor is already up,
+      with no operator workaround). That path is pending TESTER1's
+      request-0082 Part 1 verify leg against the fixed candidate (build
+      of 3e3356dee, workflow run 31687880719) — status here should be
+      re-evaluated, not assumed, once that lands. Independent pre-fix
+      defect reproduction (supporting PR #389's root cause, NOT itself a
+      capability proof): TESTER1 request-0077, candidate 66f4e5ddb, 21
+      samples over 609.8s, supervisor pid 8464 stable throughout, 0 ollama
+      processes / 0 listeners on 11434 the entire time — origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/tester1-repro-0077/observation-summary.json
+    rebind: "TESTER1 request-0082 Part 1 verify leg (no-reboot re-check, store re-appears while supervisor already running) at 3e3356dee, build run 31687880719; slice-b5-local-ai"
+
+  operator-console-on-real-install:
+    last_proven: {sha: 6939f3d3, date: 2026-08-09, evidence: ".agent-runs/native-windows/beta-evidence-2026-08-09/adv-console-6939f3d3.json bound via adv-runs-artifact-binding.json (OPERATOR-CONSOLE-FULLY-SERVED: 35/35 routes, negative-controlled, public portal + deep links serving). History: 404 on both testers 2026-08-02 with dist env unset"}
+    current_candidate_status: stale
+    bound_at: 6939f3d3
+    rebind: "slice-b9-full-beta (slice-b6 collapsed: serving proven; deep-link + env wiring verified live)"
+
+  uninstall-on-real-hardware:
+    last_proven: {sha: 2a91ff45, date: 2026-08-12, evidence: "origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/tester1-uninstall-0075/post-uninstall-report.json (TESTER1, real hardware: elevated-helper silent uninstall exit 0; install root, service, ARP entry, firewall rules, shortcuts all gone; database at ProgramData\\data\\pgdata and recordings at ProgramData\\data\\uploads\\recordings both verified present per the preserved-data contract; two disclosed minor leftovers: empty HKLM\\SOFTWARE\\CivicCast parent key, HKCU installer-language value)"}
+    current_candidate_status: stale
+    bound_at: 2a91ff45
+    note: >-
+      NEW row — no prior entry tracked uninstall. Venue distinction
+      matters: every earlier uninstall-and-leftover proof in this
+      project's history ran in Windows Sandbox; this is the first on
+      REAL hardware, which is why it is `stale` (needs re-binding at the
+      current candidate) rather than `never`. Two leftovers are disclosed,
+      not hidden: an empty registry parent key and a per-user installer
+      language value — neither affects the service/ARP/preserved-data
+      verdicts above.
+    rebind: slice-b9-full-beta gauntlet (re-run on the fixed 3e3356dee-lineage candidate)
+
+  installed-product-service-health-soak-10h:
+    last_proven: {sha: 8ed0646b, date: 2026-08-13, evidence: "origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/tester3-overnight-soak-0075/rolling-summary.json (TESTER3, real hardware, 10h/115 samples at 5-minute intervals: 100% supervisor uptime, 0 restarts, health endpoint 200 every sample, Ollama listener on 11434 present every sample, product-tree working set 382-421MB with no growth trend, zero anomalies)"}
+    current_candidate_status: stale
+    bound_at: 8ed0646b  # TESTER3 installed this candidate at request-0064 (2026-08-11) and never reinstalled; the soak ran on that standing install, NOT on 2a91ff45
+    note: >-
+      NEW row — this is NOT native-multichannel-egress-soak below. No
+      channels were egressing; this measures installed-product service
+      health only (supervisor/health-endpoint/Ollama-listener liveness
+      and memory), not multichannel UDP/TS delivery. Do not use this to
+      close out the egress-soak row.
+    rebind: slice-b7-soak (extend to egress-under-load on real hardware)
+
+  native-multichannel-egress-soak:
+    last_proven: {sha: null, date: null, evidence: "NEVER on the native lane. Closest: 3-channel capacity take6 3/3 PASS 2026-07-30 (seconds-scale); decision-full sandbox run 0-for-4 on 2026-08-05 (harness defects, last attempt interrupted)"}
+    current_candidate_status: never
+    rebind: slice-b7-soak
+
+  soak-4h-3channel:
+    last_proven: {sha: fb7f5e49-era, date: 2026-06-19, evidence: "docs/releases/v3.0.0-beta1.md (nonce SOAK-4H-3.0-S21-R8-20260619-5dadf2cc, WSL lane, TSDuck-verified UDP egress x3)"}
+    current_candidate_status: stale
+    rebind: slice-b7-soak (native equivalent)
+
+  soak-24h-caption-floor:
+    last_proven: {sha: baa0303a, date: 2026-08-01, evidence: "origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/r7-soak-24h/report.json (3,711 iterations, 0.38% miss, drift 0.007%)"}
+    current_candidate_status: stale
+
+  soak-8h-live-delivery:
+    last_proven: {sha: 5a1c0f68, date: 2026-07-08, evidence: "docs/releases/evidence/0.9.0-live-delivery-soak-8h.md (PASS summary, 91,973 fetches, 0 5xx; raw samples NOT in repo)"}
+    current_candidate_status: stale
+
+  caption-quality-wer-benchmarks:
+    last_proven: {sha: "r7-lineage", date: 2026-07-30, evidence: "origin/test/native-caption-cpu-r7:tester-handoff/native-caption-r7/evidence/controller-0005-real-audio-take2b/degradation-report.json (medium WER 0.1824 vs large-v3 reference)"}
+    current_candidate_status: stale
+
+  upgrade-path-install-over-install:
+    last_proven: {sha: ddb9385c, date: 2026-08-01, evidence: ".agent-runs/native-windows/ws5-installer/evidence/gauntlet-run22/ (rows 30/31/33 after pgdata DACL fix)"}
+    current_candidate_status: stale
+    rebind: slice-b9-full-beta gauntlet
+
+  tsduck-udp-ts-in-pack:
+    last_proven: {sha: 923fad14, date: 2026-08-08, evidence: "native-server-binaries.ccpack contains payload/tsduck/bin/tsp.exe (verified by listing, TRUE-STATE-REVIEW §3)"}
+    current_candidate_status: stale
+    bound_at: 923fad14  # newest BUILT candidate; re-binds at slice-b1 gate
+
+  captions-runtime-and-portals-bundled:
+    last_proven: {sha: 923fad14, date: 2026-08-08, evidence: "native-app-payload.ccpack contains ctranslate2 4.8.1, faster-whisper 1.2.1, onnxruntime, PyAV, boto3, 42 operator + 5 public portal dist files (verified by listing)"}
+    current_candidate_status: stale
+    bound_at: 923fad14  # newest BUILT candidate; re-binds at slice-b1 gate
+
+  docs-artifact-set-4-4:
+    last_proven: {sha: 99b1ce4b-lineage, date: 2026-08-08, evidence: "all 15 spec §4.4 artifacts exist; docs/USER-MANUAL.render.json sha256 matches current USER-MANUAL.md (verified by re-hash)"}
+    current_candidate_status: proven
+    note: content is WSL-lane; native operator docs are `never` — see next.
+
+  native-user-docs:
+    last_proven: {sha: null, date: null, evidence: "NEVER. No native install/uninstall/AcquisitionFlow user docs exist; owner-mandated Finding 23 (CPU caption-accuracy warning) absent from every user-facing doc (wp4-doc-drift-catalog.md)"}
+    current_candidate_status: never
+    rebind: slice-b8-docs

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.CivicCastFireTV" parent="Theme.Leanback.Browse" />
+    <style name="Theme.CivicCastFireTV.Player" parent="Theme.Leanback">
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>

@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+# Operator console build gate. Runs lint + TypeScript build + vitest unit
+# tests for the portal-operator Vite app. Parallel to ci-a11y (which gates the public
+# portal). The operator console does not yet have axe-core coverage —
+# accessibility hardening for the operator surface lands at Sprint 0.9.
+
+name: ci-operator-build
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Operator portal (lint + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        working-directory: civiccast/apps/portal-operator
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect operator portal presence
+        id: portal-check
+        working-directory: ${{ github.workspace }}
+        run: |
+          if [ -f "civiccast/apps/portal-operator/package.json" ]; then
+            echo "portal_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "portal_present=false" >> "$GITHUB_OUTPUT"
+            echo "Operator portal not yet present — gate is a no-op for this commit."
+          fi
+
+      - name: Set up Node 20
+        if: steps.portal-check.outputs.portal_present == 'true'
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: civiccast/apps/portal-operator/package-lock.json
+
+      - name: Install dependencies
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm ci
+
+      - name: Lint
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm run lint
+
+      - name: Build
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm run build
+
+      - name: Unit tests (vitest)
+        if: steps.portal-check.outputs.portal_present == 'true'
+        run: npm run test:unit

@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+# Documentation render check. Verifies the user manual (and other prose docs)
+# render cleanly to PDF and DOCX via Pandoc. Activates fully when USER-MANUAL.md
+# lands in Sprint 0.1; placeholder-green until then.
+
+name: ci-docs
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/ci-docs.yml"
+      - "docs/**"
+      - "scripts/render-user-manual.sh"
+      - "scripts/render_user_manual.py"
+      - "scripts/generate-openapi-artifacts.py"
+      - "civiccast/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pandoc-render:
+    name: Pandoc PDF/DOCX render
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (dev)
+        run: uv sync --all-extras --group dev
+
+      - name: Install pandoc and TeX (per ADR 0005)
+        # workflow-cost: local-docker-cache. Self-hosted runner keeps apt
+        # package state warm; paths filters keep this from running on unrelated
+        # PRs.
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            pandoc \
+            lmodern \
+            texlive-xetex \
+            texlive-fonts-recommended \
+            texlive-latex-recommended \
+            texlive-latex-extra
+
+      - name: Render USER-MANUAL via scripts/render-user-manual.sh
+        run: |
+          chmod +x scripts/render-user-manual.sh
+          OUT_DIR=$PWD/artifacts ./scripts/render-user-manual.sh
+
+      - name: Check tracked USER-MANUAL release artifacts
+        run: uv run python scripts/render_user_manual.py --out-dir docs --check-current
+
+      - name: Check generated API artifacts
+        run: uv run python scripts/generate-openapi-artifacts.py --check
+
+      - name: Upload rendered manual
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: user-manual
+          path: artifacts/USER-MANUAL.*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Docs tree readable
+        run: |
+          find docs -name "*.md" -exec head -c 1 {} \; > /dev/null
+          echo "Docs tree readable."

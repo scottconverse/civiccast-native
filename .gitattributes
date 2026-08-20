@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+# Force LF line endings for all text files across platforms.
+# Prevents CRLF leakage from Windows working trees from breaking
+# `ruff format --check`, mypy, and pytest snapshot comparisons.
+
+* text=auto eol=lf
+
+# Binaries — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.mp4 binary
+# NOTE: .ts means TypeScript in this repo (text). MPEG-TS .ts segments are
+# generated HLS output and gitignored, not stored.
+*.m3u8 binary
+*.woff binary
+*.woff2 binary
+
+# Tester-handoff installer binaries are NO LONGER committed to the repo (they
+# previously rode Git LFS and cost ~640 MB of clone bandwidth/storage). Proof
+# kits are distributed as GitHub Release assets instead — see the v2.1.0
+# release. The binary patterns are .gitignore'd so they cannot be re-committed;
+# keep only the text records (result .md, directives, scripts) under
+# tester-handoff/.
+
+# Lock files — let git handle them as text but no normalization to avoid
+# unnecessary churn when developers on different platforms commit them.
+package-lock.json text eol=lf
+uv.lock text eol=lf
+
+# WS4 keeper-patch.diff (CC-WS4-008/CC-WS4-002) embeds a real, re-appliable
+# unified-diff as its payload -- a blank CONTEXT line inside a diff hunk is,
+# by the unified-diff format itself, a single leading space character with
+# nothing after it. `git diff --check`'s blank-at-eol rule otherwise flags
+# those as "trailing whitespace"; stripping that leading space corrupts the
+# patch (`git apply` rejects a context line with no leading marker at all).
+# Only the blank-at-eol rule is disabled for this one path -- every other
+# whitespace class (real trailing space on a non-blank line, space-before-tab,
+# tab-in-indent) still applies here and to every other tracked file.
+.agent-runs/native-windows/ws4-dual-runtime-guard/wsl-keeper-patch/keeper-patch.diff whitespace=-blank-at-eol

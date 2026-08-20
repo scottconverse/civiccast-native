@@ -1,0 +1,35 @@
+{
+  "meta": {"offset": 0, "pageSize": 50, "count": 2},
+  "shows": [
+    {
+      "location": 22,
+      "id": 73411,
+      "title": "John Militaru Ministries Internat'l",
+      "category": 57,
+      "comments": "Featuring bilingual messages of faith and hope.",
+      "eventDate": "2026-07-11T00:00:00-07:00",
+      "lastModified": "2026-07-07T16:44:16.073-07:00",
+      "producer": 445,
+      "project": 170,
+      "reels": [75355],
+      "vods": [6919],
+      "runCount": 1,
+      "totalRunTime": 3515
+    },
+    {
+      "location": 22,
+      "id": 73410,
+      "title": "DW-TV Journal News",
+      "category": 48,
+      "comments": "Featuring world news and information from the heart of Europe.",
+      "eventDate": "2026-07-10T00:00:00-07:00",
+      "lastModified": "2026-07-07T16:15:18.58-07:00",
+      "producer": 61,
+      "project": 110,
+      "reels": [75354],
+      "vods": [],
+      "runCount": 2,
+      "totalRunTime": 1695
+    }
+  ]
+}

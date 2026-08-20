@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Reproducible build toolchain for scripts/build_native_pyav_wheel.py.
+cython==3.2.9
+delvewheel==1.13.0
+setuptools==83.0.0
+wheel==0.47.0

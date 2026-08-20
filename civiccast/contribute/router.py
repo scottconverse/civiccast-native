@@ -1,0 +1,738 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+"""Public contributor and staff review routes."""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import os
+import threading
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+
+from civiccast.auth.rate_limit import AuthRateLimiter
+from civiccast.auth.roles import require_any_role
+from civiccast.contribute.models import (
+    ContributorNotificationOutbox,
+    ContributorReviewQueue,
+    ContributorReviewRequest,
+    ContributorSubmission,
+    ContributorSubmissionCreate,
+    ContributorSubmissionReceipt,
+    ProducerActivityReport,
+    PublicSubmissionStatus,
+    SubmissionAgreementCatalog,
+    SubmissionMediaReference,
+)
+from civiccast.contribute.store import (
+    ContributorReceiptTokenError,
+    ContributorStoreError,
+    ContributorSubmissionNotFoundError,
+    ContributorSubmissionStore,
+    ContributorUploadAlreadyUsedError,
+    default_contributor_store_path,
+    default_contributor_upload_dir,
+)
+
+public_router = APIRouter(prefix="/api/public/contribute", tags=["public", "contribute"])
+staff_router = APIRouter(prefix="/api/staff/contribute", tags=["staff", "contribute"])
+
+# Audit item #27: the public status route verifies a receipt secret
+# (secrets.compare_digest in the store) and had no rate limit anywhere on
+# the path — the same gap the paywall verify/access routes already close
+# with a per-IP sliding window. 30/min is generous for a contributor page
+# polling its own status and still pointless for guessing a >=24-char
+# token. Process-local, same trade-off as the paywall siblings.
+# GauntletGate QA-2: POST /api/public/contribute/uploads had no auth, no rate
+# limit and no size ceiling, and it touches no database -- so an anonymous caller
+# could stream unlimited files of unlimited size onto the station's disk even on
+# a station whose storage was not yet configured. Community producers do submit
+# real programming, so the fix is a bounded ceiling plus a per-IP window rather
+# than authentication. Both are env-tunable for stations with heavier intake.
+DEFAULT_MAX_CONTRIBUTOR_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+MAX_CONTRIBUTOR_UPLOAD_BYTES = DEFAULT_MAX_CONTRIBUTOR_UPLOAD_BYTES
+
+
+def _max_upload_bytes() -> int:
+    """Resolved per call so the ceiling is tunable without a reimport."""
+    raw = os.environ.get("CIVICCAST_CONTRIBUTOR_MAX_UPLOAD_BYTES")
+    if not raw:
+        return DEFAULT_MAX_CONTRIBUTOR_UPLOAD_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_CONTRIBUTOR_UPLOAD_BYTES
+    return value if value > 0 else DEFAULT_MAX_CONTRIBUTOR_UPLOAD_BYTES
+
+
+# GauntletGate rc18 QA-2: the per-request ceiling and per-IP window above bound
+# ONE call and ONE hour. They do not bound the total. Every accepted upload is
+# written here and nothing deletes it, so at the shipped defaults a single
+# unauthenticated, un-rotated address can place ~480 GB/day on a station's disk
+# indefinitely -- and CivicCast targets small self-hosted stations on commodity
+# disks. This is the missing aggregate bound.
+#
+# It REFUSES rather than reclaims, deliberately. An age-based sweep is the wrong
+# instrument while nothing reconciles `upload_ref` against the files on disk: it
+# could delete a contributor's pending programme. Refusing is honest, reversible
+# by an operator, and cannot destroy someone's submission. Reclamation belongs
+# with the reference-tracking work, not inside this fix.
+DEFAULT_UPLOAD_DIR_MAX_BYTES = 50 * 1024 * 1024 * 1024  # 50 GiB
+
+
+def _upload_dir_max_bytes() -> int:
+    """Total ceiling for the contributor upload directory, env-tunable."""
+    raw = os.environ.get("CIVICCAST_CONTRIBUTOR_UPLOAD_DIR_MAX_BYTES", "").strip()
+    if not raw:
+        return DEFAULT_UPLOAD_DIR_MAX_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_UPLOAD_DIR_MAX_BYTES
+    return value if value > 0 else DEFAULT_UPLOAD_DIR_MAX_BYTES
+
+
+def _upload_dir_bytes(upload_dir: Path) -> int:
+    """Bytes currently held in the upload directory (top level, non-recursive)."""
+    total = 0
+    try:
+        for entry in upload_dir.iterdir():
+            if entry.is_file():
+                try:
+                    total += entry.stat().st_size
+                except OSError:
+                    continue
+    except FileNotFoundError:
+        return 0
+    return total
+
+
+# QA-2 (Critical), part 3: the per-request ceiling and the aggregate directory
+# ceiling above still let ONE anonymous, un-rotated address alone consume the
+# entire 50 GiB directory budget and lock out every other contributor. This
+# adds a per-IP cumulative budget, in ADDITION to (not instead of) the
+# directory ceiling, so no single source address can exhaust it alone.
+DEFAULT_CONTRIBUTOR_UPLOAD_PER_IP_MAX_BYTES = 5 * 1024 * 1024 * 1024  # 5 GiB
+
+
+def _per_ip_upload_max_bytes() -> int:
+    """Per-IP cumulative upload ceiling, env-tunable."""
+    raw = os.environ.get("CIVICCAST_CONTRIBUTOR_UPLOAD_PER_IP_MAX_BYTES", "").strip()
+    if not raw:
+        return DEFAULT_CONTRIBUTOR_UPLOAD_PER_IP_MAX_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_CONTRIBUTOR_UPLOAD_PER_IP_MAX_BYTES
+    return value if value > 0 else DEFAULT_CONTRIBUTOR_UPLOAD_PER_IP_MAX_BYTES
+
+
+class ContributorUploadByteBudget:
+    """In-process cumulative bytes-accepted counter, keyed by resolved client IP.
+
+    Same "in-process, resets on restart" trade-off as
+    ``civiccast.auth.rate_limit.AuthRateLimiter`` -- a soft budget that stops
+    one address from consuming the whole directory ceiling alone, not a
+    durable ledger.
+
+    The upload endpoint is a plain ``def`` handler, so Starlette runs it in the
+    AnyIO worker threadpool -- genuinely parallel, not just async-interleaved.
+    An earlier version read the caller's total once before streaming and only
+    added on success, with no lock, so N concurrent uploads from one address
+    each saw the same stale total and each streamed up to the ceiling. The
+    counter is therefore mutated only through :meth:`try_reserve` and
+    :meth:`release` under a lock, and callers reserve each chunk against the
+    *live* total before writing it.
+    """
+
+    # rc18 re-gate PE-2/TE-1: the aggregate directory ceiling's in-flight bytes
+    # live in ``_totals`` under this sentinel key (never a real client IP), not a
+    # separate attribute, so the SAME lock AND the same instrumented-dict test
+    # harness that guard the per-IP counter also guard the directory reservation.
+    _DIR_SLOT_KEY = "\x00contributor-upload-dir-in-flight"
+
+    def __init__(self) -> None:
+        self._totals: dict[str, int] = {}
+        # rc18 re-gate TE-3: which committed file holds which IP's bytes, so the
+        # reaper can return the right IP's budget when it deletes a stale upload.
+        self._paths: dict[str, tuple[str, int]] = {}
+        self._lock = threading.Lock()
+
+    def total(self, key: str) -> int:
+        with self._lock:
+            return self._totals.get(key, 0)
+
+    def try_reserve(self, key: str, num_bytes: int, ceiling: int) -> bool:
+        """Atomically reserve ``num_bytes`` if it keeps ``key`` at/under ``ceiling``.
+
+        Returns True and increments the live total on success; returns False and
+        changes nothing if the reservation would exceed the ceiling. Because the
+        check and the increment happen under one lock, concurrent reservations
+        from the same key cannot both succeed past the ceiling.
+        """
+
+        with self._lock:
+            current = self._totals.get(key, 0)
+            if current + num_bytes > ceiling:
+                return False
+            self._totals[key] = current + num_bytes
+            return True
+
+    def release(self, key: str, num_bytes: int) -> None:
+        """Return previously reserved bytes (an aborted/partial upload was deleted)."""
+
+        if num_bytes <= 0:
+            return
+        with self._lock:
+            remaining = self._totals.get(key, 0) - num_bytes
+            if remaining > 0:
+                self._totals[key] = remaining
+            else:
+                # Drop the entry entirely at zero so the dict does not grow one
+                # permanent entry per address that ever uploaded.
+                self._totals.pop(key, None)
+
+    def reserve_dir_slot(self, upload_dir: Path, ceiling: int, max_bytes: int) -> bool:
+        """Atomically admit one upload against the aggregate directory ceiling.
+
+        rc18 re-gate PE-2/TE-1. The directory ceiling used to be a plain
+        unlocked ``_upload_dir_bytes(dir) >= ceiling`` read-then-act -- the
+        exact TOCTOU QA-2 fixed for the per-IP counter but left here. Concurrent
+        uploads each passed that check before any of them wrote, so the
+        directory overshot. This reserves the upload's WORST CASE (``max_bytes``)
+        under the same lock as the scan, so N in-flight uploads reserve
+        ``N * max_bytes`` and peak on-disk bytes can never exceed ``ceiling``.
+        It is deliberately conservative -- an upload is refused if its worst case
+        would not fit even when its actual size would -- because erring toward
+        refusing protects a small station's disk, which is the whole finding.
+        """
+
+        with self._lock:
+            in_flight = self._totals.get(self._DIR_SLOT_KEY, 0)
+            if _upload_dir_bytes(upload_dir) + in_flight + max_bytes > ceiling:
+                return False
+            self._totals[self._DIR_SLOT_KEY] = in_flight + max_bytes
+            return True
+
+    def release_dir_slot(self, max_bytes: int) -> None:
+        """Return an upload's worst-case directory reservation once it finishes."""
+
+        if max_bytes <= 0:
+            return
+        with self._lock:
+            remaining = self._totals.get(self._DIR_SLOT_KEY, 0) - max_bytes
+            if remaining > 0:
+                self._totals[self._DIR_SLOT_KEY] = remaining
+            else:
+                self._totals.pop(self._DIR_SLOT_KEY, None)
+
+    def record_committed(self, resolved_path: str, key: str, num_bytes: int) -> None:
+        """Record that the committed file at ``resolved_path`` holds ``num_bytes`` for ``key``.
+
+        The per-IP total was already incremented chunk by chunk through
+        :meth:`try_reserve`; this only remembers which path holds it, so
+        :meth:`release_path` can return it to the right IP when the reaper
+        deletes the file (rc18 re-gate TE-3).
+        """
+
+        if num_bytes <= 0:
+            return
+        with self._lock:
+            self._paths[resolved_path] = (key, num_bytes)
+
+    def release_path(self, resolved_path: str) -> None:
+        """Return a reaped file's bytes to the IP that uploaded it (TE-3).
+
+        Idempotent: a path the accountant never recorded -- an upload from a
+        previous process, or one already released -- is a no-op, so the reaper
+        can call it for every file it deletes without tracking which it owns.
+        """
+
+        with self._lock:
+            owner = self._paths.pop(resolved_path, None)
+            if owner is None:
+                return
+            key, num_bytes = owner
+            remaining = self._totals.get(key, 0) - num_bytes
+            if remaining > 0:
+                self._totals[key] = remaining
+            else:
+                self._totals.pop(key, None)
+
+
+# Fallback singleton for callers/tests that hit this router outside
+# create_app() (mirrors the _upload_rate_limiter/_status_rate_limiter
+# fallback pattern below); create_app() installs a fresh instance on
+# app.state so tests never share buckets across app instances.
+_upload_byte_budget = ContributorUploadByteBudget()
+
+
+def _get_upload_byte_budget(request: Request) -> ContributorUploadByteBudget:
+    budget = getattr(request.app.state, "contributor_upload_byte_budget", None)
+    if isinstance(budget, ContributorUploadByteBudget):
+        return budget
+    return _upload_byte_budget
+
+
+UPLOAD_RATE_LIMIT = int(os.environ.get("CIVICCAST_CONTRIBUTOR_UPLOAD_RATE_LIMIT", 10))
+UPLOAD_RATE_WINDOW_SECONDS = 3600
+_upload_rate_limiter = AuthRateLimiter()
+
+
+def _enforce_upload_rate_limit(request: Request) -> None:
+    from civiccast.common.trusted_proxy import resolve_client_ip
+
+    limiter = getattr(request.app.state, "auth_rate_limiter", None)
+    if not isinstance(limiter, AuthRateLimiter):
+        limiter = _upload_rate_limiter
+    key = f"contribute-upload:{resolve_client_ip(request)}"
+    if limiter.allow(key, limit=UPLOAD_RATE_LIMIT, window_seconds=UPLOAD_RATE_WINDOW_SECONDS):
+        return
+    retry_after = limiter.retry_after_seconds(key, window_seconds=UPLOAD_RATE_WINDOW_SECONDS)
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Too many contributor uploads from this address. Wait before trying again.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+_STATUS_RATE_LIMIT = 30
+_STATUS_RATE_WINDOW_SECONDS = 60
+_status_rate_limiter = AuthRateLimiter()
+
+
+def _enforce_status_rate_limit(request: Request) -> None:
+    from civiccast.common.trusted_proxy import resolve_client_ip
+
+    # Prefer the per-app limiter create_app() owns (fresh per app instance,
+    # so tests and Mode-B hosts never share buckets); fall back to the
+    # module-level one when this router is mounted outside create_app.
+    limiter = getattr(request.app.state, "auth_rate_limiter", None)
+    if not isinstance(limiter, AuthRateLimiter):
+        limiter = _status_rate_limiter
+    key = f"contribute-status:{resolve_client_ip(request)}"
+    if limiter.allow(key, limit=_STATUS_RATE_LIMIT, window_seconds=_STATUS_RATE_WINDOW_SECONDS):
+        return
+    retry_after = limiter.retry_after_seconds(key, window_seconds=_STATUS_RATE_WINDOW_SECONDS)
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Too many submission status requests. Wait before trying again.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+# rc18 re-gate PE-1 (Critical): POST /submissions was the one public POST with no
+# per-IP limiter -- /uploads and the status route both close that gap, this one was
+# missed, so an anonymous caller could flood the operator review queue as fast as it
+# could send requests. Same per-IP sliding window as the sibling routes; env-tunable
+# and resolved per call so a station can widen it without a reimport. A submission is
+# lighter than an upload (no file transfer) but each one enqueues operator work, so
+# the default is generous-but-bounded rather than unlimited.
+DEFAULT_SUBMISSION_RATE_LIMIT = 20
+SUBMISSION_RATE_WINDOW_SECONDS = 3600
+_submission_rate_limiter = AuthRateLimiter()
+
+
+def _submission_rate_limit() -> int:
+    raw = os.environ.get("CIVICCAST_CONTRIBUTOR_SUBMISSION_RATE_LIMIT", "").strip()
+    if not raw:
+        return DEFAULT_SUBMISSION_RATE_LIMIT
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_SUBMISSION_RATE_LIMIT
+    return value if value > 0 else DEFAULT_SUBMISSION_RATE_LIMIT
+
+
+def _enforce_submission_rate_limit(request: Request) -> None:
+    from civiccast.common.trusted_proxy import resolve_client_ip
+
+    limiter = getattr(request.app.state, "auth_rate_limiter", None)
+    if not isinstance(limiter, AuthRateLimiter):
+        limiter = _submission_rate_limiter
+    key = f"contribute-submission:{resolve_client_ip(request)}"
+    if limiter.allow(
+        key, limit=_submission_rate_limit(), window_seconds=SUBMISSION_RATE_WINDOW_SECONDS
+    ):
+        return
+    retry_after = limiter.retry_after_seconds(key, window_seconds=SUBMISSION_RATE_WINDOW_SECONDS)
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Too many contributor submissions from this address. Wait before trying again.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def get_contributor_store(request: Request) -> ContributorSubmissionStore:
+    store = getattr(request.app.state, "contributor_submission_store", None)
+    if isinstance(store, ContributorSubmissionStore):
+        return store
+    try:
+        store = ContributorSubmissionStore(default_contributor_store_path())
+    except ContributorStoreError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    request.app.state.contributor_submission_store = store
+    return store
+
+
+@public_router.get(
+    "/agreements/current",
+    response_model=SubmissionAgreementCatalog,
+    summary="Read current contributor submission agreement",
+)
+def read_current_submission_agreement(
+    store: ContributorSubmissionStore = Depends(get_contributor_store),
+) -> SubmissionAgreementCatalog:
+    return store.current_agreement()
+
+
+@public_router.post(
+    "/uploads",
+    response_model=SubmissionMediaReference,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload contributor media into the intake holding area",
+    responses={
+        413: {"description": "Contributor media exceeds the station's per-file upload limit"},
+        429: {"description": "Too many uploads, or this address has used its upload budget"},
+        503: {"description": "Contributor upload storage is not ready or could not be written"},
+        507: {"description": "The station's contributor upload storage is full"},
+    },
+)
+def upload_contributor_media(
+    request: Request,
+    file: UploadFile = File(...),
+) -> SubmissionMediaReference:
+    _enforce_upload_rate_limit(request)
+    filename = _safe_filename(file.filename or "submission-media")
+    upload_dir = default_contributor_upload_dir()
+    try:
+        upload_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # A misconfigured / unwritable upload directory must return the same
+        # actionable 503 the streaming path already gives, not a bare 500.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Contributor upload storage is not ready: {exc}",
+        ) from exc
+    # QA-2 part 3: a per-IP cumulative budget so one un-rotated address cannot
+    # alone consume the whole directory budget and lock out every contributor.
+    from civiccast.common.trusted_proxy import resolve_client_ip
+
+    byte_budget = _get_upload_byte_budget(request)
+    ip_key = resolve_client_ip(request)
+    per_ip_ceiling = _per_ip_upload_max_bytes()
+    dir_ceiling = _upload_dir_max_bytes()
+    max_bytes = _max_upload_bytes()
+    # Aggregate bound (rc18 QA-2 + re-gate PE-2/TE-1): reserve this upload's
+    # worst case against the directory ceiling atomically, BEFORE a byte is
+    # written. The old check was a plain unlocked disk scan, so concurrent
+    # uploads each passed it before any of them wrote and the directory
+    # overshot. reserve_dir_slot takes the reservation under the budget's lock;
+    # a station at capacity refuses here instead of growing further.
+    if not byte_budget.reserve_dir_slot(upload_dir, dir_ceiling, max_bytes):
+        raise HTTPException(
+            status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
+            detail=(
+                "This station's contributor upload storage is full, so new "
+                "submissions cannot be accepted right now. Nothing you sent was "
+                "lost or stored. Please contact the station; an operator needs "
+                "to review and clear pending contributor uploads."
+            ),
+        )
+    # The directory slot is now HELD. Everything from here until it is released
+    # must run inside the try/finally -- including _unique_upload_path, which
+    # touches the filesystem and can raise -- or a failure before the try would
+    # strand the reservation and permanently shrink the ceiling.
+    digest = hashlib.sha256()
+    size_bytes = 0
+    reserved = 0
+    committed = False
+    try:
+        destination = _unique_upload_path(upload_dir, filename)
+        with destination.open("wb") as handle:
+            while chunk := file.file.read(1024 * 1024):
+                size_bytes += len(chunk)
+                # Stop AT the ceiling, not after: checking only once the stream
+                # ends would still let the whole file reach the disk first.
+                if size_bytes > max_bytes:
+                    handle.close()
+                    destination.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail=(
+                            "Contributor media exceeds the station's upload limit of "
+                            f"{_format_bytes(max_bytes)}. Ask the station "
+                            "for a direct hand-off if the programme is larger."
+                        ),
+                    )
+                # Reserve THIS chunk against the LIVE per-IP total before writing
+                # it. Reserving per chunk under the budget's lock is what makes
+                # concurrent uploads from one address see each other -- a single
+                # snapshot taken before the loop let N parallel uploads each pass.
+                if not byte_budget.try_reserve(ip_key, len(chunk), per_ip_ceiling):
+                    handle.close()
+                    destination.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail=(
+                            "This address has already used its contributor upload "
+                            "budget for this station. Nothing you sent was lost or "
+                            "stored. Please contact the station if you need to send "
+                            "more programming."
+                        ),
+                    )
+                reserved += len(chunk)
+                digest.update(chunk)
+                handle.write(chunk)
+        if size_bytes == 0:
+            destination.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Contributor media upload cannot be empty.",
+            )
+        committed = True
+        # Record which path holds this IP's bytes so the reaper can return the
+        # per-IP budget when it later deletes the file (re-gate TE-3). Best-effort:
+        # the upload is already committed to disk, so a failure to resolve the path
+        # for bookkeeping must NOT turn a successful upload into a 503 (the enclosing
+        # `except OSError` would otherwise catch destination.resolve() and misreport
+        # the committed upload as failed). Worst case the reaper cannot credit this
+        # one file's bytes back until restart -- an acceptable, restart-bounded cost.
+        with contextlib.suppress(OSError):
+            byte_budget.record_committed(str(destination.resolve()), ip_key, size_bytes)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not store contributor media: {exc}",
+        ) from exc
+    finally:
+        # Release the reservations BEFORE closing the source handle. An OSError
+        # from file.file.close() -- a real disk-pressure failure, exactly what
+        # this ceiling guards against -- must not skip the releases and strand
+        # the directory slot forever (each such leak shrinks the effective
+        # ceiling until restart). On commit the bytes are now on disk (the next
+        # reserve_dir_slot scan counts them, so keeping the reservation too would
+        # double-count); on any failure the partial file was already deleted.
+        byte_budget.release_dir_slot(max_bytes)
+        # A path that did not commit (413, 429, 422-empty, OSError) deleted its
+        # partial file above; return the per-IP bytes it reserved so a failed
+        # attempt does not permanently consume the address's budget.
+        if not committed:
+            byte_budget.release(ip_key, reserved)
+        # Closing the upload's temp handle is best-effort: the data is already
+        # read, and its failure must not undo the releases above.
+        with contextlib.suppress(OSError):
+            file.file.close()
+    return SubmissionMediaReference(
+        upload_ref=str(destination),
+        filename=filename,
+        content_type=file.content_type or "application/octet-stream",
+        size_bytes=size_bytes,
+        sha256=digest.hexdigest(),
+    )
+
+
+@public_router.post(
+    "/submissions",
+    response_model=ContributorSubmissionReceipt,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an external producer submission for operator review",
+    responses={
+        409: {"description": "The referenced upload is already attached to another submission"},
+        429: {"description": "Rate limit exceeded"},
+    },
+)
+def create_contributor_submission(
+    payload: ContributorSubmissionCreate,
+    request: Request,
+    store: ContributorSubmissionStore = Depends(get_contributor_store),
+) -> ContributorSubmissionReceipt:
+    _enforce_submission_rate_limit(request)
+    try:
+        return store.create_submission(payload)
+    except ContributorStoreError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ContributorUploadAlreadyUsedError as exc:
+        # PE-1: the body is well-formed; the referenced upload is already spent,
+        # which is a state conflict (409), not a malformed request (422).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        # QA-3: store.create_submission now rejects a media reference whose
+        # upload_ref/sha256 don't match a real file in the contributor
+        # upload directory. Same mapping review_contributor_submission
+        # already uses for its ValueError below.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
+
+@public_router.get(
+    "/submissions/{submission_id}/status",
+    response_model=PublicSubmissionStatus,
+    summary="Read contributor-safe submission status",
+    responses={
+        403: {"description": "Receipt token does not match this submission"},
+        404: {"description": "Submission not found"},
+        429: {"description": "Rate limit exceeded"},
+    },
+)
+def read_public_submission_status(
+    submission_id: str,
+    request: Request,
+    receipt_token: str = Query(min_length=24, max_length=160),
+    store: ContributorSubmissionStore = Depends(get_contributor_store),
+) -> PublicSubmissionStatus:
+    _enforce_status_rate_limit(request)
+    try:
+        return store.public_status(submission_id, receipt_token)
+    except ContributorReceiptTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Receipt token does not match this submission.",
+        ) from exc
+    except ContributorSubmissionNotFoundError as exc:
+        raise _submission_not_found(submission_id) from exc
+
+
+@staff_router.get(
+    "/submissions",
+    response_model=ContributorReviewQueue,
+    summary="List operator contributor submission review queue",
+    dependencies=[
+        Depends(require_any_role("publish_operator", "meeting_operator", "support_admin"))
+    ],
+)
+def list_contributor_review_queue(
+    store: ContributorSubmissionStore = Depends(get_contributor_store),
+) -> ContributorReviewQueue:
+    return store.list_queue()
+
+
+@staff_router.get(
+    "/submissions/{submission_id}",
+    response_model=ContributorSubmission,
+    summary="Read one contributor submission with operator review state",
+    responses={404: {"description": "Submission not found"}},
+    dependencies=[
+        Depends(require_any_role("publish_operator", "meeting_operator", "support_admin"))
+    ],
+)
+def read_contributor_submission(
+    submission_id: str,
+    store: ContributorSubmissionStore = Depends(get_contributor_store),
+) -> ContributorSubmission:
+    try:
+        return store.get_submission(submission_id)
+    except ContributorSubmissionNotFoundError as exc:
+        raise _submission_not_found(submission_id) from exc
+
+
+@staff_router.post(
+    "/submissions/{submission_id}/review",
+    response_model=ContributorSubmission,
+    summary="Apply operator review decision to contributor submission",
+    responses={404: {"description": "Submission not found"}},
+    dependencies=[Depends(require_any_role("publish_operator", "meeting_operator"))],
+)
+def review_contributor_submission(
+    submission_id: str,
+    request: ContributorReviewRequest,
+    store: ContributorSubmissionStore = Depends(get_contributor_store),
+) -> ContributorSubmission:
+    try:
+        return store.review_submission(submission_id, request)
+    except ContributorSubmissionNotFoundError as exc:
+        raise _submission_not_found(submission_id) from exc
+    except ContributorStoreError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
+
+@staff_router.get(
+    "/reports/producers",
+    response_model=ProducerActivityReport,
+    summary="Read producer activity report for station reporting",
+    dependencies=[
+        Depends(require_any_role("publish_operator", "meeting_operator", "support_admin"))
+    ],
+)
+def read_producer_activity_report(
+    store: ContributorSubmissionStore = Depends(get_contributor_store),
+) -> ProducerActivityReport:
+    return store.producer_report()
+
+
+@staff_router.get(
+    "/notifications/outbox",
+    response_model=ContributorNotificationOutbox,
+    summary="Read queued contributor status notifications",
+    dependencies=[
+        Depends(require_any_role("publish_operator", "meeting_operator", "support_admin"))
+    ],
+)
+def read_contributor_notification_outbox(
+    store: ContributorSubmissionStore = Depends(get_contributor_store),
+) -> ContributorNotificationOutbox:
+    return store.notification_outbox()
+
+
+def _submission_not_found(submission_id: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Contributor submission {submission_id!r} not found.",
+    )
+
+
+def _format_bytes(num_bytes: int) -> str:
+    """Human-readable size for a contributor-facing message (65536 -> '64 KB').
+
+    UX-REGATE-2: the oversized-upload 413 is read by a public community producer,
+    not an operator, so it must name a size a person can act on rather than a raw
+    ten-digit byte count.
+    """
+    if num_bytes < 1024:
+        return f"{num_bytes} bytes"
+    value = float(num_bytes)
+    for unit in ("KB", "MB", "GB", "TB"):
+        value /= 1024.0
+        if value < 1024.0 or unit == "TB":
+            rendered = f"{value:.1f}".rstrip("0").rstrip(".")
+            return f"{rendered} {unit}"
+    return f"{num_bytes} bytes"  # pragma: no cover - the TB branch already returns
+
+
+def _safe_filename(filename: str) -> str:
+    cleaned = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "-" for char in filename
+    ).strip(".-")
+    return cleaned[:120] or "submission-media"
+
+
+def _unique_upload_path(upload_dir: Path, filename: str) -> Path:
+    stem = Path(filename).stem or "submission-media"
+    suffix = Path(filename).suffix
+    candidate = upload_dir / f"{stem}{suffix}"
+    counter = 2
+    while candidate.exists():
+        candidate = upload_dir / f"{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate

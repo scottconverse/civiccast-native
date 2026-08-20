@@ -1,0 +1,11 @@
+{
+  "name": "@civiccast/app-platform-shells",
+  "version": "1.8.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-targets.mjs",
+    "smoke": "node scripts/smoke-targets.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

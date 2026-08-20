@@ -1,0 +1,283 @@
+@import "tailwindcss";
+@import "./civiccast-tokens.css";
+
+/* CivicCast — design tokens (Mode A standalone, Sprint 0.3).
+ * Ported from the design package's tokens.css.
+ * Light by default; [data-theme="dark"] overrides on <html>. */
+
+:root {
+  /* Safari < 15.4 fallback palette. Keep these before the oklch tokens so
+     modern browsers use the perceptual values while older browsers retain
+     usable hex/rgb variables instead of dropping the declaration entirely. */
+  --cc-paper:        #fbfaf7;
+  --cc-surface:      #ffffff;
+  --cc-surface-2:    #f7f5f0;
+  --cc-surface-3:    #efebe3;
+  --cc-line:         #e0ddd5;
+  --cc-line-strong:  #c8c3b8;
+  --cc-ink:          #262834;
+  --cc-ink-2:        #555765;
+  --cc-ink-3:        #666978;
+  --cc-ink-inv:      #fbfaf7;
+  --cc-brand:        #2458a6;
+  --cc-brand-2:      #1f4a8c;
+  --cc-brand-soft:   #e8f0fb;
+  --cc-brand-ink:    #ffffff;
+  --cc-accent:       #c67d1c;
+  --cc-accent-soft:  #fbedd7;
+  /* Dark ink for text/icons ON the amber accent (primary buttons, accent text
+     on the soft surface). White-on-amber is only 3.3:1 (fails WCAG AA); this
+     dark ink is ~5.5:1. Defined HERE (the cascade-authoritative file) so the
+     contrast fix can't be shadowed; civiccast-tokens.css mirrors it. */
+  --cc-accent-ink:   #1a1206;
+  --cc-live:         #c92222;
+  --cc-live-soft:    #fee7e3;
+  --cc-ok:           #27834f;
+  --cc-ok-soft:      #e4f6ea;
+  --cc-warn:         #aa7a05;
+  --cc-warn-soft:    #fff0c7;
+  --cc-warn-ink:     #1a1206;
+  --cc-err:          #bd1f31;
+  --cc-err-soft:     #fde6e8;
+  --cc-err-ink:      #ffffff;
+  --cc-info:         #2472a3;
+  --cc-info-soft:    #e2f0fa;
+
+  /* Color: warm-leaning neutrals (oklch) */
+  --cc-paper:        oklch(0.985 0.005 80);
+  --cc-surface:      oklch(1.000 0.000 0);
+  --cc-surface-2:    oklch(0.972 0.006 80);
+  --cc-surface-3:    oklch(0.945 0.008 80);
+  --cc-line:         oklch(0.910 0.010 80);
+  --cc-line-strong:  oklch(0.860 0.012 80);
+  --cc-ink:          oklch(0.200 0.015 270);
+  --cc-ink-2:        oklch(0.380 0.012 270);
+  /* ink-3: tertiary / meta. Darkened from oklch(0.560 0.010 270) so
+     small uppercase eyebrow labels (10-11px) clear WCAG 2.1 AA's 4.5:1
+     contrast threshold against --cc-paper. axe-core gates this at
+     ci-a11y. */
+  --cc-ink-3:        oklch(0.450 0.012 270);
+  --cc-ink-inv:      oklch(0.985 0.005 80);
+
+  /* Brand */
+  --cc-brand:        oklch(0.42 0.14 252);
+  --cc-brand-2:      oklch(0.36 0.13 252);
+  --cc-brand-soft:   oklch(0.94 0.04 252);
+  --cc-brand-ink:    oklch(0.99 0.005 252);
+  --cc-accent:       oklch(0.68 0.14 50);
+  --cc-accent-soft:  oklch(0.95 0.04 60);
+
+  /* Status */
+  --cc-live:         oklch(0.58 0.21 25);
+  --cc-live-soft:    oklch(0.95 0.04 25);
+  --cc-ok:           oklch(0.55 0.13 152);
+  --cc-ok-soft:      oklch(0.95 0.04 152);
+  --cc-warn:         oklch(0.70 0.15 75);
+  --cc-warn-soft:    oklch(0.96 0.05 80);
+  --cc-err:          oklch(0.55 0.20 25);
+  --cc-err-soft:     oklch(0.96 0.04 25);
+  --cc-err-ink:      oklch(0.99 0.005 25);
+  --cc-info:         oklch(0.55 0.13 230);
+  --cc-info-soft:    oklch(0.95 0.04 230);
+
+  /* Layout */
+  --cc-topbar-h: 56px;
+  --cc-sidebar-w: 248px;
+  --cc-sidebar-w-collapsed: 64px;
+  --cc-inspector-w: 360px;
+
+  /* Radii */
+  --cc-r-sm: 4px;  --cc-r-md: 6px;  --cc-r-lg: 10px;
+  --cc-r-xl: 14px; --cc-r-pill: 999px;
+
+  /* Elevation */
+  --cc-shadow-sm: 0 1px 0 rgb(38 40 52 / 0.04), 0 1px 2px rgb(38 40 52 / 0.06);
+  --cc-shadow-md: 0 1px 0 rgb(38 40 52 / 0.04), 0 4px 12px rgb(38 40 52 / 0.08);
+  --cc-shadow-lg: 0 1px 0 rgb(38 40 52 / 0.05), 0 16px 40px rgb(38 40 52 / 0.14);
+  --cc-shadow-sm: 0 1px 0 oklch(0.20 0.02 270 / 0.04), 0 1px 2px oklch(0.20 0.02 270 / 0.06);
+  --cc-shadow-md: 0 1px 0 oklch(0.20 0.02 270 / 0.04), 0 4px 12px oklch(0.20 0.02 270 / 0.08);
+  --cc-shadow-lg: 0 1px 0 oklch(0.20 0.02 270 / 0.05), 0 16px 40px oklch(0.20 0.02 270 / 0.14);
+
+  /* Motion */
+  --cc-ease: cubic-bezier(.2, .7, .2, 1);
+  --cc-dur-1: 120ms;
+  --cc-dur-2: 200ms;
+}
+
+[data-theme="dark"] {
+  --cc-paper:       #20222c;
+  --cc-surface:     #292b35;
+  --cc-surface-2:   #242631;
+  --cc-surface-3:   #343743;
+  --cc-line:        #444856;
+  --cc-line-strong: #585e6f;
+  --cc-ink:         #f4f1e9;
+  --cc-ink-2:       #c7c3ba;
+  --cc-ink-3:       #9d9a93;
+  --cc-ink-inv:     #242631;
+  --cc-brand:       #80a7f2;
+  --cc-brand-2:     #96b8ff;
+  --cc-brand-soft:  #173963;
+  --cc-brand-ink:   #111827;
+  --cc-live:        #ff746b;
+  --cc-live-soft:   #5b2727;
+  --cc-ok:          #7bcf98;
+  --cc-ok-soft:     #1f5136;
+  --cc-warn:        #e6bd4d;
+  --cc-warn-soft:   #5c4720;
+  --cc-warn-ink:    #1a1206;
+  --cc-err:         #ff736f;
+  --cc-err-soft:    #5b272b;
+  --cc-err-ink:     #111827;
+  --cc-info:        #74b9e6;
+  --cc-info-soft:   #1c4b66;
+
+  --cc-paper:       oklch(0.165 0.012 265);
+  --cc-surface:     oklch(0.200 0.012 265);
+  --cc-surface-2:   oklch(0.180 0.012 265);
+  --cc-surface-3:   oklch(0.245 0.014 265);
+  --cc-line:        oklch(0.295 0.014 265);
+  --cc-line-strong: oklch(0.360 0.016 265);
+  --cc-ink:         oklch(0.965 0.008 80);
+  --cc-ink-2:       oklch(0.785 0.010 80);
+  --cc-ink-3:       oklch(0.625 0.010 80);
+  --cc-ink-inv:     oklch(0.180 0.012 265);
+
+  --cc-brand:       oklch(0.72 0.14 252);
+  --cc-brand-2:     oklch(0.78 0.13 252);
+  --cc-brand-soft:  oklch(0.30 0.10 252);
+  --cc-brand-ink:   oklch(0.10 0.02 252);
+
+  --cc-live:        oklch(0.70 0.21 25);
+  --cc-live-soft:   oklch(0.32 0.10 25);
+  --cc-ok:          oklch(0.72 0.13 152);
+  --cc-ok-soft:     oklch(0.30 0.07 152);
+  --cc-warn:        oklch(0.78 0.15 75);
+  --cc-warn-soft:   oklch(0.32 0.08 80);
+  --cc-err:         oklch(0.70 0.20 25);
+  --cc-err-soft:    oklch(0.32 0.10 25);
+  --cc-err-ink:     oklch(0.10 0.02 25);
+  --cc-info:        oklch(0.72 0.13 230);
+  --cc-info-soft:   oklch(0.30 0.08 230);
+}
+
+@theme {
+  --color-cc-paper: var(--cc-paper);
+  --color-cc-surface: var(--cc-surface);
+  --color-cc-surface-2: var(--cc-surface-2);
+  --color-cc-surface-3: var(--cc-surface-3);
+  --color-cc-line: var(--cc-line);
+  --color-cc-line-strong: var(--cc-line-strong);
+  --color-cc-ink: var(--cc-ink);
+  --color-cc-ink-2: var(--cc-ink-2);
+  --color-cc-ink-3: var(--cc-ink-3);
+  --color-cc-ink-inv: var(--cc-ink-inv);
+  --color-cc-brand: var(--cc-brand);
+  --color-cc-brand-2: var(--cc-brand-2);
+  --color-cc-brand-soft: var(--cc-brand-soft);
+  --color-cc-brand-ink: var(--cc-brand-ink);
+  --color-cc-accent: var(--cc-accent);
+  --color-cc-live: var(--cc-live);
+  --color-cc-live-soft: var(--cc-live-soft);
+  --color-cc-ok: var(--cc-ok);
+  --color-cc-ok-soft: var(--cc-ok-soft);
+  --color-cc-warn: var(--cc-warn);
+  --color-cc-warn-soft: var(--cc-warn-soft);
+  --color-cc-warn-ink: var(--cc-warn-ink);
+  --color-cc-err: var(--cc-err);
+  --color-cc-err-soft: var(--cc-err-soft);
+  --color-cc-info: var(--cc-info);
+  --color-cc-info-soft: var(--cc-info-soft);
+
+  --font-sans: "Inter Tight", "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--cc-paper);
+  color: var(--cc-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button { font: inherit; color: inherit; cursor: pointer; }
+button,
+a,
+[role="tab"],
+[role="slider"] {
+  transition:
+    background-color var(--cc-dur-1) var(--cc-ease),
+    border-color var(--cc-dur-1) var(--cc-ease),
+    box-shadow var(--cc-dur-1) var(--cc-ease),
+    color var(--cc-dur-1) var(--cc-ease),
+    filter var(--cc-dur-1) var(--cc-ease),
+    transform var(--cc-dur-1) var(--cc-ease);
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+  filter: grayscale(0.25);
+  opacity: 0.56;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+button:disabled {
+  background-color: var(--cc-surface-3) !important;
+  border-color: var(--cc-line) !important;
+  color: var(--cc-ink-3) !important;
+}
+
+@media (hover: hover) {
+  button:not(:disabled):hover,
+  a:hover,
+  [role="tab"]:not([aria-selected="true"]):hover {
+    box-shadow: var(--cc-shadow-sm);
+    filter: brightness(0.96);
+  }
+
+  [role="slider"]:hover {
+    box-shadow: 0 0 0 3px oklch(0.42 0.14 252 / 0.24);
+    transform: scale(1.04);
+  }
+}
+
+button:not(:disabled):active,
+a:active,
+[role="tab"]:active,
+[role="slider"]:active {
+  filter: brightness(0.92);
+  transform: translateY(1px) scale(0.99);
+}
+
+[role="slider"]:focus-visible {
+  box-shadow: 0 0 0 4px oklch(0.42 0.14 252 / 0.28);
+}
+
+.cc-search-shell:focus-within {
+  border-color: var(--cc-brand) !important;
+  box-shadow: 0 0 0 3px oklch(0.42 0.14 252 / 0.20);
+}
+
+a { color: inherit; }
+
+::selection { background: var(--cc-brand-soft); color: var(--cc-brand-2); }
+
+:focus-visible {
+  outline: 2px solid var(--cc-brand);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.cc-mono { font-family: var(--font-mono); font-feature-settings: "tnum"; }
+.cc-tabular { font-variant-numeric: tabular-nums; }
+.cc-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

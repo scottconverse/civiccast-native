@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+name: roadmap-status
+
+# Repo-verified project status. Fails the build if any row in
+# docs/spec/3.0/ROADMAP.status.yaml claims a status the repository cannot prove
+# (a false "built") or if a previously-built feature's evidence regressed. To
+# advance a row, raise its `status` AND add the proving evidence in the same PR.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  roadmap-status:
+    name: Roadmap status (repo-verified)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Lightweight gate: the verifier only needs the stdlib plus a YAML parser,
+      # so we skip the full `uv sync` the heavier jobs run.
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check pyyaml
+
+      - name: Verify roadmap status (actual >= asserted, fail closed)
+        run: python scripts/roadmap_status.py --check

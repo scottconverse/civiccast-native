@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  CivicCastScene is the root SceneGraph node for the channel.
+
+  Layout: a header band with the station name + tagline, then a
+  vertical channel list (one row per CivicCast channel — public,
+  education, government, etc.). Pressing OK on a row plays the
+  channel's live HLS URL in a built-in Video node. Back returns to
+  the list. The list is populated from /api/public/app/config at
+  startup; before the fetch completes a "Loading" placeholder shows.
+-->
+<component name="CivicCastScene" extends="Scene">
+  <interface>
+    <field id="launchArgs" type="assocarray" />
+  </interface>
+
+  <script type="text/brightscript" uri="pkg:/components/CivicCastScene.brs" />
+
+  <children>
+    <Rectangle
+        id="background"
+        width="1920"
+        height="1080"
+        color="0x1A1A1AFF"
+        translation="[0,0]" />
+
+    <Group id="headerGroup" translation="[80,60]">
+      <Label
+          id="stationNameLabel"
+          text="CivicCast"
+          width="1760"
+          font="font:LargeBoldSystemFont"
+          color="0xFFFFFFFF" />
+      <Label
+          id="taglineLabel"
+          text="Public, Education, and Government broadcasting"
+          width="1760"
+          font="font:MediumSystemFont"
+          color="0xAAAAAAFF"
+          translation="[0,72]" />
+    </Group>
+
+    <Label
+        id="statusLabel"
+        text="Loading channels…"
+        width="1760"
+        font="font:MediumSystemFont"
+        color="0xCCCCCCFF"
+        translation="[80,200]" />
+
+    <LabelList
+        id="channelList"
+        translation="[80,260]"
+        itemSize="[1760,72]"
+        numRows="6"
+        color="0xFFFFFFFF"
+        focusedColor="0xFFCC00FF" />
+
+    <Video id="videoPlayer" visible="false" />
+  </children>
+</component>

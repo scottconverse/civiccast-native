@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+name: nightly-publish-soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Number of deterministic publish cycles to run"
+        required: false
+        default: "24"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/nightly-publish-soak.yml"
+      - "civiccast/publish/**"
+      - "civiccast/archive/**"
+      - "civiccast/syndicate/**"
+      - "civiccast/podcast/**"
+      - "civiccast/subscribe/**"
+      - "tests/publish/**"
+      - "scripts/run_publish_soak.py"
+      - "pyproject.toml"
+      - "uv.lock"
+  schedule:
+    # Nightly v1.0 readiness proof: 04:20 UTC.
+    - cron: "20 4 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish-soak:
+    name: Three-tier publish + soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project
+        run: uv sync --all-extras --group dev
+
+      - name: Run publish-soak tests
+        run: uv run pytest tests/publish/test_soak.py -q
+
+      - name: Generate publish-soak evidence
+        run: |
+          iterations="${{ github.event.inputs.iterations || '24' }}"
+          uv run python scripts/run_publish_soak.py \
+            --iterations "${iterations}" \
+            --output artifacts/v1.0-publish-soak-result.json
+
+      - name: Upload publish-soak evidence
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: v1.0-publish-soak-result
+          path: artifacts/v1.0-publish-soak-result.json
+          retention-days: 30

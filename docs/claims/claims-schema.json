@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://civiccast.example/docs/claims/claims-schema.json",
+  "title": "CivicCast claims-evidence registry schema (spec-claims-evidence-rule.md D2)",
+  "description": "Structural contract for docs/claims/claims.yaml. This file documents the contract that scripts/policy/check_claims_evidence.py enforces by hand (stdlib + PyYAML only, no jsonschema dependency, matching check_release_truth.py's dependency posture) — it is the authoritative human/tooling reference for the shape, not a runtime-validated artifact.",
+  "type": "object",
+  "required": ["schema_version", "governed_doc_set", "strong_claim_tokens", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "governed_doc_set": {
+      "description": "D1: the enumerated set of docs within which every strong-claim token occurrence must carry an adjacent claim marker.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "format", "enforced"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Repo-relative file path or glob."
+          },
+          "format": {
+            "type": "string",
+            "enum": ["markdown", "python"],
+            "description": "Marker grammar for this path: markdown uses `<!-- claim:ID -->`, python uses `# claim:ID` inside docstrings."
+          },
+          "enforced": {
+            "type": "boolean",
+            "description": "Whether the marker-scan check (D8 group 5) actively runs against this path in this slice. False entries document the D1-enumerated future governed set (README.md, CAPABILITIES.md, other docs/releases/*-verification.md) that ws3 intentionally does not yet sweep (D9: 'Not a repo-wide sweep; the RULE ships first')."
+          }
+        }
+      }
+    },
+    "strong_claim_tokens": {
+      "description": "D1: word-bounded, case-insensitive strong-claim tokens.",
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/claimEntry" }
+    }
+  },
+  "$defs": {
+    "claimId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,63}$",
+      "description": "Lowercase path-safe slug; matches the audit-control authority-record-v1 claim-id/control-id grammar family."
+    },
+    "blob40": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Git blob ID, computed filter-aware via `git hash-object --path <p> <p>` (the WS1 machinery)."
+    },
+    "roleFile": {
+      "type": "object",
+      "required": ["path", "blob"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "blob": { "$ref": "#/$defs/blob40" }
+      }
+    },
+    "testRole": {
+      "type": "object",
+      "required": ["path", "blob", "node_id"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "blob": { "$ref": "#/$defs/blob40" },
+        "node_id": {
+          "type": "string",
+          "description": "Full pytest node id, e.g. tests/dr/test_postgres_backup.py::test_postgres_backup_snapshot_matches_source"
+        }
+      }
+    },
+    "typedInputs": {
+      "type": "object",
+      "description": "D2: every role is mandatory. `verifier` ('checker script + registry schema', D2's own two-file description) and `fixtures` (exhaustively listed dependencies) are non-empty lists of roleFile. `code` (CC-WS3-005, round-3 audit) is EITHER a single roleFile OR a non-empty list of roleFile — a claim about evidence produced by several cooperating modules binds all of them; a single-module claim stays a bare mapping. Every other role is a single roleFile/testRole.",
+      "required": [
+        "prose",
+        "code",
+        "test",
+        "verifier",
+        "workflow",
+        "workflow_contract",
+        "trust_root",
+        "generator",
+        "fixtures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "prose": { "$ref": "#/$defs/roleFile" },
+        "code": {
+          "description": "CC-WS3-005: one module (bare roleFile) or several cooperating modules (non-empty list of roleFile).",
+          "oneOf": [
+            { "$ref": "#/$defs/roleFile" },
+            { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/roleFile" } }
+          ]
+        },
+        "test": { "$ref": "#/$defs/testRole" },
+        "verifier": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/roleFile" }
+        },
+        "workflow": { "$ref": "#/$defs/roleFile" },
+        "workflow_contract": { "$ref": "#/$defs/roleFile" },
+        "trust_root": { "$ref": "#/$defs/roleFile" },
+        "generator": { "$ref": "#/$defs/roleFile" },
+        "fixtures": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/roleFile" }
+        }
+      }
+    },
+    "control": {
+      "type": "object",
+      "required": ["id", "command", "expected_red_when", "ci_safe"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/claimId" },
+        "command": {
+          "type": "string",
+          "description": "D4: the negative-control command definition (no committed result)."
+        },
+        "expected_red_when": {
+          "type": "string",
+          "description": "D4: the condition under which this control must fail."
+        },
+        "ci_safe": {
+          "type": "boolean",
+          "description": "D4: true = this control RUNS inside the verifier job each time (same-run provenance) and is re-checked every run. False = not re-checked same-run by this verifier (historically resolved against a separate owner/auditor-signed authority record under D5; that external-evidence resolution requirement was removed 2026-08-07 — see check_claims_evidence.py's module docstring and CHANGELOG.md — so a ci_safe:false control's underlying claim still blob-drift-checks (D2) but this control itself is not independently re-verified)."
+        }
+      }
+    },
+    "resolution": {
+      "type": "string",
+      "enum": ["same_run", "external_evidence"],
+      "description": "Which resolution mode this claim was registered under. 'same_run': the D3 same-run verifier proves it every run. 'external_evidence': historically ALSO required an owner/auditor-signed authority record resolved against a separate audit-control repository (D5); that requirement was removed 2026-08-07 (owner decision — see check_claims_evidence.py's module docstring and CHANGELOG.md) as AI-invented ceremony the owner never asked for. Existing entries still carrying 'external_evidence' (docs/claims/claims.yaml) are unaffected structurally — parsing still requires at least one control with ci_safe:false, and D2 blob-drift binding still runs unconditionally against every one of their input roles — only the extra authority-record gate is gone."
+    },
+    "claimEntry": {
+      "type": "object",
+      "required": ["id", "claim", "where", "resolution", "inputs", "controls"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/claimId" },
+        "claim": {
+          "type": "string",
+          "description": "The exact claim asserted. Committed side: definitions only — never a run ID, artifact, or date (D2)."
+        },
+        "where": {
+          "type": "object",
+          "required": ["file", "anchor"],
+          "additionalProperties": false,
+          "properties": {
+            "file": { "type": "string" },
+            "anchor": {
+              "type": "string",
+              "description": "Heading text, bullet lead, or docstring bullet the claim marker is adjacent to; used by the stale-anchor check (D8 group 5)."
+            }
+          }
+        },
+        "resolution": { "$ref": "#/$defs/resolution" },
+        "inputs": { "$ref": "#/$defs/typedInputs" },
+        "controls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/control" }
+        }
+      }
+    }
+  }
+}

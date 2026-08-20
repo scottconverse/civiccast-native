@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CivicCast CTV Reference</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero" aria-labelledby="app-title">
+        <div>
+          <p class="eyebrow">CivicCast reference CTV</p>
+          <h1 id="app-title">Station feed</h1>
+        </div>
+        <div id="feed-status" class="status-pill" role="status">Loading feed</div>
+      </section>
+
+      <section class="player" aria-labelledby="selected-title">
+        <div class="preview-frame">
+          <div class="preview-mark" aria-hidden="true">CC</div>
+          <div>
+            <p id="selected-type" class="eyebrow">Live</p>
+            <h2 id="selected-title">Choose a channel</h2>
+            <p id="selected-description">Live and VOD items from the CivicCast feed appear below.</p>
+          </div>
+        </div>
+        <dl class="selected-meta">
+          <div>
+            <dt>Content ID</dt>
+            <dd id="selected-content-id">-</dd>
+          </div>
+          <div>
+            <dt>Stream</dt>
+            <dd id="selected-stream">-</dd>
+          </div>
+          <div>
+            <dt>Captions</dt>
+            <dd id="selected-captions">-</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="rail" aria-labelledby="live-heading">
+        <h2 id="live-heading">Live channels</h2>
+        <div id="live-rail" class="card-rail"></div>
+      </section>
+
+      <section class="rail" aria-labelledby="vod-heading">
+        <h2 id="vod-heading">VOD</h2>
+        <div id="vod-rail" class="card-rail"></div>
+      </section>
+    </main>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>

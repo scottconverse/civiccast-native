@@ -1,0 +1,50 @@
+Source: generated locally via PIL.ImageCms.createProfile("sRGB"), which calls
+into Little CMS 2 (lcms2) to emit an sRGB display profile that matches the
+sRGB IEC 61966-2.1 specification.
+
+Profile shape (verified post-generation):
+  Device Class:        "mntr" (monitor / display)
+  Colour Space:        "RGB "
+  PCS:                 "XYZ "
+  ICC Profile Version: 4.4
+  Creation Date/Time:  zeroed for reproducibility (ICC.1:2010-12 section 7.2.13
+                       permits a zero dateTimeNumber to indicate "undefined")
+  Size:                588 bytes
+
+This profile is embedded as the DestOutputProfile of the PDF/A-3B
+OutputIntent for CivicCast signed-record exports so they satisfy
+ISO 19005-3:2012 clause 6.2.3 (Device Class must be "prtr" or "mntr").
+
+License posture:
+  - The sRGB IEC 61966-2.1 color space is an ISO standard
+    (IEC 61966-2-1:1999 + Amd.1:2003 ratified the math; the ICC.1
+    specification is published as ISO 15076-1). The profile bytes are a
+    generated sRGB ICC profile produced locally for this repository.
+  - Little CMS 2 (the generator) is distributed under the MIT license
+    (https://github.com/mm2/Little-CMS/blob/master/COPYING). Profile
+    bytes produced by lcms2 are output and are not themselves subject
+    to the lcms2 license.
+  - Pillow (PIL fork), which wraps lcms2 as PIL.ImageCms, is distributed
+    under the MIT-CMU-style Pillow license
+    (https://github.com/python-pillow/Pillow/blob/main/LICENSE).
+
+To regenerate this file deterministically, run:
+
+  python -c "
+  from pathlib import Path
+  import PIL.ImageCms as ic
+  prof = ic.createProfile('sRGB')
+  icc = bytearray(ic.ImageCmsProfile(prof).tobytes())
+  icc[24:36] = b'\\x00' * 12  # zero creation date for reproducibility
+  Path('civiccast/records/fixtures/sRGB.icc').write_bytes(bytes(icc))
+  "
+
+Expected SHA-256 of the resulting file:
+215d9fadbfc938862a82f2633b51fee128b58767f7d7ac55d32cb7e00031bb0d
+
+Replaces the prior ICC fixture (sRGB_v4_ICC_preference.icc) which the
+International Color Consortium publishes as a Profile Connection Space
+(Device Class "spac") preference profile, not as a display/output
+profile. veraPDF 1.28.2 correctly rejected that profile under
+ISO 19005-3:2012 clause 6.2.3 because the PDF/A OutputIntent
+DestOutputProfile must be an output or monitor profile.

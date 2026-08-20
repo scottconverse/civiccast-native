@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+"""Streaming loudness compliance gate through the ffmpeg wrapper boundary."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from civiccast.stream._ffmpeg import check_ffmpeg, run_ffmpeg
+
+
+@dataclass(frozen=True)
+class LoudnessGateResult:
+    """ITU-R BS.1770 / EBU R128 loudness gate result."""
+
+    status: str
+    standard: str
+    target_lufs: float
+    used_ffmpeg_wrapper: bool
+    measured_lufs: float | None
+    operator_action: str
+
+
+# The standard CivicCast has always reported; the default keeps every existing
+# caller (streaming -16 LUFS) byte-for-byte the same.
+DEFAULT_LOUDNESS_STANDARD = "ITU-R BS.1770 / EBU R128"
+
+
+def _loudness_failure(
+    *, standard: str, target_lufs: float, operator_action: str
+) -> LoudnessGateResult:
+    return LoudnessGateResult(
+        status="failed",
+        standard=standard,
+        target_lufs=target_lufs,
+        used_ffmpeg_wrapper=True,
+        measured_lufs=None,
+        operator_action=operator_action,
+    )
+
+
+def check_loudness(
+    *,
+    media_path: Path,
+    target_lufs: float,
+    tolerance_lufs: float,
+    standard_label: str = DEFAULT_LOUDNESS_STANDARD,
+) -> LoudnessGateResult:
+    """Measure a media asset's integrated loudness and gate it against a target.
+
+    ``target_lufs`` / ``standard_label`` are parameterised (S11b per-sink
+    loudness): cable normalises to ATSC A/85 -24 LKFS, streaming to -16 LUFS,
+    EBU R128 to -23 LUFS — all measured by the same ITU-R BS.1770 meter. The
+    result reports the *destination's* standard instead of a single hardcoded
+    one, and the remediation hint names the actual target.
+    """
+
+    if not media_path.exists():
+        return _loudness_failure(
+            standard=standard_label,
+            target_lufs=target_lufs,
+            operator_action=(
+                f"Media file {media_path} is missing; render the release audio proof and "
+                "rerun the loudness gate."
+            ),
+        )
+    ffmpeg = check_ffmpeg()
+    if ffmpeg is None:
+        return _loudness_failure(
+            standard=standard_label,
+            target_lufs=target_lufs,
+            operator_action=(
+                "Install ffmpeg, verify it with civiccast doctor, then rerun loudness."
+            ),
+        )
+    result = run_ffmpeg(
+        [
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            str(media_path),
+            "-filter_complex",
+            "ebur128=peak=true",
+            "-f",
+            "null",
+            "-",
+        ]
+    )
+    if result.returncode != 0:
+        return _loudness_failure(
+            standard=standard_label,
+            target_lufs=target_lufs,
+            operator_action="ffmpeg loudness analysis failed; inspect the media file and rerun.",
+        )
+    measured = _parse_integrated_lufs(result.stderr)
+    if measured is None:
+        return _loudness_failure(
+            standard=standard_label,
+            target_lufs=target_lufs,
+            operator_action="ffmpeg did not report integrated LUFS; rerun with valid audio media.",
+        )
+    status = "ok" if abs(measured - target_lufs) <= tolerance_lufs else "failed"
+    return LoudnessGateResult(
+        status=status,
+        standard=standard_label,
+        target_lufs=target_lufs,
+        used_ffmpeg_wrapper=True,
+        measured_lufs=measured,
+        operator_action="Loudness is within tolerance."
+        if status == "ok"
+        else f"Normalize audio to {target_lufs:g} LUFS and rerun the loudness gate.",
+    )
+
+
+def check_streaming_loudness(
+    *,
+    media_path: Path,
+    target_lufs: float,
+    tolerance_lufs: float,
+) -> LoudnessGateResult:
+    """Back-compat wrapper: gate streaming audio against its -16 LUFS target.
+
+    Retained so existing callers (the source preparer, the FileSink/SRT
+    continuity proofs, the CLI) and their test monkeypatches keep working while
+    new per-sink callers use :func:`check_loudness` with a destination label.
+    """
+
+    return check_loudness(
+        media_path=media_path,
+        target_lufs=target_lufs,
+        tolerance_lufs=tolerance_lufs,
+    )
+
+
+def _parse_integrated_lufs(stderr: str) -> float | None:
+    matches = re.findall(r"\bI:\s*(-?\d+(?:\.\d+)?)\s+LUFS\b", stderr)
+    if not matches:
+        return None
+    return float(matches[-1])

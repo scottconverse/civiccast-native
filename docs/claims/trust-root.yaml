@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+#
+# D6 trust root (spec-claims-evidence-rule.md). Pins the audit-control
+# repository, its signer keys/roles, and the authority-record-v1 format's
+# governance bytes, for scripts/policy/check_claims_evidence.py's
+# external-evidence mode (D5).
+#
+# NON-AUTHORIZING BY DEFAULT (round-7 closure): when `owner_accepted` below
+# is false the verifier MUST treat every external-evidence claim as cannot-check
+# (exit 2), never pass, regardless of how clean the pinned bytes look. Only
+# Scott flipping this to `true` — after reviewing and accepting this exact
+# pin, per specs/README.md's owner-acceptance register — makes
+# external-evidence resolution authorizing. This file changing owner_accepted
+# is itself the owner-gated act; nothing else in this repo may set it.
+schema_version: 1
+
+owner_accepted: true
+
+audit_control:
+  # Normalized against the completion hook's existing repository-identity
+  # validation (case-insensitive host, no trailing .git/slash).
+  canonical_url: https://github.com/scottconverse/civiccast-audit-control
+
+  allowed_signers:
+    path: keys/allowed_signers
+    # Refreshed 2026-07-22 (CC-WS5-008 parts 2+3): re-pinned after the
+    # registry gained the two Blackwell keys — claude-coder@blackwell
+    # (pre-existing on origin, was outside the stale 2026-07-18 pin) and
+    # codex-auditor@blackwell (registered audit-control d46badd). Identities
+    # unchanged; both principals already carry their roles below. Computed
+    # via `git rev-parse origin/main:keys/allowed_signers` at audit-control
+    # HEAD d46badd.
+    # OWNER ACCEPTANCE: Scott Converse authorized this re-pin and the
+    # Blackwell auditor-key registration in-session 2026-07-22 ("Go on all
+    # of item 1", CC-WS5-008 decision). Prior acceptance trail: 2026-07-18
+    # Beelink pin (decision page civiccast-owner-decisions-2026-07-18-v1.1.md
+    # item 2), superseded by this entry.
+    # Current pin, 2026-08-05: Scott authorized replacement of the lost
+    # Blackwell audit key for native-beta recovery. Computed from
+    # audit-control commit ef85925: `git rev-parse ef85925:keys/allowed_signers`.
+    expected_blob: 1092c20058221fad178c6563fa38de7d67c0456e
+
+  # Role each principal (the allowed_signers "identity" field) carries.
+  # The owner identity below was registered in audit-control at ef85925 and
+  # on Scott's GitHub account as an SSH signing key.
+  signer_roles:
+    claude-coder@civiccast-program: coder
+    codex-auditor@civiccast-program: auditor
+    scott-owner@civiccast-program: owner
+
+authority_format:
+  identifier: authority-record-v1
+  # The audit-control commit that ratified this format (Round 9 closure).
+  ratifying_commit: 05f78d89787990a2355fa319a520ea6c821993fd
+  # Blob ID of AUTHORITY_RECORDS.md AT that exact commit. Verified by hand
+  # (git rev-parse 05f78d89787990a2355fa319a520ea6c821993fd:AUTHORITY_RECORDS.md)
+  # to equal the current HEAD blob at clone time, i.e. the format has not
+  # drifted since ratification.
+  ratified_blob: d6944d08d5870a60df5ae912aa8cfc62c2f4e047
+  # Required structured fields, in authority-record-v1's exact bold-label
+  # line syntax (mirrors AUTHORITY_RECORDS.md's "Required structured
+  # fields" section at the ratified blob above).
+  required_fields:
+    - "Authority format"
+    - "Claim"
+    - "Control"
+    - "Source SHA"
+    - "Evidence commit"
+    - "Evidence blob"
+    - "Assessment"
+  # Canonical path grammar (D6): the regex admits '..' inside a slug: the
+  # ratified doc's prohibition list is applied AFTER the regex passes.
+  canonical_path_regex: '^authority/[a-z0-9][a-z0-9._-]{0,127}/[a-z0-9][a-z0-9._-]{0,127}/[0-9a-f]{40}\.md$'
+  prohibited_slug_substrings:
+    - ".."
+    - "/"
+    - "\\"
+    - "%"
+  # authority-record-v1 also bans uppercase spellings in path segments; the
+  # verifier lower-cases the segments' own char class in the regex above
+  # (`[a-z0-9]`) so any uppercase character already fails the regex — this
+  # entry documents the rule rather than adding a second redundant check.
+  reject_uppercase_slug: true
+
+  # Evidence record canonical path (D5), independently pinned so a claim
+  # can never smuggle in a non-canonical evidence path even if the
+  # authority-record path checks out: evidence/<source-sha>/<claim-id>/<control-id>.json
+  evidence_path_template: "evidence/{source_sha}/{claim_id}/{control_id}.json"
+  authority_path_template: "authority/{claim_id}/{control_id}/{source_sha}.md"

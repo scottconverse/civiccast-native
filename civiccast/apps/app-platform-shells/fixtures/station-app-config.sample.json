@@ -1,0 +1,62 @@
+{
+  "station_id": "civiccast-station",
+  "station_name": "CivicCast station",
+  "generated_at": "2026-05-31T18:00:00Z",
+  "default_channel_id": "public",
+  "build_profile": {
+    "tier": "unbranded",
+    "app_name": "CivicCast station",
+    "platform_targets": [
+      "web_pwa",
+      "roku",
+      "tvos",
+      "fire_tv",
+      "android_tv",
+      "android_mobile",
+      "ios_ipados"
+    ],
+    "icon_url": null,
+    "splash_url": null,
+    "store_ready": false,
+    "store_notes": "Reference app-platform config; branded store packaging lands later."
+  },
+  "channels": [
+    {
+      "channel_id": "public",
+      "slug": "public",
+      "kind": "public",
+      "branding": {
+        "display_name": "Public Channel",
+        "short_name": "Public",
+        "color": "#2458A6",
+        "logo_text": "PUBLIC",
+        "logo_url": null
+      },
+      "outputs": [],
+      "programming_rules": [
+        "Live meetings take priority over file playback.",
+        "Fallback to station slate when no approved program is available."
+      ],
+      "fallback_behavior": "Use station slate when no approved program is available.",
+      "live_state_url": "/api/public/app/channels/public/live",
+      "schedule_feed_url": "/api/public/app/channels/public/schedule",
+      "vod_catalog_url": "/api/public/app/channels/public/catalog",
+      "cg_feed_url": "/api/public/app/channels/public/cg",
+      "app_targets": [
+        "web_pwa",
+        "roku",
+        "tvos",
+        "fire_tv",
+        "android_tv",
+        "android_mobile",
+        "ios_ipados",
+        "cg",
+        "epg"
+      ]
+    }
+  ],
+  "support_url": "/support",
+  "privacy_url": "/privacy",
+  "analytics_enabled": false,
+  "emergency_status_url": "/api/public/cg/emergency"
+}

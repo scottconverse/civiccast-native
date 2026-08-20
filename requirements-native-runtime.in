@@ -1,0 +1,26 @@
+# Upstream media-runtime inputs for the native Windows packaging closure.
+#
+# spec-packaging-closure D1: every upstream artifact is pinned BY HASH before
+# anything derives from it. Compile this file to requirements-native-runtime.txt
+# with `uv pip compile --generate-hashes`; the closure builder refuses to run
+# against an uncompiled or stale lock.
+#
+# spec-packaging-closure D3 / ADR-0021 ("No GPL in the shipped runtime"):
+# the `gstreamer-plugins-gpl` and `gstreamer-plugins-gpl-restricted`
+# distributions are DELIBERATELY ABSENT. They are the sole home of x264enc and
+# x265enc (verified: every other required and conditional factory resolves from
+# the distributions listed below). Adding either here is a build-refusal
+# condition, not a preference.
+#
+# `gstreamer-gtk` (GTK video sinks) remains excluded as unused.  The
+# `gstreamer-cli` wheel is required: its pinned Windows consumers provide the
+# installed-runtime validation seam (gst-discoverer/gst-inspect) and must ship
+# in the same verified closure as the Python bindings.
+
+gstreamer-libs==1.28.5
+gstreamer-plugins==1.28.5
+gstreamer-plugins-restricted==1.28.5
+gstreamer-plugins-libs==1.28.5
+gstreamer-python==1.28.5
+gstreamer-ext-runtime==1.28.5
+gstreamer-cli==1.28.5

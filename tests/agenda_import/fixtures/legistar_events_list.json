@@ -1,0 +1,17 @@
+[
+  {
+    "EventId": 5696,
+    "EventBodyName": "City Council",
+    "EventDate": "2024-01-02T00:00:00"
+  },
+  {
+    "EventId": 5699,
+    "EventBodyName": "Council Briefing",
+    "EventDate": "2024-01-08T00:00:00"
+  },
+  {
+    "EventId": 5705,
+    "EventBodyName": "City Council",
+    "EventDate": "2024-01-09T00:00:00"
+  }
+]

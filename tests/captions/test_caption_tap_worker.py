@@ -1,0 +1,522 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+"""Caption tap worker tests (Beta sprint B6, decision #1 option A).
+
+The worker consumes the egress audio fork's rolling WAV segments
+(``<tap_root>/<channel_id>/chunk-NNNNNN.wav``), feeds them through the
+existing live caption seam (pipeline → stabilization → durable review
+queue), and moves consumed segments aside so a scan never double-feeds.
+House worker shape: env settings with fail-fast ``from_env``, injected
+runtime, ``run_once``/``run_forever`` survive-and-log loop.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+import uuid
+import wave
+from collections.abc import Iterable
+from pathlib import Path
+
+import pytest
+
+from civiccast.captions.models import AudioChunk, CaptionHypothesis, CustomVocabulary
+from civiccast.captions.review import InMemoryCaptionReviewStore
+from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
+from civiccast.captions.tap_worker import (
+    CaptionTapWorker,
+    CaptionTapWorkerSettings,
+    build_tap_worker,
+)
+from civiccast.egress.caption_embed import load_caption_cues_from_timed_text
+from civiccast.egress.caption_feed import CaptionFeedWorker
+
+
+class _ScriptedRuntime:
+    """Yields one hypothesis per chunk; text is per-call scripted."""
+
+    def __init__(self, text: str = "the council will come to order") -> None:
+        self.text = text
+        self.seen_chunks: list[AudioChunk] = []
+
+    def transcribe(
+        self,
+        chunks: Iterable[AudioChunk],
+        vocabulary: CustomVocabulary | None = None,
+    ) -> Iterable[CaptionHypothesis]:
+        for chunk in chunks:
+            self.seen_chunks.append(chunk)
+            yield CaptionHypothesis(
+                source_id=f"{chunk.chunk_id}-tap",
+                start_seconds=chunk.start_seconds,
+                end_seconds=chunk.end_seconds,
+                text=self.text,
+                confidence=0.9,
+            )
+
+
+class _ConcurrencyProbeRuntime(_ScriptedRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+        self._active = 0
+        self.max_active = 0
+
+    def transcribe(
+        self,
+        chunks: Iterable[AudioChunk],
+        vocabulary: CustomVocabulary | None = None,
+    ) -> Iterable[CaptionHypothesis]:
+        with self._lock:
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+        try:
+            time.sleep(0.05)
+            yield from super().transcribe(chunks, vocabulary=vocabulary)
+        finally:
+            with self._lock:
+                self._active -= 1
+
+
+def _write_wav(path: Path, *, seconds: float = 1.0) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame_count = int(TAP_SAMPLE_RATE_HZ * seconds)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(TAP_SAMPLE_RATE_HZ)
+        handle.writeframes(b"\x01\x00" * frame_count)
+
+
+def _worker(  # type: ignore[no-untyped-def]
+    tap_root: Path,
+    runtime: _ScriptedRuntime,
+    store: InMemoryCaptionReviewStore,
+    *,
+    segment_seconds: float = 1.0,
+    atomic_segments: bool = False,
+):
+    return CaptionTapWorker(
+        tap_root=tap_root,
+        caption_work_dir=tap_root.parent / "egress",
+        runtime=runtime,
+        review_store=store,
+        segment_seconds=segment_seconds,
+        atomic_segments=atomic_segments,
+    )
+
+
+def _active_vtt(tap_root: Path, channel_id: str) -> Path:
+    return tap_root.parent / "egress" / channel_id / "captions" / "active.vtt"
+
+
+class TestCaptionTapWorker:
+    def test_atomic_gstreamer_segment_is_consumed_without_waiting_for_a_newer_file(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        _write_wav(tap_root / "gov-ch12" / "chunk-000000.wav")
+        runtime = _ScriptedRuntime()
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 1
+        assert len(runtime.seen_chunks) == 1
+        assert (tap_root / "gov-ch12" / "processed" / "chunk-000000.wav").is_file()
+
+    def test_default_five_second_segments_form_overlapping_stable_windows(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        for index in range(3):
+            _write_wav(
+                tap_root / "gov-ch12" / f"chunk-{index:06d}.wav",
+                seconds=5.0,
+            )
+        runtime = _ScriptedRuntime()
+        store = InMemoryCaptionReviewStore()
+        worker = _worker(
+            tap_root,
+            runtime,
+            store,
+            segment_seconds=5.0,
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 2
+        assert len(runtime.seen_chunks) == 2
+        assert runtime.seen_chunks[0].start_seconds == 0.0
+        assert runtime.seen_chunks[1].start_seconds == 1.0
+        assert runtime.seen_chunks[1].end_seconds == 10.0
+        assert len(store.list()) == 1
+        assert _active_vtt(tap_root, "gov-ch12").is_file()
+
+    def test_settled_segments_become_durable_review_items(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        # Two settled segments (a newer one exists after each) + the newest,
+        # possibly still being written by ffmpeg, which must NOT be consumed.
+        _write_wav(tap_root / "gov-ch12" / "chunk-000000.wav")
+        _write_wav(tap_root / "gov-ch12" / "chunk-000001.wav")
+        _write_wav(tap_root / "gov-ch12" / "chunk-000002.wav")
+        runtime = _ScriptedRuntime()
+        store = InMemoryCaptionReviewStore()
+        worker = _worker(tap_root, runtime, store)
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 2
+        assert len(runtime.seen_chunks) == 2
+        assert runtime.seen_chunks[0].sample_rate_hz == TAP_SAMPLE_RATE_HZ
+        # Chunk timing comes from the segment index (segment_seconds=1.0).
+        assert runtime.seen_chunks[0].start_seconds == 0.0
+        assert runtime.seen_chunks[1].start_seconds == 0.0
+        items = store.list()
+        assert items, "stable cues must land in the durable review queue"
+        assert all(item.asset_id == "gov-ch12" for item in items)
+        assert items[0].audio_evidence_available is True
+        sidecar = _active_vtt(tap_root, "gov-ch12")
+        assert sidecar.is_file()
+        cues = load_caption_cues_from_timed_text(sidecar, source_id="gov-ch12")
+        assert [(cue.text, cue.start_seconds, cue.end_seconds) for cue in cues] == [
+            ("the council will come to order", 0.0, 2.0)
+        ]
+
+    def test_active_sidecar_is_the_caption_feed_input(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        for index in range(3):
+            _write_wav(tap_root / "gov-ch12" / f"chunk-{index:06d}.wav")
+        runtime = _ScriptedRuntime()
+        store = InMemoryCaptionReviewStore()
+        tap_worker = _worker(tap_root, runtime, store)
+
+        tap_worker.run_once()
+
+        sent: list[dict[str, object]] = []
+        feed_worker = CaptionFeedWorker(
+            work_dir=tap_root.parent / "egress",
+            on_air_channels=lambda: ["gov-ch12"],
+            caption_cue_provider=lambda channel_id: load_caption_cues_from_timed_text(
+                _active_vtt(tap_root, channel_id),
+                source_id=channel_id,
+            ),
+            send_caption_cue=lambda channel_id, _work_dir, **cue: (
+                sent.append({"channel_id": channel_id, **cue}) or True
+            ),
+        )
+
+        result = feed_worker.run_once()
+
+        assert result.cues_sent == 1
+        delivery_id = sent[0].pop("delivery_id")
+        assert str(uuid.UUID(str(delivery_id))) == delivery_id
+        assert sent == [
+            {
+                "channel_id": "gov-ch12",
+                "text": "the council will come to order",
+                "pts_seconds": 0.0,
+                "duration_seconds": 2.0,
+            }
+        ]
+
+    def test_consumed_segments_are_not_reprocessed(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        _write_wav(tap_root / "gov-ch12" / "chunk-000000.wav")
+        _write_wav(tap_root / "gov-ch12" / "chunk-000001.wav")
+        runtime = _ScriptedRuntime()
+        store = InMemoryCaptionReviewStore()
+        worker = _worker(tap_root, runtime, store)
+
+        first = worker.run_once()
+        second = worker.run_once()
+
+        assert first.consumed_segments == 1
+        assert second.consumed_segments == 0
+        assert len(runtime.seen_chunks) == 1
+
+    def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        for channel in ("gov-ch12", "edu-ch20"):
+            _write_wav(tap_root / channel / "chunk-000000.wav")
+            _write_wav(tap_root / channel / "chunk-000001.wav")
+        runtime = _ScriptedRuntime()
+        store = InMemoryCaptionReviewStore()
+        worker = _worker(tap_root, runtime, store)
+
+        worker.run_once()
+        # Settle the second segment of each channel and keep going.
+        for channel in ("gov-ch12", "edu-ch20"):
+            _write_wav(tap_root / channel / "chunk-000002.wav")
+        worker.run_once()
+
+        asset_ids = {item.asset_id for item in store.list()}
+        assert asset_ids == {"gov-ch12", "edu-ch20"}
+        for channel in asset_ids:
+            cues = load_caption_cues_from_timed_text(
+                _active_vtt(tap_root, channel),
+                source_id=channel,
+            )
+            assert [cue.text for cue in cues] == ["the council will come to order"]
+
+    def test_channels_are_transcribed_concurrently(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        for channel in ("public", "education", "government"):
+            _write_wav(tap_root / channel / "chunk-000000.wav")
+            _write_wav(tap_root / channel / "chunk-000001.wav")
+        runtime = _ConcurrencyProbeRuntime()
+        worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore())
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 3
+        assert runtime.max_active == 3
+
+    def test_backlog_fails_closed_instead_of_publishing_stale_captions(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        for index in range(4):
+            _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+        runtime = _ScriptedRuntime()
+        worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore())
+        active = _active_vtt(tap_root, "government")
+        active.parent.mkdir(parents=True, exist_ok=True)
+        active.write_text(
+            "WEBVTT\n\nold\n00:00:00.000 --> 00:00:01.000\nstale caption\n",
+            encoding="utf-8",
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert getattr(result, "dropped_overload_segments", 0) == 3
+        assert getattr(result, "overloaded_channels", ()) == ("government",)
+        assert load_caption_cues_from_timed_text(active, source_id="government") == []
+        overload = tap_root / "government" / "overload"
+        assert sorted(path.name for path in overload.glob("*.wav")) == [
+            "chunk-000000.wav",
+            "chunk-000001.wav",
+            "chunk-000002.wav",
+        ]
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        assert status["state"] == "overloaded"
+        assert status["backlog_segments"] == 3
+
+    def test_a_bad_segment_is_quarantined_not_fatal(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        bad = tap_root / "gov-ch12" / "chunk-000000.wav"
+        bad.parent.mkdir(parents=True)
+        bad.write_bytes(b"this is not a wav file")
+        _write_wav(tap_root / "gov-ch12" / "chunk-000001.wav")
+        _write_wav(tap_root / "gov-ch12" / "chunk-000002.wav")
+        runtime = _ScriptedRuntime()
+        store = InMemoryCaptionReviewStore()
+        worker = _worker(tap_root, runtime, store)
+
+        result = worker.run_once()
+
+        # The good settled segment was still consumed.
+        assert result.consumed_segments == 1
+        assert result.quarantined_segments == 1
+        assert len(runtime.seen_chunks) == 1
+
+    def test_discovers_unbounded_chunk_indices_after_six_digit_rollover(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """`chunk-%06d` is minimum width, so 1000000 must not disappear."""
+
+        tap_root = tmp_path / "tap"
+        for index in (999999, 1_000_000):
+            _write_wav(tap_root / "government" / f"chunk-{index}.wav")
+        runtime = _ScriptedRuntime()
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 2
+        assert [chunk.chunk_id for chunk in runtime.seen_chunks] == [
+            "government-tap-999999",
+            "government-tap-1000000-overlap",
+        ]
+        assert [chunk.start_seconds for chunk in runtime.seen_chunks] == [999999.0, 999999.0]
+        assert sorted(
+            path.name for path in (tap_root / "government" / "processed").glob("*.wav")
+        ) == ["chunk-1000000.wav", "chunk-999999.wav"]
+
+    def test_quarantines_restarted_chunk_collision_instead_of_overwriting_evidence(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        original = tap_root / "government" / "chunk-000007.wav"
+        _write_wav(original)
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+        assert worker.run_once().consumed_segments == 1
+
+        # A restarted producer reused the same index with distinct bytes.
+        _write_wav(original, seconds=2.0)
+        restarted_worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+
+        result = restarted_worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert result.quarantined_segments == 1
+        assert (tap_root / "government" / "collision" / "chunk-000007.wav").is_file()
+
+
+class TestCaptionTapWorkerSettings:
+    def test_defaults_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("CIVICCAST_CAPTION_TAP", raising=False)
+        settings = CaptionTapWorkerSettings.from_env()
+        assert settings.mode == "off"
+
+    def test_inline_requires_the_tap_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "inline")
+        monkeypatch.delenv("CIVICCAST_CAPTION_TAP_DIR", raising=False)
+        with pytest.raises(ValueError, match="CIVICCAST_CAPTION_TAP_DIR"):
+            CaptionTapWorkerSettings.from_env()
+
+    def test_invalid_mode_fails_fast(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "sometimes")
+        with pytest.raises(ValueError, match="CIVICCAST_CAPTION_TAP"):
+            CaptionTapWorkerSettings.from_env()
+
+    def test_inline_with_dir_parses(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "inline")
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tmp_path))
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_POLL_SECONDS", "2.5")
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_ATOMIC", "1")
+        settings = CaptionTapWorkerSettings.from_env()
+        assert settings.mode == "inline"
+        assert settings.tap_root == tmp_path
+        assert settings.poll_seconds == 2.5
+        assert settings.atomic_segments is True
+
+    def test_channel_concurrency_does_not_multiply_whisper_model_residency(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """max_channel_workers must NOT reach the runtime's num_workers.
+
+        This test previously asserted the opposite -- `{"num_workers": 3}` --
+        under the name "default runtime is configured for parallel channel
+        workers". That name states the belief that produced the defect: that
+        faster-whisper's num_workers is how many channels get processed at
+        once. It is not. It is CTranslate2's inter_threads, which keeps a
+        SEPARATE REPLICA OF THE MODEL per worker, so the default asked for
+        three copies of large-v3 resident simultaneously.
+
+        Channel concurrency is unaffected and comes from somewhere else
+        entirely: the ThreadPoolExecutor in CaptionTapWorker._scan_once, which
+        still runs max_channel_workers channels in parallel. They now share
+        one model.
+
+        Open, and deliberately not claimed here: whether this is THE cause of
+        the 16 GB field failure (fine for two segments, then a climb toward
+        12 GB producing nothing until it timed out, twice). The shape and
+        magnitude fit and TESTER2 is measuring it, but the conflation of two
+        unrelated quantities is worth fixing on its own terms either way.
+        """
+
+        captured: dict[str, object] = {}
+        runtime = _ScriptedRuntime()
+
+        def runtime_factory(**kwargs: object) -> _ScriptedRuntime:
+            captured.update(kwargs)
+            return runtime
+
+        monkeypatch.setattr(
+            "civiccast.captions.runtime.FasterWhisperRuntime",
+            runtime_factory,
+        )
+        settings = CaptionTapWorkerSettings(
+            mode="inline",
+            tap_root=tmp_path / "tap",
+            max_channel_workers=3,
+        )
+
+        build_tap_worker(
+            settings,
+            InMemoryCaptionReviewStore(),
+            caption_work_dir=tmp_path / "egress",
+        )
+
+        # The runtime is constructed with NO worker override: it keeps its
+        # own default of 1. Asserting the whole dict (not just the absence of
+        # a key) is deliberate -- it also catches a future caller quietly
+        # reintroducing the multiplier under a different argument name.
+        assert captured == {}
+
+    def test_native_station_rejects_the_unaccepted_vulkan_runtime(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_NATIVE_STATION", "1")
+        monkeypatch.setenv("CIVICCAST_CAPTION_RUNTIME", "whispercpp-vulkan")
+        monkeypatch.setenv(
+            "CIVICCAST_WHISPER_CPP_EXE",
+            str(tmp_path / "caption-pack" / "whisper-cli.exe"),
+        )
+        monkeypatch.setenv(
+            "CIVICCAST_WHISPER_CPP_MODEL_PATH",
+            str(tmp_path / "caption-pack" / "ggml-large-v3-q5_0.bin"),
+        )
+        settings = CaptionTapWorkerSettings(
+            mode="inline",
+            tap_root=tmp_path / "tap",
+        )
+
+        with pytest.raises(ValueError, match="accepted faster-whisper"):
+            build_tap_worker(
+                settings,
+                InMemoryCaptionReviewStore(),
+                caption_work_dir=tmp_path / "egress",
+            )
+
+    def test_unknown_caption_runtime_fails_fast(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_RUNTIME", "mystery")
+        settings = CaptionTapWorkerSettings(
+            mode="inline",
+            tap_root=tmp_path / "tap",
+        )
+
+        with pytest.raises(ValueError, match="CIVICCAST_CAPTION_RUNTIME"):
+            build_tap_worker(
+                settings,
+                InMemoryCaptionReviewStore(),
+                caption_work_dir=tmp_path / "egress",
+            )

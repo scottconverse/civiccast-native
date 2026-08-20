@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+# Pre-commit hooks for CivicCast.
+# Install: pre-commit install --hook-type pre-commit --hook-type commit-msg
+# Run on all files: pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+        # Exclude tsconfig*.json — TypeScript convention permits JSONC
+        # (comments + trailing commas), which the strict-JSON checker rejects.
+        exclude: '(^|/)tsconfig.*\.json$'
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pinned to match the version uv resolves from pyproject.toml (currently
+    # 0.15.x per uv.lock). Older pre-commit ruff (0.6.9) and newer ruff
+    # disagree about formatting of multi-line `assert ..., msg` expressions
+    # — keeping them aligned avoids a churn loop where pre-commit fixes a
+    # file in one direction and CI rejects it.
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # mypy is intentionally NOT a pre-commit hook. The pre-commit-mirrors-mypy
+  # repo isolates its environment and cannot import typer / fastapi / etc.;
+  # a local hook running `uv run mypy` requires uv to be on the pre-commit
+  # invocation's PATH, which is not portable across dev machines. CI runs
+  # mypy with the full project env (.github/workflows/ci-lint.yml). For
+  # local checks, contributors run `uv run mypy civiccast` directly.
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: []
+
+  - repo: local
+    hooks:
+      - id: git-identity
+        name: Verify Git author identity
+        entry: python scripts/policy/check_git_identity.py --local-config-required
+        language: system
+        pass_filenames: false
+      - id: dco-sign-off
+        name: Verify DCO sign-off
+        entry: scripts/check-dco-signoff.sh
+        language: script
+        stages: [commit-msg]
+        pass_filenames: false

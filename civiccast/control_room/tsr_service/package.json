@@ -1,0 +1,23 @@
+{
+  "name": "civiccast-control-room-tsr-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CivicCast-owned localhost sidecar that drives production switchers (OBS / vMix / ATEM / HyperDeck / PTZ / OSC / CasparCG) via TSR (timeline-state-resolver, MIT). The CivicCast Python control plane is the only caller (bound to 127.0.0.1). No GPL/AGPL device-control source is vendored here — TSR is MIT, and devices like OBS are reached only over their own socket protocols by TSR, never linked.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs",
+    "check": "node --check index.mjs"
+  },
+  "dependencies": {
+    "timeline-state-resolver": "9.3.2"
+  },
+  "overrides": {
+    "uuid": "11.1.1",
+    "ws": "8.21.0"
+  }
+}

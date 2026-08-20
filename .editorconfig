@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# EditorConfig — https://editorconfig.org
+#
+# Enforces LF line endings on Python and config files so Windows checkouts
+# with `core.autocrlf=true` do not trip `ruff format --check`. CI on Linux
+# stores LF natively; mismatched dev machines were producing false-positive
+# format failures (queued as a Sprint 0.3 task 1a Nit before this fix).
+
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{ts,tsx,js,jsx,json,html,css,md,yml,yaml}]
+indent_size = 2
+
+[*.{md,markdown}]
+trim_trailing_whitespace = false  # markdown line breaks rely on trailing spaces
+
+[Makefile]
+indent_style = tab

@@ -1,0 +1,325 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# deterministic-detector harness (installed by /deterministic-detector:install-detector,
+# adapted to this repo's uv + testcontainers setup — mirrors ci-test.yml).
+#
+# ---------------------------------------------------------------------------
+# ENFORCEMENT STATUS — READ BEFORE TOUCHING BRANCH PROTECTION
+#
+# randomized-suite: starts INFORMATIONAL. It is flipped to a REQUIRED status
+#   check ONLY by the repo owner, and ONLY after burn-in (five green runs
+#   across different seeds, or one deliberate pollution-hunt pass). This
+#   suite has never run in random order in CI; a day-one required check would
+#   hold an unrelated PR hostage for latent order-dependence this job exists
+#   to find.
+#
+# mutation-report: PERMANENTLY informational. It runs diff-scoped on PRs so
+#   the detector's non-vacuous real-PR acceptance can be proven; it remains
+#   available for deliberate workflow_dispatch runs too.
+#
+# Agents NEVER create, modify, or remove required-status-check / branch
+# protection settings, in either direction. That flip is owner-performed.
+# ---------------------------------------------------------------------------
+
+name: deterministic-detectors
+
+on:
+  pull_request:
+    branches: [main, 'program/**']
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Base ref to diff against for mutation scoping"
+        required: false
+        default: "program/native-windows"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  randomized-suite:
+    # Status-check context = this name; keep it plain so branch protection
+    # can reference "randomized-suite" exactly once the owner promotes it.
+    name: randomized-suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      CIVICCAST_RUN_POSTGRES_TESTS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install media test prerequisites
+        timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # See the matching step in ci-test.yml for the full rationale: bare
+          # apt-get waits on the runner's unattended-upgrades dpkg lock
+          # forever, and on 2026-08-19 wedged THIS workflow for 3h49m on the
+          # release branch. Bound the lock wait, the network, and the step.
+          APT="sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3"
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            timeout 300 $APT update
+            timeout 300 $APT install -y ffmpeg
+          fi
+          if ! command -v tsp >/dev/null 2>&1; then
+            timeout 300 $APT install -y tsduck || echo '::warning::tsduck not installable; TS-relay splice test will skip'
+          fi
+
+      - name: Install project (dev)
+        run: uv sync --all-extras --group dev
+
+      - name: Probe Docker (testcontainers prerequisite)
+        run: |
+          if ! [ -S /var/run/docker.sock ] && [ -z "${DOCKER_HOST:-}" ]; then
+            echo "::error::Docker socket not present; testcontainers cannot spin up Postgres."
+            exit 1
+          fi
+          docker version >/dev/null
+
+      - name: Run platform-appropriate suites under pytest-randomly (informational)
+        run: |
+          # No -q: pytest-randomly prints "Using --randomly-seed=N" in the header,
+          # which -q would suppress. Capture the seed to the summary + a log artifact
+          # BEFORE exiting, so a FAILED randomized run is replayable (the whole point
+          # of this lane). -p randomly re-enables the plugin that addopts disables by
+          # default, so this randomization is isolated to this informational job.
+          set +e
+          # Match ci-test's platform split: the full cross-platform suite
+          # excludes tests/native, while its platform-independent native
+          # portion is selected explicitly.  Windows-only tests run in the
+          # Windows job and must not be treated as Ubuntu failures here.
+          uv run pytest -p randomly --no-cov --ignore=tests/native | tee pytest-random.log
+          status=${PIPESTATUS[0]}
+          seed=$(grep -o 'Using --randomly-seed=[0-9]*' pytest-random.log | head -1 || true)
+          if [ "$status" -eq 0 ] && [ -n "$seed" ]; then
+            uv run pytest tests/native -m "not windows_only" -p randomly --no-cov \
+              --${seed#Using --} | tee -a pytest-random.log
+            status=${PIPESTATUS[0]}
+          fi
+          {
+            echo "### Randomized suite seed"
+            echo "${seed:-(seed not found)}"
+            echo ""
+            echo "Replay cross-platform: \`uv run pytest -p randomly --ignore=tests/native --${seed#Using --}\`"
+            echo "Replay native-pure: \`uv run pytest tests/native -m 'not windows_only' -p randomly --no-cov --${seed#Using --}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - name: Upload randomized-suite log (seed + failures for replay)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 10
+        with:
+          name: randomized-suite-log
+          path: pytest-random.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  mutation-report:
+    # Permanently informational (see header).
+    name: mutation-report
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CIVICCAST_RUN_POSTGRES_TESTS: "1"
+    steps:
+      - name: Checkout
+        # fetch-depth: 0 is MANDATORY — diff-scoping needs the base branch
+        # present locally or the diff comes up empty and the job passes
+        # vacuously.
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (dev) + mutmut
+        run: |
+          uv sync --all-extras --group dev
+          uv pip install "mutmut==3.6.0"
+
+      - name: Diff-scope changed non-test .py files vs base
+        id: scope
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.ref || github.event.inputs.base || 'program/native-windows' }}"
+          git fetch origin "$BASE_REF"
+          RAW_CHANGED=$(git diff --name-only "origin/$BASE_REF"...HEAD -- '*.py')
+          CHANGED=$(printf '%s\n' "$RAW_CHANGED" \
+            | awk '!/(^|\/)tests?\// && !/(^|\/)test_/ && !/^\.agent-runs\//')
+          echo "### All changed non-test .py files" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$CHANGED" ]; then
+            echo "(no non-test .py files changed vs $BASE_REF)" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$CHANGED" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          SELECTED="$CHANGED"
+          echo "### Files selected for mutation (complete changed surface)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$SELECTED" ]; then
+            echo "(none)" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$SELECTED" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          printf '%s\n' "$SELECTED" > changed_files.txt
+
+      - name: Run diff-scoped mutmut (always informational)
+        if: ${{ !cancelled() }}
+        run: |
+          if [ ! -s changed_files.txt ]; then
+            echo "Nothing to mutate; skipping mutmut run." >> "$GITHUB_STEP_SUMMARY"
+          elif grep -qE '^\[tool\.mutmut\]' pyproject.toml 2>/dev/null; then
+            echo "SKIPPED: pyproject.toml already has [tool.mutmut]; merge diff-scoping into the existing section instead. NO mutation data produced." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          else
+            {
+              echo ""
+              echo "[tool.mutmut]"
+              echo 'source_paths = ["civiccast", "scripts", "prototype", "tools", "alembic"]'
+              echo 'also_copy = [".agent-runs", ".github", ".pipelines", "deploy", "docker", "docs", "security", "tester-handoff", "tests", "alembic.ini", ".pre-commit-config.yaml", "AGENTS.md", "ARCHITECTURE.md", "CAPABILITIES.md", "CHANGELOG.md", "CLAUDE.md", "CODE_OF_CONDUCT.md", "CODE_SIGNING_POLICY.md", "CONTRIBUTING.md", "FAQ.md", "INSTALL-WINDOWS.md", "LEGAL-NOTICES.md", "LICENSE", "LICENSE-CODE", "LICENSE-DOCS", "Makefile", "native-windows-build-toolchain.lock.json", "native-windows-ollama-models.lock.json", "native-windows-runtime-dependencies.lock.json", "next-cleanup.md", "README.md", "requirements-native-app-build.in", "requirements-native-app-build.txt", "requirements-native-app.txt", "requirements-native-pyav-build.in", "requirements-native-pyav-build.txt", "requirements-native-runtime.in", "requirements-native-runtime.txt", "SECURITY.md", "SUPPORT.md", "uv.lock"]'
+              echo 'runner = "pytest -q --tb=no -x"'
+              # These modules bind safety claims to the exact source tree.
+              # Deliberate source mutations must make their assertions fail, so normal
+              # CI owns them while mutmut excludes these modules from mutation executions.
+              #
+              # The two hardware.py-scanning tests below are a related but distinct
+              # case: mutmut 3.x rewrites each mutated file into a single physical
+              # source file holding one duplicate copy of every mutated function per
+              # candidate mutant (trampoline dispatch chooses one at runtime via
+              # MUTANT_UNDER_TEST). These tests read hardware.py as literal text via
+              # `Path(__file__).resolve().parents[2]` and regex out `_tier_for`'s
+              # comparisons/tier-id literals; that path correctly avoids a glob, but
+              # since the test module itself runs from *inside* the mutants/ sandbox
+              # copy, it still resolves to hardware.py's mutant-duplicated body --
+              # e.g. found 51 "vram_total_gb < N" matches (17 duplicated copies x 3)
+              # instead of 3. This is a sandbox artifact, not a real threshold/id
+              # drift, and is exercised for real (against pristine hardware.py) by
+              # normal CI, so mutmut excludes just these two tests.
+              #
+              # A third, distinct mechanism in the same "source-tree-binding tests
+              # are meaningless inside the mutants copy" family:
+              # test_native_pack_source_sha_contract.py's
+              # test_checked_in_pack_builder_invocations_bind_a_valid_source_sha
+              # calls `git ls-files` with no path/cwd scoping. mutmut's mutants/
+              # copy is a plain file copy, not a git checkout, so `git ls-files`
+              # run from inside it returns nothing (an ancestor .git still exists
+              # in CI's checkout, but mutants/ itself is untracked) -- the test
+              # then fails on `assert invocations` with `assert []`. Confirmed
+              # against pristine source (passes) and reproduced verbatim in a
+              # faithful local mutants/ sandbox.
+              #
+              # NOTE for future maintainers: a broader sweep of tests/policy and
+              # tests/docs for every test that reads repo/git state was done
+              # alongside this fix (2026-08-12) using a faithful local mutants/
+              # sandbox (mutmut's mutation engine invoked directly, since mutmut
+              # has no native Windows runner) with git ancestry and the full
+              # also_copy list reproduced exactly. Every other candidate --
+              # tests/policy/test_tester_handoff_prompts.py,
+              # test_windows_release_downloader.py, test_v17_adoption_gate.py,
+              # test_release_proof_policy.py, and others matching git/glob/
+              # Path(__file__).parents patterns -- passed cleanly once the
+              # sandbox was actually complete; earlier apparent failures there
+              # were artifacts of an incomplete local repro (missing also_copy
+              # entries), not real CI failures. Don't reflexively deselect a
+              # test just because it touches repo/git state -- confirm it
+              # actually fails inside a correct mutants/ sandbox first.
+              #
+              # A fourth, distinct mechanism in the same "source-tree-binding
+              # tests are meaningless inside the mutants copy" family:
+              # test_engine_connect_timeout.py's
+              # test_no_unbounded_postgres_engine_builder statically
+              # ast.parse()s every civiccast/*.py file (plus alembic/env.py) --
+              # not just the file(s) a given mutant targets -- looking for
+              # create_engine(...) calls that do not spread
+              # connect_options(...). Inside mutants/, any diff-scoped file the
+              # scan reaches carries one duplicated copy of every mutated
+              # function's body per candidate mutant (the same trampoline
+              # structure as the hardware.py case above), so the static scan
+              # sees dozens of textually-present-but-inert duplicate bodies
+              # alongside the one real, active copy -- and if any single
+              # duplicate's mutation happened to touch the connect_options(...)
+              # spread, the scan reports it as an offender even though that
+              # duplicate never executes. Confirmed directly against this PR's
+              # own mutation-report failure (run 31667035329): the reported
+              # offender list included app.py:530649 -- impossible against the
+              # real app.py, which is 2,685 lines -- and every other reported
+              # line number is likewise only reachable in the mutant-inflated
+              # copy. Reproduced verbatim in a faithful local mutants/ sandbox
+              # (mutmut's own mutate_file_contents(), applied to the same
+              # diff-scoped file set CI mutated). The other tests in this
+              # module are unaffected: they monkeypatch create_engine and
+              # exercise one specific builder function's real behavior, which
+              # the baseline trampoline still routes to the unmutated original
+              # -- only the whole-tree static scan is a sandbox artifact, so
+              # only that one test is deselected, not the file.
+              #
+              # Sweep of the rest of tests/ (tests/policy and tests/docs were
+              # already covered above) for the same git/glob/AST/text-scan
+              # patterns, using the same faithful sandbox: candidates included
+              # tests/cable/test_channel_vocabulary_policy.py's numbered-id
+              # source scan and tests/platform/test_broker_import_policy.py's
+              # nats-import AST scan, both of which also walk all of
+              # civiccast/. Neither is deselected -- confirmed passing inside
+              # the sandbox, because neither is vulnerable to duplicate-body
+              # inflation the way the engine-builder scan is: import
+              # statements live once at module scope (never duplicated per
+              # mutant), and the numbered-channel-id literals the vocabulary
+              # test forbids do not appear anywhere in the diff-scoped
+              # civiccast/*.py files, mutated or not.
+              echo 'pytest_add_cli_args_test_selection = ["--ignore=tests/policy/test_claims_evidence.py", "--ignore=tests/policy/test_shipped_payload_db_driver.py", "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory", "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_caption_tier_recommendation_vram_thresholds_match_hardware_py_bidirectionally", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_hardware_py_tier_id_ladder_shape_is_the_one_the_rust_mirror_assumes", "--deselect=tests/policy/test_native_pack_source_sha_contract.py::test_checked_in_pack_builder_invocations_bind_a_valid_source_sha", "--deselect=tests/test_engine_connect_timeout.py::test_no_unbounded_postgres_engine_builder"]'
+              echo -n "only_mutate = ["
+              sed 's/.*/"&",/' changed_files.txt | tr -d '\n'
+              echo "]"
+            } >> pyproject.toml
+
+            set +e
+            uv run mutmut run 2>&1 | tee mutmut-run.log
+            run_status=${PIPESTATUS[0]}
+            set -e
+            test "$run_status" -eq 0
+
+            echo "### Surviving mutants" >> "$GITHUB_STEP_SUMMARY"
+            set +e
+            uv run mutmut results 2>&1 | tee results.log | tee -a "$GITHUB_STEP_SUMMARY"
+            results_status=${PIPESTATUS[0]}
+            set -e
+            test "$results_status" -eq 0
+            test -s results.log
+            if grep -q "not checked" results.log; then
+              echo "BASELINE FAILED: mutants were NOT evaluated (suite failed before mutation). NO mutation data — run log tail:" \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+              tail -30 mutmut-run.log >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          fi

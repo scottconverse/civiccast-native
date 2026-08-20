@@ -1,0 +1,39 @@
+LicenseRef-Microsoft-VCRedist -- NOT a reproducible license text
+==================================================================
+
+This identifier covers the Microsoft Visual C++ Redistributable files
+shipped in this runtime tree (msvcp140.dll, vcruntime140.dll,
+vcruntime140_1.dll -- see civiccast.native.runtime_licenses.
+SUPPORT_LIBRARY_LICENSE for the exact file list). These files come from
+the `gstreamer_ext_runtime` wheel, whose own dist-info/METADATA declares
+`License: LicenseRef-Proprietary`.
+
+They are Microsoft's proprietary redistributable binaries, governed by
+the Microsoft Visual C++ Redistributable license terms (part of the
+Microsoft Software License Terms for Visual Studio / the VC++
+Redistributable EULA). That text is Microsoft's own copyrighted license
+grant, not an open-source license, and CivicCast has no license to
+reproduce it verbatim in this repository or in the shipped tree.
+
+THE TEXT IS THEREFORE NOT REPRODUCED HERE. This file is a pointer, not
+a copy of Microsoft's license.
+
+Where to find the actual terms
+-------------------------------
+
+- Microsoft Visual C++ Redistributable latest supported downloads page
+  (states the applicable license for each redistributable package):
+  https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
+
+- Microsoft Software License Terms (the umbrella EULA these
+  redistributables are distributed under; the exact terms depend on the
+  specific Visual Studio / redistributable release these DLLs were
+  extracted from):
+  https://visualstudio.microsoft.com/license-terms/
+
+Operators and redistributors of the CivicCast native Windows runtime
+must consult those pages directly for the terms actually governing
+redistribution of these three files. `scripts/build_native_runtime_closure.py`
+bundles this pointer file (not the EULA text) into every built tree's
+`licenses/texts/` directory for exactly this reason: the gap is recorded
+and owner-visible, not silently missing.

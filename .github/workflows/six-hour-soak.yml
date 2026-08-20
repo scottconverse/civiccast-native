@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+name: six-hour-soak
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  six-hour-soak:
+    runs-on: [self-hosted, linux, x64, scott-desktop]
+    timeout-minutes: 390
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+
+      - name: Install project (dev)
+        run: uv sync --all-extras --group dev
+
+      - name: Run the measured six-hour live-delivery soak
+        # 1.0-hardening: the previous runner (scripts/run_six_hour_soak.py) was
+        # a sleep loop that exercised nothing and always wrote PASS. This is the
+        # measured replacement: real rolling station + surge switch served over
+        # TCP, emulated viewers riding surge cycles, per-minute RSS/handle
+        # sampling, fail-closed verdict (civiccast/load/live_soak.py).
+        # workflow-cost: local-docker-cache; paths: manual dispatch only.
+        run: |
+          CIVICCAST_SOAK_COMMIT="$(git rev-parse --short HEAD)" \
+          uv run python -m civiccast.load.live_soak \
+            --duration-seconds 21600 \
+            --out docs/releases/evidence/six-hour-live-soak.md
+
+      - name: Upload soak proof
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: six-hour-live-soak
+          path: |
+            docs/releases/evidence/six-hour-live-soak.md
+            docs/releases/evidence/six-hour-live-soak.samples.jsonl
+          retention-days: 7

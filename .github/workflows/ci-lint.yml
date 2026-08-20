@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+name: ci-lint
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (dev)
+        run: uv sync --all-extras --group dev
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: mypy
+        run: uv run mypy civiccast
+
+      - name: Release identity consistency (single-source version check)
+        # Fails the build if any release surface drifts from civiccast/_version.py
+        # (README/CHANGELOG/index.html tag, version files). The mechanical guard
+        # against "a stray old version slipping onto a published surface".
+        run: uv run python scripts/policy/check_release_identity.py
+
+  workflows:
+    name: Lint GitHub Actions workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run actionlint
+        # PR-time lint for every workflow, so a release-workflow regression is
+        # caught here instead of only on a real tag. Pinned version + the official
+        # checksum-verifying installer fetched from that immutable tag.
+        run: |
+          bash <(curl -sSf https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify action pins resolve
+        # actionlint validates syntax + known-action inputs but CANNOT tell a
+        # nonexistent action VERSION from a real one — that is exactly how
+        # actions/download-artifact@v7.0.1 (no such tag) shipped in rc8 and only
+        # failed on a real tag build. This resolves every `uses: owner/repo@ref`
+        # against GitHub and fails closed on any that 404.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/policy/check_action_pins.py
+
+      - name: Verify every job declares a timeout
+        # A job with no timeout-minutes inherits GitHub's 360-minute default and
+        # then reports NO FAILING CHECKS while it wedges the merge queue. That
+        # cost hours on 2026-08-19/20 (apt dpkg-lock, a hung download-artifact).
+        # actionlint does not check this. Fail closed instead of trusting that
+        # nobody forgets again.
+        run: python scripts/policy/check_workflow_timeouts.py

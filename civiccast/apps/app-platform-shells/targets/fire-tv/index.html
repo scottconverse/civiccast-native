@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CivicCast Fire TV Shell</title>
+    <link rel="stylesheet" href="../../src/shell.css" />
+  </head>
+  <body>
+    <main>
+      <h1>CivicCast Fire TV Shell</h1>
+      <div class="shell-grid" data-civiccast-shell data-app-target="fire_tv"></div>
+    </main>
+    <script type="module">
+      import { bootShell } from '../../src/shell.mjs'
+      bootShell({ platformLabel: 'Fire TV' })
+    </script>
+  </body>
+</html>
