@@ -126,11 +126,10 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
         ),
         violations,
     )
-    _require(
-        version_doc.exists(),
-        f"{_repo_path(version_doc, root)} is missing.",
-        violations,
-    )
+    # NOT required here. version_doc is the WSL line's release-verification
+    # document and lives in docs/releases/, the archive this repository
+    # deliberately did not carry across. The checks below that READ it are
+    # already guarded by `if release_doc:`, so they simply do not run.
     _require(
         installer_version == version,
         (
@@ -214,25 +213,10 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
         ),
         violations,
     )
-    headless_bootstrap = (
-        root
-        / "civiccast"
-        / "apps"
-        / "installer"
-        / "src-tauri"
-        / "resources"
-        / "headless-bootstrap.ps1"
-    )
-    _require(
-        headless_bootstrap.exists()
-        and f'$CivicCastVersion = "{wsl_version}"' in _read(headless_bootstrap),
-        (
-            f"{_repo_path(headless_bootstrap, root)} does not carry the bundled bootstrap "
-            f"expected-version guard for the WSL product's own version {wsl_version} "
-            f"(from {_repo_path(wsl_tauri_config_path, root)})."
-        ),
-        violations,
-    )
+    # NOT required here. headless-bootstrap.ps1 is the WSL2 install lane --
+    # the comment above already calls it WSL-ONLY -- and it was deleted under
+    # the owner's "no linux" decision. Auditing the expected-version guard of
+    # a script this product does not ship checks nothing.
 
     # The NATIVE Windows product line's own version surfaces (chain J,
     # 2026-08-02). civiccast/_native_version.py is their single source of
