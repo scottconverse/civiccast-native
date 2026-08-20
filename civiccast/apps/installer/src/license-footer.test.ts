@@ -32,6 +32,6 @@ describe("license/attribution footer (F-23)", () => {
 
   it("links to the published full legal notices, not a dead or invented path", () => {
     const source = readAppSource();
-    expect(source).toContain("https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md");
+    expect(source).toContain("https://github.com/scottconverse/civiccast-native/blob/main/LEGAL-NOTICES.md");
   });
 });

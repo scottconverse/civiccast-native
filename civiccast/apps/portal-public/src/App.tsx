@@ -18,7 +18,7 @@ import { RecordingsScreen } from './screens/RecordingsScreen'
 import { WatchScreen } from './screens/WatchScreen'
 
 const BETA_FEEDBACK_URL =
-  'https://github.com/scottconverse/civiccast/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20'
+  'https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20'
 
 function getManifestOverride(): string | null {
   return new URLSearchParams(window.location.search).get('manifest')

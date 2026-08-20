@@ -338,7 +338,7 @@ export function Sidebar({ route, onNavigate, roles }: SidebarProps) {
         style={{ borderTop: '1px solid var(--cc-line)', color: 'var(--cc-ink-3)' }}
       >
         <a
-          href="https://github.com/scottconverse/civiccast/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20"
+          href="https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20"
           target="_blank"
           rel="noreferrer"
           className="text-xs font-semibold underline underline-offset-2"

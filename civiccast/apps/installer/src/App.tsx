@@ -212,7 +212,7 @@ function ActivityPubSetupPanel({ lane }: { lane: InstallerLane }) {
         </div>
       </div>
       <a
-        href="https://github.com/scottconverse/civiccast/blob/main/docs/ops/activitypub-federation.md"
+        href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/activitypub-federation.md"
         target="_blank"
         rel="noreferrer"
       >
@@ -789,7 +789,7 @@ function App() {
               : "Download, install, create the first admin, then open the dashboard without terminal commands."}
           </p>
           <a
-            href="https://github.com/scottconverse/civiccast/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20"
+            href="https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20"
             target="_blank"
             rel="noreferrer"
           >
@@ -951,7 +951,7 @@ function App() {
           CivicCast is open source: program code under the Apache License 2.0, documentation under CC BY 4.0. Full
           license texts and legal notices:{" "}
           <a
-            href="https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md"
+            href="https://github.com/scottconverse/civiccast-native/blob/main/LEGAL-NOTICES.md"
             target="_blank"
             rel="noreferrer"
           >

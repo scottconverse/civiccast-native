@@ -1211,7 +1211,7 @@ function StationAdminTools({ canManageProviders }: { canManageProviders: boolean
 // literal does not point to.
 const HANDOFF_RECOVERY_CODE_FILE = 'C:\\ProgramData\\CivicCast\\setup-recovery\\code.txt'
 const SUPPORT_ISSUE_URL =
-  'https://github.com/scottconverse/civiccast/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20'
+  'https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20'
 
 function isServiceDegradedError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 503

@@ -835,7 +835,7 @@ test("installer presents ActivityPub as optional advanced post-install setup", a
   const guide = page.getByRole("link", { name: "ActivityPub federation guide" });
   await expect(guide).toHaveAttribute(
     "href",
-    "https://github.com/scottconverse/civiccast/blob/main/docs/ops/activitypub-federation.md"
+    "https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/activitypub-federation.md"
   );
 });
 
