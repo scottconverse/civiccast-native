@@ -90,6 +90,7 @@ def _ensure_cuda_dll_directory() -> None:
         return
     _CUDA_DLL_DIRECTORY_HANDLES[cuda_bin_dir] = add_dll_directory(cuda_bin_dir)
 
+
 #: Environment variable through which an activated native station DECLARES
 #: which caption tier it selected. Written by
 #: ``civiccast.native.station_runtime.station_environment`` next to

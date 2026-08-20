@@ -403,12 +403,15 @@ class TestReleaseArtifactBuilderContracts:
         # windows-wsl2-bootstrap-manifest and container-manifest went with the
         # Linux/WSL2/Docker lanes. A manifest that advertises an artifact this
         # product cannot build is worse than one that omits it.
-        assert not ({
-            "deb-package",
-            "rpm-package",
-            "windows-wsl2-bootstrap-manifest",
-            "container-manifest",
-        } & kinds)
+        assert not (
+            {
+                "deb-package",
+                "rpm-package",
+                "windows-wsl2-bootstrap-manifest",
+                "container-manifest",
+            }
+            & kinds
+        )
         assert all(entry["sha256"] for entry in manifest["artifacts"] if entry["status"] == "ok")
         assert all(entry["sidecar"] for entry in manifest["artifacts"] if entry["status"] == "ok")
         assert any(entry["status"] == "blocked" for entry in manifest["artifacts"])

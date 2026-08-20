@@ -122,6 +122,7 @@ def _default_independent_slate_strategy() -> EncoderStrategy | None:
     except Exception:
         return None
 
+
 # S9-5 crash-relaunch back-off. The first crash relaunches immediately (fast
 # recovery for a one-off); a crash that recurs within the cooldown is a churn
 # signal (typically a worker that dies at startup — a bad graph, a missing
@@ -497,6 +498,7 @@ class EgressDaemon:
                 pid=None,
                 last_error=fallback_reason if using_fallback_slate else None,
             )
+
             def _encoder_request(plan: EgressSourcePlan) -> EncoderStartRequest:
                 return EncoderStartRequest(
                     channel_id=channel_id,

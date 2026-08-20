@@ -434,9 +434,7 @@ def test_corrupt_closure_self_repair_success_runs_gstreamer_normally(
     def _repair(runtime_root: Path) -> bool:
         # A real transient recovery: restore the quarantined file, then report
         # healthy so re-validation succeeds.
-        (runtime_root / "dependencies/gstreamer/bin/gst-discoverer-1.0.exe").write_bytes(
-            b"fixture"
-        )
+        (runtime_root / "dependencies/gstreamer/bin/gst-discoverer-1.0.exe").write_bytes(b"fixture")
         return True
 
     env = station_runtime.load_native_station_environment(
@@ -2058,9 +2056,7 @@ def test_resolve_cuda_bin_dir_prefers_version_root_when_both_present(tmp_path: P
     version_bin = _stage_cuda_libs(version_root)
     _stage_cuda_libs(acquisition_root)
 
-    resolved = station_runtime.resolve_cuda_bin_dir(
-        version_root, acquisition_root=acquisition_root
-    )
+    resolved = station_runtime.resolve_cuda_bin_dir(version_root, acquisition_root=acquisition_root)
 
     assert resolved == version_bin
 

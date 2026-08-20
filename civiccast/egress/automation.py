@@ -104,6 +104,7 @@ def _raise_egress_degraded_alert(session_factory: Any, *, reason: str) -> None:
             "alerting must never block control-plane startup."
         )
 
+
 AUTOMATION_MODE_INLINE = "inline"
 AUTOMATION_MODE_OFF = "off"
 _AUTOMATION_MODES = (AUTOMATION_MODE_INLINE, AUTOMATION_MODE_OFF)

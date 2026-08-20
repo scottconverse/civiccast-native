@@ -433,7 +433,7 @@ class TestRuntimeBoundary:
         monkeypatch.setattr(
             runtime_module,
             "_load_whisper_model_class",
-            lambda: (lambda _model_size_or_path, **_kwargs: object()),
+            lambda: lambda _model_size_or_path, **_kwargs: object(),
         )
         monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
         runtime = FasterWhisperRuntime(
@@ -455,7 +455,7 @@ class TestRuntimeBoundary:
         monkeypatch.setattr(
             runtime_module,
             "_load_whisper_model_class",
-            lambda: (lambda _model_size_or_path, **_kwargs: object()),
+            lambda: lambda _model_size_or_path, **_kwargs: object(),
         )
         monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
         runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu")

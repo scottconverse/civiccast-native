@@ -86,9 +86,7 @@ def run_full_drill(
             psql_command=psql_command,
         )
     else:
-        raise ValueError(
-            f"Unsupported DATABASE_URL scheme for the restore drill: {database_url!r}"
-        )
+        raise ValueError(f"Unsupported DATABASE_URL scheme for the restore drill: {database_url!r}")
     crash_result = run_daemon_crash_restart_drill(work_dir=work_dir / "crash")
     crash_report = CrashDrillReport(results=[crash_result])
     return DrillReport(

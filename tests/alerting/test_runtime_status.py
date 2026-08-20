@@ -186,9 +186,7 @@ class TestChannelRuntimeStatus:
         self,
         caption_status: str,
     ) -> None:
-        sample = _sample("public", "ON_AIR").model_copy(
-            update={"caption_status": caption_status}
-        )
+        sample = _sample("public", "ON_AIR").model_copy(update={"caption_status": caption_status})
 
         c = compute_channel_runtime_status(
             _config(),

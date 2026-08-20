@@ -44,9 +44,7 @@ def test_degraded_env_raises_a_loud_critical_operator_alert(
     monkeypatch.setattr(alert_store, "record_alert_condition", _spy_record)
 
     session = _FakeSession()
-    automation._raise_egress_degraded_alert(
-        lambda: session, reason="closure at C:/x is corrupt"
-    )
+    automation._raise_egress_degraded_alert(lambda: session, reason="closure at C:/x is corrupt")
 
     assert captured["kind"] == "encoder-death"
     assert captured["detail"] == "closure at C:/x is corrupt"

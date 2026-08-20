@@ -200,10 +200,7 @@ def test_native_station_startup_enables_caption_tap_feed_and_decode_back_proof(
 
     app = create_app()
 
-    names = {
-        getattr(supervisor, "_name", None)
-        for supervisor in app.state.background_supervisors
-    }
+    names = {getattr(supervisor, "_name", None) for supervisor in app.state.background_supervisors}
     assert {
         "civiccast-caption-tap-worker",
         "civiccast-caption-feed",

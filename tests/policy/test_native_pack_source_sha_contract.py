@@ -51,9 +51,9 @@ def _checked_in_builder_invocations() -> list[tuple[Path, str]]:
 def test_checked_in_pack_builder_invocations_bind_a_valid_source_sha() -> None:
     invocations = _checked_in_builder_invocations()
     assert invocations
-    assert {builder for _, command in invocations for builder in PACK_BUILDERS if builder in command} == set(
-        PACK_BUILDERS
-    )
+    assert {
+        builder for _, command in invocations for builder in PACK_BUILDERS if builder in command
+    } == set(PACK_BUILDERS)
     for path, command in invocations:
         text = path.read_text(encoding="utf-8")
         assert re.search(

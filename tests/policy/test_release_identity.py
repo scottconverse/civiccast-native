@@ -206,6 +206,7 @@ def test_release_identity_rejects_main_rs_constant_drifting_from_the_native_vers
         "runtime override that makes the native-hosted backend's /health agree."
     ]
 
+
 def test_release_identity_accepts_matching_health_example_version(tmp_path: Path) -> None:
     """TW-E: docs/technical-ops-reference.md's `/health` example must show the
     same version civiccast/_version.py reports."""

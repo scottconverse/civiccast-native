@@ -73,7 +73,9 @@ def _skip_if_no_postgres() -> None:
     if not _TESTCONTAINERS_OK or not docker_engine_available():
         if os.environ.get("CIVICCAST_RUN_POSTGRES_TESTS"):
             pytest.fail("Postgres DR-drill test required by env but Docker unavailable")
-        pytest.skip("Docker unavailable; the Postgres restore path is not exercised in this sandbox")
+        pytest.skip(
+            "Docker unavailable; the Postgres restore path is not exercised in this sandbox"
+        )
 
 
 @pytest.fixture
@@ -274,9 +276,7 @@ def test_postgres_restore_drill_verifies_full_round_trip(
         engine.dispose()
 
 
-def test_restore_detects_row_mutation(
-    postgres_container: tuple[str, str], tmp_path: Path
-) -> None:
+def test_restore_detects_row_mutation(postgres_container: tuple[str, str], tmp_path: Path) -> None:
     """Negative control (i): a post-restore row mutation must be DETECTED.
 
     If the checksum/row-count comparison in
@@ -636,8 +636,7 @@ def test_constraint_drop_is_detected(postgres_container: tuple[str, str], tmp_pa
             with restored_engine.begin() as conn:
                 conn.execute(
                     text(
-                        "ALTER TABLE civiccast.egress_sinks "
-                        "DROP CONSTRAINT egress_sinks_kind_check"
+                        "ALTER TABLE civiccast.egress_sinks DROP CONSTRAINT egress_sinks_kind_check"
                     )
                 )
 
@@ -830,9 +829,7 @@ def test_index_literal_matching_scratch_tokens_is_not_collapsed(
         with engine.begin() as conn:
             conn.execute(text('CREATE SCHEMA IF NOT EXISTS "civiccast"'))
             conn.execute(
-                text(
-                    'CREATE TABLE "civiccast"."canon_literal_collision" (a int, note varchar)'
-                )
+                text('CREATE TABLE "civiccast"."canon_literal_collision" (a int, note varchar)')
             )
 
         def _create_and_read(predicate_literal: str) -> tuple[str, str, str]:
@@ -997,9 +994,9 @@ def test_cold_standby_detects_missing_role_from_corrupted_globals(
             standby_pg_restore_command=_exec_prefix(standby_cid, "pg_restore"),
         )
 
-        assert any(
-            "drill_grantee" in e and "missing on standby" in e for e in report.errors
-        ), report.errors
+        assert any("drill_grantee" in e and "missing on standby" in e for e in report.errors), (
+            report.errors
+        )
     finally:
         reset_engine()
         engine.dispose()
@@ -1269,13 +1266,13 @@ def test_cold_standby_detects_revoked_grant(
         _seed_extra_role_and_grant(engine)  # drill_grantee: SELECT on civiccast.assets
 
         source_sequences = _pg_sequence_states(engine)
-        assert source_sequences, "fixture has no sequences -- sequence-privilege control would be vacuous"
+        assert source_sequences, (
+            "fixture has no sequences -- sequence-privilege control would be vacuous"
+        )
         target_sequence = source_sequences[0][0]
         with engine.begin() as conn:
             conn.execute(
-                text(
-                    f'GRANT USAGE ON SEQUENCE "civiccast"."{target_sequence}" TO drill_grantee'
-                )
+                text(f'GRANT USAGE ON SEQUENCE "civiccast"."{target_sequence}" TO drill_grantee')
             )
 
         in_container_source_url = "postgresql://test:test@localhost:5432/test"
@@ -1304,10 +1301,7 @@ def test_cold_standby_detects_revoked_grant(
         with engine.begin() as conn:
             conn.execute(text("REVOKE SELECT ON civiccast.assets FROM drill_grantee"))
             conn.execute(
-                text(
-                    f'REVOKE USAGE ON SEQUENCE "civiccast"."{target_sequence}" '
-                    "FROM drill_grantee"
-                )
+                text(f'REVOKE USAGE ON SEQUENCE "civiccast"."{target_sequence}" FROM drill_grantee')
             )
             conn.execute(text("GRANT CONNECT ON DATABASE test TO drill_grantee"))
 
@@ -1436,8 +1430,7 @@ def test_cold_standby_detects_standby_only_membership_edge(
 
         assert report.ok is False
         assert any(
-            "role membership mismatch" in e and "standby_only_group" in e
-            for e in report.errors
+            "role membership mismatch" in e and "standby_only_group" in e for e in report.errors
         ), report.errors
     finally:
         reset_engine()

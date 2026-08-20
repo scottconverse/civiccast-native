@@ -140,27 +140,41 @@ def parse_frame(raw: bytes, *, cap_bytes: int = FRAME_CAP_BYTES) -> ParsedFrame:
     ok: close the connection" (D7)."""
 
     if len(raw) > cap_bytes:
-        return ParsedFrame(ok=False, payload=None, close_reason=f"oversized frame ({len(raw)} > {cap_bytes} bytes)")
+        return ParsedFrame(
+            ok=False, payload=None, close_reason=f"oversized frame ({len(raw)} > {cap_bytes} bytes)"
+        )
 
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
-        return ParsedFrame(ok=False, payload=None, close_reason=f"malformed frame: invalid utf-8 ({exc})")
+        return ParsedFrame(
+            ok=False, payload=None, close_reason=f"malformed frame: invalid utf-8 ({exc})"
+        )
 
     try:
         obj = json.loads(text)
     except json.JSONDecodeError as exc:
-        return ParsedFrame(ok=False, payload=None, close_reason=f"malformed frame: invalid json ({exc})")
+        return ParsedFrame(
+            ok=False, payload=None, close_reason=f"malformed frame: invalid json ({exc})"
+        )
 
     if not isinstance(obj, dict):
-        return ParsedFrame(ok=False, payload=None, close_reason="malformed frame: top-level value is not an object")
+        return ParsedFrame(
+            ok=False, payload=None, close_reason="malformed frame: top-level value is not an object"
+        )
 
     if obj.get("v") != 1:
-        return ParsedFrame(ok=False, payload=None, close_reason=f"malformed frame: unsupported/missing v={obj.get('v')!r}")
+        return ParsedFrame(
+            ok=False,
+            payload=None,
+            close_reason=f"malformed frame: unsupported/missing v={obj.get('v')!r}",
+        )
 
     cmd = obj.get("cmd")
     if not isinstance(cmd, str):
-        return ParsedFrame(ok=False, payload=None, close_reason="malformed frame: missing/non-string cmd")
+        return ParsedFrame(
+            ok=False, payload=None, close_reason="malformed frame: missing/non-string cmd"
+        )
 
     return ParsedFrame(ok=True, payload=obj, close_reason=None)
 
@@ -176,14 +190,23 @@ ResponseStatus = Literal["ok", "denied", "error"]
 
 
 def build_response(
-    payload: dict[str, Any], *, status: ResponseStatus, detail: str, result: dict[str, Any] | None = None
+    payload: dict[str, Any],
+    *,
+    status: ResponseStatus,
+    detail: str,
+    result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the ``{"v":1,...}`` reply envelope for a request ``payload``
     already known to be a valid parsed frame. Echoes ``id`` back when the
     caller supplied one (bounded-retry correlation, matching the D2 worker
     envelope's shape); omits it otherwise rather than inventing one."""
 
-    response: dict[str, Any] = {"v": 1, "cmd": payload.get("cmd"), "result": status, "detail": detail}
+    response: dict[str, Any] = {
+        "v": 1,
+        "cmd": payload.get("cmd"),
+        "result": status,
+        "detail": detail,
+    }
     if result is not None:
         response["data"] = result
     request_id = payload.get("id")
@@ -235,7 +258,9 @@ class CommandQueue:
         with self._lifecycle_lock:
             if self._thread is None:
                 self._stop_event.clear()
-                thread = threading.Thread(target=self._run, name="civiccast-supervisor-pipe-cmdq", daemon=True)
+                thread = threading.Thread(
+                    target=self._run, name="civiccast-supervisor-pipe-cmdq", daemon=True
+                )
                 self._thread = thread
                 thread.start()
 
@@ -251,7 +276,9 @@ class CommandQueue:
         if thread is not None:
             thread.join(timeout=timeout)
 
-    def submit(self, command: str, payload: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
+    def submit(
+        self, command: str, payload: dict[str, Any], *, timeout: float | None = None
+    ) -> dict[str, Any]:
         """Enqueue ``command`` and block until the worker thread has run it
         (or the queue times out first). Starts the worker lazily on first
         use so a bare ``CommandQueue(handler)`` is usable without a
@@ -276,7 +303,9 @@ class CommandQueue:
                 continue
             try:
                 item.result = self._handler(item.command, item.payload)
-            except BaseException as exc:  # surfaced to the submitter via item.error, never swallowed
+            except (
+                BaseException
+            ) as exc:  # surfaced to the submitter via item.error, never swallowed
                 item.error = exc
             finally:
                 item.done.set()
@@ -291,7 +320,9 @@ AuditLogFn = Callable[[str, str], None]
 
 
 def _default_audit_log(caller_sid: str, command: str) -> None:
-    logger.warning("D7 control pipe: mutating command %r authorized for caller SID %s", command, caller_sid)
+    logger.warning(
+        "D7 control pipe: mutating command %r authorized for caller SID %s", command, caller_sid
+    )
 
 
 @dataclass(frozen=True)
@@ -324,7 +355,12 @@ class Dispatcher:
         self._command_timeout_seconds = command_timeout_seconds
 
     def handle_frame(
-        self, raw: bytes, *, groups: frozenset[str], caller_sid: str, cap_bytes: int = FRAME_CAP_BYTES
+        self,
+        raw: bytes,
+        *,
+        groups: frozenset[str],
+        caller_sid: str,
+        cap_bytes: int = FRAME_CAP_BYTES,
     ) -> DispatchOutcome:
         frame = parse_frame(raw, cap_bytes=cap_bytes)
         if not frame.ok:
@@ -454,9 +490,13 @@ def create_control_pipe(
                 detail=f"ACCESS_DENIED creating {name!r}: name already exists (possible squat)",
                 owner_pid=owner_pid,
             )
-        return PipeCreateResult(ok=False, handle=None, degraded=False, detail=f"CreateNamedPipe({name!r}) failed: {exc}")
+        return PipeCreateResult(
+            ok=False, handle=None, degraded=False, detail=f"CreateNamedPipe({name!r}) failed: {exc}"
+        )
 
-    return PipeCreateResult(ok=True, handle=handle, degraded=False, detail=f"control pipe {name!r} created")
+    return PipeCreateResult(
+        ok=True, handle=handle, degraded=False, detail=f"control pipe {name!r} created"
+    )
 
 
 def _find_owning_pid(name: str) -> int | None:
@@ -497,7 +537,9 @@ def read_pipe_dacl_sddl(handle: Any) -> str:
     return cast(
         str,
         win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(
-            security_descriptor, win32security.SDDL_REVISION_1, win32security.DACL_SECURITY_INFORMATION
+            security_descriptor,
+            win32security.SDDL_REVISION_1,
+            win32security.DACL_SECURITY_INFORMATION,
         ),
     )
 
@@ -525,12 +567,18 @@ def impersonate_and_extract(handle: Any) -> tuple[frozenset[str], str]:
 
     win32security.ImpersonateNamedPipeClient(handle)
     try:
-        thread_token = win32security.OpenThreadToken(win32api.GetCurrentThread(), win32security.TOKEN_QUERY, True)
+        thread_token = win32security.OpenThreadToken(
+            win32api.GetCurrentThread(), win32security.TOKEN_QUERY, True
+        )
         try:
-            user_sid, _attr = win32security.GetTokenInformation(thread_token, win32security.TokenUser)
+            user_sid, _attr = win32security.GetTokenInformation(
+                thread_token, win32security.TokenUser
+            )
             caller_sid = cast(str, win32security.ConvertSidToStringSid(user_sid))
             groups: set[str] = set()
-            for sid, attributes in win32security.GetTokenInformation(thread_token, win32security.TokenGroups):
+            for sid, attributes in win32security.GetTokenInformation(
+                thread_token, win32security.TokenGroups
+            ):
                 if not (attributes & win32security.SE_GROUP_ENABLED):
                     continue
                 known = _KNOWN_GROUP_SIDS.get(win32security.ConvertSidToStringSid(sid))
@@ -724,7 +772,9 @@ class PipeServer:
                 self._serving.release()
 
 
-def serve_connection(handle: Any, dispatcher: Dispatcher, *, cap_bytes: int = FRAME_CAP_BYTES) -> None:
+def serve_connection(
+    handle: Any, dispatcher: Dispatcher, *, cap_bytes: int = FRAME_CAP_BYTES
+) -> None:
     """Blocking read/dispatch/reply loop for one already-connected duplex
     pipe handle. Reads newline-delimited JSON frames, impersonates the
     client ONCE per connection (right after the first successful read --
@@ -752,7 +802,9 @@ def serve_connection(handle: Any, dispatcher: Dispatcher, *, cap_bytes: int = FR
 
             buffer += chunk
             if len(buffer) > cap_bytes and b"\n" not in buffer:
-                logger.warning("D7 control pipe: oversized frame before newline; closing connection")
+                logger.warning(
+                    "D7 control pipe: oversized frame before newline; closing connection"
+                )
                 return
 
             if groups is None:
@@ -760,11 +812,15 @@ def serve_connection(handle: Any, dispatcher: Dispatcher, *, cap_bytes: int = FR
 
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
-                outcome = dispatcher.handle_frame(line, groups=groups, caller_sid=caller_sid, cap_bytes=cap_bytes)
+                outcome = dispatcher.handle_frame(
+                    line, groups=groups, caller_sid=caller_sid, cap_bytes=cap_bytes
+                )
                 if outcome.action == "close":
                     logger.warning("D7 control pipe: closing connection (%s)", outcome.close_reason)
                     return
-                assert outcome.response is not None  # invariant of DispatchOutcome(action="reply", ...)
+                assert (
+                    outcome.response is not None
+                )  # invariant of DispatchOutcome(action="reply", ...)
                 win32file.WriteFile(handle, encode_frame(outcome.response))
     finally:
         with contextlib.suppress(pywintypes.error):

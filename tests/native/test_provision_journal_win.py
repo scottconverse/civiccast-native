@@ -109,9 +109,9 @@ def test_write_journal_hardens_the_state_root_dacl_for_real(tmp_path: Path) -> N
     )
     assert ";;;SY)" in sddl, f"state root DACL must grant SYSTEM: {sddl!r}"
     assert ";;;BA)" in sddl, f"state root DACL must grant BUILTIN\\Administrators: {sddl!r}"
-    assert (f";;;{_current_process_sid_sddl()})" in sddl or (_current_process_sid_sddl().endswith("-500") and ";;;LA)" in sddl)), (
-        f"state root DACL must grant the calling account (else it locks itself out): {sddl!r}"
-    )
+    assert f";;;{_current_process_sid_sddl()})" in sddl or (
+        _current_process_sid_sddl().endswith("-500") and ";;;LA)" in sddl
+    ), f"state root DACL must grant the calling account (else it locks itself out): {sddl!r}"
     assert ";;;AU)" not in sddl, f"state root DACL must NOT grant Authenticated Users: {sddl!r}"
     assert ";;;BU)" not in sddl, f"state root DACL must NOT grant BUILTIN\\Users: {sddl!r}"
     assert ";;;WD)" not in sddl, f"state root DACL must NOT grant Everyone/World: {sddl!r}"

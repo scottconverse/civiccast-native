@@ -170,10 +170,7 @@ class CaptionFeedWorker:
                         ),
                     ):
                         acknowledged_pages.add(page_key)
-                if all(
-                    (cue.cue_id, index) in acknowledged_pages
-                    for index in range(len(pages))
-                ):
+                if all((cue.cue_id, index) in acknowledged_pages for index in range(len(pages))):
                     seen.add(cue.cue_id)  # only mark sent on a successful push
                     sent += 1
                     channel_sent = True

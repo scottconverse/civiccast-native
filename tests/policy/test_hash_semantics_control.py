@@ -23,7 +23,11 @@ GIT_ID = ["-c", "user.name=control", "-c", "user.email=control@example.invalid"]
 def _git(repo: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", "-c", "core.autocrlf=false", *GIT_ID, *args],
-        cwd=repo, capture_output=True, text=True, timeout=30, check=True,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
     )
     return result.stdout.strip()
 

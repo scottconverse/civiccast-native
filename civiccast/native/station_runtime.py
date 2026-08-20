@@ -138,6 +138,7 @@ def reverify_gstreamer_closure(gstreamer_runtime_root: Path) -> bool:
         return False
     return True
 
+
 #: Owner decision (Scott Converse, 2026-08-07, ratified): the caption FLOOR
 #: tier (``captions-floor``, ``medium`` / ``faster-whisper-medium``) is the
 #: mandatory baseline for native station activation; ``captions-large-v3`` is
@@ -1118,9 +1119,7 @@ def _resolve_gstreamer_egress_environment(
     """
 
     try:
-        return installed_gstreamer_environment(
-            gstreamer_runtime_root, base_environment=environment
-        )
+        return installed_gstreamer_environment(gstreamer_runtime_root, base_environment=environment)
     except GstreamerRuntimeError as exc:
         detected = exc
 
@@ -1311,9 +1310,8 @@ def load_native_station_environment(
         # cuda_bin_dir as the best-effort location, matching the single-root
         # PATH behavior this gate replaces; a non-existent directory on PATH
         # is harmless.
-        cuda_bin = (
-            resolve_cuda_bin_dir(root, acquisition_root=civiccast_data_root)
-            or cuda_bin_dir(root)
+        cuda_bin = resolve_cuda_bin_dir(root, acquisition_root=civiccast_data_root) or cuda_bin_dir(
+            root
         )
         inherited_path = environment.get("PATH", "")
         environment["PATH"] = (

@@ -315,9 +315,9 @@ def test_cli_rejects_failed_probe_even_if_output_lists_libx264(
     result = json.loads(output.read_text(encoding="utf-8"))
     assert result["passed"] is False
     assert result["operator_action"] == "ffmpeg encoder probe exited 1: probe failed"
-    assert "No headend, SRT, caption, EAS, SDI, or compliance claim is made." in result[
-        "not_claimed"
-    ]
+    assert (
+        "No headend, SRT, caption, EAS, SDI, or compliance claim is made." in result["not_claimed"]
+    )
 
 
 def test_success_result_shape_keeps_file_sink_claim_boundary() -> None:

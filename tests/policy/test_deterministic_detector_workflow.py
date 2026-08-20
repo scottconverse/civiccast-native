@@ -58,7 +58,9 @@ def test_mutation_job_uses_real_event_base_and_full_history() -> None:
     assert (
         'echo \'source_paths = ["civiccast", "scripts", "prototype", "tools", "alembic"]\'' in text
     )
-    assert 'echo \'also_copy = [".agent-runs", ".github", ".pipelines", "deploy", "docker", ' in text
+    assert (
+        'echo \'also_copy = [".agent-runs", ".github", ".pipelines", "deploy", "docker", ' in text
+    )
     assert '".agent-runs"' in text
     assert '"docs", "security", "tester-handoff", "tests", "alembic.ini"' in text
     assert '"native-windows-build-toolchain.lock.json"' in text
@@ -70,8 +72,14 @@ def test_mutation_job_uses_real_event_base_and_full_history() -> None:
     # change cwd to prove the real application resolves migrations from its
     # package location, but the harness copy cannot retain that root layout.
     # They remain in normal CI and are excluded only from mutation executions.
-    assert "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory" in text
-    assert "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory" in text
+    assert (
+        "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory"
+        in text
+    )
+    assert (
+        "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory"
+        in text
+    )
     assert "mutmut excludes these modules from mutation executions" in text
     assert 'echo -n "only_mutate = ["' in text
     assert "sed 's/.*/\"&\",/'" in text

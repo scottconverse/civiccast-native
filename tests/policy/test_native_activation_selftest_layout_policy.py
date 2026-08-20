@@ -436,8 +436,7 @@ def test_postgres_pins_cover_both_the_self_test_binary_and_the_runtime_launcher(
     for entry in ("bin/postgres.exe", "bin/pg_ctl.exe"):
         expected = f"{STAGED_PAYLOAD_ROOT}/{entry}"
         assert expected in _required_staged_runtime_files(), (
-            f"{expected!r} must be in native_activation.rs's REQUIRED_STAGED_RUNTIME_FILES "
-            "(K1-2)"
+            f"{expected!r} must be in native_activation.rs's REQUIRED_STAGED_RUNTIME_FILES (K1-2)"
         )
         assert expected in _main_rs_pre_activation_check_paths(), (
             f"{expected!r} must be in main.rs's run_native_pre_activation_checks (K1-2)"
@@ -465,8 +464,7 @@ def _native_activation_optional_verified_if_present_paths() -> list[str]:
     )
     entries = re.findall(r'"([^"]+)"', match.group(1))
     assert entries, (
-        "OPTIONAL_VERIFIED_IF_PRESENT_RUNTIME_FILES const matched but no quoted entries "
-        "were found"
+        "OPTIONAL_VERIFIED_IF_PRESENT_RUNTIME_FILES const matched but no quoted entries were found"
     )
     return entries
 

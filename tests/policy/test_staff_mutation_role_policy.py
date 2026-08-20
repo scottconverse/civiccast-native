@@ -174,7 +174,11 @@ def test_every_staff_mutation_route_has_a_role_marker() -> None:
         and (str(r["method"]), str(r["path"])) not in ALLOWED_UNGUARDED_STAFF_MUTATION_ROUTES
     ]
 
-    assert not unguarded, "Unguarded /api/staff mutation route(s) found -- add " + (
-        "Depends(require_any_role(...)) at the decorator, router, or function-arg "
-        "level, or add an explained entry to ALLOWED_UNGUARDED_STAFF_MUTATION_ROUTES:\n"
-    ) + "\n".join(f"  {r['method']} {r['path']} ({r['file']}:{r['line']})" for r in unguarded)
+    assert not unguarded, (
+        "Unguarded /api/staff mutation route(s) found -- add "
+        + (
+            "Depends(require_any_role(...)) at the decorator, router, or function-arg "
+            "level, or add an explained entry to ALLOWED_UNGUARDED_STAFF_MUTATION_ROUTES:\n"
+        )
+        + "\n".join(f"  {r['method']} {r['path']} ({r['file']}:{r['line']})" for r in unguarded)
+    )

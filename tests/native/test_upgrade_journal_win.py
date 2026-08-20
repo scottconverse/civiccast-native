@@ -101,9 +101,9 @@ def test_write_journal_hardens_the_state_root_dacl_for_real(tmp_path: Path) -> N
     )
     assert ";;;SY)" in sddl, f"state root DACL must grant SYSTEM: {sddl!r}"
     assert ";;;BA)" in sddl, f"state root DACL must grant BUILTIN\\Administrators: {sddl!r}"
-    assert (f";;;{_current_process_sid_sddl()})" in sddl or (_current_process_sid_sddl().endswith("-500") and ";;;LA)" in sddl)), (
-        f"state root DACL must grant the calling account (else it locks itself out): {sddl!r}"
-    )
+    assert f";;;{_current_process_sid_sddl()})" in sddl or (
+        _current_process_sid_sddl().endswith("-500") and ";;;LA)" in sddl
+    ), f"state root DACL must grant the calling account (else it locks itself out): {sddl!r}"
     assert ";;;AU)" not in sddl, f"state root DACL must NOT grant Authenticated Users: {sddl!r}"
     assert ";;;BU)" not in sddl, f"state root DACL must NOT grant BUILTIN\\Users: {sddl!r}"
     assert ";;;WD)" not in sddl, f"state root DACL must NOT grant Everyone/World: {sddl!r}"
@@ -167,7 +167,9 @@ def test_pg_dump_backup_directory_inherits_the_hardened_state_root_dacl(
     # hardening template grants the caller's LITERAL SID string instead of
     # the "OW" alias (see _STATE_ROOT_SDDL_TEMPLATE's docstring), so only an
     # inherited copy of OUR hardened ACL contains that literal string.
-    assert (f";;;{_current_process_sid_sddl()})" in sddl or (_current_process_sid_sddl().endswith("-500") and ";;;LA)" in sddl)), (
+    assert f";;;{_current_process_sid_sddl()})" in sddl or (
+        _current_process_sid_sddl().endswith("-500") and ";;;LA)" in sddl
+    ), (
         f"backup dir must inherit the state root's hardened DACL (literal caller "
         f"SID, not the ordinary Windows default 'OW' owner alias) -- if this "
         f"fails, the pg_dump backups escaped the hardened tree: {sddl!r}"

@@ -142,7 +142,6 @@ def read_db_revision(database_url: str) -> str | None:
         run_bounded,
     )
 
-
     def _read_once() -> str | None:
         from sqlalchemy import create_engine, text
         from sqlalchemy.exc import DBAPIError

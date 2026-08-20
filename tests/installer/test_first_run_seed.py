@@ -176,9 +176,7 @@ def _seed_patches() -> Iterator[None]:
         )
         stack.enter_context(patch("civiccast.installer.service.validate_ingest"))
         stack.enter_context(
-            patch(
-                "civiccast.installer.service.pack_vod_asset", side_effect=_fake_pack_vod_asset
-            )
+            patch("civiccast.installer.service.pack_vod_asset", side_effect=_fake_pack_vod_asset)
         )
         yield
 
@@ -232,7 +230,9 @@ def test_first_admin_setup_seeds_sample_content_and_starter_schedule(monkeypatch
     assert all(s.state == "pending" for s in other_surfaces)
 
 
-def test_first_admin_setup_skips_seeding_when_sample_content_disabled(monkeypatch, tmp_path) -> None:
+def test_first_admin_setup_skips_seeding_when_sample_content_disabled(
+    monkeypatch, tmp_path
+) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
     monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
@@ -314,9 +314,7 @@ def test_first_run_seed_failure_is_persisted_visible_and_retryable(monkeypatch, 
         assert "simulated mark_packaged failure" in failed_body["error_message"]
         assert failed_body["dismissed"] is False
 
-        dismissed = client.post(
-            "/api/staff/installer/sample-seed-status/dismiss", headers=auth
-        )
+        dismissed = client.post("/api/staff/installer/sample-seed-status/dismiss", headers=auth)
         assert dismissed.status_code == 200
         assert dismissed.json()["status"] == "failed"
         assert dismissed.json()["dismissed"] is True
@@ -420,9 +418,7 @@ def test_retry_after_schedule_step_failure_resumes_instead_of_reseeding(
 
         # Fix the underlying problem, then retry.
         schedule_store.fail = None
-        retried = client.post(
-            "/api/staff/installer/sample-seed-status/retry", headers=auth
-        )
+        retried = client.post("/api/staff/installer/sample-seed-status/retry", headers=auth)
 
     assert retried.status_code == 200
     retried_body = retried.json()
@@ -460,9 +456,7 @@ def test_retry_after_ingest_failure_still_reseeds_from_scratch(monkeypatch, tmp_
         assert failed["asset_id"] is None
 
         asset_store.fail_mark_packaged = False
-        retried = client.post(
-            "/api/staff/installer/sample-seed-status/retry", headers=auth
-        )
+        retried = client.post("/api/staff/installer/sample-seed-status/retry", headers=auth)
 
     assert retried.status_code == 200
     assert retried.json()["status"] == "succeeded"
@@ -505,9 +499,7 @@ def test_abandoned_pending_seed_is_reconciled_to_failed_on_read(monkeypatch, tmp
         )
         installer_service._save_first_run_seed_state(started_at=stale_started_at.isoformat())
 
-        status_response = client.get(
-            "/api/staff/installer/sample-seed-status", headers=auth
-        )
+        status_response = client.get("/api/staff/installer/sample-seed-status", headers=auth)
 
     assert status_response.status_code == 200
     body = status_response.json()
@@ -542,9 +534,7 @@ def test_pending_seed_within_the_staleness_window_is_left_alone(monkeypatch, tmp
 
         installer_service.mark_first_run_seed_pending()
 
-        status_response = client.get(
-            "/api/staff/installer/sample-seed-status", headers=auth
-        )
+        status_response = client.get("/api/staff/installer/sample-seed-status", headers=auth)
 
     assert setup_response.status_code == 200
     assert status_response.json()["status"] == "pending"

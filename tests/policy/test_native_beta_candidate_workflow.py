@@ -178,9 +178,7 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert "--pack-public-key-base64 $env:PACK_PUBLIC_KEY_BASE64" in bootstrap
     assert "--pack-signing-key-id $env:PACK_SIGNING_KEY_ID" in bootstrap
 
-    trust_bridge = steps["Verify the compiled bootstrap trusts the freshly signed packs"][
-        "run"
-    ]
+    trust_bridge = steps["Verify the compiled bootstrap trusts the freshly signed packs"]["run"]
     assert '$sideload = "artifacts/native-beta"' in trust_bridge
     assert "Copy-Item" not in trust_bridge
     assert '"--require-component", "native-ffmpeg-runtime"' in trust_bridge
@@ -221,9 +219,7 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert "native-ollama-runtime.ccpack" in upload["with"]["path"]
     assert "native-cuda-runtime.ccpack" in upload["with"]["path"]
     assert "CivicCast (Native)_*_x64-setup.exe" in upload["with"]["path"]
-    upload_paths = {
-        line.strip() for line in upload["with"]["path"].splitlines() if line.strip()
-    }
+    upload_paths = {line.strip() for line in upload["with"]["path"].splitlines() if line.strip()}
     for component in (
         "native-app-payload",
         "native-server-binaries",
@@ -288,12 +284,10 @@ def test_native_beta_candidate_workflow_keeps_build_scratch_out_of_the_source_tr
         '$serverPackCache = Join-Path $env:RUNNER_TEMP "civiccast-server-pack-cache"' in pack_build
     )
     assert (
-        '$ffmpegPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ffmpeg-pack-cache"'
-        in pack_build
+        '$ffmpegPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ffmpeg-pack-cache"' in pack_build
     )
     assert (
-        '$ollamaPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ollama-pack-cache"'
-        in pack_build
+        '$ollamaPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ollama-pack-cache"' in pack_build
     )
     assert "--payload-out $appPayload" in pack_build
     assert "--build-scratch $appScratch" in pack_build
@@ -338,7 +332,9 @@ def test_native_beta_candidate_workflow_embeds_verified_closure_and_smokes_befor
     _assert_embedded_closure_smoke_contract(text, workflow["jobs"]["build-native-beta"])
 
 
-def test_native_beta_candidate_workflow_contract_rejects_standalone_gstreamer_pack_or_late_smoke() -> None:
+def test_native_beta_candidate_workflow_contract_rejects_standalone_gstreamer_pack_or_late_smoke() -> (
+    None
+):
     text = WORKFLOW.read_text(encoding="utf-8")
     third_pack = text.replace(
         "native-server-binaries.ccpack\n",

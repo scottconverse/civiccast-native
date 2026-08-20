@@ -76,7 +76,9 @@ InterlockReaderFn = Callable[[], InterlockRead]
 InterlockTakerFn = Callable[[str], MaintenanceRecord]
 InterlockReleaserFn = Callable[[], MaintenanceRecord]
 
-_INTERLOCK_OPTION_HELP = "Migration-owned interlock: verify (never take) a held record bound to this owner run id."
+_INTERLOCK_OPTION_HELP = (
+    "Migration-owned interlock: verify (never take) a held record bound to this owner run id."
+)
 _INTERLOCK_GENERATION_OPTION_HELP = (
     "Migration-owned interlock: the generation the record must still match at every phase boundary."
 )
@@ -89,11 +91,14 @@ ROLLBACK_ACK = (
     "native-era rows and media do not flow back; recovery point is the pre-cutover migration backup"
 )
 
-runtime_app = typer.Typer(name="runtime", no_args_is_help=True, help="Dual-runtime exclusion guard (WS4).")
+runtime_app = typer.Typer(
+    name="runtime", no_args_is_help=True, help="Dual-runtime exclusion guard (WS4)."
+)
 
 _JSON_OPTION = typer.Option("--json", help="Emit machine-readable JSON.")
 _STATE_DIR_OPTION = typer.Option(
-    "--state-dir", help="Override the journal/evidence directory (default: %ProgramData%\\CivicCast\\logs)."
+    "--state-dir",
+    help="Override the journal/evidence directory (default: %ProgramData%\\CivicCast\\logs).",
 )
 
 
@@ -145,14 +150,21 @@ def runtime_status(json_output: Annotated[bool, _JSON_OPTION] = False) -> None:
     if json_output:
         typer.echo(
             json.dumps(
-                {"inputs": json.loads(inputs.model_dump_json()), "decision": json.loads(decision.model_dump_json())},
+                {
+                    "inputs": json.loads(inputs.model_dump_json()),
+                    "decision": json.loads(decision.model_dump_json()),
+                },
                 indent=2,
             )
         )
     else:
-        typer.echo(f"Selector: {inputs.selector.value} (ok={inputs.selector.ok}) -- {inputs.selector.detail}")
+        typer.echo(
+            f"Selector: {inputs.selector.value} (ok={inputs.selector.ok}) -- {inputs.selector.detail}"
+        )
         typer.echo(f"Interlock: {inputs.interlock.status} -- {inputs.interlock.detail}")
-        typer.echo(f"A1 (keeper): live_process={inputs.a1.live_process} run_entry={inputs.a1.run_entry}")
+        typer.echo(
+            f"A1 (keeper): live_process={inputs.a1.live_process} run_entry={inputs.a1.run_entry}"
+        )
         typer.echo(f"A2 (in-distro service): {inputs.a2.status} -- {inputs.a2.detail}")
         typer.echo(f"A3 (mutex): {inputs.a3.status} -- {inputs.a3.detail}")
         typer.echo(f"WSL install detected: {inputs.wsl_install_detected}")
@@ -297,7 +309,11 @@ def _save_journal(path: Path, journal: CutoverJournal) -> None:
 
 
 def _load_or_start_journal(
-    *, journal_path: Path, direction: Literal["cutover", "rollback"], run_id: str | None, force_new: bool
+    *,
+    journal_path: Path,
+    direction: Literal["cutover", "rollback"],
+    run_id: str | None,
+    force_new: bool,
 ) -> tuple[CutoverJournal | None, CutoverJournal | None]:
     """CC-WS4-007 fix (round 2, Major): the shared journal-acquisition
     contract for both ``run_cutover`` and ``run_rollback``. Returns
@@ -366,7 +382,12 @@ def _load_or_start_journal(
     if loaded is None:
         return (
             CutoverJournal(
-                v=1, run_id=run_id or uuid.uuid4().hex, direction=direction, phases=[], unloaded_profiles=[], errors=[]
+                v=1,
+                run_id=run_id or uuid.uuid4().hex,
+                direction=direction,
+                phases=[],
+                unloaded_profiles=[],
+                errors=[],
             ),
             None,
         )
@@ -465,16 +486,25 @@ def _run_phase(
     try:
         detail = action()
         if resume_verify_failure_detail is not None:
-            detail = f"{detail} (RE-EXECUTED: resume-time verify failed: {resume_verify_failure_detail})"
+            detail = (
+                f"{detail} (RE-EXECUTED: resume-time verify failed: {resume_verify_failure_detail})"
+            )
         if verify_after_fresh_action and verify is not None:
             fresh_verify_ok, fresh_verify_detail = verify()
             if not fresh_verify_ok:
-                raise RuntimeError(f"postcondition not confirmed after action: {fresh_verify_detail}")
+                raise RuntimeError(
+                    f"postcondition not confirmed after action: {fresh_verify_detail}"
+                )
         _upsert_phase(
             journal,
             CutoverPhaseRecord(
-                phase=phase, name=name, status="done", started_utc=started, finished_utc=clock_fn(),
-                detail=detail, postcondition=postcondition,
+                phase=phase,
+                name=name,
+                status="done",
+                started_utc=started,
+                finished_utc=clock_fn(),
+                detail=detail,
+                postcondition=postcondition,
                 verified_on_resume=(False if resume_verify_failure_detail is not None else None),
             ),
         )
@@ -488,8 +518,13 @@ def _run_phase(
         _upsert_phase(
             journal,
             CutoverPhaseRecord(
-                phase=phase, name=name, status="failed", started_utc=started, finished_utc=clock_fn(),
-                detail=str(exc), postcondition=postcondition,
+                phase=phase,
+                name=name,
+                status="failed",
+                started_utc=started,
+                finished_utc=clock_fn(),
+                detail=str(exc),
+                postcondition=postcondition,
                 verified_on_resume=(False if resume_verify_failure_detail is not None else None),
             ),
         )
@@ -499,7 +534,9 @@ def _run_phase(
     return ok
 
 
-def _write_evidence(state_dir: Path, journal: CutoverJournal, timestamp: str, probe_snapshot: GuardInputs | None) -> None:
+def _write_evidence(
+    state_dir: Path, journal: CutoverJournal, timestamp: str, probe_snapshot: GuardInputs | None
+) -> None:
     """CC-WS4-007 fix (round 2, Major): the evidence JSON now includes the
     probe-result snapshot (``probe_snapshot`` -- ``None`` only when the
     caller passed no snapshot callable at all, never silently omitted) IN
@@ -513,7 +550,9 @@ def _write_evidence(state_dir: Path, journal: CutoverJournal, timestamp: str, pr
     json_path = state_dir / f"runtime-cutover-evidence-{stamp}.json"
     md_path = state_dir / f"runtime-cutover-evidence-{stamp}.md"
     payload = json.loads(journal.model_dump_json())
-    payload["probe_snapshot"] = json.loads(probe_snapshot.model_dump_json()) if probe_snapshot is not None else None
+    payload["probe_snapshot"] = (
+        json.loads(probe_snapshot.model_dump_json()) if probe_snapshot is not None else None
+    )
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     lines = [
@@ -628,7 +667,10 @@ def _bind_interlock_bracket(
             journal.interlock_owner_run_id = interlock_owner
             journal.interlock_generation = interlock_generation
             _save_journal(journal_path, journal)
-        elif journal.interlock_owner_run_id != interlock_owner or journal.interlock_generation != interlock_generation:
+        elif (
+            journal.interlock_owner_run_id != interlock_owner
+            or journal.interlock_generation != interlock_generation
+        ):
             return (
                 "--interlock-owner/--interlock-generation do not match this journal's "
                 f"already-bound values ({journal.interlock_owner_run_id!r}, {journal.interlock_generation!r})"
@@ -939,7 +981,9 @@ def _default_phase5_verify_for(state_dir: Path, journal: CutoverJournal) -> Veri
             evidence_phases = payload.get("phases")
             if not isinstance(evidence_phases, list):
                 continue
-            evidence_phase_numbers = {p.get("phase") for p in evidence_phases if isinstance(p, dict)}
+            evidence_phase_numbers = {
+                p.get("phase") for p in evidence_phases if isinstance(p, dict)
+            }
             if not journal_phase_numbers.issubset(evidence_phase_numbers):
                 continue
             matching.append(candidate.name)
@@ -949,7 +993,10 @@ def _default_phase5_verify_for(state_dir: Path, journal: CutoverJournal) -> Veri
                 f"direction={journal.direction!r} with the full committed phase set and required schema "
                 f"({sorted(_EVIDENCE_REQUIRED_KEYS)})"
             )
-        return True, f"evidence file {matching[-1]} matches run_id/direction/phase-set and required schema"
+        return (
+            True,
+            f"evidence file {matching[-1]} matches run_id/direction/phase-set and required schema",
+        )
 
     return _verify
 
@@ -1003,7 +1050,9 @@ def run_cutover(
     )
     if refusal is not None:
         return refusal
-    assert journal is not None  # narrows for type-checking; _load_or_start_journal's contract guarantees this
+    assert (
+        journal is not None
+    )  # narrows for type-checking; _load_or_start_journal's contract guarantees this
 
     interlock_reader_fn = interlock_reader or read_interlock
     interlock_taker_fn = interlock_taker or take_interlock
@@ -1022,7 +1071,9 @@ def run_cutover(
         return journal
 
     def _bracket_ok(before: str) -> bool:
-        ok, detail = _verify_interlock_bracket(journal=journal, interlock_reader=interlock_reader_fn)
+        ok, detail = _verify_interlock_bracket(
+            journal=journal, interlock_reader=interlock_reader_fn
+        )
         if not ok:
             journal.errors.append(f"interlock bracket failed before {before}: {detail}")
             _save_journal(journal_path, journal)
@@ -1037,15 +1088,21 @@ def run_cutover(
     if not _bracket_ok("phase 1"):
         return journal
     if not _run_phase(
-        journal, journal_path, 1, "in-distro disable+stop",
+        journal,
+        journal_path,
+        1,
+        "in-distro disable+stop",
         "civiccast* disabled+stopped, or no distro registered",
-        phase1_stop_service or _default_phase1_stop_service, clock_fn,
+        phase1_stop_service or _default_phase1_stop_service,
+        clock_fn,
         verify=phase1_verify or _default_phase1_verify,
     ):
         return journal
 
     def _phase2_action() -> str:
-        removed_hives, unloaded, exe_path = (phase2_remove_run_entries or _default_phase2_remove_run_entries)()
+        removed_hives, unloaded, exe_path = (
+            phase2_remove_run_entries or _default_phase2_remove_run_entries
+        )()
         journal.unloaded_profiles = unloaded
         if exe_path:
             # CC-WS4-006: bind the removed value's exe path onto the
@@ -1059,9 +1116,13 @@ def run_cutover(
     if not _bracket_ok("phase 2"):
         return journal
     if not _run_phase(
-        journal, journal_path, 2, "remove keeper Run entries",
+        journal,
+        journal_path,
+        2,
+        "remove keeper Run entries",
         "no loaded-hive Run entry carries the runtime-host flag",
-        _phase2_action, clock_fn,
+        _phase2_action,
+        clock_fn,
         verify=phase2_verify or _default_phase2_verify,
         verify_after_fresh_action=True,
     ):
@@ -1074,7 +1135,13 @@ def run_cutover(
     if not _bracket_ok("phase 3 (selector write)"):
         return journal
     if not _run_phase(
-        journal, journal_path, 3, "selector := native", "ActiveRuntime == native", _phase3_action, clock_fn,
+        journal,
+        journal_path,
+        3,
+        "selector := native",
+        "ActiveRuntime == native",
+        _phase3_action,
+        clock_fn,
         verify=phase3_verify or _default_phase3_verify,
     ):
         return journal
@@ -1085,8 +1152,13 @@ def run_cutover(
     if not _bracket_ok("phase 4 (post-selector-mutation re-verify)"):
         return journal
     if not _run_phase(
-        journal, journal_path, 4, "record distro retained as rollback media", "distro not unregistered",
-        phase4_record_retained or _default_phase4_record_retained, clock_fn,
+        journal,
+        journal_path,
+        4,
+        "record distro retained as rollback media",
+        "distro not unregistered",
+        phase4_record_retained or _default_phase4_record_retained,
+        clock_fn,
         verify=phase4_verify or _default_phase4_verify,
     ):
         return journal
@@ -1099,7 +1171,13 @@ def run_cutover(
     if not _bracket_ok("phase 5"):
         return journal
     _run_phase(
-        journal, journal_path, 5, "write evidence file", "evidence file present", _phase5_action, clock_fn,
+        journal,
+        journal_path,
+        5,
+        "write evidence file",
+        "evidence file present",
+        _phase5_action,
+        clock_fn,
         verify=phase5_verify or _default_phase5_verify_for(state_dir, journal),
     )
 
@@ -1117,7 +1195,9 @@ def run_cutover(
 @runtime_app.command("cutover-to-native")
 def cutover_to_native_command(
     state_dir: Annotated[Path | None, _STATE_DIR_OPTION] = None,
-    interlock_owner: Annotated[str | None, typer.Option("--interlock-owner", help=_INTERLOCK_OPTION_HELP)] = None,
+    interlock_owner: Annotated[
+        str | None, typer.Option("--interlock-owner", help=_INTERLOCK_OPTION_HELP)
+    ] = None,
     interlock_generation: Annotated[
         int | None, typer.Option("--interlock-generation", help=_INTERLOCK_GENERATION_OPTION_HELP)
     ] = None,
@@ -1173,7 +1253,9 @@ def _default_phase3_reenable_service() -> str:
             f"cannot confirm the CivicCast distro ({WSL_DISTRO_NAME}) exists to roll back to"
         )
     if not installed:
-        raise RuntimeError(f"no CivicCast distro ({WSL_DISTRO_NAME}) registered -- nothing to roll back to")
+        raise RuntimeError(
+            f"no CivicCast distro ({WSL_DISTRO_NAME}) registered -- nothing to roll back to"
+        )
     argv = [
         str(WSL_EXE),
         "-d",
@@ -1222,7 +1304,9 @@ def _default_phase4_restore_run_entry(
         )
     resolved_root = winreg.HKEY_CURRENT_USER if root is None else root
     value_data = f'"{exe_path}" {RUNTIME_HOST_FLAG}'
-    with winreg.CreateKeyEx(resolved_root, key_path, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as key:
+    with winreg.CreateKeyEx(
+        resolved_root, key_path, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE
+    ) as key:
         winreg.SetValueEx(key, "CivicCast Autostart", 0, winreg.REG_SZ, value_data)
         read_back_value, read_back_type = winreg.QueryValueEx(key, "CivicCast Autostart")
         if read_back_type != winreg.REG_SZ or read_back_value != value_data:
@@ -1354,7 +1438,9 @@ def run_rollback(
     )
     if refusal is not None:
         return refusal
-    assert journal is not None  # narrows for type-checking; _load_or_start_journal's contract guarantees this
+    assert (
+        journal is not None
+    )  # narrows for type-checking; _load_or_start_journal's contract guarantees this
 
     interlock_reader_fn = interlock_reader or read_interlock
     interlock_taker_fn = interlock_taker or take_interlock
@@ -1373,7 +1459,9 @@ def run_rollback(
         return journal
 
     def _bracket_ok(before: str) -> bool:
-        ok, detail = _verify_interlock_bracket(journal=journal, interlock_reader=interlock_reader_fn)
+        ok, detail = _verify_interlock_bracket(
+            journal=journal, interlock_reader=interlock_reader_fn
+        )
         if not ok:
             journal.errors.append(f"interlock bracket failed before {before}: {detail}")
             _save_journal(journal_path, journal)
@@ -1391,9 +1479,13 @@ def run_rollback(
     if not _bracket_ok("phase 1"):
         return journal
     if not _run_phase(
-        journal, journal_path, 1, "stop native supervisor children",
+        journal,
+        journal_path,
+        1,
+        "stop native supervisor children",
         "no native transmission children running",
-        lambda: "no native supervisor children to stop (ws5 not landed)", clock_fn,
+        lambda: "no native supervisor children to stop (ws5 not landed)",
+        clock_fn,
         verify=phase1_verify or _default_rollback_phase1_verify,
     ):
         return journal
@@ -1421,7 +1513,13 @@ def run_rollback(
     if not _bracket_ok("phase 2 (selector write)"):
         return journal
     if not _run_phase(
-        journal, journal_path, 2, "selector := wsl", "ActiveRuntime == wsl", _phase2_action, clock_fn,
+        journal,
+        journal_path,
+        2,
+        "selector := wsl",
+        "ActiveRuntime == wsl",
+        _phase2_action,
+        clock_fn,
         verify=phase2_verify or _default_rollback_phase2_verify,
     ):
         return journal
@@ -1431,9 +1529,13 @@ def run_rollback(
     if not _bracket_ok("phase 3 (post-selector-mutation re-verify)"):
         return journal
     if not _run_phase(
-        journal, journal_path, 3, "re-enable in-distro services",
+        journal,
+        journal_path,
+        3,
+        "re-enable in-distro services",
         "civiccast* active in-distro",
-        phase3_reenable_service or _default_phase3_reenable_service, clock_fn,
+        phase3_reenable_service or _default_phase3_reenable_service,
+        clock_fn,
         verify=phase3_verify or _default_rollback_phase3_verify,
     ):
         return journal
@@ -1444,8 +1546,13 @@ def run_rollback(
     if not _bracket_ok("phase 4"):
         return journal
     _run_phase(
-        journal, journal_path, 4, "restore keeper Run entry for invoking user",
-        "HKCU Run entry present for the invoking user", _phase4_action, clock_fn,
+        journal,
+        journal_path,
+        4,
+        "restore keeper Run entry for invoking user",
+        "HKCU Run entry present for the invoking user",
+        _phase4_action,
+        clock_fn,
         verify=phase4_verify or _default_rollback_phase4_verify,
     )
 
@@ -1460,12 +1567,17 @@ def run_rollback(
 
 @runtime_app.command("rollback-to-wsl")
 def rollback_to_wsl_command(
-    ack: Annotated[str | None, typer.Option("--ack", help="Must exactly equal the printed boundary statement.")] = None,
+    ack: Annotated[
+        str | None, typer.Option("--ack", help="Must exactly equal the printed boundary statement.")
+    ] = None,
     exe_path: Annotated[
-        str | None, typer.Option("--exe-path", help="Installed exe path for the restored Run entry.")
+        str | None,
+        typer.Option("--exe-path", help="Installed exe path for the restored Run entry."),
     ] = None,
     state_dir: Annotated[Path | None, _STATE_DIR_OPTION] = None,
-    interlock_owner: Annotated[str | None, typer.Option("--interlock-owner", help=_INTERLOCK_OPTION_HELP)] = None,
+    interlock_owner: Annotated[
+        str | None, typer.Option("--interlock-owner", help=_INTERLOCK_OPTION_HELP)
+    ] = None,
     interlock_generation: Annotated[
         int | None, typer.Option("--interlock-generation", help=_INTERLOCK_GENERATION_OPTION_HELP)
     ] = None,

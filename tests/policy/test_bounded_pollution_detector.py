@@ -94,9 +94,7 @@ def test_campaign_rejects_incomplete_extra_or_false_result_records(
 ) -> None:
     def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
         result_arg = next(
-            argument
-            for argument in command
-            if argument.startswith("--dtp-results-output-file=")
+            argument for argument in command if argument.startswith("--dtp-results-output-file=")
         )
         result_path = Path(result_arg.split("=", 1)[1])
         result_path.write_text(json.dumps(result_records), encoding="utf-8")
@@ -122,9 +120,7 @@ def test_campaign_receipt_counts_exactly_validated_records(
 
     def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
         result_arg = next(
-            argument
-            for argument in command
-            if argument.startswith("--dtp-results-output-file=")
+            argument for argument in command if argument.startswith("--dtp-results-output-file=")
         )
         Path(result_arg.split("=", 1)[1]).write_text(
             json.dumps(records),

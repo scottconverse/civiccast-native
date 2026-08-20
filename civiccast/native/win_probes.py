@@ -178,7 +178,9 @@ def read_selector(*, root: _RegKeyType | None = None, key_path: str = SELECTOR_K
 
     resolved_root = _hklm() if root is None else root
     try:
-        with winreg.OpenKey(resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_READ)) as key:
+        with winreg.OpenKey(
+            resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_READ)
+        ) as key:
             try:
                 raw_value, value_type = winreg.QueryValueEx(key, SELECTOR_VALUE_NAME)
             except FileNotFoundError:
@@ -208,7 +210,9 @@ def read_selector(*, root: _RegKeyType | None = None, key_path: str = SELECTOR_K
         )
     if raw_value in ("native", "wsl"):
         return SelectorRead(
-            ok=True, value=cast(Selector, raw_value), detail=f"read {SELECTOR_VALUE_NAME}={raw_value!r}"
+            ok=True,
+            value=cast(Selector, raw_value),
+            detail=f"read {SELECTOR_VALUE_NAME}={raw_value!r}",
         )
     return SelectorRead(
         ok=False, value=None, detail=f"unrecognized {SELECTOR_VALUE_NAME} value {raw_value!r}"
@@ -216,7 +220,10 @@ def read_selector(*, root: _RegKeyType | None = None, key_path: str = SELECTOR_K
 
 
 def write_selector(
-    value: Literal["native", "wsl"], *, root: _RegKeyType | None = None, key_path: str = SELECTOR_KEY
+    value: Literal["native", "wsl"],
+    *,
+    root: _RegKeyType | None = None,
+    key_path: str = SELECTOR_KEY,
 ) -> None:
     """Write ActiveRuntime -- admin-writable HKLM key; raises PermissionError
     with the OS's own message when the caller lacks write access."""
@@ -224,7 +231,9 @@ def write_selector(
     import winreg
 
     resolved_root = _hklm() if root is None else root
-    with winreg.CreateKeyEx(resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)) as key:
+    with winreg.CreateKeyEx(
+        resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)
+    ) as key:
         winreg.SetValueEx(key, SELECTOR_VALUE_NAME, 0, winreg.REG_SZ, value)
 
 
@@ -237,7 +246,9 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def read_interlock(*, root: _RegKeyType | None = None, key_path: str = MAINTENANCE_KEY) -> InterlockRead:
+def read_interlock(
+    *, root: _RegKeyType | None = None, key_path: str = MAINTENANCE_KEY
+) -> InterlockRead:
     """F6 fix: same FileNotFoundError-vs-other-OSError split as
     read_selector -- only a genuinely missing key/value is readable-free;
     any other OSError is UNREADABLE, fail-closed (D4: "a transmitter that
@@ -247,7 +258,9 @@ def read_interlock(*, root: _RegKeyType | None = None, key_path: str = MAINTENAN
 
     resolved_root = _hklm() if root is None else root
     try:
-        with winreg.OpenKey(resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_READ)) as key:
+        with winreg.OpenKey(
+            resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_READ)
+        ) as key:
             try:
                 raw_value, value_type = winreg.QueryValueEx(key, MAINTENANCE_VALUE_NAME)
             except FileNotFoundError:
@@ -278,7 +291,9 @@ def read_interlock(*, root: _RegKeyType | None = None, key_path: str = MAINTENAN
     try:
         record = MaintenanceRecord.model_validate_json(raw_value)
     except (ValidationError, ValueError) as exc:
-        return InterlockRead(status="unreadable", record=None, detail=f"malformed Maintenance JSON: {exc}")
+        return InterlockRead(
+            status="unreadable", record=None, detail=f"malformed Maintenance JSON: {exc}"
+        )
 
     status: InterlockStatus = "held" if record.state == "held" else "free"
     return InterlockRead(
@@ -309,15 +324,25 @@ def take_interlock(
     next_generation = (current.record.generation + 1) if current.record is not None else 1
     now = (clock or _utc_now_iso)()
     record = MaintenanceRecord(
-        v=1, state="held", generation=next_generation, owner_run_id=owner_run_id, taken_utc=now, released_utc=None
+        v=1,
+        state="held",
+        generation=next_generation,
+        owner_run_id=owner_run_id,
+        taken_utc=now,
+        released_utc=None,
     )
-    with winreg.CreateKeyEx(resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)) as key:
+    with winreg.CreateKeyEx(
+        resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)
+    ) as key:
         winreg.SetValueEx(key, MAINTENANCE_VALUE_NAME, 0, winreg.REG_SZ, record.model_dump_json())
     return record
 
 
 def release_interlock(
-    *, root: _RegKeyType | None = None, key_path: str = MAINTENANCE_KEY, clock: Callable[[], str] | None = None
+    *,
+    root: _RegKeyType | None = None,
+    key_path: str = MAINTENANCE_KEY,
+    clock: Callable[[], str] | None = None,
 ) -> MaintenanceRecord:
     """Release the D7a interlock (idempotent if already released). Raises
     RuntimeError if nothing is there to release or the record is unreadable."""
@@ -333,7 +358,9 @@ def release_interlock(
 
     now = (clock or _utc_now_iso)()
     record = current.record.model_copy(update={"state": "released", "released_utc": now})
-    with winreg.CreateKeyEx(resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)) as key:
+    with winreg.CreateKeyEx(
+        resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)
+    ) as key:
         winreg.SetValueEx(key, MAINTENANCE_VALUE_NAME, 0, winreg.REG_SZ, record.model_dump_json())
     return record
 
@@ -368,7 +395,10 @@ def _scan_live_processes(process_iter: Callable[[], Iterable[Any]]) -> tuple[Pro
                 return "positive", f"process pid={pid} cmdline carries {RUNTIME_HOST_FLAG}"
             if _process_matches_wsl_keeper(name, cmdline):
                 pid = getattr(proc, "pid", "?")
-                return "positive", f"wsl.exe keeper process pid={pid} matches all keeper argv markers"
+                return (
+                    "positive",
+                    f"wsl.exe keeper process pid={pid} matches all keeper argv markers",
+                )
     except Exception as exc:
         return "error", f"process scan failed mid-iteration: {exc}"
 
@@ -857,17 +887,24 @@ def probe_indistro_services(
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return _classify_absence_via_detect(runner=runner, because=f"wsl.exe timed out after {timeout}s")
+        return _classify_absence_via_detect(
+            runner=runner, because=f"wsl.exe timed out after {timeout}s"
+        )
     except FileNotFoundError:
         return _classify_absence_via_detect(runner=runner, because="wsl.exe was not found on PATH")
     except OSError as exc:
-        return _classify_absence_via_detect(runner=runner, because=f"wsl.exe invocation failed: {exc}")
+        return _classify_absence_via_detect(
+            runner=runner, because=f"wsl.exe invocation failed: {exc}"
+        )
 
     stdout = _decode_wsl_output(completed.stdout)
     stderr = _decode_wsl_output(completed.stderr)
     combined = f"{stdout}{stderr}"
 
-    if "WSL_E_DISTRO_NOT_FOUND" in combined or "no distribution with the supplied name" in combined.lower():
+    if (
+        "WSL_E_DISTRO_NOT_FOUND" in combined
+        or "no distribution with the supplied name" in combined.lower()
+    ):
         return _classify_absence_via_detect(
             runner=runner, because=f"wsl.exe reports distro not found: {combined.strip()}"
         )
@@ -878,7 +915,9 @@ def probe_indistro_services(
     if lines and all(line in ("inactive", "failed", "unknown") for line in lines):
         return A2Result(status="negative", detail=f"civiccast* service inactive: {stdout.strip()}")
     if completed.returncode == 0 and not lines:
-        return A2Result(status="negative", detail="civiccast* service query returned no active units")
+        return A2Result(
+            status="negative", detail="civiccast* service query returned no active units"
+        )
 
     # CC-CLEANROOM-001: on a PRISTINE box wsl.exe is the App-Execution-Alias
     # stub -- every invocation (this systemctl call included) exits nonzero
@@ -961,7 +1000,9 @@ class RuntimeOwnerMutex:
             self._close_handle()
             return A3Result(status="denied", detail=f"mutex '{self._name}' held by another process")
         self._close_handle()
-        return A3Result(status="error", detail=f"WaitForSingleObject returned unexpected code {wait_result}")
+        return A3Result(
+            status="error", detail=f"WaitForSingleObject returned unexpected code {wait_result}"
+        )
 
     def probe(self, timeout_ms: int = 0) -> A3Result:
         """CC-WS4-004 fix (round 2, Major -- auditor panel): the lifetime-
@@ -992,7 +1033,8 @@ class RuntimeOwnerMutex:
 
         if self._owns and self._handle is not None:
             return A3Result(
-                status="acquired", detail=f"mutex '{self._name}' self-owned (held since first probe; not reopened)"
+                status="acquired",
+                detail=f"mutex '{self._name}' self-owned (held since first probe; not reopened)",
             )
         return self.acquire(timeout_ms)
 
@@ -1029,7 +1071,9 @@ class RuntimeOwnerMutex:
         return cast(
             str,
             win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(
-                security_descriptor, win32security.SDDL_REVISION_1, win32security.DACL_SECURITY_INFORMATION
+                security_descriptor,
+                win32security.SDDL_REVISION_1,
+                win32security.DACL_SECURITY_INFORMATION,
             ),
         )
 
@@ -1048,7 +1092,9 @@ class RuntimeOwnerMutex:
 
         result = self.acquire()
         if result.status in ("denied", "error"):
-            raise RuntimeError(f"RuntimeOwnerMutex '{self._name}' not acquired ({result.status}): {result.detail}")
+            raise RuntimeError(
+                f"RuntimeOwnerMutex '{self._name}' not acquired ({result.status}): {result.detail}"
+            )
         return self
 
     def __exit__(self, *exc_info: object) -> None:

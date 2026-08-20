@@ -82,9 +82,7 @@ def test_lifespan_shutdown_calls_stop_all_channels_before_background_stop(
     assert automation.running is False
 
 
-def test_drain_all_deadline_is_configurable(
-    app_env: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_drain_all_deadline_is_configurable(app_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CIVICCAST_EGRESS_DRAIN_DEADLINE_SECONDS", "3.5")
 
     from civiccast.app import create_app
