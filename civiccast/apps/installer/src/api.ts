@@ -467,9 +467,53 @@ function nativeInstallerBridgeAvailable(): boolean {
  */
 function withHonestNativePlatform(state: InstallerState): InstallerState {
   if (state.platform === "windows-wsl2" && nativeInstallerBridgeAvailable()) {
-    return { ...state, platform: "windows-native" };
+    return { ...state, platform: "windows-native", lanes: nativeStartupLanes(state) };
   }
   return state;
+}
+
+/**
+ * The lane a native station should show while its control plane is still
+ * coming up -- replacing the WSL2 remedy copy `installerFixtures.blocked`
+ * carries.
+ *
+ * N-07 corrected this fallback's `platform` field but left its LANE, so a
+ * native operator read "Windows helper missing ... Choose Set up Windows
+ * helper ... ask IT to enable CPU virtualization, Windows Virtual Machine
+ * Platform, and Windows Subsystem for Linux". That named a remedy this
+ * product does not have, and once the WSL bootstrap affordance stopped
+ * rendering on native it became a DEAD END: an instruction pointing at a
+ * button that is not on the screen. On first run, which is the worst possible
+ * moment to lose an operator.
+ *
+ * Nothing is actually blocked here. Status is `loading`, not `blocked`, so no
+ * primary action renders and none is promised -- there is nothing for the
+ * operator to do but wait, and the screen now says exactly that.
+ *
+ * Only the WSL2 remedy lanes are replaced. A native fallback that already
+ * carries a real lane (from saved local progress) is untouched.
+ */
+function nativeStartupLanes(state: InstallerState): InstallerState["lanes"] {
+  return state.lanes.map((lane) =>
+    // ONLY the wsl2 remedy lane. My first pass also rewrote `platform`, which
+    // broke three native progress tests -- the platform lane is legitimate on
+    // a native station (saved runtime-ready progress uses it) and rewriting it
+    // erased real state. installerFixtures.blocked's lane is id "wsl2", so
+    // narrowing here still closes the dead end.
+    lane.id === "wsl2"
+      ? {
+          ...lane,
+          id: "platform",
+          label: "Starting CivicCast",
+          status: "loading" as const,
+          ready: false,
+          detail:
+            "CivicCast is starting its local services. On a first launch this takes a moment " +
+            "while the station prepares its database and control plane.",
+          nextStep: "Keep this window open. It updates by itself as soon as the station answers."
+        }
+      : lane
+  );
 }
 
 async function invokeNativeInstaller<T>(command: string, args?: Record<string, unknown>): Promise<T> {

@@ -248,6 +248,35 @@ describe("loadInstallerState unreachable-API fallback (N-07 carried)", () => {
     expect(state.platform).toBe("windows-native");
   });
 
+  it("never tells a native operator to set up WSL2 during that window", async () => {
+    // The other half of N-07. Correcting `platform` alone left the LANE
+    // saying "Windows helper missing ... Choose Set up Windows helper ... ask
+    // IT to enable CPU virtualization, Windows Virtual Machine Platform, and
+    // Windows Subsystem for Linux" -- a remedy this product does not have,
+    // and a DEAD END once that button stopped rendering on native.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED: local control plane not listening yet");
+      })
+    );
+    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
+      core: { invoke: async () => { throw new Error("no local installer state file yet"); } }
+    };
+
+    const state = await loadInstallerState();
+    const blob = JSON.stringify(state);
+
+    expect(blob).not.toMatch(/Set up Windows helper/i);
+    expect(blob).not.toMatch(/Windows Subsystem for Linux/i);
+    expect(blob).not.toMatch(/WSL/i);
+    // And it says what is actually happening, with nothing for the operator
+    // to press: status is `loading`, so no primary action is promised.
+    expect(state.lanes[0].status).toBe("loading");
+    expect(state.lanes[0].label).toBe("Starting CivicCast");
+    expect(state.lanes[0].nextStep).toMatch(/updates by itself/i);
+  });
+
   it("keeps reporting windows-wsl2 for the browser-preview / WSL2 web installer (no native bridge)", async () => {
     vi.stubGlobal(
       "fetch",
