@@ -37,6 +37,7 @@ import argparse
 import ctypes
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -435,6 +436,15 @@ def stage_upstream_wheels(requirements_file: Path, stage: Path) -> None:
     stage.mkdir(parents=True, exist_ok=True)
     # --python is not optional here: see HOST_PYTHON_VERSION. Resolving
     # against the ambient interpreter silently produces a wrong-ABI tree.
+    #
+    # UV_PYTHON, when the caller has set it, names the EXACT reviewed
+    # interpreter -- the candidate workflow sets it to
+    # build/wp1-native-toolchain/python/python.exe. Prefer that over the bare
+    # minor version: passing "3.12" would let uv resolve some other 3.12 on
+    # PATH, which is right for the ABI but less precise than what the caller
+    # already decided. The bare version is the fallback for anyone building
+    # without that setup.
+    interpreter = os.environ.get("UV_PYTHON", "").strip() or HOST_PYTHON_VERSION
     try:
         subprocess.run(
             [
@@ -444,7 +454,7 @@ def stage_upstream_wheels(requirements_file: Path, stage: Path) -> None:
                 "--no-deps",
                 "--require-hashes",
                 "--python",
-                HOST_PYTHON_VERSION,
+                interpreter,
                 "--target",
                 str(stage),
                 "-r",
@@ -455,7 +465,7 @@ def stage_upstream_wheels(requirements_file: Path, stage: Path) -> None:
     except subprocess.CalledProcessError as error:
         raise RuntimeError(
             f"refusing to stage upstream wheels: uv could not resolve them for "
-            f"CPython {HOST_PYTHON_VERSION}. {HOST_PYTHON_REQUIREMENT}. Install that "
+            f"{interpreter!r}. {HOST_PYTHON_REQUIREMENT}. Install that "
             f"interpreter (uv python install {HOST_PYTHON_VERSION}) rather than building "
             f"against whichever Python is ambient -- the tree's ABI is pinned, and a "
             f"mismatched stage only fails much later, as an unresolved pythonXYZ.dll "
