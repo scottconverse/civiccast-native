@@ -31,159 +31,6 @@ permissions:
   attestations: write
 
 jobs:
-  linux-artifacts:
-    name: Linux, Python, docs, and portable artifacts
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install system packaging tools
-        # workflow-cost: local-docker-cache. This job is tag/manual
-        # only, never PR-fired, and is the release artifact producer required
-        # by the release readiness audit.
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            pandoc \
-            lmodern \
-            texlive-xetex \
-            texlive-fonts-recommended \
-            texlive-latex-recommended \
-            texlive-latex-extra \
-            dpkg-dev \
-            rpm
-
-      - name: Install Python build dependencies
-        run: |
-          python -m pip install --upgrade build hatchling
-          python -m pip install -e .
-
-      - name: Render user manual
-        run: python scripts/render_user_manual.py --out-dir artifacts/release
-
-      - name: Build release artifacts
-        run: |
-          python scripts/build_release_artifacts.py --out-dir artifacts/release --all-portable
-          python scripts/build_release_artifacts.py --out-dir artifacts/release --python
-          python scripts/build_release_artifacts.py --out-dir artifacts/release --linux-native
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v4.1.2
-
-      - name: Create and verify Sigstore release attestations
-        env:
-          COSIGN_YES: "true"
-        run: |
-          manifest="$(find artifacts/release -maxdepth 1 -name '*-release-artifacts-manifest.json' | head -n 1)"
-          test -n "$manifest"
-          identity="https://github.com/scottconverse/civiccast/.github/workflows/release-artifacts.yml@${GITHUB_REF}"
-          # Do NOT attest the partial manifest itself: this job publishes only the
-          # OTHER artifacts (each with its own bundle); the complete manifest is
-          # built + attested later by publish-manifest. Attesting the partial here
-          # left an orphan <manifest>.sigstore.json on the release that would, once
-          # the merged manifest publishes under the same name, become a stale
-          # predicate mismatch (cosign verify would fail). See gate-civiccast C2.
-          find artifacts/release -maxdepth 1 -type f ! -name '*.sigstore.json' ! -name '*-release-artifacts-manifest.json' -print0 |
-            while IFS= read -r -d '' artifact; do
-              bundle="${artifact}.sigstore.json"
-              cosign attest-blob \
-                --yes \
-                --oidc-provider github-actions \
-                --predicate "$manifest" \
-                --type custom \
-                --bundle "$bundle" \
-                "$artifact"
-              cosign verify-blob-attestation \
-                --bundle "$bundle" \
-                --type custom \
-                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-                --certificate-identity "$identity" \
-                "$artifact"
-            done
-
-      - name: Upload workflow artifact bundle
-        uses: actions/upload-artifact@v7.0.1
-        timeout-minutes: 45
-        with:
-          name: civiccast-linux-release-artifacts
-          path: artifacts/release/**
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload to GitHub Release on tag
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          upload_asset() {
-            asset="$1"
-            name="$(basename "$asset")"
-            digest="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
-            existing="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
-            if [ "$existing" = "$digest" ]; then
-              echo "$name already uploaded with matching digest"
-              return 0
-            fi
-            for attempt in 1 2 3; do
-              if gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber; then
-                return 0
-              fi
-              sleep $((attempt * 10))
-            done
-            existing="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
-            test "$existing" = "$digest"
-          }
-          for asset in artifacts/release/*; do
-            # the complete release manifest is published solely by the
-            # publish-manifest job (which unions this job's and the Windows
-            # job's artifacts); skip the partial one here.
-            case "$(basename "$asset")" in
-              *-release-artifacts-manifest.json) continue ;;
-            esac
-            upload_asset "$asset"
-          done
-
-      - name: Upload to GitHub Release on manual request
-        if: github.event_name == 'workflow_dispatch' && inputs.upload_to_release == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          test -n "${{ inputs.release_tag }}"
-          upload_asset() {
-            asset="$1"
-            name="$(basename "$asset")"
-            digest="sha256:$(sha256sum "$asset" | cut -d ' ' -f 1)"
-            existing="$(gh release view "${{ inputs.release_tag }}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
-            if [ "$existing" = "$digest" ]; then
-              echo "$name already uploaded with matching digest"
-              return 0
-            fi
-            for attempt in 1 2 3; do
-              if gh release upload "${{ inputs.release_tag }}" "$asset" --clobber; then
-                return 0
-              fi
-              sleep $((attempt * 10))
-            done
-            existing="$(gh release view "${{ inputs.release_tag }}" --json assets --jq ".assets[] | select(.name == \"$name\") | .digest" || true)"
-            test "$existing" = "$digest"
-          }
-          for asset in artifacts/release/*; do
-            # the complete release manifest is published solely by the
-            # publish-manifest job (which unions this job's and the Windows
-            # job's artifacts); skip the partial one here.
-            case "$(basename "$asset")" in
-              *-release-artifacts-manifest.json) continue ;;
-            esac
-            upload_asset "$asset"
-          done
-
   windows-installer:
     name: Windows Tauri installer and clean-windows proof kit
     # Hosted Windows runner: the only lane needing an MSVC toolchain.
@@ -485,12 +332,14 @@ jobs:
 
   publish-manifest:
     name: Merge and publish the complete artifact manifest
-    # Runs after BOTH artifact-producing jobs. Each writes only a partial
-    # manifest of the artifacts it built; this job unions them into the single
-    # published ledger so the signed Windows installer (and its sidecar, tester
-    # package, and proof kit) are never silently omitted. Being the last writer,
-    # its --clobber upload supersedes either job's partial manifest.
-    needs: [linux-artifacts, windows-installer]
+    # The windows-installer job writes only a partial manifest of what it
+    # built; this job promotes it to the single published ledger so the signed
+    # installer (and its sidecar, tester package, and proof kit) are never
+    # silently omitted. It used to union a Linux partial manifest in as well;
+    # the .deb/.rpm lane is gone with the rest of the Linux product, so there
+    # is one input now. Being the last writer, its --clobber upload supersedes
+    # the windows job's partial manifest.
+    needs: [windows-installer]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -505,13 +354,6 @@ jobs:
       - name: Install Python build dependencies
         run: python -m pip install -e .
 
-      - name: Download Linux job artifacts
-        uses: actions/download-artifact@v7.0.0
-        timeout-minutes: 30
-        with:
-          name: civiccast-linux-release-artifacts
-          path: merge/linux
-
       - name: Download Windows job artifacts
         uses: actions/download-artifact@v7.0.0
         timeout-minutes: 30
@@ -522,7 +364,7 @@ jobs:
       - name: Merge the per-job manifests into one complete ledger
         run: |
           python scripts/build_release_artifacts.py \
-            --merge-manifests merge/linux merge/windows \
+            --merge-manifests merge/windows \
             --out-dir merge/combined
           echo "Merged release manifest:"
           cat merge/combined/civiccast-*-release-artifacts-manifest.json
@@ -532,8 +374,6 @@ jobs:
 
       # Attest the COMPLETE (merged) manifest here — the only place it is ever
       # published — so its .sigstore.json describes the bytes that actually ship.
-      # The linux job deliberately no longer attests its partial manifest, so
-      # there is no stale same-named bundle to collide with this one.
       - name: Attest the complete manifest (Sigstore)
         env:
           COSIGN_YES: "true"
