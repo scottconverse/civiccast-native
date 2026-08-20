@@ -72,6 +72,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -1358,7 +1359,7 @@ def _default_ollama_version_probe() -> bool:
 
     url = DEFAULT_OLLAMA_BASE_URL.rstrip("/") + "/api/version"
     try:
-        with urllib.request.urlopen(url, timeout=_OLLAMA_VERSION_TIMEOUT_SECONDS) as resp:  # noqa: S310
+        with urllib.request.urlopen(url, timeout=_OLLAMA_VERSION_TIMEOUT_SECONDS) as resp:  # noqa: S310  # nosec B310 - DEFAULT_OLLAMA_BASE_URL is the literal http://127.0.0.1:11434
             return int(getattr(resp, "status", 0) or 0) == 200
     except Exception:
         return False
@@ -1953,7 +1954,17 @@ def default_dependency_provider() -> ProductionDependencies:
 
         health_url = control_plane_url.rstrip("/") + "/health"
         try:
-            with urllib.request.urlopen(health_url, timeout=_HEALTH_HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310
+            # The control-plane URL is operator-overridable (an environment
+            # variable with a loopback default), so the scheme is NOT a
+            # compile-time constant here. urlopen honours file:/ and every
+            # other scheme urllib knows; a mis-set variable would turn a
+            # health probe into a local file read whose contents then get
+            # JSON-parsed as a health body. Reject anything but HTTP(S)
+            # before opening it. Raising inside this try is deliberate --
+            # the except below already fails the probe CLOSED.
+            if urllib.parse.urlparse(health_url).scheme not in ("http", "https"):
+                raise ValueError(f"refusing non-HTTP control-plane URL: {health_url!r}")
+            with urllib.request.urlopen(health_url, timeout=_HEALTH_HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310  # nosec B310 - scheme checked immediately above
                 status_code = int(getattr(resp, "status", 0) or 0)
                 raw_body = resp.read()
         except urllib.error.HTTPError as exc:

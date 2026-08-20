@@ -266,11 +266,21 @@ def _real_health_check() -> ControlPlaneHealthProbe:
 
     import json
     import urllib.error
+    import urllib.parse
     import urllib.request
 
     health_url = _control_plane_url().rstrip("/") + "/health"
     try:
-        with urllib.request.urlopen(health_url, timeout=_HEALTH_HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310
+        # _control_plane_url() reads an environment variable with a loopback
+        # default, so the scheme is not fixed at build time. urlopen would
+        # happily follow file:/ and hand the bytes to the JSON parse below as
+        # if they were a health body. Reject anything but HTTP(S) first;
+        # raising here is deliberate, since the except clauses fail the probe
+        # CLOSED. Mirrors the identical guard in
+        # civiccast/native/supervisor/service.py's health_probe.
+        if urllib.parse.urlparse(health_url).scheme not in ("http", "https"):
+            raise ValueError(f"refusing non-HTTP control-plane URL: {health_url!r}")
+        with urllib.request.urlopen(health_url, timeout=_HEALTH_HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310  # nosec B310 - scheme checked immediately above
             status_code = int(getattr(resp, "status", 0) or 0)
             raw_body = resp.read()
     except urllib.error.HTTPError as exc:

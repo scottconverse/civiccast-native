@@ -407,7 +407,7 @@ def _http_get_ok(url: str, timeout_seconds: float = _OLLAMA_HTTP_TIMEOUT_SECONDS
     """Bounded loopback GET; True iff HTTP 200. Never raises."""
 
     try:
-        with urllib.request.urlopen(url, timeout=timeout_seconds) as resp:  # noqa: S310
+        with urllib.request.urlopen(url, timeout=timeout_seconds) as resp:  # noqa: S310  # nosec B310 - loopback probe; callers build the URL as f"http://{host}"
             return int(getattr(resp, "status", 0) or 0) == 200
     except Exception:
         return False
@@ -560,7 +560,7 @@ def _ollama_tags(base_url: str) -> frozenset[str]:
     loopback only, the staged-store serveability proof for the verifying
     no-op path. Raises loudly on an unreachable/malformed response."""
 
-    with urllib.request.urlopen(  # noqa: S310
+    with urllib.request.urlopen(  # noqa: S310  # nosec B310 - base_url is built locally as f"http://{host}", loopback only
         f"{base_url}/api/tags", timeout=_OLLAMA_HTTP_TIMEOUT_SECONDS
     ) as resp:
         payload = json.loads(resp.read())
