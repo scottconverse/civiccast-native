@@ -301,9 +301,7 @@ def test_native_beta_candidate_workflow_keeps_build_scratch_out_of_the_source_tr
 
     upload_paths = [
         line.strip()
-        for line in steps["Upload the native-beta candidate artifact"]["with"][
-            "path"
-        ].splitlines()
+        for line in steps["Upload the native-beta candidate artifact"]["with"]["path"].splitlines()
         if line.strip()
     ]
     assert all(path.startswith("artifacts/native-beta/") for path in upload_paths)
