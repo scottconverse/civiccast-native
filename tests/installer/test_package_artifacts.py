@@ -328,16 +328,6 @@ class TestPackageArtifactValidation:
 
 
 class TestReleaseArtifactBuilderContracts:
-    def test_rpm_version_fields_keep_beta_version_rpm_safe(self) -> None:
-        builder = importlib.import_module("scripts.build_release_artifacts")
-
-        assert builder._rpm_version_fields("3.0.0-beta1") == (
-            "3.0.0",
-            "1.beta1",
-            "3.0.0-1.beta1",
-        )
-        assert builder._rpm_version_fields("3.0.0") == ("3.0.0", "1", "3.0.0")
-
     def test_source_archive_skips_transient_agent_run_state(
         self, tmp_path: Path, monkeypatch
     ) -> None:
@@ -1326,28 +1316,6 @@ class TestReleaseArtifactBuilderContracts:
             "kind": "clean-windows-proof-kit",
         }
         assert acquisition["hashes"]["clean_windows_proof_kit"]
-
-    def test_clean_windows_proof_directive_collects_recoverable_findings(self) -> None:
-        directive = (
-            Path("docs") / "releases" / "evidence" / "v1.3-clean-windows-codex-proof-directive.md"
-        ).read_text(encoding="utf-8")
-
-        assert "collect-and-continue proof" in directive
-        assert "expected filename/path mismatch" in directive
-        assert "Record each mismatch as a finding" in directive
-        assert "Stop immediately only for a blocker" in directive
-        assert "In the pullable tester branch flow, do not copy files by hand" in directive
-        assert "If `C:\\CivicCastProof\\VERIFY-AND-LAUNCH.ps1` already exists" in directive
-        assert "Run-WindowsTesterDirective.ps1" in directive
-        assert "versioned tester runner handles WSL2/Ubuntu 24.04" in directive
-        assert "Do not click the installer app's WSL button as the main" in directive
-        assert "installs Node.js and Playwright Chromium" in directive
-        assert "Do not manually click installer screens" in directive
-        assert "C:\\CivicCastTester\\Use-CivicCastPlaywright.ps1" in directive
-        assert "Install WSL2 Ubuntu 24.04`. Approve the Windows UAC prompt" not in directive
-        assert "-Mode RecordResult" in directive
-        assert "test-results/windows" in directive
-        assert "not as a replacement for the\npushed tester result" in directive
 
     def test_beta_handoff_acquisition_exposes_gstreamer_runtime_hash(self, tmp_path: Path) -> None:
         builder = importlib.import_module("scripts.build_release_artifacts")

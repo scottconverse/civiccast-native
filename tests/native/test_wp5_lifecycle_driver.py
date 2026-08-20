@@ -2,11 +2,14 @@
 # Copyright (c) The CivicCast Authors
 """Regression guard for the WP-5 clean-venue lifecycle proof driver.
 
-The driver itself lives under the slice evidence tree
-(``.agent-runs/native-windows/ws5-installer/evidence/wp5_lifecycle_driver.py``)
-because it is proof harness, not product code. This test binds it into the
-suite so a future change to the D3 engine or the driver cannot silently break
-the proof. It also PROVES the driver's negative control works: a fault-injected
+The driver lives at ``scripts/wp5_lifecycle_driver.py``. It used to sit under
+``.agent-runs/native-windows/ws5-installer/evidence/`` -- marooned in the
+otherwise-scratch agent-run tree -- and the native-repo migration dropped that
+tree wholesale, taking a load-bearing harness with it. It is proof harness
+rather than product code, but it is RUN code that a test imports and the
+Windows Sandbox launcher maps in, so it belongs beside the other runnable
+scripts. This test binds it into the suite so a future change to the D3 engine
+or the driver cannot silently break the proof. It also PROVES the driver's negative control works: a fault-injected
 run must NOT be reported as a passing COMPLETE — a harness that cannot fail
 proves nothing.
 """
@@ -20,14 +23,7 @@ from types import ModuleType
 
 import pytest
 
-_DRIVER = (
-    Path(__file__).resolve().parents[2]
-    / ".agent-runs"
-    / "native-windows"
-    / "ws5-installer"
-    / "evidence"
-    / "wp5_lifecycle_driver.py"
-)
+_DRIVER = Path(__file__).resolve().parents[2] / "scripts" / "wp5_lifecycle_driver.py"
 
 
 def _load_driver() -> ModuleType:

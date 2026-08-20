@@ -35,7 +35,7 @@ PACK_SIGNATURE_NAME = "manifest.sig"
 PACK_PAYLOAD_PREFIX = "payload/"
 CAPTION_COMPONENT = "captions-large-v3"
 CAPTION_SELF_TEST_PATH = f"self-test/{CAPTION_PACK_CONTRACT['self_test_audio_file']}"
-CAPTION_SELF_TEST_BYTES = int(CAPTION_PACK_CONTRACT["self_test_audio_bytes"])
+CAPTION_SELF_TEST_BYTES = int(str(CAPTION_PACK_CONTRACT["self_test_audio_bytes"]))
 CAPTION_SELF_TEST_SHA256 = str(CAPTION_PACK_CONTRACT["self_test_audio_sha256"])
 OLLAMA_MODEL_LOCK_PATH = (
     Path(__file__).resolve().parents[2] / "native-windows-ollama-models.lock.json"

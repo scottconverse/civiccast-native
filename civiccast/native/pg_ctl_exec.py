@@ -29,7 +29,9 @@ from __future__ import annotations
 import contextlib
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 _TAIL_CHARS = 1500
 
@@ -59,7 +61,7 @@ def run_pg_ctl_argv(
     argv: list[str],
     *,
     timeout_seconds: float,
-    runner=None,
+    runner: Callable[..., Any] | None = None,
 ) -> PgCtlResult:
     """Execute a pg_ctl argv with FILE-backed capture (see module docstring).
 
@@ -173,9 +175,9 @@ def run_captured_argv(
     *,
     timeout_seconds: float,
     env: dict[str, str] | None = None,
-    runner=None,
-    popen=None,
-    kill_tree=None,
+    runner: Callable[..., Any] | None = None,
+    popen: Callable[..., Any] | None = None,
+    kill_tree: Callable[..., Any] | None = None,
 ) -> CapturedProcess:
     """Execute ``argv`` with FILE-backed capture, a HARD deadline, and a
     kill-tree on expiry (module docstring's mechanism, generalized).
