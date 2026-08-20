@@ -55,7 +55,11 @@ test("installer shows one primary action and only state-appropriate recovery act
     ["empty", "Continue"],
     ["error", "Retry"],
     ["partial", "Continue"],
-    ["blocked", "Set up Windows helper"],
+    // The blocked fixture is now the native "Starting CivicCast" state: the
+    // station is coming up, there is nothing for the operator to press, and
+    // a loading lane promises no action. It used to expect "Set up Windows
+    // helper" -- a WSL2 remedy this product does not have.
+    ["blocked", null],
     ["progress", null],
     ["skipped_model", "Set up models"],
     ["offline_bundle", "Continue"],
@@ -77,11 +81,16 @@ test("installer shows one primary action and only state-appropriate recovery act
 
   await page.goto("/?state=blocked");
   await expect(page.locator(".top-primary-action")).toHaveCount(0);
-  await expect(page.locator(".detail-primary-action")).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Set up Windows helper" })).toHaveCount(1);
+  // 0, not 1: see the table above -- the native startup state offers nothing.
+  await expect(page.locator(".detail-primary-action")).toHaveCount(0);
+  // The WSL2 remedy is gone, so assert its ABSENCE rather than deleting the
+  // check -- if that button ever comes back on a native station, this fails.
+  await expect(page.getByRole("button", { name: "Set up Windows helper" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
   await page.getByText("More options").click();
-  await expect(page.getByRole("button", { name: "Repair this step" })).toHaveCount(1);
+  // No repair either: canRepairLane suppresses the platform lane, and repair
+  // on a non-runtime lane only ever wrote a state that queued nothing.
+  await expect(page.getByRole("button", { name: "Repair this step" })).toHaveCount(0);
 
   await page.goto("/?state=progress");
   await expect(page.locator(".top-primary-action")).toHaveCount(0);

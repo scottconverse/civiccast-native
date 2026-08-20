@@ -91,18 +91,31 @@ export const installerFixtures: Record<string, InstallerState> = {
       }
     ]
   },
+  // The catch-all `loadInstallerState` returns when the summary API is
+  // unreachable AND there is no saved progress -- see its own comment: "a
+  // fresh launch before the supervisor's control-plane child has bound its
+  // port, a reset, or right after a reinstall". First run.
+  //
+  // It used to describe a missing WSL2 helper and tell the operator to choose
+  // "Set up Windows helper" and enable Windows Subsystem for Linux. That named
+  // a remedy this product does not have, and once the button stopped rendering
+  // on native it was an instruction pointing at nothing.
+  //
+  // `loading`, not `blocked`: nothing is blocked, the station is starting. A
+  // loading lane promises no primary action, so nothing is offered that does
+  // not exist.
   blocked: {
     ready: false,
-    platform: "windows-wsl2",
+    platform: "windows-native",
     lanes: [
       {
-        id: "wsl2",
-        label: "Windows helper missing",
-        status: "blocked",
+        id: "platform",
+        label: "Starting CivicCast",
+        status: "loading",
         ready: false,
-        detail: "CivicCast needs a Windows helper before it can finish setup and open the dashboard. The helper lets CivicCast run its local meeting tools on this computer.",
-        nextStep:
-          "Choose Set up Windows helper and approve the Windows security prompt. If Windows says WSL2 cannot start, ask IT to enable CPU virtualization, Windows Virtual Machine Platform, and Windows Subsystem for Linux, then rerun this installer."
+        detail:
+          "CivicCast is starting its local services. On a first launch this takes a moment while the station prepares its database and control plane.",
+        nextStep: "Keep this window open. It updates by itself as soon as the station answers."
       }
     ]
   },
@@ -467,54 +480,11 @@ function nativeInstallerBridgeAvailable(): boolean {
  */
 function withHonestNativePlatform(state: InstallerState): InstallerState {
   if (state.platform === "windows-wsl2" && nativeInstallerBridgeAvailable()) {
-    return { ...state, platform: "windows-native", lanes: nativeStartupLanes(state) };
+    return { ...state, platform: "windows-native" };
   }
   return state;
 }
 
-/**
- * The lane a native station should show while its control plane is still
- * coming up -- replacing the WSL2 remedy copy `installerFixtures.blocked`
- * carries.
- *
- * N-07 corrected this fallback's `platform` field but left its LANE, so a
- * native operator read "Windows helper missing ... Choose Set up Windows
- * helper ... ask IT to enable CPU virtualization, Windows Virtual Machine
- * Platform, and Windows Subsystem for Linux". That named a remedy this
- * product does not have, and once the WSL bootstrap affordance stopped
- * rendering on native it became a DEAD END: an instruction pointing at a
- * button that is not on the screen. On first run, which is the worst possible
- * moment to lose an operator.
- *
- * Nothing is actually blocked here. Status is `loading`, not `blocked`, so no
- * primary action renders and none is promised -- there is nothing for the
- * operator to do but wait, and the screen now says exactly that.
- *
- * Only the WSL2 remedy lanes are replaced. A native fallback that already
- * carries a real lane (from saved local progress) is untouched.
- */
-function nativeStartupLanes(state: InstallerState): InstallerState["lanes"] {
-  return state.lanes.map((lane) =>
-    // ONLY the wsl2 remedy lane. My first pass also rewrote `platform`, which
-    // broke three native progress tests -- the platform lane is legitimate on
-    // a native station (saved runtime-ready progress uses it) and rewriting it
-    // erased real state. installerFixtures.blocked's lane is id "wsl2", so
-    // narrowing here still closes the dead end.
-    lane.id === "wsl2"
-      ? {
-          ...lane,
-          id: "platform",
-          label: "Starting CivicCast",
-          status: "loading" as const,
-          ready: false,
-          detail:
-            "CivicCast is starting its local services. On a first launch this takes a moment " +
-            "while the station prepares its database and control plane.",
-          nextStep: "Keep this window open. It updates by itself as soon as the station answers."
-        }
-      : lane
-  );
-}
 
 async function invokeNativeInstaller<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const bridge = window as Window & NativeInstallerBridge;
