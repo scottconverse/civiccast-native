@@ -1,0 +1,132 @@
+{
+  "sources": [
+    {
+      "type": "source",
+      "label": "src0",
+      "elements": [
+        {
+          "factory": "videotestsrc",
+          "name": null,
+          "props": {
+            "is-live": true,
+            "pattern": 0
+          }
+        },
+        {
+          "factory": "capsfilter",
+          "name": null,
+          "props": {
+            "caps": "video/x-raw,width=640,height=360,framerate=30/1"
+          }
+        }
+      ],
+      "audio": []
+    },
+    {
+      "type": "source",
+      "label": "src1",
+      "elements": [
+        {
+          "factory": "videotestsrc",
+          "name": null,
+          "props": {
+            "is-live": true,
+            "pattern": 18
+          }
+        },
+        {
+          "factory": "capsfilter",
+          "name": null,
+          "props": {
+            "caps": "video/x-raw,width=640,height=360,framerate=30/1"
+          }
+        }
+      ],
+      "audio": []
+    },
+    {
+      "type": "source",
+      "label": "src2",
+      "elements": [
+        {
+          "factory": "videotestsrc",
+          "name": null,
+          "props": {
+            "is-live": true,
+            "pattern": 1
+          }
+        },
+        {
+          "factory": "capsfilter",
+          "name": null,
+          "props": {
+            "caps": "video/x-raw,width=640,height=360,framerate=30/1"
+          }
+        }
+      ],
+      "audio": []
+    }
+  ],
+  "encoder": [
+    {
+      "factory": "videoconvert",
+      "name": null,
+      "props": {}
+    },
+    {
+      "factory": "videoscale",
+      "name": null,
+      "props": {}
+    },
+    {
+      "factory": "videorate",
+      "name": null,
+      "props": {}
+    },
+    {
+      "factory": "capsfilter",
+      "name": null,
+      "props": {
+        "caps": "video/x-raw,width=640,height=360,framerate=30/1"
+      }
+    },
+    {
+      "factory": "openh264enc",
+      "name": null,
+      "props": {
+        "bitrate": 1000
+      }
+    },
+    {
+      "factory": "h264parse",
+      "name": null,
+      "props": {
+        "config-interval": -1
+      }
+    }
+  ],
+  "audio_encoder": [],
+  "mux": {
+    "factory": "mpegtsmux",
+    "name": "mux",
+    "props": {}
+  },
+  "sinks": [
+    [
+      {
+        "factory": "queue",
+        "name": null,
+        "props": {}
+      },
+      {
+        "factory": "filesink",
+        "name": null,
+        "props": {
+          "location": "C:\\dev\\civiccast-session0-spike\\out\\broadcast-20260717-001712.ts"
+        }
+      }
+    ]
+  ],
+  "captions": null,
+  "secondary_audio": []
+}
