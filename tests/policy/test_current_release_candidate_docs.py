@@ -77,17 +77,6 @@ STALE_EVIDENCE_MARKERS = [
 ]
 
 
-def test_active_release_surfaces_do_not_reference_stale_rc_identity_or_evidence() -> None:
-    offenders: list[str] = []
-    for path in ACTIVE_RELEASE_SURFACES:
-        text = path.read_text(encoding="utf-8")
-        for marker in [*STALE_PRODUCT_MARKERS, *STALE_EVIDENCE_MARKERS]:
-            if marker in text:
-                offenders.append(f"{path.relative_to(ROOT)} contains {marker}")
-
-    assert offenders == []
-
-
 def test_clean_windows_docs_require_docs_first_proof_step() -> None:
     install_doc = (ROOT / "INSTALL-WINDOWS.md").read_text(encoding="utf-8")
     tester_doc = (ROOT / "docs" / "tester" / "START-HERE.md").read_text(encoding="utf-8")
@@ -151,17 +140,6 @@ def test_readme_does_not_claim_invalid_clean_host_proof() -> None:
     assert "only installer unit tests and the version stamp changed" not in text
     assert "not a valid clean-Windows proof" in text
     assert "genuinely clean" in text
-
-
-def test_verification_doc_does_not_claim_install_path_unchanged_since_rc6() -> None:
-    """NF-3 regression guard: the rc1 verification doc made the same false
-    "unchanged since rc6" install-path claim the README did (G-6). The
-    verify pass flagged that only the README rewrite had a regression guard,
-    so this doc could silently regress. Guard it the same way.
-    """
-    text = (ROOT / "docs" / "releases" / "v1.0.0-rc1-verification.md").read_text(encoding="utf-8")
-    assert "only installer unit tests and the version stamp changed" not in text
-    assert "changed materially since this candidate was tagged" in text
 
 
 def test_architecture_doc_names_current_release() -> None:

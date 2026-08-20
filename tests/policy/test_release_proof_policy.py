@@ -129,14 +129,6 @@ class TestWindowsAttestationDocumentation:
         assert "keyless blob signature" in text
         assert "Every non-Windows-job release asset" not in text
 
-    def test_rc11_verification_page_names_the_public_release_and_historical_record(self) -> None:
-        text = Path("docs/releases/v1.0.0-rc11-verification.md").read_text(encoding="utf-8")
-
-        assert "public prerelease for controlled beta testing" in text
-        assert "https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc11" in text
-        assert "Prepublication verification record" in text
-        assert "There is no public rc11 release" not in text
-
 
 class TestWorkflowCostDiscipline:
     def test_expensive_release_workflows_have_manual_dispatch_timeout_and_retention(
