@@ -78,13 +78,13 @@ jobs:
           # apt-get waits on the runner's unattended-upgrades dpkg lock
           # forever, and on 2026-08-19 wedged THIS workflow for 3h49m on the
           # release branch. Bound the lock wait, the network, and the step.
-          APT="sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3"
+          APT=(sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3)
           if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-            timeout 300 $APT update
-            timeout 300 $APT install -y ffmpeg
+            timeout 300 "${APT[@]}" update
+            timeout 300 "${APT[@]}" install -y ffmpeg
           fi
           if ! command -v tsp >/dev/null 2>&1; then
-            timeout 300 $APT install -y tsduck || echo '::warning::tsduck not installable; TS-relay splice test will skip'
+            timeout 300 "${APT[@]}" install -y tsduck || echo '::warning::tsduck not installable; TS-relay splice test will skip'
           fi
 
       - name: Install project (dev)
@@ -115,7 +115,7 @@ jobs:
           seed=$(grep -o 'Using --randomly-seed=[0-9]*' pytest-random.log | head -1 || true)
           if [ "$status" -eq 0 ] && [ -n "$seed" ]; then
             uv run pytest tests/native -m "not windows_only" -p randomly --no-cov \
-              --${seed#Using --} | tee -a pytest-random.log
+              "--${seed#Using --}" | tee -a pytest-random.log
             status=${PIPESTATUS[0]}
           fi
           {

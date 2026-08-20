@@ -70,10 +70,10 @@ jobs:
           # apt gives up on the lock, each invocation gives up on the network,
           # and the step itself gives up -- so a stuck runner fails in minutes
           # instead of burning the CI clock and blocking merges.
-          APT="sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3"
+          APT=(sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3)
           if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-            timeout 300 $APT update
-            timeout 300 $APT install -y ffmpeg
+            timeout 300 "${APT[@]}" update
+            timeout 300 "${APT[@]}" install -y ffmpeg
           fi
           # #151 TS-relay behavioral splice test (skips without tsp).
           #
@@ -86,7 +86,7 @@ jobs:
           # best-effort until the add-on itself is in scope. If cable ships,
           # this needs a floor guard matching the pattern used above.
           if ! command -v tsp >/dev/null 2>&1; then
-            timeout 300 $APT install -y tsduck || echo '::warning::tsduck not installable; TS-relay splice test will skip (best-effort by design; see comment)'
+            timeout 300 "${APT[@]}" install -y tsduck || echo '::warning::tsduck not installable; TS-relay splice test will skip (best-effort by design; see comment)'
           fi
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
@@ -448,9 +448,9 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           # Bounded for the same dpkg-lock reason as the media-prereq step above.
-          APT="sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3"
-          timeout 300 $APT update
-          timeout 600 $APT install -y \
+          APT=(sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3)
+          timeout 300 "${APT[@]}" update
+          timeout 600 "${APT[@]}" install -y \
             python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
