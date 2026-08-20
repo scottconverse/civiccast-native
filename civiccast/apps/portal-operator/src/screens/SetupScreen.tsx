@@ -505,7 +505,7 @@ function StorageSetupPanel({
         <div
           id={STORAGE_HANDOFF_NOTE_ID}
           role="note"
-          aria-label="Restore the setup handoff on the station"
+          aria-label="Restore the setup handoff the Windows installer creates"
           className="rounded-md p-3 text-xs"
           style={{
             background: 'var(--cc-warn-soft)',
@@ -513,7 +513,7 @@ function StorageSetupPanel({
             color: 'var(--cc-ink)',
           }}
         >
-          <strong className="block text-sm">Restore the setup handoff on the station</strong>
+          <strong className="block text-sm">Restore the setup handoff the Windows installer creates</strong>
           <span>
             Preparing storage needs the one-time handoff the Windows installer creates, and this
             page was opened without it. Nothing is wrong with the station, but reopening CivicCast
@@ -1556,7 +1556,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
           className="rounded-md p-4 text-sm"
           style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
         >
-          <h2 className="m-0 text-base font-semibold">Restore the setup handoff on the station</h2>
+          <h2 className="m-0 text-base font-semibold">Restore the setup handoff the Windows installer creates</h2>
           <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
             The first setup page needs the one-time operator handoff created by the Windows
             installer, and this page was opened without it. Nothing is wrong with the station, and{' '}
