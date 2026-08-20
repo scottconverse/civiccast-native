@@ -188,7 +188,11 @@ class CaptionEvidenceRetentionPolicy:
             and self._storage_root.is_dir()
             and tap_root.resolve().stat().st_dev != self._storage_root.stat().st_dev
         ):
-            record = {
+            # dict[str, object] explicitly: inferred from this all-str literal
+            # it would be dict[str, str], which _append_audit_records and
+            # CaptionRetentionResult.audit_records both reject -- dict is
+            # invariant, so a narrower value type is not a subtype.
+            record: dict[str, object] = {
                 "outcome": "storage-refused",
                 "reason": "caption-storage-volumes-diverge",
                 "path": "",
@@ -404,7 +408,7 @@ def _normalize_candidate(candidate: Mapping[str, object]) -> _Candidate:
         created_at=_utc(candidate["created_at"]),
         resolved_at=_utc(candidate["resolved_at"]) if candidate.get("resolved_at") else None,
         sha256=str(candidate["sha256"]),
-        bytes=int(candidate["bytes"]),
+        bytes=int(str(candidate["bytes"])),
         derived_evidence_verified=bool(candidate.get("derived_evidence_verified", False)),
     )
 
