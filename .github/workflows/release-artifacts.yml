@@ -214,7 +214,10 @@ jobs:
             exit 1
           }
           $bundle = "$($exe.FullName).sigstore.json"
-          $identity = "https://github.com/scottconverse/civiccast/.github/workflows/release-artifacts.yml@${env:GITHUB_REF}"
+          # Derived, never retyped: a hard-coded owner/name here signs as one
+          # repository and verifies against another the moment the workflow
+          # moves, which is exactly what the migration to civiccast-native did.
+          $identity = "https://github.com/${env:GITHUB_REPOSITORY}/.github/workflows/release-artifacts.yml@${env:GITHUB_REF}"
           cosign sign-blob `
             --yes `
             --oidc-provider github-actions `
@@ -379,7 +382,8 @@ jobs:
           COSIGN_YES: "true"
         run: |
           shopt -s nullglob
-          identity="https://github.com/scottconverse/civiccast/.github/workflows/release-artifacts.yml@${GITHUB_REF}"
+          # Same reason as the pwsh site above: derive, do not retype.
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-artifacts.yml@${GITHUB_REF}"
           for manifest in merge/combined/civiccast-*-release-artifacts-manifest.json; do
             bundle="${manifest}.sigstore.json"
             cosign attest-blob \
