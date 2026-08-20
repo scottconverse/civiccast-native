@@ -26,8 +26,8 @@ Windows tester proof, and work that still needs real-world evidence.
 | Operator frontend builds | `.github/workflows/ci-operator-build.yml`; PR #173 operator build check | Automated CI lane plus current beta-baseline PR check |
 | Accessibility checks have a CI lane | `.github/workflows/ci-a11y.yml` | Automated CI lane exists |
 | Release artifacts can be built | `.github/workflows/release-artifacts.yml`; v2.0.8 GitHub Release assets | Automated lane plus published release assets |
-| Cleanroom E2E has a CI lane | `.github/workflows/ci-cleanroom-e2e.yml` | Automated lane exists; not a substitute for real Windows user testing |
-| VM cleanroom release has a CI lane | `.github/workflows/vm-cleanroom-release.yml` | Automated lane exists |
+| Cleanroom E2E has a CI lane | **NO LANE IN THIS REPOSITORY.** `ci-cleanroom-e2e.yml` was the Docker/Linux full-install gate and did not come across with the retired lane. | The native line has no automated full-install e2e gate. `vm-cleanroom-release.yml` is not a substitute -- see its row. |
+| VM cleanroom release has a CI lane | `.github/workflows/vm-cleanroom-release.yml` | Lane exists but is `workflow_dispatch`-only, targets a `self-hosted, linux` runner, and `scripts/run_vm_cleanroom_release.py` computes an install PLAN rather than performing an install. It has never run in this repository. |
 | AI release proof has a CI lane | `.github/workflows/ai-release-proof.yml` | Automated lane exists; hardware-specific performance still needs field proof |
 | Caption runtime benchmark has a CI lane | `.github/workflows/benchmark-caption-runtime.yml` | Automated lane exists |
 | External provider proof has a CI lane | `.github/workflows/external-provider-proof.yml` | Harness exists; live provider credentials/proofs are station-specific |

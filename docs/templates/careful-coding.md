@@ -80,7 +80,7 @@ If you're consistently under-running it (≤2 min per commit), you're not actual
 
 - **Cross-file consistency.** That's the QA lens of the hostile 5-lens self-audit, run before every push (`docs/process/5-lens-self-audit.md`).
 - **Doc-currency drift.** That's the Docs lens of the same 5-lens self-audit, plus cross-agent PR review.
-- **Multi-role / release-candidate readiness.** That's the clean-box/sandbox e2e proof (`ci-cleanroom-e2e.yml`, `vm-cleanroom-release.yml`) and, for the native line, the Native-Windows Program's adversarial audit round — not a per-commit or per-PR obligation.
+- **Multi-role / release-candidate readiness.** For the native line that is the Native-Windows Program's adversarial audit round plus a real install on a clean Windows box — not a per-commit or per-PR obligation. It is NOT an automated clean-box lane: `ci-cleanroom-e2e.yml` was the retired Docker/Linux gate and is not in this repository, and `vm-cleanroom-release.yml` is dispatch-only, Linux-runner-targeted, and has never run here.
 - **Release notes / migration guides.** That's PR-description and push-report time, not commit time.
 
 Stay at the per-commit level. Trying to do push-time or release-candidacy work at every commit is exactly the runaway cycle this checklist exists to prevent.

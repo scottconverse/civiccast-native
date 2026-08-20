@@ -187,20 +187,19 @@ below is currently enforced, not aspirational.
    `docs/claims/claims.yaml` / `claims-schema.json` / `workflow-contract.yaml`.
    A capability claim without bound evidence fails the check; this is not a
    repo-wide sweep, only the registered governed set.
-5. **Clean-box / sandbox e2e gates before release candidacy.** Neither
-   workflow runs on every push — know the actual trigger before citing
-   either as "the gate that ran":
-   `ci-cleanroom-e2e.yml` runs on `workflow_dispatch`, on `v*` release
-   tags, weekly by cron, and on PRs into `main` whose diff touches
-   `civiccast/**`, `docker/**`, `tests/**`, `pyproject.toml`, `uv.lock`, or
-   the workflow file itself — a docs-only change, or any PR targeting the
-   native branch, does not trigger it.
-   `vm-cleanroom-release.yml` is `workflow_dispatch`-only; it never runs
-   automatically. `.agent-runs/native-windows/k1-clean-box-proof/` is the
-   durable evidence record for the native line's clean-box activation proof,
-   produced by manual/directed runs, not by an always-on CI trigger. A
-   change that claims release-candidate readiness needs a citation to one
-   of these having actually run against the change's SHA — not an assumption
+5. **Clean-box e2e: THERE IS NO AUTOMATED GATE IN THIS REPOSITORY.** Say so
+   plainly rather than citing one that is not here.
+   `ci-cleanroom-e2e.yml` was the Docker/Linux full-install gate; `docker/`
+   was excluded under the owner's "no linux" decision and the workflow went
+   with it. Nothing replaced it.
+   `vm-cleanroom-release.yml` is `workflow_dispatch`-only, targets a
+   `self-hosted, linux` runner, and its script computes an install PLAN
+   rather than performing an install. It has never run here.
+   `.agent-runs/native-windows/k1-clean-box-proof/` is likewise not in this
+   repository — `.agent-runs` was excluded by the migration manifest.
+   So a change claiming release-candidate readiness cannot cite an automated
+   clean-box run against its SHA, because none can exist yet. It needs a real
+   install on a clean Windows box, recorded — not an assumption
    that it ran because the PR is green.
 6. **Keystone framing for major capabilities.** The CivicCast One
    reconciliation work names major native-line capabilities as keystones
