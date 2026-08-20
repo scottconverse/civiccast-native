@@ -63,54 +63,15 @@ class TestWorkflowRunnerPolicy:
             assert "self-hosted" not in text, path
             assert "ubuntu-latest" in text, path
 
-    def test_release_artifacts_workflow_uses_hosted_runners_only(self) -> None:
-        text = Path(".github/workflows/release-artifacts.yml").read_text(encoding="utf-8")
-
-        assert "self-hosted" not in text
-        assert "ubuntu-latest" in text or "windows-latest" in text
-
-    def test_windows_installer_is_blob_signed_verified_and_uploaded(self) -> None:
-        text = Path(".github/workflows/release-artifacts.yml").read_text(encoding="utf-8")
-        windows_job = text[text.index("  windows-installer:") : text.index("  publish-manifest:")]
-
-        install = windows_job.index("cosign-installer")
-        sign = windows_job.index("cosign sign-blob")
-        verify = windows_job.index("cosign verify-blob")
-        refresh = windows_job.index("Regenerate integrity artifacts with the Sigstore bundle")
-        upload = windows_job.index("Upload workflow artifact bundle")
-
-        assert install < sign < verify < refresh < upload
-        assert "cosign attest-blob" not in windows_job
-        assert "cosign verify-blob-attestation" not in windows_job
-        assert "civiccast-*-windows-setup.exe.sigstore.json" in windows_job
-        assert "civiccast-*-windows-setup.exe.sidecar.json" in windows_job
-
-    def test_sigstore_verification_binds_the_exact_trigger_ref(self) -> None:
-        text = Path(".github/workflows/release-artifacts.yml").read_text(encoding="utf-8")
-
-        # The owner/name half is DERIVED, not written down. It used to be
-        # hard-coded as scottconverse/civiccast, which meant that after the
-        # migration cosign signed as civiccast-native and verified against
-        # civiccast -- verification rejecting its own signatures. Pinning the
-        # derived form keeps a regression back to a literal repo name failing.
-        assert "github.com/scottconverse/civiccast/" not in text
-        identity_tail = "/.github/workflows/release-artifacts.yml@"
-
-        assert (
-            f'identity="https://github.com/${{GITHUB_REPOSITORY}}{identity_tail}${{GITHUB_REF}}"'
-            in text
-        )
-        assert (
-            f'$identity = "https://github.com/${{env:GITHUB_REPOSITORY}}{identity_tail}'
-            f'${{env:GITHUB_REF}}"' in text
-        )
-        # 1, not 2: the bash form appears only in publish-manifest now. The
-        # linux-artifacts job that carried the second one was removed with the
-        # .deb/.rpm lane. The pwsh form in windows-installer is asserted
-        # separately below.
-        assert text.count('--certificate-identity "$identity"') == 1
-        assert "--certificate-identity $identity" in text
-        assert "certificate-identity-regexp" not in text
+    # test_release_artifacts_workflow_uses_hosted_runners_only,
+    # test_windows_installer_is_blob_signed_verified_and_uploaded, and
+    # test_sigstore_verification_binds_the_exact_trigger_ref were removed with
+    # .github/workflows/release-artifacts.yml (the legacy WSL-era release
+    # pipeline; chore/retire-wsl-lane). The current release path is the native
+    # chain: .github/workflows/native-beta-candidate-artifacts.yml (build) and
+    # .github/workflows/sign-native-installer.yml (Authenticode sign via Azure
+    # Trusted Signing). That chain carries no cosign/sigstore step today, so
+    # those three functions' assertions have no native-path equivalent to pin.
 
 
 class TestWindowsAttestationDocumentation:
