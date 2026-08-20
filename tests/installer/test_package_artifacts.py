@@ -328,16 +328,6 @@ class TestPackageArtifactValidation:
 
 
 class TestReleaseArtifactBuilderContracts:
-    def test_rpm_version_fields_keep_beta_version_rpm_safe(self) -> None:
-        builder = importlib.import_module("scripts.build_release_artifacts")
-
-        assert builder._rpm_version_fields("3.0.0-beta1") == (
-            "3.0.0",
-            "1.beta1",
-            "3.0.0-1.beta1",
-        )
-        assert builder._rpm_version_fields("3.0.0") == ("3.0.0", "1", "3.0.0")
-
     def test_source_archive_skips_transient_agent_run_state(
         self, tmp_path: Path, monkeypatch
     ) -> None:
@@ -395,31 +385,44 @@ class TestReleaseArtifactBuilderContracts:
 
         kinds = {entry["kind"] for entry in manifest["artifacts"]}
         assert {
-            "deb-package",
-            "rpm-package",
             "macos-pkg",
             "windows-tauri-installer",
-            "windows-wsl2-bootstrap-manifest",
-            "container-manifest",
             "portable-archive",
         } <= kinds
+        # Guard the removals, not just the survivors: deb-package, rpm-package,
+        # windows-wsl2-bootstrap-manifest and container-manifest went with the
+        # Linux/WSL2/Docker lanes. A manifest that advertises an artifact this
+        # product cannot build is worse than one that omits it.
+        assert not (
+            {
+                "deb-package",
+                "rpm-package",
+                "windows-wsl2-bootstrap-manifest",
+                "container-manifest",
+            }
+            & kinds
+        )
         assert all(entry["sha256"] for entry in manifest["artifacts"] if entry["status"] == "ok")
         assert all(entry["sidecar"] for entry in manifest["artifacts"] if entry["status"] == "ok")
         assert any(entry["status"] == "blocked" for entry in manifest["artifacts"])
         assert any(
             "tooling unavailable" in entry["proof"].lower() for entry in manifest["artifacts"]
         )
-        bootstrap_entry = next(
-            entry
-            for entry in manifest["artifacts"]
-            if entry["kind"] == "windows-wsl2-bootstrap-manifest"
+        # Was: read the WSL2 bootstrap manifest's sidecar and assert it
+        # registered a civiccast-egress@.service systemd unit. Both the entry
+        # and that unit are gone. The portable archive is the one entry here
+        # that is always built regardless of available tooling, so it is what
+        # this assertion can rely on.
+        portable_entry = next(
+            entry for entry in manifest["artifacts"] if entry["kind"] == "portable-archive"
         )
-        sidecar = tmp_path / str(bootstrap_entry["sidecar"])
+        sidecar = tmp_path / str(portable_entry["sidecar"])
         payload = json.loads(sidecar.read_text(encoding="utf-8"))
-        egress = payload["install_manifest"]["additional_services"][0]
-        assert egress["service_name"] == "civiccast-egress@.service"
-        assert egress["restart_policy"] == "always"
-        assert egress["host_service"] is False
+        install_manifest = payload["install_manifest"]
+        # A native station supervises egress as a child of the Windows service,
+        # so there is no second registered service to declare.
+        assert install_manifest["additional_services"] == []
+        assert install_manifest["service"]["manager"] == "none"
 
     def test_builder_wheelhouse_manifest_hashes_application_and_dependency_wheels(
         self, tmp_path: Path, monkeypatch
@@ -1313,28 +1316,6 @@ class TestReleaseArtifactBuilderContracts:
             "kind": "clean-windows-proof-kit",
         }
         assert acquisition["hashes"]["clean_windows_proof_kit"]
-
-    def test_clean_windows_proof_directive_collects_recoverable_findings(self) -> None:
-        directive = (
-            Path("docs") / "releases" / "evidence" / "v1.3-clean-windows-codex-proof-directive.md"
-        ).read_text(encoding="utf-8")
-
-        assert "collect-and-continue proof" in directive
-        assert "expected filename/path mismatch" in directive
-        assert "Record each mismatch as a finding" in directive
-        assert "Stop immediately only for a blocker" in directive
-        assert "In the pullable tester branch flow, do not copy files by hand" in directive
-        assert "If `C:\\CivicCastProof\\VERIFY-AND-LAUNCH.ps1` already exists" in directive
-        assert "Run-WindowsTesterDirective.ps1" in directive
-        assert "versioned tester runner handles WSL2/Ubuntu 24.04" in directive
-        assert "Do not click the installer app's WSL button as the main" in directive
-        assert "installs Node.js and Playwright Chromium" in directive
-        assert "Do not manually click installer screens" in directive
-        assert "C:\\CivicCastTester\\Use-CivicCastPlaywright.ps1" in directive
-        assert "Install WSL2 Ubuntu 24.04`. Approve the Windows UAC prompt" not in directive
-        assert "-Mode RecordResult" in directive
-        assert "test-results/windows" in directive
-        assert "not as a replacement for the\npushed tester result" in directive
 
     def test_beta_handoff_acquisition_exposes_gstreamer_runtime_hash(self, tmp_path: Path) -> None:
         builder = importlib.import_module("scripts.build_release_artifacts")

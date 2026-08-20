@@ -291,7 +291,9 @@ class _LiveUdpSender:
         self._pipeline = Gst.parse_launch(pipeline_str)
         if self._pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
             self._pipeline.set_state(Gst.State.NULL)
-            raise RuntimeError(f"live UDP sender pipeline failed to reach PLAYING: {pipeline_str!r}")
+            raise RuntimeError(
+                f"live UDP sender pipeline failed to reach PLAYING: {pipeline_str!r}"
+            )
         # Block for the (possibly async) PLAYING transition, BOUNDED, so callers can
         # rely on the feed already flowing once the constructor returns -- mirrors the
         # subprocess sender being observably "started" before the caller moves on.
@@ -1234,7 +1236,9 @@ def test_reload_never_buffers_recovers(tmp_path: Path) -> None:
     out_ts = tmp_path / "out.ts"
     graph = _filesink_graph(graphmod.demo_test_graph(nsrc=2), out_ts)
     # 2s reload watchdog so the abort happens fast in the test
-    proc, control, log = _launch_worker(tmp_path, graph, out_ts, {"CIVICCAST_RELOAD_TIMEOUT_S": "2"})
+    proc, control, log = _launch_worker(
+        tmp_path, graph, out_ts, {"CIVICCAST_RELOAD_TIMEOUT_S": "2"}
+    )
     try:
         _send(control, f"reload {bad_a}")  # never buffers (dead port)
         time.sleep(0.2)

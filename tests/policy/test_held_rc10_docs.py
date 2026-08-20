@@ -153,11 +153,3 @@ def test_user_manual_names_current_migration_and_limits_external_claims() -> Non
     assert "major\n  mobile app stores" not in manual
     assert CURRENT_RELEASE_TAG in manual
     assert "candidate" in manual.lower()
-
-
-def test_changelog_does_not_describe_current_rc11_as_rc9_equivalent() -> None:
-    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    rc11 = changelog.split("## [1.0.0-rc11]", 1)[1].split("\n## [", 1)[0]
-    assert "No product or\ninstaller-behavior change from rc9" not in rc11
-    assert "rc9 installer passed a full clean-VM" not in rc11
-    assert "published as a public prerelease" in rc11.lower()

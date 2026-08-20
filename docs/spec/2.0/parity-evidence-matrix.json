@@ -1,0 +1,150 @@
+{
+  "version": "2.0.0",
+  "purpose": "Track industry-standard parity evidence before the v2.0.0 release candidate.",
+  "allowed_statuses": [
+    "complete",
+    "complete_with_external_dependency",
+    "human_blocked"
+  ],
+  "public_claim_boundary": "CivicCast may claim software feature parity where implementation and local proof exist. It must not claim app-store publication, hardware certification, legal certification, managed-service operation, or live-device validation unless the linked evidence explicitly proves that claim.",
+  "gaps": [
+    {
+      "id": "native-ott-mobile-app-suite",
+      "name": "Native OTT and mobile app suite",
+      "primary_stage": "v1.8.2",
+      "status": "complete_with_external_dependency",
+      "software_claim": "Shared app contracts and reference shells exist for living-room, mobile, and web targets.",
+      "external_dependency": "Store publication, platform developer accounts, device-lab certification, and signed production binaries remain external proof items.",
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.2-2026-05-31/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.2-shared-app-runtime-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.2-app-shell-builds-2026-05-31.md",
+        "docs/spec/2.0/v1.8.2-app-store-readiness.md"
+      ]
+    },
+    {
+      "id": "gated-private-video-access",
+      "name": "Gated and private video access",
+      "primary_stage": "v1.8.5",
+      "status": "complete",
+      "software_claim": "Playback policies, entitlements, channel inheritance, public catalog enforcement, RSS gating, and operator controls are implemented.",
+      "external_dependency": null,
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.5-2026-05-31/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.5-playback-policy-backbone-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.5-playback-policy-entitlements-rss-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.5-playback-policy-operator-ui-2026-05-31.md"
+      ]
+    },
+    {
+      "id": "vod-preroll-messaging",
+      "name": "VOD preroll messaging",
+      "primary_stage": "v1.8.5",
+      "status": "complete",
+      "software_claim": "Preroll policy metadata and playback policy enforcement are part of the same gated playback backbone.",
+      "external_dependency": null,
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.5-2026-05-31/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.5-playback-policy-public-catalog-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.5-playback-policy-channel-inheritance-2026-05-31.md"
+      ]
+    },
+    {
+      "id": "multi-zone-cg-bulletin-board",
+      "name": "Full multi-zone CG bulletin board",
+      "primary_stage": "v1.8.3",
+      "status": "complete",
+      "software_claim": "Multi-zone CG templates, queueing, feed adapters, snapshots, operator editing, and HLS render planning are implemented.",
+      "external_dependency": null,
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.3-2026-05-31/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.3-cg-template-editor-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.3-cg-feed-adapters-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.3-cg-hls-render-path-2026-05-31.md"
+      ]
+    },
+    {
+      "id": "av-router-control",
+      "name": "AV router control",
+      "primary_stage": "v1.8.8",
+      "status": "complete_with_external_dependency",
+      "software_claim": "Router inventory, manual take planning, scheduled take planning, RS-232/TCP/UDP command previews, and operator controls are implemented.",
+      "external_dependency": "Live facility router hardware validation requires attached station equipment and explicit operator authorization.",
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.8-2026-06-01/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.8-router-control-backbone-2026-06-01.md",
+        "docs/audits/audit-lite-v1.8.8-router-schedule-plan-2026-06-01.md",
+        "docs/audits/audit-lite-v1.8.8-scheduled-router-ui-2026-06-01.md"
+      ]
+    },
+    {
+      "id": "caption-appliance-integration",
+      "name": "Caption appliance integration",
+      "primary_stage": "v1.8.8",
+      "status": "complete_with_external_dependency",
+      "software_claim": "External SRT, WebVTT, and decoded caption appliance payloads can enter the existing caption review queue.",
+      "external_dependency": "Live caption appliance validation requires an attached appliance or partner-provided sample feed.",
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.8-2026-06-01/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.8-external-caption-ingest-2026-06-01.md"
+      ]
+    },
+    {
+      "id": "squeezebacks-and-lbar-live-overlays",
+      "name": "Squeezebacks and L-bar live overlays",
+      "primary_stage": "v1.8.8",
+      "status": "complete_with_external_dependency",
+      "software_claim": "Overlay z-order, L-bar, squeezeback, bug, lower-third, and emergency overlay compositor plans are implemented and exposed in the operator UI.",
+      "external_dependency": "Live GPU/HLS compositor execution against real program material remains external runtime proof.",
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.8-2026-06-01/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.8-overlay-compositor-plan-2026-06-01.md",
+        "docs/audits/audit-lite-v1.8.8-overlay-operator-surface-2026-06-01.md"
+      ]
+    },
+    {
+      "id": "rtmp-cloud-ingest-relay",
+      "name": "RTMP cloud ingest relay",
+      "primary_stage": "v1.8.7",
+      "status": "complete_with_external_dependency",
+      "software_claim": "Remote ingest relay configuration, live ingest plans, deployment guidance, and operator visibility are implemented.",
+      "external_dependency": "Live hosted relay proof requires a provisioned relay endpoint and network credentials.",
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.7-2026-06-01/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.7-cloud-relay-backbone-2026-06-01.md",
+        "docs/audits/audit-lite-v1.8.7-live-ingest-plan-2026-06-01.md",
+        "docs/audits/audit-lite-v1.8.7-relay-operator-visibility-2026-06-01.md",
+        "docs/audits/audit-lite-v1.8.7-relay-ops-docs-2026-06-01.md"
+      ]
+    },
+    {
+      "id": "expanded-audience-measurement-reporting",
+      "name": "Expanded audience measurement and reporting",
+      "primary_stage": "v1.8.6",
+      "status": "complete_with_external_dependency",
+      "software_claim": "Analytics reporting backbone, operator reports, privacy docs, GA4 export, and EPG export support are implemented.",
+      "external_dependency": "Provider-side analytics proof requires configured external analytics properties or production traffic.",
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.6-2026-05-31/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.6-analytics-reporting-backbone-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.6-analytics-operator-ui-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.6-ga4-epg-export-2026-05-31.md"
+      ]
+    },
+    {
+      "id": "contributor-submission-portal",
+      "name": "Contributor submission portal",
+      "primary_stage": "v1.8.4",
+      "status": "complete",
+      "software_claim": "Contributor contracts, public submission/status surfaces, operator review controls, status outbox, and test package are implemented.",
+      "external_dependency": null,
+      "evidence": [
+        "docs/audits/audit-civiccast-v1.8.4-2026-05-31/00-executive-audit.md",
+        "docs/audits/audit-lite-v1.8.4-contributor-contracts-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.4-contributor-portals-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.4-contributor-review-controls-2026-05-31.md",
+        "docs/audits/audit-lite-v1.8.4-contributor-status-outbox-2026-05-31.md"
+      ]
+    }
+  ]
+}

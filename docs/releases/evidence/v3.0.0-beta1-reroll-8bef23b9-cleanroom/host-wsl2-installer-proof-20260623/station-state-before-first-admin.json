@@ -1,0 +1,16 @@
+{
+    "captured_at":  "2026-06-23T18:25:17.7196608Z",
+    "endpoint":  "GET /api/setup/station-state",
+    "setup_nonce": "<redacted>",
+    "response":  {
+                     "status":  "not_started",
+                     "setup_complete":  false,
+                     "profile":  null,
+                     "recovery_kit_created":  false,
+                     "recovery_kit_id":  null,
+                     "recovery_kit_acknowledged":  false,
+                     "operator_console_url":  "http://127.0.0.1:8000/operator/?nonce=<redacted>",
+                     "next_step":  "Create the first admin account and save the recovery kit."
+                 }
+}
+

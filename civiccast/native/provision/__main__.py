@@ -98,6 +98,7 @@ from civiccast.native.provision.models import (
     ProvisionJournal,
     ProvisionPhase,
     ProvisionPlan,
+    ProvisionSeams,
     resolve_database_url,
 )
 from civiccast.native.provision.orchestrator import (
@@ -627,7 +628,11 @@ def _run_engine_and_finish(
     args: argparse.Namespace,
     plan: ProvisionPlan,
     context: ProvisionContext,
-    seams: object,
+    # Was `object`, which made the run_provision call below an arg-type
+    # error and, worse, meant every seams.* attribute access in this
+    # function was unchecked. The only caller passes what
+    # build_default_seams_for returns.
+    seams: ProvisionSeams,
 ) -> int:
     """Drive the journaled provisioning engine to COMPLETE, migrate the schema
     to alembic head, and print the DatabaseUrl + setup-nonce handoff lines.

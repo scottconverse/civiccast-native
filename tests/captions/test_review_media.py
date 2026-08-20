@@ -69,10 +69,13 @@ def test_retained_audio_evidence_must_cover_the_whole_cue(tmp_path: Path) -> Non
     )
     evidence = write_caption_review_audio_evidence(chunk, tmp_path / "evidence.wav")
 
-    assert verify_caption_review_audio_evidence_for_cue(
-        evidence,
-        _cue(start=12.0, end=14.5),
-    ) == (tmp_path / "evidence.wav").resolve()
+    assert (
+        verify_caption_review_audio_evidence_for_cue(
+            evidence,
+            _cue(start=12.0, end=14.5),
+        )
+        == (tmp_path / "evidence.wav").resolve()
+    )
 
     with pytest.raises(CaptionReviewClipError, match="cover"):
         verify_caption_review_audio_evidence_for_cue(

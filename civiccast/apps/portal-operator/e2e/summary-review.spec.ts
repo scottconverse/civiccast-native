@@ -132,6 +132,24 @@ async function mockSummaryBackend(
       }),
     })
   })
+  // Same gap as signed-records.spec.ts: A-1 first-run seeding added this fetch
+  // after these mocks were written, so unmocked it 401s against the preview
+  // server and the browser logs a console error, failing the console-clean
+  // assertion below. A real signed-in session gets a 200.
+  await page.route('**/api/staff/installer/sample-seed-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'dismissed',
+        sample_content_enabled: false,
+        initial_schedule_enabled: false,
+        dismissed: true,
+        message: 'Sample content seeding was not requested for this station.',
+        next_step: 'Nothing to do.',
+      }),
+    })
+  })
   await page.route('**/api/staff/assets', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) })
   })

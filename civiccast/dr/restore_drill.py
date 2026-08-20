@@ -1082,7 +1082,9 @@ def run_postgres_restore_drill(
     errors: list[str] = []
     verify_source_url = _verification_engine_url(verification_database_url or source_database_url)
 
-    source_engine = create_engine(verify_source_url, future=True, **connect_options(verify_source_url))
+    source_engine = create_engine(
+        verify_source_url, future=True, **connect_options(verify_source_url)
+    )
     try:
         source_revision = schema_check.read_db_revision(verify_source_url)
         source_extensions = _pg_extension_names(source_engine)
@@ -1458,7 +1460,11 @@ def run_postgres_cold_standby_drill(
         standby_verification_database_url or standby_database_url
     )
 
-    source_engine = create_engine(_verification_engine_url(source_engine_url), future=True, **connect_options(_verification_engine_url(source_engine_url)))
+    source_engine = create_engine(
+        _verification_engine_url(source_engine_url),
+        future=True,
+        **connect_options(_verification_engine_url(source_engine_url)),
+    )
     try:
         source_revision = schema_check.read_db_revision(source_engine_url)
         source_extensions = _pg_extension_names(source_engine)
@@ -1501,7 +1507,9 @@ def run_postgres_cold_standby_drill(
             globals_sql, database_url=standby_database_url, psql_command=standby_psql_command
         )
 
-    standby_bootstrap_engine = create_engine(standby_verify_url, future=True, **connect_options(standby_verify_url))
+    standby_bootstrap_engine = create_engine(
+        standby_verify_url, future=True, **connect_options(standby_verify_url)
+    )
     try:
         standby_role_attrs = _pg_role_attributes(standby_bootstrap_engine, source_relevant_roles)
         standby_role_memberships = _pg_role_memberships(

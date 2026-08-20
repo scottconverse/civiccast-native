@@ -142,15 +142,17 @@ def _drive_forward(journal: ProvisionJournal, seams: ProvisionSeams) -> Provisio
         if journal.phase.rank < ProvisionPhase.POSTGRES_CLUSTER_READY.rank:
             attempting = ProvisionPhase.POSTGRES_CLUSTER_READY
             observed = seams.detect_postgres_cluster()
-            decision = evaluate_postgres_cluster(
+            cluster_decision = evaluate_postgres_cluster(
                 observed_version=observed,
                 expected_major_version=journal.plan.postgres_major_version,
             )
-            if decision.outcome == "version_mismatch":
-                raise RuntimeError(f"PostgreSQL cluster refused: {decision.detail}")
-            if decision.outcome == "needs_initdb":
+            if cluster_decision.outcome == "version_mismatch":
+                raise RuntimeError(f"PostgreSQL cluster refused: {cluster_decision.detail}")
+            if cluster_decision.outcome == "needs_initdb":
                 seams.run_initdb()
-            journal = _persist(journal, ProvisionPhase.POSTGRES_CLUSTER_READY, decision.detail)
+            journal = _persist(
+                journal, ProvisionPhase.POSTGRES_CLUSTER_READY, cluster_decision.detail
+            )
 
         if journal.phase.rank < ProvisionPhase.POSTGRES_CONFIG_WRITTEN.rank:
             attempting = ProvisionPhase.POSTGRES_CONFIG_WRITTEN
@@ -179,20 +181,20 @@ def _drive_forward(journal: ProvisionJournal, seams: ProvisionSeams) -> Provisio
             # rerun against an already-provisioned cluster finds the
             # database present and takes no action.
             attempting = ProvisionPhase.DATABASE_READY
-            decision = seams.ensure_database()
-            journal = _persist(journal, ProvisionPhase.DATABASE_READY, decision.detail)
+            database_decision = seams.ensure_database()
+            journal = _persist(journal, ProvisionPhase.DATABASE_READY, database_decision.detail)
 
         if journal.phase.rank < ProvisionPhase.NATS_STORE_READY.rank:
             attempting = ProvisionPhase.NATS_STORE_READY
             probe = seams.detect_nats_store()
-            decision = evaluate_nats_store(
+            nats_store_decision = evaluate_nats_store(
                 path_exists=probe.path_exists, is_directory=probe.is_directory
             )
-            if decision.outcome == "fail_closed_not_a_directory":
-                raise RuntimeError(f"NATS store path refused: {decision.detail}")
-            if decision.outcome == "create":
+            if nats_store_decision.outcome == "fail_closed_not_a_directory":
+                raise RuntimeError(f"NATS store path refused: {nats_store_decision.detail}")
+            if nats_store_decision.outcome == "create":
                 seams.ensure_nats_store_dir()
-            journal = _persist(journal, ProvisionPhase.NATS_STORE_READY, decision.detail)
+            journal = _persist(journal, ProvisionPhase.NATS_STORE_READY, nats_store_decision.detail)
 
         if journal.phase.rank < ProvisionPhase.NATS_CONFIG_WRITTEN.rank:
             attempting = ProvisionPhase.NATS_CONFIG_WRITTEN

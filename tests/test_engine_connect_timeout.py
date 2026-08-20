@@ -98,9 +98,7 @@ def test_connect_options_explicit_timeout_overrides_env_and_default(
         "connect_args": {"connect_timeout": 5}
     }
     # Without the explicit bound the env override still governs.
-    assert connect_options("postgresql://h/db") == {
-        "connect_args": {"connect_timeout": 30}
-    }
+    assert connect_options("postgresql://h/db") == {"connect_args": {"connect_timeout": 30}}
     # SQLite stays exempt regardless of any bound.
     assert connect_options("sqlite:///f.db", timeout_seconds=5) == {}
 

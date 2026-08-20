@@ -3057,8 +3057,7 @@ def read_first_run_seed_status() -> SampleSeedStatus:
     if status_value == "succeeded":
         schedule_item_id = raw.get("schedule_item_id")
         message = (
-            "CivicCast published a sample video to the portal and created a starter "
-            "schedule item."
+            "CivicCast published a sample video to the portal and created a starter schedule item."
             if schedule_item_id
             else "CivicCast published a sample video to the portal."
         )

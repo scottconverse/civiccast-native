@@ -60,7 +60,9 @@ def test_start_never_returns_the_code(monkeypatch: pytest.MonkeyPatch) -> None:
     assert real_code not in payload["code_file"], "the code itself must never appear on the wire"
 
 
-def test_start_then_complete_grants_the_configured_setup_nonce(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_then_complete_grants_the_configured_setup_nonce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _NONCE)
     client = TestClient(create_app())
     payload = _start(client)

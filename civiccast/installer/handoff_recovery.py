@@ -348,7 +348,7 @@ def complete_recovery(code: str) -> RecoveryCompleteResult:
         if state.get("consumed") is True:
             return RecoveryCompleteResult(ok=False, reason="wrong")
 
-        attempts = int(state.get("attempts") or 0)
+        attempts = int(str(state.get("attempts") or 0))
         if attempts >= MAX_ATTEMPTS:
             return RecoveryCompleteResult(ok=False, reason="burned")
 

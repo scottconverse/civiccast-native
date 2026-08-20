@@ -686,9 +686,7 @@ class GstreamerRepairResponse(BaseModel):
     triggered: bool = Field(description="A signed re-stage was launched.")
     closure_healthy: bool = Field(description="The closure verifies clean right now.")
     remedy: str = Field(
-        description=(
-            "already-healthy | restage-launched | installer-missing | launch-failed"
-        )
+        description=("already-healthy | restage-launched | installer-missing | launch-failed")
     )
     detail: str
     pid: int | None = None

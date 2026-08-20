@@ -126,11 +126,10 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
         ),
         violations,
     )
-    _require(
-        version_doc.exists(),
-        f"{_repo_path(version_doc, root)} is missing.",
-        violations,
-    )
+    # NOT required here. version_doc is the WSL line's release-verification
+    # document and lives in docs/releases/, the archive this repository
+    # deliberately did not carry across. The checks below that READ it are
+    # already guarded by `if release_doc:`, so they simply do not run.
     _require(
         installer_version == version,
         (
@@ -141,18 +140,26 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
     )
     if technical_ops_reference:
         # TW-E: the /health example in the "Monitoring the running service"
-        # section must show the version the running server actually reports
-        # (civiccast/app.py embeds __version__ verbatim in /health), not a
-        # stale prior rc left behind by the last version bump.
+        # section must show the version the running server actually reports,
+        # not a stale one left behind by the last version bump.
+        #
+        # Anchored to civiccast/_native_version.py, NOT civiccast/_version.py.
+        # This document is the NATIVE station's operator reference now, and a
+        # native station's /health reports the native version: station_runtime
+        # sets CIVICCAST_NATIVE_REPORTED_VERSION from _native_version, and
+        # app.py's _reported_version() prefers it over the module __version__
+        # (chain J, 2026-08-02). Checking against the retired WSL line's
+        # _version.py told an operator to expect a number their station will
+        # never print.
         health_example = re.search(
             r'"status":"degraded","version":"([^"]+)"', technical_ops_reference
         )
         _require(
-            health_example is not None and health_example.group(1) == version,
+            health_example is not None and health_example.group(1) == native_source_version,
             (
                 f"{_repo_path(technical_ops_reference_path, root)}'s /health example shows "
                 f"version {health_example.group(1) if health_example else 'MISSING'!r}, "
-                f"expected {version!r}."
+                f"expected {native_source_version!r} (from civiccast/_native_version.py)."
             ),
             violations,
         )
@@ -214,25 +221,10 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
         ),
         violations,
     )
-    headless_bootstrap = (
-        root
-        / "civiccast"
-        / "apps"
-        / "installer"
-        / "src-tauri"
-        / "resources"
-        / "headless-bootstrap.ps1"
-    )
-    _require(
-        headless_bootstrap.exists()
-        and f'$CivicCastVersion = "{wsl_version}"' in _read(headless_bootstrap),
-        (
-            f"{_repo_path(headless_bootstrap, root)} does not carry the bundled bootstrap "
-            f"expected-version guard for the WSL product's own version {wsl_version} "
-            f"(from {_repo_path(wsl_tauri_config_path, root)})."
-        ),
-        violations,
-    )
+    # NOT required here. headless-bootstrap.ps1 is the WSL2 install lane --
+    # the comment above already calls it WSL-ONLY -- and it was deleted under
+    # the owner's "no linux" decision. Auditing the expected-version guard of
+    # a script this product does not ship checks nothing.
 
     # The NATIVE Windows product line's own version surfaces (chain J,
     # 2026-08-02). civiccast/_native_version.py is their single source of

@@ -53,7 +53,7 @@ test('cold operator console shows the in-product setup-recovery action, not only
 
   await page.goto('/#/setup')
 
-  await expect(page.getByRole('heading', { name: 'Restore the setup handoff on the station' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Restore the setup handoff the Windows installer creates' })).toBeVisible()
   // The pre-existing command-line instruction stays -- this is an ADDITIONAL
   // recovery path, not a replacement.
   await expect(page.getByText('--civiccast-restore-setup-handoff')).toBeVisible()
@@ -115,7 +115,7 @@ test('a mocked valid recovery code resumes setup and the dead-end is gone', asyn
   })
 
   await page.goto('/#/setup')
-  await expect(page.getByRole('heading', { name: 'Restore the setup handoff on the station' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Restore the setup handoff the Windows installer creates' })).toBeVisible()
 
   await page.getByRole('button', { name: 'I lost my setup link' }).click()
   expect(startCalls).toBe(1)
@@ -130,7 +130,7 @@ test('a mocked valid recovery code resumes setup and the dead-end is gone', asyn
   await page.getByLabel('Recovery code').fill('abcdefgh')
   await page.getByRole('button', { name: 'Continue' }).click()
 
-  await expect(page.getByRole('heading', { name: 'Restore the setup handoff on the station' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Restore the setup handoff the Windows installer creates' })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Durable storage' })).toBeVisible()
   expect(completeRequestBody).toEqual({ code: 'ABCDEFGH' })
   await expect

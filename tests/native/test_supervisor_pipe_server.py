@@ -154,7 +154,9 @@ def test_parse_frame_invalid_utf8_closes() -> None:
 
 
 def test_build_response_echoes_id_when_present() -> None:
-    response = build_response({"v": 1, "cmd": "status", "id": "abc123"}, status="ok", detail="applied")
+    response = build_response(
+        {"v": 1, "cmd": "status", "id": "abc123"}, status="ok", detail="applied"
+    )
     assert response["v"] == 1
     assert response["cmd"] == "status"
     assert response["result"] == "ok"
@@ -193,7 +195,9 @@ def _make_dispatcher(
 def test_dispatcher_read_tier_allowed_for_authenticated_users(command: str) -> None:
     dispatcher, queue = _make_dispatcher()
     outcome = dispatcher.handle_frame(
-        _frame({"v": 1, "cmd": command}), groups=AUTHENTICATED_USERS_ONLY, caller_sid="S-1-5-21-test-1001"
+        _frame({"v": 1, "cmd": command}),
+        groups=AUTHENTICATED_USERS_ONLY,
+        caller_sid="S-1-5-21-test-1001",
     )
     assert outcome.action == "reply"
     assert outcome.response is not None
@@ -209,7 +213,9 @@ def test_dispatcher_admin_tier_denied_for_authenticated_users_only(command: str)
 
     dispatcher, queue = _make_dispatcher()
     outcome = dispatcher.handle_frame(
-        _frame({"v": 1, "cmd": command}), groups=AUTHENTICATED_USERS_ONLY, caller_sid="S-1-5-21-test-1001"
+        _frame({"v": 1, "cmd": command}),
+        groups=AUTHENTICATED_USERS_ONLY,
+        caller_sid="S-1-5-21-test-1001",
     )
     assert outcome.action == "reply"
     assert outcome.response is not None
@@ -232,7 +238,9 @@ def test_dispatcher_admin_tier_allowed_for_administrators(command: str) -> None:
 @pytest.mark.parametrize("command", ADMIN_COMMANDS)
 def test_dispatcher_admin_tier_allowed_for_system(command: str) -> None:
     dispatcher, queue = _make_dispatcher()
-    outcome = dispatcher.handle_frame(_frame({"v": 1, "cmd": command}), groups=SYSTEM_GROUPS, caller_sid="S-1-5-18")
+    outcome = dispatcher.handle_frame(
+        _frame({"v": 1, "cmd": command}), groups=SYSTEM_GROUPS, caller_sid="S-1-5-18"
+    )
     assert outcome.action == "reply"
     assert outcome.response is not None
     assert outcome.response["result"] == "ok"
@@ -244,7 +252,9 @@ def test_dispatcher_no_groups_denied_even_status() -> None:
     token extraction failure upstream) is denied even the read tier."""
 
     dispatcher, queue = _make_dispatcher()
-    outcome = dispatcher.handle_frame(_frame({"v": 1, "cmd": "status"}), groups=NO_GROUPS, caller_sid="S-1-0-0")
+    outcome = dispatcher.handle_frame(
+        _frame({"v": 1, "cmd": "status"}), groups=NO_GROUPS, caller_sid="S-1-0-0"
+    )
     assert outcome.response is not None
     assert outcome.response["result"] == "denied"
     queue.stop()
@@ -256,7 +266,9 @@ def test_dispatcher_unknown_command_denied() -> None:
 
     dispatcher, queue = _make_dispatcher()
     outcome = dispatcher.handle_frame(
-        _frame({"v": 1, "cmd": "reboot_the_datacenter"}), groups=ADMIN_GROUPS, caller_sid="S-1-5-32-544"
+        _frame({"v": 1, "cmd": "reboot_the_datacenter"}),
+        groups=ADMIN_GROUPS,
+        caller_sid="S-1-5-32-544",
     )
     assert outcome.action == "reply"
     assert outcome.response is not None
@@ -307,7 +319,9 @@ def test_dispatcher_does_not_audit_log_denied_mutating_command() -> None:
     audit_calls: list[tuple[str, str]] = []
     dispatcher, queue = _make_dispatcher(audit_calls=audit_calls)
     dispatcher.handle_frame(
-        _frame({"v": 1, "cmd": "stop"}), groups=AUTHENTICATED_USERS_ONLY, caller_sid="S-1-5-21-test-1001"
+        _frame({"v": 1, "cmd": "stop"}),
+        groups=AUTHENTICATED_USERS_ONLY,
+        caller_sid="S-1-5-21-test-1001",
     )
     assert audit_calls == []
     queue.stop()
@@ -318,7 +332,9 @@ def test_dispatcher_handler_exception_becomes_error_reply_not_a_crash() -> None:
         raise RuntimeError("child process refused to start")
 
     dispatcher, queue = _make_dispatcher(handler=boom)
-    outcome = dispatcher.handle_frame(_frame({"v": 1, "cmd": "start"}), groups=ADMIN_GROUPS, caller_sid="S-1-5-32-544")
+    outcome = dispatcher.handle_frame(
+        _frame({"v": 1, "cmd": "start"}), groups=ADMIN_GROUPS, caller_sid="S-1-5-32-544"
+    )
     assert outcome.action == "reply"
     assert outcome.response is not None
     assert outcome.response["result"] == "error"
@@ -333,7 +349,9 @@ def test_dispatcher_exhaustive_command_x_tier_matrix(command: str) -> None:
     actually calls it for every known command"."""
 
     dispatcher, queue = _make_dispatcher()
-    outcome = dispatcher.handle_frame(_frame({"v": 1, "cmd": command}), groups=ADMIN_GROUPS, caller_sid="S-1-5-32-544")
+    outcome = dispatcher.handle_frame(
+        _frame({"v": 1, "cmd": command}), groups=ADMIN_GROUPS, caller_sid="S-1-5-32-544"
+    )
     assert outcome.action == "reply"
     assert outcome.response is not None
     assert outcome.response["result"] == "ok"
@@ -386,7 +404,8 @@ def test_command_queue_serializes_concurrent_submissions_no_torn_state() -> None
 
     queue = CommandQueue(handler)
     threads = [
-        threading.Thread(target=lambda i=i: queue.submit(f"cmd{i}", {}, timeout=5)) for i in range(8)
+        threading.Thread(target=lambda i=i: queue.submit(f"cmd{i}", {}, timeout=5))
+        for i in range(8)
     ]
     for t in threads:
         t.start()

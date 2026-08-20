@@ -1,10 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
 #
-# Produces the native-Windows beta's five co-delivered assets without
-# publishing them.  A release coordinator must verify this private artifact
-# and run the clean-machine gate before manually publishing it to
+# Produces the native-Windows beta's five co-delivered assets without cutting
+# a release. A release coordinator must verify the candidate and run the
+# clean-machine gate before manually publishing it to
 # scottconverse/civiccast-releases.
+#
+# NOT PRIVATE. This header used to call the output "this private artifact",
+# which was wrong and had been wrong for months: workflow artifacts on a
+# public repository are downloadable by any GitHub user for their whole
+# retention window (14 days here). That covers the signed station bundle
+# (~18.6 GB) and the assembled kit (~21.9 GB).
+#
+# Owner-confirmed 2026-08-20 that public is acceptable for these; the comment
+# was the thing that was wrong, not the setup. Said plainly here so nobody
+# treats an unreleased candidate as unreachable on the strength of a stale
+# adjective. "Not yet released" is true. "Private" is not.
 name: native-beta-candidate-artifacts
 
 on:
@@ -469,7 +480,7 @@ jobs:
             assets = @($assets | ForEach-Object { [System.IO.Path]::GetRelativePath($artifactRoot, $_.FullName).Replace('\', '/') })
           } | ConvertTo-Json | Set-Content -LiteralPath artifacts/native-beta/candidate-receipt.json -Encoding utf8
 
-      - name: Upload private native-beta candidate artifact
+      - name: Upload the native-beta candidate artifact
         uses: actions/upload-artifact@v4
         timeout-minutes: 45
         with:
@@ -485,7 +496,7 @@ jobs:
             artifacts/native-beta/SHA256SUMS.txt
             artifacts/native-beta/candidate-receipt.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   # Produces the signed native STATION BUNDLE the K1 flat-activation fix
   # consumes (scripts/build_native_station_bundle.py: station-index.json +
@@ -692,7 +703,7 @@ jobs:
             artifacts/native-station-bundle/station/**
             artifacts/native-station-bundle/native-station-bundle-build-report.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   # Assembles the INSTALLABLE kit: the signed bootstrap installer with the
   # signed station bundle co-located at `.\station\` next to it, the exact
@@ -780,4 +791,4 @@ jobs:
           name: native-beta-kit-${{ github.sha }}
           path: kit/**
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1

@@ -483,10 +483,7 @@ class GstPlayoutEngine:
                 "capsfilter",
                 "caption_audio_tap_caps",
                 props={
-                    "caps": (
-                        "audio/x-raw,format=S16LE,rate=16000,channels=1,"
-                        "layout=interleaved"
-                    )
+                    "caps": ("audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved")
                 },
             ),
             ElementSpec(

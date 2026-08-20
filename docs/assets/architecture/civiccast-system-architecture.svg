@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">CivicCast system architecture</title>
+  <desc id="desc">Operator, resident, installer, API, durable storage, media, AI, publish, and egress surfaces.</desc>
+  <defs>
+    <style>
+      .bg{fill:#fbfaf7}.band{fill:#eef3f8}.box{fill:#fff;stroke:#2c3548;stroke-width:2}.soft{fill:#f6f8fb;stroke:#55667f;stroke-width:1.5}.title{font:700 26px Arial,sans-serif;fill:#1f2734}.label{font:700 17px Arial,sans-serif;fill:#1f2734}.small{font:14px Arial,sans-serif;fill:#506070}.arrow{stroke:#2458a6;stroke-width:3;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2458a6"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1280" height="720"/>
+  <text class="title" x="60" y="56">CivicCast: local civic broadcast architecture</text>
+  <text class="small" x="60" y="84">Self-hosted meeting operations, public playback, reviewed records, and bounded local channel egress proof.</text>
+
+  <rect class="band" x="42" y="118" width="322" height="520" rx="16"/>
+  <text class="label" x="68" y="154">People and apps</text>
+  <rect class="box" x="72" y="188" width="245" height="72" rx="8"/>
+  <text class="label" x="96" y="216">Operator console</text>
+  <text class="small" x="96" y="240">Run meeting, review, publish</text>
+  <rect class="box" x="72" y="294" width="245" height="72" rx="8"/>
+  <text class="label" x="96" y="322">Resident portal</text>
+  <text class="small" x="96" y="346">Live, upcoming, replay</text>
+  <rect class="box" x="72" y="400" width="245" height="72" rx="8"/>
+  <text class="label" x="96" y="428">Installer shell</text>
+  <text class="small" x="96" y="452">Readiness and handoff</text>
+  <rect class="box" x="72" y="506" width="245" height="72" rx="8"/>
+  <text class="label" x="96" y="534">Technical staff</text>
+  <text class="small" x="96" y="558">CLI, release proof, support</text>
+
+  <rect class="band" x="430" y="118" width="420" height="520" rx="16"/>
+  <text class="label" x="456" y="154">CivicCast service</text>
+  <rect class="box" x="492" y="188" width="286" height="86" rx="8"/>
+  <text class="label" x="524" y="222">FastAPI umbrella app</text>
+  <text class="small" x="524" y="246">Public, staff, installer, release APIs</text>
+  <rect class="soft" x="470" y="326" width="150" height="72" rx="8"/>
+  <text class="label" x="500" y="356">Durable DB</text>
+  <text class="small" x="492" y="380">SQLite or Postgres</text>
+  <rect class="soft" x="654" y="326" width="150" height="72" rx="8"/>
+  <text class="label" x="690" y="356">Storage</text>
+  <text class="small" x="674" y="380">Uploads, HLS, proof</text>
+  <rect class="soft" x="470" y="448" width="150" height="72" rx="8"/>
+  <text class="label" x="510" y="478">AI tools</text>
+  <text class="small" x="486" y="502">Captions, summaries</text>
+  <rect class="soft" x="654" y="448" width="150" height="72" rx="8"/>
+  <text class="label" x="688" y="478">Broker</text>
+  <text class="small" x="678" y="502">NATS or test path</text>
+
+  <rect class="band" x="914" y="118" width="322" height="520" rx="16"/>
+  <text class="label" x="940" y="154">Outputs and proof</text>
+  <rect class="box" x="962" y="188" width="245" height="72" rx="8"/>
+  <text class="label" x="992" y="216">Public playback</text>
+  <text class="small" x="992" y="240">Portal and HLS manifests</text>
+  <rect class="box" x="962" y="294" width="245" height="72" rx="8"/>
+  <text class="label" x="992" y="322">Approved records</text>
+  <text class="small" x="992" y="346">Captions, records, exports</text>
+  <rect class="box" x="962" y="400" width="245" height="72" rx="8"/>
+  <text class="label" x="992" y="428">Optional providers</text>
+  <text class="small" x="992" y="452">Archive, YouTube, webhooks</text>
+  <rect class="box" x="962" y="506" width="245" height="72" rx="8"/>
+  <text class="label" x="992" y="534">Local egress proof</text>
+  <text class="small" x="992" y="558">FileSink, SRT, captions</text>
+
+  <path class="arrow" d="M318 224 H492"/>
+  <path class="arrow" d="M318 330 H492"/>
+  <path class="arrow" d="M318 436 H492"/>
+  <path class="arrow" d="M635 274 V326"/>
+  <path class="arrow" d="M635 274 C632 296 555 306 545 326"/>
+  <path class="arrow" d="M635 274 C668 300 716 306 729 326"/>
+  <path class="arrow" d="M635 274 C616 376 550 406 545 448"/>
+  <path class="arrow" d="M635 274 C724 356 738 408 729 448"/>
+  <path class="arrow" d="M778 231 H962"/>
+  <path class="arrow" d="M778 231 C860 262 902 312 962 330"/>
+  <path class="arrow" d="M778 231 C872 350 902 420 962 436"/>
+  <path class="arrow" d="M778 231 C862 438 902 526 962 542"/>
+</svg>

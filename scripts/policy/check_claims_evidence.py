@@ -117,7 +117,9 @@ CAPABILITY_TOKENS: tuple[str, ...] = ("backup", "restore", "dump")
 # too would newly flag existing entries whose claim text legitimately says
 # "recovery" in prose unrelated to any bound-test-name mismatch, which is
 # not this finding's defect.
-BLOCK_CAPABILITY_TOKENS: tuple[str, ...] = tuple(dict.fromkeys((*CAPABILITY_TOKENS, "capture", "recovery")))
+BLOCK_CAPABILITY_TOKENS: tuple[str, ...] = tuple(
+    dict.fromkeys((*CAPABILITY_TOKENS, "capture", "recovery"))
+)
 
 CLAIM_ID_RE = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
 BLOB_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -338,7 +340,9 @@ def _reject_unknown_keys(value: dict[str, Any], allowed: frozenset[str], context
 _ROLE_FILE_KEYS: frozenset[str] = frozenset({"path", "blob"})
 _TEST_ROLE_FILE_KEYS: frozenset[str] = frozenset({"path", "blob", "node_id"})
 _CONTROL_KEYS: frozenset[str] = frozenset({"id", "command", "expected_red_when", "ci_safe"})
-_ENTRY_KEYS: frozenset[str] = frozenset({"id", "claim", "where", "resolution", "inputs", "controls"})
+_ENTRY_KEYS: frozenset[str] = frozenset(
+    {"id", "claim", "where", "resolution", "inputs", "controls"}
+)
 _WHERE_KEYS: frozenset[str] = frozenset({"file", "anchor"})
 # CC-WS3-007 residue (round-6 fold): claims-schema.json's top-level object
 # and its governed_doc_set item def are ALSO additionalProperties: false --
@@ -359,10 +363,16 @@ def _parse_role_file(value: Any, context: str, *, allow_node_id: bool = False) -
     path = value.get("path")
     blob = value.get("blob")
     _require(isinstance(path, str) and bool(path), f"{context}: 'path' must be a non-empty string")
-    _require(isinstance(blob, str) and bool(BLOB_RE.match(blob)), f"{context}: 'blob' must be a 40-hex git blob ID")
+    _require(
+        isinstance(blob, str) and bool(BLOB_RE.match(blob)),
+        f"{context}: 'blob' must be a 40-hex git blob ID",
+    )
     node_id = value.get("node_id")
     if node_id is not None:
-        _require(isinstance(node_id, str) and bool(node_id), f"{context}: 'node_id' must be a non-empty string")
+        _require(
+            isinstance(node_id, str) and bool(node_id),
+            f"{context}: 'node_id' must be a non-empty string",
+        )
     return RoleFile(path=path, blob=blob, node_id=node_id)
 
 
@@ -373,20 +383,31 @@ def _parse_control(value: Any, context: str) -> Control:
     command = value.get("command")
     expected_red_when = value.get("expected_red_when")
     ci_safe = value.get("ci_safe")
-    _require(isinstance(control_id, str) and bool(CLAIM_ID_RE.match(control_id)), f"{context}: control 'id' fails slug grammar")
-    _require(isinstance(command, str) and bool(command), f"{context}: control 'command' must be a non-empty string")
+    _require(
+        isinstance(control_id, str) and bool(CLAIM_ID_RE.match(control_id)),
+        f"{context}: control 'id' fails slug grammar",
+    )
+    _require(
+        isinstance(command, str) and bool(command),
+        f"{context}: control 'command' must be a non-empty string",
+    )
     _require(
         isinstance(expected_red_when, str) and bool(expected_red_when),
         f"{context}: control 'expected_red_when' must be a non-empty string",
     )
     _require(isinstance(ci_safe, bool), f"{context}: control 'ci_safe' must be a boolean")
-    return Control(id=control_id, command=command, expected_red_when=expected_red_when, ci_safe=ci_safe)
+    return Control(
+        id=control_id, command=command, expected_red_when=expected_red_when, ci_safe=ci_safe
+    )
 
 
 def _parse_entry(value: Any) -> ClaimEntry:
     _require(isinstance(value, dict), "entry must be a mapping")
     claim_id = value.get("id")
-    _require(isinstance(claim_id, str) and bool(CLAIM_ID_RE.match(claim_id)), f"entry id {claim_id!r} fails slug grammar")
+    _require(
+        isinstance(claim_id, str) and bool(CLAIM_ID_RE.match(claim_id)),
+        f"entry id {claim_id!r} fails slug grammar",
+    )
     present_forbidden = sorted(FORBIDDEN_ENTRY_FIELDS & set(value.keys()))
     _require(
         not present_forbidden,
@@ -399,16 +420,28 @@ def _parse_entry(value: Any) -> ClaimEntry:
     # entry field nor a banned one) are malformed here.
     _reject_unknown_keys(value, _ENTRY_KEYS, claim_id)
     claim_text = value.get("claim")
-    _require(isinstance(claim_text, str) and bool(claim_text), f"{claim_id}: 'claim' must be a non-empty string")
+    _require(
+        isinstance(claim_text, str) and bool(claim_text),
+        f"{claim_id}: 'claim' must be a non-empty string",
+    )
     where = value.get("where")
     _require(isinstance(where, dict), f"{claim_id}: 'where' must be a mapping")
     _reject_unknown_keys(where, _WHERE_KEYS, f"{claim_id}.where")
     where_file = where.get("file")
     where_anchor = where.get("anchor")
-    _require(isinstance(where_file, str) and bool(where_file), f"{claim_id}: where.file must be a non-empty string")
-    _require(isinstance(where_anchor, str) and bool(where_anchor), f"{claim_id}: where.anchor must be a non-empty string")
+    _require(
+        isinstance(where_file, str) and bool(where_file),
+        f"{claim_id}: where.file must be a non-empty string",
+    )
+    _require(
+        isinstance(where_anchor, str) and bool(where_anchor),
+        f"{claim_id}: where.anchor must be a non-empty string",
+    )
     resolution = value.get("resolution")
-    _require(resolution in ("same_run", "external_evidence"), f"{claim_id}: 'resolution' must be same_run or external_evidence")
+    _require(
+        resolution in ("same_run", "external_evidence"),
+        f"{claim_id}: 'resolution' must be same_run or external_evidence",
+    )
 
     inputs_raw = value.get("inputs")
     _require(isinstance(inputs_raw, dict), f"{claim_id}: 'inputs' must be a mapping")
@@ -430,15 +463,24 @@ def _parse_entry(value: Any) -> ClaimEntry:
         # def, which has no node_id property at all.
         allow_node_id = role == "test"
         if as_list:
-            _require(isinstance(raw, list) and len(raw) >= 1, f"{claim_id}: inputs.{role} must be a non-empty list")
+            _require(
+                isinstance(raw, list) and len(raw) >= 1,
+                f"{claim_id}: inputs.{role} must be a non-empty list",
+            )
             inputs[role] = [
-                _parse_role_file(item, f"{claim_id}.inputs.{role}[{i}]", allow_node_id=allow_node_id)
+                _parse_role_file(
+                    item, f"{claim_id}.inputs.{role}[{i}]", allow_node_id=allow_node_id
+                )
                 for i, item in enumerate(raw)
             ]
         else:
-            role_file = _parse_role_file(raw, f"{claim_id}.inputs.{role}", allow_node_id=allow_node_id)
+            role_file = _parse_role_file(
+                raw, f"{claim_id}.inputs.{role}", allow_node_id=allow_node_id
+            )
             if role == "test":
-                _require(bool(role_file.node_id), f"{claim_id}: inputs.test must carry a pytest node_id")
+                _require(
+                    bool(role_file.node_id), f"{claim_id}: inputs.test must carry a pytest node_id"
+                )
             inputs[role] = role_file
 
     # CC-WS3-003 (Major, round-2 audit): identity tying. The `where` file is
@@ -475,7 +517,9 @@ def _parse_entry(value: Any) -> ClaimEntry:
 
     controls_raw = value.get("controls")
     _require(isinstance(controls_raw, list), f"{claim_id}: 'controls' must be a list")
-    controls = [_parse_control(item, f"{claim_id}.controls[{i}]") for i, item in enumerate(controls_raw)]
+    controls = [
+        _parse_control(item, f"{claim_id}.controls[{i}]") for i, item in enumerate(controls_raw)
+    ]
     control_ids = [control.id for control in controls]
     dup_controls = sorted({cid for cid in control_ids if control_ids.count(cid) > 1})
     _require(
@@ -524,7 +568,10 @@ def load_registry(path: Path) -> Registry:
     _require(schema_version == 1, f"registry schema_version must be 1, got {schema_version!r}")
 
     governed_raw = raw.get("governed_doc_set")
-    _require(isinstance(governed_raw, list) and len(governed_raw) >= 1, "governed_doc_set must be a non-empty list")
+    _require(
+        isinstance(governed_raw, list) and len(governed_raw) >= 1,
+        "governed_doc_set must be a non-empty list",
+    )
     governed_doc_set: list[GovernedDoc] = []
     for index, item in enumerate(governed_raw):
         _require(isinstance(item, dict), "governed_doc_set entries must be mappings")
@@ -534,15 +581,32 @@ def load_registry(path: Path) -> Registry:
         doc_path = item.get("path")
         doc_format = item.get("format")
         enforced = item.get("enforced")
-        _require(isinstance(doc_path, str) and bool(doc_path), "governed_doc_set entry needs a non-empty 'path'")
-        _require(doc_format in ("markdown", "python"), f"governed_doc_set[{doc_path}]: format must be markdown or python")
-        _require(isinstance(enforced, bool), f"governed_doc_set[{doc_path}]: 'enforced' must be a boolean")
-        governed_doc_set.append(GovernedDoc(path=doc_path, doc_format=doc_format, enforced=enforced))
+        _require(
+            isinstance(doc_path, str) and bool(doc_path),
+            "governed_doc_set entry needs a non-empty 'path'",
+        )
+        _require(
+            doc_format in ("markdown", "python"),
+            f"governed_doc_set[{doc_path}]: format must be markdown or python",
+        )
+        _require(
+            isinstance(enforced, bool),
+            f"governed_doc_set[{doc_path}]: 'enforced' must be a boolean",
+        )
+        governed_doc_set.append(
+            GovernedDoc(path=doc_path, doc_format=doc_format, enforced=enforced)
+        )
 
     tokens_raw = raw.get("strong_claim_tokens")
-    _require(isinstance(tokens_raw, list) and len(tokens_raw) >= 1, "strong_claim_tokens must be a non-empty list")
+    _require(
+        isinstance(tokens_raw, list) and len(tokens_raw) >= 1,
+        "strong_claim_tokens must be a non-empty list",
+    )
     for token in tokens_raw:
-        _require(isinstance(token, str) and bool(token), "strong_claim_tokens entries must be non-empty strings")
+        _require(
+            isinstance(token, str) and bool(token),
+            "strong_claim_tokens entries must be non-empty strings",
+        )
     strong_claim_tokens = tuple(tokens_raw)
 
     entries_raw = raw.get("entries")
@@ -770,7 +834,8 @@ def _markdown_item_locality(text: str) -> tuple[list[str], list[tuple[int, str, 
         supported = _SUPPORTED_LIST_ITEM_RE.match(stripped)
         if supported:
             while stack and not (
-                stack[-1]["quote_depth"] == quote_depth and marker_indent > stack[-1]["marker_indent"]
+                stack[-1]["quote_depth"] == quote_depth
+                and marker_indent > stack[-1]["marker_indent"]
             ):
                 close_top()
             stack.append(
@@ -809,7 +874,9 @@ def _markdown_item_locality(text: str) -> tuple[list[str], list[tuple[int, str, 
             entries.append((item["start"], "\n".join(item["lines"])))
     entries.sort(key=lambda pair: pair[0])
 
-    resolved_unsupported = [(lineno, raw_line, "\n".join(bucket)) for lineno, raw_line, bucket in unsupported]
+    resolved_unsupported = [
+        (lineno, raw_line, "\n".join(bucket)) for lineno, raw_line, bucket in unsupported
+    ]
     return [item_text for _, item_text in entries], resolved_unsupported
 
 
@@ -929,7 +996,9 @@ def scan_marker_violations(repo_root: Path, registry: Registry) -> list[str]:
                     covering_entry = entry_by_id.get(marker_id)
                     if covering_entry is None:
                         continue
-                    covered |= {match.lower() for match in capability_re.findall(covering_entry.claim)}
+                    covered |= {
+                        match.lower() for match in capability_re.findall(covering_entry.claim)
+                    }
                 uncovered = sorted(sub_capabilities - covered)
                 for capability in uncovered:
                     if sub_markers:
@@ -1002,7 +1071,9 @@ def parse_workflow_jobs(workflow_path: Path) -> dict[str, Any]:
     try:
         raw = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
-        raise MalformedRegistryError(f"cannot parse workflow file {workflow_path}: {error}") from error
+        raise MalformedRegistryError(
+            f"cannot parse workflow file {workflow_path}: {error}"
+        ) from error
     if not isinstance(raw, dict):
         raise MalformedRegistryError(f"workflow file {workflow_path} is not a YAML mapping")
     jobs = raw.get("jobs")
@@ -1020,7 +1091,9 @@ def workflow_contract_violations(
     unlisted_live = actual_jobs - inventory
     listed_dead = inventory - actual_jobs
     if unlisted_live:
-        violations.append(f"job-inventory drift: live job(s) unlisted in contract: {sorted(unlisted_live)}")
+        violations.append(
+            f"job-inventory drift: live job(s) unlisted in contract: {sorted(unlisted_live)}"
+        )
     if listed_dead:
         violations.append(f"job-inventory drift: contract lists dead job(s): {sorted(listed_dead)}")
 
@@ -1031,7 +1104,11 @@ def workflow_contract_violations(
 
     if isinstance(verifier_job, str) and verifier_job in workflow_jobs:
         needs = workflow_jobs[verifier_job].get("needs")
-        needs_set = set(needs) if isinstance(needs, list) else ({needs} if isinstance(needs, str) else set())
+        needs_set = (
+            set(needs)
+            if isinstance(needs, list)
+            else ({needs} if isinstance(needs, str) else set())
+        )
         producer_keys = set(producers.keys())
         if needs_set != producer_keys:
             violations.append(
@@ -1127,10 +1204,14 @@ def producer_evidence_violations(
             )
             continue
 
-        junit_path = find_producer_artifact(artifacts_dir, spec["junit_artifact"], spec["junit_file"])
+        junit_path = find_producer_artifact(
+            artifacts_dir, spec["junit_artifact"], spec["junit_file"]
+        )
         meta_path = find_producer_artifact(artifacts_dir, spec["meta_artifact"], spec["meta_file"])
         if junit_path is None:
-            violations.append(f"producer {producer!r}: junit artifact {spec['junit_file']!r} missing")
+            violations.append(
+                f"producer {producer!r}: junit artifact {spec['junit_file']!r} missing"
+            )
         if meta_path is None:
             violations.append(f"producer {producer!r}: meta artifact {spec['meta_file']!r} missing")
         if junit_path is None or meta_path is None:
@@ -1193,7 +1274,9 @@ def claim_test_violations(
     registry: Registry, evidence_by_producer: dict[str, ProducerEvidence]
 ) -> list[str]:
     violations: list[str] = []
-    all_cases = [case for evidence in evidence_by_producer.values() for case in evidence.junit_cases]
+    all_cases = [
+        case for evidence in evidence_by_producer.values() for case in evidence.junit_cases
+    ]
     for entry in registry.entries:
         if entry.resolution != "same_run":
             continue
@@ -1203,7 +1286,9 @@ def claim_test_violations(
         assert node_id is not None
         matches = [case for case in all_cases if case.matches_node_id(node_id)]
         if not matches:
-            violations.append(f"{entry.id}: claim test node {node_id!r} not observed in any producer's junit")
+            violations.append(
+                f"{entry.id}: claim test node {node_id!r} not observed in any producer's junit"
+            )
             continue
         if any(case.status != "passed" for case in matches):
             bad = [case for case in matches if case.status != "passed"]
@@ -1218,7 +1303,9 @@ def ci_safe_control_violations(
     registry: Registry, evidence_by_producer: dict[str, ProducerEvidence]
 ) -> list[str]:
     violations: list[str] = []
-    all_cases = [case for evidence in evidence_by_producer.values() for case in evidence.junit_cases]
+    all_cases = [
+        case for evidence in evidence_by_producer.values() for case in evidence.junit_cases
+    ]
     for entry in registry.entries:
         for control in entry.controls:
             if not control.ci_safe:
@@ -1308,10 +1395,10 @@ def run_same_run_mode(args: argparse.Namespace, repo_root: Path) -> list[str]:
     return violations
 
 
-
-
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     # 2026-08-07: "external-evidence" removed from --mode's choices along
     # with the D5/D6 authority-record verifier code it selected (see the
     # module docstring and CHANGELOG.md). --mode is kept as a required,
@@ -1329,7 +1416,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--event-name", default="pull_request")
     parser.add_argument("--pr-head-sha")
     parser.add_argument("--github-sha")
-    parser.add_argument("--run-id", help="expected GITHUB_RUN_ID; producer meta from another run is rejected")
+    parser.add_argument(
+        "--run-id", help="expected GITHUB_RUN_ID; producer meta from another run is rejected"
+    )
     parser.add_argument(
         "--run-attempt",
         help="expected GITHUB_RUN_ATTEMPT; producer meta from a prior attempt is rejected (CC-WS3-004)",
@@ -1358,7 +1447,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for required in ("workflow_contract", "workflow_file", "artifacts_dir"):
             if getattr(args, required) is None:
-                raise MalformedRegistryError(f"--{required.replace('_', '-')} is required for --mode same-run")
+                raise MalformedRegistryError(
+                    f"--{required.replace('_', '-')} is required for --mode same-run"
+                )
         violations = run_same_run_mode(args, repo_root)
     except CannotCheckError as error:
         print(f"CANNOT-CHECK: {error}", file=sys.stderr)

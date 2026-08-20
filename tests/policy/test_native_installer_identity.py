@@ -341,12 +341,13 @@ def test_bootstrap_postinstall_activates_the_flat_station_and_fails_loud_on_erro
     assert 'nsExec::ExecToLog \'"$INSTDIR\\CivicCast Native.exe" --civiccast-activate-station' in (
         executable
     ), "the activation CLI must be actually invoked via nsExec, not just referenced"
-    assert "--install-root \"$INSTDIR\"" in executable.split("--civiccast-activate-station", 1)[1].split(
-        "\n", 1
-    )[0], "the activation invocation must target $INSTDIR (flat layout), matching its neighbors"
+    assert (
+        '--install-root "$INSTDIR"'
+        in executable.split("--civiccast-activate-station", 1)[1].split("\n", 1)[0]
+    ), "the activation invocation must target $INSTDIR (flat layout), matching its neighbors"
 
     activation_block = postinstall.split("--civiccast-activate-station", 1)[1].split(
-        "!insertmacro CIVICCAST_STEP \"step d4-service-registration", 1
+        '!insertmacro CIVICCAST_STEP "step d4-service-registration', 1
     )[0]
     assert "${CIVICCAST_EXIT_D4_ACTIVATION}" in activation_block
     assert "!insertmacro CIVICCAST_FAIL" in activation_block, (
@@ -3012,8 +3013,7 @@ def test_postinstall_rewrites_installlocation_without_embedded_quotes() -> None:
         "$INSTDIR, overwriting Tauri's quoted value"
     )
     assert "'\"$INSTDIR\"'" not in postinstall.split(rewrite, 1)[1], (
-        "nothing after the unquoted rewrite may re-introduce a quoted "
-        "InstallLocation value"
+        "nothing after the unquoted rewrite may re-introduce a quoted InstallLocation value"
     )
     quiet = 'WriteRegStr SHCTX "${UNINSTKEY}" "QuietUninstallString"'
     assert postinstall.index(quiet) < postinstall.index(rewrite), (
@@ -3049,8 +3049,7 @@ def test_pack_delivery_failure_tells_operator_to_uninstall_before_retry() -> Non
         "the partial install before retrying; PREINSTALL refuses otherwise"
     )
     assert "refuse to install over it" in fail_line, (
-        "the message must say WHY the uninstall is needed, not add an "
-        "unexplained step"
+        "the message must say WHY the uninstall is needed, not add an unexplained step"
     )
     assert "preserved by uninstall" in fail_line, (
         "an operator told to uninstall mid-failure must be told their recorded "

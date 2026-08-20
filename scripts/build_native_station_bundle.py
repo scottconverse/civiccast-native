@@ -225,7 +225,9 @@ def _collect_tree_sources(root: Path) -> dict[str, Path]:
         if candidate.is_dir():
             continue
         if not stat.S_ISREG(details.st_mode):
-            raise StationBundleBuildError(f"pack artifact root contains a non-regular file: {candidate}")
+            raise StationBundleBuildError(
+                f"pack artifact root contains a non-regular file: {candidate}"
+            )
         relative = PurePosixPath(candidate.relative_to(root).as_posix()).as_posix()
         if relative.casefold() in folded:
             raise StationBundleBuildError(
@@ -470,7 +472,9 @@ def build_station_bundle(
 
     output_dir = output_dir.expanduser().resolve()
     if output_dir.exists() and any(output_dir.iterdir()):
-        raise StationBundleBuildError(f"refusing non-empty station bundle output directory: {output_dir}")
+        raise StationBundleBuildError(
+            f"refusing non-empty station bundle output directory: {output_dir}"
+        )
 
     # Every required root is checked BEFORE any file is written -- a station
     # bundle missing one required component is worthless (validate_complete_
@@ -478,7 +482,9 @@ def build_station_bundle(
     # failing here, loud and up front, naming exactly what is missing, beats
     # a partially-built bundle a release engineer has to notice is broken.
     component_roots: dict[str, Path] = {
-        "captions-floor": _require_pack_root(captions_floor_root, component="captions-floor", required=True),
+        "captions-floor": _require_pack_root(
+            captions_floor_root, component="captions-floor", required=True
+        ),
         "summary-gemma4-12b": _require_pack_root(
             gemma4_12b_root, component="summary-gemma4-12b", required=True
         ),
@@ -496,9 +502,7 @@ def build_station_bundle(
         component_roots["captions-large-v3"] = optional_large_v3_root
 
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    temporary = Path(
-        tempfile.mkdtemp(prefix=f".{output_dir.name}.staging-", dir=output_dir.parent)
-    )
+    temporary = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.staging-", dir=output_dir.parent))
     try:
         packs: dict[str, Path] = {}
 
@@ -608,7 +612,10 @@ def build_station_bundle(
     return {
         **report,
         "packs": {
-            component: {**report_packs[component], "path": str(output_dir / report_packs[component]["filename"])}
+            component: {
+                **report_packs[component],
+                "path": str(output_dir / report_packs[component]["filename"]),
+            }
             for component in report_packs
         },
         "station_index": str(output_dir / index_path.name),
@@ -618,7 +625,9 @@ def build_station_bundle(
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--output-dir",
         required=True,
@@ -671,7 +680,9 @@ def main(argv: list[str] | None = None) -> int:
             product_version=args.product_version,
             compatible_core=args.compatible_core,
             channel=args.channel,
-            created_epoch=args.created_epoch if args.created_epoch is not None else int(time.time()),
+            created_epoch=args.created_epoch
+            if args.created_epoch is not None
+            else int(time.time()),
         )
     except StationBundleBuildError as exc:
         print(f"build_native_station_bundle: {exc}", file=sys.stderr)

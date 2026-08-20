@@ -197,10 +197,13 @@ def write_yaml(path: Path, data: dict) -> Path:
 
 def test_group1_seeded_false_claim_test_did_not_pass(repo: Path) -> None:
     entry = make_entry_dict(repo)
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     evidence = {
         "test": cce.ProducerEvidence(
-            junit_cases=[cce.JunitCase("test_x", "test_thing", "failed")], meta={"sha": SOURCE_SHA_A}
+            junit_cases=[cce.JunitCase("test_x", "test_thing", "failed")],
+            meta={"sha": SOURCE_SHA_A},
         )
     }
     violations = cce.claim_test_violations(registry, evidence)
@@ -306,7 +309,9 @@ def test_group2_malformed_junit_meta(tmp_path: Path) -> None:
 )
 def test_group3_blob_drift_single_role_files(repo: Path, role: str, rel_path: str) -> None:
     entry = make_entry_dict(repo)
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     (repo / rel_path).write_text("MUTATED CONTENT\n", encoding="utf-8")
     violations = cce.blob_drift_violations(repo, registry)
     assert any(f"input role {role} " in v and "blob drift" in v for v in violations), violations
@@ -314,7 +319,9 @@ def test_group3_blob_drift_single_role_files(repo: Path, role: str, rel_path: st
 
 def test_group3_blob_drift_verifier_script(repo: Path) -> None:
     entry = make_entry_dict(repo)
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     (repo / "verifier.py").write_text("# MUTATED verifier\n", encoding="utf-8")
     violations = cce.blob_drift_violations(repo, registry)
     assert any("verifier[0]" in v and "blob drift" in v for v in violations), violations
@@ -322,7 +329,9 @@ def test_group3_blob_drift_verifier_script(repo: Path) -> None:
 
 def test_group3_blob_drift_registry_schema(repo: Path) -> None:
     entry = make_entry_dict(repo)
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     (repo / "schema.json").write_text('{"mutated": true}\n', encoding="utf-8")
     violations = cce.blob_drift_violations(repo, registry)
     assert any("verifier[1]" in v and "blob drift" in v for v in violations), violations
@@ -330,7 +339,9 @@ def test_group3_blob_drift_registry_schema(repo: Path) -> None:
 
 def test_group3_blob_drift_fixture(repo: Path) -> None:
     entry = make_entry_dict(repo)
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     (repo / "fixture1.json").write_text('{"mutated": 1}\n', encoding="utf-8")
     violations = cce.blob_drift_violations(repo, registry)
     assert any("fixtures[0]" in v and "blob drift" in v for v in violations), violations
@@ -343,10 +354,13 @@ def test_group3_blob_drift_fixture(repo: Path) -> None:
 
 def test_group4_skipped_test_node_presented_as_proof(repo: Path) -> None:
     entry = make_entry_dict(repo)
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     evidence = {
         "test": cce.ProducerEvidence(
-            junit_cases=[cce.JunitCase("test_x", "test_thing", "skipped")], meta={"sha": SOURCE_SHA_A}
+            junit_cases=[cce.JunitCase("test_x", "test_thing", "skipped")],
+            meta={"sha": SOURCE_SHA_A},
         )
     }
     violations = cce.claim_test_violations(registry, evidence)
@@ -357,8 +371,12 @@ def test_group4_test_mutated_after_its_junit_run(repo: Path) -> None:
     # junit shows a pass, but the test file's committed blob no longer
     # matches what's on disk today — the proof no longer binds to current code.
     entry = make_entry_dict(repo)
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
-    (repo / "test_x.py").write_text("# mutated after the junit run captured a pass\n", encoding="utf-8")
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
+    (repo / "test_x.py").write_text(
+        "# mutated after the junit run captured a pass\n", encoding="utf-8"
+    )
     violations = cce.blob_drift_violations(repo, registry)
     assert any("input role test " in v and "blob drift" in v for v in violations)
 
@@ -369,10 +387,10 @@ def test_group4_test_mutated_after_its_junit_run(repo: Path) -> None:
 
 
 def test_group5_unmarked_strong_token_in_governed_doc(repo: Path) -> None:
-    (repo / "governed.py").write_text('"""This capability is fully implemented."""\n', encoding="utf-8")
-    registry = cce.load_registry(
-        write_yaml(repo / "claims.yaml", make_registry_dict(repo, []))
+    (repo / "governed.py").write_text(
+        '"""This capability is fully implemented."""\n', encoding="utf-8"
     )
+    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [])))
     violations = cce.scan_marker_violations(repo, registry)
     assert any("unmarked strong-claim token" in v for v in violations)
 
@@ -402,7 +420,9 @@ def test_group5_duplicate_claim_id(repo: Path) -> None:
     entry1 = make_entry_dict(repo, claim_id="dup-claim")
     entry2 = make_entry_dict(repo, claim_id="dup-claim")
     with pytest.raises(cce.MalformedRegistryError, match="duplicate claim id"):
-        cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry1, entry2])))
+        cce.load_registry(
+            write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry1, entry2]))
+        )
 
 
 def test_group5_malformed_registry_missing_role(repo: Path) -> None:
@@ -539,7 +559,6 @@ def test_group8_producer_missing_meta_only(tmp_path: Path) -> None:
     assert any("meta artifact" in v and "missing" in v for v in violations)
 
 
-
 # ===========================================================================
 # D5/audit-control fixture builders and D8 groups 9-11 (evidence-record
 # path/create-only/blob problems; signer pinning; tampered/unaccepted trust
@@ -548,8 +567,9 @@ def test_group8_producer_missing_meta_only(tmp_path: Path) -> None:
 # ===========================================================================
 
 
-
-@pytest.mark.parametrize("field", ["run_id", "run_date", "executed_at", "result", "commit_sha", "source_sha"])
+@pytest.mark.parametrize(
+    "field", ["run_id", "run_date", "executed_at", "result", "commit_sha", "source_sha"]
+)
 def test_group12_self_reference_probe_banned_field(repo: Path, field: str) -> None:
     entry = make_entry_dict(repo)
     entry[field] = "2026-07-17"
@@ -616,7 +636,9 @@ def test_group13_positive_below_floor_while_another_exceeds(tmp_path: Path) -> N
         contract, artifacts, {"test": "success", "engine": "success"}, SOURCE_SHA_A
     )
     assert any("producer 'test'" in v and "below its per-producer floor" in v for v in violations)
-    assert not any("producer 'engine'" in v and "below its per-producer floor" in v for v in violations)
+    assert not any(
+        "producer 'engine'" in v and "below its per-producer floor" in v for v in violations
+    )
 
 
 def test_group13_duplicate_control_id_within_one_claim(repo: Path) -> None:
@@ -624,8 +646,6 @@ def test_group13_duplicate_control_id_within_one_claim(repo: Path) -> None:
     entry = make_entry_dict(repo, controls=[dict(control), dict(control)])
     with pytest.raises(cce.MalformedRegistryError, match="duplicate control id"):
         cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
-
-
 
 
 # ===========================================================================
@@ -645,7 +665,9 @@ def test_group13_duplicate_control_id_within_one_claim(repo: Path) -> None:
 # ===========================================================================
 
 
-def _run_cli(args: list[str], cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess[str]:
+def _run_cli(
+    args: list[str], cwd: Path | None = None, env: dict | None = None
+) -> subprocess.CompletedProcess[str]:
     import os
 
     full_env = dict(os.environ)
@@ -700,7 +722,9 @@ def test_ac1_verifier_green_on_registered_claims_at_head(tmp_path: Path) -> None
     the load-bearing proof that docs/claims/claims.yaml is not aspirational),
     with synthetic-but-otherwise-real-shaped CI artifacts standing in for a
     real GitHub Actions run (no Docker/GitHub available locally)."""
-    contract = yaml.safe_load((REPO_ROOT / "docs" / "claims" / "workflow-contract.yaml").read_text())
+    contract = yaml.safe_load(
+        (REPO_ROOT / "docs" / "claims" / "workflow-contract.yaml").read_text()
+    )
     producers = contract["expected_producers"]
 
     artifacts = tmp_path / "artifacts"
@@ -723,7 +747,9 @@ def test_ac1_verifier_green_on_registered_claims_at_head(tmp_path: Path) -> None
                 cases.append((dotted, func_part, "passed"))
         (junit_dir / spec["junit_file"]).write_text(junit_xml(cases), encoding="utf-8")
         (meta_dir / spec["meta_file"]).write_text(
-            json.dumps({"job_id": producer, "sha": real_repo_head, "run_id": "999", "run_attempt": "1"}),
+            json.dumps(
+                {"job_id": producer, "sha": real_repo_head, "run_id": "999", "run_attempt": "1"}
+            ),
             encoding="utf-8",
         )
 
@@ -833,23 +859,29 @@ def test_ac4_removing_a_marker_in_a_governed_doc_exits_red(tmp_path: Path) -> No
 # ===========================================================================
 
 
-
-
 # ---------------------------------------------------------------------------
 # CC-WS3-001 (Critical): claim-text capability-token lexical tripwire
 # ---------------------------------------------------------------------------
 
 
-def test_ws3r2_001_capability_token_guard_flags_restore_claim_on_backup_only_test(repo: Path) -> None:
+def test_ws3r2_001_capability_token_guard_flags_restore_claim_on_backup_only_test(
+    repo: Path,
+) -> None:
     """The exact ws2-postgres-restore-drill defect, reproduced as a fixture:
     claim text says "restore", the bound test's path/node id says only
     "test_x" (no backup/restore/dump anywhere) — must be flagged."""
     entry = make_entry_dict(repo)
     entry["claim"] = "The backup drill's restore path is exercised for real."
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     violations = cce.claim_capability_token_violations(registry)
-    assert any("capability token 'restore'" in v and entry["id"] in v for v in violations), violations
-    assert any("capability token 'backup'" in v and entry["id"] in v for v in violations), violations
+    assert any("capability token 'restore'" in v and entry["id"] in v for v in violations), (
+        violations
+    )
+    assert any("capability token 'backup'" in v and entry["id"] in v for v in violations), (
+        violations
+    )
 
 
 def test_ws3r2_001_capability_token_guard_silent_when_test_name_matches(repo: Path) -> None:
@@ -857,7 +889,9 @@ def test_ws3r2_001_capability_token_guard_silent_when_test_name_matches(repo: Pa
     entry["claim"] = "The backup drill captures a backup for real."
     entry["inputs"]["test"]["path"] = "test_backup_thing.py"
     entry["inputs"]["test"]["node_id"] = "test_backup_thing.py::test_thing"
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     assert cce.claim_capability_token_violations(registry) == []
 
 
@@ -904,22 +938,17 @@ def test_ws3r2_002a_parser_all_ci_safe_controls_external_evidence_is_malformed(r
 
 
 def test_ws3r2_002a_parser_one_ci_safe_false_control_is_accepted(repo: Path) -> None:
-    control = {"id": "one-non-ci-safe", "command": "n/a", "expected_red_when": "n/a", "ci_safe": False}
+    control = {
+        "id": "one-non-ci-safe",
+        "command": "n/a",
+        "expected_red_when": "n/a",
+        "ci_safe": False,
+    }
     entry = make_entry_dict(repo, resolution="external_evidence", controls=[control])
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     assert registry.entries[0].resolution == "external_evidence"
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -944,7 +973,9 @@ def test_ws3r2_003_test_node_id_file_mismatch_test_path_is_malformed(repo: Path)
 
 def test_ws3r2_003_matching_prose_and_test_identity_is_accepted(repo: Path) -> None:
     entry = make_entry_dict(repo)
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     assert len(registry.entries) == 1
 
 
@@ -1005,7 +1036,9 @@ def test_ws3r2_004_duplicate_filename_outside_canonical_dir_is_ignored(tmp_path:
 def test_ws3r2_004_wrong_job_id_in_meta_is_a_violation(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     _write_producer_artifacts(
-        artifacts, {"sha": SOURCE_SHA_A, "run_id": "1", "job_id": "not-test"}, n_passed_cases("t", 1)
+        artifacts,
+        {"sha": SOURCE_SHA_A, "run_id": "1", "job_id": "not-test"},
+        n_passed_cases("t", 1),
     )
     violations, _ = cce.producer_evidence_violations(
         _base_contract(), artifacts, {"test": "success"}, SOURCE_SHA_A
@@ -1058,7 +1091,11 @@ def test_ws3r2_004_matching_run_attempt_is_accepted(tmp_path: Path) -> None:
 def test_ws3r2_005_three_new_registry_entries_present_and_clean() -> None:
     registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
     ids = {entry.id for entry in registry.entries}
-    assert {"ws1-release-truth-checker", "native-decision-gate", "session0-service-broadcast"} <= ids
+    assert {
+        "ws1-release-truth-checker",
+        "native-decision-gate",
+        "session0-service-broadcast",
+    } <= ids
     by_id = {entry.id: entry for entry in registry.entries}
     assert by_id["ws1-release-truth-checker"].resolution == "same_run"
     assert by_id["native-decision-gate"].resolution == "external_evidence"
@@ -1076,10 +1113,10 @@ def test_ws3r2_005_release_truth_checker_test_node_is_bound_and_real() -> None:
     entry = next(e for e in registry.entries if e.id == "ws1-release-truth-checker")
     test_role = entry.inputs["test"]
     assert isinstance(test_role, cce.RoleFile)
-    assert test_role.node_id == "tests/policy/test_release_truth.py::test_unknown_live_release_is_drift"
-
-
-
+    assert (
+        test_role.node_id
+        == "tests/policy/test_release_truth.py::test_unknown_live_release_is_drift"
+    )
 
 
 # ===========================================================================
@@ -1090,10 +1127,11 @@ def test_ws3r2_005_release_truth_checker_test_node_is_bound_and_real() -> None:
 # ===========================================================================
 
 
-
 def test_ws3r3_005_code_role_accepts_single_mapping(repo: Path) -> None:
     entry = make_entry_dict(repo)
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     code_role = registry.entries[0].inputs["code"]
     assert isinstance(code_role, cce.RoleFile)
 
@@ -1104,7 +1142,9 @@ def test_ws3r3_005_code_role_accepts_list_of_modules(repo: Path) -> None:
         {"path": "code.py", "blob": blob(repo, "code.py")},
         {"path": "generator.py", "blob": blob(repo, "generator.py")},
     ]
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     code_role = registry.entries[0].inputs["code"]
     assert isinstance(code_role, list) and len(code_role) == 2
     labels = [label for label, _ in registry.entries[0].role_files()]
@@ -1126,7 +1166,9 @@ def test_ws3r3_005_blob_drift_flags_each_code_module_independently(repo: Path) -
         {"path": "code.py", "blob": blob(repo, "code.py")},
         {"path": "code2.py", "blob": blob(repo, "code2.py")},
     ]
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     # Drift ONLY code2.py; code.py must NOT be flagged, code2.py MUST be.
     extra.write_text("# mutated second module\n", encoding="utf-8")
     violations = cce.blob_drift_violations(repo, registry)
@@ -1168,7 +1210,9 @@ def test_ws3r3_005_session0_binds_current_engine_dependencies() -> None:
         assert cce.git_hash_object(REPO_ROOT, rf.path) == rf.blob
 
 
-def test_current_external_claims_do_not_describe_changed_files_as_unmodified_or_owner_pending() -> None:
+def test_current_external_claims_do_not_describe_changed_files_as_unmodified_or_owner_pending() -> (
+    None
+):
     registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
     by_id = {entry.id: entry for entry in registry.entries}
     current_claims = (
@@ -1205,7 +1249,7 @@ def test_ws3r3_005_session0_still_binds_its_committed_demo_graph() -> None:
     fixtures = entry.inputs["fixtures"]
     assert isinstance(fixtures, list)
     fixture_paths = {rf.path for rf in fixtures}
-    assert fixture_paths == {".agent-runs/native-windows/spike-session0/evidence/demo-graph.json"}
+    assert fixture_paths == {"docs/evidence/session0-demo-graph.json"}
 
 
 @pytest.mark.parametrize(
@@ -1266,19 +1310,9 @@ def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_
 # ---------------------------------------------------------------------------
 
 
-
-
 # ---------------------------------------------------------------------------
 # CC-WS3-006 (b): extra / missing / duplicate input entries
 # ---------------------------------------------------------------------------
-
-
-
-
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1286,25 +1320,9 @@ def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ---------------------------------------------------------------------------
 # CC-WS3-006: the literal round-4 finding, reproduced end-to-end
 # ---------------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1312,20 +1330,14 @@ def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_
 # ---------------------------------------------------------------------------
 
 
-
-
 # ---------------------------------------------------------------------------
 # CC-WS3-006: direct-call round-trip (evidence_inputs_for / expected_inputs_for agree)
 # ---------------------------------------------------------------------------
 
 
-
-
 # ---------------------------------------------------------------------------
 # CC-WS3-007 (Minor): schema/runtime parity
 # ---------------------------------------------------------------------------
-
-
 
 
 # ===========================================================================
@@ -1348,7 +1360,9 @@ def test_ws3r5_007a_role_file_rejects_unknown_key(repo: Path) -> None:
     not just the key name)."""
     entry = make_entry_dict(repo)
     entry["inputs"]["code"]["unexpected_key"] = "surprise"
-    with pytest.raises(cce.MalformedRegistryError, match=r"demo-claim\.inputs\.code.*unexpected_key"):
+    with pytest.raises(
+        cce.MalformedRegistryError, match=r"demo-claim\.inputs\.code.*unexpected_key"
+    ):
         cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
 
 
@@ -1370,7 +1384,9 @@ def test_ws3r5_007a_test_role_file_rejects_unknown_key(repo: Path) -> None:
     must also raise, naming the key AND the parser location (round-6)."""
     entry = make_entry_dict(repo)
     entry["inputs"]["test"]["unexpected_key"] = "surprise"
-    with pytest.raises(cce.MalformedRegistryError, match=r"demo-claim\.inputs\.test.*unexpected_key"):
+    with pytest.raises(
+        cce.MalformedRegistryError, match=r"demo-claim\.inputs\.test.*unexpected_key"
+    ):
         cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
 
 
@@ -1396,7 +1412,9 @@ def test_ws3r5_007a_control_rejects_unknown_key(repo: Path) -> None:
         "unexpected_key": "surprise",
     }
     entry = make_entry_dict(repo, controls=[control])
-    with pytest.raises(cce.MalformedRegistryError, match=r"demo-claim\.controls\[0\].*unexpected_key"):
+    with pytest.raises(
+        cce.MalformedRegistryError, match=r"demo-claim\.controls\[0\].*unexpected_key"
+    ):
         cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
 
 
@@ -1408,7 +1426,9 @@ def test_ws3r5_007a_entry_rejects_unknown_key(repo: Path) -> None:
     distinguishes this entry-level location from the nested ones above."""
     entry = make_entry_dict(repo)
     entry["unexpected_key"] = "surprise"
-    with pytest.raises(cce.MalformedRegistryError, match=r"demo-claim: unexpected key.*unexpected_key"):
+    with pytest.raises(
+        cce.MalformedRegistryError, match=r"demo-claim: unexpected key.*unexpected_key"
+    ):
         cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
 
 
@@ -1436,7 +1456,9 @@ def test_ws3r5_007a_real_registry_still_loads_clean_under_strict_parser(tmp_path
 # ---------------------------------------------------------------------------
 
 
-def test_ws3r5_008_capture_only_marker_does_not_cover_broader_restore_capability(repo: Path) -> None:
+def test_ws3r5_008_capture_only_marker_does_not_cover_broader_restore_capability(
+    repo: Path,
+) -> None:
     """FALSIFICATION: the exact CC-WS3-008 shape, as an isolated fixture -- a
     governed python bullet strong-claims "backup/restore is implemented AND
     executed", but its only adjacent marker's registry entry claims capture
@@ -1505,7 +1527,9 @@ def test_ws3r5_008_block_with_no_capability_keywords_is_unaffected(repo: Path) -
     (repo / "governed.py").write_text(
         '"""This capability is fully implemented. # claim:demo-claim"""\n', encoding="utf-8"
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     assert cce.scan_marker_violations(repo, registry) == []
 
 
@@ -1539,7 +1563,9 @@ def test_ws3r5_008_round4_state_reconstruction_is_rejected(tmp_path: Path) -> No
     _copy_registry_referenced_files(work, real_registry)
     target = work / "civiccast" / "dr" / "__init__.py"
     text = target.read_text(encoding="utf-8")
-    stripped = text.replace("(# claim:ws2-postgres-restore-drill)", "(marker removed for this reconstruction)")
+    stripped = text.replace(
+        "(# claim:ws2-postgres-restore-drill)", "(marker removed for this reconstruction)"
+    )
     assert stripped != text, "fixture assumption broken: restore marker text not found to strip"
     assert "(# claim:ws2-sqlite-restore-falsification)" in stripped, (
         "fixture assumption broken: the sqlite marker must remain untouched in this reconstruction"
@@ -1548,9 +1574,9 @@ def test_ws3r5_008_round4_state_reconstruction_is_rejected(tmp_path: Path) -> No
 
     registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
     violations = cce.scan_marker_violations(work, registry)
-    assert any(
-        "restore" in v and "ws2-postgres-backup-capture" in v for v in violations
-    ), violations
+    assert any("restore" in v and "ws2-postgres-backup-capture" in v for v in violations), (
+        violations
+    )
 
 
 def test_ws3r5_008_real_postgres_block_has_full_capability_coverage(tmp_path: Path) -> None:
@@ -1579,7 +1605,9 @@ def test_ws3r5_008_real_postgres_block_has_full_capability_coverage(tmp_path: Pa
 # ---------------------------------------------------------------------------
 
 
-def test_ws3r6_008_markdown_sibling_bullet_marker_does_not_cover_unmarked_bullet(repo: Path) -> None:
+def test_ws3r6_008_markdown_sibling_bullet_marker_does_not_cover_unmarked_bullet(
+    repo: Path,
+) -> None:
     """FALSIFICATION: the verdict's exact markdown reproduction -- a
     marker-free 'Postgres restore is implemented' bullet sits in the same
     blank-line-delimited paragraph as a SIBLING bullet whose marker's
@@ -1593,7 +1621,9 @@ def test_ws3r6_008_markdown_sibling_bullet_marker_does_not_cover_unmarked_bullet
         where_file="docs.md",
         where_anchor="an unrelated sibling bullet",
     )
-    sibling_entry["claim"] = "Postgres restore is proven end to end, a real dump-and-restore round trip."
+    sibling_entry["claim"] = (
+        "Postgres restore is proven end to end, a real dump-and-restore round trip."
+    )
     (repo / "docs.md").write_text(
         "* Postgres restore is implemented, proven end to end.\n"
         "* an unrelated sibling bullet <!-- claim:sibling-restore-entry -->\n",
@@ -1613,7 +1643,9 @@ def test_ws3r6_008_markdown_bullet_with_its_own_marker_passes(repo: Path) -> Non
     own_entry = make_entry_dict(
         repo, claim_id="own-restore-entry", where_file="docs.md", where_anchor="Postgres restore"
     )
-    own_entry["claim"] = "Postgres restore is proven end to end, a real dump-and-restore round trip."
+    own_entry["claim"] = (
+        "Postgres restore is proven end to end, a real dump-and-restore round trip."
+    )
     (repo / "docs.md").write_text(
         "* Postgres restore is implemented, proven end to end. "
         "<!-- claim:own-restore-entry -->\n"
@@ -1667,13 +1699,17 @@ def test_ws3r6_007b_governed_doc_rejects_unknown_key(repo: Path) -> None:
 
 
 def _sibling_restore_entry(repo: Path, claim_id: str = "sibling-restore-entry") -> dict:
-    entry = make_entry_dict(repo, claim_id=claim_id, where_file="docs.md", where_anchor="an unrelated sibling")
+    entry = make_entry_dict(
+        repo, claim_id=claim_id, where_file="docs.md", where_anchor="an unrelated sibling"
+    )
     entry["claim"] = "Postgres restore is proven end to end, a real dump-and-restore round trip."
     return entry
 
 
 def _own_restore_entry(repo: Path, claim_id: str = "own-restore-entry") -> dict:
-    entry = make_entry_dict(repo, claim_id=claim_id, where_file="docs.md", where_anchor="Postgres restore")
+    entry = make_entry_dict(
+        repo, claim_id=claim_id, where_file="docs.md", where_anchor="Postgres restore"
+    )
     entry["claim"] = "Postgres restore is proven end to end, a real dump-and-restore round trip."
     return entry
 
@@ -1691,7 +1727,9 @@ def test_ws3r7_008_plus_sibling_marker_does_not_cover_unmarked_item(repo: Path) 
         "+ an unrelated sibling item <!-- claim:sibling-restore-entry -->\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
     assert any("restore" in v and "no marker of its own" in v for v in violations), violations
 
@@ -1705,7 +1743,9 @@ def test_ws3r7_008_plus_item_with_its_own_marker_passes(repo: Path) -> None:
         "+ an unrelated sibling item with no claim of its own.\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry]))
+    )
     assert cce.scan_marker_violations(repo, registry) == []
 
 
@@ -1719,7 +1759,9 @@ def test_ws3r7_008_ordered_dot_sibling_marker_does_not_cover_unmarked_item(repo:
         "2. an unrelated sibling item <!-- claim:sibling-restore-entry -->\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
     assert any("restore" in v and "no marker of its own" in v for v in violations), violations
 
@@ -1732,7 +1774,9 @@ def test_ws3r7_008_ordered_dot_item_with_its_own_marker_passes(repo: Path) -> No
         "2. an unrelated sibling item with no claim of its own.\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry]))
+    )
     assert cce.scan_marker_violations(repo, registry) == []
 
 
@@ -1744,7 +1788,9 @@ def test_ws3r7_008_ordered_paren_sibling_marker_does_not_cover_unmarked_item(rep
         "2) an unrelated sibling item <!-- claim:sibling-restore-entry -->\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
     assert any("restore" in v and "no marker of its own" in v for v in violations), violations
 
@@ -1757,7 +1803,9 @@ def test_ws3r7_008_ordered_paren_item_with_its_own_marker_passes(repo: Path) -> 
         "2) an unrelated sibling item with no claim of its own.\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry]))
+    )
     assert cce.scan_marker_violations(repo, registry) == []
 
 
@@ -1771,7 +1819,9 @@ def test_ws3r7_008_blockquoted_sibling_marker_does_not_cover_unmarked_item(repo:
         "> * an unrelated sibling item <!-- claim:sibling-restore-entry -->\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
     assert any("restore" in v and "no marker of its own" in v for v in violations), violations
 
@@ -1784,7 +1834,9 @@ def test_ws3r7_008_blockquoted_item_with_its_own_marker_passes(repo: Path) -> No
         "> * an unrelated sibling item with no claim of its own.\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry]))
+    )
     assert cce.scan_marker_violations(repo, registry) == []
 
 
@@ -1803,7 +1855,9 @@ def test_ws3r7_008_deeper_nested_sibling_children_marker_does_not_cover_unmarked
         "     * an unrelated sibling item <!-- claim:sibling-restore-entry -->\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
     assert any("restore" in v and "no marker of its own" in v for v in violations), violations
 
@@ -1817,7 +1871,9 @@ def test_ws3r7_008_deeper_nested_child_with_its_own_marker_passes(repo: Path) ->
         "     * an unrelated sibling item with no claim of its own.\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [own_entry]))
+    )
     assert cce.scan_marker_violations(repo, registry) == []
 
 
@@ -1827,15 +1883,22 @@ def test_ws3r7_008_deeper_nested_parent_marker_does_not_cover_unmarked_child(rep
     five spaces under it strong-claims "restore" with no marker of its
     own. A parent's marker must not cover its child's unmarked claim."""
     parent_entry = make_entry_dict(
-        repo, claim_id="parent-restore-entry", where_file="docs.md", where_anchor="Postgres restore drills"
+        repo,
+        claim_id="parent-restore-entry",
+        where_file="docs.md",
+        where_anchor="Postgres restore drills",
     )
-    parent_entry["claim"] = "Postgres restore is proven end to end, a real dump-and-restore round trip."
+    parent_entry["claim"] = (
+        "Postgres restore is proven end to end, a real dump-and-restore round trip."
+    )
     (repo / "docs.md").write_text(
         "* Postgres restore drills. <!-- claim:parent-restore-entry -->\n"
         "     * Postgres restore is implemented, proven end to end.\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [parent_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [parent_entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
     assert any("restore" in v and "no marker of its own" in v for v in violations), violations
 
@@ -1845,15 +1908,22 @@ def test_ws3r7_008_deeper_nested_child_own_marker_passes_no_parent_needed(repo: 
     has none at all) -- the fix must not require a parent marker either,
     just true own-item locality."""
     child_entry = make_entry_dict(
-        repo, claim_id="child-restore-entry", where_file="docs.md", where_anchor="Postgres restore is implemented"
+        repo,
+        claim_id="child-restore-entry",
+        where_file="docs.md",
+        where_anchor="Postgres restore is implemented",
     )
-    child_entry["claim"] = "Postgres restore is proven end to end, a real dump-and-restore round trip."
+    child_entry["claim"] = (
+        "Postgres restore is proven end to end, a real dump-and-restore round trip."
+    )
     (repo / "docs.md").write_text(
         "* Postgres restore drills, no claim of its own here.\n"
         "     * Postgres restore is implemented, proven end to end. <!-- claim:child-restore-entry -->\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [child_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [child_entry]))
+    )
     assert cce.scan_marker_violations(repo, registry) == []
 
 
@@ -1872,7 +1942,9 @@ def test_ws3r7_008_letter_ordered_item_fails_closed_instead_of_silently_passing(
         "* an unrelated sibling item <!-- claim:sibling-restore-entry -->\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [sibling_entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
     assert any(
         "docs.md:1" in v and "unsupported list form for locality analysis" in v for v in violations
@@ -1886,16 +1958,22 @@ def test_ws3r7_008_letter_ordered_item_without_a_nearby_strong_claim_does_not_fa
     token anywhere in its own accumulated text must not trip the
     fail-closed rule -- it only fires when a strong token or marker
     actually sits in or next to the unsupported content."""
-    entry = make_entry_dict(repo, where_file="docs.md", where_anchor="Postgres restore is implemented")
+    entry = make_entry_dict(
+        repo, where_file="docs.md", where_anchor="Postgres restore is implemented"
+    )
     entry["claim"] = "Postgres restore is proven end to end, a real dump-and-restore round trip."
     (repo / "docs.md").write_text(
         "a. an ordinary letter-ordered note, nothing strong-claimed here.\n"
         "* Postgres restore is implemented, proven end to end. <!-- claim:demo-claim -->\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
-    assert not any("unsupported list form for locality analysis" in v for v in violations), violations
+    assert not any("unsupported list form for locality analysis" in v for v in violations), (
+        violations
+    )
 
 
 # ===========================================================================
@@ -1924,7 +2002,9 @@ def test_ws3r8_008_letter_ordered_marker_no_strong_token_fails_closed(repo: Path
         "a. Ordinary prose here, nothing strong-claimed. <!-- claim:demo-claim -->\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
     assert any(
         "docs.md:1" in v and "unsupported list form for locality analysis" in v for v in violations
@@ -1939,16 +2019,18 @@ def test_ws3r8_008_letter_ordered_strong_claim_no_marker_anywhere_fails_closed(r
     so the required "unsupported list form for locality analysis" naming
     doc:line never appeared. The fix must emit it (alongside, not instead
     of, the still-correct generic unmarked-token violation)."""
-    entry = make_entry_dict(repo, where_file="docs.md", where_anchor="Postgres restore is implemented")
+    entry = make_entry_dict(
+        repo, where_file="docs.md", where_anchor="Postgres restore is implemented"
+    )
     (repo / "docs.md").write_text(
         "a. Postgres restore is implemented, proven end to end.\n",
         encoding="utf-8",
     )
-    registry = cce.load_registry(write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry])))
+    registry = cce.load_registry(
+        write_yaml(repo / "claims.yaml", make_registry_dict(repo, [entry]))
+    )
     violations = cce.scan_marker_violations(repo, registry)
     assert any(
         "docs.md:1" in v and "unsupported list form for locality analysis" in v for v in violations
     ), violations
     assert any("unmarked strong-claim token" in v for v in violations), violations
-
-

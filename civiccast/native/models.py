@@ -249,7 +249,9 @@ class CutoverJournal(BaseModel):
 
     @property
     def ok(self) -> bool:
-        return bool(self.phases) and not self.errors and all(p.status == "done" for p in self.phases)
+        return (
+            bool(self.phases) and not self.errors and all(p.status == "done" for p in self.phases)
+        )
 
 
 __all__ = [

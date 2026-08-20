@@ -113,7 +113,10 @@ def _current_process_sid_sddl() -> str:
 
     token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32security.TOKEN_QUERY)
     sid, _attributes = win32security.GetTokenInformation(token, win32security.TokenUser)
-    return win32security.ConvertSidToStringSid(sid)
+    # str(): pywin32 ships no type stubs, so this call is Any and the
+    # declared -> str was unenforced. Coercing makes the annotation true
+    # at runtime instead of merely claimed.
+    return str(win32security.ConvertSidToStringSid(sid))
 
 
 def _harden_state_root_acl(state_root: Path) -> None:

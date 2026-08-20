@@ -167,3 +167,43 @@ export function catalogComponent(id: ComponentId): CatalogComponent {
   }
   return found;
 }
+
+/**
+ * The same lookup for an id that arrived over the wire, where the type system
+ * cannot vouch for it.
+ *
+ * `AcquisitionComponentProgress.id` is `string`, because that is what a JSON
+ * payload gives us. The downloading screen renders one row per component and
+ * used to call {@link catalogComponent} directly with it -- which THROWS on an
+ * id it does not know, inside `components.map(...)`, i.e. inside React's
+ * render. The consequence is not a warning in a console nobody has open: the
+ * downloading screen goes blank, mid-install, on the first run, with no way
+ * forward.
+ *
+ * Today's Rust producer emits exactly the seven catalog ids
+ * (`acquisition_catalog.rs`; `PRODUCTION_CATALOG_IDS` names six of them), so
+ * this is not a live crash -- it is a crash waiting for someone to add an
+ * eighth pack on the Rust side and ship it before the TypeScript union
+ * catches up. Nothing enforces that ordering, and nothing was type-checking
+ * this file at all until now.
+ *
+ * An unknown component degrades to a truthful row instead: the operator sees
+ * it downloading, with its progress and its size, and no invented description.
+ */
+export function catalogComponentForWireId(id: string): CatalogComponent {
+  const found = COMPONENT_CATALOG.find((component) => component.id === id);
+  if (found) {
+    return found;
+  }
+  return {
+    id: id as ComponentId,
+    name: "Additional component",
+    purpose: "A part of CivicCast this installer version does not have a description for.",
+    placeholderSizeBytes: 0,
+    required: false,
+    // The backend is already downloading it, whatever it is -- that is why a
+    // row exists. Claiming otherwise would put the row in the permanently
+    // "Waiting" state `deliverable: false` is for.
+    deliverable: true
+  };
+}

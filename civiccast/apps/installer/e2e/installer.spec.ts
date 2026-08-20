@@ -2,6 +2,11 @@
 // Copyright (c) The CivicCast Authors
 
 import { expect, test } from "@playwright/test";
+// Type-only: erased at runtime, so the addInitScript bodies below stay
+// serializable. Without it the `progress` literals infer a NARROWER type
+// than the real one and reject the optional fields the product reads --
+// e.g. operator_console_url, which api.ts does read.
+import type { InstallerProgress } from "../src/types";
 
 const states = [
   "loading",
@@ -55,7 +60,11 @@ test("installer shows one primary action and only state-appropriate recovery act
     ["empty", "Continue"],
     ["error", "Retry"],
     ["partial", "Continue"],
-    ["blocked", "Set up Windows helper"],
+    // The blocked fixture is now the native "Starting CivicCast" state: the
+    // station is coming up, there is nothing for the operator to press, and
+    // a loading lane promises no action. It used to expect "Set up Windows
+    // helper" -- a WSL2 remedy this product does not have.
+    ["blocked", null],
     ["progress", null],
     ["skipped_model", "Set up models"],
     ["offline_bundle", "Continue"],
@@ -77,11 +86,16 @@ test("installer shows one primary action and only state-appropriate recovery act
 
   await page.goto("/?state=blocked");
   await expect(page.locator(".top-primary-action")).toHaveCount(0);
-  await expect(page.locator(".detail-primary-action")).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "Set up Windows helper" })).toHaveCount(1);
+  // 0, not 1: see the table above -- the native startup state offers nothing.
+  await expect(page.locator(".detail-primary-action")).toHaveCount(0);
+  // The WSL2 remedy is gone, so assert its ABSENCE rather than deleting the
+  // check -- if that button ever comes back on a native station, this fails.
+  await expect(page.getByRole("button", { name: "Set up Windows helper" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
   await page.getByText("More options").click();
-  await expect(page.getByRole("button", { name: "Repair this step" })).toHaveCount(1);
+  // No repair either: canRepairLane suppresses the platform lane, and repair
+  // on a non-runtime lane only ever wrote a state that queued nothing.
+  await expect(page.getByRole("button", { name: "Repair this step" })).toHaveCount(0);
 
   await page.goto("/?state=progress");
   await expect(page.locator(".top-primary-action")).toHaveCount(0);
@@ -96,7 +110,12 @@ test("installer shows one primary action and only state-appropriate recovery act
   await expect(page.locator(".detail-primary-action")).toHaveCount(1);
   await expect(page.locator(".detail-primary-action")).toHaveText("Retry");
   await expect(page.locator(".detail-primary-action")).toBeEnabled();
-  await expect(page.locator(".actions > button")).toHaveCount(0);
+  // Exactly one secondary action, and it is the log. This used to assert ZERO
+  // -- true only because the fixture claimed `platform: "macos"`, which gated
+  // "Open installer log" off. On the Windows product a failed install must
+  // offer the log; the old assertion was recording a bug as the contract.
+  await expect(page.locator(".actions > button")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Open installer log" })).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Cancel" })).toHaveCount(0);
   await page.getByText("More options").click();
   await expect(page.getByRole("button", { name: "Repair this step" })).toHaveCount(1);
@@ -112,19 +131,29 @@ test("installer shows one primary action and only state-appropriate recovery act
   await expect(page.getByRole("button", { name: "Open operator console" })).toHaveCount(1);
 });
 
-test("restart handoff is explicit and installer failures provide a working log action", async ({ page }) => {
+// This test used to have a first half asserting a "Resume after reboot" button
+// on a `wsl2` lane with reboot_required: true. That affordance rendered only
+// through `isWslBootstrapLane`, and every live path in main.rs that writes
+// reboot_required: true is inside the WSL bootstrap
+// (install_wsl_ubuntu_for_current_user / parse_wsl_bootstrap_result). A native
+// station never writes it, so there is no reboot to hand off -- the half was
+// testing a feature, not guarding a regression, and is gone rather than
+// converted.
+//
+// The second half is native behaviour and is the whole test now: when setup
+// fails, the operator gets a button that opens the log. That is support's only
+// self-serve diagnostic and App.tsx renders it for `windows-native` too.
+test("an installer failure gives the operator a working log action", async ({ page }) => {
   await page.addInitScript(() => {
-    const initialProgress = {
+    const failedProgress = {
       schema_version: 1,
-      current_lane_id: "wsl2",
-      status: "blocked",
-      message: "Windows enabled the required features. Restart Windows before setup can continue.",
-      reboot_required: true,
-      updated_at_unix: 1
+      current_lane_id: "runtime",
+      status: "error",
+      message: "CivicCast runtime setup failed (exit code: 43).",
+      reboot_required: false,
+      updated_at_unix: 2
     };
-    if (!window.localStorage.getItem("civiccast.testNativeProgress")) {
-      window.localStorage.setItem("civiccast.testNativeProgress", JSON.stringify(initialProgress));
-    }
+    window.localStorage.setItem("civiccast.testNativeProgress", JSON.stringify(failedProgress));
     (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
       core: {
         invoke: async (command: string) => {
@@ -140,23 +169,13 @@ test("restart handoff is explicit and installer failures provide a working log a
     };
   });
 
-  await page.goto("/?downloadExperience=0");
-  await expect(page.getByRole("button", { name: "Resume after reboot" })).toBeVisible();
+  await page.goto("/?state=error&downloadExperience=0");
 
-  await page.evaluate(() => {
-    window.localStorage.setItem(
-      "civiccast.testNativeProgress",
-      JSON.stringify({
-        schema_version: 1,
-        current_lane_id: "runtime",
-        status: "error",
-        message: "CivicCast runtime setup failed (exit code: 43).",
-        reboot_required: false,
-        updated_at_unix: 2
-      })
-    );
-  });
-  await page.reload();
+  // The failure is stated in words before anything is offered to press.
+  await expect(page.getByRole("heading", { name: "Hash mismatch" })).toBeVisible();
+  await expect(
+    page.getByText("The package bytes do not match the SHA-256 value in the sidecar.")
+  ).toBeVisible();
 
   const openLog = page.getByRole("button", { name: "Open installer log" });
   await expect(openLog).toBeVisible();
@@ -230,6 +249,10 @@ test("installer ready state hands off to the operator console", async ({ page })
   await expect(page.getByText("CivicCast is installed and ready.")).toBeVisible();
 });
 
+// The lane ids and labels below are the ones `installer/service.py`'s
+// build_installer_summary actually emits for a native station -- `platform` /
+// "Setting up CivicCast" and `runtime` / "Preparing CivicCast tools" -- not a
+// `wsl2` lane on a windows-wsl2 deployment, which is what this used to mock.
 test("background polling preserves the step the operator selected", async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
@@ -238,7 +261,7 @@ test("background polling preserves the step the operator selected", async ({ pag
           if (command === "read_local_installer_state") {
             return JSON.stringify({
               schema_version: 1,
-              current_lane_id: "wsl2",
+              current_lane_id: "platform",
               status: "ready",
               message: "CivicCast is running and healthy on this computer.",
               reboot_required: false,
@@ -255,21 +278,30 @@ test("background polling preserves the step the operator selected", async ({ pag
       contentType: "application/json",
       body: JSON.stringify({
         ready: true,
-        platform: "windows-wsl2",
+        platform: "windows-native",
         lanes: [
-          { id: "wsl2", label: "Windows helper", status: "success", ready: true, next_step: "Ready." },
-          { id: "runtime", label: "CivicCast setup", status: "success", ready: true, next_step: "Ready." }
+          { id: "platform", label: "Setting up CivicCast", status: "success", ready: true, next_step: "Ready." },
+          { id: "runtime", label: "Preparing CivicCast tools", status: "success", ready: true, next_step: "Ready." }
         ]
       })
     });
   });
   await page.route("/api/staff/installer/beta-handoff", async (route) => route.abort());
 
-  await page.goto("/");
-  await page.getByRole("button", { name: /CivicCast setup/ }).click();
+  await page.goto("/?downloadExperience=0");
+
+  // The station's own state file wins over the summary mocked above, so the
+  // wizard shows the two lanes stateFromLocalProgress synthesises: "Setting up
+  // CivicCast" (ready) and "CivicCast setup" (partial). It opens on step 2,
+  // the unfinished one -- so select step 1 and make sure a poll does not drag
+  // the operator back. Selecting the step it already shows would prove nothing.
   await expect(page.getByRole("heading", { name: "CivicCast setup" })).toBeVisible();
+  await page.getByRole("button", { name: /Setting up CivicCast/ }).click();
+  await expect(page.getByRole("heading", { name: "Setting up CivicCast" })).toBeVisible();
+
+  // Longer than one poll interval.
   await page.waitForTimeout(2300);
-  await expect(page.getByRole("heading", { name: "CivicCast setup" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Setting up CivicCast" })).toBeVisible();
 });
 
 test("installer skipped-model state tells operators how to finish AI setup", async ({ page }) => {
@@ -277,16 +309,6 @@ test("installer skipped-model state tells operators how to finish AI setup", asy
   await expect(page.getByRole("heading", { name: "AI models skipped" })).toBeVisible();
   await expect(page.getByText("The installer has not verified Whisper or Ollama model hashes for this workstation.")).toBeVisible();
   await expect(page.getByText("Choose Set up models to download or import verified model files before the first captioned meeting.")).toBeVisible();
-});
-
-test("installer blocked Windows helper state offers setup action", async ({ page }) => {
-  await page.goto("/?state=blocked");
-  await expect(page.getByRole("heading", { name: "Windows helper missing" })).toBeVisible();
-  await expect(page.locator(".detail-primary-action", { hasText: "Set up Windows helper" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Set up Windows helper" }).first()).toBeEnabled();
-  await expect(page.getByText("approve the Windows security prompt")).toBeVisible();
-  await expect(page.getByText("ask IT to enable CPU virtualization")).toBeVisible();
-  await expect(page.getByText("Windows Virtual Machine Platform")).toBeVisible();
 });
 
 test("installer blocked non-Windows platform does not offer Windows helper action", async ({ page }) => {
@@ -323,430 +345,6 @@ test("installer blocked non-Windows platform does not offer Windows helper actio
   await expect(page.locator(".step-detail > p").first()).toContainText(
     "This Linux computer is missing a required setup component."
   );
-});
-
-test("installer Windows helper action is visible in a short proof window", async ({ page }) => {
-  await page.setViewportSize({ width: 720, height: 420 });
-  await page.goto("/?state=blocked");
-
-  const primaryAction = page.locator(".detail-primary-action", { hasText: "Set up Windows helper" });
-
-  await expect(primaryAction).toBeVisible();
-  await expect(primaryAction).toBeInViewport();
-  await expect(primaryAction).toBeFocused();
-});
-
-test("installer shows saved Windows helper restart progress instead of generic blocked state", async ({ page }) => {
-  await page.addInitScript(() => {
-    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
-      core: {
-        invoke: async (command: string) => {
-          if (command === "read_local_installer_state") {
-            return JSON.stringify({
-              schema_version: 1,
-              current_lane_id: "wsl2",
-              status: "wsl_install_started",
-              message: "Windows prepared the helper CivicCast needs and now needs a restart.",
-              reboot_required: true,
-              updated_at_unix: 1
-            });
-          }
-          throw new Error(`unexpected command ${command}`);
-        }
-      }
-    };
-  });
-  await page.route("/api/staff/installer/summary", async (route) => {
-    await route.abort();
-  });
-  await page.route("/api/staff/installer/beta-handoff", async (route) => {
-    await route.fulfill({
-      status: 404,
-      contentType: "text/plain",
-      body: "not found"
-    });
-  });
-
-  await page.goto("/?downloadExperience=0");
-
-  const wizard = page.getByLabel("Installer wizard", { exact: true });
-  await expect(page.getByRole("heading", { name: "Windows helper" })).toBeVisible();
-  await expect(wizard.getByText("Windows prepared the helper CivicCast needs")).toBeVisible();
-  await expect(wizard.getByText("Restart this computer if Windows asks")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Windows helper missing" })).toBeHidden();
-  // UX-1: while a restart is pending the primary action must say exactly what
-  // happens next — never a generic "Continue" that hides the reboot boundary.
-  await expect(page.getByRole("button", { name: "Resume after reboot" }).first()).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Continue" })).toHaveCount(0);
-});
-
-test("installer shows native saved Windows helper blocked state as setup action", async ({ page }) => {
-  await page.addInitScript(() => {
-    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
-      core: {
-        invoke: async (command: string) => {
-          if (command === "read_local_installer_state") {
-            return JSON.stringify({
-              schema_version: 1,
-              current_lane_id: "wsl2",
-              status: "blocked",
-              message:
-                "CivicCast needs the Windows helper before it can finish setup. Choose Set up Windows helper to continue.",
-              reboot_required: false,
-              updated_at_unix: 1,
-              service_url: "http://127.0.0.1:8000",
-              operator_console_url: "http://127.0.0.1:8000/operator/",
-              resident_portal_url: "http://127.0.0.1:8000/"
-            });
-          }
-          throw new Error(`unexpected command ${command}`);
-        }
-      }
-    };
-  });
-  await page.route("/api/staff/installer/summary", async (route) => {
-    await route.abort();
-  });
-  await page.route("/api/staff/installer/beta-handoff", async (route) => {
-    await route.fulfill({
-      status: 404,
-      contentType: "text/plain",
-      body: "not found"
-    });
-  });
-
-  await page.goto("/?downloadExperience=0");
-
-  await expect(page.getByText("Needs setup").first()).toBeVisible();
-  await expect(page.locator(".phase-active")).toHaveText("Setting up CivicCast");
-  await expect(page.getByRole("button", { name: "Set up Windows helper" }).first()).toBeEnabled();
-  await expect(page.locator(".detail-primary-action", { hasText: "Set up Windows helper" })).toBeVisible();
-  await expect(page.getByLabel("Installer wizard", { exact: true }).getByText("Choose Set up Windows helper to continue.")).toBeVisible();
-});
-
-test("installer Windows helper action surfaces Windows approval before native completion", async ({ page }) => {
-  await page.addInitScript(() => {
-    let actionInvoked = false;
-    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
-      core: {
-        invoke: async (command: string) => {
-          if (command === "read_local_installer_state") {
-            return "null";
-          }
-          if (command === "run_local_installer_action") {
-            actionInvoked = true;
-            await new Promise((resolve) => window.setTimeout(resolve, 100));
-            return "CivicCast is asking Windows for permission to set up the helper it needs.";
-          }
-          if (command === "wsl_action_invoked_for_test") {
-            return actionInvoked;
-          }
-          throw new Error(`unexpected command ${command}`);
-        }
-      }
-    };
-  });
-  await page.route("/api/staff/installer/summary", async (route) => {
-    await route.abort();
-  });
-  await page.route("/api/staff/installer/beta-handoff", async (route) => {
-    await route.fulfill({
-      status: 404,
-      contentType: "text/plain",
-      body: "not found"
-    });
-  });
-
-  await page.goto("/?downloadExperience=0");
-  const primaryAction = page.locator(".detail-primary-action", { hasText: "Set up Windows helper" });
-
-  await expect(primaryAction).toBeFocused();
-  await page.keyboard.press("Enter");
-
-  await expect(page.getByRole("status")).toContainText("Asking Windows for permission");
-  await expect(page.getByRole("status")).toContainText("CivicCast is asking Windows");
-  await expect
-    .poll(() => page.evaluate(() => window.__TAURI__?.core.invoke("wsl_action_invoked_for_test")))
-    .toBe(true);
-});
-
-test("installer prevents duplicate Windows helper starts and shows live servicing activity", async ({ page }) => {
-  await page.addInitScript(() => {
-    let actionInvocations = 0;
-    let actionStarted = false;
-    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
-      core: {
-        invoke: async (command: string) => {
-          if (command === "read_local_installer_state") {
-            if (!actionStarted) {
-              return "null";
-            }
-            return JSON.stringify({
-              schema_version: 1,
-              current_lane_id: "wsl2",
-              status: "running",
-              message: "Windows is still working: turning on Windows Subsystem for Linux.",
-              reboot_required: false,
-              updated_at_unix: Math.floor(Date.now() / 1000),
-              started_at_unix: Math.floor(Date.now() / 1000) - 12,
-              elapsed_seconds: 12,
-              activity_current: 1,
-              activity_total: 4,
-              activity_phase: "Turning on Windows Subsystem for Linux"
-            });
-          }
-          if (command === "run_local_installer_action") {
-            actionInvocations += 1;
-            actionStarted = true;
-            await new Promise((resolve) => window.setTimeout(resolve, 5000));
-            return "Windows helper setup finished.";
-          }
-          if (command === "wsl_action_count_for_test") {
-            return actionInvocations;
-          }
-          throw new Error(`unexpected command ${command}`);
-        }
-      }
-    };
-  });
-  await page.route("/api/staff/installer/summary", async (route) => route.abort());
-  await page.route("/api/staff/installer/beta-handoff", async (route) => route.abort());
-
-  await page.goto("/?downloadExperience=0");
-  const setup = page.getByRole("button", { name: "Set up Windows helper" }).first();
-  await setup.click();
-  await page.keyboard.press("Enter");
-
-  await expect
-    .poll(() => page.evaluate(() => window.__TAURI__?.core.invoke("wsl_action_count_for_test")))
-    .toBe(1);
-  const activity = page.getByRole("status", { name: "Windows setup activity" });
-  await expect(activity).toContainText("Windows is still working");
-  await expect(activity).toContainText("Step 1 of 4");
-  await expect(activity).toContainText("12 seconds elapsed");
-  // Windows servicing does not provide honest fractional progress. The phase,
-  // step count, elapsed time, and heartbeat are exact; the meter stays animated.
-  await expect(activity.locator("progress")).not.toHaveAttribute("max", /.+/);
-});
-
-test("installer Windows helper action saves a readable error when native handoff fails", async ({ page }) => {
-  await page.addInitScript(() => {
-    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
-      core: {
-        invoke: async (command: string) => {
-          if (command === "read_local_installer_state") {
-            return "null";
-          }
-          if (command === "run_local_installer_action" || command === "runLocalInstallerAction") {
-            throw new Error("IPC command was not available in the packaged app");
-          }
-          throw new Error(`unexpected command ${command}`);
-        }
-      }
-    };
-  });
-  await page.route("/api/staff/installer/summary", async (route) => {
-    await route.abort();
-  });
-  await page.route("/api/staff/installer/beta-handoff", async (route) => {
-    await route.fulfill({
-      status: 404,
-      contentType: "text/plain",
-      body: "not found"
-    });
-  });
-
-  await page.goto("/?downloadExperience=0");
-  await page.getByRole("button", { name: "Set up Windows helper" }).first().click();
-
-  // The readable error still reaches the operator via the live status banner...
-  await expect(page.getByRole("status")).toContainText("could not hand this step");
-  await expect(page.getByRole("status")).toContainText("IPC command was not available in the packaged app");
-  // ...but a native read that succeeds (even reporting "null") is authoritative: it must not
-  // resurrect this action's own browser-cached error as a false lane-level "Error" state, and it
-  // must clear the cache so a later native hiccup can't resurrect it either (G-9b / UX-3).
-  await expect(page.getByRole("button", { name: /Windows helper.*Error/ })).toBeHidden();
-  await expect(page.getByRole("heading", { name: "Windows helper missing" })).toBeVisible();
-  await expect
-    .poll(() => page.evaluate(() => window.localStorage.getItem("civiccast.installerProgress")))
-    .toBeNull();
-});
-
-test("installer Windows helper action accepts window-level Enter activation", async ({ page }) => {
-  await page.addInitScript(() => {
-    let actionInvoked = false;
-    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
-      core: {
-        invoke: async (command: string) => {
-          if (command === "read_local_installer_state") {
-            return "null";
-          }
-          if (command === "run_local_installer_action") {
-            actionInvoked = true;
-            await new Promise((resolve) => window.setTimeout(resolve, 100));
-            return "CivicCast is asking Windows for permission to set up the helper it needs.";
-          }
-          if (command === "wsl_action_invoked_for_test") {
-            return actionInvoked;
-          }
-          throw new Error(`unexpected command ${command}`);
-        }
-      }
-    };
-  });
-  await page.route("/api/staff/installer/summary", async (route) => {
-    await route.abort();
-  });
-  await page.route("/api/staff/installer/beta-handoff", async (route) => {
-    await route.abort();
-  });
-
-  await page.goto("/?downloadExperience=0");
-  await expect(page.locator(".detail-primary-action", { hasText: "Set up Windows helper" })).toBeFocused();
-  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
-  await page.keyboard.press("Enter");
-
-  await expect(page.getByRole("status")).toContainText("Asking Windows for permission");
-  await expect
-    .poll(() => page.evaluate(() => window.__TAURI__?.core.invoke("wsl_action_invoked_for_test")))
-    .toBe(true);
-});
-
-test("installer Windows helper action accepts native-style window Space keyup activation", async ({ page }) => {
-  await page.addInitScript(() => {
-    let actionInvoked = false;
-    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
-      core: {
-        invoke: async (command: string) => {
-          if (command === "read_local_installer_state") {
-            return "null";
-          }
-          if (command === "run_local_installer_action") {
-            actionInvoked = true;
-            await new Promise((resolve) => window.setTimeout(resolve, 100));
-            return "CivicCast is asking Windows for permission to set up the helper it needs.";
-          }
-          if (command === "wsl_action_invoked_for_test") {
-            return actionInvoked;
-          }
-          throw new Error(`unexpected command ${command}`);
-        }
-      }
-    };
-  });
-  await page.route("/api/staff/installer/summary", async (route) => {
-    await route.abort();
-  });
-  await page.route("/api/staff/installer/beta-handoff", async (route) => {
-    await route.abort();
-  });
-
-  await page.goto("/?downloadExperience=0");
-  await expect(page.locator(".detail-primary-action", { hasText: "Set up Windows helper" })).toBeFocused();
-  await page.evaluate(() => {
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    window.dispatchEvent(
-      new KeyboardEvent("keyup", {
-        bubbles: true,
-        cancelable: true,
-        key: "Spacebar",
-        code: "Space",
-        keyCode: 32
-      })
-    );
-  });
-
-  await expect(page.getByRole("status")).toContainText("Asking Windows for permission");
-  await expect
-    .poll(() => page.evaluate(() => window.__TAURI__?.core.invoke("wsl_action_invoked_for_test")))
-    .toBe(true);
-});
-
-test("installer keyboard activation on a focused control does not hijack the WSL shortcut (UX-1 / G-5)", async ({ page }) => {
-  await page.addInitScript(() => {
-    let wslContinueInvoked = false;
-    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
-      core: {
-        invoke: async (command: string, args?: { laneId?: string; action?: string }) => {
-          if (command === "read_local_installer_state") {
-            return "null";
-          }
-          if (command === "run_local_installer_action") {
-            if (args?.laneId === "wsl2" && args?.action === "continue") {
-              wslContinueInvoked = true;
-              return "CivicCast is asking Windows for permission to set up the helper it needs.";
-            }
-            return "CivicCast refreshed this proof step.";
-          }
-          if (command === "wsl_action_invoked_for_test") {
-            return wslContinueInvoked;
-          }
-          throw new Error(`unexpected command ${command}`);
-        }
-      }
-    };
-  });
-  await page.route("/api/staff/installer/summary", async (route) => {
-    await route.abort();
-  });
-  await page.route("/api/staff/installer/beta-handoff", async (route) => {
-    await route.abort();
-  });
-
-  await page.goto("/?downloadExperience=0");
-  await expect(page.locator(".detail-primary-action", { hasText: "Set up Windows helper" })).toBeFocused();
-
-  // Move away from the auto-focused WSL action button onto the state-appropriate Repair
-  // action and activate it with the
-  // keyboard. Before the fix, the window-level capture-phase listener intercepted this
-  // Enter/Space regardless of focus and re-triggered "Set up Windows helper" instead.
-  await page.getByText("More options").click();
-  await page.getByRole("button", { name: "Repair this step" }).focus();
-  await page.keyboard.press("Enter");
-
-  // Repair's own action completes and reports its own outcome -- never the WSL bootstrap
-  // message, and the WSL "continue" action must never have been invoked at all.
-  await expect(page.getByRole("status")).toContainText("CivicCast refreshed this proof step.");
-  await expect(page.getByRole("status")).not.toContainText("Asking Windows for permission");
-  expect(await page.evaluate(() => window.__TAURI__?.core.invoke("wsl_action_invoked_for_test"))).toBe(false);
-});
-
-test("installer saved-progress refresh does not steal focus from WSL recovery controls", async ({ page }) => {
-  await page.addInitScript(() => {
-    const progress = {
-      schema_version: 1,
-      current_lane_id: "wsl2",
-      status: "blocked",
-      message: "Windows helper setup needs operator attention.",
-      reboot_required: false,
-      updated_at_unix: 1
-    };
-    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
-      core: {
-        invoke: async (command: string) => {
-          if (command === "read_local_installer_state") {
-            return JSON.stringify(progress);
-          }
-          throw new Error(`unexpected command ${command}`);
-        }
-      }
-    };
-  });
-  await page.route("/api/staff/installer/summary", async (route) => route.abort());
-  await page.route("/api/staff/installer/beta-handoff", async (route) => route.abort());
-
-  await page.goto("/?downloadExperience=0");
-  await expect(page.getByRole("button", { name: "Set up Windows helper" })).toBeFocused();
-  await page.getByText("More options").click();
-  const repair = page.getByRole("button", { name: "Repair this step" });
-  await repair.focus();
-  await expect(repair).toBeFocused();
-
-  await page.waitForTimeout(2300);
-
-  await expect(repair).toBeFocused();
 });
 
 test("installer reconciles a stale in-memory blocked state once the on-disk state turns ready, without a reload (T-3)", async ({ page }) => {
@@ -787,12 +385,14 @@ test("installer reconciles a stale in-memory blocked state once the on-disk stat
   });
 
   await page.goto("/?downloadExperience=0");
-  await expect(page.getByRole("heading", { name: "Windows helper missing" })).toBeVisible();
+  // The unreachable-API fallback: "Starting CivicCast", nothing to press. It
+  // used to be "Windows helper missing" with a Set up Windows helper button.
+  await expect(page.getByRole("heading", { name: "Starting CivicCast" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open operator console" })).toHaveCount(0);
 
   // No reload, no user action: the background poll (2s interval) must pick up the change.
   await expect(page.getByRole("button", { name: "Open operator console" }).first()).toBeEnabled({ timeout: 5000 });
-  await expect(page.getByRole("heading", { name: "Windows helper missing" })).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Starting CivicCast" })).toBeHidden();
 });
 
 test("installer revokes stale Ready when the installed runtime becomes unavailable", async ({ page }) => {
@@ -1058,15 +658,20 @@ test("installer polls native progress until delayed runtime ready is visible", a
       contentType: "application/json",
       body: JSON.stringify({
         ready: false,
-        platform: "windows-wsl2",
+        platform: "windows-native",
         operator_console_url: "http://127.0.0.1:5173",
         lanes: [
           {
-            id: "wsl2",
-            label: "Windows helper missing",
-            status: "blocked",
+            id: "runtime",
+            label: "Preparing CivicCast tools",
+            // "partial", not "blocked": primaryActionDisabled disables the
+            // action on a blocked lane, which is correct -- a blocked native
+            // platform lane tells the operator to WAIT, and offering a button
+            // there would be the dead end this migration already fixed once.
+            // This test needs a lane whose Continue is genuinely live.
+            status: "partial",
             ready: false,
-            next_step: "Choose Set up Windows helper."
+            next_step: "Choose Continue to finish setting up this computer."
           }
         ]
       })
@@ -1081,15 +686,17 @@ test("installer polls native progress until delayed runtime ready is visible", a
   });
 
   await page.goto("/?downloadExperience=0");
-  await page.getByRole("button", { name: "Set up Windows helper" }).first().click();
+  await page.getByRole("button", { name: "Continue" }).first().click();
 
+  // The action returns "running"; ready arrives 250ms later, with no reload and
+  // no second click. Only the background poll can surface it.
   await expect(page.getByRole("button", { name: /CivicCast setup/ })).toContainText("Ready");
   await expect(page.getByRole("button", { name: "Open operator console" }).first()).toBeEnabled();
 });
 
 test("installer shows live runtime activity and opens the console once when setup becomes ready", async ({ page }) => {
   await page.addInitScript(() => {
-    let progress = {
+    let progress: InstallerProgress = {
       schema_version: 1,
       current_lane_id: "platform",
       status: "ready",
@@ -1149,13 +756,16 @@ test("installer shows live runtime activity and opens the console once when setu
     .toBe(1);
 });
 
-test("installer reads packaged helper-ready progress before backend fixtures", async ({ page }) => {
+// Subject: the station's OWN state file outranks whatever the summary API
+// says. The vocabulary moved -- the platform lane is "Setting up CivicCast"
+// now, not "Windows helper" -- but the precedence being tested has not.
+test("installer reads packaged platform-ready progress before backend fixtures", async ({ page }) => {
   await page.addInitScript(() => {
     const readyProgress = JSON.stringify({
       schema_version: 1,
       current_lane_id: "platform",
       status: "ready",
-      message: "The Windows helper CivicCast needs is ready.",
+      message: "CivicCast's local services are ready.",
       reboot_required: false,
       updated_at_unix: 1,
       operator_console_url: "http://127.0.0.1:8000/operator/"
@@ -1179,14 +789,14 @@ test("installer reads packaged helper-ready progress before backend fixtures", a
       contentType: "application/json",
       body: JSON.stringify({
         ready: false,
-        platform: "windows-wsl2",
+        platform: "windows-native",
         lanes: [
           {
-            id: "wsl2",
-            label: "Windows helper missing",
+            id: "platform",
+            label: "Setting up CivicCast",
             status: "blocked",
             ready: false,
-            next_step: "Choose Set up Windows helper."
+            next_step: "CivicCast is still preparing this computer."
           }
         ]
       })
@@ -1198,7 +808,8 @@ test("installer reads packaged helper-ready progress before backend fixtures", a
 
   await page.goto("/?downloadExperience=0");
 
-  await expect(page.getByRole("button", { name: /Windows helper/ })).toContainText("Ready");
+  // The state file said ready; the API said blocked. The file wins.
+  await expect(page.getByRole("button", { name: /Setting up CivicCast/ })).toContainText("Ready");
   await expect(page.getByRole("heading", { name: "CivicCast setup" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue" }).first()).toBeEnabled();
 });
@@ -1235,8 +846,14 @@ test("installer marks local runtime-ready progress as dashboard ready", async ({
   await expect(page.getByRole("button", { name: /CivicCast setup/ })).toContainText("Ready");
 });
 
+// `?state=blocked` was the vehicle here until the native fallback stopped
+// offering repair on the platform lane -- correctly, because main.rs routes
+// repair on a non-runtime lane to a state write that queues nothing. Saving
+// and resetting repair progress is generic behaviour, so this moved to a
+// fixture where "Repair this step" is legitimately on offer: an `error` lane,
+// which the affordance table above pins at exactly one repair button.
 test("installer saves repair progress and can reset it", async ({ page }) => {
-  await page.goto("/?state=blocked");
+  await page.goto("/?state=error");
   await page.getByText("More options").click();
   await page.getByRole("button", { name: "Repair this step" }).click();
 
@@ -1260,7 +877,7 @@ test("installer presents ActivityPub as optional advanced post-install setup", a
   const guide = page.getByRole("link", { name: "ActivityPub federation guide" });
   await expect(guide).toHaveAttribute(
     "href",
-    "https://github.com/scottconverse/civiccast/blob/main/docs/ops/activitypub-federation.md"
+    "https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/activitypub-federation.md"
   );
 });
 

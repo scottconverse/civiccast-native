@@ -1,0 +1,65 @@
+{
+  "corpus_id": "civiccast-v1.0-ai-baseline-2026-05-15",
+  "caption_fixtures": [
+    {
+      "fixture_id": "caption-motion-001",
+      "reference": "Motion passes two to one after public comment.",
+      "hypothesis": "Motion passes 2 to 1 after public comment."
+    },
+    {
+      "fixture_id": "caption-budget-002",
+      "reference": "The budget hearing opened with a twelve thousand dollar request.",
+      "hypothesis": "The budget hearing opened with a $12,000 request."
+    }
+  ],
+  "translation_fixtures": [
+    {
+      "fixture_id": "translation-motion-001",
+      "source_text": "motion carries",
+      "reference_translation": "la mocion se aprueba"
+    },
+    {
+      "fixture_id": "translation-council-002",
+      "source_text": "welcome to the council meeting",
+      "reference_translation": "bienvenidos a la reunion del consejo"
+    },
+    {
+      "fixture_id": "translation-budget-003",
+      "source_text": "budget hearing",
+      "reference_translation": "audiencia de presupuesto"
+    }
+  ],
+  "summary_fixtures": [
+    {
+      "fixture_id": "summary-motion-001",
+      "meeting_id": "meeting-ai-baseline-001",
+      "reference_summary": "Councilmember Rivera moved to approve the item.",
+      "cues": [
+        {
+          "cue_id": "cue-1",
+          "start_seconds": 0.0,
+          "end_seconds": 4.0,
+          "text": "Councilmember Rivera moved to approve the item.",
+          "confidence": 0.96,
+          "low_confidence": false
+        },
+        {
+          "cue_id": "cue-2",
+          "start_seconds": 4.0,
+          "end_seconds": 8.0,
+          "text": "Councilmember Chen seconded the motion.",
+          "confidence": 0.96,
+          "low_confidence": false
+        },
+        {
+          "cue_id": "cue-3",
+          "start_seconds": 8.0,
+          "end_seconds": 12.0,
+          "text": "Roll call: Rivera yes, Chen yes, Malik no. Motion passes 2-1.",
+          "confidence": 0.96,
+          "low_confidence": false
+        }
+      ]
+    }
+  ]
+}

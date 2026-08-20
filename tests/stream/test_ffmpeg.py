@@ -30,31 +30,40 @@ class TestH264EncoderResolution:
         resolver = getattr(ffmpeg_module, "resolve_h264_encoder", None)
         assert resolver is not None, "the ffmpeg H.264 resolver must exist"
 
-        assert resolver(
-            ffmpeg_path="C:/ffmpeg/all/ffmpeg.exe",
-            probe=lambda _path: {"h264_nvenc", "h264_mf", "libopenh264"},
-            verify=_all_usable,
-        ) == "h264_nvenc"
+        assert (
+            resolver(
+                ffmpeg_path="C:/ffmpeg/all/ffmpeg.exe",
+                probe=lambda _path: {"h264_nvenc", "h264_mf", "libopenh264"},
+                verify=_all_usable,
+            )
+            == "h264_nvenc"
+        )
 
     def test_uses_media_foundation_when_nvenc_is_absent(self) -> None:
         resolver = getattr(ffmpeg_module, "resolve_h264_encoder", None)
         assert resolver is not None, "the ffmpeg H.264 resolver must exist"
 
-        assert resolver(
-            ffmpeg_path="C:/ffmpeg/mf/ffmpeg.exe",
-            probe=lambda _path: {"h264_mf", "libopenh264"},
-            verify=_all_usable,
-        ) == "h264_mf"
+        assert (
+            resolver(
+                ffmpeg_path="C:/ffmpeg/mf/ffmpeg.exe",
+                probe=lambda _path: {"h264_mf", "libopenh264"},
+                verify=_all_usable,
+            )
+            == "h264_mf"
+        )
 
     def test_uses_openh264_when_it_is_the_only_supported_encoder(self) -> None:
         resolver = getattr(ffmpeg_module, "resolve_h264_encoder", None)
         assert resolver is not None, "the ffmpeg H.264 resolver must exist"
 
-        assert resolver(
-            ffmpeg_path="C:/ffmpeg/openh264/ffmpeg.exe",
-            probe=lambda _path: {"libopenh264"},
-            verify=_all_usable,
-        ) == "libopenh264"
+        assert (
+            resolver(
+                ffmpeg_path="C:/ffmpeg/openh264/ffmpeg.exe",
+                probe=lambda _path: {"libopenh264"},
+                verify=_all_usable,
+            )
+            == "libopenh264"
+        )
 
     def test_advertised_but_unusable_nvenc_falls_through_to_a_usable_encoder(self) -> None:
         """The CI-caught defect: h264_nvenc listed by -encoders but unable to
@@ -63,11 +72,14 @@ class TestH264EncoderResolution:
         resolver = getattr(ffmpeg_module, "resolve_h264_encoder", None)
         assert resolver is not None, "the ffmpeg H.264 resolver must exist"
 
-        assert resolver(
-            ffmpeg_path="C:/ffmpeg/bare-nvenc/ffmpeg.exe",
-            probe=lambda _path: {"h264_nvenc", "libopenh264"},
-            verify=lambda _path, encoder: encoder != "h264_nvenc",
-        ) == "libopenh264"
+        assert (
+            resolver(
+                ffmpeg_path="C:/ffmpeg/bare-nvenc/ffmpeg.exe",
+                probe=lambda _path: {"h264_nvenc", "libopenh264"},
+                verify=lambda _path, encoder: encoder != "h264_nvenc",
+            )
+            == "libopenh264"
+        )
 
     def test_libx264_is_the_last_resort_when_it_is_the_only_usable_encoder(self) -> None:
         """A station running a full GPL ffmpeg build (WSL line, distro ffmpeg,
@@ -76,21 +88,27 @@ class TestH264EncoderResolution:
         resolver = getattr(ffmpeg_module, "resolve_h264_encoder", None)
         assert resolver is not None, "the ffmpeg H.264 resolver must exist"
 
-        assert resolver(
-            ffmpeg_path="C:/ffmpeg/gpl-only/ffmpeg.exe",
-            probe=lambda _path: {"libx264"},
-            verify=_all_usable,
-        ) == "libx264"
+        assert (
+            resolver(
+                ffmpeg_path="C:/ffmpeg/gpl-only/ffmpeg.exe",
+                probe=lambda _path: {"libx264"},
+                verify=_all_usable,
+            )
+            == "libx264"
+        )
 
     def test_prefers_royalty_free_openh264_over_libx264(self) -> None:
         resolver = getattr(ffmpeg_module, "resolve_h264_encoder", None)
         assert resolver is not None, "the ffmpeg H.264 resolver must exist"
 
-        assert resolver(
-            ffmpeg_path="C:/ffmpeg/soft-both/ffmpeg.exe",
-            probe=lambda _path: {"libopenh264", "libx264"},
-            verify=_all_usable,
-        ) == "libopenh264"
+        assert (
+            resolver(
+                ffmpeg_path="C:/ffmpeg/soft-both/ffmpeg.exe",
+                probe=lambda _path: {"libopenh264", "libx264"},
+                verify=_all_usable,
+            )
+            == "libopenh264"
+        )
 
     def test_refuses_when_no_supported_h264_encoder_is_present(self) -> None:
         resolver = getattr(ffmpeg_module, "resolve_h264_encoder", None)
@@ -153,9 +171,7 @@ class TestH264EncoderResolution:
         assert checker is not None, "the usability checker must exist"
 
         completed = MagicMock(returncode=0, stderr="")
-        with patch(
-            "civiccast.stream._ffmpeg.subprocess.run", return_value=completed
-        ) as spawn:
+        with patch("civiccast.stream._ffmpeg.subprocess.run", return_value=completed) as spawn:
             assert checker("C:/runtime/ffmpeg.exe", "libopenh264") is True
 
         argv = spawn.call_args.args[0]
@@ -198,9 +214,7 @@ class TestH264EncoderResolution:
         rejects every named -profile:v value, libopenh264 only knows
         constrained_baseline. Resolving the encoder NAME without translating
         its options broke slate generation on MF hosts."""
-        with patch(
-            "civiccast.stream._ffmpeg.resolve_h264_encoder", return_value=encoder
-        ):
+        with patch("civiccast.stream._ffmpeg.resolve_h264_encoder", return_value=encoder):
             resolved = ffmpeg_module._resolve_video_encoder_args(
                 ["-c:v", "h264", "-profile:v", "baseline", "-b:v", "800k"],
                 "C:/runtime/ffmpeg.exe",
@@ -222,9 +236,7 @@ class TestH264EncoderResolution:
     def test_stream_qualified_profile_translates_with_its_matching_codec(self) -> None:
         """terra round-3 Major 1: -c:v:0 h264 resolved but -profile:v:0 was
         left in libx264 dialect — the pack's h264_mf rejected the argv."""
-        with patch(
-            "civiccast.stream._ffmpeg.resolve_h264_encoder", return_value="h264_mf"
-        ):
+        with patch("civiccast.stream._ffmpeg.resolve_h264_encoder", return_value="h264_mf"):
             resolved = ffmpeg_module._resolve_video_encoder_args(
                 ["-c:v:0", "h264", "-profile:v:0", "baseline", "-b:v", "800k"],
                 "C:/runtime/ffmpeg.exe",
@@ -232,9 +244,7 @@ class TestH264EncoderResolution:
         assert resolved == ["-c:v:0", "h264_mf", "-b:v", "800k"]
 
     def test_profile_for_a_stream_we_did_not_resolve_passes_through(self) -> None:
-        with patch(
-            "civiccast.stream._ffmpeg.resolve_h264_encoder", return_value="h264_mf"
-        ):
+        with patch("civiccast.stream._ffmpeg.resolve_h264_encoder", return_value="h264_mf"):
             resolved = ffmpeg_module._resolve_video_encoder_args(
                 ["-c:v:0", "h264", "-profile:v:1", "high"],
                 "C:/runtime/ffmpeg.exe",
@@ -242,9 +252,7 @@ class TestH264EncoderResolution:
         assert resolved == ["-c:v:0", "h264_mf", "-profile:v:1", "high"]
 
     def test_unqualified_profile_does_not_pair_with_a_qualified_codec(self) -> None:
-        with patch(
-            "civiccast.stream._ffmpeg.resolve_h264_encoder", return_value="h264_mf"
-        ):
+        with patch("civiccast.stream._ffmpeg.resolve_h264_encoder", return_value="h264_mf"):
             resolved = ffmpeg_module._resolve_video_encoder_args(
                 ["-c:v:0", "h264", "-profile:v", "baseline"],
                 "C:/runtime/ffmpeg.exe",

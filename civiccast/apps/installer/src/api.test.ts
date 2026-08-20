@@ -29,26 +29,34 @@ describe("stateFromLocalProgress", () => {
     expect(stateFromLocalProgress(null)).toBeNull();
   });
 
-  it("shows a restart-required card as a blocked WSL-bootstrap lane (UX-1: not a clickable generic Continue)", () => {
+  it("shows a restart-required card that states the restart and offers nothing to press", () => {
+    // UX-1 kept its shape, not its subject. "blocked" (not "progress") still
+    // matters: "progress" rendered a clickable generic "Continue" during the
+    // stale window after a restart. What changed is what it used to key into --
+    // isWslBootstrapLane, so the button read "Set up Windows helper" and warned
+    // about installing a Linux runtime. There is no helper to set up.
+    //
+    // A `wsl2` lane id can still arrive here, from a state file a pre-native
+    // build left on an upgraded box, which is why this passes that exact id.
     const state = stateFromLocalProgress(
       progress({ current_lane_id: "wsl2", reboot_required: true, message: "Windows needs a restart." })
     );
     expect(state?.ready).toBe(false);
-    expect(state?.platform).toBe("windows-wsl2");
+    expect(state?.platform).toBe("windows-native");
     expect(state?.lanes).toHaveLength(1);
-    // "blocked" + platform windows-wsl2 + a wsl2/platform lane id is precisely what
-    // isWslBootstrapLane() keys on, so the primary button reads "Set up Windows
-    // helper" (enabled) and its click shows the WSL "several minutes" warning —
-    // instead of the old "progress" mapping that rendered a generic "Continue"
-    // that skipped the warning during the post-reboot stale window.
     expect(state?.lanes[0]).toMatchObject({
-      id: "wsl2",
+      // "platform", not the "wsl2" that went IN: the lane id is normalised on
+      // the way out so an old file's vocabulary cannot reach the operator.
+      id: "platform",
+      label: "Setting up CivicCast",
       status: "blocked",
       detail: "Windows needs a restart."
     });
+    // Nothing WSL survives into what the operator reads.
+    expect(JSON.stringify(state)).not.toMatch(/wsl|windows helper/i);
   });
 
-  it("splits into a ready platform lane plus a partial runtime lane once WSL reports ready", () => {
+  it("splits into a ready platform lane plus a partial runtime lane once the platform lane reports ready", () => {
     const state = stateFromLocalProgress(progress({ current_lane_id: "platform", status: "ready" }));
     expect(state?.ready).toBe(false);
     expect(state?.lanes.map((lane) => [lane.id, lane.status, lane.ready])).toEqual([
@@ -78,17 +86,22 @@ describe("stateFromLocalProgress", () => {
     });
   });
 
-  it("shows automatic post-reboot WSL resume as active progress", () => {
+  it("reads a pre-native state file's resume status as active progress, not a stall", () => {
+    // The only way `wsl_resume_requested` reaches this function is a state file
+    // a pre-native build left behind on an upgraded box. It must still map to
+    // "progress" -- falling through to "blocked" would tell an operator whose
+    // install is fine that it is stuck.
     const state = stateFromLocalProgress(
       progress({
         current_lane_id: "wsl2",
         status: "wsl_resume_requested",
         reboot_required: false,
-        message: "Windows restarted successfully. CivicCast is resuming Windows helper setup for this user."
+        message: "Windows restarted successfully. CivicCast is resuming setup for this user."
       })
     );
     expect(state?.lanes[0]).toMatchObject({
-      id: "wsl2",
+      id: "platform",
+      label: "Setting up CivicCast",
       status: "progress",
       ready: false
     });
@@ -248,18 +261,51 @@ describe("loadInstallerState unreachable-API fallback (N-07 carried)", () => {
     expect(state.platform).toBe("windows-native");
   });
 
-  it("keeps reporting windows-wsl2 for the browser-preview / WSL2 web installer (no native bridge)", async () => {
+  it("never tells a native operator to set up WSL2 during that window", async () => {
+    // The other half of N-07. Correcting `platform` alone left the LANE
+    // saying "Windows helper missing ... Choose Set up Windows helper ... ask
+    // IT to enable CPU virtualization, Windows Virtual Machine Platform, and
+    // Windows Subsystem for Linux" -- a remedy this product does not have,
+    // and a DEAD END once that button stopped rendering on native.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED: local control plane not listening yet");
+      })
+    );
+    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
+      core: { invoke: async () => { throw new Error("no local installer state file yet"); } }
+    };
+
+    const state = await loadInstallerState();
+    const blob = JSON.stringify(state);
+
+    expect(blob).not.toMatch(/Set up Windows helper/i);
+    expect(blob).not.toMatch(/Windows Subsystem for Linux/i);
+    expect(blob).not.toMatch(/WSL/i);
+    // And it says what is actually happening, with nothing for the operator
+    // to press: status is `loading`, so no primary action is promised.
+    expect(state.lanes[0].status).toBe("loading");
+    expect(state.lanes[0].label).toBe("Starting CivicCast");
+    expect(state.lanes[0].nextStep).toMatch(/updates by itself/i);
+  });
+
+  it("does not claim a WSL2 deployment in a plain browser preview either", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
         throw new Error("ECONNREFUSED");
       })
     );
-    // No window.__TAURI__ at all: matches a plain browser preview or the
-    // WSL2-guest web installer, neither of which is the native build.
+    // No window.__TAURI__ at all. This used to match TWO things: a plain
+    // browser preview, and the WSL2-guest web installer -- and the fallback
+    // reported "windows-wsl2" to cover the second. The second is gone. What is
+    // left is a developer running `npm run dev`, previewing the SAME native
+    // product, so the honest answer is the same one the packaged build gives.
 
     const state = await loadInstallerState();
 
-    expect(state.platform).toBe("windows-wsl2");
+    expect(state.platform).toBe("windows-native");
+    expect(JSON.stringify(state)).not.toMatch(/wsl/i);
   });
 });

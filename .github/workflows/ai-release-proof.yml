@@ -22,4 +22,4 @@ jobs:
         with:
           name: v1.1-ai-release-proof
           path: docs/releases/evidence/v1.1-real-ai-proof.json
-          retention-days: 14
+          retention-days: 1

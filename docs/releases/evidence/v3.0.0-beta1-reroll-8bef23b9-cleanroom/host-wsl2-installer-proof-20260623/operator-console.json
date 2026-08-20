@@ -1,0 +1,12 @@
+{
+  "url": "http://127.0.0.1:8000/operator/?nonce=<redacted>",
+  "title": "CivicCast Operator",
+  "bodyText": "C\nCivicCastv3.0.0-beta1\nNo live meeting broadcast\nLocal\n12:24 PM\n/\nNext\nNo events scheduled\nD\nOP\nCC\nPUBLIC MEETINGS\nCivicCast station\nSETUP\nFirst Setup\nControl Room Setup\nAI Models\nCustom Fields\nRUN MEETING\nLive\nFacility\nControl Room\nRemote Contribution\nChannels\nCG Board\nCG Designer\nToday\n1.4\nSchedule\nAuto-schedule\nProgram Guide\nREVIEW RECORDS\nAssets\nContributors\nReview queue\nSummary review\nAgendas\nMeetings Archive\n1.4\nPUBLISH\nPublish\nPlayback policy\nAnalytics\nReports\nEPG Export\nUnderwriting\nApp Admin\nSubscribers\n1.4\nSYSTEM HEALTH\nReadiness\nAlerts\nEmergency Alerts\nFederation\nOperator-first beta\nSETUP\nFirst setup\n\nCreate the station identity, first local admin, and recovery kit before a public meeting.\n\nDurable storage\n\nCivicCast has a local database for meeting records, captions, summaries, and subscriptions.\n\nStorage ready\n\nNext step: Open the operator console and continue setup.\n\nStation name\nThe name residents will recognize.\nAdmin display name\nThe person responsible for setup and recovery.\nAdmin username\nA local sign-in name for the first admin.\nAdmin password\nUse at least 12 characters.\nWhere will you keep the recovery kit?\nA note for your records (e.g. 'printed, stored in the clerk safe') â€” not a file path. Download the kit below to save the file.\nResident portal URL\nOptional for local rehearsal; set before public launch.\nCreate first admin",
+  "console": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    }
+  ],
+  "pageErrors": []
+}

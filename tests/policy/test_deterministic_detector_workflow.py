@@ -55,14 +55,28 @@ def test_mutation_job_uses_real_event_base_and_full_history() -> None:
     )
     assert "### All changed non-test .py files" in text
     assert "### Files selected for mutation (complete changed surface)" in text
-    assert (
-        'echo \'source_paths = ["civiccast", "scripts", "prototype", "tools", "alembic"]\'' in text
-    )
-    assert 'echo \'also_copy = [".agent-runs", ".github", ".pipelines", "deploy", "docker", ' in text
-    assert '".agent-runs"' in text
-    assert '"docs", "security", "tester-handoff", "tests", "alembic.ini"' in text
-    assert '"native-windows-build-toolchain.lock.json"' in text
-    assert '"native-windows-runtime-dependencies.lock.json"' in text
+    # source_paths / also_copy are FILTERED AGAINST DISK, not written as
+    # literals. Pinning the literal line is what this assertion used to do, and
+    # it pinned `prototype` -- a directory this repo does not have. mutmut
+    # resolves every source_path with strict=True, so that one name aborted the
+    # whole run with FileNotFoundError and the job produced no mutation data.
+    #
+    # What must hold is the PROPERTY: every candidate is still named here (so
+    # dropping one is a visible edit), each is checked for existence, a drop is
+    # reported rather than silent, and an empty source list refuses to report a
+    # score instead of reporting a meaningless one.
+    assert "keep_existing()" in text
+    assert 'SOURCE_PATHS="$(keep_existing civiccast scripts prototype tools alembic)"' in text
+    assert 'ALSO_COPY="$(keep_existing .agent-runs .github .pipelines deploy docker ' in text
+    assert "docs security tester-handoff tests alembic.ini" in text
+    assert "native-windows-build-toolchain.lock.json" in text
+    assert "native-windows-runtime-dependencies.lock.json" in text
+    assert 'if [ -e "$name" ]; then' in text
+    assert "NOT PRESENT, excluded from mutmut config:" in text
+    assert 'if [ "$SOURCE_PATHS" = "[]" ]; then' in text
+    assert "Refusing to report a mutation score of nothing." in text
+    assert 'echo "source_paths = $SOURCE_PATHS"' in text
+    assert 'echo "also_copy = $ALSO_COPY"' in text
     assert "echo 'runner = \"pytest -q --tb=no -x\"'" in text
     assert "--ignore=tests/policy/test_claims_evidence.py" in text
     assert "--ignore=tests/policy/test_shipped_payload_db_driver.py" in text
@@ -70,8 +84,14 @@ def test_mutation_job_uses_real_event_base_and_full_history() -> None:
     # change cwd to prove the real application resolves migrations from its
     # package location, but the harness copy cannot retain that root layout.
     # They remain in normal CI and are excluded only from mutation executions.
-    assert "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory" in text
-    assert "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory" in text
+    assert (
+        "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory"
+        in text
+    )
+    assert (
+        "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory"
+        in text
+    )
     assert "mutmut excludes these modules from mutation executions" in text
     assert 'echo -n "only_mutate = ["' in text
     assert "sed 's/.*/\"&\",/'" in text

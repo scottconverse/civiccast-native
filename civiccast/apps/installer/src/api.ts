@@ -55,9 +55,14 @@ export const installerFixtures: Record<string, InstallerState> = {
       }
     ]
   },
+  // `macos` was hiding a real affordance. App.tsx gates "Open installer log"
+  // -- support's only self-serve diagnostic on a failed install -- on
+  // isWindowsPlatform, so a macOS fixture rendered an error state with no way
+  // to see what went wrong, and the e2e assertion built on it recorded that
+  // absence as correct. This product runs on Windows.
   error: {
     ready: false,
-    platform: "macos",
+    platform: "windows-native",
     lanes: [
       {
         id: "hash",
@@ -91,18 +96,31 @@ export const installerFixtures: Record<string, InstallerState> = {
       }
     ]
   },
+  // The catch-all `loadInstallerState` returns when the summary API is
+  // unreachable AND there is no saved progress -- see its own comment: "a
+  // fresh launch before the supervisor's control-plane child has bound its
+  // port, a reset, or right after a reinstall". First run.
+  //
+  // It used to describe a missing WSL2 helper and tell the operator to choose
+  // "Set up Windows helper" and enable Windows Subsystem for Linux. That named
+  // a remedy this product does not have, and once the button stopped rendering
+  // on native it was an instruction pointing at nothing.
+  //
+  // `loading`, not `blocked`: nothing is blocked, the station is starting. A
+  // loading lane promises no primary action, so nothing is offered that does
+  // not exist.
   blocked: {
     ready: false,
-    platform: "windows-wsl2",
+    platform: "windows-native",
     lanes: [
       {
-        id: "wsl2",
-        label: "Windows helper missing",
-        status: "blocked",
+        id: "platform",
+        label: "Starting CivicCast",
+        status: "loading",
         ready: false,
-        detail: "CivicCast needs a Windows helper before it can finish setup and open the dashboard. The helper lets CivicCast run its local meeting tools on this computer.",
-        nextStep:
-          "Choose Set up Windows helper and approve the Windows security prompt. If Windows says WSL2 cannot start, ask IT to enable CPU virtualization, Windows Virtual Machine Platform, and Windows Subsystem for Linux, then rerun this installer."
+        detail:
+          "CivicCast is starting its local services. On a first launch this takes a moment while the station prepares its database and control plane.",
+        nextStep: "Keep this window open. It updates by itself as soon as the station answers."
       }
     ]
   },
@@ -233,24 +251,29 @@ export function stateFromLocalProgress(progress: InstallerProgress | null): Inst
   }
   const operatorConsoleUrl = progress.operator_console_url ?? LOCAL_OPERATOR_CONSOLE_URL;
   if (progress.reboot_required && ["wsl2", "platform"].includes(progress.current_lane_id)) {
-    // "blocked" (not "progress") so this maps to isWslBootstrapLane: the primary
-    // button reads "Set up Windows helper" (matching the Resume-after-reboot
-    // banner + the state this converges to ~1.5s later), stays enabled, and its
-    // click path shows the "installs a Linux runtime, can take several minutes"
-    // warning. "progress" made it a clickable generic "Continue" that skipped
-    // that warning during the post-reboot stale-state window (gate-civiccast UX-1).
+    // No native path writes reboot_required -- every main.rs site that sets it
+    // is inside the WSL bootstrap. This branch survives as a safety net for a
+    // state file written by a pre-native build on an upgraded box, and for
+    // anything Windows itself makes us restart for later. It states the
+    // restart and offers nothing to press, rather than routing into a helper
+    // setup that does not exist.
+    //
+    // `wsl2` stays in the id list for the same reason: an old file can still
+    // name that lane, and dropping it would fall through to `return null` --
+    // i.e. no state at all rather than a truthful one.
     return {
       ready: false,
-      platform: "windows-wsl2",
+      platform: "windows-native",
       operatorConsoleUrl,
       lanes: [
         {
-          id: progress.current_lane_id,
-          label: "Windows helper",
+          // Normalised, not echoed: an old state file can say "wsl2".
+          id: "platform",
+          label: "Setting up CivicCast",
           status: "blocked",
           ready: false,
           detail: progress.message,
-          nextStep: "Restart this computer if Windows asks, then reopen CivicCast Installer."
+          nextStep: "Restart this computer, then open CivicCast Installer again. It picks up where it stopped."
         }
       ]
     };
@@ -258,12 +281,12 @@ export function stateFromLocalProgress(progress: InstallerProgress | null): Inst
   if (progress.status === "ready" && ["wsl2", "platform"].includes(progress.current_lane_id)) {
     return {
       ready: false,
-      platform: "windows-wsl2",
+      platform: "windows-native",
       operatorConsoleUrl,
       lanes: [
         {
           id: "platform",
-          label: "Windows helper",
+          label: "Setting up CivicCast",
           status: "success",
           ready: true,
           detail: progress.message,
@@ -274,7 +297,7 @@ export function stateFromLocalProgress(progress: InstallerProgress | null): Inst
           label: "CivicCast setup",
           status: "partial",
           ready: false,
-          detail: "The Windows helper is ready. It lets CivicCast run its local meeting tools on this computer. CivicCast still needs to prepare storage and start the dashboard.",
+          detail: "CivicCast's local services are ready. It still needs to prepare storage and start the dashboard.",
           nextStep: "Choose Continue to finish setup and open the operator dashboard."
         }
       ]
@@ -283,15 +306,15 @@ export function stateFromLocalProgress(progress: InstallerProgress | null): Inst
   if (runtimeLaneIds.includes(progress.current_lane_id) && progress.status === "running") {
     return {
       ready: false,
-      platform: "windows-wsl2",
+      platform: "windows-native",
       operatorConsoleUrl,
       lanes: [
         {
           id: "platform",
-          label: "Windows helper",
+          label: "Setting up CivicCast",
           status: "success",
           ready: true,
-          detail: "The Windows helper CivicCast needs is ready. It lets CivicCast run its local meeting tools on this computer.",
+          detail: "CivicCast's local services are ready on this computer.",
           nextStep: "CivicCast is finishing setup."
         },
         {
@@ -308,15 +331,15 @@ export function stateFromLocalProgress(progress: InstallerProgress | null): Inst
   if (runtimeLaneIds.includes(progress.current_lane_id) && progress.status === "ready") {
     return {
       ready: true,
-      platform: "windows-wsl2",
+      platform: "windows-native",
       operatorConsoleUrl,
       lanes: [
         {
           id: "platform",
-          label: "Windows helper",
+          label: "Setting up CivicCast",
           status: "success",
           ready: true,
-          detail: "The Windows helper CivicCast needs is ready. It lets CivicCast run its local meeting tools on this computer.",
+          detail: "CivicCast's local services are ready on this computer.",
           nextStep: "CivicCast is running."
         },
         {
@@ -331,6 +354,9 @@ export function stateFromLocalProgress(progress: InstallerProgress | null): Inst
     };
   }
   if (["wsl2", "platform"].includes(progress.current_lane_id)) {
+    // The three wsl_* values are only reachable from a state file a pre-native
+    // build wrote; nothing in this product emits them. Kept so an upgrade over
+    // such an install shows progress instead of falling through to `blocked`.
     const inProgress = [
       "wsl_install_requested",
       "wsl_install_started",
@@ -342,12 +368,13 @@ export function stateFromLocalProgress(progress: InstallerProgress | null): Inst
     const failed = ["failed", "error"].includes(progress.status);
     return {
       ready: false,
-      platform: "windows-wsl2",
+      platform: "windows-native",
       operatorConsoleUrl,
       lanes: [
         {
-          id: progress.current_lane_id,
-          label: "Windows helper",
+          // Normalised, not echoed: an old state file can say "wsl2".
+          id: "platform",
+          label: "Setting up CivicCast",
           status: failed ? "error" : inProgress ? "progress" : "blocked",
           ready: false,
           detail: progress.message,
@@ -363,15 +390,15 @@ export function stateFromLocalProgress(progress: InstallerProgress | null): Inst
     const failed = ["blocked", "failed", "error"].includes(progress.status);
     return {
       ready: false,
-      platform: "windows-wsl2",
+      platform: "windows-native",
       operatorConsoleUrl,
       lanes: [
         {
           id: "platform",
-          label: "Windows helper",
+          label: "Setting up CivicCast",
           status: "success",
           ready: true,
-          detail: "The Windows helper CivicCast needs is ready. It lets CivicCast run its local meeting tools on this computer.",
+          detail: "CivicCast's local services are ready on this computer.",
           nextStep: "CivicCast is finishing setup."
         },
         {
@@ -448,22 +475,19 @@ function nativeInstallerBridgeAvailable(): boolean {
 }
 
 /**
- * Corrects a GUESSED installer state's `platform` when it disagrees with the
+ * Corrects a stored installer state's `platform` when it disagrees with the
  * one fact this page can always answer for itself: whether a native command
  * bridge exists at all (N-07, carried).
  *
- * `loadInstallerState`'s "we could not reach the summary API, and there is no
- * saved progress either" fallback is `installerFixtures.blocked`, which
- * hardcodes `platform: "windows-wsl2"` -- a reasonable guess for the WSL2 web
- * installer's own unreachable-backend case, but false on a native Tauri
- * station during the same brief window (a fresh launch before the
- * supervisor's control-plane child has bound its port, a reset, or right
- * after a reinstall). `nativeInstallerBridgeAvailable()` is definitional: it
- * is true only inside the real native webview, never in the WSL2 web
- * installer or a browser preview, so it always outranks a guessed fixture.
- * The real `/api/staff/installer/summary` response is untouched by this --
- * it already reports the deployment correctly (`installer/service.py`'s
- * `_native_windows_station()`).
+ * The unreachable-API fallback no longer needs this -- `installerFixtures.
+ * blocked` is `windows-native` at source. What still does is SAVED LOCAL
+ * PROGRESS: a state file written by a pre-native build, which an upgrade over
+ * an existing install can hand back verbatim. `nativeInstallerBridgeAvailable()`
+ * is definitional -- true only inside the real native webview -- so it
+ * outranks anything a file claims.
+ *
+ * The real `/api/staff/installer/summary` response is untouched by this; it
+ * reports the deployment itself (`installer/service.py`).
  */
 function withHonestNativePlatform(state: InstallerState): InstallerState {
   if (state.platform === "windows-wsl2" && nativeInstallerBridgeAvailable()) {
@@ -471,6 +495,7 @@ function withHonestNativePlatform(state: InstallerState): InstallerState {
   }
   return state;
 }
+
 
 async function invokeNativeInstaller<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const bridge = window as Window & NativeInstallerBridge;

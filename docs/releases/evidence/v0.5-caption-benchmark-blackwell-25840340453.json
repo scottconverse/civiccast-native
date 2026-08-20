@@ -1,0 +1,25 @@
+{
+  "audio_duration_seconds": 7.706,
+  "audio_path": "docs/releases/evidence/v0.5-caption-benchmark.wav",
+  "chunk_count": 2,
+  "compute_type": "int8_float16",
+  "device": "cuda",
+  "elapsed_seconds": 63.475,
+  "gpu_after": {
+    "free_mb": 12210.7,
+    "name": "NVIDIA GeForce RTX 5070 Ti",
+    "total_mb": 16303.0,
+    "used_mb": 4092.3
+  },
+  "gpu_before": {
+    "free_mb": 14325.3,
+    "name": "NVIDIA GeForce RTX 5070 Ti",
+    "total_mb": 16303.0,
+    "used_mb": 1977.7
+  },
+  "mean_chunk_seconds": 31.737,
+  "model": "large-v3",
+  "p95_chunk_seconds": 63.162,
+  "transcript": "Motion carries 7-0. Councilmember Rivera. Quests the zoning hearing continue next Tuesday.",
+  "word_error_rate": 0.2857
+}

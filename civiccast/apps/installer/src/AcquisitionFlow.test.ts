@@ -32,7 +32,7 @@ function removeTauriBridge(): void {
   delete (window as unknown as { __TAURI__?: Bridge }).__TAURI__;
 }
 
-function startAcquisitionCallCount(invokeMock: ReturnType<typeof vi.fn>): number {
+function startAcquisitionCallCount(invokeMock: ReturnType<typeof vi.fn<Bridge["invoke"]>>): number {
   return invokeMock.mock.calls.filter(
     ([command]) => command === "start_acquisition" || command === "startAcquisition"
   ).length;
@@ -41,7 +41,7 @@ function startAcquisitionCallCount(invokeMock: ReturnType<typeof vi.fn>): number
 describe("DownloadingScreen entry calls start_acquisition exactly once", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let invokeMock: ReturnType<typeof vi.fn>;
+  let invokeMock: ReturnType<typeof vi.fn<Bridge["invoke"]>>;
 
   beforeEach(() => {
     container = document.createElement("div");

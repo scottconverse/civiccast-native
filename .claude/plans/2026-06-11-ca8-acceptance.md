@@ -1,0 +1,4 @@
+﻿
+## FINDING (2026-06-12, live TSDuck captures) - filler-period TS session resets
+60s capture on the udp-ts output while on bulletin filler: 3 source-port changes, disc=2 on every content pid, CBR perfect (8,000,000 b/s). Root cause: filler source plans cover one bulletin cycle (~30s); at plan end the encoder exits and the daemon relaunches it -> new TS session every ~30s during filler. A headend TR 101 290 monitor would log CC errors continuously during filler. Programs are clean; transitions only.
+Fix in flight (branch work/filler-gap-length): filler plans span the whole gap to the next scheduled item (capped), so session resets happen only at program boundaries. GitHub issue creation was classifier-blocked this session - FILE THE ISSUE when authorized, content drafted in this section. Follow-up (separate): truly seamless single-mux splicing across all transitions.

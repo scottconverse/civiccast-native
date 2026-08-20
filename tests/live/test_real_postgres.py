@@ -681,7 +681,9 @@ class TestRealPostgresPodcastSubscribePersistence:
 
             reloaded = store.get(created.subscription_id)
             assert reloaded is not None
-            assert reloaded.confirmation_token, "subscription token is stored but intentionally omitted from public email response"
+            assert reloaded.confirmation_token, (
+                "subscription token is stored but intentionally omitted from public email response"
+            )
             confirmed = confirm_subscription(reloaded.confirmation_token, store=store)
             reloaded = store.get(created.subscription_id)
             listed = store.list_confirmed_for_target(

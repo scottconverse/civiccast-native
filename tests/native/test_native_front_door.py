@@ -129,9 +129,7 @@ def test_unknown_api_path_gets_a_json_404_not_the_spa_shell(
     assert default_response.headers["content-type"].startswith("application/json")
     assert default_response.json() == {"detail": "Not Found"}
 
-    html_accept_response = client.get(
-        "/api/does-not-exist", headers={"accept": "text/html"}
-    )
+    html_accept_response = client.get("/api/does-not-exist", headers={"accept": "text/html"})
     assert html_accept_response.status_code == 404
     assert html_accept_response.headers["content-type"].startswith("application/json")
     assert html_accept_response.json() == {"detail": "Not Found"}

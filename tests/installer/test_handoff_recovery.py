@@ -51,7 +51,9 @@ def _recovery_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _state() -> dict[str, object]:
-    raw = json.loads((handoff_recovery.recovery_dir() / handoff_recovery._STATE_FILENAME).read_text())
+    raw = json.loads(
+        (handoff_recovery.recovery_dir() / handoff_recovery._STATE_FILENAME).read_text()
+    )
     assert isinstance(raw, dict)
     return raw
 
@@ -59,7 +61,9 @@ def _state() -> dict[str, object]:
 def _rewrite_state(**updates: object) -> None:
     state = _state()
     state.update(updates)
-    (handoff_recovery.recovery_dir() / handoff_recovery._STATE_FILENAME).write_text(json.dumps(state))
+    (handoff_recovery.recovery_dir() / handoff_recovery._STATE_FILENAME).write_text(
+        json.dumps(state)
+    )
 
 
 def _read_code() -> str:
@@ -69,7 +73,9 @@ def _read_code() -> str:
 # --- start_recovery: the challenge file and its ACL --------------------------
 
 
-def test_start_recovery_writes_an_unambiguous_code_and_hardens_the_directory(tmp_path: Path) -> None:
+def test_start_recovery_writes_an_unambiguous_code_and_hardens_the_directory(
+    tmp_path: Path,
+) -> None:
     acl = _AclRecorder()
 
     result = start_recovery(harden_acl=acl)

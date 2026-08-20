@@ -1357,9 +1357,7 @@ def _require_handoff_recovery_start_request(request: Request) -> None:
     if not _is_local_client(request):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Setup recovery is only available from the local installer or local browser."
-            ),
+            detail=("Setup recovery is only available from the local installer or local browser."),
         )
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     key = f"{client_ip(request)}:{request.url.path}"
@@ -1397,9 +1395,7 @@ def _require_handoff_recovery_complete_request(request: Request) -> None:
     if not _is_local_client(request):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Setup recovery is only available from the local installer or local browser."
-            ),
+            detail=("Setup recovery is only available from the local installer or local browser."),
         )
 
 

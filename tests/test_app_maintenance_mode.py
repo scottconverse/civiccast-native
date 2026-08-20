@@ -171,7 +171,9 @@ def test_explicit_unknown_mode_value_fails_closed_not_normal(
         assert app.state.supervisor_mode == "unknown"
         assert client.get("/health").json()["mode"] == "unknown"
         automation = _named_supervisor(app, "civiccast-channel-automation")
-        assert automation.running is False, "explicit unknown mode must fail closed (hold back workers)"
+        assert automation.running is False, (
+            "explicit unknown mode must fail closed (hold back workers)"
+        )
         mutating = client.post(
             "/api/staff/live/recording-targets",
             json={

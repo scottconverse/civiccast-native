@@ -446,7 +446,7 @@ def build_windows_tauri_installer(
             target,
             kind="windows-tauri-installer",
             package_kind="windows-tauri-exe",
-            service_manager="wsl2-systemd",
+            service_manager="windows-scm",
         )
         return Artifact(target, "windows-tauri-installer")
 
@@ -480,7 +480,7 @@ def build_windows_tauri_installer(
         target,
         kind="windows-tauri-installer",
         package_kind="windows-tauri-exe",
-        service_manager="wsl2-systemd",
+        service_manager="windows-scm",
     )
     return Artifact(target, "windows-tauri-installer")
 
@@ -1058,24 +1058,24 @@ def build_cross_platform_installer_artifacts(
     tools = available_tools or {}
     out_dir.mkdir(parents=True, exist_ok=True)
     entries: list[dict[str, object]] = []
-    _rpm_version, _rpm_release, rpm_filename_version = _rpm_version_fields(version)
 
+    # The deb-package and rpm-package lanes are gone with build_deb/build_rpm,
+    # along with the _rpm_version_fields helper that generated the .rpm
+    # filename. Keeping a proof entry for a package this product no longer
+    # builds would have been a manifest that describes an artifact nobody can
+    # produce.
     specs = [
-        ("deb-package", f"civiccast_{version}_all.deb", "dpkg-deb", "deb", "systemd"),
-        (
-            "rpm-package",
-            f"civiccast-{rpm_filename_version}.noarch.rpm",
-            "rpmbuild",
-            "rpm",
-            "systemd",
-        ),
         ("macos-pkg", f"civiccast-{version}.pkg", "pkgbuild", "pkg", "launchd"),
         (
             "windows-tauri-installer",
             f"civiccast-{version}-windows-installer.exe",
             "tauri-windows",
             "windows-tauri-exe",
-            "wsl2-systemd",
+            # Was "wsl2-systemd" -- the Windows installer registers a Windows
+            # service through the SCM (civiccast/native/supervisor/service.py),
+            # and has since the native lane existed. That value described the
+            # superseded WSL2 install path.
+            "windows-scm",
         ),
     ]
     for kind, filename, tool, package_kind, manager in specs:
@@ -1103,24 +1103,17 @@ def build_cross_platform_installer_artifacts(
                 }
             )
 
+    # windows-wsl2-bootstrap-manifest and container-manifest are both gone:
+    # the first described installing into WSL2 Ubuntu, the second the Docker
+    # image built by the deleted docker/ tree.
     for kind, filename, package_kind, manager in [
-        (
-            "windows-wsl2-bootstrap-manifest",
-            f"civiccast-{version}-windows-wsl2-bootstrap.json",
-            "windows-wsl2-bootstrap-manifest",
-            "systemd",
-        ),
-        (
-            "container-manifest",
-            f"civiccast-{version}-container-image-manifest.json",
-            "container",
-            "container",
-        ),
         (
             "portable-archive",
             f"civiccast-{version}-portable.tar.gz",
             "portable",
-            "systemd",
+            # A portable archive registers no service at all; "systemd" here
+            # was inherited from the Linux lane and was never true of it.
+            "none",
         ),
     ]:
         artifact = out_dir / filename
@@ -1138,7 +1131,7 @@ def build_cross_platform_installer_artifacts(
     manifest: dict[str, object] = {
         "version": version,
         "artifacts": entries,
-        "windows_support": "Windows setup uses a Windows helper to run CivicCast local meeting tools. IT note: the helper is WSL2 Ubuntu 24.04 with Python 3.12.",
+        "windows_support": "Windows setup installs CivicCast natively: a signed installer, a Windows service, and a bundled runtime. No WSL, no Docker, no Linux.",
     }
     target = out_dir / f"civiccast-{version}-cross-platform-installers.json"
     target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1295,7 +1288,7 @@ def _beta_handoff_acquisition(out_dir: Path, artifacts: list[Artifact]) -> dict[
         "install_command": install_command
         if isinstance(install_command, str)
         else "python -m pip install --no-index --find-links wheelhouse 'wheelhouse/civiccast-<version>-py3-none-any.whl[captions-runtime]'",
-        "windows_runtime": "Windows setup uses a Windows helper to run CivicCast local meeting tools. IT note: the helper is WSL2 Ubuntu 24.04 with Python 3.12; native Windows services are not supported.",
+        "windows_runtime": "Windows setup installs CivicCast natively: a signed installer registers a Windows service (SCM) that supervises the control plane, Postgres, NATS and the media workers from a bundled runtime. No WSL, no Docker, no Linux.",
     }
 
 

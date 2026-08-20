@@ -37,6 +37,7 @@ import argparse
 import ctypes
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -259,6 +260,23 @@ HOST_RUNTIME_DLL_NAMES: frozenset[str] = frozenset({"python312.dll", "python3.dl
 #: built from these wheels will not load under a different CPython minor.
 HOST_PYTHON_REQUIREMENT = "CPython 3.12 (extension modules carry the cp312 ABI tag)"
 
+#: The interpreter version `uv pip install` MUST resolve wheels for. Derived
+#: from the pin above rather than repeated, so the two cannot disagree.
+#:
+#: Without this, `uv pip install --target` resolves against whatever Python
+#: happens to be ambient. On a machine whose default is 3.13 that stages
+#: cp313 wheels into a tree this module has pinned to cp312, and the mismatch
+#: only surfaces LATER, from resolve_pe_closure, as:
+#:
+#:   UnknownProvenanceError: python313.dll imported by
+#:   gstreamer_python/Lib/site-packages/gi/_gi.cp313-win_amd64.pyd
+#:
+#: which is a true statement about a tree that should never have been built.
+#: The CI job happens to run under 3.12.10 so it never saw this; a developer
+#: box does. Pinning the resolve makes the failure immediate and say what is
+#: actually wrong.
+HOST_PYTHON_VERSION = "3.12"
+
 _GSTREAMER_VERSION_RE = re.compile(r"^gstreamer-libs==([^\s\\]+)", re.MULTILINE)
 
 
@@ -416,20 +434,43 @@ def stage_upstream_wheels(requirements_file: Path, stage: Path) -> None:
             "anything derives from it)"
         )
     stage.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            "uv",
-            "pip",
-            "install",
-            "--no-deps",
-            "--require-hashes",
-            "--target",
-            str(stage),
-            "-r",
-            str(requirements_file),
-        ],
-        check=True,
-    )
+    # --python is not optional here: see HOST_PYTHON_VERSION. Resolving
+    # against the ambient interpreter silently produces a wrong-ABI tree.
+    #
+    # UV_PYTHON, when the caller has set it, names the EXACT reviewed
+    # interpreter -- the candidate workflow sets it to
+    # build/wp1-native-toolchain/python/python.exe. Prefer that over the bare
+    # minor version: passing "3.12" would let uv resolve some other 3.12 on
+    # PATH, which is right for the ABI but less precise than what the caller
+    # already decided. The bare version is the fallback for anyone building
+    # without that setup.
+    interpreter = os.environ.get("UV_PYTHON", "").strip() or HOST_PYTHON_VERSION
+    try:
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--no-deps",
+                "--require-hashes",
+                "--python",
+                interpreter,
+                "--target",
+                str(stage),
+                "-r",
+                str(requirements_file),
+            ],
+            check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"refusing to stage upstream wheels: uv could not resolve them for "
+            f"{interpreter!r}. {HOST_PYTHON_REQUIREMENT}. Install that "
+            f"interpreter (uv python install {HOST_PYTHON_VERSION}) rather than building "
+            f"against whichever Python is ambient -- the tree's ABI is pinned, and a "
+            f"mismatched stage only fails much later, as an unresolved pythonXYZ.dll "
+            f"import from the PE closure."
+        ) from error
 
 
 # ---------------------------------------------------------------------------

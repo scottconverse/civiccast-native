@@ -81,7 +81,7 @@ jobs:
           name: user-manual
           path: artifacts/USER-MANUAL.*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
       - name: Docs tree readable
         run: |

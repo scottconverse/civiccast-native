@@ -296,8 +296,7 @@ def test_wheelhouse_only_application_requires_an_explicit_native_disposition() -
     app_row = next(
         row
         for row in report["rows"]
-        if row["origin"] == "wsl-wheelhouse-only"
-        and row["wsl_identity"] == "civiccast==1.0.0rc18"
+        if row["origin"] == "wsl-wheelhouse-only" and row["wsl_identity"] == "civiccast==1.0.0rc18"
     )
     assert app_row == {
         "origin": "wsl-wheelhouse-only",

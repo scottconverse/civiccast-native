@@ -57,7 +57,14 @@ jobs:
 
       - name: Install Playwright browsers
         if: steps.portal-check.outputs.portal_present == 'true'
-        run: npx playwright install --with-deps chromium
+        # webkit as well as chromium: portal-public's playwright.config.ts
+        # declares BOTH projects, so every webkit spec was failing in ~3ms
+        # with "Executable doesn't exist" -- the browser was never
+        # downloaded. That is 13 resident-facing a11y tests, on the Safari
+        # engine, which is exactly where a public portal needs them.
+        # The operator job below installs chromium only, correctly: its own
+        # config declares no webkit project.
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Build portal
         if: steps.portal-check.outputs.portal_present == 'true'
@@ -74,7 +81,7 @@ jobs:
         with:
           name: playwright-report-public
           path: civiccast/apps/portal-public/playwright-report/
-          retention-days: 7
+          retention-days: 1
 
   a11y-operator:
     name: Accessibility (axe-core) — operator console
@@ -132,4 +139,4 @@ jobs:
         with:
           name: playwright-report-operator
           path: civiccast/apps/portal-operator/playwright-report/
-          retention-days: 7
+          retention-days: 1

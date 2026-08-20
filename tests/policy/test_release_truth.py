@@ -36,8 +36,12 @@ GOOD_RELEASES = [
 ]
 
 
-def run(manifest: str, releases: list | None = None, readme: str | None = None,
-        tmp_path: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run(
+    manifest: str,
+    releases: list | None = None,
+    readme: str | None = None,
+    tmp_path: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     mpath = tmp_path / "manifest.yaml"
     mpath.write_text(manifest, encoding="utf-8")
     cmd = [sys.executable, str(SCRIPT), "--manifest", str(mpath)]
@@ -49,8 +53,9 @@ def run(manifest: str, releases: list | None = None, readme: str | None = None,
         readme_path = tmp_path / "README.md"
         readme_path.write_text(readme, encoding="utf-8")
         cmd += ["--readme", str(readme_path)]
-    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=60)
+    return subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
+    )
 
 
 def test_clean_manifest_and_releases_pass(tmp_path: Path) -> None:
@@ -60,8 +65,9 @@ def test_clean_manifest_and_releases_pass(tmp_path: Path) -> None:
 
 
 def test_two_current_entries_is_drift(tmp_path: Path) -> None:
-    bad = GOOD_MANIFEST.replace("{tag: v1, status: withdrawn, superseded_by: v2}",
-                                "{tag: v1, status: current}")
+    bad = GOOD_MANIFEST.replace(
+        "{tag: v1, status: withdrawn, superseded_by: v2}", "{tag: v1, status: current}"
+    )
     result = run(bad, tmp_path=tmp_path)
     assert result.returncode == 1
     assert "exactly one current" in result.stdout
@@ -75,8 +81,9 @@ def test_withdrawn_without_successor_is_drift(tmp_path: Path) -> None:
 
 
 def test_missing_live_release_is_drift(tmp_path: Path) -> None:
-    result = run(GOOD_MANIFEST, [r for r in GOOD_RELEASES if r["tag_name"] != "v1"],
-                 tmp_path=tmp_path)
+    result = run(
+        GOOD_MANIFEST, [r for r in GOOD_RELEASES if r["tag_name"] != "v1"], tmp_path=tmp_path
+    )
     assert result.returncode == 1
     assert "no live GitHub release" in result.stdout
 
@@ -124,15 +131,18 @@ def test_marker_deep_in_body_does_not_mark_withdrawal(tmp_path: Path) -> None:
 
 
 def test_readme_missing_current_is_drift(tmp_path: Path) -> None:
-    result = run(GOOD_MANIFEST, GOOD_RELEASES, "This README mentions nothing relevant.",
-                 tmp_path)
+    result = run(GOOD_MANIFEST, GOOD_RELEASES, "This README mentions nothing relevant.", tmp_path)
     assert result.returncode == 1
     assert "never mentions the current release" in result.stdout
 
 
 def test_readme_withdrawn_without_context_is_drift(tmp_path: Path) -> None:
-    result = run(GOOD_MANIFEST, GOOD_RELEASES,
-                 "Install v2. Also historically we shipped v1 which was great.", tmp_path)
+    result = run(
+        GOOD_MANIFEST,
+        GOOD_RELEASES,
+        "Install v2. Also historically we shipped v1 which was great.",
+        tmp_path,
+    )
     assert result.returncode == 1
     assert "without withdrawn/supersede context" in result.stdout
 
@@ -193,8 +203,7 @@ def test_non_string_pattern_element_exits_2(tmp_path: Path) -> None:
 def test_list_valued_entry_tag_exits_2(tmp_path: Path) -> None:
     # CC-WS1-002 round 2: a list-valued tag used to traceback with an
     # unhashable TypeError in set(tags) at exit 1.
-    bad = GOOD_MANIFEST.replace("{tag: v2, status: current}",
-                                "{tag: [v2, oops], status: current}")
+    bad = GOOD_MANIFEST.replace("{tag: v2, status: current}", "{tag: [v2, oops], status: current}")
     result = run(bad, tmp_path=tmp_path)
     assert result.returncode == 2
     assert result.stderr.startswith("ERROR")
@@ -219,8 +228,9 @@ def test_releases_fixture_not_a_list_exits_2(tmp_path: Path) -> None:
     rpath = tmp_path / "releases.json"
     rpath.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
     cmd = [sys.executable, str(SCRIPT), "--manifest", str(mpath), "--releases-json", str(rpath)]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                            errors="replace", timeout=60)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
+    )
     assert result.returncode == 2
     assert result.stderr.startswith("ERROR")
     assert "Traceback" not in result.stdout
@@ -230,7 +240,11 @@ def test_releases_fixture_not_a_list_exits_2(tmp_path: Path) -> None:
 def test_real_manifest_is_internally_consistent() -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--manifest", str(REAL_MANIFEST)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -238,9 +252,10 @@ def test_real_manifest_is_internally_consistent() -> None:
 def test_staging_entry_clears_unknown_tag_drift(tmp_path: Path) -> None:
     # rc15 pattern: a published-but-not-yet-installable release gets a staging
     # entry (no superseded_by required) instead of tripping unknown-tag drift.
-    manifest = GOOD_MANIFEST.replace(
-        "entries:", "entries:\n  - {tag: v3, status: staging}")
-    releases = [*GOOD_RELEASES,
-                {"tag_name": "v3", "name": "v3 — coming", "body": "", "draft": False}]
+    manifest = GOOD_MANIFEST.replace("entries:", "entries:\n  - {tag: v3, status: staging}")
+    releases = [
+        *GOOD_RELEASES,
+        {"tag_name": "v3", "name": "v3 — coming", "body": "", "draft": False},
+    ]
     result = run(manifest, releases, tmp_path=tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr

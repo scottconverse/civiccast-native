@@ -222,7 +222,9 @@ def test_restart_is_refused_while_blocked_without_touching_the_cp() -> None:
 def test_runtime_set_applies_a_legal_change() -> None:
     sel = FakeSelector(value="native")
     sup = FakeAdminSupervisor(state="ready")
-    result = _router(sup, sel).handle("runtime_set", {"cmd": "runtime_set", "v": 1, "runtime": "wsl"})
+    result = _router(sup, sel).handle(
+        "runtime_set", {"cmd": "runtime_set", "v": 1, "runtime": "wsl"}
+    )
 
     assert result["outcome"] == "applied"
     assert sel.writes == ["wsl"]

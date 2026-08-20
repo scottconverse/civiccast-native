@@ -99,7 +99,9 @@ def test_station_index_filename_matches_the_nsis_wiring() -> None:
 
 
 def test_require_pack_root_fails_loud_when_missing() -> None:
-    with pytest.raises(builder.StationBundleBuildError, match="missing required pack artifact root"):
+    with pytest.raises(
+        builder.StationBundleBuildError, match="missing required pack artifact root"
+    ):
         builder._require_pack_root(None, component="captions-floor", required=True)
 
 
@@ -275,7 +277,9 @@ def test_ollama_model_components_reject_fixture_bytes_without_a_matching_reviewe
             signing_key_id="development-test-key",
             metadata={},
         )
-    assert not output.exists(), "a pack that fails its own self-verification must not be left on disk"
+    assert not output.exists(), (
+        "a pack that fails its own self-verification must not be left on disk"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +376,12 @@ def _write_ollama_model_root(tmp_path: Path, *, model_name: str, model: dict[str
     (root / "blobs" / f"sha256-{config['sha256']}").write_bytes(fixture_bytes["config"])
     (root / "blobs" / f"sha256-{layer['sha256']}").write_bytes(fixture_bytes["layer"])
     manifest_path = (
-        root / "manifests" / "registry.ollama.ai" / "library" / str(model["repository"]) / str(model["tag"])
+        root
+        / "manifests"
+        / "registry.ollama.ai"
+        / "library"
+        / str(model["repository"])
+        / str(model["tag"])
     )
     manifest_path.parent.mkdir(parents=True)
     manifest_path.write_bytes(fixture_bytes["manifest"])
@@ -426,7 +435,9 @@ def test_ollama_model_pack_metadata_fails_loud_on_component_mismatch(tmp_path: P
     model = models["gemma4-12b"]
     root = _write_ollama_model_root(tmp_path, model_name="gemma4-12b", model=model)
 
-    with pytest.raises(builder.StationBundleBuildError, match="does not match the pack being built"):
+    with pytest.raises(
+        builder.StationBundleBuildError, match="does not match the pack being built"
+    ):
         builder._ollama_model_pack_metadata("summary-gemma4-e4b", root)
 
 

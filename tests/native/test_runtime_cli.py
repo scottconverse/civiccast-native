@@ -39,11 +39,19 @@ _A_REAL_FILE = sys.executable
 
 
 def _patch_all_clear_probes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(runtime_cli, "read_selector", lambda: SelectorRead(ok=True, value="native", detail="ok"))
     monkeypatch.setattr(
-        runtime_cli, "probe_keeper", lambda: A1Result(live_process="negative", run_entry="negative", detail="clear")
+        runtime_cli, "read_selector", lambda: SelectorRead(ok=True, value="native", detail="ok")
     )
-    monkeypatch.setattr(runtime_cli, "probe_indistro_services", lambda: A2Result(status="negative", detail="inactive"))
+    monkeypatch.setattr(
+        runtime_cli,
+        "probe_keeper",
+        lambda: A1Result(live_process="negative", run_entry="negative", detail="clear"),
+    )
+    monkeypatch.setattr(
+        runtime_cli,
+        "probe_indistro_services",
+        lambda: A2Result(status="negative", detail="inactive"),
+    )
     monkeypatch.setattr(runtime_cli, "detect_wsl_install", lambda: False)
 
     class _FakeMutex:
@@ -73,16 +81,26 @@ def _patch_all_clear_probes(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def fake_take_interlock(owner_run_id: str) -> MaintenanceRecord:
         record = MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=owner_run_id, taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner_run_id,
+            taken_utc="2026-07-18T00:00:00Z",
         )
         interlock_state["record"] = record
         return record
 
     def fake_release_interlock() -> MaintenanceRecord:
         current = interlock_state["record"] or MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id="unknown", taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id="unknown",
+            taken_utc="2026-07-18T00:00:00Z",
         )
-        released = current.model_copy(update={"state": "released", "released_utc": "2026-07-18T00:05:00Z"})
+        released = current.model_copy(
+            update={"state": "released", "released_utc": "2026-07-18T00:05:00Z"}
+        )
         interlock_state["record"] = released
         return released
 
@@ -109,20 +127,34 @@ def _clear_interlock_kwargs() -> dict[str, object]:
 
     def fake_taker(owner_run_id: str) -> MaintenanceRecord:
         record = MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=owner_run_id, taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner_run_id,
+            taken_utc="2026-07-18T00:00:00Z",
         )
         state["record"] = record
         return record
 
     def fake_releaser() -> MaintenanceRecord:
         current = state["record"] or MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id="unknown", taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id="unknown",
+            taken_utc="2026-07-18T00:00:00Z",
         )
-        released = current.model_copy(update={"state": "released", "released_utc": "2026-07-18T00:05:00Z"})
+        released = current.model_copy(
+            update={"state": "released", "released_utc": "2026-07-18T00:05:00Z"}
+        )
         state["record"] = released
         return released
 
-    return {"interlock_reader": fake_reader, "interlock_taker": fake_taker, "interlock_releaser": fake_releaser}
+    return {
+        "interlock_reader": fake_reader,
+        "interlock_taker": fake_taker,
+        "interlock_releaser": fake_releaser,
+    }
 
 
 def _fake_probe_snapshot() -> GuardInputs:
@@ -416,7 +448,9 @@ def test_run_cutover_phase3_resume_reverifies_and_reexecutes_if_selector_flipped
     fake_selector["value"] = "wsl"
 
     journal2 = runtime_cli.run_cutover(state_dir=tmp_path, **kwargs)
-    assert write_calls["n"] == 2, "phase 3 must be RE-EXECUTED, not skipped, when resume-verify fails"
+    assert write_calls["n"] == 2, (
+        "phase 3 must be RE-EXECUTED, not skipped, when resume-verify fails"
+    )
     phase3_after = next(p for p in journal2.phases if p.phase == 3)
     assert phase3_after.status == "done"
     assert phase3_after.verified_on_resume is False
@@ -476,7 +510,9 @@ def test_run_cutover_phase1_resume_reverifies_and_reexecutes_if_services_now_act
     fake_active["value"] = True
 
     journal2 = runtime_cli.run_cutover(state_dir=tmp_path, **kwargs)
-    assert stop_calls["n"] == 2, "phase 1 must be RE-EXECUTED when resume-verify finds services active again"
+    assert stop_calls["n"] == 2, (
+        "phase 1 must be RE-EXECUTED when resume-verify finds services active again"
+    )
     phase1_after = next(p for p in journal2.phases if p.phase == 1)
     assert phase1_after.status == "done"
     assert phase1_after.verified_on_resume is False
@@ -623,7 +659,9 @@ def test_run_rollback_absent_distro_is_a_failure() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_run_rollback_no_exe_path_and_no_journal_recorded_path_fails_before_mutation(tmp_path) -> None:
+def test_run_rollback_no_exe_path_and_no_journal_recorded_path_fails_before_mutation(
+    tmp_path,
+) -> None:
     """RED-FIRST control: run_rollback(exe_path=None) with no journal-
     recorded path => nonzero, selector unchanged (the preflight refuses
     before phase 2 -- the selector-mutating phase -- ever runs)."""
@@ -704,7 +742,7 @@ def test_run_rollback_derives_exe_path_from_prior_completed_cutover_journal(tmp_
         exe_path=None,
         phase2_write_wsl=lambda: None,
         phase3_reenable_service=lambda: "civiccast* enabled",
-        phase4_restore_run_entry=lambda exe_path: (seen_exe_paths.append(exe_path) or "restored"),
+        phase4_restore_run_entry=lambda exe_path: seen_exe_paths.append(exe_path) or "restored",
         **_clear_interlock_kwargs(),
     )
     assert rollback_journal.ok is True
@@ -734,14 +772,22 @@ def test_cutover_owned_mode_takes_interlock_when_none_provided(tmp_path) -> None
     def fake_taker(owner_run_id: str) -> MaintenanceRecord:
         take_calls.append(owner_run_id)
         return MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=owner_run_id, taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner_run_id,
+            taken_utc="2026-07-18T00:00:00Z",
         )
 
     def fake_reader() -> InterlockRead:
         if not take_calls:
             return InterlockRead(status="free", record=None, detail="not yet taken")
         record = MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=take_calls[-1], taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=take_calls[-1],
+            taken_utc="2026-07-18T00:00:00Z",
         )
         return InterlockRead(status="held", record=record, detail="held")
 
@@ -810,7 +856,11 @@ def test_cutover_external_mode_generation_drift_mid_transaction_aborts(tmp_path)
 
     def fake_reader() -> InterlockRead:
         record = MaintenanceRecord(
-            v=1, state="held", generation=state["generation"], owner_run_id="migration-run-1", taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=state["generation"],
+            owner_run_id="migration-run-1",
+            taken_utc="2026-07-18T00:00:00Z",
         )
         return InterlockRead(status="held", record=record, detail="held")
 
@@ -846,7 +896,11 @@ def test_cutover_external_mode_released_mid_transaction_aborts_at_next_boundary(
     def fake_reader() -> InterlockRead:
         if state["status"] == "held":
             record = MaintenanceRecord(
-                v=1, state="held", generation=5, owner_run_id="migration-run-1", taken_utc="2026-07-18T00:00:00Z"
+                v=1,
+                state="held",
+                generation=5,
+                owner_run_id="migration-run-1",
+                taken_utc="2026-07-18T00:00:00Z",
             )
             return InterlockRead(status="held", record=record, detail="held")
         return InterlockRead(status="free", record=None, detail="released")
@@ -880,17 +934,29 @@ def test_cutover_owned_mode_leaves_interlock_held_on_phase_failure(tmp_path) -> 
     release_calls = {"n": 0}
 
     def fake_taker(owner_run_id: str) -> MaintenanceRecord:
-        return MaintenanceRecord(v=1, state="held", generation=1, owner_run_id=owner_run_id, taken_utc="2026-07-18T00:00:00Z")
+        return MaintenanceRecord(
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner_run_id,
+            taken_utc="2026-07-18T00:00:00Z",
+        )
 
     def fake_reader() -> InterlockRead:
         record = MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id="whatever-run-id-was-taken", taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id="whatever-run-id-was-taken",
+            taken_utc="2026-07-18T00:00:00Z",
         )
         return InterlockRead(status="held", record=record, detail="held")
 
     def fake_releaser() -> MaintenanceRecord:
         release_calls["n"] += 1
-        return MaintenanceRecord(v=1, state="released", generation=1, owner_run_id="x", taken_utc="2026-07-18T00:00:00Z")
+        return MaintenanceRecord(
+            v=1, state="released", generation=1, owner_run_id="x", taken_utc="2026-07-18T00:00:00Z"
+        )
 
     def phase2_raises() -> tuple[list[str], list[str]]:
         raise RuntimeError("simulated failure")
@@ -915,19 +981,33 @@ def test_rollback_owned_mode_takes_interlock_when_none_provided(tmp_path) -> Non
 
     def fake_taker(owner_run_id: str) -> MaintenanceRecord:
         take_calls.append(owner_run_id)
-        return MaintenanceRecord(v=1, state="held", generation=1, owner_run_id=owner_run_id, taken_utc="2026-07-18T00:00:00Z")
+        return MaintenanceRecord(
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner_run_id,
+            taken_utc="2026-07-18T00:00:00Z",
+        )
 
     def fake_reader() -> InterlockRead:
         if not take_calls:
             return InterlockRead(status="free", record=None, detail="not yet taken")
         record = MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=take_calls[-1], taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=take_calls[-1],
+            taken_utc="2026-07-18T00:00:00Z",
         )
         return InterlockRead(status="held", record=record, detail="held")
 
     def fake_releaser() -> MaintenanceRecord:
         return MaintenanceRecord(
-            v=1, state="released", generation=1, owner_run_id=take_calls[-1], taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="released",
+            generation=1,
+            owner_run_id=take_calls[-1],
+            taken_utc="2026-07-18T00:00:00Z",
         )
 
     journal = runtime_cli.run_rollback(
@@ -974,7 +1054,9 @@ def test_rollback_external_mode_free_record_aborts_before_selector_write(tmp_pat
 
 def test_rollback_refuses_without_ack(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     _patch_all_clear_probes(monkeypatch)
-    result = runner.invoke(runtime_cli.runtime_app, ["rollback-to-wsl", "--state-dir", str(tmp_path)])
+    result = runner.invoke(
+        runtime_cli.runtime_app, ["rollback-to-wsl", "--state-dir", str(tmp_path)]
+    )
     assert result.exit_code != 0
     assert runtime_cli.ROLLBACK_ACK in result.output
 
@@ -993,9 +1075,13 @@ def test_rollback_with_exact_ack_proceeds_and_transcript_has_boundary_statement(
 ) -> None:
     _patch_all_clear_probes(monkeypatch)
     monkeypatch.setattr(runtime_cli, "_default_phase2_write_wsl", lambda: None)
-    monkeypatch.setattr(runtime_cli, "_default_phase3_reenable_service", lambda: "civiccast* enabled")
     monkeypatch.setattr(
-        runtime_cli, "_default_phase4_restore_run_entry", lambda exe_path: "restored for invoking user"
+        runtime_cli, "_default_phase3_reenable_service", lambda: "civiccast* enabled"
+    )
+    monkeypatch.setattr(
+        runtime_cli,
+        "_default_phase4_restore_run_entry",
+        lambda exe_path: "restored for invoking user",
     )
     result = runner.invoke(
         runtime_cli.runtime_app,
@@ -1075,7 +1161,9 @@ def test_run_rollback_malformed_journal_fails_closed_and_is_preserved(tmp_path) 
     assert (tmp_path / "runtime-cutover-journal.json.corrupt-1").exists()
 
 
-def test_run_rollback_refuses_to_replace_incomplete_cutover_journal_without_force_new(tmp_path) -> None:
+def test_run_rollback_refuses_to_replace_incomplete_cutover_journal_without_force_new(
+    tmp_path,
+) -> None:
     """RED-FIRST control: an existing INCOMPLETE cutover journal (some
     phase failed, journal.ok is False) must NOT be silently replaced by a
     fresh rollback journal -- refuse unless --force-new."""
@@ -1175,7 +1263,9 @@ def test_save_journal_writes_atomically_no_tmp_file_left_behind(tmp_path) -> Non
     from civiccast.native.models import CutoverJournal
 
     journal_path = runtime_cli._journal_path(tmp_path)
-    journal = CutoverJournal(v=1, run_id="r1", direction="cutover", phases=[], unloaded_profiles=[], errors=[])
+    journal = CutoverJournal(
+        v=1, run_id="r1", direction="cutover", phases=[], unloaded_profiles=[], errors=[]
+    )
     runtime_cli._save_journal(journal_path, journal)
 
     assert journal_path.exists()
@@ -1185,14 +1275,18 @@ def test_save_journal_writes_atomically_no_tmp_file_left_behind(tmp_path) -> Non
     assert reloaded == journal
 
 
-def test_save_journal_cleans_up_tmp_file_on_write_failure(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_journal_cleans_up_tmp_file_on_write_failure(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """FALSIFICATION: if the atomic replace step itself fails, the temp
     file must be cleaned up, not left behind as directory litter."""
 
     from civiccast.native.models import CutoverJournal
 
     journal_path = runtime_cli._journal_path(tmp_path)
-    journal = CutoverJournal(v=1, run_id="r1", direction="cutover", phases=[], unloaded_profiles=[], errors=[])
+    journal = CutoverJournal(
+        v=1, run_id="r1", direction="cutover", phases=[], unloaded_profiles=[], errors=[]
+    )
 
     real_replace = Path.replace
 
@@ -1308,7 +1402,9 @@ def test_phase5_verify_rejects_truncated_evidence_on_resume(tmp_path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_ws4_009_bracket_boundary_transient_failure_then_resume_clears_and_releases(tmp_path) -> None:
+def test_ws4_009_bracket_boundary_transient_failure_then_resume_clears_and_releases(
+    tmp_path,
+) -> None:
     """RED-FIRST control (a): a transient bracket re-verify failure
     (interlock unreadable) at the very first phase boundary must NOT make
     journal.ok permanently False once a retry's re-verify actually
@@ -1325,7 +1421,11 @@ def test_ws4_009_bracket_boundary_transient_failure_then_resume_clears_and_relea
     def fake_taker(owner_run_id: str) -> MaintenanceRecord:
         take_calls.append(owner_run_id)
         return MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=owner_run_id, taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner_run_id,
+            taken_utc="2026-07-18T00:00:00Z",
         )
 
     def fake_reader() -> InterlockRead:
@@ -1333,9 +1433,17 @@ def test_ws4_009_bracket_boundary_transient_failure_then_resume_clears_and_relea
             return InterlockRead(status="free", record=None, detail="not yet taken")
         if unreadable_once["armed"]:
             unreadable_once["armed"] = False
-            return InterlockRead(status="unreadable", record=None, detail="transient Maintenance read glitch (test double)")
+            return InterlockRead(
+                status="unreadable",
+                record=None,
+                detail="transient Maintenance read glitch (test double)",
+            )
         record = MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=take_calls[-1], taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=take_calls[-1],
+            taken_utc="2026-07-18T00:00:00Z",
         )
         return InterlockRead(status="held", record=record, detail="held")
 
@@ -1394,14 +1502,22 @@ def test_ws4_009_rollback_preflight_failure_then_resume_clears_and_releases(tmp_
     def fake_taker(owner_run_id: str) -> MaintenanceRecord:
         take_calls.append(owner_run_id)
         return MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=owner_run_id, taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner_run_id,
+            taken_utc="2026-07-18T00:00:00Z",
         )
 
     def fake_reader() -> InterlockRead:
         if not take_calls:
             return InterlockRead(status="free", record=None, detail="not yet taken")
         record = MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=take_calls[-1], taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=take_calls[-1],
+            taken_utc="2026-07-18T00:00:00Z",
         )
         return InterlockRead(status="held", record=record, detail="held")
 
@@ -1453,11 +1569,19 @@ def test_ws4_009_persistent_bracket_failure_never_clears_stale_error(tmp_path) -
 
     def fake_taker(owner_run_id: str) -> MaintenanceRecord:
         return MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=owner_run_id, taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner_run_id,
+            taken_utc="2026-07-18T00:00:00Z",
         )
 
     def fake_reader() -> InterlockRead:
-        return InterlockRead(status="unreadable", record=None, detail="persistently broken Maintenance read (test double)")
+        return InterlockRead(
+            status="unreadable",
+            record=None,
+            detail="persistently broken Maintenance read (test double)",
+        )
 
     def fake_releaser() -> MaintenanceRecord:
         raise AssertionError("release must never be attempted while the bracket keeps failing")
@@ -1498,17 +1622,27 @@ def test_ws4_009_bracket_per_label_isolation_phase1_success_does_not_clear_phase
     def fake_taker(owner_run_id: str) -> MaintenanceRecord:
         taken_owner["id"] = owner_run_id
         return MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=owner_run_id, taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner_run_id,
+            taken_utc="2026-07-18T00:00:00Z",
         )
 
     def fake_reader() -> InterlockRead:
         call_count["n"] += 1
         if call_count["n"] in fail_on:
             return InterlockRead(
-                status="unreadable", record=None, detail=f"simulated transient failure #{call_count['n']}"
+                status="unreadable",
+                record=None,
+                detail=f"simulated transient failure #{call_count['n']}",
             )
         record = MaintenanceRecord(
-            v=1, state="held", generation=1, owner_run_id=taken_owner["id"], taken_utc="2026-07-18T00:00:00Z"
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=taken_owner["id"],
+            taken_utc="2026-07-18T00:00:00Z",
         )
         return InterlockRead(status="held", record=record, detail="held")
 
@@ -1530,7 +1664,10 @@ def test_ws4_009_bracket_per_label_isolation_phase1_success_does_not_clear_phase
     journal1 = runtime_cli.run_cutover(**kwargs)
     assert journal1.ok is False
     assert {p.phase for p in journal1.phases if p.status == "done"} == {1, 2}
-    assert any(e.startswith("interlock bracket failed before phase 3 (selector write):") for e in journal1.errors)
+    assert any(
+        e.startswith("interlock bracket failed before phase 3 (selector write):")
+        for e in journal1.errors
+    )
 
     journal2 = runtime_cli.run_cutover(**kwargs)
     assert call_count["n"] == 6  # proves calls 4 (phase 1) and 5 (phase 2) both ran and succeeded
@@ -1539,6 +1676,13 @@ def test_ws4_009_bracket_per_label_isolation_phase1_success_does_not_clear_phase
     # The "phase 3" stale entry survives the genuine phase-1/phase-2
     # boundary successes that happened on this resume -- per-label
     # isolation, not a global clear.
-    assert any(e.startswith("interlock bracket failed before phase 3 (selector write):") for e in journal2.errors)
-    assert not any(e.startswith("interlock bracket failed before phase 1:") for e in journal2.errors)
-    assert not any(e.startswith("interlock bracket failed before phase 2:") for e in journal2.errors)
+    assert any(
+        e.startswith("interlock bracket failed before phase 3 (selector write):")
+        for e in journal2.errors
+    )
+    assert not any(
+        e.startswith("interlock bracket failed before phase 1:") for e in journal2.errors
+    )
+    assert not any(
+        e.startswith("interlock bracket failed before phase 2:") for e in journal2.errors
+    )

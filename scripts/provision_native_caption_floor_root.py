@@ -88,8 +88,7 @@ CAPTION_SELF_TEST_SHA256: Final[str] = (
 #: history -- pin THAT commit, never a mutable branch ref.
 _JFK_SOURCE_COMMIT: Final[str] = "b0a11594aec50892a02cd8d129eee2dfe93a8bb8"
 _JFK_SOURCE_URL: Final[str] = (
-    "https://raw.githubusercontent.com/ggerganov/whisper.cpp/"
-    f"{_JFK_SOURCE_COMMIT}/samples/jfk.wav"
+    f"https://raw.githubusercontent.com/ggerganov/whisper.cpp/{_JFK_SOURCE_COMMIT}/samples/jfk.wav"
 )
 
 DEFAULT_CACHE: Final[Path] = ROOT / "build" / "native-model-cache-captions-floor"
@@ -125,7 +124,9 @@ def _verify_file(path: Path, *, expected_bytes: int, expected_sha256: str, label
     _require_regular_file(path, label=label)
     actual_bytes = path.stat().st_size
     if actual_bytes != expected_bytes:
-        raise CaptionFloorProvisionError(f"{label} size {actual_bytes} != reviewed {expected_bytes}")
+        raise CaptionFloorProvisionError(
+            f"{label} size {actual_bytes} != reviewed {expected_bytes}"
+        )
     actual_sha256 = _sha256_file(path)
     if actual_sha256 != expected_sha256:
         raise CaptionFloorProvisionError(
@@ -300,7 +301,9 @@ def build_captions_floor_root(
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--offline", action="store_true")

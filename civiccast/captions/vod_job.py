@@ -62,10 +62,16 @@ from civiccast.captions.vod import (
 
 _LOG = logging.getLogger(__name__)
 
-OFFLINE_CAPTION_JOB_STATE_PENDING = "pending"
-OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW = "awaiting_review"
-OFFLINE_CAPTION_JOB_STATE_COMPLETE = "complete"
-OFFLINE_CAPTION_JOB_STATE_FAILED = "failed"
+OfflineCaptionJobState = Literal["pending", "awaiting_review", "complete", "failed"]
+
+# Annotated with the Literal rather than left as bare str. Untyped, each of
+# these infers as `str`, so passing one where OfflineCaptionJobState is
+# expected -- as create_offline_caption_job does -- was an arg-type error, and
+# a typo in any of these four strings would have type-checked clean.
+OFFLINE_CAPTION_JOB_STATE_PENDING: OfflineCaptionJobState = "pending"
+OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW: OfflineCaptionJobState = "awaiting_review"
+OFFLINE_CAPTION_JOB_STATE_COMPLETE: OfflineCaptionJobState = "complete"
+OFFLINE_CAPTION_JOB_STATE_FAILED: OfflineCaptionJobState = "failed"
 OFFLINE_CAPTION_JOB_STATES = (
     OFFLINE_CAPTION_JOB_STATE_PENDING,
     OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW,
@@ -78,7 +84,6 @@ OFFLINE_CAPTION_JOB_ACTIVE_STATES = (
     OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW,
 )
 
-OfflineCaptionJobState = Literal["pending", "awaiting_review", "complete", "failed"]
 
 OFFLINE_CAPTION_JOB_MODE_INLINE = "inline"
 OFFLINE_CAPTION_JOB_MODE_OFF = "off"

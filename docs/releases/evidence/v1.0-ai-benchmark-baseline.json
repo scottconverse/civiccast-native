@@ -1,0 +1,56 @@
+{
+  "generated_at": "2026-05-15T06:30:13.586622Z",
+  "corpus_id": "civiccast-v1.0-ai-baseline-2026-05-15",
+  "baseline_policy": "v1.0 baseline: deterministic local adapters set the release floor; future live-model runs must meet or exceed these fixture tolerances.",
+  "caption_scores": [
+    {
+      "fixture_id": "caption-motion-001",
+      "word_error_rate": 0.25,
+      "tolerance": 0.34,
+      "passed": true
+    },
+    {
+      "fixture_id": "caption-budget-002",
+      "word_error_rate": 0.3,
+      "tolerance": 0.34,
+      "passed": true
+    }
+  ],
+  "translation_scores": [
+    {
+      "fixture_id": "translation-motion-001",
+      "bleu": 1.0,
+      "comet_adequacy": 1.0,
+      "bleu_floor": 0.99,
+      "comet_floor": 0.99,
+      "passed": true
+    },
+    {
+      "fixture_id": "translation-council-002",
+      "bleu": 1.0,
+      "comet_adequacy": 1.0,
+      "bleu_floor": 0.99,
+      "comet_floor": 0.99,
+      "passed": true
+    },
+    {
+      "fixture_id": "translation-budget-003",
+      "bleu": 1.0,
+      "comet_adequacy": 1.0,
+      "bleu_floor": 0.99,
+      "comet_floor": 0.99,
+      "passed": true
+    }
+  ],
+  "summary_scores": [
+    {
+      "fixture_id": "summary-motion-001",
+      "rouge_l": 1.0,
+      "factual_correctness": 1.0,
+      "rouge_l_floor": 0.45,
+      "factual_correctness_floor": 1.0,
+      "passed": true
+    }
+  ],
+  "passed": true
+}

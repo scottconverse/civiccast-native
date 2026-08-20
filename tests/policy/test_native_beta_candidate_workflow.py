@@ -100,7 +100,7 @@ def _assert_embedded_closure_smoke_contract(text: str, job: dict[str, object]) -
     assert names.index(smoke_name) < names.index(
         "Sign the native bootstrap (Azure Artifact Signing)"
     )
-    assert names.index(smoke_name) < names.index("Upload private native-beta candidate artifact")
+    assert names.index(smoke_name) < names.index("Upload the native-beta candidate artifact")
 
 
 def _assert_msvc_install_path_binding(job: dict[str, object]) -> None:
@@ -178,9 +178,7 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert "--pack-public-key-base64 $env:PACK_PUBLIC_KEY_BASE64" in bootstrap
     assert "--pack-signing-key-id $env:PACK_SIGNING_KEY_ID" in bootstrap
 
-    trust_bridge = steps["Verify the compiled bootstrap trusts the freshly signed packs"][
-        "run"
-    ]
+    trust_bridge = steps["Verify the compiled bootstrap trusts the freshly signed packs"]["run"]
     assert '$sideload = "artifacts/native-beta"' in trust_bridge
     assert "Copy-Item" not in trust_bridge
     assert '"--require-component", "native-ffmpeg-runtime"' in trust_bridge
@@ -213,7 +211,7 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert 'Get-Item "artifacts/native-beta/packs/native-cuda-runtime.ccpack"' in checksums
     assert "GetRelativePath($artifactRoot, $asset.FullName)" in checksums
 
-    upload = steps["Upload private native-beta candidate artifact"]
+    upload = steps["Upload the native-beta candidate artifact"]
     assert upload["uses"] == "actions/upload-artifact@v4"
     assert "native-app-payload.ccpack" in upload["with"]["path"]
     assert "native-server-binaries.ccpack" in upload["with"]["path"]
@@ -221,9 +219,7 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert "native-ollama-runtime.ccpack" in upload["with"]["path"]
     assert "native-cuda-runtime.ccpack" in upload["with"]["path"]
     assert "CivicCast (Native)_*_x64-setup.exe" in upload["with"]["path"]
-    upload_paths = {
-        line.strip() for line in upload["with"]["path"].splitlines() if line.strip()
-    }
+    upload_paths = {line.strip() for line in upload["with"]["path"].splitlines() if line.strip()}
     for component in (
         "native-app-payload",
         "native-server-binaries",
@@ -288,12 +284,10 @@ def test_native_beta_candidate_workflow_keeps_build_scratch_out_of_the_source_tr
         '$serverPackCache = Join-Path $env:RUNNER_TEMP "civiccast-server-pack-cache"' in pack_build
     )
     assert (
-        '$ffmpegPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ffmpeg-pack-cache"'
-        in pack_build
+        '$ffmpegPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ffmpeg-pack-cache"' in pack_build
     )
     assert (
-        '$ollamaPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ollama-pack-cache"'
-        in pack_build
+        '$ollamaPackCache = Join-Path $env:RUNNER_TEMP "civiccast-ollama-pack-cache"' in pack_build
     )
     assert "--payload-out $appPayload" in pack_build
     assert "--build-scratch $appScratch" in pack_build
@@ -307,9 +301,7 @@ def test_native_beta_candidate_workflow_keeps_build_scratch_out_of_the_source_tr
 
     upload_paths = [
         line.strip()
-        for line in steps["Upload private native-beta candidate artifact"]["with"][
-            "path"
-        ].splitlines()
+        for line in steps["Upload the native-beta candidate artifact"]["with"]["path"].splitlines()
         if line.strip()
     ]
     assert all(path.startswith("artifacts/native-beta/") for path in upload_paths)
@@ -338,7 +330,9 @@ def test_native_beta_candidate_workflow_embeds_verified_closure_and_smokes_befor
     _assert_embedded_closure_smoke_contract(text, workflow["jobs"]["build-native-beta"])
 
 
-def test_native_beta_candidate_workflow_contract_rejects_standalone_gstreamer_pack_or_late_smoke() -> None:
+def test_native_beta_candidate_workflow_contract_rejects_standalone_gstreamer_pack_or_late_smoke() -> (
+    None
+):
     text = WORKFLOW.read_text(encoding="utf-8")
     third_pack = text.replace(
         "native-server-binaries.ccpack\n",

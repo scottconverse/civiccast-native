@@ -22,4 +22,4 @@ jobs:
         with:
           name: v1.1-loudness-proof
           path: docs/releases/evidence/v1.1-loudness-proof.md
-          retention-days: 7
+          retention-days: 1

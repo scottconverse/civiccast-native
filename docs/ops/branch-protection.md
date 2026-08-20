@@ -87,10 +87,11 @@ Notes:
   two path-filtered workflows that would deadlock code-only PRs:
   - `Pandoc PDF/DOCX render` (`ci-docs.yml`, `paths: docs/** …`) — runs + still
     blocks on doc-touching PRs, but is NOT a hard required-context.
-  - `Cleanroom (Docker, full install gate)` (`ci-cleanroom-e2e.yml`,
-    `paths: …`) — deliberately path-filtered because the Docker full-install
-    gate is heavy and should not run on every trivial PR; de-path-filtering it
-    just to require it would slow every PR. Left non-required.
+  - `Cleanroom (Docker, full install gate)` (`ci-cleanroom-e2e.yml`) — GONE.
+    It was the Docker/Linux full-install gate and is not in this repository.
+    Nothing replaced it: the native line currently has no automated
+    full-install gate, so there is no heavy install context to require or
+    exempt here.
   To make either a hard required-context safely, de-path-filter the workflow
   (so it always reports) first — accepting the per-PR cost — then add its name
   to `contexts`. If a required workflow is renamed, update `contexts`.

@@ -780,7 +780,16 @@ def test_locate_msvc_runtime_prefers_configured_build_tools_root(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     build_tools = tmp_path / "BuildTools"
-    runtime = build_tools / "VC" / "Redist" / "MSVC" / "14.50.35719" / "x64" / "Microsoft.VC145.CRT" / "msvcp140.dll"
+    runtime = (
+        build_tools
+        / "VC"
+        / "Redist"
+        / "MSVC"
+        / "14.50.35719"
+        / "x64"
+        / "Microsoft.VC145.CRT"
+        / "msvcp140.dll"
+    )
     runtime.parent.mkdir(parents=True)
     runtime.write_bytes(b"reviewed-msvc-runtime")
     monkeypatch.setattr(

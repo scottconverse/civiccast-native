@@ -212,7 +212,7 @@ function ActivityPubSetupPanel({ lane }: { lane: InstallerLane }) {
         </div>
       </div>
       <a
-        href="https://github.com/scottconverse/civiccast/blob/main/docs/ops/activitypub-federation.md"
+        href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/activitypub-federation.md"
         target="_blank"
         rel="noreferrer"
       >
@@ -351,6 +351,14 @@ function App() {
   const downloadExperienceDisabled = searchParams.get("downloadExperience") === "0";
   const [installer, setInstaller] = useState<InstallerState | null>(null);
   const [activeLaneId, setActiveLaneId] = useState("");
+  // Set only when the OPERATOR clicks a step in the wizard rail, cleared when
+  // they take an action that legitimately advances the flow. The 2-second
+  // background poll below used to call setActiveLaneId unconditionally, so a
+  // step the operator opened to read was yanked away within two seconds --
+  // every two seconds, for as long as setup ran. Their choice outranks the
+  // poll's opinion; the poll's opinion still applies when they have not made
+  // one.
+  const operatorPickedLaneId = useRef<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [operatorConsoleUrl, setOperatorConsoleUrl] = useState(DEFAULT_OPERATOR_CONSOLE_URL);
   const [progress, setProgress] = useState<InstallerProgress | null>(null);
@@ -454,6 +462,10 @@ function App() {
         }
         setProgress(savedProgress);
         setInstaller(refreshed);
+        // An action advances the flow, so the operator's sticky step pick
+        // is spent here rather than pinning the wizard for the rest of
+        // the install.
+        operatorPickedLaneId.current = null;
         setActiveLaneId(firstActionableLane(refreshed)?.id ?? refreshed.lanes[0]?.id ?? "runtime");
       } catch (error) {
         if (ignore) {
@@ -479,6 +491,10 @@ function App() {
       const refreshed = await loadInstallerState(requestedState, savedProgress);
       setProgress(savedProgress);
       setInstaller(refreshed);
+      // An action advances the flow, so the operator's sticky step pick
+      // is spent here rather than pinning the wizard for the rest of
+      // the install.
+      operatorPickedLaneId.current = null;
       setActiveLaneId(firstActionableLane(refreshed)?.id ?? refreshed.lanes[0]?.id ?? "runtime");
       if (refreshed.operatorConsoleUrl) {
         setOperatorConsoleUrl(refreshed.operatorConsoleUrl);
@@ -529,7 +545,13 @@ function App() {
       const refreshed = await loadInstallerState(requestedState, savedProgress);
       setProgress(savedProgress);
       setInstaller(refreshed);
-      setActiveLaneId(firstActionableLane(refreshed)?.id ?? refreshed.lanes[0]?.id ?? activeLaneId);
+      const picked = operatorPickedLaneId.current;
+      const pickedStillExists = picked ? refreshed.lanes.some((lane) => lane.id === picked) : false;
+      setActiveLaneId(
+        pickedStillExists && picked
+          ? picked
+          : firstActionableLane(refreshed)?.id ?? refreshed.lanes[0]?.id ?? activeLaneId
+      );
       if (refreshed.operatorConsoleUrl) {
         setOperatorConsoleUrl(refreshed.operatorConsoleUrl);
       }
@@ -575,6 +597,10 @@ function App() {
     const savedProgress = await refreshProgress();
     const refreshed = await loadInstallerState(requestedState, savedProgress);
     setInstaller(refreshed);
+    // An action advances the flow, so the operator's sticky step pick
+    // is spent here rather than pinning the wizard for the rest of
+    // the install.
+    operatorPickedLaneId.current = null;
     setActiveLaneId(firstActionableLane(refreshed)?.id ?? lane.id);
   };
 
@@ -591,6 +617,10 @@ function App() {
     const savedProgress = await refreshProgress();
     const refreshed = await loadInstallerState(requestedState, savedProgress);
     setInstaller(refreshed);
+    // An action advances the flow, so the operator's sticky step pick
+    // is spent here rather than pinning the wizard for the rest of
+    // the install.
+    operatorPickedLaneId.current = null;
     setActiveLaneId(firstActionableLane(refreshed)?.id ?? lane.id);
   };
 
@@ -645,6 +675,10 @@ function App() {
       const savedProgress = await refreshProgress();
       const refreshed = await loadInstallerState(requestedState, savedProgress);
       setInstaller(refreshed);
+      // An action advances the flow, so the operator's sticky step pick
+      // is spent here rather than pinning the wizard for the rest of
+      // the install.
+      operatorPickedLaneId.current = null;
       setActiveLaneId(firstActionableLane(refreshed)?.id ?? lane.id);
     } finally {
       if (startsWindowsBootstrap) {
@@ -789,7 +823,7 @@ function App() {
               : "Download, install, create the first admin, then open the dashboard without terminal commands."}
           </p>
           <a
-            href="https://github.com/scottconverse/civiccast/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20"
+            href="https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20"
             target="_blank"
             rel="noreferrer"
           >
@@ -845,7 +879,10 @@ function App() {
               aria-current={lane.id === activeLane.id ? "step" : undefined}
               className={`step step-${lane.status}`}
               key={lane.id}
-              onClick={() => setActiveLaneId(lane.id)}
+              onClick={() => {
+                operatorPickedLaneId.current = lane.id;
+                setActiveLaneId(lane.id);
+              }}
               type="button"
             >
               <span className="step-number">{index + 1}</span>
@@ -951,7 +988,7 @@ function App() {
           CivicCast is open source: program code under the Apache License 2.0, documentation under CC BY 4.0. Full
           license texts and legal notices:{" "}
           <a
-            href="https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md"
+            href="https://github.com/scottconverse/civiccast-native/blob/main/LEGAL-NOTICES.md"
             target="_blank"
             rel="noreferrer"
           >

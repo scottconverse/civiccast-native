@@ -49,7 +49,6 @@ continues at zero GitHub-hosted runner spend:
 - `ci-docs`
 - `ci-a11y`
 - `ci-operator-build`
-- `ci-cleanroom-e2e`
 - `diagnose-blackwell-runtime` (manual only; pinned to `rtx5070` for v0.5
   caption runtime proof)
 
@@ -84,9 +83,11 @@ The job names remain unchanged so branch-protection contexts do not drift.
 Before claiming a PR head is green, inspect logs for the claimed behavior:
 
 - `ci-test`: `634 passed` and `Real-Postgres tests passed: 19`.
-- `ci-cleanroom-e2e`: `CivicCast cleanroom: ALL GATES GREEN`. The cleanroom
-  includes the recorded-asset HLS playback gate, synthetic RTMP live-source
-  Gate 8, and real-Postgres testcontainers gate.
+- `ci-cleanroom-e2e`: NOT IN THIS REPOSITORY. It was the Docker/Linux lane's
+  gate, carrying the recorded-asset HLS playback check, the synthetic RTMP
+  live-source Gate 8, and the real-Postgres testcontainers gate. Do not cite
+  `CivicCast cleanroom: ALL GATES GREEN` as evidence for anything here -- no
+  run of it exists against any native commit.
 - `ci-docs`: rendered `USER-MANUAL.pdf` and `USER-MANUAL.docx`.
 - `ci-a11y`: public and operator axe suites pass.
 - `ci-operator-build`: operator lint and build pass.

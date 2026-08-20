@@ -1,0 +1,20 @@
+{
+  "asset_id": "live-caption-proof",
+  "attempted_rewrite_text": "Motion fails seven to zero.",
+  "caption_playlist_path": "C:\\Users\\scott\\AppData\\Local\\Temp\\civiccast-live-caption-proof-30min\\captions\\en\\playlist.m3u8",
+  "caption_segment_has_text": true,
+  "caption_segment_path": "C:\\Users\\scott\\AppData\\Local\\Temp\\civiccast-live-caption-proof-30min\\captions\\en\\seg000.vtt",
+  "committed_text": "Motion carries seven to zero. Window 1.",
+  "duplicate_review_item_count": 0,
+  "first_pass_committed_count": 0,
+  "latency_budget_seconds": 4.0,
+  "manifest_has_subtitle_track": true,
+  "manifest_path": "C:\\Users\\scott\\AppData\\Local\\Temp\\civiccast-live-caption-proof-30min\\playlist.m3u8",
+  "max_commit_latency_seconds": 0.2265,
+  "mean_commit_latency_seconds": 0.0851,
+  "no_retroactive_rewrite": true,
+  "passed": true,
+  "review_item_count": 450,
+  "second_pass_committed_count": 450,
+  "window_count": 450
+}

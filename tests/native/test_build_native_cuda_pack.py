@@ -315,11 +315,19 @@ def test_refuses_a_wheel_with_no_dlls_under_its_bin_prefix(
     )
     pins = {
         "cublas": builder._WheelPin(
-            "nvidia-cublas-cu12", "0.0.0", cublas_path.name, cublas_bytes, cublas_sha256,
+            "nvidia-cublas-cu12",
+            "0.0.0",
+            cublas_path.name,
+            cublas_bytes,
+            cublas_sha256,
             "nvidia/cublas/bin/",
         ),
         "cudnn": builder._WheelPin(
-            "nvidia-cudnn-cu12", "0.0.0", cudnn_path.name, cudnn_bytes, cudnn_sha256,
+            "nvidia-cudnn-cu12",
+            "0.0.0",
+            cudnn_path.name,
+            cudnn_bytes,
+            cudnn_sha256,
             "nvidia/cudnn/bin/",
         ),
     }
@@ -346,11 +354,19 @@ def test_refuses_colliding_dll_basenames_between_the_two_wheels(
     )
     pins = {
         "cublas": builder._WheelPin(
-            "nvidia-cublas-cu12", "0.0.0", cublas_path.name, cublas_bytes, cublas_sha256,
+            "nvidia-cublas-cu12",
+            "0.0.0",
+            cublas_path.name,
+            cublas_bytes,
+            cublas_sha256,
             "nvidia/cublas/bin/",
         ),
         "cudnn": builder._WheelPin(
-            "nvidia-cudnn-cu12", "0.0.0", cudnn_path.name, cudnn_bytes, cudnn_sha256,
+            "nvidia-cudnn-cu12",
+            "0.0.0",
+            cudnn_path.name,
+            cudnn_bytes,
+            cudnn_sha256,
             "nvidia/cudnn/bin/",
         ),
     }
@@ -380,11 +396,19 @@ def test_stops_when_a_required_dll_name_is_absent_from_the_wheels(
     )
     pins = {
         "cublas": builder._WheelPin(
-            "nvidia-cublas-cu12", "0.0.0", cublas_path.name, cublas_bytes, cublas_sha256,
+            "nvidia-cublas-cu12",
+            "0.0.0",
+            cublas_path.name,
+            cublas_bytes,
+            cublas_sha256,
             "nvidia/cublas/bin/",
         ),
         "cudnn": builder._WheelPin(
-            "nvidia-cudnn-cu12", "0.0.0", cudnn_path.name, cudnn_bytes, cudnn_sha256,
+            "nvidia-cudnn-cu12",
+            "0.0.0",
+            cudnn_path.name,
+            cudnn_bytes,
+            cudnn_sha256,
             "nvidia/cudnn/bin/",
         ),
     }

@@ -837,8 +837,7 @@ class Supervisor:
                 if winerror is None and exc.args:
                     winerror = exc.args[0]
                 _LOGGER.warning(
-                    "postgres postmaster (pid %s) containment fault forensics: "
-                    "winerror=%s; %s",
+                    "postgres postmaster (pid %s) containment fault forensics: winerror=%s; %s",
                     postmaster.pid,
                     winerror,
                     self._job.containment_diagnostics(postmaster.pid),

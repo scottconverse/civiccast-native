@@ -1,0 +1,9 @@
+{
+    "exited_at":  "2026-06-23T18:17:31.0160405Z",
+    "exit_code":  0,
+    "installer":  "C:\\CivicCastTester\\v3-beta-release-prep\\artifacts\\release\\v3.0.0-beta1-reroll-8bef23b9\\civiccast-3.0.0-beta1-windows-setup.exe",
+    "installed_exe":  "C:\\Users\\scott\\AppData\\Local\\CivicCast Installer\\civiccast-installer.exe",
+    "installed_exists":  false,
+    "installed_sha256":  null
+}
+

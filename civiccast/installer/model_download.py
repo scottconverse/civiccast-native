@@ -72,7 +72,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from civiccast.native.caption_tiers import CAPTION_TIER_REGISTRY, FLOOR_TIER_ID
+from civiccast.native.caption_tiers import (
+    CAPTION_TIER_REGISTRY,
+    FLOOR_TIER_ID,
+    CaptionTierBindingError,
+)
 from civiccast.native.supervisor.install_layout import (
     ollama_model_store_candidates,
     resolve_install_layout,
@@ -351,11 +355,23 @@ def _download_floor_caption_model(cache_dir: Path | None) -> str:
         ) from exc
 
     spec = CAPTION_TIER_REGISTRY[FLOOR_TIER_ID].require_bound()
+    # require_bound() raises unless both of these are set, but it returns the
+    # same CaptionTierSpec whose fields are still declared str | None, so the
+    # guarantee is invisible to a type checker. Re-stating it here narrows the
+    # types AND keeps the failure mode identical -- an unbound tier raises
+    # CaptionTierBindingError either way, never reaches the network.
+    repo_id = spec.model_repository
+    revision = spec.model_revision
+    if repo_id is None or revision is None:  # pragma: no cover - require_bound guarantees this
+        raise CaptionTierBindingError(
+            f"caption tier {spec.tier_id!r} passed require_bound() without a "
+            "pinned repository/revision"
+        )
     local_dir = cache_dir / spec.model_directory if cache_dir is not None else None
     return str(
         snapshot_download(  # nosec B615 - revision is pinned via caption_tiers.py.
-            repo_id=spec.model_repository,
-            revision=spec.model_revision,
+            repo_id=repo_id,
+            revision=revision,
             local_dir=str(local_dir) if local_dir is not None else None,
         )
     )

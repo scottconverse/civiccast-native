@@ -1649,7 +1649,16 @@ def create_app() -> FastAPI:
             app.state, "schema_status", SchemaStatus(state="unknown")
         )
         readiness = "healthy" if schema_status.state == "current" else "degraded"
-        body = {"status": readiness, "version": _reported_version(), "schema": schema_status.state}
+        # Annotated to match the declared return type. Inferred from this
+        # literal alone it is dict[str, str], which then rejects the bool and
+        # int fields the maintenance branch adds below -- and dict is
+        # invariant, so the return failed too. Four errors, one missing
+        # annotation.
+        body: dict[str, str | bool | int] = {
+            "status": readiness,
+            "version": _reported_version(),
+            "schema": schema_status.state,
+        }
         bootstrap_instance_id = os.environ.get("CIVICCAST_BOOTSTRAP_INSTANCE_ID")
         if bootstrap_instance_id:
             body["bootstrap_instance_id"] = bootstrap_instance_id
@@ -1852,7 +1861,11 @@ def _is_api_path(scope: Scope) -> bool:
     static directory (e.g. rewritten to ``index.html``) by the time some call
     sites reach it."""
 
-    path = scope.get("path", "")
+    # Scope is a Mapping[str, Any], so scope.get returns Any and the
+    # comparison below is Any-typed too -- mypy cannot see that this
+    # returns a bool. Bind it as str first, which is also what the
+    # startswith call already assumes.
+    path: str = scope.get("path", "")
     return path == "/api" or path.startswith("/api/")
 
 

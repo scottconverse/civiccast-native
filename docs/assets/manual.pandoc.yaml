@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+#
+# Single source of truth for how docs/USER-MANUAL.md is rendered.
+#
+# Both renderers use this file so they cannot drift:
+#   - scripts/render-user-manual.sh  (used by the ci-docs workflow)
+#   - scripts/render_user_manual.py  (used for the tracked docs/ artifacts)
+#
+# Run pandoc from the repository root so the relative paths below resolve.
+
+pdf-engine: xelatex
+
+toc: true
+toc-depth: 2
+number-sections: false
+
+include-in-header:
+  - docs/assets/manual-style.tex
+
+resource-path:
+  - docs
+
+variables:
+  documentclass: article
+  # Gives \maketitle a standalone cover page instead of crowding the title,
+  # the subtitle, and the table of contents onto page 1.
+  classoption:
+    - titlepage
+  papersize: letter
+  fontsize: 11pt
+  geometry:
+    - top=2.4cm
+    - bottom=2.4cm
+    - left=2.6cm
+    - right=2.6cm
+  # Liberation ships on the CI image and on operator workstations; it is the
+  # font pairing this manual has always rendered with. Keep the trio together.
+  mainfont: Liberation Serif
+  sansfont: Liberation Sans
+  monofont: Liberation Mono
+  colorlinks: true
+  # Quoted: unquoted "[HTML]{...}" parses as a YAML list, not a hyperref spec.
+  linkcolor: "[HTML]{1F4E8C}"
+  urlcolor: "[HTML]{2458A6}"
+  toccolor: "[HTML]{16365C}"
+  secnumdepth: 0

@@ -15,8 +15,24 @@ permissions:
 jobs:
   lint:
     name: Lint and type check
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # workflow-cost: windows-pr-justification -- mypy's result is
+    # platform-dependent for this product and only the Windows answer is
+    # actionable. Same commit, same command, same 621 source files:
+    #
+    #   ubuntu-latest   112 errors in 17 files
+    #   windows-latest   23 errors in 11 files
+    #
+    # The extra 89 are artifacts of type-checking Windows-only code on Linux --
+    # sys.platform-guarded branches and pywin32 imports that have no stubs
+    # there. Checking types on a platform this product never runs on reports
+    # problems that cannot happen and hides the ones that can.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        # Git Bash ships on the Windows runners; keeping bash means these steps
+        # are unchanged apart from where they execute.
+        shell: bash
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -92,4 +108,11 @@ jobs:
         # cost hours on 2026-08-19/20 (apt dpkg-lock, a hung download-artifact).
         # actionlint does not check this. Fail closed instead of trusting that
         # nobody forgets again.
-        run: python scripts/policy/check_workflow_timeouts.py
+        #
+        # PyYAML is installed explicitly: this job runs a bare setup-python with
+        # no project install (its sibling, check_action_pins.py, is stdlib-only),
+        # so the checker's `import yaml` raised ModuleNotFoundError on its first
+        # CI run even though it passed locally.
+        run: |
+          python -m pip install --quiet "PyYAML>=6"
+          python scripts/policy/check_workflow_timeouts.py
