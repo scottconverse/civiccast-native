@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: CC-BY-4.0
+title: "[general] "
+labels: ["general"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Anything that doesn't fit the other categories — civic-tech conversation, PEG
+        community topics, open-source process, vendor comparisons, philosophy of the
+        project. Be kind and stay on-topic.
+  - type: textarea
+    id: topic
+    attributes:
+      label: What's on your mind?
+    validations:
+      required: true

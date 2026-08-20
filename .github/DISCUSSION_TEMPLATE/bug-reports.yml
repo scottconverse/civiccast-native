@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: CC-BY-4.0
+title: "[bug-discussion] "
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Most bugs belong in Issues, not Discussions.
+
+        If you can reproduce it, please open an
+        [Issue](../../issues/new?template=bug-report.yml) instead — Issues are tracked,
+        assigned, and closed on fix. Discussions are not.
+
+        Use this template **only** if you're not sure whether what you're seeing is a bug,
+        and want to talk it through before filing.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What you're seeing
+      description: Describe the behavior. Include screenshots or logs if you have them.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: CivicCast version
+      placeholder: "3.0.0 or commit SHA"
+    validations:
+      required: false
+  - type: dropdown
+    id: confidence
+    attributes:
+      label: How confident are you this is a bug?
+      options:
+        - "Pretty sure — I just want a second opinion before filing"
+        - "Could be misconfiguration on my end"
+        - "Could be expected behavior I'm misreading"
+    validations:
+      required: true

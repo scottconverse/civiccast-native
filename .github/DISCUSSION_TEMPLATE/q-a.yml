@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: CC-BY-4.0
+title: "[q&a] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Operator and admin questions: install, configuration, integrations, day-to-day
+        troubleshooting. If you've found a reproducible defect, please open an
+        [Issue](../../issues/new/choose) instead — Issues are tracked, Discussions are not.
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: The goal in your own words. Be specific.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you've already tried
+      description: Docs you read, configs you changed, error messages you saw.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - "Install / first-run"
+        - "Playout / scheduling"
+        - "Captions / loudness / EAS"
+        - "OTT / web player"
+        - "Alerting / SMS / email"
+        - "Analytics / reporting"
+        - "Integrations (Twilio, Stripe, agenda, etc.)"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CivicCast version
+      placeholder: "3.0.0 or commit SHA"
+    validations:
+      required: false

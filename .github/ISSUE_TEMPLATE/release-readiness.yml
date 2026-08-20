@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: CC-BY-4.0
+name: Release readiness checklist
+description: Track release-readiness evidence before publishing a CivicCast release.
+title: "Release readiness: "
+labels:
+  - ops
+  - testing
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this checklist when preparing a release candidate. Link evidence rather than pasting long logs.
+  - type: input
+    id: version
+    attributes:
+      label: Version or tag
+      description: Release version, tag, or candidate identifier.
+      placeholder: v2.0.x
+    validations:
+      required: true
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: Required gates
+      options:
+        - label: Python lint/type/test gates passed.
+        - label: Frontend build/lint gates passed.
+        - label: Playwright/a11y gates passed where applicable.
+        - label: Policy and OpenAPI checks passed.
+        - label: Release artifacts generated and verified.
+        - label: CAPABILITIES.md reviewed and updated if subsystem state changed.
+        - label: Release notes identify proof boundaries and known gaps.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence links
+      description: Link CI runs, release artifact runs, proof logs, and any manual verification notes.
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Residual risks
+      description: List known release risks, deferred work, and explicit non-goals.

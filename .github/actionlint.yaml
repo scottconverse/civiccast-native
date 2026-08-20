@@ -1,0 +1,12 @@
+# actionlint configuration.
+# Declare the project's self-hosted runner labels so actionlint does not flag
+# them as unknown. These are real labels on CivicCast's self-hosted runners
+# (Scott's GPU/desktop/VM boxes) used by the GPU-benchmark, soak, cleanroom,
+# and AI-release-proof workflows.
+self-hosted-runner:
+  labels:
+    - scott-desktop
+    - rtx
+    - rtx5070
+    - ubuntu-2404
+    - vm

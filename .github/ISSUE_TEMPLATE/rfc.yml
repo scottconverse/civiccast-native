@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: CC-BY-4.0
+name: RFC (Request for Comments)
+description: Propose a substantial architectural change, new module, or policy.
+title: "[rfc] "
+labels: ["rfc", "discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        RFCs are for changes too substantial for a regular feature request — new modules, schema changes that affect Mode B compatibility, license posture changes, governance changes, or anything that would warrant a new ADR.
+
+        Closed architectural decisions (see [CLAUDE.md](../../CLAUDE.md)) require an RFC before they can be reopened.
+  - type: input
+    id: title
+    attributes:
+      label: RFC title
+      placeholder: "Federation handshake protocol for Mode B"
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem this solves; why the project should care.
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: Detailed design
+      description: |
+        Be specific. Include data flow, schemas, API surfaces, failure modes,
+        and what changes in operator-facing behavior. If this would result in a
+        new ADR, sketch the ADR's "Decision," "Alternatives considered," and
+        "Consequences" sections.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches and why they were rejected.
+  - type: textarea
+    id: drawbacks
+    attributes:
+      label: Drawbacks and risks
+      description: What new costs or risks does this introduce?
+  - type: textarea
+    id: spec-impact
+    attributes:
+      label: Spec / release plan impact
+      description: Which sections of the spec or release plan would change? Which rung absorbs the work?
+  - type: checkboxes
+    id: closed-decision
+    attributes:
+      label: Closed-decision check
+      options:
+        - label: This RFC does not reopen a closed architectural decision (or, if it does, I have stated which one and why reopening is justified).
+          required: true

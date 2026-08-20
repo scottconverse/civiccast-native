@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: CC-BY-4.0
+name: Provider integration checklist
+description: Track mock-to-real provider work against the provider registry/factory contract.
+title: "Provider integration: "
+labels:
+  - provider
+  - mock-to-real
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Provider registry/factory work must land before individual real adapters. Keep mock providers available for tests and local development.
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - Provider registry/factory
+        - SMTP email
+        - Webhooks
+        - YouTube
+        - Internet Archive
+        - NAS archive
+        - Cable headend
+        - CDN selector
+    validations:
+      required: true
+  - type: checkboxes
+    id: contract
+    attributes:
+      label: Integration contract
+      options:
+        - label: Config contract defined and documented.
+        - label: Mock-to-real selection is config-driven.
+        - label: Readiness checks are exposed.
+        - label: Operator-visible provider status is available.
+        - label: Secrets are redacted in logs and errors.
+        - label: Contract tests exercise the provider seam.
+        - label: CAPABILITIES.md updated in the same PR if state changes.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Describe the adapter behavior, external API/IO used, and what remains mocked or deferred.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests and proof
+      description: List contract, unit, integration, or proof tests required for this provider.

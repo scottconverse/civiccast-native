@@ -1,0 +1,17 @@
+# Allowlist for ci-blob-size-guard.yml
+#
+# One shell glob per line. Anything matched here is permitted to exceed the
+# 5 MiB per-file limit. '#' starts a comment; blank lines are ignored.
+#
+# Adding an entry is a deliberate, reviewable act. Before you add one, check
+# that the file is not actually a build artifact:
+#
+#   - Installers, tester packages, proof kits, soak outputs, model weights,
+#     media renders -> GitHub Release assets, or local disk referenced by
+#     path + hash from a committed text log. NEVER a committed file.
+#   - Git LFS is not an escape hatch. Objects pushed to LFS are permanent;
+#     this repo already has 17.25 GB parked there from exactly that mistake.
+#
+# Format: <glob>    # YYYY-MM-DD reason
+#
+# (no entries)

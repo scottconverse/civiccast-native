@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: CC-BY-4.0
+name: QA regression checklist
+description: Track a focused QA regression pass for a workflow or subsystem.
+title: "QA regression: "
+labels:
+  - testing
+body:
+  - type: input
+    id: subsystem
+    attributes:
+      label: Subsystem or workflow
+      placeholder: Public portal playback, live finalization, provider registry
+    validations:
+      required: true
+  - type: checkboxes
+    id: coverage
+    attributes:
+      label: Regression coverage
+      options:
+        - label: Happy path covered.
+        - label: Empty/loading/error states covered where applicable.
+        - label: Permission/auth behavior covered where applicable.
+        - label: Retry/failure behavior covered where applicable.
+        - label: Accessibility/responsive checks covered where applicable.
+        - label: CAPABILITIES.md reviewed for state changes.
+  - type: textarea
+    id: commands
+    attributes:
+      label: Commands or manual steps
+      description: Commands run, manual test steps, and environment details.
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: Results
+      description: Summarize pass/fail results, defects found, and follow-up issues.
+    validations:
+      required: true

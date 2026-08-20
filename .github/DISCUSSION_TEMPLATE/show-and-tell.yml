@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: CC-BY-4.0
+title: "[show & tell] "
+labels: ["show-and-tell"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Show what you built! Station setups, broadcasts, custom CG, dashboards, mods,
+        screenshots, war stories. This category is for celebration and inspiration — no
+        polish required.
+  - type: input
+    id: station
+    attributes:
+      label: Station or org (optional)
+      placeholder: "e.g. Anytown PEG, or just 'a small town in Oregon'"
+    validations:
+      required: false
+  - type: textarea
+    id: what
+    attributes:
+      label: What are you sharing?
+      description: A setup, a broadcast, a screenshot, a workflow you came up with.
+    validations:
+      required: true
+  - type: textarea
+    id: story
+    attributes:
+      label: The story behind it
+      description: Anything fun, hard, or unexpected? Lessons for others?
+    validations:
+      required: false

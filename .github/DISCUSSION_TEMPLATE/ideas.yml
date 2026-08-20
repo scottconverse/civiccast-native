@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: CC-BY-4.0
+title: "[idea] "
+labels: ["enhancement", "idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests, parity proposals, "wouldn't it be great if". For settled-spec
+        proposals, an RFC issue may be a better home — see
+        [.github/ISSUE_TEMPLATE/rfc.yml](../../issues/new?template=rfc.yml).
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can't you do today, or what's painful about how it works now?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Your proposal
+      description: How you'd like it to work. A rough sketch is fine.
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Roughly, how big is this?
+      options:
+        - "Small tweak (config flag, UI polish)"
+        - "Medium feature (new endpoint, new screen)"
+        - "Large feature (new subsystem)"
+        - "Not sure"
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+    validations:
+      required: false

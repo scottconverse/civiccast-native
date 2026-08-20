@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: CC-BY-4.0
+title: "[announcement] "
+labels: ["announcement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Announcements are maintainer-posted: releases, milestones, scheduled changes, and
+        end-of-life notices. If you want to **ask** about a release, post in **Q&A** instead.
+  - type: input
+    id: version
+    attributes:
+      label: Version or milestone
+      placeholder: "e.g. 3.0.0 / Stage F gauntlet pass"
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Plain-English summary — what changed and who it affects.
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Capability list, upgrade notes, known issues, links to release notes.
+    validations:
+      required: false
+  - type: textarea
+    id: action
+    attributes:
+      label: Anything operators should do
+      description: Upgrade steps, config changes, or "nothing — this is informational".
+    validations:
+      required: false

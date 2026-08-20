@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: CC-BY-4.0
+
+# Default ownership for CivicCast changes.
+* @scottconverse
+
+# Core backend and operational surfaces.
+/civiccast/ @scottconverse
+/scripts/ @scottconverse
+/tools/ @scottconverse
+/alembic/ @scottconverse
+
+# Frontend applications.
+/civiccast/apps/ @scottconverse
+
+# Documentation, release, and governance.
+/docs/ @scottconverse
+/*.md @scottconverse
+/.github/ @scottconverse
