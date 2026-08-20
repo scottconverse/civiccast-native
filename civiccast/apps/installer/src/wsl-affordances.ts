@@ -56,7 +56,7 @@ export function isWslBootstrapLane(_installer: InstallerState, _lane: InstallerL
  * was already the behaviour on a native station; it is simply no longer
  * conditional. Same reasoning that keeps the ffmpeg lane out of "blocked".
  */
-export function canRepairLane(installer: InstallerState, lane: InstallerLane) {
+export function canRepairLane(_installer: InstallerState, lane: InstallerLane) {
   if (isWslBootstrapLaneId(lane)) {
     return false;
   }

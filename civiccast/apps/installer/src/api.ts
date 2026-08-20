@@ -461,22 +461,19 @@ function nativeInstallerBridgeAvailable(): boolean {
 }
 
 /**
- * Corrects a GUESSED installer state's `platform` when it disagrees with the
+ * Corrects a stored installer state's `platform` when it disagrees with the
  * one fact this page can always answer for itself: whether a native command
  * bridge exists at all (N-07, carried).
  *
- * `loadInstallerState`'s "we could not reach the summary API, and there is no
- * saved progress either" fallback is `installerFixtures.blocked`, which
- * hardcodes `platform: "windows-wsl2"` -- a reasonable guess for the WSL2 web
- * installer's own unreachable-backend case, but false on a native Tauri
- * station during the same brief window (a fresh launch before the
- * supervisor's control-plane child has bound its port, a reset, or right
- * after a reinstall). `nativeInstallerBridgeAvailable()` is definitional: it
- * is true only inside the real native webview, never in the WSL2 web
- * installer or a browser preview, so it always outranks a guessed fixture.
- * The real `/api/staff/installer/summary` response is untouched by this --
- * it already reports the deployment correctly (`installer/service.py`'s
- * `_native_windows_station()`).
+ * The unreachable-API fallback no longer needs this -- `installerFixtures.
+ * blocked` is `windows-native` at source. What still does is SAVED LOCAL
+ * PROGRESS: a state file written by a pre-native build, which an upgrade over
+ * an existing install can hand back verbatim. `nativeInstallerBridgeAvailable()`
+ * is definitional -- true only inside the real native webview -- so it
+ * outranks anything a file claims.
+ *
+ * The real `/api/staff/installer/summary` response is untouched by this; it
+ * reports the deployment itself (`installer/service.py`).
  */
 function withHonestNativePlatform(state: InstallerState): InstallerState {
   if (state.platform === "windows-wsl2" && nativeInstallerBridgeAvailable()) {

@@ -58,7 +58,7 @@ function matches(command: string, snake: string, camel: string): boolean {
 describe("cancel, retry and the stall watchdog on the downloading screen", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let invokeMock: ReturnType<typeof vi.fn>;
+  let invokeMock: ReturnType<typeof vi.fn<Bridge["invoke"]>>;
   /** What the polled installer state currently reports. Mutated by each test. */
   let reported: AcquisitionComponentProgress[];
 

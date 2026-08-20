@@ -2,6 +2,11 @@
 // Copyright (c) The CivicCast Authors
 
 import { expect, test } from "@playwright/test";
+// Type-only: erased at runtime, so the addInitScript bodies below stay
+// serializable. Without it the `progress` literals infer a NARROWER type
+// than the real one and reject the optional fields the product reads --
+// e.g. operator_console_url, which api.ts does read.
+import type { InstallerProgress } from "../src/types";
 
 const states = [
   "loading",
@@ -664,7 +669,7 @@ test("installer polls native progress until delayed runtime ready is visible", a
 
 test("installer shows live runtime activity and opens the console once when setup becomes ready", async ({ page }) => {
   await page.addInitScript(() => {
-    let progress = {
+    let progress: InstallerProgress = {
       schema_version: 1,
       current_lane_id: "platform",
       status: "ready",

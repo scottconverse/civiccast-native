@@ -112,6 +112,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Runs on EVERY PR, not just the native-beta build below. `vite build`
+      # transpiles with esbuild, which strips types without checking them, and
+      # this app had no tsconfig.json at all -- so nothing in CI had ever
+      # type-checked the installer frontend. Its first run found a crash path
+      # in the downloading screen (see components-catalog.ts's
+      # catalogComponentForWireId).
+      - name: Type check
+        timeout-minutes: 10
+        run: npm run typecheck
+
       - name: Unit tests (vitest)
         run: npm run test:unit
 

@@ -44,7 +44,13 @@ import {
   type DownloadTotalDenominator,
   type ProgressSample
 } from "./acquisition-progress";
-import { catalogComponent, COMPONENT_CATALOG, type CatalogComponent, type ComponentId } from "./components-catalog";
+import {
+  catalogComponent,
+  catalogComponentForWireId,
+  COMPONENT_CATALOG,
+  type CatalogComponent,
+  type ComponentId
+} from "./components-catalog";
 import type { AcquisitionComponentProgress, HardwareGpu, HardwareInventory } from "./types";
 
 const ACQUISITION_DONE_KEY = "civiccast.acquisitionFlowComplete";
@@ -654,11 +660,13 @@ export function DownloadingScreen({
 }) {
   const { components, startError, measuredIds } = useAcquisitionComponents(selectedIds);
   const nowMillis = useNowMillis(true);
-  const sampleHistory = useRef<Map<ComponentId, ProgressSample[]>>(new Map());
+  const sampleHistory = useRef<Map<string, ProgressSample[]>>(new Map());
   const overallSamples = useRef<ProgressSample[]>([]);
-  const lastByteChange = useRef<Map<ComponentId, { bytes: number; atMillis: number }>>(new Map());
+  const lastByteChange = useRef<Map<string, { bytes: number; atMillis: number }>>(new Map());
   const screenEntryMillis = useRef<number>(Date.now());
-  const [expandedId, setExpandedId] = useState<ComponentId | null>(null);
+  // `string`, not ComponentId: this only ever holds an id read back off an
+  // AcquisitionComponentProgress row, which is whatever the backend sent.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [retryMessage, setRetryMessage] = useState<string>("");
   const [cancelError, setCancelError] = useState<string>("");
 
@@ -782,7 +790,10 @@ export function DownloadingScreen({
       >
         <ul className="download-list" aria-label="Component downloads">
           {components.map((component) => {
-            const catalog = catalogComponent(component.id);
+            // Wire-supplied id: `catalogComponent` THROWS on one it does not
+            // know, and this call is inside render -- see
+            // catalogComponentForWireId's doc for the blank-screen it caused.
+            const catalog = catalogComponentForWireId(component.id);
             const history = sampleHistory.current.get(component.id) ?? [];
             if (component.state === "downloading" || component.state === "verifying") {
               // A fresh Date.now() here, NOT the `nowMillis` display-clock state:

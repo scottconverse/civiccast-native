@@ -1,16 +1,26 @@
-// Global test setup for the operator console.
+// Guarantee a working Web Storage in the jsdom test environment.
 //
-// 1. testing-library's DOM cleanup after every test, so renders never leak into
-//    the next test's document.body (vitest provides no global afterEach).
-// 2. A working Web Storage, repaired when the host Node ships its own
-//    `localStorage` global and jsdom's Storage never gets installed. See the
-//    twin of this block in apps/installer/vitest.setup.ts for the full
-//    explanation -- keep the two in step. On this suite the defect failed 26 of
-//    621 tests on Node 25 while CI, on Node 20, was green.
-import { afterEach } from 'vitest'
-import { cleanup } from '@testing-library/react'
-
-afterEach(cleanup)
+// Node 24+ ships its own global `localStorage` / `sessionStorage`. vitest's
+// jsdom environment sees those globals already defined and leaves them alone,
+// so `window.localStorage` ends up being Node's object rather than jsdom's
+// Storage -- and reading a method off it fails:
+//
+//   TypeError: window.localStorage.clear is not a function
+//
+// That is an ENVIRONMENT defect, not a product one. It made 38 of 153 unit
+// tests fail on a developer machine running Node 25 while CI, pinned to Node
+// 20, saw 1 failure -- i.e. the local suite stopped being able to tell the
+// truth about the code, in either direction.
+//
+// This installs a real Storage implementation when the environment's one is
+// unusable. It matches the DOM spec's Storage semantics (string coercion,
+// `length`, `key(i)`, null for a missing key) so a test that passes here
+// passes in a browser. When jsdom's own Storage is present -- which is what
+// happens on Node 20 and on any Node without built-in Web Storage -- this does
+// nothing at all.
+//
+// Keep it until the repo's Node floor is above the divergence and CI and
+// developer machines run the same major.
 
 function storageIsUsable(candidate: unknown): boolean {
   if (!candidate || typeof candidate !== "object") {

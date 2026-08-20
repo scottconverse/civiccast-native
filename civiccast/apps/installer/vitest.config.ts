@@ -5,6 +5,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "jsdom",
+    // Repairs Web Storage when the host Node ships its own globals and jsdom's
+    // Storage never gets installed -- see vitest.setup.ts.
+    setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.ts"]
   }
 });

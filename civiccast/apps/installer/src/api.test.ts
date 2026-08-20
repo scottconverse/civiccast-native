@@ -277,18 +277,22 @@ describe("loadInstallerState unreachable-API fallback (N-07 carried)", () => {
     expect(state.lanes[0].nextStep).toMatch(/updates by itself/i);
   });
 
-  it("keeps reporting windows-wsl2 for the browser-preview / WSL2 web installer (no native bridge)", async () => {
+  it("does not claim a WSL2 deployment in a plain browser preview either", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
         throw new Error("ECONNREFUSED");
       })
     );
-    // No window.__TAURI__ at all: matches a plain browser preview or the
-    // WSL2-guest web installer, neither of which is the native build.
+    // No window.__TAURI__ at all. This used to match TWO things: a plain
+    // browser preview, and the WSL2-guest web installer -- and the fallback
+    // reported "windows-wsl2" to cover the second. The second is gone. What is
+    // left is a developer running `npm run dev`, previewing the SAME native
+    // product, so the honest answer is the same one the packaged build gives.
 
     const state = await loadInstallerState();
 
-    expect(state.platform).toBe("windows-wsl2");
+    expect(state.platform).toBe("windows-native");
+    expect(JSON.stringify(state)).not.toMatch(/wsl/i);
   });
 });
