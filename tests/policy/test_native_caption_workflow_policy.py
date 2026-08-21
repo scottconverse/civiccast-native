@@ -569,7 +569,13 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # none marked `windows_only`, so both lanes move by +12. Re-derived by an
     # actual `--collect-only` run on this tree, not by arithmetic: (1634,
     # 1826) -> (1646, 1838).
-    assert (collect("not windows_only"), collect()) == (1646, 1838)
+    #
+    # PR #13 (2026-08-21, fix/postgres-launcher-log-sharing): 5 new
+    # platform-independent pinning tests for the pg_ctl launcher-stdio split
+    # (tests/native/test_supervisor_children.py, test_supervisor_service.py);
+    # none marked `windows_only`, so both lanes move by +5. Re-derived by an
+    # actual `--collect-only` run on this tree: (1646, 1838) -> (1651, 1843).
+    assert (collect("not windows_only"), collect()) == (1651, 1843)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
