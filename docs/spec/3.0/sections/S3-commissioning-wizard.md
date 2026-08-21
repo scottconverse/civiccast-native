@@ -1,5 +1,53 @@
 # S3 — Commissioning Wizard: Extend the Installer with Headend/SDI/Output Proof
 
+> **Status (2026-08-21 audit correction):** The banner below this note
+> previously claimed "Built for v3.0.0-beta1" while the code did not exist —
+> corrected here to state what actually landed on
+> `feat/s1-station-profile-s3-commissioning`, contract-tested (rung 0):
+>
+> - `civiccast/installer/commissioning.py`: all §3 models
+>   (`CommissioningCheckItem/Report`, `ChannelCommissioningSetup`,
+>   `OutputProofSettings`, `CommissioningProofRun`, `CommissioningReport`,
+>   plus `CommissioningState` for resumability) and the 4 step functions
+>   (`run_first_run_cable_checks` — the real 11 checks per §6;
+>   `validate_channel_commissioning_setup`; `run_output_proof` — a real
+>   bounded ffmpeg SMPTE-bars+tone generator run concurrently with the
+>   existing TSDuck compliance prober, fail-closed, never a soft pass;
+>   `build_commissioning_report`). 23 unit tests
+>   (`tests/installer/test_commissioning.py`).
+> - Persistence: `read_commissioning_state`/`save_commissioning_*` in
+>   `station_state.py`, one namespaced `"commissioning"` key, no DB table —
+>   proven resumable (a step's result survives independently of the others).
+> - API: `POST /api/staff/cable/commissioning/{checks,channel-setup,
+>   output-proof,report}` + `GET .../state`, role-gated per §4
+>   (`setup_admin` write, `+support_admin` read). 11 API tests
+>   (`tests/installer/test_commissioning_api.py`).
+> - CLI: `cable doctor`/`commission`/`support-bundle` (the last is a thin
+>   wrapper over the pre-existing `create_diagnostic_bundle`, not
+>   reimplemented), `output sdi-readiness`, `egress output test-pattern`. 6
+>   CLI tests (`tests/test_cli_commissioning.py`).
+> - Operator console: `CommissioningWizardScreen.tsx` — screens 8-11 as 4
+>   server-state-gated panels (channel/headend pickers reuse the existing
+>   `listChannelProfiles`/`listHeadendProfiles` endpoints; screen 11 reuses
+>   the existing `SupportBundlePanel` rather than rebuilding it).
+> - Honesty boundaries carried into the code: `CommissioningProofRun`
+>   always carries a `not_claimed` line stating the proof is a headend/
+>   format proof via ffmpeg + TSDuck, not physical SDI/DeckLink hardware
+>   proof; a requested CEA-708 passthrough check is always reported as
+>   unverified (`cea708_verified: null`) with a blocker, never faked
+>   true/false, since no decode-back check is wired in yet.
+> - **Not done in this slice**: the output-proof HTTP endpoint blocks
+>   synchronously for the full `duration_seconds` (up to 30 min) rather than
+>   running as a background job with progress polling — functionally
+>   correct (mirrors the pre-existing `egress verify` CLI's same bounded-
+>   blocking posture) but not the smoothest console UX for a long proof
+>   run; a future slice could move it to a job/poll pattern. CEA-708
+>   decode-back verification itself (S11) is not implemented — only its
+>   honest non-claim.
+>
+> The banner immediately below is the section's **original**
+> (pre-2026-08-21) claim, retained for history.
+>
 > **Status:** Built for v3.0.0-beta1; headend/lab acceptance remains external.
 > **Scope:** Extend the existing 7-step first-run installer wizard with 4 new commissioning steps (headend/SDI/TSDuck/output-proof), wiring CLI commands (`doctor`, `commission`, `support-bundle`, `output sdi-readiness`, `egress verify`), and ensuring phone-first operator guidance where possible. **Per-tier TURNKEY install** — the installer does ALL the work (no BYO): it installs/configures the **GStreamer playout engine** (S15) and its tier-appropriate plugins/SDKs, and the output proof now exercises that engine end-to-end to the selected sink.
 

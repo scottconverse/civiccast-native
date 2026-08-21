@@ -11895,6 +11895,531 @@
         ]
       }
     },
+    "/api/staff/station-box-profile": {
+      "get": {
+        "tags": [
+          "staff",
+          "platform"
+        ],
+        "summary": "Full StationBoxProfile: cable/PEG appliance-readiness report",
+        "operationId": "get_station_box_profile_api_staff_station_box_profile_get",
+        "parameters": [
+          {
+            "name": "deployment_profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "public-meetings",
+                "streaming-only",
+                "peg-cable"
+              ],
+              "type": "string",
+              "default": "public-meetings",
+              "title": "Deployment Profile"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StationBoxProfile"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/station-box-profile/readiness": {
+      "get": {
+        "tags": [
+          "staff",
+          "platform"
+        ],
+        "summary": "PEG readiness roll-up only (cheap poll target for S8 alerting)",
+        "operationId": "get_station_box_profile_readiness_api_staff_station_box_profile_readiness_get",
+        "parameters": [
+          {
+            "name": "deployment_profile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "public-meetings",
+                "streaming-only",
+                "peg-cable"
+              ],
+              "type": "string",
+              "default": "public-meetings",
+              "title": "Deployment Profile"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PegReadinessRollup"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/station/profile": {
+      "get": {
+        "tags": [
+          "staff",
+          "station"
+        ],
+        "summary": "Read the station identity profile (name, timezone, storage roots, channel)",
+        "operationId": "get_station_profile_api_staff_station_profile_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StationProfile"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "staff",
+          "station"
+        ],
+        "summary": "Edit the mutable station identity profile fields",
+        "operationId": "put_station_profile_api_staff_station_profile_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StationProfileUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StationProfile"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/cable/commissioning/state": {
+      "get": {
+        "tags": [
+          "staff",
+          "commissioning"
+        ],
+        "summary": "Resumable commissioning progress across all 4 steps",
+        "operationId": "get_commissioning_state_api_staff_cable_commissioning_state_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommissioningState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/cable/commissioning/checks": {
+      "post": {
+        "tags": [
+          "staff",
+          "commissioning"
+        ],
+        "summary": "S3 Screen 8: run the first-run cable commissioning checks",
+        "operationId": "post_commissioning_checks_api_staff_cable_commissioning_checks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommissioningChecksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommissioningCheckReport"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/cable/commissioning/channel-setup": {
+      "post": {
+        "tags": [
+          "staff",
+          "commissioning"
+        ],
+        "summary": "S3 Screen 9: validate and persist the channel output setup",
+        "operationId": "post_channel_setup_api_staff_cable_commissioning_channel_setup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelCommissioningSetup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelCommissioningSetup"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Channel setup failed validation."
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/cable/commissioning/output-proof": {
+      "post": {
+        "tags": [
+          "staff",
+          "commissioning"
+        ],
+        "summary": "S3 Screen 10: run the bounded output-proof test pattern + TSDuck probe",
+        "operationId": "post_output_proof_api_staff_cable_commissioning_output_proof_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutputProofSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommissioningProofRun"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Egress config not found for the channel."
+          },
+          "503": {
+            "description": "Durable storage is not ready."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/cable/commissioning/report": {
+      "post": {
+        "tags": [
+          "staff",
+          "commissioning"
+        ],
+        "summary": "S3 Screen 11: build and persist the final commissioning report",
+        "operationId": "post_commissioning_report_api_staff_cable_commissioning_report_post",
+        "parameters": [
+          {
+            "name": "station_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Station Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommissioningReport"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An earlier commissioning step has not completed yet."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/runtime-safe-to-air": {
       "get": {
         "tags": [
@@ -28851,6 +29376,51 @@
         "title": "AgendaItemUpdate",
         "description": "Patch-an-item request body (absent keys unchanged).\n\n``item_id`` / ``agenda_id`` are set at creation and not editable here."
       },
+      "AiDefaultSelection": {
+        "properties": {
+          "summary_model": {
+            "type": "string",
+            "title": "Summary Model"
+          },
+          "translate_model": {
+            "type": "string",
+            "title": "Translate Model"
+          },
+          "caption_model": {
+            "type": "string",
+            "title": "Caption Model"
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "ram-12b",
+              "ram-e4b",
+              "forced-cpu"
+            ],
+            "title": "Basis"
+          },
+          "detected_ram_gb": {
+            "type": "number",
+            "title": "Detected Ram Gb"
+          },
+          "rationale": {
+            "type": "string",
+            "title": "Rationale"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "summary_model",
+          "translate_model",
+          "caption_model",
+          "basis",
+          "detected_ram_gb",
+          "rationale"
+        ],
+        "title": "AiDefaultSelection",
+        "description": "Memory-adaptive summary/translate/caption default (S1 \u00a76.1; S13 owns selection UI)."
+      },
       "AiModelAvailability": {
         "properties": {
           "features": {
@@ -31376,6 +31946,55 @@
         ],
         "title": "AutoScheduleRuleInput"
       },
+      "BackupDestinationRef": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "reachable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reachable"
+          },
+          "destination": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination"
+          },
+          "last_probe_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Probe At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "configured"
+        ],
+        "title": "BackupDestinationRef",
+        "description": "References the installer's own BackupStatus probe; not re-probed here."
+      },
       "BackupManifest": {
         "properties": {
           "schema_version": {
@@ -32130,6 +32749,48 @@
         ],
         "title": "CPUInfo",
         "description": "CPU summary."
+      },
+      "CableOsVerdict": {
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "single-windows-pc-ok",
+              "native-linux-recommended",
+              "soak-pending"
+            ],
+            "title": "Verdict"
+          },
+          "os_kind": {
+            "type": "string",
+            "enum": [
+              "wsl2",
+              "linux",
+              "macos",
+              "windows",
+              "unknown"
+            ],
+            "title": "Os Kind"
+          },
+          "rationale": {
+            "type": "string",
+            "title": "Rationale"
+          },
+          "decision_ref": {
+            "type": "string",
+            "title": "Decision Ref",
+            "default": "MASTER \u00a713.1"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "verdict",
+          "os_kind",
+          "rationale"
+        ],
+        "title": "CableOsVerdict",
+        "description": "Cable-grade OS verdict (MASTER \u00a713.1, soak-pending until Scott decides)."
       },
       "CallSheet": {
         "properties": {
@@ -33894,6 +34555,121 @@
         "title": "ChannelBrandingUpdate",
         "description": "Operator-editable channel branding fields."
       },
+      "ChannelCommissioningSetup": {
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Channel Id"
+          },
+          "channel_name": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Channel Name"
+          },
+          "output_format": {
+            "type": "string",
+            "enum": [
+              "720p30",
+              "1080i60",
+              "1080p30",
+              "SD480i60"
+            ],
+            "title": "Output Format"
+          },
+          "headend_profile_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Headend Profile Id"
+          },
+          "destination": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Destination"
+          },
+          "muxrate_kbps": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Muxrate Kbps"
+          },
+          "sdi_device": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sdi Device"
+          },
+          "fill_policy": {
+            "type": "string",
+            "enum": [
+              "slate",
+              "loop",
+              "silence"
+            ],
+            "title": "Fill Policy",
+            "default": "slate"
+          },
+          "emergency_slate_asset_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emergency Slate Asset Id"
+          },
+          "cea708_passthrough": {
+            "type": "boolean",
+            "title": "Cea708 Passthrough",
+            "default": false
+          },
+          "watch_folder_path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watch Folder Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "channel_id",
+          "channel_name",
+          "output_format",
+          "headend_profile_id",
+          "destination"
+        ],
+        "title": "ChannelCommissioningSetup",
+        "description": "Operator's Screen 9 channel choices."
+      },
       "ChannelLogEntry": {
         "properties": {
           "occurrence_id": {
@@ -34653,6 +35429,426 @@
         ],
         "title": "ChapterMarker",
         "description": "Moderated chapter marker shared by VOD, podcast, and apps."
+      },
+      "ClockReport": {
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "utc_offset_minutes": {
+            "type": "integer",
+            "title": "Utc Offset Minutes"
+          },
+          "system_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "System Time"
+          },
+          "ntp_sync": {
+            "type": "string",
+            "enum": [
+              "synced",
+              "unsynced",
+              "unknown"
+            ],
+            "title": "Ntp Sync"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "timezone",
+          "utc_offset_minutes",
+          "system_time",
+          "ntp_sync"
+        ],
+        "title": "ClockReport",
+        "description": "System clock sanity for a 24/7 program log."
+      },
+      "CommissioningCheckItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Label"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "warning",
+              "skipped"
+            ],
+            "title": "Status"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          },
+          "next_step": {
+            "type": "string",
+            "title": "Next Step",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "status"
+        ],
+        "title": "CommissioningCheckItem",
+        "description": "One check from the Screen 8 first-run cable checks list."
+      },
+      "CommissioningCheckReport": {
+        "properties": {
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "station_name": {
+            "type": "string",
+            "title": "Station Name",
+            "default": ""
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CommissioningCheckItem"
+            },
+            "type": "array",
+            "title": "Checks"
+          },
+          "ready": {
+            "type": "boolean",
+            "title": "Ready"
+          },
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blockers"
+          },
+          "support_bundle_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Support Bundle Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "generated_at",
+          "ready"
+        ],
+        "title": "CommissioningCheckReport",
+        "description": "All Screen 8 checks collected."
+      },
+      "CommissioningChecksRequest": {
+        "properties": {
+          "deployment_profile": {
+            "type": "string",
+            "enum": [
+              "public-meetings",
+              "streaming-only",
+              "peg-cable"
+            ],
+            "title": "Deployment Profile",
+            "default": "public-meetings"
+          },
+          "station_name": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Station Name",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "CommissioningChecksRequest"
+      },
+      "CommissioningProofRun": {
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Channel Id"
+          },
+          "proof_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Proof Id"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "test_pattern": {
+            "type": "string",
+            "enum": [
+              "bars",
+              "live",
+              "slate"
+            ],
+            "title": "Test Pattern"
+          },
+          "compliance_probe_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComplianceProbeResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sdi_device_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SdiReadiness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cea708_verified": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cea708 Verified"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "partial",
+              "not-run"
+            ],
+            "title": "Verdict"
+          },
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blockers"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          },
+          "raw_ts_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Ts Path"
+          },
+          "not_claimed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Not Claimed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "channel_id",
+          "proof_id",
+          "started_at",
+          "test_pattern",
+          "verdict"
+        ],
+        "title": "CommissioningProofRun",
+        "description": "Screen 10 proof result."
+      },
+      "CommissioningReport": {
+        "properties": {
+          "station_name": {
+            "type": "string",
+            "title": "Station Name"
+          },
+          "channel_name": {
+            "type": "string",
+            "title": "Channel Name"
+          },
+          "headend_profile_id": {
+            "type": "string",
+            "title": "Headend Profile Id"
+          },
+          "output_format": {
+            "type": "string",
+            "enum": [
+              "720p30",
+              "1080i60",
+              "1080p30",
+              "SD480i60"
+            ],
+            "title": "Output Format"
+          },
+          "sdi_device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sdi Device"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Completed At"
+          },
+          "first_run_checks": {
+            "$ref": "#/components/schemas/CommissioningCheckReport"
+          },
+          "channel_setup": {
+            "$ref": "#/components/schemas/ChannelCommissioningSetup"
+          },
+          "proof_run": {
+            "$ref": "#/components/schemas/CommissioningProofRun"
+          },
+          "ready_for_broadcast": {
+            "type": "boolean",
+            "title": "Ready For Broadcast"
+          },
+          "next_steps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Next Steps"
+          },
+          "support_bundle_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Support Bundle Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "station_name",
+          "channel_name",
+          "headend_profile_id",
+          "output_format",
+          "completed_at",
+          "first_run_checks",
+          "channel_setup",
+          "proof_run",
+          "ready_for_broadcast"
+        ],
+        "title": "CommissioningReport",
+        "description": "Screen 11 final handoff."
+      },
+      "CommissioningState": {
+        "properties": {
+          "first_run_checks": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommissioningCheckReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "channel_setup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChannelCommissioningSetup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proof_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommissioningProofRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommissioningReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "CommissioningState",
+        "description": "Resumable per-step commissioning progress (station-state JSON, no DB)."
       },
       "CommitRequest": {
         "properties": {
@@ -37243,6 +38439,37 @@
         "title": "CustomFieldValueInput",
         "description": "One value in a PUT-asset-values request (field_id + canonical string)."
       },
+      "DeckLinkEngineRef": {
+        "properties": {
+          "card_present": {
+            "type": "boolean",
+            "title": "Card Present"
+          },
+          "bmd_sdk_present": {
+            "type": "boolean",
+            "title": "Bmd Sdk Present"
+          },
+          "sdk_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sdk Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "card_present",
+          "bmd_sdk_present"
+        ],
+        "title": "DeckLinkEngineRef",
+        "description": "BMD Desktop Video SDK readiness the GStreamer ``decklinkvideosink`` needs."
+      },
       "DeliveryRecord": {
         "properties": {
           "delivery_id": {
@@ -39055,6 +40282,150 @@
         "title": "EmergencyOverlay",
         "description": "Emergency-notification overlay state for the resident player."
       },
+      "EngineBlocker": {
+        "properties": {
+          "tier": {
+            "type": "string",
+            "enum": [
+              "base",
+              "sdi-broadcast",
+              "premium-cg"
+            ],
+            "title": "Tier"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "next_step": {
+            "type": "string",
+            "title": "Next Step"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tier",
+          "reason",
+          "next_step"
+        ],
+        "title": "EngineBlocker",
+        "description": "One unmet prerequisite for a higher engine tier."
+      },
+      "EngineReadiness": {
+        "properties": {
+          "gstreamer_present": {
+            "type": "boolean",
+            "title": "Gstreamer Present"
+          },
+          "gstreamer_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gstreamer Version"
+          },
+          "required_plugins_present": {
+            "type": "boolean",
+            "title": "Required Plugins Present"
+          },
+          "missing_plugins": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing Plugins"
+          },
+          "opengl_45": {
+            "type": "boolean",
+            "title": "Opengl 45"
+          },
+          "hw_encoder": {
+            "type": "string",
+            "enum": [
+              "nvenc",
+              "vaapi",
+              "qsv",
+              "none"
+            ],
+            "title": "Hw Encoder"
+          },
+          "decklink": {
+            "$ref": "#/components/schemas/DeckLinkEngineRef"
+          },
+          "ndi_sdk": {
+            "$ref": "#/components/schemas/NdiSdkRef"
+          },
+          "native_os": {
+            "type": "boolean",
+            "title": "Native Os"
+          },
+          "next_step": {
+            "type": "string",
+            "title": "Next Step",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "gstreamer_present",
+          "required_plugins_present",
+          "opengl_45",
+          "hw_encoder",
+          "decklink",
+          "ndi_sdk",
+          "native_os"
+        ],
+        "title": "EngineReadiness",
+        "description": "GStreamer playout-engine prerequisites per S15 tier."
+      },
+      "EngineTierVerdict": {
+        "properties": {
+          "qualifies_for": {
+            "type": "string",
+            "enum": [
+              "base",
+              "sdi-broadcast",
+              "premium-cg"
+            ],
+            "title": "Qualifies For"
+          },
+          "base_ok": {
+            "type": "boolean",
+            "title": "Base Ok"
+          },
+          "sdi_broadcast_ok": {
+            "type": "boolean",
+            "title": "Sdi Broadcast Ok"
+          },
+          "premium_cg_ok": {
+            "type": "boolean",
+            "title": "Premium Cg Ok"
+          },
+          "blockers": {
+            "items": {
+              "$ref": "#/components/schemas/EngineBlocker"
+            },
+            "type": "array",
+            "title": "Blockers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "qualifies_for",
+          "base_ok",
+          "sdi_broadcast_ok",
+          "premium_cg_ok"
+        ],
+        "title": "EngineTierVerdict",
+        "description": "Which S15 engine tier this box qualifies for (fail-closed)."
+      },
       "EpgExportConfig": {
         "properties": {
           "config_id": {
@@ -40025,6 +41396,73 @@
         "type": "object",
         "title": "FeedUpdateInput",
         "description": "Patch-feed payload (only set fields are applied)."
+      },
+      "FfmpegFeatureReport": {
+        "properties": {
+          "detected": {
+            "type": "boolean",
+            "title": "Detected"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "supported": {
+            "type": "boolean",
+            "title": "Supported"
+          },
+          "has_decklink": {
+            "type": "boolean",
+            "title": "Has Decklink"
+          },
+          "has_ndi": {
+            "type": "boolean",
+            "title": "Has Ndi"
+          },
+          "has_libx264": {
+            "type": "boolean",
+            "title": "Has Libx264"
+          },
+          "has_loudnorm": {
+            "type": "boolean",
+            "title": "Has Loudnorm"
+          },
+          "byo_sdi_binary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byo Sdi Binary"
+          },
+          "next_step": {
+            "type": "string",
+            "title": "Next Step",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "detected",
+          "supported",
+          "has_decklink",
+          "has_ndi",
+          "has_libx264",
+          "has_loudnorm"
+        ],
+        "title": "FfmpegFeatureReport",
+        "description": "Transitional / utility-path ffmpeg feature flags (not the playout engine)."
       },
       "FireCueInput": {
         "properties": {
@@ -43496,6 +44934,63 @@
         "title": "NdiReadinessResponse",
         "description": "BYO-NDI posture: the station's ffmpeg wire + live relay statuses."
       },
+      "NdiSdkRef": {
+        "properties": {
+          "sdk_present": {
+            "type": "boolean",
+            "title": "Sdk Present"
+          },
+          "sdk_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sdk Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sdk_present"
+        ],
+        "title": "NdiSdkRef",
+        "description": "NDI SDK 5/6 readiness the GStreamer ``ndisink`` needs."
+      },
+      "NetworkReport": {
+        "properties": {
+          "hostname": {
+            "type": "string",
+            "title": "Hostname"
+          },
+          "primary_interface_up": {
+            "type": "boolean",
+            "title": "Primary Interface Up"
+          },
+          "headend_interface_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headend Interface Hint"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "hostname",
+          "primary_interface_up"
+        ],
+        "title": "NetworkReport",
+        "description": "Network context; headend interface detail deferred to S2."
+      },
       "NotificationDelivery": {
         "properties": {
           "delivery_id": {
@@ -43873,6 +45368,56 @@
         ],
         "title": "OutboxRecord",
         "description": "One locally generated ActivityPub activity."
+      },
+      "OutputProofSettings": {
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Channel Id"
+          },
+          "test_pattern": {
+            "type": "string",
+            "enum": [
+              "bars",
+              "live",
+              "slate"
+            ],
+            "title": "Test Pattern",
+            "default": "bars"
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "maximum": 1800.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Duration Seconds",
+            "default": 60
+          },
+          "output_directory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Directory"
+          },
+          "capture_raw_ts": {
+            "type": "boolean",
+            "title": "Capture Raw Ts",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "channel_id"
+        ],
+        "title": "OutputProofSettings",
+        "description": "Screen 10 controls for one output-proof run."
       },
       "OverlayCompositorPlan": {
         "properties": {
@@ -44391,6 +45936,73 @@
         ],
         "title": "PdfARecordMetadata",
         "description": "PDF/A-3B export metadata."
+      },
+      "PegReadinessDimension": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "green",
+              "yellow",
+              "red"
+            ],
+            "title": "Color"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "next_step": {
+            "type": "string",
+            "title": "Next Step",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "color",
+          "message"
+        ],
+        "title": "PegReadinessDimension",
+        "description": "One dimension of the PEG readiness roll-up."
+      },
+      "PegReadinessRollup": {
+        "properties": {
+          "overall": {
+            "type": "string",
+            "enum": [
+              "green",
+              "yellow",
+              "red"
+            ],
+            "title": "Overall"
+          },
+          "dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/PegReadinessDimension"
+            },
+            "type": "array",
+            "title": "Dimensions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "overall"
+        ],
+        "title": "PegReadinessRollup",
+        "description": "Fail-closed green/yellow/red roll-up across the cable + engine dimensions."
       },
       "PlanConflict": {
         "properties": {
@@ -49043,6 +50655,43 @@
         "title": "RehearsalReport",
         "description": "Private first-broadcast rehearsal result."
       },
+      "ReleaseIdentityRef": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "package_verified": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Verified"
+          },
+          "proof_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proof State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "ReleaseIdentityRef",
+        "description": "Release/build identity."
+      },
       "RelinkAssetRequest": {
         "properties": {
           "new_file_path": {
@@ -51443,6 +53092,41 @@
         "title": "ScheduleItemResponse",
         "description": "Response payload for the schedule endpoints.\n\nAudit-team v0.3.0 UX-003: ``asset_title`` is denormalized into the\nresponse so the operator-console schedule UI can render the human\ntitle (not the opaque asset_id) without a second round-trip per row.\nThe store fills it via a JOIN at list/get time. ``None`` is allowed\nfor legacy rows where the FK target may have been deleted; the UI\nfalls back to the asset_id in that case."
       },
+      "SdiReadiness": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "decklink_muxer_missing",
+              "ffmpeg_unavailable"
+            ],
+            "title": "Status"
+          },
+          "ffmpeg_detected": {
+            "type": "boolean",
+            "title": "Ffmpeg Detected"
+          },
+          "muxer_present": {
+            "type": "boolean",
+            "title": "Muxer Present"
+          },
+          "next_step": {
+            "type": "string",
+            "title": "Next Step",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "ffmpeg_detected",
+          "muxer_present"
+        ],
+        "title": "SdiReadiness",
+        "description": "Whether the BYO ffmpeg build can drive a DeckLink output."
+      },
       "SdiReadinessResponse": {
         "properties": {
           "byo_ffmpeg_configured": {
@@ -53558,6 +55242,93 @@
         "title": "StationAuthResponse",
         "description": "Operator console auth response with a hidden API bearer token."
       },
+      "StationBoxProfile": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version",
+            "default": 1
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "civiccast_version": {
+            "type": "string",
+            "title": "Civiccast Version"
+          },
+          "hardware": {
+            "$ref": "#/components/schemas/HardwareProbe"
+          },
+          "system_ram_total_gb": {
+            "type": "number",
+            "title": "System Ram Total Gb"
+          },
+          "engine": {
+            "$ref": "#/components/schemas/EngineReadiness"
+          },
+          "ffmpeg": {
+            "$ref": "#/components/schemas/FfmpegFeatureReport"
+          },
+          "clock": {
+            "$ref": "#/components/schemas/ClockReport"
+          },
+          "network": {
+            "$ref": "#/components/schemas/NetworkReport"
+          },
+          "backup_destination": {
+            "$ref": "#/components/schemas/BackupDestinationRef"
+          },
+          "release_identity": {
+            "$ref": "#/components/schemas/ReleaseIdentityRef"
+          },
+          "sdi": {
+            "$ref": "#/components/schemas/SdiReadiness"
+          },
+          "tsduck": {
+            "$ref": "#/components/schemas/TsduckStatus"
+          },
+          "ndi_sdk": {
+            "$ref": "#/components/schemas/NdiSdkRef"
+          },
+          "qualified_engine_tier": {
+            "$ref": "#/components/schemas/EngineTierVerdict"
+          },
+          "ai_default": {
+            "$ref": "#/components/schemas/AiDefaultSelection"
+          },
+          "peg_readiness": {
+            "$ref": "#/components/schemas/PegReadinessRollup"
+          },
+          "cable_os_verdict": {
+            "$ref": "#/components/schemas/CableOsVerdict"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "generated_at",
+          "civiccast_version",
+          "hardware",
+          "system_ram_total_gb",
+          "engine",
+          "ffmpeg",
+          "clock",
+          "network",
+          "backup_destination",
+          "release_identity",
+          "sdi",
+          "tsduck",
+          "ndi_sdk",
+          "qualified_engine_tier",
+          "ai_default",
+          "peg_readiness",
+          "cable_os_verdict"
+        ],
+        "title": "StationBoxProfile",
+        "description": "Full cable/PEG appliance-readiness report. Computed, never persisted."
+      },
       "StationChannelProfile": {
         "properties": {
           "channel_id": {
@@ -53738,6 +55509,76 @@
         ],
         "title": "StationProfile",
         "description": "Operator-facing station identity created during first-admin setup."
+      },
+      "StationProfileUpdateRequest": {
+        "properties": {
+          "station_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Station Name"
+          },
+          "station_timezone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Station Timezone"
+          },
+          "public_base_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Base Url"
+          },
+          "default_channel_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Channel Id"
+          },
+          "storage_locations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StationStorageLocations"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StationProfileUpdateRequest",
+        "description": "Mutable subset of ``StationProfile`` an operator can edit post-setup.\n\nIdentity (``admin_username``), recovery-kit, and role fields are not\neditable through this surface -- they have their own dedicated flows\n(recovery, role management). Every field is optional so a PUT can\nchange just one of them."
       },
       "StationRecoveryRequest": {
         "properties": {

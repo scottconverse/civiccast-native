@@ -15,6 +15,52 @@ came across and what deliberately did not.
 
 ### Added
 
+- **S1 StationBoxProfile — cable/PEG appliance-readiness capability model.**
+  `civiccast/platform/station_box_profile.py` extends `hardware.probe()`
+  with a full readiness report: GStreamer playout-engine prerequisite
+  detection per S15 tier (`EngineReadiness`/`EngineTierVerdict`), a
+  RAM-keyed AI-default table (`select_ai_defaults`, `gemma4:12b` at ≥16GB
+  system RAM), the fail-closed `PegReadinessRollup`, and the
+  soak-pending `CableOsVerdict` (never prints a green single-Windows-PC
+  cable certification before MASTER §13.1 resolves). Computed, no DB
+  table. `civiccast doctor --profile` renders it (human + `--json`); the
+  plain `doctor`/`doctor --json` output is unchanged for back-compat.
+  `GET /api/staff/station-box-profile[/readiness]`, role-gated. New
+  `GET`/`PUT /api/staff/station/profile` exposes the mutable station
+  identity (name, timezone, storage roots) with an env-override-first
+  precedence loader (`resolve_station_timezone`/`resolve_station_display_name`/
+  `resolve_station_storage_locations` in `installer/station_state.py`);
+  `app.py`'s `_station_tz` now delegates to the shared loader instead of
+  re-implementing the precedence chain inline. New operator-console
+  **Station Profile** screen. 40 + 13 + 11 new tests.
+- **S3 commissioning wizard (screens 8-11).**
+  `civiccast/installer/commissioning.py` implements the post-first-admin
+  cable commissioning flow: first-run cable checks (11 checks, reusing S1's
+  `StationBoxProfile` and the existing durable-storage/NATS health probes —
+  no re-implemented probes), channel-setup validation against the S2
+  `HeadendProfile` catalog, a bounded output-proof run (a real ffmpeg
+  SMPTE-bars+tone generator driven concurrently with the existing TSDuck
+  compliance prober, fail-closed), and the final commissioning report.
+  State persists to station-state JSON (`CommissioningState`, one
+  namespaced key, no DB table) so a restart mid-commissioning resumes
+  from the last completed step. New `POST /api/staff/cable/commissioning/
+  {checks,channel-setup,output-proof,report}` + `GET .../state`. New CLI:
+  `cable doctor`/`commission`/`support-bundle`, `output sdi-readiness`,
+  `egress output test-pattern`. New operator-console **Cable
+  Commissioning** screen (4 server-state-gated panels). Every proof run
+  carries an explicit `not_claimed` boundary: this is a headend/format
+  proof via ffmpeg + TSDuck, not a physical SDI/DeckLink hardware proof
+  (rung 3 remains gated on real DeckLink hardware, MASTER §13.2); a
+  requested CEA-708 passthrough check is always reported unverified
+  (`cea708_verified: null`), never faked. 23 + 11 + 6 new tests.
+- **S10 field-certification amendment.** Dated 2026-08-21 amendment atop
+  `docs/spec/3.0/sections/S10-field-certification-and-proof-ladder.md`:
+  field certification for the native-Windows line is proven by Gate A
+  (`docs/ops/gate-a.md`) and Gate B (the real-hardware 24h reboot soak),
+  not by the rung-runner pipeline S10 originally specified (never built;
+  the *legacy* pre-Gate-A rung-numbered pipeline that did exist was
+  removed in PR #12, commit `ef27958`). The rest of S10 is kept intact as
+  a historical design record.
 - **This repository.** 2,090 files, ~24 MB, copied from the native-Windows
   release line. The old (private, not archived) repository's 286 MB of
   packed history — WSL-era churn plus roughly 640 MB of historical Git-LFS

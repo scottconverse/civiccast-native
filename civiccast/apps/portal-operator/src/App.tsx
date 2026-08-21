@@ -50,6 +50,8 @@ const ReviewQueueScreen = lazy(() => import('./screens/ReviewQueueScreen').then(
 const ScheduleScreen = lazy(() => import('./screens/ScheduleScreen').then((module) => ({ default: module.ScheduleScreen })))
 const SummaryReviewScreen = lazy(() => import('./screens/SummaryReviewScreen').then((module) => ({ default: module.SummaryReviewScreen })))
 const SystemHealthScreen = lazy(() => import('./screens/SystemHealthScreen').then((module) => ({ default: module.SystemHealthScreen })))
+const StationProfileScreen = lazy(() => import('./screens/StationProfileScreen').then((module) => ({ default: module.StationProfileScreen })))
+const CommissioningWizardScreen = lazy(() => import('./screens/CommissioningWizardScreen').then((module) => ({ default: module.CommissioningWizardScreen })))
 
 function AssetsRoute() {
   const navigate = useNavigate()
@@ -264,6 +266,8 @@ function AppContent() {
         <Route path="/archive" element={<Navigate to="/assets" replace />} />
         <Route path="/subscribers" element={<Navigate to="/paywall" replace />} />
         <Route path="/ai-models" element={<AiModelsScreen />} />
+        <Route path="/station-profile" element={<StationProfileScreen />} />
+        <Route path="/commissioning" element={<CommissioningWizardScreen />} />
         <Route path="/custom-fields" element={<CustomFieldsScreen />} />
         <Route path="/reports" element={<ReportsScreen />} />
         <Route path="/epg" element={<EpgExportScreen />} />

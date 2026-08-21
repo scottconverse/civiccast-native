@@ -1487,6 +1487,51 @@ Read channel playout proof log.
 - Request body: none
 - Responses: 200 `ChannelProofLog`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Channel profile not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `POST /api/staff/cable/commissioning/channel-setup`
+
+S3 Screen 9: validate and persist the channel output setup.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `ChannelCommissioningSetup`
+- Responses: 200 `ChannelCommissioningSetup`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 Channel setup failed validation.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/cable/commissioning/checks`
+
+S3 Screen 8: run the first-run cable commissioning checks.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `CommissioningChecksRequest`
+- Responses: 200 `CommissioningCheckReport`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/cable/commissioning/output-proof`
+
+S3 Screen 10: run the bounded output-proof test pattern + TSDuck probe.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `OutputProofSettings`
+- Responses: 200 `CommissioningProofRun`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Egress config not found for the channel.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready.
+
+### `POST /api/staff/cable/commissioning/report`
+
+S3 Screen 11: build and persist the final commissioning report.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `station_name` (query, optional): `string`
+- Request body: none
+- Responses: 200 `CommissioningReport`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 409 An earlier commissioning step has not completed yet.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/cable/commissioning/state`
+
+Resumable commissioning progress across all 4 steps.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `CommissioningState`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `POST /api/staff/captions/external-ingest`
 
 Add external caption appliance output to the review queue.
@@ -3836,6 +3881,42 @@ Run a self-test on demand (daily or weekly check set).
 - Request body: none
 - Responses: 200 `SystemSelfTest`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
 
+### `GET /api/staff/station-box-profile`
+
+Full StationBoxProfile: cable/PEG appliance-readiness report.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `deployment_profile` (query, optional): `'public-meetings' | 'streaming-only' | 'peg-cable'`
+- Request body: none
+- Responses: 200 `StationBoxProfile`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/station-box-profile/readiness`
+
+PEG readiness roll-up only (cheap poll target for S8 alerting).
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `deployment_profile` (query, optional): `'public-meetings' | 'streaming-only' | 'peg-cable'`
+- Request body: none
+- Responses: 200 `PegReadinessRollup`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/station/profile`
+
+Read the station identity profile (name, timezone, storage roots, channel).
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `StationProfile`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PUT /api/staff/station/profile`
+
+Edit the mutable station identity profile fields.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `StationProfileUpdateRequest`
+- Responses: 200 `StationProfile`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `POST /api/staff/stream/overlay-compositor-plan`
 
 Preview a streaming overlay compositor plan.
@@ -4213,6 +4294,15 @@ Read CivicCast local federation metadata.
 - `title` (optional): `string | null`
 - `video_timecode_s` (optional): `number | null`
 
+### `AiDefaultSelection`
+
+- `basis` (required): `'ram-12b' | 'ram-e4b' | 'forced-cpu'`
+- `caption_model` (required): `string`
+- `detected_ram_gb` (required): `number`
+- `rationale` (required): `string`
+- `summary_model` (required): `string`
+- `translate_model` (required): `string`
+
 ### `AiModelAvailability`
 
 - `features` (optional): `Record<string, FeatureModelAvailability>`
@@ -4568,6 +4658,13 @@ Read CivicCast local federation metadata.
 - `saved_search_id` (required): `string`
 - `schedule_block_id` (required): `string`
 
+### `BackupDestinationRef`
+
+- `configured` (required): `boolean`
+- `destination` (optional): `string | null`
+- `last_probe_at` (optional): `string | null`
+- `reachable` (optional): `boolean | null`
+
 ### `BackupManifest`
 
 - `backup_id` (required): `string`
@@ -4688,6 +4785,13 @@ Read CivicCast local federation metadata.
 - `brand` (required): `string` -- CPU brand string, best-effort.
 - `cores_logical` (required): `number` -- Number of logical CPU cores (with SMT).
 - `cores_physical` (required): `number` -- Number of physical CPU cores.
+
+### `CableOsVerdict`
+
+- `decision_ref` (optional): `string`
+- `os_kind` (required): `'wsl2' | 'linux' | 'macos' | 'windows' | 'unknown'`
+- `rationale` (required): `string`
+- `verdict` (required): `'single-windows-pc-ok' | 'native-linux-recommended' | 'soak-pending'`
 
 ### `CallSheet`
 
@@ -4963,6 +5067,20 @@ Read CivicCast local federation metadata.
 - `logo_url` (optional): `string | null`
 - `short_name` (optional): `string | null`
 
+### `ChannelCommissioningSetup`
+
+- `cea708_passthrough` (optional): `boolean`
+- `channel_id` (required): `string`
+- `channel_name` (required): `string`
+- `destination` (required): `string`
+- `emergency_slate_asset_id` (optional): `string | null`
+- `fill_policy` (optional): `'slate' | 'loop' | 'silence'`
+- `headend_profile_id` (required): `string`
+- `muxrate_kbps` (optional): `number | null`
+- `output_format` (required): `'720p30' | '1080i60' | '1080p30' | 'SD480i60'`
+- `sdi_device` (optional): `string | null`
+- `watch_folder_path` (optional): `string | null`
+
 ### `ChannelLogEntry`
 
 - `asset_id` (required): `string`
@@ -5080,6 +5198,74 @@ Read CivicCast local federation metadata.
 - `source` (optional): `'operator' | 'ai' | 'imported'`
 - `start_seconds` (required): `number`
 - `title` (required): `string`
+
+### `ClockReport`
+
+- `note` (optional): `string`
+- `ntp_sync` (required): `'synced' | 'unsynced' | 'unknown'`
+- `system_time` (required): `string`
+- `timezone` (required): `string`
+- `utc_offset_minutes` (required): `number`
+
+### `CommissioningCheckItem`
+
+- `detail` (optional): `string`
+- `id` (required): `string`
+- `label` (required): `string`
+- `next_step` (optional): `string`
+- `status` (required): `'pass' | 'fail' | 'warning' | 'skipped'`
+
+### `CommissioningCheckReport`
+
+- `blockers` (optional): `Array<string>`
+- `checks` (optional): `Array<CommissioningCheckItem>`
+- `generated_at` (required): `string`
+- `ready` (required): `boolean`
+- `station_name` (optional): `string`
+- `support_bundle_path` (optional): `string | null`
+
+### `CommissioningChecksRequest`
+
+- `deployment_profile` (optional): `'public-meetings' | 'streaming-only' | 'peg-cable'`
+- `station_name` (optional): `string`
+
+### `CommissioningProofRun`
+
+- `blockers` (optional): `Array<string>`
+- `cea708_verified` (optional): `boolean | null`
+- `channel_id` (required): `string`
+- `compliance_probe_result` (optional): `ComplianceProbeResult | null`
+- `detail` (optional): `string`
+- `ended_at` (optional): `string | null`
+- `not_claimed` (optional): `Array<string>`
+- `proof_id` (required): `string`
+- `raw_ts_path` (optional): `string | null`
+- `sdi_device_status` (optional): `SdiReadiness | null`
+- `started_at` (required): `string`
+- `test_pattern` (required): `'bars' | 'live' | 'slate'`
+- `verdict` (required): `'pass' | 'fail' | 'partial' | 'not-run'`
+
+### `CommissioningReport`
+
+- `channel_name` (required): `string`
+- `channel_setup` (required): `ChannelCommissioningSetup`
+- `completed_at` (required): `string`
+- `first_run_checks` (required): `CommissioningCheckReport`
+- `headend_profile_id` (required): `string`
+- `next_steps` (optional): `Array<string>`
+- `output_format` (required): `'720p30' | '1080i60' | '1080p30' | 'SD480i60'`
+- `proof_run` (required): `CommissioningProofRun`
+- `ready_for_broadcast` (required): `boolean`
+- `sdi_device` (optional): `string | null`
+- `station_name` (required): `string`
+- `support_bundle_path` (optional): `string | null`
+
+### `CommissioningState`
+
+- `channel_setup` (optional): `ChannelCommissioningSetup | null`
+- `first_run_checks` (optional): `CommissioningCheckReport | null`
+- `proof_run` (optional): `CommissioningProofRun | null`
+- `report` (optional): `CommissioningReport | null`
 
 ### `CommitRequest`
 
@@ -5478,6 +5664,12 @@ Read CivicCast local federation metadata.
 - `field_id` (required): `string`
 - `value` (required): `string`
 
+### `DeckLinkEngineRef`
+
+- `bmd_sdk_present` (required): `boolean`
+- `card_present` (required): `boolean`
+- `sdk_version` (optional): `string | null`
+
 ### `DeliveryRecord`
 
 - `activity_id` (required): `string`
@@ -5760,6 +5952,33 @@ Read CivicCast local federation metadata.
 - `severity` (required): `'watch' | 'warning' | 'emergency'`
 - `title` (required): `string`
 
+### `EngineBlocker`
+
+- `next_step` (required): `string`
+- `reason` (required): `string`
+- `tier` (required): `'base' | 'sdi-broadcast' | 'premium-cg'`
+
+### `EngineReadiness`
+
+- `decklink` (required): `DeckLinkEngineRef`
+- `gstreamer_present` (required): `boolean`
+- `gstreamer_version` (optional): `string | null`
+- `hw_encoder` (required): `'nvenc' | 'vaapi' | 'qsv' | 'none'`
+- `missing_plugins` (optional): `Array<string>`
+- `native_os` (required): `boolean`
+- `ndi_sdk` (required): `NdiSdkRef`
+- `next_step` (optional): `string`
+- `opengl_45` (required): `boolean`
+- `required_plugins_present` (required): `boolean`
+
+### `EngineTierVerdict`
+
+- `base_ok` (required): `boolean`
+- `blockers` (optional): `Array<EngineBlocker>`
+- `premium_cg_ok` (required): `boolean`
+- `qualifies_for` (required): `'base' | 'sdi-broadcast' | 'premium-cg'`
+- `sdi_broadcast_ok` (required): `boolean`
+
 ### `EpgExportConfig`
 
 - `channel_id` (required): `string`
@@ -5904,6 +6123,18 @@ rule (S13 §5.1).
 - `source_url` (optional): `string | null`
 - `tags` (optional): `Array<string> | null`
 - `trust_tier` (optional): `'operator_curated' | 'partner_curated' | 'public_permitted' | null`
+
+### `FfmpegFeatureReport`
+
+- `byo_sdi_binary` (optional): `string | null`
+- `detected` (required): `boolean`
+- `has_decklink` (required): `boolean`
+- `has_libx264` (required): `boolean`
+- `has_loudnorm` (required): `boolean`
+- `has_ndi` (required): `boolean`
+- `next_step` (optional): `string`
+- `supported` (required): `boolean`
+- `version` (optional): `string | null`
 
 ### `FireCueInput`
 
@@ -6463,6 +6694,17 @@ rule (S13 §5.1).
 - `next_step` (optional): `string`
 - `relays` (optional): `Array<none>`
 
+### `NdiSdkRef`
+
+- `sdk_present` (required): `boolean`
+- `sdk_version` (optional): `string | null`
+
+### `NetworkReport`
+
+- `headend_interface_hint` (optional): `string | null`
+- `hostname` (required): `string`
+- `primary_interface_up` (required): `boolean`
+
 ### `NotificationDelivery`
 
 - `channel` (required): `'email' | 'webhook'`
@@ -6528,6 +6770,14 @@ rule (S13 §5.1).
 - `activity` (required): `Record<string, unknown>`
 - `activity_id` (required): `string`
 - `created_at` (required): `string`
+
+### `OutputProofSettings`
+
+- `capture_raw_ts` (optional): `boolean`
+- `channel_id` (required): `string`
+- `duration_seconds` (optional): `number`
+- `output_directory` (optional): `string | null`
+- `test_pattern` (optional): `'bars' | 'live' | 'slate'`
 
 ### `OverlayCompositorPlan`
 
@@ -6610,6 +6860,19 @@ rule (S13 §5.1).
 - `embedded_metadata_names` (optional): `Array<string>`
 - `file_name` (required): `string`
 - `media_type` (required): `string`
+
+### `PegReadinessDimension`
+
+- `color` (required): `'green' | 'yellow' | 'red'`
+- `id` (required): `string`
+- `label` (required): `string`
+- `message` (required): `string`
+- `next_step` (optional): `string`
+
+### `PegReadinessRollup`
+
+- `dimensions` (optional): `Array<PegReadinessDimension>`
+- `overall` (required): `'green' | 'yellow' | 'red'`
 
 ### `PlanConflict`
 
@@ -7325,6 +7588,12 @@ rule (S13 §5.1).
 - `started_at` (required): `string`
 - `status` (required): `'ready' | 'needs_attention' | 'blocked'`
 
+### `ReleaseIdentityRef`
+
+- `package_verified` (optional): `boolean | null`
+- `proof_state` (optional): `string | null`
+- `version` (required): `string`
+
 ### `RelinkAssetRequest`
 
 - `new_file_path` (required): `string` -- Server-side path to the replacement file.
@@ -7693,6 +7962,13 @@ rule (S13 §5.1).
 - `scheduled_at` (required): `string`
 - `state` (required): `'scheduled' | 'cancelled' | 'published'`
 
+### `SdiReadiness`
+
+- `ffmpeg_detected` (required): `boolean`
+- `muxer_present` (required): `boolean`
+- `next_step` (optional): `string`
+- `status` (required): `'ok' | 'decklink_muxer_missing' | 'ffmpeg_unavailable'`
+
 ### `SdiReadinessResponse`
 
 - `byo_ffmpeg_configured` (required): `boolean`
@@ -7987,6 +8263,27 @@ rule (S13 §5.1).
 - `profile` (required): `StationProfile`
 - `status` (required): `'authenticated' | 'recovered'`
 
+### `StationBoxProfile`
+
+- `ai_default` (required): `AiDefaultSelection`
+- `backup_destination` (required): `BackupDestinationRef`
+- `cable_os_verdict` (required): `CableOsVerdict`
+- `civiccast_version` (required): `string`
+- `clock` (required): `ClockReport`
+- `engine` (required): `EngineReadiness`
+- `ffmpeg` (required): `FfmpegFeatureReport`
+- `generated_at` (required): `string`
+- `hardware` (required): `HardwareProbe`
+- `ndi_sdk` (required): `NdiSdkRef`
+- `network` (required): `NetworkReport`
+- `peg_readiness` (required): `PegReadinessRollup`
+- `qualified_engine_tier` (required): `EngineTierVerdict`
+- `release_identity` (required): `ReleaseIdentityRef`
+- `schema_version` (optional): `number`
+- `sdi` (required): `SdiReadiness`
+- `system_ram_total_gb` (required): `number`
+- `tsduck` (required): `TsduckStatus`
+
 ### `StationChannelProfile`
 
 - `channel_id` (required): `string`
@@ -8016,6 +8313,14 @@ rule (S13 §5.1).
 - `station_name` (required): `string`
 - `station_timezone` (optional): `string`
 - `storage_locations` (required): `StationStorageLocations`
+
+### `StationProfileUpdateRequest`
+
+- `default_channel_id` (optional): `string | null`
+- `public_base_url` (optional): `string | null`
+- `station_name` (optional): `string | null`
+- `station_timezone` (optional): `string | null`
+- `storage_locations` (optional): `StationStorageLocations | null`
 
 ### `StationRecoveryRequest`
 

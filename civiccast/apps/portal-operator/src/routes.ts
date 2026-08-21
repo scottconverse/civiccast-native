@@ -30,6 +30,8 @@ export const ROUTE_PATHS: Record<RouteId, string> = {
   alerts: '/alerts',
   eas: '/emergency-alerts',
   'ai-models': '/ai-models',
+  'station-profile': '/station-profile',
+  commissioning: '/commissioning',
   'custom-fields': '/custom-fields',
   reports: '/reports',
   epg: '/epg',
