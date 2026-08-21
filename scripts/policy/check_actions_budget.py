@@ -36,6 +36,32 @@ RELEASE_CANDIDATE_WORKFLOWS = {"native-beta-candidate-artifacts.yml"}
 STATIC_CONCURRENCY_GROUPS = {
     "ci-installer-compile.yml": "ci-installer-compile-reusable-${{ github.ref }}"
 }
+# Workflows exempt from this check's two default-budget rules (the
+# `${{ github.workflow }}-${{ github.ref }}` + cancel-in-progress: true
+# concurrency shape, and the 1-day artifact retention cap) for a documented,
+# reviewed reason that is NOT "budget neglect" -- each reason is also stated
+# in the workflow's own header/step comments, this is not the only place it
+# lives.
+DOCUMENTED_BUDGET_EXCEPTIONS: dict[str, str] = {
+    "gate-a-station-acceptance.yml": (
+        "Gate A intentionally sets cancel-in-progress: false: a queued Gate A "
+        "run must never be killed mid-soak by a newer candidate arriving, or "
+        "the interrupted run's hours of station-acceptance work are lost for "
+        "nothing. Its own concurrency group ('sandbox-lab', shared with "
+        "native-beta-candidate-artifacts.yml's self-hosted build lane so the "
+        "two never contend for the one physical box) is deliberately NOT the "
+        "per-ref '${{ github.workflow }}-${{ github.ref }}' shape this check "
+        "otherwise requires, for the same reason. Its verdict/evidence "
+        "artifacts are also kept 90/14 days, not this check's 1-day default: "
+        "a FAIL needs its evidence preserved for debugging at least as long "
+        "as a PASS's, and both predate the 2026-08-20 storage-budget "
+        "incident this check's 1-day default was written to prevent (see "
+        "this check's own retention-days comment) without ever contributing "
+        "to it -- Gate A's own artifacts are small (a JSON verdict + logs), "
+        "not the multi-GB station-bundle/kit artifacts that incident was "
+        "about."
+    ),
+}
 
 
 def _repo_root() -> Path:
@@ -245,6 +271,11 @@ def _artifact_blocks(text: str) -> list[str]:
 def validate_workflow(path: Path, text: str) -> list[str]:
     violations: list[str] = []
     release_or_tag = _is_release_or_tag_workflow(path, text)
+    # Exempts only the two default-budget rules below (concurrency shape,
+    # artifact retention) -- every other rule in this function (cron, heavy
+    # markers, PR matrix, macOS/Windows-on-PR) still applies in full even to
+    # a documented-exception workflow.
+    budget_exempt = release_or_tag or path.name in DOCUMENTED_BUDGET_EXCEPTIONS
     pr_trigger = _has_pr_trigger(text)
 
     if "@daily" in text:
@@ -253,7 +284,7 @@ def validate_workflow(path: Path, text: str) -> list[str]:
         if _is_daily_cron(expr):
             violations.append(f"daily cron `{expr}` is forbidden; weekly is the maximum default")
 
-    if not release_or_tag and not _has_concurrency(path, text):
+    if not budget_exempt and not _has_concurrency(path, text):
         violations.append("missing required concurrency block with cancel-in-progress: true")
 
     if pr_trigger and _has_push_main(text):
@@ -288,7 +319,7 @@ def validate_workflow(path: Path, text: str) -> list[str]:
             "PR CI must use one production Python version by default, currently Python 3.12"
         )
 
-    if not release_or_tag:
+    if not budget_exempt:
         # 1 day, not 7. Cut on 2026-08-20 after artifact storage hit 100%
         # of the account's 0.5 GB allowance -- 990 live artifacts, 542.5 GB,
         # 93% of it from one workflow storing ~45 GB per push (about half of

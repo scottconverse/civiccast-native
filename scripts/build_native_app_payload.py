@@ -753,6 +753,7 @@ def build_reviewed_pyav_wheel(
     *,
     python_executable: str,
     uv_executable: str,
+    advisory_wheel_hash: bool = False,
 ) -> Path:
     """Build the exact LGPL-only PyAV candidate authorized by the app lock."""
 
@@ -761,17 +762,20 @@ def build_reviewed_pyav_wheel(
     wheelhouse = scratch / "pyav-wheelhouse"
     environment = dict(os.environ)
     environment["CIVICCAST_UV_EXE"] = uv_executable
+    command = [
+        python_executable,
+        str(PYAV_BUILDER),
+        "--output-dir",
+        str(wheelhouse),
+        "--cache-dir",
+        str(DEFAULT_PYAV_CACHE),
+        "--scratch",
+        str(scratch / "pyav-build"),
+    ]
+    if advisory_wheel_hash:
+        command.append("--advisory-wheel-hash")
     subprocess.run(
-        [
-            python_executable,
-            str(PYAV_BUILDER),
-            "--output-dir",
-            str(wheelhouse),
-            "--cache-dir",
-            str(DEFAULT_PYAV_CACHE),
-            "--scratch",
-            str(scratch / "pyav-build"),
-        ],
+        command,
         cwd=ROOT,
         check=True,
         env=environment,
@@ -785,6 +789,7 @@ def prepare_reviewed_pyav_wheel(
     reviewed_wheel: Path | None,
     python_executable: str,
     uv_executable: str,
+    advisory_wheel_hash: bool = False,
 ) -> Path:
     """Build PyAV or stage an independently reproduced exact wheel.
 
@@ -799,6 +804,7 @@ def prepare_reviewed_pyav_wheel(
             scratch,
             python_executable=python_executable,
             uv_executable=uv_executable,
+            advisory_wheel_hash=advisory_wheel_hash,
         )
 
     source = reviewed_wheel.resolve()
@@ -1784,6 +1790,7 @@ def build(
     reviewed_pyav_wheel: Path | None = None,
     msvc_runtime: Path | None = None,
     allow_dirty_source: bool = False,
+    advisory_pyav_wheel_hash: bool = False,
 ) -> dict[str, object]:
     source_state = collect_source_state(repo_root=ROOT)
     if source_state["dirty"] and not allow_dirty_source:
@@ -1806,6 +1813,7 @@ def build(
         reviewed_wheel=reviewed_pyav_wheel,
         python_executable=toolchain.python,
         uv_executable=toolchain.uv,
+        advisory_wheel_hash=advisory_pyav_wheel_hash,
     )
     retained_wheelhouse = out / "WHEELS"
     print("      Retaining the exact hash-pinned dependency wheels (cp312/windows) ...")
@@ -1954,6 +1962,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="permit an explicitly non-release proof build from a dirty source tree",
     )
+    parser.add_argument(
+        "--advisory-pyav-wheel-hash",
+        action="store_true",
+        help=(
+            "forwarded to the PyAV wheel build: log a warning instead of failing when the "
+            "compiled wheel's byte-exact hash does not match the pinned reference (every "
+            "pinned download still verifies strictly)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     out = args.out.resolve()
@@ -1970,6 +1987,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             msvc_runtime=(args.msvc_runtime.resolve() if args.msvc_runtime is not None else None),
             allow_dirty_source=args.allow_dirty_source,
+            advisory_pyav_wheel_hash=args.advisory_pyav_wheel_hash,
         )
     finally:
         if args.scratch is None:
