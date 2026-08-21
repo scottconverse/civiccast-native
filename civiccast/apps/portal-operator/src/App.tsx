@@ -20,6 +20,8 @@ import { TrimEditorScreen } from './screens/TrimEditorScreen'
 
 const AgendasScreen = lazy(() => import('./screens/AgendasScreen').then((module) => ({ default: module.AgendasScreen })))
 const AssetsScreen = lazy(() => import('./screens/AssetsScreen').then((module) => ({ default: module.AssetsScreen })))
+const MissingMediaScreen = lazy(() => import('./screens/MissingMediaScreen').then((module) => ({ default: module.MissingMediaScreen })))
+const MediaLifecycleSettingsScreen = lazy(() => import('./screens/MediaLifecycleSettingsScreen').then((module) => ({ default: module.MediaLifecycleSettingsScreen })))
 const AssetDetailScreen = lazy(() => import('./screens/AssetDetailScreen').then((module) => ({ default: module.AssetDetailScreen })))
 const ActivityPubScreen = lazy(() => import('./screens/ActivityPubScreen').then((module) => ({ default: module.ActivityPubScreen })))
 const AiModelsScreen = lazy(() => import('./screens/AiModelsScreen').then((module) => ({ default: module.AiModelsScreen })))
@@ -61,6 +63,11 @@ function AssetsRoute() {
       onOpenAsset={(id) => navigate(`/assets/${encodeURIComponent(id)}`)}
     />
   )
+}
+
+function MissingMediaRoute() {
+  const navigate = useNavigate()
+  return <MissingMediaScreen onOpenAsset={(id) => navigate(`/assets/${encodeURIComponent(id)}`)} />
 }
 
 function AssetDetailRoute() {
@@ -248,6 +255,8 @@ function AppContent() {
         <Route path="/assets" element={<AssetsRoute />} />
         <Route path="/assets/:assetId" element={<AssetDetailRoute />} />
         <Route path="/assets/:assetId/trim" element={<AssetTrimRoute />} />
+        <Route path="/missing-media" element={<MissingMediaRoute />} />
+        <Route path="/media-lifecycle" element={<MediaLifecycleSettingsScreen />} />
         <Route path="/contribute" element={<ContributeScreen />} />
         <Route path="/contributors" element={<Navigate to="/contribute" replace />} />
         <Route path="/review" element={<ReviewQueueScreen />} />

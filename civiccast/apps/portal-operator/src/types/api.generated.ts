@@ -183,7 +183,7 @@ export interface AlertChannelInput {
 export interface AlertEvent {
   event_id: string
   rule_id: string
-  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded'
+  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout'
   severity: 'critical' | 'warning' | 'info'
   state: 'firing' | 'resolved'
   resource_ref: string
@@ -200,7 +200,7 @@ export interface AlertEvent {
 
 export interface AlertRule {
   rule_id: string
-  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded'
+  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout'
   enabled?: boolean
   severity: 'critical' | 'warning' | 'info'
   channel_ids?: Array<string>
@@ -261,10 +261,6 @@ export interface AnalyticsReport {
   podcast_downloads?: Array<AnalyticsDimensionCount>
   retained_fields: Array<string>
   privacy_boundary: string
-  vod_rollups?: Array<ViewershipRollupPoint>
-  live_rollups?: Array<ViewershipRollupPoint>
-  year_over_year?: Array<YearOverYearPoint>
-  ingest_configured?: boolean
 }
 
 export interface AppBuildProfile {
@@ -385,6 +381,40 @@ export interface AssetQuery {
   custom_fields?: Array<CustomFieldPredicate>
   order_by?: 'published_at' | 'title' | 'duration_seconds'
   order_desc?: boolean
+}
+
+export interface AssetReadinessResponse {
+  asset_id: string
+  readiness_state: 'not_ready' | 'pending_transcode' | 'transcoding' | 'ready' | 'missing_file' | 'rejected'
+  readiness_reason: string | null
+  loudness_status: 'ok' | 'failed' | 'not_checked' | null
+  measured_lufs: number | null
+  in_flight_transcode_jobs?: Array<InFlightTranscodeJob>
+  archive_complete: boolean
+  archive_portal_verified: boolean
+  archive_ia_verified: boolean
+  archive_nas_verified: boolean
+  legal_hold: boolean
+  updated_at: string
+}
+
+export interface AssetRetentionPolicyInput {
+  name: string
+  match_meeting_body?: string | null
+  retention_policy: string
+  priority?: number
+  enabled?: boolean
+}
+
+export interface AssetRetentionPolicyResponse {
+  policy_id: string
+  name: string
+  match_meeting_body: string | null
+  retention_policy: string
+  priority: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface AssetViewPoint {
@@ -567,20 +597,6 @@ export interface BoardCreateRequest {
   template_id: string
 }
 
-export interface BoardPdfInclude {
-  totals?: boolean
-  top_content?: boolean
-  yoy?: boolean
-  live_peaks?: boolean
-}
-
-export interface BoardPdfRequest {
-  range_start: string
-  range_end: string
-  include?: BoardPdfInclude
-  station_label?: string
-}
-
 export interface BoardUpdateRequest {
   template_id?: string | null
   active?: boolean | null
@@ -596,6 +612,10 @@ export interface Body_compile_trafficking_for_date_api_staff_underwriting_compil
   for_date: string
   candidates: Array<CandidateBreakSlot>
   local_tz_offset_minutes?: number
+}
+
+export interface Body_replace_asset_source_api_staff_assets__asset_id__replace_source_put {
+  file: string
 }
 
 export interface Body_upload_asset_api_staff_assets_upload_post {
@@ -2225,6 +2245,13 @@ export interface ImportPlan {
   skipped?: Array<PlanSkip>
 }
 
+export interface InFlightTranscodeJob {
+  job_id: string
+  output_format: string
+  progress_percent: number
+  estimated_remaining_secs?: number | null
+}
+
 export interface InstallerStep {
   id: string
   title: string
@@ -2247,6 +2274,20 @@ export interface InviteJoinView {
   view_url?: string | null
   session_id?: string | null
   terms_version?: string | null
+}
+
+export interface LegalHoldInput {
+  legal_hold: boolean
+  reason?: string | null
+}
+
+export interface LifecycleAuditEntryResponse {
+  entry_id: string
+  asset_id: string | null
+  action: string
+  detail: string
+  dry_run: boolean
+  created_at: string
 }
 
 export interface LiveConcurrentPoint {
@@ -2479,6 +2520,16 @@ export interface MigrationRollbackRequest {
 export interface MintInviteInput {
   guest_display_name: string
   role: 'council_member' | 'presenter' | 'public_comment'
+}
+
+export interface MissingMediaAlertRow {
+  schedule_id: string
+  asset_id: string
+  asset_title: string
+  channel_id: string
+  scheduled_start: string
+  asset_state: string
+  reason: string
 }
 
 export interface ModelBundleItem {
@@ -3297,6 +3348,23 @@ export interface RAMInfo {
   available_gb: number
 }
 
+export interface ReadinessDashboardResponse {
+  total_assets: number
+  ready_count: number
+  transcoding_count: number
+  missing_count: number
+  rejected_count: number
+  by_asset: Array<ReadinessDashboardRow>
+}
+
+export interface ReadinessDashboardRow {
+  asset_id: string
+  title: string
+  readiness_state: 'not_ready' | 'pending_transcode' | 'transcoding' | 'ready' | 'missing_file' | 'rejected'
+  readiness_reason: string | null
+  in_flight_jobs_count: number
+}
+
 export interface RecordExportApiRequest {
   summary_id: string
   summary_status?: string | null
@@ -3541,17 +3609,6 @@ export interface RollbackArtifactRequest {
 
 export interface RollbackRequest {
   reason: string
-}
-
-export interface RollupStats {
-  total_viewer_count: number
-  total_time_viewed_seconds: number
-  peak_concurrent?: number | null
-}
-
-export interface RollupsResponse {
-  rollups: Array<ViewershipRollupPoint>
-  stats: RollupStats
 }
 
 export interface RoomDetail {
@@ -4210,6 +4267,19 @@ export interface StationStorageLocations {
   backups: string
 }
 
+export interface StorageBudgetResponse {
+  total_bytes_used: number
+  budget_bytes: number | null
+  percent_used: number | null
+  by_retention_policy: Array<StorageBudgetTierRow>
+}
+
+export interface StorageBudgetTierRow {
+  retention_policy: string
+  asset_count: number
+  bytes_used: number
+}
+
 export interface StorageSetupRequest {
   storage_dir?: string | null
 }
@@ -4647,18 +4717,6 @@ export interface ViewerTokenResponse {
   expires_at?: string | null
 }
 
-export interface ViewershipRollupPoint {
-  stream_type: 'vod' | 'live'
-  bucket_kind: 'day' | 'halfhour' | 'hour'
-  bucket_start: string
-  subject_id: string
-  viewer_count: number
-  time_viewed_seconds: number
-  peak_concurrent?: number | null
-  avg_concurrent?: number | null
-  samples: number
-}
-
 export interface VirtualRouterButton {
   button_id: string
   label: string
@@ -4717,11 +4775,25 @@ export interface VolunteerRole {
   updated_at?: string
 }
 
-export interface YearOverYearPoint {
-  metric: 'viewer_count' | 'time_viewed_seconds' | 'peak_concurrent'
-  current_period: number
-  prior_period: number
-  delta_pct?: number | null
+export interface WatchFolderConfigInput {
+  monitor_path: string
+  import_naming_pattern?: string | null
+  enabled?: boolean
+  settle_window_seconds?: number
+  retention_policy_default?: string | null
+}
+
+export interface WatchFolderConfigResponse {
+  config_id: string
+  monitor_path: string
+  import_naming_pattern: string | null
+  enabled: boolean
+  settle_window_seconds: number
+  retention_policy_default: string | null
+  last_scanned_at: string | null
+  last_scan_files_found: number
+  created_at: string
+  updated_at: string
 }
 
 export interface ZoneInput {
