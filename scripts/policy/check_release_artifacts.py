@@ -20,14 +20,37 @@ class PolicyResult:
 
 
 def check_cross_platform_installer_policy(paths: list[Path]) -> PolicyResult:
-    """Reject overclaims in installer docs and release proof text."""
+    """Reject overclaims in installer docs and release proof text.
+
+    This used to reject a "native Windows service without WSL2" claim as an
+    overclaim, back when the WSL2/Ubuntu bootstrap lane was the only real
+    Windows deployment and that claim was false. The native Windows product
+    (ADR-0021) made it true, and the WSL2 lane was retired outright under
+    the owner's "no linux" decision (2026-08-19) -- so the check is now
+    inverted: it rejects docs that still claim the Windows installer
+    requires, bootstraps, or runs inside WSL2/Ubuntu, since that claim is
+    the one that is false today.
+    """
 
     for path in paths:
         text = path.read_text(encoding="utf-8").lower()
-        if "native windows service" in text or "without wsl2" in text:
+        if any(
+            phrase in text
+            for phrase in (
+                "wsl2-only bootstrap",
+                "requires wsl2",
+                "bootstraps wsl2",
+                "runs inside wsl2",
+                "runs inside the wsl2",
+            )
+        ):
             return PolicyResult(
                 status="failed",
-                next_step="Rewrite Windows claims as Windows WSL2-only bootstrap support.",
+                next_step=(
+                    "Rewrite the stale WSL2 bootstrap claim: CivicCast's Windows "
+                    "installer is a native Windows product (ADR-0021) with no WSL2 "
+                    "dependency; the WSL2/Ubuntu lane was retired."
+                ),
             )
         if "model status: skipped" in text and "all model proof is complete" in text:
             return PolicyResult(

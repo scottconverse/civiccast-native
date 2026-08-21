@@ -6503,7 +6503,7 @@ rule (S13 §5.1).
 ### `OSContext`
 
 - `hostname` (required): `string` -- Network hostname for human identification.
-- `kind` (required): `'wsl2' | 'linux' | 'macos' | 'windows' | 'unknown'` -- OS classification: wsl2 (Linux inside WSL2 — primary deployment target per ADR 0003), linux (native Linux), macos (Apple), windows (native Windows — not a supported deployment), or unknown.
+- `kind` (required): `'wsl2' | 'linux' | 'macos' | 'windows' | 'unknown'` -- OS classification: windows (native Windows — the primary deployment target per ADR 0021, which superseded ADR 0003's WSL2-primary decision), linux (native Linux, a supported deployment target), macos (Apple, a supported deployment target), wsl2 (Linux running inside a WSL2 guest — informational only; the WSL2 installer lane ADR 0003 described was retired under the owner's 'no linux' decision and is not a deployment target), or unknown.
 - `machine` (required): `string` -- platform.machine() value (architecture).
 - `release` (required): `string` -- platform.release() value.
 - `system` (required): `string` -- platform.system() value.

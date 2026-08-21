@@ -1607,28 +1607,6 @@ def test_support_bundle_download_rejects_non_support_admin(monkeypatch) -> None:
     assert response.status_code == 403
 
 
-def test_backup_setup_translates_windows_drive_path_for_wsl_runtime(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("CIVICAST_TESTER_OPS_STATE_PATH", str(tmp_path / "ops-state.json"))
-    monkeypatch.setenv("CIVICAST_TRANSLATE_WINDOWS_BACKUP_PATHS", "1")
-    monkeypatch.setenv("CIVICAST_WSL_DRIVE_MOUNT_ROOT", str(tmp_path / "mnt"))
-    drive_mount = tmp_path / "mnt" / "c"
-    drive_mount.mkdir(parents=True)
-    client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
-
-    backup = client.post(
-        "/api/staff/installer/backup",
-        json={"destination": r"C:\CivicCastBetaBackups"},
-    )
-
-    assert backup.status_code == 200
-    backup_payload = backup.json()
-    expected_destination = (drive_mount / "CivicCastBetaBackups").resolve()
-    assert backup_payload["status"] == "ready"
-    assert backup_payload["destination"] == str(expected_destination)
-    assert expected_destination.is_dir()
-    assert not list(expected_destination.glob(".civiccast-backup-probe-*"))
-
-
 def test_installer_health_api_does_not_go_ready_from_placeholder_configuration(
     monkeypatch,
 ) -> None:
@@ -1767,12 +1745,12 @@ def test_support_bundle_includes_logs_with_secrets_redacted(monkeypatch, tmp_pat
     monkeypatch.setenv("CIVICCAST_SUPPORT_BUNDLE_DIR", str(tmp_path / "support"))
     monkeypatch.setenv("CIVICCAST_EGRESS_WORK_DIR", str(tmp_path / "egress-work"))
 
-    bootstrap_log = tmp_path / "bootstrap-wsl2-ubuntu.log"
+    bootstrap_log = tmp_path / "runtime-host.log"
     bootstrap_log.write_text(
-        "Starting WSL bootstrap\n"
+        "Runtime host started.\n"
         "CIVICCAST_SETUP_NONCE=super-secret-nonce-value\n"
         "Authorization: Bearer super-secret-bearer-token\n"
-        "WSL bootstrap complete\n",
+        "CivicCast service health recovered.\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("CIVICCAST_INSTALLER_BOOTSTRAP_LOG", str(bootstrap_log))
@@ -1794,7 +1772,7 @@ def test_support_bundle_includes_logs_with_secrets_redacted(monkeypatch, tmp_pat
 
     raw_bundle = Path(response.path).read_text(encoding="utf-8")
     # Real content made it in -- this isn't a bundle that silently dropped logs.
-    assert "WSL bootstrap complete" in raw_bundle
+    assert "CivicCast service health recovered." in raw_bundle
     assert "frame=" in raw_bundle
     assert "encoder ready" in raw_bundle
     # But every secret-shaped value is gone, never just present-but-relabeled.

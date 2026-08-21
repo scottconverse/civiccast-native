@@ -16,8 +16,12 @@ without ever vendoring its AGPL source into the CivicCast Apache tree:
   AGPL obligation attaches to CivicCast core.
 * **coturn** is a system service (BSD-3, permissive); it is NOT a download-a-zip
   install. We return the operator-assisted OS package command (no silent
-  elevation), and state honestly that coturn has no native Windows build (run it
-  on the Linux headend / WSL).
+  elevation) on Linux/macOS. coturn has no native Windows build, and the
+  WSL2 lane that used to run it there was retired under the owner's "no
+  linux" decision (2026-08-19): coturn is now a DOCUMENTED EXTERNAL TURN
+  server on Windows -- point CIVICCAST_TURN_HOST/CIVICCAST_TURN_PORT at a
+  coturn instance running on a separate host (or a managed TURN provider),
+  and leave CIVICCAST_COTURN_COMMAND unset.
 
 A real end-to-end clone is an LPM rung-2 proof (S17 §8 item 4); the stage/verify/
 swap + idempotency + drift-rejection logic is proven here with an injected git
@@ -104,10 +108,11 @@ def _resolve_head(git: GitRunner, repo_dir: Path) -> str | None:
 def _coturn_action() -> str:
     if os.name == "nt":
         return (
-            "coturn has no native Windows build — run the TURN server on the Linux "
-            "headend or under WSL: `sudo apt install coturn` (Debian/Ubuntu) or "
-            "`sudo dnf install coturn` (Fedora/RHEL), then enable it with your "
-            "realm + a public IP/port. Set CIVICCAST_COTURN_COMMAND to its launch line."
+            "coturn has no native Windows build. Configure an external TURN server -- "
+            "a coturn instance on a separate Linux/BSD host with your realm + a public "
+            "IP/port, or a managed TURN provider -- then set CIVICCAST_TURN_HOST and "
+            "CIVICCAST_TURN_PORT to that server's address. Leave CIVICCAST_COTURN_COMMAND "
+            "unset: this station cannot launch or manage a coturn process on Windows."
         )
     return (
         "Install coturn from your OS package manager (no silent elevation): "

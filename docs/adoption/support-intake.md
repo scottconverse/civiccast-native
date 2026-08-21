@@ -16,8 +16,7 @@ For setup, installer, meeting, publish, restore, update, or channel-operation
 issues, include:
 
 - CivicCast version.
-- Operating system; for Windows, the CivicCast product line (WSL public beta
-  or native development line) and whether WSL2 is present.
+- Operating system.
 - Installer filename and whether the SHA-256 checksum matched.
 - The screen where the issue happened.
 - The exact operator message, especially **Ready**, **Check before meeting**,

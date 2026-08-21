@@ -177,6 +177,18 @@ Charter §7 installer obligations. Produces the beta artifact.
    installMode, identifier, and install identity are all disjoint from the WSL
    product and free of any inherited WSL hook — closing the SDR-004
    inheritance footgun at the test layer.
+
+   *Superseded by two later, unrelated decisions, kept here as the historical
+   record of WP-2 itself:* `nsis-hooks-native.nsh` was folded into
+   `nsis-hooks-bootstrap.nsh` in the WP2 hook-migration (2026-07-30) and no
+   longer exists as a separate file. The WSL product itself — and its
+   `tauri.conf.json` `installerHooks`/`nsis-hooks.nsh` — was retired under the
+   owner's "no linux" decision (2026-08-19); the base `tauri.conf.json` is
+   kept only as the file Tauri's CLI always merges a `--config` overlay on
+   top of and no longer declares any `installerHooks` of its own. The
+   disjointness test this paragraph describes is now
+   `tests/policy/test_native_installer_identity.py`'s positive assertion that
+   only the native hook file exists/is wired, not a two-product comparison.
 2. Journaled install/upgrade engine with the D3 backup/restore integration.
 3. Windows Sandbox automation driver for the full proof matrix, plus focused
    persistent-VM automation for any row Sandbox cannot faithfully establish.

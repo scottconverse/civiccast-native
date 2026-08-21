@@ -33,12 +33,17 @@ export interface InstallerState {
    * Mirrors `InstallerSummary.platform` (civiccast/installer/models.py).
    *
    * `"windows-native"` is the native Windows station -- CivicCast's own
-   * supervisor-hosted control plane, which does not use WSL at all.
-   * `"windows-wsl2"` is the WSL2 deployment (and the bare Windows host running
-   * its bootstrap probe). WSL-only affordances -- the "Set up Windows helper"
-   * button and the platform lane's repair pass, both of which route into the
-   * WSL bootstrap's `apt-get install` -- gate on `"windows-wsl2"` ONLY, so
-   * these two must never share one value.
+   * supervisor-hosted control plane, which does not use WSL at all, and the
+   * only Windows deployment this product ships today.
+   *
+   * `"windows-wsl2"` named the retired WSL2 deployment. Nothing in this
+   * frontend renders a WSL-only affordance for it any more -- the "Set up
+   * Windows helper" button and the platform lane's repair pass both routed
+   * into main.rs's WSL bootstrap pipeline, which is gone. The value is kept
+   * in the type only so a state file or cached progress a pre-native build
+   * left on disk still type-checks; `withHonestNativePlatform` (api.ts)
+   * corrects it to `"windows-native"` the moment a real native bridge is
+   * present.
    */
   platform: "linux" | "macos" | "windows-native" | "windows-wsl2";
   operatorConsoleUrl?: string;

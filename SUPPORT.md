@@ -11,12 +11,15 @@
 > is recorded in
 > [docs/releases/v1.0.0-rc18-verification.md](docs/releases/v1.0.0-rc18-verification.md).
 
-> **Two product lines.** CivicCast ships two parallel Windows product lines
-> from this repository: the WSL2 beta this page mainly covers (`main`, the
-> current public download) and a native-Windows beta under active parallel
-> development (`release/native-beta-1.0.0-beta.1-rc1`, not yet public).
-> Neither retires the other. See [BRANCHES.md](BRANCHES.md) for the full
-> breakdown, and "Native Windows beta" below for that line's support surface.
+> **This repository ships one product line: native Windows.** Earlier
+> revisions of this notice described "two parallel Windows product lines"
+> shipping from this repository -- that described the OLD
+> `scottconverse/civiccast` repository. This repository (`civiccast-native`)
+> was created by copying only the native product out of it with fresh
+> history, and the WSL2 lane was retired outright under the owner's "no
+> linux" decision (2026-08-19). See [BRANCHES.md](BRANCHES.md) for the full
+> explanation and where the retired line's history now lives (private, not
+> archived).
 
 CivicCast is an open-source public-good project. Support is community-driven;
 there is no commercial support contract or SLA.
@@ -33,8 +36,8 @@ there is no commercial support contract or SLA.
 3. **Open a question or bug issue.** Use **Report a beta issue** in the
    installer, operator console, or resident portal, or open the repository's
    bug-report template directly. Include the CivicCast version, operating
-   system, whether this is Windows 11 + WSL2, the screen where the issue
-   happened, the exact operator message, and the steps already tried. Never
+   system, the screen where the issue happened, the exact operator
+   message, and the steps already tried. Never
    include passwords, recovery codes, staff tokens, or private meeting
    material in a public report.
 4. **Use [Discussions](https://github.com/scottconverse/civiccast/discussions) for
@@ -56,8 +59,9 @@ not exercised in that pass; see the
 Preserve the installer log and support bundle for every failure.
 
 Supported early-adopter paths are documented self-hosted deployment profiles,
-with Windows running CivicCast inside WSL2 Ubuntu. Operator or beta-test
-installs require durable storage. The installer and API prepare local durable
+with Windows running CivicCast as a native Windows service (no WSL, no
+Ubuntu). Operator or beta-test installs require durable storage. The
+installer and API prepare local durable
 storage and migrations by default, then the Setup screen creates the first local
 admin and browser token. Technical admins can configure Postgres with
 `DATABASE_URL` instead. In-memory stores are for tests and throwaway
@@ -69,8 +73,7 @@ The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md),
 developed on `release/native-beta-1.0.0-beta.1-rc1`) is **not a public beta**.
 Its development candidate, `v1.0.0-beta.1`, is an owner-held build, not a
 published GitHub release, so there is no public installer to support yet and
-no dedicated support intake for it: the bug-report issue template's operating-
-system field currently only lists "Windows 11 + WSL2 (Ubuntu 24.04)."
+no dedicated support intake for it.
 
 If you are working on or evaluating the native line as a contributor:
 
@@ -90,8 +93,7 @@ If you are working on or evaluating the native line as a contributor:
   2026-08-19); it is an engineering proof, not a support commitment.
 
 This section will be replaced with a real support surface once the native
-line has a published release and its own proof boundary document, the way
-the WSL line does above.
+line has a published release and its own proof boundary document.
 
 ## What Is Not Supported
 

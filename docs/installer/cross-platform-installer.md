@@ -1,12 +1,25 @@
 # Cross-Platform Installer
 
-CivicCast exposes guided installer contracts for Linux, macOS, and two
-distinct Windows product lines. The current public Windows beta is the WSL
-line: its host bootstrapper prepares Ubuntu on WSL2 and its CivicCast services
-run inside that Ubuntu runtime with systemd. The native Windows line is in
-development under ADR 0021 and uses a separate product identity and a
-session-0 Windows service. The two Windows products share a codebase but do
-not install, repair, or remove each other's runtime.
+> **This repository (`civiccast-native`) ships ONE Windows product: the
+> native line.** The "WSL line" described below was a real, separate
+> Windows product this project used to also ship, retired under the
+> owner's "no linux" decision (2026-08-19) -- see
+> [BRANCHES.md](../../BRANCHES.md). Its history lives in the separate,
+> private `scottconverse/civiccast` repository, not here. The paragraph and
+> platform-matrix row below are kept as historical context for why
+> `civiccast.installer.platform` still exists as a Linux/macOS-only module
+> and why the native product's own identity work (ADR 0021) had to be
+> disjoint from a second, real Windows product -- not as a description of
+> anything this repository currently builds or ships.
+
+CivicCast exposed guided installer contracts for Linux, macOS, and two
+distinct Windows product lines. The (now-retired) public Windows beta was the
+WSL line: its host bootstrapper prepared Ubuntu on WSL2 and its CivicCast
+services ran inside that Ubuntu runtime with systemd. The native Windows line
+was developed under ADR 0021 with a separate product identity and a
+session-0 Windows service; it is what this repository builds today. The two
+Windows products shared a codebase but never installed, repaired, or removed
+each other's runtime.
 
 ## Platform Matrix
 
@@ -14,8 +27,8 @@ not install, repair, or remove each other's runtime.
 | --- | --- | --- | --- | --- |
 | Linux | Native Linux | `.deb` or `.rpm` | systemd | Ready only when service metadata and package proof are present. |
 | macOS | Native macOS operator host | `.pkg` | launchd | Ready only when `.pkg` metadata and launchd bootstrap proof are present. |
-| Windows 11 - WSL line (current public beta) | Ubuntu on WSL2 | Tauri/NSIS setup app plus WSL2 bootstrap manifest | systemd inside WSL2 | Ready only when the setup app builds, WSL2 Ubuntu exists, and the guided WSL lanes pass. |
-| Windows 11 - native line (in development) | Native Windows | Distinct Tauri/NSIS setup app and native payload | session-0 Windows service | Readiness is governed by ADR 0021 and `.agent-runs/native-windows/specs/spec-installer-lifecycle.md`; development evidence is not a public native-beta claim. |
+| Windows 11 - native line (this repository) | Native Windows | Tauri/NSIS setup app and native payload | session-0 Windows service | Readiness is governed by ADR 0021 and `docs/design/spec-installer-lifecycle.md`. |
+| Windows 11 - WSL line (retired; separate archived repository) | Ubuntu on WSL2 | Tauri/NSIS setup app plus WSL2 bootstrap manifest | systemd inside WSL2 | Historical only -- this repository does not build this row. |
 
 ## Windows Setup App
 

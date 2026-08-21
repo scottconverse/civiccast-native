@@ -1,11 +1,20 @@
 # Beta Tester Handoff
 
+> **Historical: describes the retired public WSL2 line, not this
+> repository.** `civiccast-native` ships one product, the native Windows
+> station (session-0 Windows service, no WSL) -- see
+> [BRANCHES.md](../../BRANCHES.md). This document's `v1.0.0-rc18` handoff
+> process, and the `docs/releases/v1.0.0-rc17-verification.md` link below,
+> belong to the separate, private `scottconverse/civiccast` repository and
+> do not resolve or apply here. Kept as historical reference pending a
+> native-line beta-handoff guide.
+
 _Current as of v1.0.0-rc18 (2026-07-23). v1.0.0-rc17 is superseded and is now only the rollback target._
 
-This guide is the current beta tester path for the CivicCast operator-first
-tester line. Windows testers use the Windows installer as a host bootstrapper,
-then run CivicCast services in Ubuntu 24.04 on WSL2. The beta path does not
-ship a Windows Service runtime.
+This guide was the beta tester path for the CivicCast operator-first
+tester line on the retired WSL2 product. Windows testers used the Windows
+installer as a host bootstrapper, then ran CivicCast services in Ubuntu
+24.04 on WSL2. That beta path did not ship a Windows Service runtime.
 
 A **lane** is a named readiness track recorded in the handoff record — the
 JSON output of `civiccast installer beta-handoff --json` (see step 5 below).

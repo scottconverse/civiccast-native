@@ -1737,11 +1737,12 @@ Var CIVICCAST_TEARDOWN_EXIT
     ; this key, and this removal is deliberately REDUNDANT with it rather
     ; than a replacement -- DeleteRegKey on an absent key is a silent no-op,
     ; so the redundancy costs nothing. It is here because that expectation
-    ; has already failed once in this product family: nsis-hooks.nsh (the WSL
-    ; product's hook file, still in this repo) carries an explicit "rc13
-    ; lifecycle repair" doing exactly this deletion for its own
-    ; InstallDirRegKey, with the comment "Leaving it behind after uninstall
-    ; produces a false 'Already Installed' page on an otherwise clean host".
+    ; has already failed once in this product family: the retired WSL
+    ; product's hook file (nsis-hooks.nsh, removed under the owner's "no
+    ; linux" decision) carried an explicit "rc13 lifecycle repair" doing
+    ; exactly this deletion for its own InstallDirRegKey, with the comment
+    ; "Leaving it behind after uninstall produces a false 'Already Installed'
+    ; page on an otherwise clean host".
     ;
     ; PLACEMENT is load-bearing, not cosmetic: inside the ${Else} arm of the
     ; $R2 tree-retention gate, so it runs ONLY on the path that actually

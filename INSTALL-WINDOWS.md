@@ -1,15 +1,28 @@
 # Install CivicCast On Windows
 
-> **Two product lines, one page.** This page is written for the public
-> **WSL2 line** (`main`, `v1.0.0-rc18`) and every section below assumes that
-> install path **except** "If The Operator Console Says 'Could Not Read
-> Setup State'," which is scoped to the separate **native Windows line**
-> (`release/native-beta-1.0.0-beta.1-rc1`, not yet public) and says so in its
-> own heading. See [BRANCHES.md](BRANCHES.md) for the full two-line
-> breakdown. If you are not sure which line you installed, check whether
-> your install created a `CivicCast-Ubuntu-24.04` WSL distribution (WSL
-> line) or a `C:\Program Files\CivicCast (Native)\` directory (native line)
-> — the two install paths do not overlap.
+> **This repository (`civiccast-native`) ships ONE product: the native
+> Windows station.** No WSL, no Docker, no Linux install target -- see
+> [BRANCHES.md](BRANCHES.md). It is a signed installer that registers a
+> Windows service through the SCM and supervises the control plane,
+> Postgres, NATS, and the media workers from a bundled runtime, at
+> `C:\Program Files\CivicCast (Native)\`.
+>
+> **The native line is an owner-held development candidate and is not yet
+> published** (per BRANCHES.md's "Release identity"). This page currently
+> documents the one thing that is real and testable pre-release: recovering
+> the operator-console setup handoff on an already-installed native station.
+> A full install/download walkthrough will be written once a native release
+> is published.
+>
+> **Everything below this notice, up to "If The Operator Console Says
+> 'Could Not Read Setup State'," describes the retired public WSL2 line**
+> (`v1.0.0-rc18` and earlier) that this repository does not carry. That
+> product's full history, release artifacts, and verification docs live in
+> the separate, private `scottconverse/civiccast` repository (see
+> BRANCHES.md's "Where the old line went") -- the doc links and GitHub
+> release URLs below point there, not here, and several no longer resolve
+> from this repository. It is kept as historical reference, not as
+> current install instructions for this repository.
 
 > **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
 > installer is built from the gate-cleared `main`, Authenticode-signed, and proven
@@ -167,15 +180,13 @@ one-time Windows helper setup; if that step never completed, open CivicCast
 Installer and choose **Set up Windows helper** for the required administrator
 approval.
 
-## If The Operator Console Says "Could Not Read Setup State" (native Windows line only)
+## If The Operator Console Says "Could Not Read Setup State"
 
-**This section applies to the native Windows line
-(`release/native-beta-1.0.0-beta.1-rc1`), not the public WSL2 line covered by
-the rest of this page** — the paths and executables below
+**This is the current, applicable content in this repository.** It covers
+the native Windows line's own install — the paths and executables below
 (`CivicCast Native.exe`, `CivicCast (Native)`, `civiccast.native.runtime_cli`)
-only exist on a native-line install. If you installed the public `v1.0.0-rc18`
-WSL2 release and see this message, it is not this recovery flow; open a
-support bundle instead (see "If Something Fails" below).
+only exist on a native-line install; the retired public WSL2 line described
+above (a different, archived repository) never had this recovery flow.
 
 The operator console's first setup page needs the one-time handoff URL the
 Windows installer creates — a plain console URL with no `?nonce=` on the end
@@ -245,13 +256,14 @@ Ask for IT help if:
 - You are testing an external provider, physical video output, or cable-headend
   path.
 
-For IT: on this page's line (the public WSL2 beta), the Windows helper is
-WSL2 Ubuntu 24.04, and CivicCast requires WSL2 for this install path because
-the local meeting tools run inside that helper with Linux-compatible service
-behavior. WSL1 is not a supported release path for this line. (The separate
-native Windows line — see the scoped section above — does not use WSL at
-all; it runs as a native Windows service. Don't apply this WSL2 requirement
-to a native-line install.)
+For IT, historical (retired public WSL2 line, not this repository): that
+line's Windows helper was WSL2 Ubuntu 24.04, and its install path used to
+depend on WSL2 because the local meeting tools ran inside that helper with
+Linux-compatible service behavior. WSL1 was never a supported release path
+for it. The native Windows line documented in this repository — see the
+section below — does not use WSL at all; it runs as a native Windows
+service through the SCM. None of the WSL2 requirement above applies to a
+native-line install.
 
 ## If Something Fails
 

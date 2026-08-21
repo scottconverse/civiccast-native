@@ -457,11 +457,11 @@ test("installer never shows the optimistic 'finishing setup' banner over a stale
       contentType: "application/json",
       body: JSON.stringify({
         ready: false,
-        platform: "windows-wsl2",
+        platform: "windows-native",
         lanes: [
           {
             id: "platform",
-            label: "Windows helper",
+            label: "Setting up CivicCast",
             status: "success",
             ready: true,
             next_step: "CivicCast is finishing setup."
@@ -499,7 +499,7 @@ test("installer local helper-ready progress continues to CivicCast setup", async
         schema_version: 1,
         current_lane_id: "platform",
         status: "ready",
-        message: "The Windows helper CivicCast needs is ready.",
+        message: "CivicCast's local services are ready on this computer.",
         reboot_required: false,
         updated_at_unix: 1
       };
@@ -575,7 +575,7 @@ test("installer continue uses freshly saved runtime-ready progress", async ({ pa
       contentType: "application/json",
       body: JSON.stringify({
         ready: false,
-        platform: "windows-wsl2",
+        platform: "windows-native",
         operator_console_url: "http://127.0.0.1:5173",
         lanes: [
           {
@@ -700,7 +700,7 @@ test("installer shows live runtime activity and opens the console once when setu
       schema_version: 1,
       current_lane_id: "platform",
       status: "ready",
-      message: "The Windows helper CivicCast needs is ready.",
+      message: "CivicCast's local services are ready on this computer.",
       reboot_required: false,
       updated_at_unix: Math.floor(Date.now() / 1000)
     };

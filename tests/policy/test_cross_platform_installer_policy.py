@@ -9,7 +9,10 @@ from pathlib import Path
 
 
 class TestCrossPlatformInstallerPolicy:
-    def test_policy_rejects_native_windows_non_wsl_service_claims(self, tmp_path: Path) -> None:
+    def test_policy_accepts_native_windows_service_claims(self, tmp_path: Path) -> None:
+        """The native Windows product (ADR-0021) genuinely has no WSL2
+        dependency -- this claim is true and must pass, not fail."""
+
         policy = importlib.import_module("scripts.policy.check_release_artifacts")
         docs = tmp_path / "installer.md"
         docs.write_text(
@@ -19,8 +22,24 @@ class TestCrossPlatformInstallerPolicy:
 
         result = policy.check_cross_platform_installer_policy([docs])
 
+        assert result.status == "passed"
+
+    def test_policy_rejects_stale_wsl2_bootstrap_claims(self, tmp_path: Path) -> None:
+        """The retired WSL2/Ubuntu bootstrap lane must never be claimed as a
+        current requirement -- that decision (2026-08-19) is the one this
+        check now guards."""
+
+        policy = importlib.import_module("scripts.policy.check_release_artifacts")
+        docs = tmp_path / "installer.md"
+        docs.write_text(
+            "The Windows installer requires WSL2 and bootstraps an Ubuntu distro.",
+            encoding="utf-8",
+        )
+
+        result = policy.check_cross_platform_installer_policy([docs])
+
         assert result.status == "failed"
-        assert "Windows WSL2-only" in result.next_step
+        assert "native Windows product" in result.next_step
 
     def test_policy_rejects_full_model_proof_when_models_are_skipped(self, tmp_path: Path) -> None:
         policy = importlib.import_module("scripts.policy.check_release_artifacts")

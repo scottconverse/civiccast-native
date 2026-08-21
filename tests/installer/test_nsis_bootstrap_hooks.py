@@ -374,9 +374,9 @@ def test_m2_a_completed_uninstall_removes_the_tauri_install_dir_registry_key() -
         f"(HKLM\\{TAURI_INSTALL_DIR_REG_KEY}), whose default value is the install path. "
         "Left behind, it is what makes a fresh install of this product show Tauri's "
         '"Already Installed" reinstall page on an otherwise clean host -- the same '
-        "lifecycle defect the WSL product's nsis-hooks.nsh already carries an explicit "
-        "repair for (its rc13 'orphaned uninstall registration' block), proving Tauri's "
-        "own generated uninstall Section cannot be relied on to have done it"
+        "lifecycle defect the retired WSL product's nsis-hooks.nsh already carried an "
+        "explicit repair for (its rc13 'orphaned uninstall registration' block), proving "
+        "Tauri's own generated uninstall Section cannot be relied on to have done it"
     )
 
 

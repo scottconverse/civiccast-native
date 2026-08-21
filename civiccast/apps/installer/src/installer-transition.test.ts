@@ -3,36 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { firstActionableLane, markWindowsBootstrapResultPending } from "./installer-transition";
+import { firstActionableLane } from "./installer-transition";
 import type { InstallerLane, InstallerState } from "./types";
-
-describe("markWindowsBootstrapResultPending", () => {
-  it("removes the stale missing-helper action while the native result is being reconciled", () => {
-    const state: InstallerState = {
-      ready: false,
-      platform: "windows-wsl2",
-      lanes: [
-        {
-          id: "platform",
-          label: "Windows helper",
-          status: "blocked",
-          ready: false,
-          detail: "Windows helper missing",
-          nextStep: "Choose Set up Windows helper."
-        }
-      ]
-    };
-
-    const pending = markWindowsBootstrapResultPending(state, "platform");
-
-    expect(pending.lanes[0]).toMatchObject({
-      status: "progress",
-      ready: false,
-      detail: "Windows helper setup finished. CivicCast is checking the result.",
-      nextStep: "Keep this window open. No action is needed."
-    });
-  });
-});
 
 describe("firstActionableLane", () => {
   const lane = (overrides: Partial<InstallerLane> & { id: string }): InstallerLane => ({
@@ -45,7 +17,7 @@ describe("firstActionableLane", () => {
   });
   const state = (lanes: InstallerLane[]): InstallerState => ({
     ready: false,
-    platform: "windows-wsl2",
+    platform: "windows-native",
     lanes
   });
 

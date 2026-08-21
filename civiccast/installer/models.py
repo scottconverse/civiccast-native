@@ -961,10 +961,12 @@ class InstallerSummary(BaseModel):
 
     ready: bool
     #: ``"windows-native"`` is the native Windows station (the supervisor's own
-    #: control plane); ``"windows-wsl2"`` is the WSL2 deployment and the bare
-    #: Windows host running its bootstrap probe. The installer GUI switches
-    #: WSL-only affordances on this value, so the two must not share one name --
-    #: see ``build_installer_summary`` and ``apps/installer/src/App.tsx``.
+    #: control plane) -- every Windows control plane running today's code is
+    #: this. ``"windows-wsl2"`` named the retired WSL2 deployment; kept in the
+    #: type only so a pre-native build's cached progress or on-disk state
+    #: still type-checks on the frontend (``apps/installer/src/api.ts``'s
+    #: ``withHonestNativePlatform``) -- this backend never produces it. See
+    #: ``build_installer_summary``.
     platform: Literal["linux", "macos", "windows-native", "windows-wsl2"]
     operator_console_url: Annotated[str, Field(min_length=1)]
     lanes: list[InstallerLane]

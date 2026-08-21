@@ -4,37 +4,35 @@
 publication software for public-access stations, city councils, school
 boards, and community media teams.**
 
-The controlled beta line proves one bounded local workflow (validated on rc15,
-now carried by the published `v1.0.0-rc18`, which supersedes rc17 —
-see "Current state" below):
-create or upload recorded media, rehearse that exact sample privately, package
-it privately, approve Portal publication, and play it in the resident portal.
-Stock live ingest fails closed
-until an integrator supplies and proves a server-side media probe. 24/7 station
-operation, physical hardware, headend delivery, external providers, and
-app-store distribution require separate field proof.
+This repository (`civiccast-native`) ships **one product line**: a native
+Windows station-in-a-box. `main` carries it — a signed installer that
+registers a Windows service through the SCM and supervises the control
+plane, Postgres, NATS, and the media workers from a bundled runtime. No
+WSL, no Docker, no Linux install target. See [BRANCHES.md](BRANCHES.md)
+for the full explanation, including where the retired WSL2/Ubuntu lane's
+history now lives (a separate, private repository, not this one).
 
-## Windows product-line scope
+> **Historical note.** Earlier revisions of this README described "two
+> parallel product lines" -- `main` as a public WSL2 Windows beta
+> (`v1.0.0-rc15`/`rc18`) alongside a separate native-Windows development
+> branch. That described the OLD `scottconverse/civiccast` repository, not
+> this one: this repository was created by copying only the native product
+> out of it with fresh history (BRANCHES.md), and the WSL2 lane was
+> retired outright under the owner's "no linux" decision (2026-08-19). The
+> sections below that still describe `v1.0.0-rc18`/WSL2-line proof state,
+> and any link to `docs/releases/v1.0.0-rc*-verification.md` or to
+> `scottconverse/civiccast`'s GitHub releases, refer to that other,
+> private repository and do not resolve or apply here. They are kept as
+> historical context pending a native-line rewrite of this README's proof
+> narrative and capability table footnotes.
 
-**This repository carries two parallel product lines: `main` (the public
-WSL2 beta below) and `release/native-beta-1.0.0-beta.1-rc1` (the active
-native-Windows development line). See [BRANCHES.md](BRANCHES.md) for which
-branch is which, which branch to target with a PR, and what each line
-ships.**
-
-The public `v1.0.0-rc15` installer and the evidence described below belong to
-the Windows 11 + WSL2 product line. A distinct native Windows product line is
-in owner-approved development under [ADR 0021](docs/adr/0021-native-windows-runtime.md)
-and the native execution contracts in `.agent-runs/native-windows/specs/`.
-Native development evidence is not a public installer or beta-readiness claim,
-and the native line does not retire the WSL line.
-
-The native Windows line's own development candidate is `v1.0.0-beta.1` — an
-owner-held unpublished candidate, not a public release. Its version identity is
-deliberately distinct from the WSL line's `v1.0.0-rc15`: the native line is a new
-beta series, not a successor build of the WSL rc series, and the two must never be
-mistaken for each other (they install to separate registry roots, under separate
-product identities, and are never upgrade-compatible with one another).
+The native line's own development candidate is `v1.0.0-beta.1` — an
+owner-held candidate that is **not yet published** (BRANCHES.md's "Release
+identity"). Its version identity is deliberately distinct from the retired
+WSL line's `v1.0.0-rc15`/`rc18`: the native line is a new beta series, not
+a successor build of the WSL rc series (they install to separate registry
+roots, under separate product identities, and are never
+upgrade-compatible with one another).
 
 > **Native packs built before the `v1.0.0-rc15` → `v1.0.0-beta.1` version-identity
 > split are stale and will fail pack-trust verification.** The installer's pack
@@ -159,7 +157,7 @@ from disk.
 | Underwriting / sponsorship spot trafficking | Spot-as-asset, rotation rules, break insertion, per-underwriter affidavits, billing export | Built (S24) |
 | Meeting-agenda integration with video timecode | Agenda items synced to chapters, public agenda sidebar with seek, optional agenda PDF | Built (S25) |
 | Native OTT apps (Roku / Apple TV / Fire TV / Android TV / Android mobile / iOS) | Real platform-idiomatic starter source for all six targets that builds with the platform's own toolchain; HLS playback against the public app config API | Built (S12) — store-ready polish (artwork, store metadata, accessibility audit) is per-target follow-up |
-| Captions / loudness / EAS software layer | Caption decode-back/status proofs, per-sink loudness target, CAP / IPAWS / NWS / AMBER display, EAS attention-tone stripping on web/OTT egress, secondary-audio routing (SAP / descriptive). The packaged helper includes a CivicCast-bundled private GStreamer runtime and hard-checks the native caption-SEI elements before it claims that path is ready. The 0.1.0-rc6 installer provisions the bundled WSL2 + Ubuntu runtime on a clean Windows machine and the operator core is reachable end-to-end — proven on a lab VM (recorded and live video served and ffprobe-verified, no hotpatch; not yet validated on production broadcast hardware). Optional operator-provided `x264enc` remains supported but is not shipped. | Built in software; clean-Windows install proven on a lab VM |
+| Captions / loudness / EAS software layer | Caption decode-back/status proofs, per-sink loudness target, CAP / IPAWS / NWS / AMBER display, EAS attention-tone stripping on web/OTT egress, secondary-audio routing (SAP / descriptive). The native Windows installer bundles a private GStreamer runtime and hard-checks the native caption-SEI elements before it claims that path is ready (see [BRANCHES.md](BRANCHES.md); this replaces an earlier, now-retired WSL2/Ubuntu-hosted runtime described in older revisions of this table). Optional operator-provided `x264enc` remains supported but is not shipped. | Built in software |
 | Live ingest and contribution | RTMP / RTSP / NDI / SRT ingest, VDO.Ninja remote guests, Production Control Room (TSR over OBS / vMix / ATEM) | Built (S16, S17) |
 | Analytics and audience measurement | Self-hosted analytics (viewer count, time-watched), franchise audience reports | Built (S14) — packaged audience reports (CSV/XML) over the existing store; the fuller dashboard/Postgres epic is a tracked follow-on |
 | AI model-selection surface | Per-feature operator choice across local Ollama / Ollama Cloud / OpenRouter; defaults adapt to detected RAM | Built (S13) |
@@ -343,13 +341,16 @@ CivicCast names a missing dependency, explains the next action in plain
 English, and leaves that lane unready rather than pretending the station
 is ready.
 
-The Windows helper installer is designed to provision the local runtime inside
-Ubuntu WSL2: Python, FFmpeg/FFprobe, a CivicCast-bundled private GStreamer
-runtime with the caption-SEI elements, Faster Whisper through the bundled
-wheelhouse, and the pinned TSDuck Ubuntu 24.04 package for cable verification.
-The 0.1.0-rc6 installer, built by CI, provisions this runtime on a clean Windows machine and serves playable recorded and live video end-to-end — ffprobe-verified on a lab VM (not yet validated on production broadcast hardware). NDI runtime/SDK,
-DeckLink hardware/drivers, app-store provider accounts, and live station
-headend equipment remain operator/provider supplied.
+The native Windows installer provisions the local runtime directly on
+Windows, with no Linux or WSL2 dependency: a bundled Python runtime,
+FFmpeg/FFprobe, a CivicCast-bundled private GStreamer runtime with the
+caption-SEI elements, Faster Whisper through the bundled wheelhouse, and
+the pinned native TSDuck build for cable verification. (Earlier
+revisions of this paragraph described an Ubuntu-WSL2-hosted runtime; that
+lane was retired under the owner's "no linux" decision -- see
+BRANCHES.md.) NDI runtime/SDK, DeckLink hardware/drivers, app-store
+provider accounts, and live station headend equipment remain
+operator/provider supplied.
 
 ## Documentation
 

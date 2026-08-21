@@ -7,13 +7,13 @@ name: ci-installer-compile
 # The installer is only *built* in release-artifacts.yml's `windows-installer`
 # job, which is tag/manual-only — so a PR that breaks the installer's Rust
 # compile is not caught until a release tag. The installer's other PR-time tests
-# (tests/policy/test_windows_wsl_bootstrap_script.py) only string-match the
-# bootstrap script; they never compile the app. This guard closes that gap: it
-# `cargo test`s the crate on the release OS (Windows) whenever installer code
-# changes, so both a compile break AND a regression in the installer's pure
-# decision logic (the #[cfg(test)] unit tests in main.rs — WSL classifiers,
-# health-response parsing, URL/PowerShell-quote validation) surface on the PR
-# that introduces it.
+# (tests/policy/test_native_installer_runtime_infra.py, formerly
+# test_windows_wsl_bootstrap_script.py) only string-match main.rs; they never
+# compile the app. This guard closes that gap: it `cargo test`s the crate on
+# the release OS (Windows) whenever installer code changes, so both a compile
+# break AND a regression in the installer's pure decision logic (the
+# #[cfg(test)] unit tests in main.rs — health-response parsing,
+# URL/PowerShell-quote validation) surface on the PR that introduces it.
 #
 # `cargo test --locked` compiles the crate and runs its unit tests: it fails on a
 # stale Cargo.lock, and (verified locally, tauri 2 / cargo 1.96) it does NOT need

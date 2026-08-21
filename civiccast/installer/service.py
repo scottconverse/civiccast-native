@@ -150,9 +150,7 @@ from civiccast.vod.store import AssetAlreadyExistsError
 if TYPE_CHECKING:
     from civiccast.dr.models import DrillReport
 
-_WINDOWS_DRIVE_ABSOLUTE_RE = re.compile(r"^(?P<drive>[A-Za-z]):[\\/](?P<rest>.*)$")
 _WINDOWS_DRIVE_RELATIVE_RE = re.compile(r"^[A-Za-z]:(?![\\/])")
-_WINDOWS_UNC_RE = re.compile(r"^(?:\\\\|//)")
 
 _PROFILE_LABELS: dict[DeploymentProfile, str] = {
     "public-meetings": "Public Meetings",
@@ -1048,7 +1046,16 @@ def configure_backup(request: BackupSetupRequest) -> BackupStatus:
 
 
 def _backup_destination_path(destination: str) -> Path:
-    """Return the concrete runtime path used for backup probes."""
+    """Return the concrete runtime path used for backup probes.
+
+    Used to also translate a Windows-style drive path (``C:\\...``) into its
+    mounted equivalent when the control plane was itself running as a Linux
+    process inside a WSL2 guest (``CIVICAST_WSL_DRIVE_MOUNT_ROOT``,
+    ``CIVICAST_TRANSLATE_WINDOWS_BACKUP_PATHS``) -- the retired WSL product's
+    own control plane. The native product's control plane runs directly on
+    Windows (``os.name == "nt"``), so a Windows-style path was already used
+    as-is there before this simplification; nothing changes for it.
+    """
 
     candidate = destination.strip()
     if not candidate:
@@ -1057,47 +1064,7 @@ def _backup_destination_path(destination: str) -> Path:
         raise ValueError(
             "Use an absolute Windows path such as C:\\CivicCastBackups, not a drive-relative path."
         )
-    if _WINDOWS_UNC_RE.match(candidate) and _should_translate_windows_backup_paths():
-        raise ValueError(
-            "Windows network share paths are not available inside the CivicCast WSL runtime. "
-            "Choose a local drive path such as D:\\CivicCastBackups or a mounted WSL path."
-        )
-    windows_mount = _windows_drive_path_to_wsl(candidate)
-    if windows_mount is not None and _should_translate_windows_backup_paths():
-        drive_mount = (
-            Path(os.getenv("CIVICAST_WSL_DRIVE_MOUNT_ROOT", "/mnt")) / candidate[0].lower()
-        )
-        if not drive_mount.exists():
-            raise ValueError(
-                f"Windows drive {candidate[0].upper()}: is not mounted in WSL at {drive_mount}."
-            )
-        return windows_mount
     return Path(candidate).expanduser()
-
-
-def _should_translate_windows_backup_paths() -> bool:
-    if os.getenv("CIVICAST_TRANSLATE_WINDOWS_BACKUP_PATHS") == "1":
-        return True
-    if os.name == "nt":
-        return False
-    return bool(
-        os.getenv("WSL_DISTRO_NAME")
-        or Path("/proc/sys/fs/binfmt_misc/WSLInterop").exists()
-        or Path("/mnt/c").exists()
-    )
-
-
-def _windows_drive_path_to_wsl(destination: str) -> Path | None:
-    match = _WINDOWS_DRIVE_ABSOLUTE_RE.match(destination.strip())
-    if match is None:
-        return None
-    drive = match.group("drive").lower()
-    rest = match.group("rest").replace("\\", "/")
-    mount_root = Path(os.getenv("CIVICAST_WSL_DRIVE_MOUNT_ROOT", "/mnt"))
-    path = mount_root / drive
-    if rest:
-        path = path.joinpath(*[part for part in rest.split("/") if part])
-    return path
 
 
 def save_provider_credentials(
@@ -3173,8 +3140,8 @@ def create_diagnostic_bundle(
     alerting/egress stores were unavailable and the section is simply omitted.
 
     ``channel_ids`` (item #26) drives which per-channel egress log files get
-    pulled into the bundle's ``logs`` section, in addition to the installer's
-    own WSL bootstrap log. Every collected line passes through the same
+    pulled into the bundle's ``logs`` section, in addition to the native
+    runtime host's own diagnostic log. Every collected line passes through the same
     ``_redact_log_text`` choke point used for the rest of the bundle, so a
     stray secret or the setup nonce in an FFmpeg/bootstrap log line cannot
     leave the machine unredacted."""
@@ -3310,10 +3277,10 @@ def _tail_log_file(path: Path, *, limit: int = _SUPPORT_BUNDLE_LOG_TAIL_CHARS) -
 
 
 def _collect_support_bundle_logs(channel_ids: tuple[str, ...]) -> dict[str, Any]:
-    """Gather the runtime/service logs named by item #26: the installer's WSL
-    bootstrap log and each live channel's FFmpeg stdout/stderr tail. Missing
-    files (nothing has run yet, or this is not Windows) are simply omitted --
-    log collection never blocks bundle creation."""
+    """Gather the runtime/service logs named by item #26: the native runtime
+    host's own diagnostic log and each live channel's FFmpeg stdout/stderr
+    tail. Missing files (nothing has run yet, or this is not Windows) are
+    simply omitted -- log collection never blocks bundle creation."""
 
     logs: dict[str, Any] = {}
 
@@ -3342,15 +3309,21 @@ def _collect_support_bundle_logs(channel_ids: tuple[str, ...]) -> dict[str, Any]
 
 
 def _installer_bootstrap_log_path() -> Path | None:
+    """The native runtime host's own diagnostic log (main.rs's
+    ``runtime_host_log``, under ``%USERPROFILE%\\.civiccast`` -- the SAME
+    root ``installer_state_root()`` uses, per ``main.rs``'s
+    ``installer_log_candidates``). Used to point at the retired WSL2 lane's
+    ``bootstrap-wsl2-ubuntu.log`` under ``%LOCALAPPDATA%\\CivicCast``, a
+    script and a path that no longer exist."""
     configured = os.getenv("CIVICCAST_INSTALLER_BOOTSTRAP_LOG")
     if configured:
         return Path(configured).expanduser()
     if os.name != "nt":
         return None
-    root = os.getenv("LOCALAPPDATA")
+    root = os.getenv("USERPROFILE")
     if not root:
         return None
-    return Path(root) / "CivicCast" / "bootstrap-wsl2-ubuntu.log"
+    return Path(root) / ".civiccast" / "runtime-host.log"
 
 
 def _egress_work_dir() -> Path:
@@ -5794,47 +5767,6 @@ _NATIVE_STATION_PLATFORM_BLOCKED_NEXT_STEP = (
 )
 
 
-def _native_windows_station() -> bool:
-    """True when this control plane IS the native Windows station.
-
-    ``/installer/summary`` serves BOTH deployments and must not confuse them:
-
-    * On a WSL2 deployment the control plane is a Linux process inside the
-      Ubuntu guest, so ``platform.system()`` is ``"Linux"`` (and
-      :func:`_running_inside_wsl` is true). This returns ``False`` there and
-      the WSL bootstrap plan keeps deciding the platform lane, unchanged.
-      The same is true of a bare Windows host that is only running the
-      WSL-side bootstrap probe: neither signal below is present.
-    * On the native Windows product the control plane is the supervisor's own
-      child, launched from the embedded interpreter.
-
-    Two signals, read out of the code that writes them rather than assumed,
-    neither of which a WSL deployment produces:
-
-    * ``CIVICCAST_NATIVE_STATION=1`` -- written ONLY by
-      ``civiccast.native.station_runtime.load_native_station_environment``
-      and delivered to this process through the supervisor's control-plane
-      child env (``native/supervisor/service.py``
-      ``station_environment_for_python`` -> ``ProductionDependencies.
-      control_plane_env`` -> ``core.Supervisor`` ->
-      ``children.control_plane_child_spec(extra_env=...)``). No bootstrap
-      script, Rust command, or WSL path anywhere in the tree sets it.
-    * the installed layout ``<install_root>\\runtime\\python[service].exe``
-      -- the SAME shape ``native/supervisor/service.py`` uses to decide
-      whether to load the station env at all, and ``installer/
-      model_download.py`` uses to decide whether it is running on an
-      installed station. This one holds from first boot, so a station that is
-      installed but not yet ACTIVATED is still recognised as native and then
-      reported honestly as not ready by :func:`_native_station_activated`.
-    """
-
-    if platform.system().lower() != "windows":
-        return False
-    if os.environ.get("CIVICCAST_NATIVE_STATION", "").strip() == "1":
-        return True
-    return Path(sys.executable).parent.name.casefold() == "runtime"
-
-
 def _native_station_activated() -> bool:
     """True when this native station has completed activation.
 
@@ -5865,21 +5797,22 @@ def _native_station_activated() -> bool:
 def build_installer_summary() -> InstallerSummary:
     """Build the tester install summary without mixing in release-proof lanes."""
 
-    platform_plan = _detected_bootstrap_plan()
+    is_windows = platform.system().lower() == "windows"
+    # The platform lane asserts "CivicCast has a supported place to run", and
+    # WHAT that means depends on the deployment. ``build_bootstrap_plan``
+    # (Linux/macOS only, see civiccast.installer.platform's module doc)
+    # answers it for those two; Windows is decided entirely by this
+    # process's own native-station signals below, never by a generic
+    # multi-OS plan -- the retired WSL2 lane used to be the ONLY thing that
+    # answered it for Windows, which meant a native station could never
+    # clear this lane no matter how healthy it was until that lane's own
+    # activation state was consulted directly.
+    platform_plan = None if is_windows else _detected_bootstrap_plan()
     storage = durable_storage_status()
     storage_ready = storage.status == "ready"
     runtime_ready = sys.version_info >= (3, 12)
     ffmpeg_ready = shutil.which("ffmpeg") is not None
-    # The platform lane asserts "CivicCast has a supported place to run", and
-    # WHAT that means depends on the deployment. ``build_bootstrap_plan``
-    # answers it for WSL2 only -- ``PlatformBootstrapPlan`` rejects a native
-    # Windows runtime outright, and ``_detected_bootstrap_plan`` hard-codes
-    # ``ubuntu``/``ubuntu_wsl2`` to False on a Windows host, so a native
-    # station could never clear that lane no matter how healthy it was. The
-    # native product asserts its own prerequisite instead (an ACTIVATED
-    # station); the WSL path below is untouched, plan and all.
-    native_station = _native_windows_station()
-    if native_station:
+    if is_windows:
         platform_ready = _native_station_activated()
         platform_status: Literal["ready", "blocked"] = "ready" if platform_ready else "blocked"
         platform_next_step = (
@@ -5888,11 +5821,12 @@ def build_installer_summary() -> InstallerSummary:
             else _NATIVE_STATION_PLATFORM_BLOCKED_NEXT_STEP
         )
     else:
+        assert platform_plan is not None  # narrows for the type checker
         platform_ready = platform_plan.status == "ready"
         platform_status = platform_plan.status
         platform_blocker = " ".join(platform_plan.blockers)
         platform_next_step = (
-            "CivicCast's Windows helper is ready. It can run the local meeting tools on this computer. Continue setup and open the dashboard."
+            platform_plan.next_step
             if platform_plan.status == "ready"
             else f"{platform_blocker} {platform_plan.next_step}".strip()
         )
@@ -5920,12 +5854,13 @@ def build_installer_summary() -> InstallerSummary:
             id="ffmpeg",
             label="Preparing video tools",
             # "unavailable", not "blocked": the installer GUI keys both its
-            # "Repair this step" button (App.tsx canRepairLane) and its
-            # dependency-repair action off "blocked"/"error", and that repair
-            # path runs the WSL bootstrap (main.rs -> headless-bootstrap.ps1
-            # "apt-get install ffmpeg"), which cannot put ffmpeg on a native
-            # Windows control plane's PATH. An affordance that cannot deliver
-            # is worse than none, so this lane offers the remedy that works.
+            # "Repair this step" button (lane-affordances.ts canRepairLane)
+            # and its dependency-repair action off "blocked"/"error", and
+            # that repair path (main.rs's launch_civiccast_runtime_bootstrap)
+            # restarts the native runtime host -- it cannot install a missing
+            # ffmpeg dependency onto the control plane's PATH. An affordance
+            # that cannot deliver is worse than none, so this lane offers the
+            # remedy that works.
             status="ready" if ffmpeg_ready else "unavailable",
             ready=ffmpeg_ready,
             next_step=(
@@ -6014,56 +5949,41 @@ def build_installer_summary() -> InstallerSummary:
         ),
     ]
     # ``platform`` is a CONTRACT the installer GUI switches affordances on, not
-    # a label: ``apps/installer/src/App.tsx``'s ``isWslBootstrapLane`` offers
-    # "Set up Windows helper" -- which routes into the WSL bootstrap
-    # (``src-tauri/src/main.rs`` ``is_wsl_bootstrap_lane`` ->
-    # ``headless-bootstrap.ps1``'s ``apt-get install``) -- for
-    # ``platform === "windows-wsl2"`` on a blocked ``platform`` lane, which is
-    # exactly the shape of a native station that has not finished activating.
-    # Reporting "windows-wsl2" there was false: the native product does not use
-    # WSL at all, and the bootstrap it offered cannot run. A native station now
-    # says so, and every WSL-only affordance switches itself off.
-    #
-    # ``platform_plan.os_family`` cannot answer this on its own -- it is
-    # ``"windows"`` for BOTH deployments' Windows-side probe (see
-    # ``_detected_bootstrap_plan``) -- so this reuses the same
-    # ``_native_windows_station()`` signal the platform lane above already
-    # decided on, rather than re-detecting.
-    platform: Literal["linux", "macos", "windows-native", "windows-wsl2"]
-    if platform_plan.os_family == "windows":
-        platform = "windows-native" if native_station else "windows-wsl2"
+    # a label: ``apps/installer/src/lane-affordances.ts``'s
+    # ``isWindowsPlatform`` gates "Open installer log" on it being
+    # "windows-native". "windows-wsl2" is kept in the type only so a
+    # pre-native build's on-disk state or cached progress still type-checks
+    # (see api.ts's ``withHonestNativePlatform``); this function never
+    # PRODUCES it -- every Windows control plane running today's code is the
+    # native station, full stop.
+    platform_field: Literal["linux", "macos", "windows-native", "windows-wsl2"]
+    if is_windows:
+        platform_field = "windows-native"
     else:
-        platform = platform_plan.os_family
+        assert platform_plan is not None  # narrows for the type checker
+        platform_field = platform_plan.os_family
     return InstallerSummary(
         ready=all(lane.ready for lane in lanes if lane.id not in _OPTIONAL_INSTALLER_LANE_IDS),
-        platform=platform,
+        platform=platform_field,
         operator_console_url=operator_console_url(),
         lanes=lanes,
     )
 
 
 def _detected_bootstrap_plan() -> PlatformBootstrapPlan:
-    """Detect the runtime that is evaluating installer readiness."""
+    """Detect the runtime that is evaluating installer readiness.
+
+    Only ever called for the Linux/macOS native deployments -- the caller
+    (``build_installer_summary``) branches Windows off before reaching this,
+    since Windows readiness is decided by this process's own native-station
+    signals, never by a generic multi-OS plan. This function used to also
+    detect a Linux process running inside a WSL2 Ubuntu guest (the retired
+    WSL product's own control plane) and a bare Windows host; both branches
+    were removed with that product under the owner's "no linux" decision
+    (2026-08-19).
+    """
 
     system = platform.system().lower()
-    if system == "windows":
-        return build_bootstrap_plan(
-            os_family="windows",
-            detected_tools={
-                "wsl": shutil.which("wsl.exe") is not None,
-                "ubuntu": False,
-                "ubuntu_wsl2": False,
-            },
-        )
-    if system == "linux" and _running_inside_wsl():
-        return build_bootstrap_plan(
-            os_family="windows",
-            detected_tools={
-                "wsl": True,
-                "ubuntu": True,
-                "ubuntu_wsl2": _running_inside_wsl2(),
-            },
-        )
     os_family: OsFamily = "macos" if system == "darwin" else "linux"
     if os_family == "linux":
         return build_bootstrap_plan(
@@ -6080,22 +6000,6 @@ def _detected_bootstrap_plan() -> PlatformBootstrapPlan:
             "pkgbuild": shutil.which("pkgbuild") is not None,
         },
     )
-
-
-def _running_inside_wsl() -> bool:
-    try:
-        version = Path("/proc/version").read_text(encoding="utf-8", errors="ignore").lower()
-    except OSError:
-        return False
-    return "microsoft" in version or "wsl" in version
-
-
-def _running_inside_wsl2() -> bool:
-    try:
-        release = Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        release = platform.release()
-    return "wsl2" in release.lower() or "microsoft-standard" in release.lower()
 
 
 def _ndi_runtime_detected() -> bool:

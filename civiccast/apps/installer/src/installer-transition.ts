@@ -19,20 +19,3 @@ export function firstActionableLane(installer: InstallerState): InstallerLane | 
     installer.lanes[0]
   );
 }
-
-export function markWindowsBootstrapResultPending(installer: InstallerState, laneId: string): InstallerState {
-  return {
-    ...installer,
-    lanes: installer.lanes.map((lane) =>
-      lane.id === laneId
-        ? {
-            ...lane,
-            status: "progress",
-            ready: false,
-            detail: "Windows helper setup finished. CivicCast is checking the result.",
-            nextStep: "Keep this window open. No action is needed."
-          }
-        : lane
-    )
-  };
-}

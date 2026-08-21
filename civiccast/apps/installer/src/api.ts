@@ -15,7 +15,7 @@ export type InstallerAction = "retry" | "cancel" | "continue" | "repair" | "rese
 export const installerFixtures: Record<string, InstallerState> = {
   loading: {
     ready: false,
-    platform: "windows-wsl2",
+    platform: "windows-native",
     lanes: [
       {
         id: "loading",
@@ -43,7 +43,7 @@ export const installerFixtures: Record<string, InstallerState> = {
   },
   empty: {
     ready: false,
-    platform: "windows-wsl2",
+    platform: "windows-native",
     lanes: [
       {
         id: "package",
@@ -76,7 +76,7 @@ export const installerFixtures: Record<string, InstallerState> = {
   },
   partial: {
     ready: false,
-    platform: "windows-wsl2",
+    platform: "windows-native",
     lanes: [
       {
         id: "platform",
@@ -154,7 +154,7 @@ export const installerFixtures: Record<string, InstallerState> = {
   },
   offline_bundle: {
     ready: false,
-    platform: "windows-wsl2",
+    platform: "windows-native",
     lanes: [
       {
         id: "offline-bundle",
@@ -182,7 +182,7 @@ export const installerFixtures: Record<string, InstallerState> = {
   },
   beta_handoff: {
     ready: false,
-    platform: "windows-wsl2",
+    platform: "windows-native",
     lanes: [
       {
         id: "clean-windows-install-proof",
@@ -212,7 +212,7 @@ export const installerFixtures: Record<string, InstallerState> = {
   },
   activitypub_setup: {
     ready: false,
-    platform: "windows-wsl2",
+    platform: "windows-native",
     operatorConsoleUrl: "http://127.0.0.1:5173",
     lanes: [
       {
