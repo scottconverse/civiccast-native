@@ -80,9 +80,7 @@ def test_runtime_retry_reenters_idempotent_bootstrap_instead_of_only_starting_ho
     process directly -- a runtime error can mean provisioning never
     completed, and starting the host alone cannot repair that state."""
     source = TAURI_MAIN.read_text(encoding="utf-8")
-    retry_branch = source.split('if action == "retry"', 1)[1].split(
-        'if action == "continue"', 1
-    )[0]
+    retry_branch = source.split('if action == "retry"', 1)[1].split('if action == "continue"', 1)[0]
 
     assert "launch_civiccast_runtime_bootstrap" in retry_branch
     assert "is_runtime_bootstrap_lane(&lane_id)" in retry_branch
@@ -107,7 +105,10 @@ def test_runtime_bootstrap_starts_the_host_process_and_reverifies_health() -> No
     assert "std::thread::spawn(move || {" in bootstrap_body
     assert "launch_runtime_host_process(&app)" in bootstrap_body
     assert "wait_for_service_health_after_runtime_start(" in bootstrap_body
-    assert 'write_installer_state(\n                &lane_id,\n                "error"' in bootstrap_body
+    assert (
+        'write_installer_state(\n                &lane_id,\n                "error"'
+        in bootstrap_body
+    )
     # The old pipeline this replaced (shelling out to the deleted
     # headless-bootstrap.ps1) is gone as CODE, not just unused -- the
     # filename may still appear in a historical doc comment explaining the
