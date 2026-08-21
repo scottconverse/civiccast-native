@@ -841,12 +841,12 @@ Patch a meeting agenda (absent keys unchanged; status flips through the publish 
 
 ### `POST /api/staff/agendas/{agenda_id}/import`
 
-Best-effort import of an uploaded agenda doc (text/plain only).
+Best-effort import of an uploaded agenda doc (text/plain or PDF).
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
 - Parameters: `agenda_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `Array<AgendaItem>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Meeting agenda not found; 415 Unsupported content type (only text/plain is parsed); 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
+- Responses: 200 `Array<AgendaItem>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Meeting agenda not found; 415 Unsupported content type (only text/plain and application/pdf are parsed); 422 PDF was readable but no recognizable agenda items were found in it; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
 
 ### `GET /api/staff/agendas/{agenda_id}/items`
 
@@ -4183,6 +4183,7 @@ Read CivicCast local federation metadata.
 ### `AgendaItem`
 
 - `agenda_id` (required): `string`
+- `confidence` (optional): `number | null`
 - `created_at` (optional): `string`
 - `doc_anchor` (optional): `string | null`
 - `item_id` (required): `string`
@@ -4196,6 +4197,7 @@ Read CivicCast local federation metadata.
 ### `AgendaItemInput`
 
 - `agenda_id` (required): `string`
+- `confidence` (optional): `number | null`
 - `doc_anchor` (optional): `string | null`
 - `item_id` (required): `string`
 - `notes` (optional): `string | null`
@@ -4206,6 +4208,7 @@ Read CivicCast local federation metadata.
 
 ### `AgendaItemUpdate`
 
+- `confidence` (optional): `number | null`
 - `doc_anchor` (optional): `string | null`
 - `notes` (optional): `string | null`
 - `number` (optional): `string | null`
@@ -6827,7 +6830,7 @@ rule (S13 §5.1).
 - `device_id` (required): `string`
 - `enabled` (optional): `boolean`
 - `host` (optional): `string | null`
-- `kind` (required): `'obs' | 'vmix' | 'atem' | 'hyperdeck' | 'ptz' | 'osc' | 'tcp' | 'http' | 'casparcg' | 'gpi' | 'serial'`
+- `kind` (required): `'obs' | 'vmix' | 'atem' | 'hyperdeck' | 'ptz' | 'osc' | 'tcp' | 'http' | 'casparcg' | 'gpi' | 'serial'` -- Device kind. 'gpi' and 'serial' are network-relay triggers (TCP) only -- direct GPI contact-closure / serial (RS-232/422) hardware is not supported in this release; both route through TSR's generic TCPSEND adapter. Front real hardware with your own TCP-to-GPI or TCP-to-serial relay box.
 - `label` (required): `string`
 - `last_probed_at` (optional): `string | null`
 - `last_reachable` (optional): `boolean | null`

@@ -37,6 +37,7 @@ import {
   deviceHealthLabel,
   deviceKindLabel,
   deviceReachability,
+  isNetworkRelayOnlyDeviceKind,
 } from './control-room-format'
 import { ControlRoomReadinessPanel } from './ControlRoomReadinessPanel'
 
@@ -58,8 +59,8 @@ const CUE_PAYLOAD_TEMPLATES: Record<string, { label: string; description: string
   http: { label: 'HTTP', description: 'Call a local adapter endpoint.', payload: { method: 'POST', url: 'http://127.0.0.1:8088/api', body: {} } },
   overlay_push: { label: 'Overlay push', description: 'Push title/lower-third text.', payload: { layer: 1, title: 'Lower Third', text: 'Guest Name' } },
   overlay_clear: { label: 'Overlay clear', description: 'Clear an overlay layer.', payload: { layer: 1 } },
-  gpi_pulse: { label: 'GPI pulse', description: 'Pulse a configured GPI pin.', payload: { pin: 'gpi-1', duration_ms: 250 } },
-  serial_send: { label: 'Serial send', description: 'Send a serial command string.', payload: { port: 'COM1', message: 'TAKE\\r\\n' } },
+  gpi_pulse: { label: 'GPI pulse', description: 'Send a "pulse" command over the network relay (TCP) — not a direct hardware GPI pin.', payload: { pin: 'gpi-1', duration_ms: 250 } },
+  serial_send: { label: 'Serial send', description: 'Send a command string over the network relay (TCP) — not a direct serial (RS-232/422) port.', payload: { port: 'COM1', message: 'TAKE\\r\\n' } },
   router_take: { label: 'Router take', description: 'Route a source to a destination.', payload: { source: '3', destination: '1' } },
 }
 type DeviceProbeState = { reachable: boolean | null; detail?: string }
@@ -120,6 +121,13 @@ export function DeviceForm({
           {DEVICE_KINDS.map((k) => <option key={k} value={k}>{deviceKindLabel(k)}</option>)}
         </select>
       </label>
+      {isNetworkRelayOnlyDeviceKind(kind) && (
+        <p className="w-full text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+          Network-relay trigger over TCP — direct GPI contact-closure / serial (RS-232/422)
+          hardware is not supported in this release. Point Host/Port at a TCP-to-GPI or
+          TCP-to-serial relay box.
+        </p>
+      )}
       <label className="flex flex-col text-[10px] uppercase" style={{ color: 'var(--cc-ink-3)' }}>
         Transport
         <select aria-label="Transport" className={field} style={fieldStyle} value={transport}

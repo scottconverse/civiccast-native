@@ -14,10 +14,22 @@ export function deviceKindLabel(kind: string): string {
     tcp: 'TCP device',
     http: 'HTTP device',
     casparcg: 'CasparCG',
-    gpi: 'GPI',
-    serial: 'Serial (RS-232/422)',
+    // Honest label: both route through TSR's generic TCPSEND adapter
+    // (tsr_service/index.mjs) — there is no direct GPI contact-closure or
+    // serial (RS-232/422) hardware driver in this release. A station that
+    // needs real hardware fronts it with its own TCP-to-GPI or
+    // TCP-to-serial relay box and points Host/Port at that box.
+    gpi: 'GPI (network relay)',
+    serial: 'Serial (network relay)',
   }
   return map[kind] ?? kind
+}
+
+/** True for device kinds that are network-relay triggers, not direct
+ * hardware — the UI shows a clarifying note instead of implying a real
+ * GPI/serial port connection. */
+export function isNetworkRelayOnlyDeviceKind(kind: string): boolean {
+  return kind === 'gpi' || kind === 'serial'
 }
 
 export function cueActionLabel(action: string): string {
