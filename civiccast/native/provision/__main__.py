@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""CLI entry point the native NSIS hook set invokes for live PostgreSQL/NATS
+"""CLI entry point the native NSIS hook set invokes for live PostgreSQL
 provisioning execution (WP2 provision-execution wiring;
 ``native_service_registration.rs``'s module doc's "DatabaseUrl" STOP section
 names this as the missing caller). Mirrors
@@ -12,6 +12,11 @@ engine against its REAL seam bundle, and hand the resolved ``DatabaseUrl``
 back to the Rust caller through a single stdout marker line -- never through
 a log, a journal entry, an NSIS variable dump, or this process's own
 diagnostic output.
+
+NATS JetStream was removed from the product entirely (owner decision
+2026-08-20, ADR 0023 "NATS removed -- in-process event bus", which
+supersedes ADR 0001); this CLI no longer accepts NATS flags or resolves NATS
+paths.
 
 Invocation (``nsis-hooks-native.nsh``'s ``NSIS_HOOK_POSTINSTALL``)::
 
@@ -46,7 +51,7 @@ here):
 * ``civiccast.native.provision.orchestrator`` never writes the password into
   a journal history entry, the recovery document, or a log line -- verified
   by inspection: every ``_persist``/``_halt`` call's ``detail`` string is
-  static or built from ``PostgresClusterDecision``/``NatsStoreDecision``
+  static or built from ``PostgresClusterDecision``/``DatabaseDecision``
   text, which never reference ``context.database_password``.
 * CORRECTED 2026-07-30 (municipal-shared-PC hardening fix; the previous
   revision of this bullet claimed the password's on-disk persistence in
@@ -460,8 +465,6 @@ class ProvisionPaths:
     postgres_data_dir: str
     postgres_config_path: str
     postgres_hba_path: str
-    nats_store_dir: str
-    nats_config_path: str
     server_pack_path: str
     initdb_path: str
 
@@ -482,10 +485,10 @@ def resolve_provision_paths(
     ``default_egress_work_dir`` gives: the Windows-style backslash path must
     be identical regardless of the host OS running this pure module's tests.
 
-    PostgreSQL data + the NATS JetStream store share ONE
-    ``<program_data_root>\\CivicCast\\data`` tree (alongside the existing
-    egress work dir at ``...\\data\\egress``), so a single ACL boundary
-    covers all of it. ``postgresql.conf``/``pg_hba.conf`` MUST live INSIDE
+    PostgreSQL data lives under the ``<program_data_root>\\CivicCast\\data``
+    tree (alongside the existing egress work dir at ``...\\data\\egress``),
+    so a single ACL boundary covers all of it. ``postgresql.conf``/
+    ``pg_hba.conf`` MUST live INSIDE
     ``postgres_data_dir`` -- not a style choice: ``postgres_child_spec`` in
     :mod:`civiccast.native.supervisor.children` launches ``pg_ctl start -D
     <data_dir> -w`` with no ``-c config_file=`` override, so PostgreSQL only
@@ -509,7 +512,6 @@ def resolve_provision_paths(
     pd_root = (program_data_root or os.environ.get("PROGRAMDATA", r"C:\ProgramData")).rstrip("\\/")
     civiccast_root = f"{pd_root}\\{_PROGRAM_DATA_SUBDIR}"
     postgres_data_dir = f"{civiccast_root}\\data\\pgdata"
-    nats_store_dir = f"{civiccast_root}\\data\\nats-store"
 
     install = install_root.rstrip("\\/")
     default_server_pack_path = f"{install}\\packs\\native-server-binaries.ccpack"
@@ -521,8 +523,6 @@ def resolve_provision_paths(
         postgres_data_dir=postgres_data_dir,
         postgres_config_path=f"{postgres_data_dir}\\postgresql.conf",
         postgres_hba_path=f"{postgres_data_dir}\\pg_hba.conf",
-        nats_store_dir=nats_store_dir,
-        nats_config_path=f"{civiccast_root}\\config\\nats-server.conf",
         server_pack_path=server_pack_path or default_server_pack_path,
         initdb_path=initdb_path or default_initdb_path,
     )
@@ -556,7 +556,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m civiccast.native.provision",
         description=(
-            "Run the journaled CivicCast (Native) PostgreSQL/NATS provisioning engine (spec D4)."
+            "Run the journaled CivicCast (Native) PostgreSQL provisioning engine (spec D4)."
         ),
     )
     parser.add_argument("--install-root", required=True)
@@ -575,8 +575,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--initdb-path", default=None)
     parser.add_argument("--postgres-host", default="127.0.0.1")
     parser.add_argument("--postgres-port", type=int, default=5432)
-    parser.add_argument("--nats-host", default="127.0.0.1")
-    parser.add_argument("--nats-port", type=int, default=4222)
     parser.add_argument("--database-name", default="civiccast")
     parser.add_argument("--database-username", default="civiccast_svc")
     parser.add_argument("--postgres-major-version", default="17")
@@ -606,10 +604,6 @@ def build_plan_and_context(
         postgres_config_path=paths.postgres_config_path,
         postgres_hba_path=paths.postgres_hba_path,
         database_password=database_password,
-        nats_host=args.nats_host,
-        nats_port=args.nats_port,
-        nats_store_dir=paths.nats_store_dir,
-        nats_config_path=paths.nats_config_path,
         server_pack_path=paths.server_pack_path,
         state_root=paths.state_root,
         owner_run_id=args.owner_run_id,

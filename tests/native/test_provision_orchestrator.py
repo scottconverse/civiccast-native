@@ -6,7 +6,7 @@ the REAL orchestrator and REAL journal state machine -- the same code that
 runs in production drives these fakes, so the test exercises orchestration
 logic, not a re-implementation of it.
 
-HARD RULE: no real PostgreSQL or NATS process is ever spawned here -- every
+HARD RULE: no real PostgreSQL process is ever spawned here -- every
 seam is an in-memory fake operating on a tmp_path.
 """
 
@@ -17,7 +17,6 @@ from pathlib import Path
 
 from civiccast.native.provision.models import (
     DatabaseDecision,
-    NatsStoreProbe,
     ProvisionContext,
     ProvisionPhase,
     ProvisionPlan,
@@ -31,15 +30,11 @@ class Harness:
     """A live, temp-dir-backed fake of the world the engine acts on."""
 
     postgres_data_dir: Path
-    nats_store_dir: Path
 
     # World state.
     postgres_version: str | None = None  # None == uninitialized data dir
-    nats_store_exists: bool = False
-    nats_store_is_dir: bool = True
     postgres_conf_written: str | None = None
     pg_hba_conf_written: str | None = None
-    nats_conf_written: str | None = None
     database_exists: bool = False  # BLOCKER #52: world state for ensure_database
     calls: list[str] = field(default_factory=list)
 
@@ -83,21 +78,6 @@ class Harness:
         self.database_exists = True
         return DatabaseDecision(outcome="created", detail="created")
 
-    def detect_nats_store(self) -> NatsStoreProbe:
-        self._record("detect_nats_store")
-        return NatsStoreProbe(
-            path_exists=self.nats_store_exists, is_directory=self.nats_store_is_dir
-        )
-
-    def ensure_nats_store_dir(self) -> None:
-        self._record("ensure_nats_store_dir")
-        self.nats_store_exists = True
-        self.nats_store_is_dir = True
-
-    def write_nats_conf(self, content: str) -> None:
-        self._record("write_nats_conf")
-        self.nats_conf_written = content
-
     def seams(self) -> ProvisionSeams:
         return ProvisionSeams(
             verify_pack=self.verify_pack,
@@ -106,9 +86,6 @@ class Harness:
             write_postgres_conf=self.write_postgres_conf,
             write_pg_hba_conf=self.write_pg_hba_conf,
             ensure_database=self.ensure_database,
-            detect_nats_store=self.detect_nats_store,
-            ensure_nats_store_dir=self.ensure_nats_store_dir,
-            write_nats_conf=self.write_nats_conf,
         )
 
 
@@ -131,8 +108,6 @@ def _context(tmp_path: Path) -> ProvisionContext:
         postgres_config_path=str(tmp_path / "pgdata" / "postgresql.conf"),
         postgres_hba_path=str(tmp_path / "pgdata" / "pg_hba.conf"),
         database_password="hunter2",
-        nats_store_dir=str(tmp_path / "nats" / "store"),
-        nats_config_path=str(tmp_path / "nats" / "nats-server.conf"),
         server_pack_path=str(tmp_path / "server-binaries.ccpack"),
         state_root=str(tmp_path / "state"),
         owner_run_id="run-1",
@@ -142,7 +117,6 @@ def _context(tmp_path: Path) -> ProvisionContext:
 def _harness(tmp_path: Path) -> Harness:
     return Harness(
         postgres_data_dir=tmp_path / "pgdata",
-        nats_store_dir=tmp_path / "nats" / "store",
     )
 
 
@@ -162,13 +136,9 @@ def test_happy_path_completes_all_phases_in_order(tmp_path: Path) -> None:
         "write_postgres_conf",
         "write_pg_hba_conf",
         "ensure_database",
-        "detect_nats_store",
-        "ensure_nats_store_dir",
-        "write_nats_conf",
     ]
     assert harness.postgres_conf_written is not None
     assert "127.0.0.1" in harness.postgres_conf_written
-    assert harness.nats_conf_written is not None
     assert harness.database_exists is True
 
 
@@ -181,8 +151,6 @@ def test_happy_path_journal_history_records_every_forward_phase(tmp_path: Path) 
         ProvisionPhase.POSTGRES_CLUSTER_READY.value,
         ProvisionPhase.POSTGRES_CONFIG_WRITTEN.value,
         ProvisionPhase.DATABASE_READY.value,
-        ProvisionPhase.NATS_STORE_READY.value,
-        ProvisionPhase.NATS_CONFIG_WRITTEN.value,
         ProvisionPhase.COMPLETE.value,
     ]
 
@@ -197,16 +165,6 @@ def test_existing_cluster_same_version_skips_initdb_idempotent(tmp_path: Path) -
 
     assert outcome.ok
     assert "run_initdb" not in harness.calls
-
-
-def test_existing_nats_store_skips_recreate_idempotent(tmp_path: Path) -> None:
-    harness = _harness(tmp_path)
-    harness.nats_store_exists = True
-    harness.nats_store_is_dir = True
-    outcome = run_provision(_plan(), _context(tmp_path), harness.seams())
-
-    assert outcome.ok
-    assert "ensure_nats_store_dir" not in harness.calls
 
 
 def test_database_absent_is_created_and_journaled(tmp_path: Path) -> None:
@@ -266,15 +224,12 @@ def test_adoption_journey_reuses_cluster_and_database_without_destroying_data(
     harness = _harness(tmp_path)
     harness.postgres_version = "17"  # preserved, already-initialized cluster
     harness.database_exists = True  # preserved civiccast database (station data)
-    harness.nats_store_exists = True
-    harness.nats_store_is_dir = True
 
     outcome = run_provision(_plan(), _context(tmp_path), harness.seams())
 
     assert outcome.ok
-    # The two data-destroying actions must NOT have run.
+    # The data-destroying action must NOT have run.
     assert "run_initdb" not in harness.calls, "adoption must never re-initdb a preserved cluster"
-    assert "ensure_nats_store_dir" not in harness.calls
     # ensure_database is still CALLED (it owns the idempotency check) but takes
     # no action -- the database detail records reuse, not creation.
     assert "ensure_database" in harness.calls
@@ -293,7 +248,7 @@ def test_adoption_journey_reuses_cluster_and_database_without_destroying_data(
 def test_database_creation_failure_halts_loud_through_existing_error_path(tmp_path: Path) -> None:
     """BLOCKER #52: a database-creation failure funnels through the SAME
     fail-closed halt every other provisioning step uses -- no new exit code,
-    no silent swallow. NATS steps must never run."""
+    no silent swallow."""
 
     harness = _harness(tmp_path)
     harness.fail_ensure_database = True
@@ -302,7 +257,6 @@ def test_database_creation_failure_halts_loud_through_existing_error_path(tmp_pa
     assert outcome.failed
     assert outcome.phase is ProvisionPhase.FAILED
     assert "injected database-creation failure" in (outcome.journal.error or "")
-    assert "detect_nats_store" not in harness.calls
     assert outcome.journal.recovery_document_path is not None
     recovery_doc = Path(outcome.journal.recovery_document_path)
     assert recovery_doc.exists()
@@ -333,7 +287,6 @@ def test_pack_verification_failure_halts_before_any_mutation(tmp_path: Path) -> 
     assert outcome.phase is ProvisionPhase.FAILED
     assert harness.calls == ["verify_pack"]
     assert harness.postgres_version is None
-    assert harness.nats_store_exists is False
 
 
 def test_version_mismatch_fails_closed_without_running_initdb(tmp_path: Path) -> None:
@@ -345,17 +298,6 @@ def test_version_mismatch_fails_closed_without_running_initdb(tmp_path: Path) ->
     assert "run_initdb" not in harness.calls
     assert "16" in (outcome.journal.error or "")
     assert "17" in (outcome.journal.error or "")
-
-
-def test_nats_store_path_not_a_directory_fails_closed(tmp_path: Path) -> None:
-    harness = _harness(tmp_path)
-    harness.nats_store_exists = True
-    harness.nats_store_is_dir = False  # a file occupies the store path
-    outcome = run_provision(_plan(), _context(tmp_path), harness.seams())
-
-    assert outcome.failed
-    assert "ensure_nats_store_dir" not in harness.calls
-    assert "non-directory" in (outcome.journal.error or "").lower()
 
 
 def test_initdb_failure_halts_and_writes_recovery_document(tmp_path: Path) -> None:
@@ -432,9 +374,6 @@ def test_resume_after_simulated_kill_continues_from_persisted_phase(tmp_path: Pa
         "write_postgres_conf",
         "write_pg_hba_conf",
         "ensure_database",
-        "detect_nats_store",
-        "ensure_nats_store_dir",
-        "write_nats_conf",
     ]
 
 

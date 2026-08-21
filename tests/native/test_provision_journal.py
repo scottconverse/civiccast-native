@@ -3,7 +3,7 @@
 """Journal state-machine + durable-persistence tests for the provisioning
 engine. These pin the transition grammar and the fail-loud/atomic
 persistence behavior that makes a resume trustworthy after a power-loss
-kill. Pure -- no Windows, no Postgres, no NATS."""
+kill. Pure -- no Windows, no Postgres."""
 
 from __future__ import annotations
 
@@ -43,8 +43,6 @@ def _context(tmp_path: Path, *, database_password: str = "hunter2") -> Provision
         postgres_config_path=str(tmp_path / "pgdata" / "postgresql.conf"),
         postgres_hba_path=str(tmp_path / "pgdata" / "pg_hba.conf"),
         database_password=database_password,
-        nats_store_dir=str(tmp_path / "nats" / "store"),
-        nats_config_path=str(tmp_path / "nats" / "nats-server.conf"),
         server_pack_path=str(tmp_path / "server-binaries.ccpack"),
         state_root=str(tmp_path / "state"),
         owner_run_id="run-1",
