@@ -16,16 +16,10 @@ import {
   AcquisitionFlow,
   clearAcquisitionFlowComplete
 } from "./AcquisitionFlow";
-import { isActivationKey, shouldActivateWslShortcut, shouldArmWslShortcut } from "./keyboard-activation";
-import { firstActionableLane, markWindowsBootstrapResultPending } from "./installer-transition";
-import {
-  installerActivityElapsedSeconds,
-  isRuntimeBootstrapProgress,
-  isWindowsBootstrapProgress,
-  windowsBootstrapProgressIsIndeterminate
-} from "./progress-visual";
+import { firstActionableLane } from "./installer-transition";
+import { installerActivityElapsedSeconds, isRuntimeBootstrapProgress } from "./progress-visual";
 import type { InstallerLane, InstallerProgress, InstallerState, LaneStatus } from "./types";
-import { canRepairLane, isWindowsPlatform, isWslBootstrapLane } from "./wsl-affordances";
+import { canRepairLane, isWindowsPlatform } from "./lane-affordances";
 import "./styles.css";
 
 const DEFAULT_OPERATOR_CONSOLE_URL = LOCAL_OPERATOR_CONSOLE_URL;
@@ -43,8 +37,7 @@ const PHASE_BY_LANE_ID: Record<string, string> = {
   models: "Preparing video tools",
   platform: "Setting up CivicCast",
   runtime: "Starting CivicCast",
-  storage: "Preparing local storage",
-  wsl2: "Setting up CivicCast"
+  storage: "Preparing local storage"
 };
 
 const stateLabels: Record<LaneStatus, string> = {
@@ -74,7 +67,7 @@ function isActivityPubLane(lane: InstallerLane) {
   return lane.id === "activitypub";
 }
 
-function primaryActionLabel(installer: InstallerState, lane: InstallerLane, rebootRequired = false) {
+function primaryActionLabel(installer: InstallerState, lane: InstallerLane) {
   if (installer.ready) {
     return "Open operator console";
   }
@@ -83,9 +76,6 @@ function primaryActionLabel(installer: InstallerState, lane: InstallerLane, rebo
   }
   if (lane.status === "cancelled") {
     return lane.id === "models" ? "Set up models" : "Retry";
-  }
-  if (isWslBootstrapLane(installer, lane)) {
-    return rebootRequired ? "Resume after reboot" : "Set up Windows helper";
   }
   if (lane.id === "storage" && !lane.ready) {
     return "Prepare storage";
@@ -96,8 +86,8 @@ function primaryActionLabel(installer: InstallerState, lane: InstallerLane, rebo
   return "Continue";
 }
 
-function primaryActionDisabled(installer: InstallerState, lane: InstallerLane) {
-  if (isWslBootstrapLane(installer, lane) || lane.ready || canRetryLane(lane)) {
+function primaryActionDisabled(lane: InstallerLane) {
+  if (lane.ready || canRetryLane(lane)) {
     return false;
   }
   return ["blocked", "credential_gated", "hardware_required"].includes(lane.status);
@@ -108,7 +98,7 @@ function canRetryLane(lane: InstallerLane) {
 }
 
 function showsPrimaryAction(installer: InstallerState, lane: InstallerLane) {
-  if (installer.ready || lane.ready || isWslBootstrapLane(installer, lane) || canRetryLane(lane)) {
+  if (installer.ready || lane.ready || canRetryLane(lane)) {
     return true;
   }
   if (lane.id === "storage") {
@@ -131,8 +121,7 @@ function PrimaryActionControl({
   onRetry,
   onOpenConsole,
   className = "",
-  buttonRef,
-  rebootRequired = false
+  buttonRef
 }: {
   installer: InstallerState;
   lane: InstallerLane;
@@ -142,12 +131,11 @@ function PrimaryActionControl({
   onOpenConsole: () => void;
   className?: string;
   buttonRef?: React.Ref<HTMLButtonElement>;
-  rebootRequired?: boolean;
 }) {
   if (!showsPrimaryAction(installer, lane)) {
     return null;
   }
-  const label = primaryActionLabel(installer, lane, rebootRequired);
+  const label = primaryActionLabel(installer, lane);
   if (installer.ready) {
     return (
       <button ref={buttonRef} className={className} onClick={onOpenConsole} type="button" title={consoleHref}>
@@ -168,7 +156,7 @@ function PrimaryActionControl({
       type="button"
       className={className}
       onClick={() => onContinue(lane)}
-      disabled={primaryActionDisabled(installer, lane)}
+      disabled={primaryActionDisabled(lane)}
     >
       {label}
     </button>
@@ -263,44 +251,6 @@ function ResumePanel({
   );
 }
 
-function WindowsSetupActivity({ progress }: { progress: InstallerProgress | null }) {
-  const active = isWindowsBootstrapProgress(progress);
-  const [nowUnix, setNowUnix] = useState(() => Math.floor(Date.now() / 1000));
-  useEffect(() => {
-    if (!active) {
-      return;
-    }
-    const timer = window.setInterval(() => setNowUnix(Math.floor(Date.now() / 1000)), 1000);
-    return () => window.clearInterval(timer);
-  }, [active]);
-  if (!active || !progress) {
-    return null;
-  }
-  const current = progress.activity_current;
-  const total = progress.activity_total;
-  const hasStepCount = Boolean(current && total && current <= total);
-  const elapsed = installerActivityElapsedSeconds(progress, nowUnix);
-  return (
-    <section
-      className="windows-setup-activity"
-      role="status"
-      aria-label="Windows setup activity"
-      aria-live="polite"
-    >
-      <strong>{progress.message}</strong>
-      <div className="activity-facts">
-        <span>{hasStepCount ? `Step ${current} of ${total}` : "Windows setup is active"}</span>
-        <span>{elapsedLabel(elapsed)}</span>
-      </div>
-      {windowsBootstrapProgressIsIndeterminate(progress) ? <progress /> : <progress max={total} value={current} />}
-      <p>
-        Keep CivicCast Installer open. This status updates every few seconds. Restart only when this screen explicitly
-        says a restart is required.
-      </p>
-    </section>
-  );
-}
-
 function RuntimeSetupActivity({ progress }: { progress: InstallerProgress | null }) {
   const active = isRuntimeBootstrapProgress(progress);
   const [nowUnix, setNowUnix] = useState(() => Math.floor(Date.now() / 1000));
@@ -369,8 +319,6 @@ function App() {
   const runtimeSetupWasObserved = useRef(false);
   const operatorConsoleAutoOpened = useRef(false);
   const primaryActionRef = useRef<HTMLButtonElement | null>(null);
-  const autoFocusedLaneId = useRef<string | null>(null);
-  const wslActionInFlight = useRef(false);
 
   useEffect(() => {
     let ignore = false;
@@ -395,7 +343,7 @@ function App() {
         }
         setInstaller({
           ready: false,
-          platform: "windows-wsl2",
+          platform: "windows-native",
           lanes: [
             {
               id: "installer",
@@ -420,9 +368,7 @@ function App() {
       return;
     }
     const runtimeLane = installer.lanes.find((lane) => lane.id === "runtime");
-    const platformIsReady = installer.lanes.some(
-      (lane) => ["platform", "wsl2"].includes(lane.id) && lane.ready
-    );
+    const platformIsReady = installer.lanes.some((lane) => lane.id === "platform" && lane.ready);
     if (!platformIsReady || !runtimeLane || runtimeLane.ready || runtimeLane.status !== "partial") {
       return;
     }
@@ -562,22 +508,6 @@ function App() {
     return () => window.clearInterval(timer);
   }, [activeLaneId, installer, requestedState]);
 
-  useEffect(() => {
-    if (!installer) {
-      return;
-    }
-    const activeLane = installer.lanes.find((lane) => lane.id === activeLaneId) ?? installer.lanes[0];
-    if (!activeLane || !isWslBootstrapLane(installer, activeLane)) {
-      autoFocusedLaneId.current = null;
-      return;
-    }
-    if (autoFocusedLaneId.current === activeLane.id) {
-      return;
-    }
-    primaryActionRef.current?.focus();
-    autoFocusedLaneId.current = activeLane.id;
-  }, [activeLaneId, installer]);
-
   const refreshProgress = async () => {
     const savedProgress = await loadInstallerProgress();
     setProgress(savedProgress);
@@ -637,97 +567,20 @@ function App() {
       setStatusMessage(`${lane.label} is queued for the local setup helper.`);
       return;
     }
-    const startsWindowsBootstrap = isWslBootstrapLane(installer, lane);
-    if (startsWindowsBootstrap) {
-      if (wslActionInFlight.current) {
-        return;
-      }
-      wslActionInFlight.current = true;
-      setStatusMessage(
-        // rc17 D5: never promise a single approval. A required restart re-runs
-        // this same elevated step and shows the Windows prompt again -- saying
-        // "once" here reads as a broken second prompt when that happens.
-        "Asking Windows for permission to set up the helper CivicCast needs. Approve the Windows security prompt. This screen will then show live activity.",
-      );
-      setInstaller({
-        ...installer,
-        lanes: installer.lanes.map((candidate) =>
-          candidate.id === lane.id
-            ? {
-                ...candidate,
-                status: "progress",
-                detail: "Waiting for Windows approval. CivicCast will show the active setup phase here next.",
-                nextStep: "Approve the Windows security prompt, then keep this installer open."
-              }
-            : candidate
-        )
-      });
+    const outcome = await runInstallerAction(lane.id, "continue");
+    setStatusMessage(outcome.message);
+    if (outcome.operatorConsoleUrl) {
+      setOperatorConsoleUrl(outcome.operatorConsoleUrl);
     }
-    try {
-      const outcome = await runInstallerAction(lane.id, "continue");
-      setStatusMessage(outcome.message);
-      if (startsWindowsBootstrap) {
-        setInstaller(markWindowsBootstrapResultPending(installer, lane.id));
-      }
-      if (outcome.operatorConsoleUrl) {
-        setOperatorConsoleUrl(outcome.operatorConsoleUrl);
-      }
-      const savedProgress = await refreshProgress();
-      const refreshed = await loadInstallerState(requestedState, savedProgress);
-      setInstaller(refreshed);
-      // An action advances the flow, so the operator's sticky step pick
-      // is spent here rather than pinning the wizard for the rest of
-      // the install.
-      operatorPickedLaneId.current = null;
-      setActiveLaneId(firstActionableLane(refreshed)?.id ?? lane.id);
-    } finally {
-      if (startsWindowsBootstrap) {
-        wslActionInFlight.current = false;
-      }
-    }
+    const savedProgress = await refreshProgress();
+    const refreshed = await loadInstallerState(requestedState, savedProgress);
+    setInstaller(refreshed);
+    // An action advances the flow, so the operator's sticky step pick
+    // is spent here rather than pinning the wizard for the rest of
+    // the install.
+    operatorPickedLaneId.current = null;
+    setActiveLaneId(firstActionableLane(refreshed)?.id ?? lane.id);
   };
-
-  useEffect(() => {
-    // See shouldArmWslShortcut: never arm the old wizard's global Enter/Space
-    // shortcut while the download-experience screens are showing (this effect
-    // runs before the showAcquisitionFlow early return below).
-    const lane = installer?.lanes.find((candidate) => candidate.id === activeLaneId) ?? installer?.lanes[0];
-    if (
-      !installer ||
-      !lane ||
-      !shouldArmWslShortcut({
-        showAcquisitionFlow,
-        hasInstaller: Boolean(installer),
-        requestedState: Boolean(requestedState),
-        laneIsWslBootstrap: isWslBootstrapLane(installer, lane),
-      })
-    ) {
-      return;
-    }
-
-    const activateWslAction = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || !isActivationKey(event)) {
-        return;
-      }
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      const tagName = target?.tagName.toLowerCase();
-      if (target?.isContentEditable || tagName === "input" || tagName === "select" || tagName === "textarea") {
-        return;
-      }
-      if (!shouldActivateWslShortcut(document.activeElement, primaryActionRef.current)) {
-        return;
-      }
-      event.preventDefault();
-      void continueLane(lane);
-    };
-
-    window.addEventListener("keydown", activateWslAction, true);
-    window.addEventListener("keyup", activateWslAction, true);
-    return () => {
-      window.removeEventListener("keydown", activateWslAction, true);
-      window.removeEventListener("keyup", activateWslAction, true);
-    };
-  }, [activeLaneId, installer, requestedState, showAcquisitionFlow]);
 
   const openConsole = async () => {
     const consoleHref = installer?.operatorConsoleUrl ?? operatorConsoleUrl;
@@ -801,15 +654,13 @@ function App() {
   const activeIndex = installer.lanes.findIndex((lane) => lane.id === activeLane.id);
   const completedCount = installer.lanes.filter((lane) => lane.ready).length;
   const consoleHref = installer.operatorConsoleUrl ?? operatorConsoleUrl;
-  const windowsBootstrapActive =
-    isWindowsBootstrapProgress(progress) ||
-    (["wsl2", "platform"].includes(activeLane.id) && activeLane.status === "progress");
+  const platformLaneActive = activeLane.id === "platform" && activeLane.status === "progress";
   const runtimeBootstrapActive = isRuntimeBootstrapProgress(progress);
-  const installerActivityActive = windowsBootstrapActive || runtimeBootstrapActive;
+  const installerActivityActive = platformLaneActive || runtimeBootstrapActive;
   const activityCurrent = progress?.activity_current;
   const activityTotal = progress?.activity_total;
   const hasActivitySteps = Boolean(
-    windowsBootstrapActive && activityCurrent && activityTotal && activityCurrent <= activityTotal
+    platformLaneActive && activityCurrent && activityTotal && activityCurrent <= activityTotal
   );
 
   return (
@@ -847,7 +698,6 @@ function App() {
 
       <SetupPhaseStrip activeLaneId={activeLane.id} />
       <ResumePanel progress={progress} onReset={resetInstaller} bootstrapActive={installerActivityActive} />
-      <WindowsSetupActivity progress={progress} />
       <RuntimeSetupActivity progress={progress} />
 
       {statusMessage ? (
@@ -861,11 +711,9 @@ function App() {
           <div className="progress">
             <span>
               {hasActivitySteps
-                ? `Windows setup: step ${activityCurrent} of ${activityTotal}`
+                ? `CivicCast setup: step ${activityCurrent} of ${activityTotal}`
                 : installerActivityActive
-                  ? runtimeBootstrapActive
-                    ? "CivicCast setup is active"
-                    : "Windows setup is active"
+                  ? "CivicCast setup is active"
                   : `${completedCount} of ${installer.lanes.length} ready`}
             </span>
             {installerActivityActive ? (
@@ -910,7 +758,6 @@ function App() {
               onOpenConsole={openConsole}
               className="detail-primary-action"
               buttonRef={primaryActionRef}
-              rebootRequired={Boolean(progress?.reboot_required)}
             />
           ) : null}
           <p>{activeLane.detail}</p>
@@ -920,11 +767,11 @@ function App() {
             <p className="next">Next: {activeLane.nextStep}</p>
           )}
           <div className="actions">
-            {/* The installer log is a Windows artifact either way -- main.rs's
-                open_installer_log shells notepad.exe on the newest log the
-                engine wrote, and a native station produces those logs too.
-                Gating it on "windows-wsl2" alone would take support's only
-                self-serve diagnostic away from the native product. */}
+            {/* The installer log is a Windows artifact -- main.rs's
+                open_installer_log shells notepad.exe on the native runtime
+                host's own log. isWindowsPlatform gates it on the real
+                "windows-native" platform value so support's only self-serve
+                diagnostic renders on every native station. */}
             {activeLane.status === "error" && isWindowsPlatform(installer) ? (
               <button type="button" className="secondary-action" onClick={openLog}>
                 Open installer log
