@@ -202,6 +202,7 @@ from civiccast.live.router import (
 )
 from civiccast.live.router import public_router as live_public_router
 from civiccast.live.router import staff_router as live_staff_router
+from civiccast.live.source_probe import build_source_probe
 from civiccast.live.store import (
     LiveRelayConfigStore,
     LiveSessionStore,
@@ -1988,7 +1989,13 @@ def _wire_durable_stores(app: FastAPI) -> None:
         return LiveSessionStore(_session_factory)
 
     def _resolve_preflight_evaluator() -> PreflightEvaluator:
-        return PreflightEvaluator(_session_factory)
+        # B2 fix: a real ffprobe-backed source probe, not the no-probe default
+        # that fails every live_source check closed (REASON_LIVE_SOURCE_NOT_PROBED)
+        # and 409s every real go-on-air attempt. The installer's private
+        # rehearsal path still overrides this per-call with its own sample-file
+        # probe via `source_probe_override` (civiccast/installer/service.py);
+        # this is the probe every other caller -- i.e. a real station -- gets.
+        return PreflightEvaluator(_session_factory, source_probe=build_source_probe())
 
     def _resolve_live_source_store() -> LiveSourceStore:
         return LiveSourceStore(_session_factory)

@@ -361,6 +361,31 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **B2 — a real station could never take a live meeting on air.**
+  `civiccast/app.py`'s `_resolve_preflight_evaluator` built the go-on-air
+  `PreflightEvaluator` with no `source_probe` at all
+  (`PreflightEvaluator(_session_factory)`), so the `live_source` pre-flight
+  check fell into `REASON_LIVE_SOURCE_NOT_PROBED` unconditionally and every
+  `POST /go-on-air` 409'd — even against a correctly configured RTMP/RTSP/
+  SRT/NDI source. The only working `source_probe` in the tree was the
+  installer's private System Health rehearsal, which validates a local
+  recorded sample file and was never wired into the running service (spec
+  §12 station-acceptance: "schedules a day and commits to air; interrupts
+  with live and returns safely" — unreachable from the product UI). New
+  `civiccast/live/source_probe.py` (`probe_live_source` /
+  `build_source_probe`) asks `ffprobe` to open the configured source and
+  confirms a real video or audio stream before the station commits to air,
+  bounded by `CIVICCAST_LIVE_SOURCE_PROBE_TIMEOUT_SECONDS` (default 8s) so
+  a hung encoder can't hang the request. `_resolve_preflight_evaluator` now
+  wires it in; the installer rehearsal's sample-file probe still overrides
+  it per-call via `source_probe_override`, unchanged. A failed probe's
+  message now names the source and the concrete failure (e.g. "rtmp source
+  'Council Room A RTMP' (room-a-rtmp) ... Connection refused"), which flows
+  verbatim into the go-on-air 409's `failed_checks` detail. Credential-
+  bearing sources (`LiveSource.credentials_handle`, spec §15's OS
+  credential store reference) are not yet resolved by the probe — no
+  resolver exists anywhere in this codebase yet; stated as a known
+  limitation in the module docstring rather than silently glossed over.
 - **nanoid 3.3.17 → 3.3.18** (GHSA-2v37-7h3g-55p8, high) in both the operator
   console and the public portal.
 - **pypdf 6.14.2 → 6.16.1** (PYSEC-2026-3655, PYSEC-2026-3656) — resource

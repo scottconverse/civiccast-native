@@ -175,7 +175,13 @@ Nine checks in canonical order, defined at `civiccast/live/preflight.py`:
 1. `network` -- caller-supplied probe.
 2. `storage` -- caller-supplied probe; minimum default 50 GiB free.
 3. `ai_runtime` -- caller-supplied probe; optional in Slice 1.
-4. `live_source` -- DB lookup: any `LiveSource` for the session's `channel_id`.
+4. `live_source` -- DB lookup: any `LiveSource` for the session's
+   `channel_id`, then a real server-side media probe
+   (`civiccast/live/source_probe.py`'s `probe_live_source`, ffprobe-backed,
+   bounded by `CIVICCAST_LIVE_SOURCE_PROBE_TIMEOUT_SECONDS`, default 8s)
+   confirming the source is actually delivering video or audio before
+   go-on-air is allowed. No probe configured -> fails closed
+   (`live_source.not_probed`), never a silent pass.
 5. `recording_target` -- DB lookup: any `RecordingTarget` exists.
 6. `operator_confirm` -- caller-supplied boolean.
 7. `syndication` -- placeholder (always `not_configured` in Slice 1).
