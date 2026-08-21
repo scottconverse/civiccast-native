@@ -1,21 +1,27 @@
 # Early-Adopter Quickstart
 
-> **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
+> **Historical: describes the retired public WSL2 line, not this
+> repository.** `civiccast-native` ships one product, the native Windows
+> station (session-0 Windows service, no WSL2) -- see
+> [BRANCHES.md](../../BRANCHES.md). The `v1.0.0-rc18` release, its GitHub
+> release page, and the `docs/releases/v1.0.0-rc18-verification.md` link
+> below belong to the separate, private `scottconverse/civiccast`
+> repository and do not resolve or apply here. ADR 0021, referenced below
+> as "in development," is what this repository now ships. Kept as
+> historical reference pending a native-line early-adopter quickstart.
 
-Status: rc18 is the current controlled beta; rc17 is the rollback target
+> **Release state (historical): `v1.0.0-rc18` was the published controlled
+> beta of the retired WSL2 line.** Its installer was built from the
+> gate-cleared `main` of the other repository, Authenticode-signed, and
+> proven on a genuinely clean Windows host.
 
-`v1.0.0-rc18` is the most recently published release. Its proof boundary — what the exact
-rc18 installer has and has not yet proven on a clean host — is recorded in the
-[rc18 verification record](../releases/v1.0.0-rc18-verification.md).
+Status (historical): rc18 was the WSL2 line's current controlled beta; rc17 was its rollback target.
 
-This guide covers the current Windows 11 + WSL2 public-beta product line. A
-distinct native Windows line is in development under
-[ADR 0021](../adr/0021-native-windows-runtime.md); no native installer or
-native beta-readiness claim should be inferred from this guide.
+This guide covered the (now-retired) Windows 11 + WSL2 public-beta product
+line. The native Windows line developed under
+[ADR 0021](../adr/0021-native-windows-runtime.md) is what this repository
+builds today; no WSL2 setup step or beta-readiness claim from this guide
+applies to it.
 
 ## Who This Is For
 
@@ -59,7 +65,7 @@ rollback target.
 ## First Station Run
 
 1. Run the setup app.
-2. Let the installer prepare WSL2 and open the operator console.
+2. (Historical, WSL2 line) Let the installer prepare WSL2 and open the operator console.
 3. Create the first admin account.
 4. Save or print the recovery kit.
 5. Verify backup.

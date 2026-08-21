@@ -78,9 +78,13 @@ class OSContext(BaseModel):
     kind: OSKind = Field(
         ...,
         description=(
-            "OS classification: wsl2 (Linux inside WSL2 — primary deployment target "
-            "per ADR 0003), linux (native Linux), macos (Apple), windows (native "
-            "Windows — not a supported deployment), or unknown."
+            "OS classification: windows (native Windows — the primary deployment "
+            "target per ADR 0021, which superseded ADR 0003's WSL2-primary "
+            "decision), linux (native Linux, a supported deployment target), "
+            "macos (Apple, a supported deployment target), wsl2 (Linux running "
+            "inside a WSL2 guest — informational only; the WSL2 installer lane "
+            "ADR 0003 described was retired under the owner's 'no linux' decision "
+            "and is not a deployment target), or unknown."
         ),
     )
     system: str = Field(..., description="platform.system() value.")
