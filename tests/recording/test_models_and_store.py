@@ -831,9 +831,12 @@ class TestMigration0056AndMerge:
         # unused here until the merge commit re-chains onto main's 0072.)
         # 0074_caption_review_audio_evidence adds caption review audio
         # evidence; 0075_offline_caption_jobs adds the offline caption job
-        # queue (keystone K3) and is the current head.
-        assert list(heads) == ["0075_offline_caption_jobs"], (
-            f"Expected single head 0075_offline_caption_jobs, got {heads!r}"
+        # queue (keystone K3), chained after 0074.
+        # 0076_agenda_item_confidence (product-hole fix: adds
+        # agenda_items.confidence for the PDF-agenda-import heuristic) is
+        # the current head, chained after 0075.
+        assert list(heads) == ["0076_agenda_item_confidence"], (
+            f"Expected single head 0076_agenda_item_confidence, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:

@@ -48,6 +48,32 @@ describe('DeviceForm', () => {
     const { getByText } = render(<DeviceForm submitting={false} onSubmit={vi.fn()} />)
     expect((getByText('Register device') as HTMLButtonElement).disabled).toBe(true)
   })
+
+  it('does not show the network-relay note for a real device kind', () => {
+    const { queryByText } = render(<DeviceForm submitting={false} onSubmit={vi.fn()} />)
+    expect(queryByText(/Network-relay trigger over TCP/i)).toBeNull()
+  })
+
+  it('shows the honest network-relay note and label when GPI is selected', () => {
+    const { getByLabelText, getByText } = render(
+      <DeviceForm submitting={false} onSubmit={vi.fn()} />,
+    )
+    fireEvent.change(getByLabelText('Device kind'), { target: { value: 'gpi' } })
+    expect(getByText('GPI (network relay)')).toBeTruthy()
+    expect(
+      getByText(/Network-relay trigger over TCP — direct GPI contact-closure/i),
+    ).toBeTruthy()
+    expect(getByText(/hardware is not supported in this release/i)).toBeTruthy()
+  })
+
+  it('shows the honest network-relay note and label when Serial is selected', () => {
+    const { getByLabelText, getByText } = render(
+      <DeviceForm submitting={false} onSubmit={vi.fn()} />,
+    )
+    fireEvent.change(getByLabelText('Device kind'), { target: { value: 'serial' } })
+    expect(getByText('Serial (network relay)')).toBeTruthy()
+    expect(getByText(/Network-relay trigger over TCP/i)).toBeTruthy()
+  })
 })
 
 describe('CueForm', () => {

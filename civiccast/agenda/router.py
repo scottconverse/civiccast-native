@@ -43,6 +43,7 @@ from civiccast.agenda.models import (
 )
 from civiccast.agenda.service import (
     AgendaImportDecodeError,
+    AgendaImportNoItemsError,
     AgendaPublishError,
     AgendaService,
     AgendaServiceError,
@@ -468,12 +469,15 @@ def sync_from_chapters(
 @staff_router.post(
     "/agendas/{agenda_id}/import",
     response_model=list[AgendaItem],
-    summary="Best-effort import of an uploaded agenda doc (text/plain only)",
+    summary="Best-effort import of an uploaded agenda doc (text/plain or PDF)",
     dependencies=[Depends(require_any_role(*_AUTHOR))],
     openapi_extra=_AUTHOR_EXTRA,
     responses={
         404: {"description": "Meeting agenda not found"},
-        415: {"description": "Unsupported content type (only text/plain is parsed)"},
+        415: {
+            "description": "Unsupported content type (only text/plain and application/pdf are parsed)"
+        },
+        422: {"description": "PDF was readable but no recognizable agenda items were found in it"},
         503: {"description": _DB_NOT_READY},
     },
 )
@@ -485,27 +489,34 @@ async def import_from_doc(
     """Parse the request body as an agenda doc and seed draft items.
 
     Body: the doc bytes (operators ``POST`` the file content with the right
-    ``Content-Type``). Only ``text/plain`` is parsed in slice 2; PDF / DOCX
-    returns 415 Unsupported Media Type — a robust binary parser is a
-    follow-up. Idempotent on re-run via the same skip-by-order rule
-    ``sync_from_chapters`` uses.
+    ``Content-Type``). ``text/plain`` is parsed literally, line by line.
+    ``application/pdf`` runs the heuristic text-layer extractor in
+    ``civiccast.agenda.pdf_import`` (numbered items, ALL-CAPS section
+    headings, standalone time markers); each returned item carries a
+    ``confidence`` score, and if the target agenda is currently
+    ``published`` the import reopens it to ``draft`` so an operator must
+    review and republish before the new, heuristically-guessed items reach
+    the public portal (AI/agenda non-negotiables Spec Sec4.2). Any other
+    content type returns 415 Unsupported Media Type. Idempotent on re-run
+    via the same skip-by-order rule ``sync_from_chapters`` uses.
 
     The endpoint REQUIRES a ``Content-Type`` header (E-3 / Q-1). A missing
     header is a 415 — silently defaulting to ``text/plain`` masked binary
     uploads as text and surfaced as raw 500 on the decode. Bodies that aren't
-    valid UTF-8 are also a 415 — same root cause."""
+    valid UTF-8 are also a 415 — same root cause. A readable PDF with zero
+    recognizable lines is a 422, not a silent empty import."""
     resolved = _require_service(svc)
     body = await request.body()
     content_type = request.headers.get("content-type")
     if content_type is None:
-        # The router exists to translate "not text/plain" into 415; a
-        # missing header sidestepped that translation. Make the contract
-        # explicit instead of silently labeling the body text/plain.
+        # The router exists to translate "not text/plain or application/pdf"
+        # into 415; a missing header sidestepped that translation. Make the
+        # contract explicit instead of silently labeling the body text/plain.
         raise HTTPException(
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail=(
-                "Content-Type header is required for /import; only 'text/plain' is parsed "
-                "in slice 2."
+                "Content-Type header is required for /import; only 'text/plain' and "
+                "'application/pdf' are parsed."
             ),
         )
     try:
@@ -516,9 +527,14 @@ async def import_from_doc(
         # The body declared text/plain but the bytes aren't UTF-8 — 415
         # with a structured diagnostic, never a raw 500 (E-3 / Q-1).
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
+    except AgendaImportNoItemsError as exc:
+        # The PDF was readable and the content type is supported, but the
+        # heuristic extractor's disclosed ceiling found nothing reliable —
+        # 422 (unprocessable), distinct from the 415 "wrong format" cases.
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     except NotImplementedError as exc:
-        # PDF / DOCX / anything not text/plain — surface as 415 so the
-        # operator gets the right diagnostic, not a generic 500.
+        # DOCX / anything not text/plain or application/pdf — surface as 415
+        # so the operator gets the right diagnostic, not a generic 500.
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
 
 

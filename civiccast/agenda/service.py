@@ -14,11 +14,18 @@ router (slice 3) and the player code paths consume:
   service stays decoupled from :mod:`civiccast.schedule.store`. Idempotent:
   re-running skips items that already exist at the same ``order`` so
   operator edits survive a re-sync.
-* :meth:`AgendaService.import_from_doc` — best-effort plain-text import of
-  an operator-uploaded agenda doc. One non-blank line per item, with a
-  leading numbering token (``3.a`` / ``VII`` / ``12``) split off into
-  :attr:`AgendaItem.number`. PDF parsing is explicitly out of scope for
-  slice 2 (the operator can paste extracted text in the meantime).
+* :meth:`AgendaService.import_from_doc` — best-effort import of an
+  operator-uploaded agenda doc. ``text/plain`` bodies get a plain line-by-line
+  parse: one non-blank line per item, with a leading numbering token
+  (``3.a`` / ``VII`` / ``12``) split off into :attr:`AgendaItem.number`.
+  ``application/pdf`` bodies go through :mod:`civiccast.agenda.pdf_import`'s
+  heuristic text-layer extractor (numbered items, ALL-CAPS section headings,
+  standalone time markers), and each resulting item carries a
+  :attr:`AgendaItem.confidence` score. Because PDF extraction is a guess, not
+  a literal transcription, importing PDF items into an ALREADY-PUBLISHED
+  agenda reopens it to ``draft`` (AI/agenda non-negotiables Spec Sec4.2 --
+  operator approval before publish) so the new, unreviewed items cannot reach
+  the public portal until the operator re-reviews and explicitly republishes.
 * :meth:`AgendaService.as_chapter_list` — the read path the player uses:
   returns published-and-timecoded items projected into
   :class:`civiccast.schedule.models.Chapter` shape. Draft agendas project to
@@ -39,6 +46,7 @@ from civiccast.agenda.models import (
     PublicAgendaItem,
     PublicMeetingAgenda,
 )
+from civiccast.agenda.pdf_import import extract_agenda_lines_from_pdf
 from civiccast.agenda.store import (
     AgendaNotFoundError,
     AgendaPublishEmptyError,
@@ -81,6 +89,20 @@ class AgendaImportDecodeError(AgendaServiceError):
     The router translates this to 415 so the operator gets a clean
     diagnostic ("the bytes you uploaded aren't UTF-8"), not a raw 500
     (E-3 / Q-1).
+    """
+
+
+class AgendaImportNoItemsError(AgendaServiceError):
+    """Raised when a PDF import found zero recognizable agenda lines.
+
+    Distinct from :class:`AgendaImportDecodeError`: the content type IS
+    supported (``application/pdf``) and the PDF WAS readable, but the
+    heuristic extractor's disclosed ceiling
+    (:mod:`civiccast.agenda.pdf_import`) means an unrecognized layout
+    (scanned image, no text layer, non-standard numbering) yields nothing
+    reliable. The router maps this to 422 so the operator sees "we couldn't
+    find items in this PDF," not a silent empty import (never fabricate a
+    best-guess item list) and not a generic 500.
     """
 
 
@@ -174,33 +196,78 @@ class AgendaService:
         doc_bytes: bytes,
         content_type: str = "text/plain",
     ) -> list[AgendaItem]:
-        """Best-effort parse of a plain-text agenda doc.
+        """Best-effort parse of an operator-uploaded agenda doc.
 
-        Each non-blank line becomes a draft item. A leading numbering token
-        (``3.a`` / ``3.1`` / ``12`` / Roman ``VII``) is split off into
-        :attr:`AgendaItem.number`. ``video_timecode_s`` stays None — the
+        ``text/plain``: each non-blank line becomes a draft item, taken
+        literally. A leading numbering token (``3.a`` / ``3.1`` / ``12`` /
+        Roman ``VII``) is split off into :attr:`AgendaItem.number`.
+        :attr:`AgendaItem.confidence` stays ``None`` — the operator typed or
+        pasted this text themselves, so there is nothing to be uncertain
+        about.
+
+        ``application/pdf``: text-layer heuristic extraction via
+        :mod:`civiccast.agenda.pdf_import` (numbered items, ALL-CAPS section
+        headings, standalone time markers). Each item's
+        :attr:`AgendaItem.confidence` carries the heuristic's reliability
+        score. A PDF that yields zero recognizable lines raises
+        :class:`AgendaImportNoItemsError` rather than silently importing
+        nothing. Because this is AI/heuristic-guessed content (AI/agenda
+        non-negotiables Spec Sec4.2 — operator approval before publish), a
+        PDF import that lands items on an agenda that is currently
+        ``published`` reopens it to ``draft`` so the new items cannot reach
+        the public portal until the operator reviews and republishes.
+
+        Any other content type raises :class:`NotImplementedError`.
+
+        ``video_timecode_s`` stays ``None`` for every import path — the
         operator scrubs each item to its in-video moment afterwards.
-
-        PDF (and any non-text/plain content type) raises
-        :class:`NotImplementedError`. A robust PDF agenda parser is a
-        follow-up; in the meantime the operator copy/pastes the agenda's
-        text into the import form.
 
         Idempotent on re-run via the same ``(agenda_id, order)`` skip rule
         :meth:`sync_from_chapters` uses.
         """
         normalized = content_type.split(";", 1)[0].strip().lower()
-        if normalized != "text/plain":
+        if normalized not in ("text/plain", "application/pdf"):
             raise NotImplementedError(
-                f"import_from_doc: content_type {content_type!r} is not supported "
-                "in slice 2. Only 'text/plain' is parsed; PDF / DOCX parsing is a "
-                "follow-up. Paste the doc's extracted text in the meantime."
+                f"import_from_doc: content_type {content_type!r} is not supported. "
+                "Only 'text/plain' and 'application/pdf' are parsed; paste the doc's "
+                "extracted text in the meantime for anything else (DOCX, ...)."
             )
         agenda = self._store.get_agenda(agenda_id)
         if agenda is None:
             raise AgendaNotFoundError(f"Meeting agenda {agenda_id!r} not found.")
         existing = self._store.list_items(agenda_id, order_by="order")
         taken_orders = {item.order for item in existing}
+
+        written: list[AgendaItem] = []
+        if normalized == "application/pdf":
+            parsed_lines = extract_agenda_lines_from_pdf(doc_bytes)
+            if not parsed_lines:
+                raise AgendaImportNoItemsError(
+                    f"No recognizable agenda items were found in the uploaded PDF for "
+                    f"agenda {agenda_id!r}. The PDF may be a scanned image with no text "
+                    "layer, or use a numbering/heading style the importer doesn't "
+                    "recognize yet. Paste the agenda's text instead."
+                )
+            for parsed in parsed_lines:
+                idx = parsed.order - 1
+                if idx in taken_orders:
+                    continue
+                item = AgendaItem(
+                    item_id=f"{agenda_id}-imp-{idx}",
+                    agenda_id=agenda_id,
+                    order=idx,
+                    number=parsed.number,
+                    title=parsed.title[:_TITLE_MAX],
+                    confidence=parsed.confidence,
+                )
+                written.append(self._store.upsert_item(item))
+            # AI-guessed content must clear operator review before it can be
+            # public again (Spec Sec4.2). A draft agenda was already gated by
+            # the ordinary publish flow; only a currently-published agenda
+            # needs this explicit reopen.
+            if written and agenda.status == "published":
+                self._store.set_status(agenda_id, "draft")
+            return written
 
         try:
             text = doc_bytes.decode("utf-8")
@@ -214,7 +281,6 @@ class AgendaService:
         lines = [line.strip() for line in text.splitlines()]
         lines = [line for line in lines if line]
 
-        written: list[AgendaItem] = []
         for idx, line in enumerate(lines):
             if idx in taken_orders:
                 continue
@@ -304,6 +370,7 @@ def _split_number_and_title(line: str) -> tuple[str | None, str]:
 
 __all__ = [
     "AgendaImportDecodeError",
+    "AgendaImportNoItemsError",
     "AgendaPublishError",
     "AgendaService",
     "AgendaServiceError",

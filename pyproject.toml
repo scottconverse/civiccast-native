@@ -55,9 +55,10 @@ dependencies = [
   "pikepdf==10.6.0",
   # 4.1.0 Agenda Bridge Phase 2 (PrimeGov) -- bounded PDF-text extraction for
   # a compiled agenda that ships as PDF only (civiccast/agenda_import/
-  # docparse.py). Pure-Python, ships inline types (py.typed), no mypy
-  # override needed. Pinned floor since only PdfReader.pages/extract_text()
-  # (stable since early 3.x) is used.
+  # docparse.py). Also used by the operator-upload PDF import heuristic
+  # (civiccast/agenda/pdf_import.py, product-hole fix). Pure-Python, ships
+  # inline types (py.typed), no mypy override needed. Pinned floor since
+  # only PdfReader.pages/extract_text() (stable since early 3.x) is used.
   "pypdf>=5.0",
   "keyring==25.7.0",
   # Floor raised 2026-08-06 for PYSEC-2026-3552 / CVE-2026-69247 (Bleichenbacher

@@ -376,8 +376,10 @@ def list_offline_caption_jobs(
     worker but nothing surfaced them; the only "retry" was re-approving
     publish. This is the read side of that gap.
 
-    No React screen calls this yet; see ``next-cleanup.md`` for the
-    operator console wiring this route is waiting on.
+    Wired to the operator console's per-asset captions drawer
+    (``OfflineCaptionJobsPanel``, ``civiccast/apps/portal-operator/src/
+    screens/OfflineCaptionJobsPanel.tsx``), which calls this scoped to the
+    open asset and offers a Retry action on failed rows.
     """
     if store is None:
         raise HTTPException(

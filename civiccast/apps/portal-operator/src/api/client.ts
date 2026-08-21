@@ -49,6 +49,8 @@ import type {
   ComplianceProbeResult,
   EgressCaptionProofSample,
   EgressConfig,
+  GstreamerRepairResponse,
+  OfflineCaptionJobRecord,
   HeadendProfile,
   HeadendProfileApplyRequest,
   MaterializeResult,
@@ -198,6 +200,7 @@ import type {
   TsrProbeResult,
 } from '../types/api.generated'
 import type {
+  ContributionInstallReport,
   ContributionRoom,
   CreateRoomInput,
   GuestInvite,
@@ -868,6 +871,19 @@ export function queueEgressCommand(
   )
 }
 
+/**
+ * POST /api/staff/egress/repair-gstreamer — operator recovery for a station
+ * degraded onto the FFmpeg egress engine by a corrupt GStreamer closure
+ * (civiccast/egress/router.py's repair_gstreamer_runtime, setup_admin /
+ * support_admin gated). Re-verifies the closure in place, or launches a
+ * signed re-stage if it's still broken; never a reinstall.
+ */
+export function repairGstreamerRuntime(): Promise<GstreamerRepairResponse> {
+  return request<GstreamerRepairResponse>('/api/staff/egress/repair-gstreamer', {
+    method: 'POST',
+  })
+}
+
 export function updateStaffAsset(
   assetId: string,
   patch: AssetMetadataUpdate,
@@ -1426,6 +1442,27 @@ export function contributionDiagnostics(): Promise<VdoDiagnostics> {
   return request<VdoDiagnostics>(`${RC}/diagnostics`)
 }
 
+/**
+ * POST /api/staff/contribution/diagnostics/turn-test — probe TURN
+ * reachability right now (not the last background poll tick) and return
+ * refreshed diagnostics. Covers both the locally-supervised coturn posture
+ * and the owner-approved documented-external-TURN posture (coturn has no
+ * native Windows build; civiccast/installer/contribution_install.py).
+ */
+export function testTurnConnectivity(): Promise<VdoDiagnostics> {
+  return request<VdoDiagnostics>(`${RC}/diagnostics/turn-test`, { method: 'POST' })
+}
+
+/**
+ * GET /api/staff/installer/remote-contribution — whether the pinned
+ * VDO.Ninja is installed/verified, plus `coturn_action`: the honest,
+ * platform-aware guidance for pointing the station at coturn (external TURN
+ * server on Windows; a local OS package on Linux/macOS).
+ */
+export function getRemoteContributionInstallStatus(): Promise<ContributionInstallReport> {
+  return request<ContributionInstallReport>('/api/staff/installer/remote-contribution')
+}
+
 export function updateControlSurface(
   surfaceId: string,
   payload: ControlSurfaceInput,
@@ -1844,6 +1881,37 @@ export function getCaptionProofs(
   const qs = new URLSearchParams({ limit: String(limit) })
   return request<EgressCaptionProofSample[]>(
     `/api/staff/egress/channels/${encodeURIComponent(channelId)}/caption-proofs?${qs.toString()}`,
+  )
+}
+
+export type OfflineCaptionJobState = OfflineCaptionJobRecord['state']
+
+/**
+ * GET /api/staff/captions/offline-jobs — offline caption job rows (K3):
+ * state / attempts / last_error, for operator visibility. Optionally
+ * narrowed to one asset and/or one state (e.g. `state: 'failed'` for a
+ * retry queue view). No React screen called this before the captions job
+ * drawer (civiccast/captions/router.py's list_offline_caption_jobs).
+ */
+export function listOfflineCaptionJobs(
+  params: { assetId?: string; state?: OfflineCaptionJobState } = {},
+): Promise<OfflineCaptionJobRecord[]> {
+  const qs = new URLSearchParams()
+  if (params.assetId) qs.set('asset_id', params.assetId)
+  if (params.state) qs.set('state', params.state)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return request<OfflineCaptionJobRecord[]>(`/api/staff/captions/offline-jobs${suffix}`)
+}
+
+/**
+ * POST /api/staff/captions/offline-jobs/{job_id}/retry — manually retry a
+ * failed offline caption job (records_clerk gated). 409 if a different job
+ * is already active for the same asset; the caller surfaces that message.
+ */
+export function retryOfflineCaptionJob(jobId: string): Promise<OfflineCaptionJobRecord> {
+  return request<OfflineCaptionJobRecord>(
+    `/api/staff/captions/offline-jobs/${encodeURIComponent(jobId)}/retry`,
+    { method: 'POST' },
   )
 }
 
@@ -2597,9 +2665,9 @@ export function affidavitExportUrl(params: {
 // can never bypass the 422 refusal.
 //
 // `importAgendaFromDoc` POSTs a raw body with an explicit Content-Type
-// (default text/plain). The router refuses anything that is not text/plain
-// with 415 today; the UI surfaces the 415 message as "PDF/DOCX import is a
-// follow-up".
+// (default text/plain). The router parses `text/plain` (literal, line by
+// line) and `application/pdf` (heuristic extraction, confidence-scored,
+// civiccast/agenda/pdf_import.py) and refuses anything else with 415.
 
 const AGENDAS = '/api/staff/agendas'
 
@@ -2713,10 +2781,12 @@ export function syncAgendaFromChapters(agendaId: string): Promise<AgendaItem[]> 
 /**
  * POST /api/staff/agendas/{agenda_id}/import — parse a doc and seed items.
  *
- * The body is the doc bytes; `contentType` defaults to `text/plain` since
- * slice 2 only parses plain text (PDF / DOCX return 415 Unsupported Media
- * Type). Caller-controlled so a future slice can hand off PDF without a
- * client change.
+ * `doc` is either the pasted text (`string`, `contentType` defaults to
+ * `text/plain`) or an uploaded PDF's raw bytes (pass the `File`/`Blob`
+ * directly with `contentType: 'application/pdf'` — a `File` already
+ * satisfies `fetch`'s `BodyInit`, no manual read/convert needed). DOCX and
+ * anything else return 415 Unsupported Media Type. A readable PDF with no
+ * recognizable items returns 422 — the caller surfaces that message as-is.
  *
  * Raw-body POST — we cannot use the JSON `request<T>` helper here because
  * that one always sets Content-Type to application/json and JSON.stringifies
@@ -2725,7 +2795,7 @@ export function syncAgendaFromChapters(agendaId: string): Promise<AgendaItem[]> 
  */
 export async function importAgendaFromDoc(
   agendaId: string,
-  doc: string,
+  doc: string | Blob,
   contentType: string = 'text/plain',
 ): Promise<AgendaItem[]> {
   const staffToken = runtimeStaffToken()

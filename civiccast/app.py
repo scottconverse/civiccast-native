@@ -167,6 +167,7 @@ from civiccast.live.contribution.coprocess import (
     ContributionCoprocessSettings,
     ContributionCoprocessSupervisor,
     contribution_diagnostics_snapshot,
+    contribution_turn_connectivity_test,
     set_active_supervisor,
 )
 from civiccast.live.contribution.on_air import build_contribution_on_air_hook
@@ -2218,7 +2219,11 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # pattern as the TSR URL in _resolve_control_room_service above).
         vdo_url = os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_VDO_URL")
         bridge = (
-            UrlVdoNinjaBridge(vdo_url, diagnostics_probe=contribution_diagnostics_snapshot)
+            UrlVdoNinjaBridge(
+                vdo_url,
+                diagnostics_probe=contribution_diagnostics_snapshot,
+                connectivity_test=contribution_turn_connectivity_test,
+            )
             if vdo_url
             else NullVdoNinjaBridge()
         )

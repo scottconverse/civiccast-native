@@ -109,6 +109,7 @@ export interface AgendaItem {
   video_timecode_s?: number | null
   doc_anchor?: string | null
   notes?: string | null
+  confidence?: number | null
   created_at?: string
   updated_at?: string
 }
@@ -122,6 +123,7 @@ export interface AgendaItemInput {
   video_timecode_s?: number | null
   doc_anchor?: string | null
   notes?: string | null
+  confidence?: number | null
 }
 
 export interface AgendaItemUpdate {
@@ -131,6 +133,7 @@ export interface AgendaItemUpdate {
   video_timecode_s?: number | null
   doc_anchor?: string | null
   notes?: string | null
+  confidence?: number | null
 }
 
 export interface AiModelAvailability {
@@ -4361,6 +4364,8 @@ export interface ValidationError {
 
 export interface VdoDiagnostics {
   turn_reachable?: boolean
+  turn_host?: string | null
+  turn_port?: number | null
   vdo_process_up?: boolean
   coturn_process_up?: boolean
   ice_summary?: string

@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+    Float,
     Index,
     Integer,
     String,
@@ -180,6 +181,13 @@ class AgendaItem(BaseModel):
     video_timecode_s: int | None = Field(default=None, ge=0)
     doc_anchor: Annotated[str | None, Field(default=None, max_length=200)] = None
     notes: Annotated[str | None, Field(default=None, max_length=5000)] = None
+    # Set only by heuristic/AI-assisted import paths (currently the PDF
+    # import heuristic in civiccast.agenda.pdf_import); None for
+    # operator-authored items and exact plain-text imports, where there is
+    # nothing to be uncertain about. 0.0-1.0; the operator console can
+    # surface this to flag low-confidence rows for review before publish
+    # (AI/agenda non-negotiables Spec Sec4.2).
+    confidence: Annotated[float | None, Field(default=None, ge=0.0, le=1.0)] = None
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -197,6 +205,7 @@ class AgendaItemInput(BaseModel):
     video_timecode_s: int | None = Field(default=None, ge=0)
     doc_anchor: Annotated[str | None, Field(default=None, max_length=200)] = None
     notes: Annotated[str | None, Field(default=None, max_length=5000)] = None
+    confidence: Annotated[float | None, Field(default=None, ge=0.0, le=1.0)] = None
 
 
 class AgendaItemUpdate(BaseModel):
@@ -213,6 +222,9 @@ class AgendaItemUpdate(BaseModel):
     video_timecode_s: int | None = Field(default=None, ge=0)
     doc_anchor: Annotated[str | None, Field(default=None, max_length=200)] = None
     notes: Annotated[str | None, Field(default=None, max_length=5000)] = None
+    # Explicit null clears it -- the operator's normal "I reviewed this
+    # heuristic guess and it's correct" action.
+    confidence: Annotated[float | None, Field(default=None, ge=0.0, le=1.0)] = None
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +325,7 @@ class AgendaItemDb(Base):
     video_timecode_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
     doc_anchor: Mapped[str | None] = mapped_column(String(200), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )

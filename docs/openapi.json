@@ -14930,6 +14930,48 @@
         ]
       }
     },
+    "/api/staff/contribution/diagnostics/turn-test": {
+      "post": {
+        "tags": [
+          "staff",
+          "contribution"
+        ],
+        "summary": "Probe TURN reachability right now (does not wait for the next background poll)",
+        "description": "The \"Test TURN connectivity\" button in the contribution setup UI.\n\nCovers both postures: a locally-supervised coturn (Linux/macOS) and the\nowner-approved documented-external-TURN posture (coturn has no native\nWindows build \u2014 see civiccast/installer/contribution_install.py). Either\nway this probes the effective CIVICCAST_TURN_HOST/CIVICCAST_TURN_PORT\nright now and returns refreshed diagnostics, never a stale cached result.",
+        "operationId": "test_turn_connectivity_api_staff_contribution_diagnostics_turn_test_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VdoDiagnostics"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/public/contribution/invites/{invite_token}": {
       "get": {
         "tags": [
@@ -16446,7 +16488,7 @@
           "captions"
         ],
         "summary": "List offline caption jobs (K3) for operator visibility",
-        "description": "Return offline caption job rows -- state, attempts, last_error.\n\nAudit finding 4: state/attempts/last_error were persisted by the K3\nworker but nothing surfaced them; the only \"retry\" was re-approving\npublish. This is the read side of that gap.\n\nNo React screen calls this yet; see ``next-cleanup.md`` for the\noperator console wiring this route is waiting on.",
+        "description": "Return offline caption job rows -- state, attempts, last_error.\n\nAudit finding 4: state/attempts/last_error were persisted by the K3\nworker but nothing surfaced them; the only \"retry\" was re-approving\npublish. This is the read side of that gap.\n\nWired to the operator console's per-asset captions drawer\n(``OfflineCaptionJobsPanel``, ``civiccast/apps/portal-operator/src/\nscreens/OfflineCaptionJobsPanel.tsx``), which calls this scoped to the\nopen asset and offers a Retry action on failed rows.",
         "operationId": "list_offline_caption_jobs_api_staff_captions_offline_jobs_get",
         "parameters": [
           {
@@ -20852,8 +20894,8 @@
           "staff",
           "agenda"
         ],
-        "summary": "Best-effort import of an uploaded agenda doc (text/plain only)",
-        "description": "Parse the request body as an agenda doc and seed draft items.\n\nBody: the doc bytes (operators ``POST`` the file content with the right\n``Content-Type``). Only ``text/plain`` is parsed in slice 2; PDF / DOCX\nreturns 415 Unsupported Media Type \u2014 a robust binary parser is a\nfollow-up. Idempotent on re-run via the same skip-by-order rule\n``sync_from_chapters`` uses.\n\nThe endpoint REQUIRES a ``Content-Type`` header (E-3 / Q-1). A missing\nheader is a 415 \u2014 silently defaulting to ``text/plain`` masked binary\nuploads as text and surfaced as raw 500 on the decode. Bodies that aren't\nvalid UTF-8 are also a 415 \u2014 same root cause.",
+        "summary": "Best-effort import of an uploaded agenda doc (text/plain or PDF)",
+        "description": "Parse the request body as an agenda doc and seed draft items.\n\nBody: the doc bytes (operators ``POST`` the file content with the right\n``Content-Type``). ``text/plain`` is parsed literally, line by line.\n``application/pdf`` runs the heuristic text-layer extractor in\n``civiccast.agenda.pdf_import`` (numbered items, ALL-CAPS section\nheadings, standalone time markers); each returned item carries a\n``confidence`` score, and if the target agenda is currently\n``published`` the import reopens it to ``draft`` so an operator must\nreview and republish before the new, heuristically-guessed items reach\nthe public portal (AI/agenda non-negotiables Spec Sec4.2). Any other\ncontent type returns 415 Unsupported Media Type. Idempotent on re-run\nvia the same skip-by-order rule ``sync_from_chapters`` uses.\n\nThe endpoint REQUIRES a ``Content-Type`` header (E-3 / Q-1). A missing\nheader is a 415 \u2014 silently defaulting to ``text/plain`` masked binary\nuploads as text and surfaced as raw 500 on the decode. Bodies that aren't\nvalid UTF-8 are also a 415 \u2014 same root cause. A readable PDF with zero\nrecognizable lines is a 422, not a silent empty import.",
         "operationId": "import_from_doc_api_staff_agendas__agenda_id__import_post",
         "parameters": [
           {
@@ -20885,20 +20927,13 @@
             "description": "Meeting agenda not found"
           },
           "415": {
-            "description": "Unsupported content type (only text/plain is parsed)"
+            "description": "Unsupported content type (only text/plain and application/pdf are parsed)"
+          },
+          "422": {
+            "description": "PDF was readable but no recognizable agenda items were found in it"
           },
           "503": {
             "description": "Durable storage is not ready yet."
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -27197,7 +27232,7 @@
           "egress"
         ],
         "summary": "Repair the GStreamer runtime and restore full egress (no reinstall)",
-        "description": "Operator recovery for a station degraded onto the FFmpeg egress engine by\na corrupt GStreamer closure.\n\nRe-verifies the closure in place. If it is healthy again (the common\ntransient AV-quarantine cause), nothing destructive runs and GStreamer\negress restores on the next control-plane environment re-derivation. If it\nstill has missing bytes, launches the installer's signed, scoped\n``native-app-payload`` re-stage DETACHED; on the service's next start the\nre-derived environment re-verifies the healthy closure and GStreamer egress\nAUTO-RESTORES. Never a reinstall.\n\nBackend-only in this change; no React built here. See\n``next-cleanup.md`` for the operator console button this route is\nwaiting on.",
+        "description": "Operator recovery for a station degraded onto the FFmpeg egress engine by\na corrupt GStreamer closure.\n\nRe-verifies the closure in place. If it is healthy again (the common\ntransient AV-quarantine cause), nothing destructive runs and GStreamer\negress restores on the next control-plane environment re-derivation. If it\nstill has missing bytes, launches the installer's signed, scoped\n``native-app-payload`` re-stage DETACHED; on the service's next start the\nre-derived environment re-verifies the healthy closure and GStreamer egress\nAUTO-RESTORES. Never a reinstall.\n\nWired to the operator console's egress health surface\n(``GstreamerRepairPanel`` in ``civiccast/apps/portal-operator/src/\nscreens/SystemHealthScreen.tsx``), which POSTs here behind a confirm\ndialog and surfaces ``remedy`` / ``detail`` / ``closure_healthy``.",
         "operationId": "repair_gstreamer_runtime_api_staff_egress_repair_gstreamer_post",
         "responses": {
           "200": {
@@ -28661,6 +28696,19 @@
             ],
             "title": "Notes"
           },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -28757,6 +28805,19 @@
               }
             ],
             "title": "Notes"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
           }
         },
         "additionalProperties": false,
@@ -28844,6 +28905,19 @@
               }
             ],
             "title": "Notes"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
           }
         },
         "additionalProperties": false,
@@ -45703,7 +45777,8 @@
               "gpi",
               "serial"
             ],
-            "title": "Kind"
+            "title": "Kind",
+            "description": "Device kind. 'gpi' and 'serial' are network-relay triggers (TCP) only -- direct GPI contact-closure / serial (RS-232/422) hardware is not supported in this release; both route through TSR's generic TCPSEND adapter. Front real hardware with your own TCP-to-GPI or TCP-to-serial relay box."
           },
           "transport": {
             "type": "string",
@@ -56555,6 +56630,28 @@
             "title": "Turn Reachable",
             "default": false
           },
+          "turn_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Host"
+          },
+          "turn_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Port"
+          },
           "vdo_process_up": {
             "type": "boolean",
             "title": "Vdo Process Up",
@@ -56579,7 +56676,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "VdoDiagnostics",
-        "description": "A read-only health snapshot for the operator diagnostics drawer (S17 \u00a75).\n\n``turn_reachable`` is the load-bearing commissioning signal (a guest behind\nNAT cannot join without it). The process-up flags come from the S9 co-process\nsupervisor (slice 3d)."
+        "description": "A read-only health snapshot for the operator diagnostics drawer (S17 \u00a75).\n\n``turn_reachable`` is the load-bearing commissioning signal (a guest behind\nNAT cannot join without it). The process-up flags come from the S9 co-process\nsupervisor (slice 3d).\n\n``turn_reachable`` reflects the most recent probe of ``turn_host``:\n``turn_port`` regardless of ``coturn_process_up`` \u2014 the owner-approved\n\"documented external TURN\" posture (coturn has no native Windows build;\nsee ``civiccast/installer/contribution_install.py``) means there is\ndeliberately no LOCAL coturn process to supervise, but the configured\nexternal server's reachability is still the thing that matters to a\nguest behind NAT, and is still probed.\n\n``turn_host`` / ``turn_port`` echo the effective, currently-configured\nTURN target (``CIVICCAST_TURN_HOST`` / ``CIVICCAST_TURN_PORT``, read at\nservice start) so the operator console can show what's actually\nconfigured, not just whether it's reachable."
       },
       "ViewerAccount": {
         "properties": {

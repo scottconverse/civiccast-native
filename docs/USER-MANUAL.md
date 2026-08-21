@@ -545,12 +545,23 @@ secrets. It is for tests only and must never be enabled at a station.
   Contributor record store and upload landing.
 - **`CIVICCAST_CONTRIBUTOR_UPLOAD_DIR`**\
   Contributor record store and upload landing.
-- **`CIVICCAST_TURN_HOST`**\
-  TURN/VDO co-process commands.
-- **`CIVICCAST_TURN_PORT`**\
-  TURN/VDO co-process commands.
+- **`CIVICCAST_TURN_HOST`** / **`CIVICCAST_TURN_PORT`**\
+  The TURN server guests connect through to punch out from behind NAT. coturn
+  has no native Windows build, so on Windows CivicCast does **not** run a
+  local coturn process: point these two variables at a **documented external
+  TURN server** — a coturn instance on a separate Linux/BSD host, or a
+  managed TURN provider — and leave `CIVICCAST_COTURN_COMMAND` unset. The
+  operator console's Remote Contribution screen (Diagnostics drawer,
+  support_admin role) shows the currently-configured host/port, a **Test TURN
+  connectivity** button that probes it right now, and the same guidance text
+  under "How to point this station at coturn." On Linux/macOS these still
+  work the same way if you'd rather point at an external server than run
+  coturn locally.
 - **`CIVICCAST_COTURN_COMMAND`**\
-  TURN/VDO co-process commands.
+  Linux/macOS only — the local coturn launch command, if you're running
+  coturn on the station itself rather than pointing at an external server
+  (see `CIVICCAST_TURN_HOST` above). Leave unset on Windows; there is no
+  native Windows build.
 - **`CIVICCAST_VDO_COMMAND`**\
   TURN/VDO co-process commands.
 - **`CIVICCAST_CONTROL_ROOM_TSR_URL`**\

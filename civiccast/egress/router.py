@@ -710,9 +710,10 @@ def repair_gstreamer_runtime() -> GstreamerRepairResponse:
     re-derived environment re-verifies the healthy closure and GStreamer egress
     AUTO-RESTORES. Never a reinstall.
 
-    Backend-only in this change; no React built here. See
-    ``next-cleanup.md`` for the operator console button this route is
-    waiting on.
+    Wired to the operator console's egress health surface
+    (``GstreamerRepairPanel`` in ``civiccast/apps/portal-operator/src/
+    screens/SystemHealthScreen.tsx``), which POSTs here behind a confirm
+    dialog and surfaces ``remedy`` / ``detail`` / ``closure_healthy``.
     """
 
     # Imported lazily so the egress router module graph stays light and the

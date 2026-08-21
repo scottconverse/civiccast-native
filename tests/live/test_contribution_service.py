@@ -53,9 +53,15 @@ class FakeBridge:
     """A deterministic VDO.Ninja bridge for tests — records calls, mints stable
     URLs, returns an injectable diagnostics snapshot."""
 
-    def __init__(self, diagnostics: VdoDiagnostics | None = None) -> None:
+    def __init__(
+        self,
+        diagnostics: VdoDiagnostics | None = None,
+        connectivity_test_result: VdoDiagnostics | None = None,
+    ) -> None:
         self.opened: list[str] = []
         self._diag = diagnostics or VdoDiagnostics(turn_reachable=True, vdo_process_up=True)
+        self._connectivity_test_result = connectivity_test_result
+        self.connectivity_test_calls = 0
 
     def director_url(self, room: ContributionRoom) -> str:
         self.opened.append(room.room_id)
@@ -69,6 +75,10 @@ class FakeBridge:
 
     def diagnostics(self) -> VdoDiagnostics:
         return self._diag
+
+    def test_turn_connectivity(self) -> VdoDiagnostics:
+        self.connectivity_test_calls += 1
+        return self._connectivity_test_result or self._diag
 
 
 @pytest.fixture
@@ -147,6 +157,28 @@ def test_url_bridge_diagnostics_unwired_is_honest() -> None:
     assert wired.diagnostics().turn_reachable is True
 
 
+def test_url_bridge_connectivity_test_unwired_is_honest() -> None:
+    bridge = UrlVdoNinjaBridge("https://vdo.test")
+    diag = bridge.test_turn_connectivity()
+    assert diag.turn_reachable is False
+    assert "not wired" in diag.detail
+    # With a connectivity_test callable wired it returns that callable's result
+    # -- a separate injection point from diagnostics_probe, since a "test now"
+    # probe and a "last background poll" snapshot are different operations.
+    calls = []
+    wired = UrlVdoNinjaBridge(
+        "https://vdo.test",
+        connectivity_test=lambda: (
+            calls.append(1),
+            VdoDiagnostics(turn_reachable=True, turn_host="turn.example.org", turn_port=3478),
+        )[1],
+    )
+    diag = wired.test_turn_connectivity()
+    assert diag.turn_reachable is True
+    assert diag.turn_host == "turn.example.org"
+    assert len(calls) == 1
+
+
 def test_null_bridge_fails_closed() -> None:
     bridge = NullVdoNinjaBridge()
     room = ContributionRoom(
@@ -157,6 +189,7 @@ def test_null_bridge_fails_closed() -> None:
     with pytest.raises(VdoBridgeError):
         bridge.guest_urls(room, invite_token="t", role="presenter")
     assert bridge.diagnostics().turn_reachable is False
+    assert bridge.test_turn_connectivity().turn_reachable is False
 
 
 # --- rooms -------------------------------------------------------------------
@@ -350,6 +383,20 @@ def test_diagnostics_delegates_to_bridge(store: ContributionStore) -> None:
     svc, _ = _make_service(store, bridge=bridge)
     diag = svc.diagnostics()
     assert diag.turn_reachable is True and diag.ice_summary == "ok"
+
+
+def test_test_turn_connectivity_delegates_to_bridge(store: ContributionStore) -> None:
+    bridge = FakeBridge(
+        connectivity_test_result=VdoDiagnostics(
+            turn_reachable=False, turn_host="turn.example.org", turn_port=3478
+        )
+    )
+    svc, _ = _make_service(store, bridge=bridge)
+    diag = svc.test_turn_connectivity()
+    assert bridge.connectivity_test_calls == 1
+    assert diag.turn_reachable is False
+    assert diag.turn_host == "turn.example.org"
+    assert diag.turn_port == 3478
 
 
 def test_dropping_on_air_guest_emits_alert_but_waiting_guest_does_not(

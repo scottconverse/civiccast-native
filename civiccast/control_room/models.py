@@ -13,6 +13,13 @@ Entities (S16 §3):
   here in cleartext — ``secret_ref`` points at the OS keyring
   (:mod:`civiccast.control_room.secrets`), mirroring how ``live/`` keeps
   credentials out of operator-facing plans.
+  **Honest label (do not build a fake driver):** ``gpi`` and ``serial`` are
+  network-relay triggers only. ``tsr_service/index.mjs``'s ``DEVICE_TYPE`` map
+  routes both kinds through TSR's generic ``TCPSEND`` adapter — there is no
+  real GPI contact-closure or serial (RS-232/422) hardware driver in this
+  release. A station that needs real hardware GPI/serial fronts it with its
+  own TCP-to-GPI or TCP-to-serial relay box; CivicCast's TCP payload path
+  already reaches it.
 * ``DeviceProfile`` — the TSR mapping/config for a device: which TSR device
   type, non-secret options, the CivicCast capability map, and (S18 gap-8) the
   Take-Delay / Post-Roll transition timing. Versioned for auditability.
@@ -119,7 +126,18 @@ class ProductionDevice(BaseModel):
 
     device_id: Annotated[str, Field(min_length=1, max_length=120)]
     label: Annotated[str, Field(min_length=1, max_length=160)]
-    kind: ProductionDeviceKind
+    kind: Annotated[
+        ProductionDeviceKind,
+        Field(
+            description=(
+                "Device kind. 'gpi' and 'serial' are network-relay triggers (TCP) "
+                "only -- direct GPI contact-closure / serial (RS-232/422) hardware "
+                "is not supported in this release; both route through TSR's generic "
+                "TCPSEND adapter. Front real hardware with your own TCP-to-GPI or "
+                "TCP-to-serial relay box."
+            )
+        ),
+    ]
     transport: DeviceTransport
     host: Annotated[str | None, Field(default=None, max_length=255)] = None
     port: Annotated[int | None, Field(default=None, ge=1, le=65535)] = None
