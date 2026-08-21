@@ -510,7 +510,7 @@ def test_assign_child_accepts_foreign_membership_only_with_opt_in_and_proof(
 
 def test_assign_child_without_opt_in_still_fails_closed_on_foreign_membership() -> None:
     """Negative control: the SAME foreign-membership condition without the
-    opt-in keyword must still raise -- nats/control_plane/ollama keep the
+    opt-in keyword must still raise -- control_plane/ollama keep the
     strict D3 assign."""
 
     api = InheritedMembershipApi(winerror=5, already_in_job=False, in_any_job=True)

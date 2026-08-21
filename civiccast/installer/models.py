@@ -80,7 +80,6 @@ BetaHandoffLaneId = Literal[
     "clean-windows-install-proof",
     "dependencies",
     "models",
-    "nats",
     "mtls",
     "activitypub",
     "external-providers",

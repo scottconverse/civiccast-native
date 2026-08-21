@@ -248,14 +248,17 @@ fn require_staged_files(staging: &Path, relative_files: &[&str]) -> Result<(), S
 /// The runtime files the promoted staged station MUST carry, expressed as the
 /// SAME staging-relative paths the running service actually uses.
 ///
-/// K1 activation defect (found by a clean-box install proof): postgres, nats,
+/// K1 activation defect (found by a clean-box install proof): postgres
 /// and tsduck are NOT staged under `dependencies/`. They ship inside the signed
 /// `native-server-binaries` pack, which
 /// `install_layout.py::_SERVER_PACK_SUBDIR` resolves at runtime to
 /// `<install_root>\packs\native-server-binaries\payload\bin` (pg_ctl.exe,
-/// postgres.exe, nats-server.exe) and `...\payload\tsduck\bin` (tsp.exe) -- see
+/// postgres.exe) and `...\payload\tsduck\bin` (tsp.exe) -- see
 /// `scripts/build_native_server_pack.py` (`bin/<file>` + `tsduck/bin/<file>`
-/// sources under the pack's `payload/` prefix). node is BUILD-TIME ONLY
+/// sources under the pack's `payload/` prefix). NATS JetStream was removed
+/// from the product (owner decision 2026-08-20; see ADR 0023, which
+/// supersedes ADR 0001), so nats-server.exe is no longer part of this pack
+/// or this required-files list. node is BUILD-TIME ONLY
 /// (`scripts/build_native_app_payload.py` uses `which(node)` to compile the
 /// React portals; the runtime serves them as static dist via Python), so it is
 /// never staged and requiring it can never pass -- it is absent here.
@@ -288,7 +291,6 @@ const REQUIRED_STAGED_RUNTIME_FILES: &[&str] = &[
     "runtime/python.exe",
     "packs/native-server-binaries/payload/bin/postgres.exe",
     "packs/native-server-binaries/payload/bin/pg_ctl.exe",
-    "packs/native-server-binaries/payload/bin/nats-server.exe",
     "dependencies/ffmpeg/bin/ffmpeg.exe",
     "dependencies/ollama/ollama.exe",
     "runtime/Lib/site-packages/faster_whisper/__init__.py",
@@ -2063,8 +2065,12 @@ mod tests {
     fn required_staged_runtime_files_use_the_real_runtime_layout_not_the_wrong_convention() {
         // Cheap guard against re-introducing the wrong convention. The K1 defect
         // was postgres/nats/tsduck listed under `dependencies/` and node listed
-        // at all; none of those substrings may reappear, and the three real
-        // server-pack paths must be present.
+        // at all; none of those substrings may reappear, and the real
+        // server-pack paths must be present. NATS JetStream was removed from
+        // the product (owner decision 2026-08-20; see ADR 0023, which
+        // supersedes ADR 0001), so `dependencies/nats` stays in the
+        // never-reappear list defensively even though nats-server.exe is no
+        // longer staged at all.
         for wrong in [
             "dependencies/postgresql",
             "dependencies/nats",
@@ -2081,7 +2087,6 @@ mod tests {
         for expected in [
             "packs/native-server-binaries/payload/bin/postgres.exe",
             "packs/native-server-binaries/payload/bin/pg_ctl.exe",
-            "packs/native-server-binaries/payload/bin/nats-server.exe",
         ] {
             assert!(
                 REQUIRED_STAGED_RUNTIME_FILES.contains(&expected),

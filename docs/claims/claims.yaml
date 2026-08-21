@@ -135,10 +135,10 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -213,10 +213,10 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -268,10 +268,10 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -331,10 +331,10 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -442,10 +442,10 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -571,10 +571,10 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f

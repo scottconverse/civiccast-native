@@ -19,10 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 LOCK_PATH = ROOT / "native-windows-runtime-dependencies.lock.json"
 PROVISIONER_PATH = ROOT / "scripts" / "provision_native_runtime_dependencies.py"
 BUILD_TOOLCHAIN_LOCK_PATH = ROOT / "native-windows-build-toolchain.lock.json"
-ARTIFACT_NAMES = {"postgres", "nats", "tsduck", "ffmpeg", "node", "ollama"}
+ARTIFACT_NAMES = {"postgres", "tsduck", "ffmpeg", "node", "ollama"}
 EXPECTED_VERSIONS = {
     "postgres": "17.10-2",
-    "nats": "2.14.3",
     "tsduck": "3.44-4676",
     "ffmpeg": "n8.1.2-34-g9b6c8969e0",
     "node": "24.15.0",
@@ -30,7 +29,6 @@ EXPECTED_VERSIONS = {
 }
 EXPECTED_SPDX_LICENSES = {
     "postgres": "PostgreSQL",
-    "nats": "Apache-2.0",
     "tsduck": "BSD-2-Clause",
     "ffmpeg": "LGPL-3.0-or-later",
     "node": "MIT",
@@ -53,7 +51,6 @@ EXPECTED_EXECUTABLES = {
         "bin/postgres.exe",
         "bin/psql.exe",
     ],
-    "nats": ["nats-server.exe"],
     "tsduck": ["bin/tsp.exe"],
     "ffmpeg": ["bin/ffmpeg.exe", "bin/ffprobe.exe"],
     "node": ["node.exe"],
@@ -252,7 +249,7 @@ def test_validate_lock_rejects_unreviewable_artifact_metadata(
     match: str,
 ) -> None:
     lock = provisioner.load_lock()
-    lock["artifacts"]["nats"][field] = value
+    lock["artifacts"]["postgres"][field] = value
 
     with pytest.raises(provisioner.RuntimeDependencyProvisionError, match=match):
         provisioner.validate_lock(lock)
@@ -263,23 +260,23 @@ def test_fetch_verifies_size_and_digest_before_cache_admission(
     tmp_path: Path,
 ) -> None:
     body = b"reviewed runtime artifact"
-    artifact = _artifact("nats", body)
+    artifact = _artifact("tsduck", body)
     calls: list[str] = []
 
     def opener(request: object, *, timeout: float) -> _Response:
         calls.append(request.full_url)  # type: ignore[attr-defined]
         assert timeout == 60
-        return _Response(body, "https://github.com/civiccast-fixtures/nats.zip")
+        return _Response(body, "https://github.com/civiccast-fixtures/tsduck.zip")
 
-    cached = provisioner.fetch_locked_artifact("nats", artifact, tmp_path, opener=opener)
-    assert cached == tmp_path / "nats.zip"
+    cached = provisioner.fetch_locked_artifact("tsduck", artifact, tmp_path, opener=opener)
+    assert cached == tmp_path / "tsduck.zip"
     assert cached.read_bytes() == body
-    assert calls == ["https://github.com/civiccast-fixtures/nats.zip"]
-    assert not (tmp_path / "nats.zip.partial").exists()
+    assert calls == ["https://github.com/civiccast-fixtures/tsduck.zip"]
+    assert not (tmp_path / "tsduck.zip.partial").exists()
 
     cached.write_bytes(b"tampered")
     with pytest.raises(provisioner.RuntimeDependencyProvisionError, match=r"SHA-256|size"):
-        provisioner.fetch_locked_artifact("nats", artifact, tmp_path, offline=True)
+        provisioner.fetch_locked_artifact("tsduck", artifact, tmp_path, offline=True)
 
 
 def test_fetch_rejects_bad_download_and_removes_partial_file(
@@ -287,16 +284,16 @@ def test_fetch_rejects_bad_download_and_removes_partial_file(
     tmp_path: Path,
 ) -> None:
     body = b"truncated"
-    artifact = _artifact("nats", body + b" artifact")
+    artifact = _artifact("tsduck", body + b" artifact")
 
     def opener(_request: object, *, timeout: float) -> _Response:
         assert timeout == 60
-        return _Response(body, "https://github.com/civiccast-fixtures/nats.zip")
+        return _Response(body, "https://github.com/civiccast-fixtures/tsduck.zip")
 
     with pytest.raises(provisioner.RuntimeDependencyProvisionError, match=r"SHA-256|size"):
-        provisioner.fetch_locked_artifact("nats", artifact, tmp_path, opener=opener)
-    assert not (tmp_path / "nats.zip").exists()
-    assert not (tmp_path / "nats.zip.partial").exists()
+        provisioner.fetch_locked_artifact("tsduck", artifact, tmp_path, opener=opener)
+    assert not (tmp_path / "tsduck.zip").exists()
+    assert not (tmp_path / "tsduck.zip.partial").exists()
 
 
 def test_fetch_offline_refuses_a_missing_cache_entry(
@@ -305,8 +302,8 @@ def test_fetch_offline_refuses_a_missing_cache_entry(
 ) -> None:
     with pytest.raises(provisioner.RuntimeDependencyProvisionError, match="offline"):
         provisioner.fetch_locked_artifact(
-            "nats",
-            _artifact("nats", b"reviewed runtime artifact"),
+            "tsduck",
+            _artifact("tsduck", b"reviewed runtime artifact"),
             tmp_path,
             offline=True,
             opener=lambda *_args, **_kwargs: pytest.fail("offline must not open a URL"),
@@ -316,7 +313,7 @@ def test_fetch_offline_refuses_a_missing_cache_entry(
 @pytest.mark.parametrize(
     "member",
     [
-        "nats/../../escape.txt",
+        "sample/../../escape.txt",
         "/absolute.txt",
         "C:/drive-path.txt",
     ],
@@ -330,7 +327,7 @@ def test_safe_extract_rejects_traversal_and_absolute_member_paths(
     archive.write_bytes(_zip_bytes({member: b"escape"}))
 
     with pytest.raises(provisioner.RuntimeDependencyProvisionError, match="unsafe"):
-        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="nats")
+        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="sample")
     assert not (tmp_path / "escape.txt").exists()
 
 
@@ -340,11 +337,11 @@ def test_safe_extract_rejects_normalized_case_insensitive_collisions(
 ) -> None:
     archive = tmp_path / "collision.zip"
     archive.write_bytes(
-        _zip_bytes({"nats/bin/NATS-SERVER.EXE": b"one", "nats/bin/nats-server.exe": b"two"})
+        _zip_bytes({"sample/bin/SAMPLE-SERVER.EXE": b"one", "sample/bin/sample-server.exe": b"two"})
     )
 
     with pytest.raises(provisioner.RuntimeDependencyProvisionError, match="collision"):
-        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="nats")
+        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="sample")
 
 
 def test_safe_extract_rejects_exact_duplicate_members(
@@ -353,23 +350,23 @@ def test_safe_extract_rejects_exact_duplicate_members(
 ) -> None:
     archive = tmp_path / "duplicate.zip"
     with zipfile.ZipFile(archive, "w") as handle:
-        handle.writestr("nats/bin/same.dll", b"first")
+        handle.writestr("sample/bin/same.dll", b"first")
         with pytest.warns(UserWarning, match="Duplicate name"):
-            handle.writestr("nats/bin/same.dll", b"second")
+            handle.writestr("sample/bin/same.dll", b"second")
 
     with pytest.raises(provisioner.RuntimeDependencyProvisionError, match="duplicate"):
-        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="nats")
+        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="sample")
     assert not (tmp_path / "out").exists()
 
 
 @pytest.mark.parametrize(
     "member",
     [
-        "nats/bin/CON",
-        "nats/bin/runner.",
-        "nats/bin/runner ",
-        "nats/bin/runner.exe:stream",
-        "nats/bin/runner?.exe",
+        "sample/bin/CON",
+        "sample/bin/runner.",
+        "sample/bin/runner ",
+        "sample/bin/runner.exe:stream",
+        "sample/bin/runner?.exe",
     ],
 )
 def test_safe_extract_rejects_windows_namespace_hazards(
@@ -381,7 +378,7 @@ def test_safe_extract_rejects_windows_namespace_hazards(
     archive.write_bytes(_zip_bytes({member: b"unsafe"}))
 
     with pytest.raises(provisioner.RuntimeDependencyProvisionError, match="unsafe Windows"):
-        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="nats")
+        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="sample")
 
 
 def test_safe_extract_rejects_symlink_like_members(
@@ -390,27 +387,29 @@ def test_safe_extract_rejects_symlink_like_members(
 ) -> None:
     archive = tmp_path / "symlink.zip"
     with zipfile.ZipFile(archive, "w") as handle:
-        link = zipfile.ZipInfo("nats/bin/nats-server.exe")
+        link = zipfile.ZipInfo("sample/bin/sample-server.exe")
         link.create_system = 3
         link.external_attr = 0o120777 << 16
         handle.writestr(link, b"target")
 
     with pytest.raises(provisioner.RuntimeDependencyProvisionError, match="symlink"):
-        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="nats")
+        provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="sample")
 
 
 def test_safe_extract_applies_only_the_reviewed_prefix(
     provisioner: object,
     tmp_path: Path,
 ) -> None:
-    archive = tmp_path / "nats.zip"
-    archive.write_bytes(_zip_bytes({"nats/nats-server.exe": b"server", "nats/LICENSE": b"license"}))
+    archive = tmp_path / "sample.zip"
+    archive.write_bytes(
+        _zip_bytes({"sample/sample-server.exe": b"server", "sample/LICENSE": b"license"})
+    )
 
-    provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="nats")
+    provisioner.safe_extract_zip(archive, tmp_path / "out", strip_prefix="sample")
 
-    assert (tmp_path / "out" / "nats-server.exe").read_bytes() == b"server"
+    assert (tmp_path / "out" / "sample-server.exe").read_bytes() == b"server"
     assert (tmp_path / "out" / "LICENSE").read_bytes() == b"license"
-    assert not (tmp_path / "out" / "nats").exists()
+    assert not (tmp_path / "out" / "sample").exists()
 
 
 def test_safe_extract_supports_a_reviewed_root_level_archive(
@@ -489,7 +488,6 @@ def test_stage_dependencies_produces_the_exact_runtime_roots_and_manifest(
     assert manifest_path == output / "native-runtime-dependencies-manifest.json"
     assert {path.name for path in output.iterdir()} == {
         "postgresql",
-        "nats",
         "tsduck",
         "ffmpeg",
         "node",
@@ -500,7 +498,6 @@ def test_stage_dependencies_produces_the_exact_runtime_roots_and_manifest(
     }
     for name, root in {
         "postgres": "postgresql",
-        "nats": "nats",
         "tsduck": "tsduck",
         "ffmpeg": "ffmpeg",
         "node": "node",

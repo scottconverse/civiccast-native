@@ -22,7 +22,6 @@ CURRENT_FACING_DOCS = (
     Path("index.html"),
     Path("installer/beta-tester-handoff.md"),
     Path("installer/cross-platform-installer.md"),
-    Path("installer/nats-mtls-readiness.md"),
     Path("ops/credential-matrix.md"),
     Path("ops/backup-restore.md"),
     Path("ops/troubleshooting.md"),

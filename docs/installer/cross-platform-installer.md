@@ -117,6 +117,6 @@ External provider lanes such as Internet Archive remain credential-gated. Air-ga
 For v1.2 beta testers, the installer summary is paired with
 `civiccast installer beta-handoff --json`. That handoff summary adds the
 release artifact acquisition manifest, clean Windows install proof evidence,
-durable storage setup, dependency/model gates, NATS, mTLS, and external
+durable storage setup, dependency/model gates, mTLS, and external
 provider credentials to the same fail-closed operator view. The detailed tester path lives in
 [Beta Tester Handoff](beta-tester-handoff.md).

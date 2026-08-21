@@ -7,7 +7,7 @@ machinery every other native component pack uses --
 :mod:`civiccast.installer.native_packs`) and asserts
 :func:`civiccast.native.provision.pack.verify_server_binaries_pack` accepts a
 correctly signed pack and refuses a tampered one -- before any provisioning
-action would touch disk. No real PostgreSQL/NATS binaries are packed or run;
+action would touch disk. No real PostgreSQL binaries are packed or run;
 the pack payload is a couple of tiny placeholder files, since only the trust
 envelope is under test here.
 """
@@ -29,12 +29,12 @@ def _key() -> Ed25519PrivateKey:
 
 def _sources(tmp_path: Path) -> dict[str, Path]:
     initdb = tmp_path / "initdb.exe"
-    nats_server = tmp_path / "nats-server.exe"
+    pg_ctl = tmp_path / "pg_ctl.exe"
     initdb.write_bytes(b"placeholder initdb binary")
-    nats_server.write_bytes(b"placeholder nats-server binary")
+    pg_ctl.write_bytes(b"placeholder pg_ctl binary")
     return {
         "postgres/initdb.exe": initdb,
-        "nats/nats-server.exe": nats_server,
+        "postgres/pg_ctl.exe": pg_ctl,
     }
 
 

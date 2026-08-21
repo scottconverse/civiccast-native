@@ -8,8 +8,11 @@ In Mode A the substrate is bundled with CivicCast; in Mode B the host
 suite (CivicSuite) supplies it through the same protocol surface.
 
 Sprint 0.1 shipped the hardware probe (`civiccast.platform.hardware`).
-The v1.2 hardening rung adds the platform-owned broker Protocol and
-in-process adapter used by module seams before a concrete NATS adapter lands.
+The v1.2 hardening rung added the platform-owned broker Protocol and
+in-process adapter. NATS JetStream was removed from the product (owner
+decision 2026-08-20; see ADR 0023, which supersedes ADR 0001) --
+:class:`InProcessBrokerClient` is now the only ``BrokerClient``
+implementation.
 """
 
 from civiccast.platform.broker import (
@@ -18,11 +21,10 @@ from civiccast.platform.broker import (
     BrokerPublishReceipt,
     InProcessBrokerClient,
 )
-from civiccast.platform.broker_config import BrokerConfig, BrokerConfigurationError
+from civiccast.platform.broker_config import BrokerConfigurationError
 
 __all__ = [
     "BrokerClient",
-    "BrokerConfig",
     "BrokerConfigurationError",
     "BrokerEvent",
     "BrokerPublishReceipt",

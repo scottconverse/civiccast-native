@@ -15,7 +15,7 @@ invoking it would need a real ``initdb`` binary, which the HARD RULE for
 this task forbids in the unit suite -- that proof belongs to the WP2/WP5
 live lifecycle matrix, same as the rest of ``civiccast.native.provision``.
 
-HARD RULE: no real PostgreSQL/NATS process is ever spawned here.
+HARD RULE: no real PostgreSQL process is ever spawned here.
 """
 
 from __future__ import annotations
@@ -193,8 +193,6 @@ def _seeded_journal(tmp_path, *, phase: ProvisionPhase) -> ProvisionJournal:
         postgres_config_path=str(tmp_path / "pgdata" / "postgresql.conf"),
         postgres_hba_path=str(tmp_path / "pgdata" / "pg_hba.conf"),
         database_password="prior-run-password",
-        nats_store_dir=str(tmp_path / "nats" / "store"),
-        nats_config_path=str(tmp_path / "nats" / "nats-server.conf"),
         server_pack_path=str(tmp_path / "server-binaries.ccpack"),
         state_root=str(tmp_path / "state"),
         owner_run_id="prior-run-1",
@@ -225,8 +223,6 @@ def test_probe_resumable_journal_false_for_a_terminal_phase(tmp_path, phase) -> 
         ProvisionPhase.POSTGRES_CLUSTER_READY,
         ProvisionPhase.POSTGRES_CONFIG_WRITTEN,
         ProvisionPhase.DATABASE_READY,
-        ProvisionPhase.NATS_STORE_READY,
-        ProvisionPhase.NATS_CONFIG_WRITTEN,
     ],
 )
 def test_probe_resumable_journal_false_at_or_past_the_credential_boundary(tmp_path, phase) -> None:
@@ -401,8 +397,6 @@ def test_main_resumes_via_journal_instead_of_fail_loud_missing_registry(tmp_path
         postgres_config_path=paths.postgres_config_path,
         postgres_hba_path=paths.postgres_hba_path,
         database_password="prior-run-password",
-        nats_store_dir=paths.nats_store_dir,
-        nats_config_path=paths.nats_config_path,
         server_pack_path=paths.server_pack_path,
         state_root=paths.state_root,
         owner_run_id="prior-run-1",
@@ -467,8 +461,6 @@ def test_main_fails_loud_honestly_instead_of_resuming_past_the_credential_bounda
         postgres_config_path=paths.postgres_config_path,
         postgres_hba_path=paths.postgres_hba_path,
         database_password="prior-run-password",
-        nats_store_dir=paths.nats_store_dir,
-        nats_config_path=paths.nats_config_path,
         server_pack_path=paths.server_pack_path,
         state_root=paths.state_root,
         owner_run_id="prior-run-1",
@@ -522,8 +514,6 @@ def test_resolve_provision_paths_derives_the_program_data_tree() -> None:
     assert paths.program_data_root == r"C:\ProgramData"
     assert paths.state_root == r"C:\ProgramData\CivicCast\provision"
     assert paths.postgres_data_dir == r"C:\ProgramData\CivicCast\data\pgdata"
-    assert paths.nats_store_dir == r"C:\ProgramData\CivicCast\data\nats-store"
-    assert paths.nats_config_path == r"C:\ProgramData\CivicCast\config\nats-server.conf"
     assert (
         paths.server_pack_path
         == r"C:\Program Files\CivicCast (Native)\packs\native-server-binaries.ccpack"
@@ -621,8 +611,6 @@ def test_build_arg_parser_accepts_full_required_set_with_expected_defaults(tmp_p
     assert args.existing_database_url == ""
     assert args.postgres_host == "127.0.0.1"
     assert args.postgres_port == 5432
-    assert args.nats_host == "127.0.0.1"
-    assert args.nats_port == 4222
     assert args.database_name == "civiccast"
     assert args.database_username == "civiccast_svc"
     assert args.postgres_major_version == "17"
@@ -653,8 +641,6 @@ def test_build_plan_and_context_assembles_expected_fields(tmp_path) -> None:
     assert context.postgres_config_path == paths.postgres_config_path
     assert context.postgres_hba_path == paths.postgres_hba_path
     assert context.database_password == "a-generated-password"
-    assert context.nats_store_dir == paths.nats_store_dir
-    assert context.nats_config_path == paths.nats_config_path
     assert context.server_pack_path == paths.server_pack_path
     assert context.state_root == paths.state_root
     assert context.owner_run_id == "run-1"
@@ -750,8 +736,6 @@ def test_main_adopts_surviving_cluster_instead_of_fail_loud(tmp_path, capsys, mo
         postgres_config_path=paths.postgres_config_path,
         postgres_hba_path=paths.postgres_hba_path,
         database_password="old-run-password",
-        nats_store_dir=paths.nats_store_dir,
-        nats_config_path=paths.nats_config_path,
         server_pack_path=paths.server_pack_path,
         state_root=paths.state_root,
         owner_run_id="old-run-1",

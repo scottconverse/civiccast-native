@@ -334,6 +334,22 @@ came across and what deliberately did not.
     policy's own stated design; `docs/openapi.json` regenerated (the routes'
     descriptions changed).
 
+- **NATS JetStream, removed entirely (2026-08-20, owner decision).** NATS
+  never did real production work in this codebase — the platform
+  event-broker substrate always defaulted to an in-process adapter — so it
+  is cut from the product: the supervised child process, the
+  `civiccast.platform.nats_broker` module, NATS provisioning, the
+  installer's NATS/JetStream mTLS readiness check, the Rust installer's
+  NATS references, the `nats` certificate identity
+  (`civiccast/certs/authority.py`), and the corresponding tests. ADR 0023
+  records the reversal and supersedes ADR 0001 (ADRs are immutable once
+  Accepted — ADR 0001's own text is untouched; the supersession is recorded
+  one-directionally in ADR 0023). `civiccast.platform.broker.InProcessBrokerClient` is the only
+  broker adapter for every deployment mode; `civiccast.platform.broker_config`
+  no longer has a "production" mode, NATS URL/stream/mTLS settings, or a
+  JetStream readiness gate. This closes out the size, process, port, config,
+  and health-gate cost NATS carried without ever being load-bearing.
+
 ### Changed
 
 - **Egress default engine flipped to GStreamer (S15).** `civiccast/egress/engine_select.py`'s

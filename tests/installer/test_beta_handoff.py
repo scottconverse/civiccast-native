@@ -14,7 +14,6 @@ REQUIRED_BETA_LANES = {
     "clean-windows-install-proof",
     "dependencies",
     "models",
-    "nats",
     "mtls",
     "external-providers",
 }

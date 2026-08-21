@@ -1092,7 +1092,7 @@ def _write_fresh_install(install_root: Path) -> Path:
     (runtime / "pythonservice.exe").write_bytes(b"python-service-host")
     payload = install_root / "packs" / "native-server-binaries" / "payload"
     payload.mkdir(parents=True)
-    (payload / "nats-server.exe").write_bytes(b"server-binary")
+    (payload / "postgres.exe").write_bytes(b"server-binary")
     return install_root
 
 

@@ -652,18 +652,20 @@ def test_main_default_path_registers_the_module_level_host_class() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_win32_child_runner_spawns_and_terminates_a_real_process() -> None:
+def test_win32_child_runner_spawns_and_terminates_a_real_process(tmp_path: Path) -> None:
     """The default (production) seams spawn a REAL child via subprocess.Popen and
     terminate it. Uses an infra child name (no new process group) so no console
     CTRL_BREAK is involved; the real CTRL_BREAK drain is exercised end to end by
-    the control-plane integration, not asserted here."""
+    the control-plane integration, not asserted here. An injected log_root keeps
+    this hermetic against a real supervisor's own postgres.log on the same box
+    (this repo's dev machines routinely run a live CivicCast install)."""
 
-    runner = Win32ChildProcessRunner()
+    runner = Win32ChildProcessRunner(log_root=tmp_path / "logs")
     spec = ChildSpec(
-        name="nats",  # type: ignore[arg-type]
+        name="postgres",
         argv=[sys.executable, "-c", "import time; time.sleep(60)"],
         graceful_stop_kind="argv",
-        graceful_stop_argv_template=["nats", "--signal", "ldm={pid}"],
+        graceful_stop_argv_template=["pg_ctl", "stop", "-m", "fast"],
         graceful_stop_deadline_seconds=15.0,
         readiness_budget_seconds=1.0,
     )
@@ -692,7 +694,7 @@ def test_g3_default_popen_factory_redirects_child_output_to_its_log_file(tmp_pat
     log_root = tmp_path / "logs"
     runner = Win32ChildProcessRunner(log_root=log_root)
     spec = ChildSpec(
-        name="nats",  # type: ignore[arg-type]
+        name="postgres",
         argv=[
             sys.executable,
             "-c",
@@ -700,7 +702,7 @@ def test_g3_default_popen_factory_redirects_child_output_to_its_log_file(tmp_pat
             "sys.stderr.write('g3-stderr-marker\\n'); sys.stderr.flush()",
         ],
         graceful_stop_kind="argv",
-        graceful_stop_argv_template=["nats", "--signal", "ldm={pid}"],
+        graceful_stop_argv_template=["pg_ctl", "stop", "-m", "fast"],
         graceful_stop_deadline_seconds=15.0,
         readiness_budget_seconds=1.0,
     )
@@ -712,7 +714,7 @@ def test_g3_default_popen_factory_redirects_child_output_to_its_log_file(tmp_pat
         if runner.is_alive(handle):
             runner.terminate(handle)
 
-    log_path = log_root / "nats.log"
+    log_path = log_root / "postgres.log"
     assert log_path.exists(), "the per-child log file must exist under the INJECTED log root"
     content = log_path.read_text(encoding="utf-8", errors="replace")
     assert "g3-stdout-marker" in content, "stdout must be captured in the per-child log file"

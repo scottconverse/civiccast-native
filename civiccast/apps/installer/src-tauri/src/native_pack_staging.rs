@@ -585,8 +585,8 @@ pub fn pack_extraction_destination(dest_dir: &Path, component: &str) -> Result<P
 /// This exists because of a confirmed, live hazard, not as defensive
 /// boilerplate: the CivicCastSupervisor service runs as LocalSystem out of
 /// exactly the tree [`ensure_pack_extracted`] deletes on its corrupt-tree
-/// path (`fs::remove_dir_all(&extraction_dir)`), and keeps long-lived
-/// `postgres.exe`/`nats-server.exe` children whose binaries live under that
+/// path (`fs::remove_dir_all(&extraction_dir)`), and keeps a long-lived
+/// `postgres.exe` child whose binary lives under that
 /// same tree. `native_service_registration::stop_native_service`'s own doc
 /// comment already says callers "MUST call this first" before any such
 /// rebuild -- but a doc comment enforces nothing, and the standalone D5

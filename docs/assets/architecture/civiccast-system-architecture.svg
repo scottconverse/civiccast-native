@@ -44,7 +44,7 @@
   <text class="small" x="486" y="502">Captions, summaries</text>
   <rect class="soft" x="654" y="448" width="150" height="72" rx="8"/>
   <text class="label" x="688" y="478">Broker</text>
-  <text class="small" x="678" y="502">NATS or test path</text>
+  <text class="small" x="682" y="502">Always in-process</text>
 
   <rect class="band" x="914" y="118" width="322" height="520" rx="16"/>
   <text class="label" x="940" y="154">Outputs and proof</text>

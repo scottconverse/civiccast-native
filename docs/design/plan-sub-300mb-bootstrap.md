@@ -73,7 +73,8 @@ The public release asset set is exactly:
    - signed; `metadata.source_sha` and `metadata.civiccast_source_head` bind
      it to the exact candidate commit.
 3. `native-server-binaries.ccpack`
-   - PostgreSQL, NATS, TSDuck, FFmpeg, and server-side runtime binaries;
+   - PostgreSQL, TSDuck, FFmpeg, and server-side runtime binaries (NATS was
+     removed from this pack -- owner decision 2026-08-20, see ADR 0023);
    - signed; `metadata.source_sha` binds it to the exact candidate commit.
 4. `SHA256SUMS.txt`
 5. `candidate-receipt.json`

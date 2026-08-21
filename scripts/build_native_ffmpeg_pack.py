@@ -313,7 +313,7 @@ def load_ed25519_private_key(path: Path) -> Ed25519PrivateKey:
 
 def acquire_ffmpeg_pack_sources(cache: Path, *, lock_path: Path = LOCK_PATH) -> Path:
     """Download + verify + extract ONLY the ``ffmpeg`` artifact from the
-    reviewed runtime-dependency lock (never the postgres/nats/tsduck/node/
+    reviewed runtime-dependency lock (never the postgres/tsduck/node/
     ollama artifacts the same lock also pins for unrelated packs).
 
     ``cache`` is caller-controlled and MUST live outside the repository --

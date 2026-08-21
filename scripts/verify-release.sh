@@ -73,14 +73,11 @@ echo "verify-release: mypy"
 echo "verify-release: pytest"
 "$PYTHON" -m pytest -q --tb=short
 
-echo "verify-release: v1.2 NATS/mTLS focused tests"
+echo "verify-release: v1.2 mTLS focused tests"
 "$PYTHON" -m pytest -q --tb=short \
-  tests/platform/test_nats_broker_config.py \
-  tests/platform/test_nats_broker_adapter.py \
   tests/certs/test_local_ca.py \
   tests/certs/test_cert_rotation.py \
-  tests/installer/test_nats_mtls_readiness.py \
-  tests/policy/test_v12_nats_mtls_boundaries.py
+  tests/policy/test_v12_mtls_boundaries.py
 
 echo "verify-release: v1.2 ActivityPub focused tests"
 "$PYTHON" -m pytest -q --tb=short \

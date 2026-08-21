@@ -181,7 +181,7 @@ uv run civiccast installer beta-handoff --json
 ```
 
 That summary ties package acquisition, clean Windows install proof,
-dependencies, model hashes, NATS, mTLS, and external provider proof into one
+dependencies, model hashes, mTLS, and external provider proof into one
 fail-closed checklist. A lane that needs credentials, hardware, or a controlled
 target remains blocked until the operator records evidence.
 
@@ -318,7 +318,7 @@ support ticket.
 | `uv run civiccast installer platform-plan` | Show the host requirements the installer checks before it runs. | `--os-family`, `--json` |
 | `uv run civiccast installer verify-package` | Verify package bytes, sidecar hash, signed install manifest, and metadata (Authenticode evidence for a Windows `.exe` claiming `signed: true`). | `--artifact`, `--sidecar`, `--json` |
 | `uv run civiccast installer summary` | Print the installer readiness summary used by the GUI. | `--json` |
-| `uv run civiccast installer beta-handoff` | Produce the beta tester checklist covering package, clean install, dependencies, models, NATS, mTLS, and providers. | `--release-manifest`, `--clean-windows-evidence`, `--json` |
+| `uv run civiccast installer beta-handoff` | Produce the beta tester checklist covering package, clean install, dependencies, models, mTLS, and providers. | `--release-manifest`, `--clean-windows-evidence`, `--json` |
 
 ### Model commands
 
@@ -336,7 +336,6 @@ support ticket.
 | --- | --- | --- |
 | `uv run civiccast cert rotate civiccast-api` | Rotate the local-CA certificate and private key for one service identity. | `--json` |
 | `uv run civiccast cert rotate civiccast-worker` | Rotate the worker service identity used by internal mTLS checks. | `--json` |
-| `uv run civiccast cert rotate nats` | Rotate the NATS client or service identity used by broker readiness. | `--json` |
 
 Private keys are written under `CIVICCAST_CERT_ROOT` when it is set; otherwise
 CivicCast uses the default local certificate directory. On Windows, CivicCast
@@ -1127,7 +1126,7 @@ uv run civiccast installer beta-handoff --json
 ```
 
 The required handoff lanes are package acquisition, clean Windows install
-proof, local dependencies, model proof, NATS, mTLS, and external providers.
+proof, local dependencies, model proof, mTLS, and external providers.
 External providers stay `credential_or_secret_required` without approved
 credentials and redacted live proof. NDI remains operator-gated unless the
 runtime, sender, or hardware proof exists on the target host.
@@ -1150,7 +1149,6 @@ publish issues.
 | `/health` reports `"status":"degraded"` | The database schema does not match the running code — see the `schema` field for which case. | If `not-configured`, run **Prepare storage** in the operator console. If `behind`, run `alembic upgrade head`. If `unknown`, check that the database is reachable. |
 | Clean Windows proof is blocked | The host did not provide an isolated target, or no install was exercised on it. | Rerun the proof on a fresh Hyper-V, Windows Sandbox, or VirtualBox Windows target. |
 | External provider lane is credential-gated | A secret may be missing or live proof has not been recorded. | Use approved credentials only, run the controlled provider proof, and store redacted evidence. |
-| NATS lane is blocked | Broker URL, stream, mTLS files, or connectivity are incomplete. | Follow `docs/installer/nats-mtls-readiness.md` and rerun the handoff check. |
 | Model lane is blocked | Required model hashes are unavailable. | Download or import the approved model bundle and verify hashes before captions or summaries. |
 | NDI lane needs hardware | FFmpeg, the NDI runtime, SDK inputs, sender helper, or receiver proof is missing. | Install operator-approved NDI components or leave the cable/NDI proof lane gated. |
 

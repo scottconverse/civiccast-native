@@ -60,8 +60,6 @@ def _journal(tmp_path: Path) -> ProvisionJournal:
         postgres_config_path=str(tmp_path / "pgdata" / "postgresql.conf"),
         postgres_hba_path=str(tmp_path / "pgdata" / "pg_hba.conf"),
         database_password="hunter2",
-        nats_store_dir=str(tmp_path / "nats" / "store"),
-        nats_config_path=str(tmp_path / "nats" / "nats-server.conf"),
         server_pack_path=str(tmp_path / "server-binaries.ccpack"),
         state_root=str(tmp_path / "state"),
         owner_run_id="run-1",

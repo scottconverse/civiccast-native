@@ -586,7 +586,34 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # (tests/native/test_supervisor_children.py, test_supervisor_service.py);
     # none marked `windows_only`, so both lanes move by +5. Re-derived by an
     # actual `--collect-only` run on this tree: on top of wave 2: (1637, 1829) -> (1642, 1834).
-    assert (collect("not windows_only"), collect()) == (1642, 1834)
+    #
+    # NATS removal (2026-08-21, owner decision 2026-08-20; ADR 0023 supersedes
+    # ADR 0001): -31 pure, -31 windows_only -- NATS JetStream is cut from the
+    # product, and every test that pinned NATS-specific behavior under
+    # tests/native went with it: the ``nats`` child spec and its JetStream
+    # readiness check (test_supervisor_children.py), the NATS store/config
+    # provisioning seams (test_provision_seams.py) and their orchestrator
+    # wiring (test_provision_orchestrator.py), the ``render_nats_conf``
+    # config renderer (test_provision_conf.py), ``NatsTlsFiles`` /
+    # ``evaluate_nats_store`` (test_provision_models.py), and two
+    # NATS-phase parametrize cases dropped from an existing journal test
+    # (test_provision_cli.py). None were marked `windows_only` (NATS's
+    # Windows behavior was covered by the same plain-fixture tests as every
+    # other platform), so both lanes move by the same -31. Re-derived by an
+    # actual `--collect-only` run on this tree, not by arithmetic: (1642, 1834)
+    # -> (1611, 1803).
+    #
+    # NATS removal, continued (2026-08-21): -7 pure, -7 windows_only -- the
+    # same removal finished across the four supervisor-service-layer test
+    # files that construct/wire a live Supervisor end to end
+    # (test_supervisor_service.py, test_supervisor_service_win.py,
+    # test_supervisor_wiring_batch.py, test_supervisor_ollama_child.py):
+    # the `nats_probe`/`nats_server_path`/`nats_config_path` wiring and the
+    # JetStream publish-ack readiness-probe tests these files pinned went
+    # with the rest of NATS. None were marked `windows_only`, so both lanes
+    # move by the same -7. Re-derived by an actual `--collect-only` run on
+    # this tree, not by arithmetic: (1611, 1803) -> (1604, 1796).
+    assert (collect("not windows_only"), collect()) == (1604, 1796)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

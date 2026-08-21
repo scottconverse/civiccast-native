@@ -441,72 +441,6 @@ jobs:
   # signs the runtime pack on every release-branch push. Neither runs per-PR.
   # ---------------------------------------------------------------------
 
-  nats-boundary:
-    name: NATS JetStream real-boundary
-    # 1.0-hardening: tests/platform/test_nats_broker_real.py silently skipped on
-    # every CI run (CIVICCAST_RUN_NATS_TESTS was never set anywhere). This job
-    # runs it against a real JetStream server so a regression in the broker
-    # integration cannot ship green-by-skip.
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    steps:
-      - name: Checkout
-        # ws3 claims-evidence (D3): explicit PR-head checkout, same rationale
-        # as the test job above.
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
-        with:
-          version: "latest"
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Emit producer meta (ws3 claims-evidence D3)
-        run: python scripts/policy/emit_producer_meta.py --job-id nats-boundary --out nats-boundary-meta.json
-
-      - name: Install project (dev)
-        run: uv sync --all-extras --group dev
-
-      - name: Run the real-boundary test (skip = failure)
-        # The test manages its own JetStream container via testcontainers; the
-        # env flag flips "quietly skip" into a hard failure if Docker or
-        # testcontainers is unavailable ??? same posture as the Postgres guard.
-        env:
-          CIVICCAST_RUN_NATS_TESTS: "1"
-        run: |
-          uv run pytest tests/platform/test_nats_broker_real.py -v \
-            --junitxml=nats-boundary-junit.xml -o junit_family=xunit2
-
-      - name: Upload junit (ws3 claims-evidence D3/D7)
-        if: always()
-        uses: actions/upload-artifact@v7.0.1
-        timeout-minutes: 10
-        with:
-          name: nats-boundary-junit
-          path: nats-boundary-junit.xml
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload producer meta (ws3 claims-evidence D3/D7)
-        if: always()
-        uses: actions/upload-artifact@v7.0.1
-        timeout-minutes: 10
-        with:
-          name: nats-boundary-meta
-          path: nats-boundary-meta.json
-          if-no-files-found: warn
-          retention-days: 1
-
   windows-native:
     name: WS4 dual-runtime guard (real Windows probes)
     # workflow-cost: windows-pr-justification -- Windows registry, process-table, and WSL probes require a hosted Windows runner.
@@ -586,7 +520,7 @@ jobs:
     # per-producer result evaluation below is the fail-closed rule the spec
     # requires ??? a job that `needs` a skipped/failed job would otherwise be
     # skipped itself, silently evading verification (D3).
-    needs: [test, nats-boundary]
+    needs: [test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -634,7 +568,6 @@ jobs:
           # fail-closed evaluation D3 requires (a skipped/failed producer
           # must fail the verifier, never silently skip it).
           CLAIMS_PRODUCER_RESULT_TEST: ${{ needs.test.result }}
-          CLAIMS_PRODUCER_RESULT_NATS_BOUNDARY: ${{ needs['nats-boundary'].result }}
           CLAIMS_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           python - <<'PYEOF' > producer-results.json
@@ -643,7 +576,6 @@ jobs:
 
           results = {
               "test": os.environ["CLAIMS_PRODUCER_RESULT_TEST"],
-              "nats-boundary": os.environ["CLAIMS_PRODUCER_RESULT_NATS_BOUNDARY"],
           }
           print(json.dumps(results, indent=2))
           PYEOF

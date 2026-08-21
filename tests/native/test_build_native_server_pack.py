@@ -2,12 +2,16 @@
 # Copyright (c) The CivicCast Authors
 """WP2 Core-pack builder tests: pinned-input validation, license refusal
 paths, and the end-to-end provisioning-layout contract for the
-``native-server-binaries`` pack (PostgreSQL 17 + NATS + TSDuck subset).
+``native-server-binaries`` pack (PostgreSQL 17 + TSDuck subset).
 
 Uses tiny fixture bytes for every binary -- never a real (hundreds-of-MB)
 PostgreSQL/TSDuck download -- mirroring ``tests/native/
 test_caption_pack_builder.py``'s ``monkeypatch.setattr(builder, ...)``
-style. No real ``postgres``/``nats``/``tsp`` process is ever spawned.
+style. No real ``postgres``/``tsp`` process is ever spawned.
+
+NATS JetStream was removed from the product (owner decision 2026-08-20; see
+ADR 0023, which supersedes ADR 0001); ``nats-server.exe`` is no longer part
+of this pack.
 """
 
 from __future__ import annotations
@@ -52,14 +56,13 @@ def _write(path: Path, body: bytes) -> tuple[int, str]:
     return len(body), hashlib.sha256(body).hexdigest()
 
 
-def _make_fixture_roots(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, tuple[int, str]]]:
-    """Build tiny postgres/nats/tsduck source trees whose pinned files EXACTLY
+def _make_fixture_roots(tmp_path: Path) -> tuple[Path, Path, dict[str, tuple[int, str]]]:
+    """Build tiny postgres/tsduck source trees whose pinned files EXACTLY
     match a monkeypatched, minimal set of the builder's real pin tables, so
     every source-selection code path (bin, bin-dll, lib, share top files,
     share/extension, share data trees, licenses) still runs for real."""
 
     postgres_root = tmp_path / "postgres"
-    nats_root = tmp_path / "nats"
     tsduck_root = tmp_path / "tsduck"
 
     pins: dict[str, tuple[int, str]] = {}
@@ -90,10 +93,6 @@ def _make_fixture_roots(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, tup
     for name in builder.POSTGRES_LICENSE_FILES:
         _write(postgres_root / name, f"license:{name}".encode())
 
-    nats_pins = {"nats-server.exe": _write(nats_root / "nats-server.exe", b"nats-binary")}
-    for name in builder.NATS_LICENSE_FILES:
-        _write(nats_root / name, f"license:{name}".encode())
-
     tsduck_pins = {}
     for name in (
         "tsp.exe",
@@ -110,18 +109,15 @@ def _make_fixture_roots(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, tup
 
     pins.update({f"bin/{k}": v for k, v in {**bin_pins, **dll_pins}.items()})
     pins.update({f"lib/{k}": v for k, v in lib_pins.items()})
-    pins.update({f"nats/{k}": v for k, v in nats_pins.items()})
     pins.update({f"tsduck/{k}": v for k, v in tsduck_pins.items()})
 
     return (
         postgres_root,
-        nats_root,
         tsduck_root,
         {
             "bin": bin_pins,
             "bin_dll": dll_pins,
             "lib": lib_pins,
-            "nats": nats_pins,
             "tsduck": tsduck_pins,
         },
     )
@@ -131,7 +127,6 @@ def _patch_minimal_pins(monkeypatch: pytest.MonkeyPatch, pins: dict) -> None:
     monkeypatch.setattr(builder, "POSTGRES_BIN_PINS", pins["bin"])
     monkeypatch.setattr(builder, "POSTGRES_BIN_DLL_PINS", pins["bin_dll"])
     monkeypatch.setattr(builder, "POSTGRES_LIB_PINS", pins["lib"])
-    monkeypatch.setattr(builder, "NATS_BIN_PINS", pins["nats"])
     monkeypatch.setattr(builder, "TSDUCK_BIN_PINS", pins["tsduck"])
 
 
@@ -151,7 +146,7 @@ def test_component_identity_matches_the_provisioning_trust_wire() -> None:
 def test_end_to_end_build_verifies_through_the_real_provisioning_trust_wire(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    postgres_root, nats_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
+    postgres_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
     _patch_minimal_pins(monkeypatch, pins)
 
     key = _dev_key()
@@ -159,7 +154,6 @@ def test_end_to_end_build_verifies_through_the_real_provisioning_trust_wire(
     report = builder.build_server_pack(
         output=output,
         postgres_root=postgres_root,
-        nats_root=nats_root,
         tsduck_root=tsduck_root,
         signing_private_key=key,
         signing_key_id="development-test-key",
@@ -183,7 +177,6 @@ def test_end_to_end_build_verifies_through_the_real_provisioning_trust_wire(
     )
     assert verified.component == "native-server-binaries"
     assert verified.metadata["postgres_version"] == builder.POSTGRES_VERSION
-    assert verified.metadata["nats_version"] == builder.NATS_VERSION
     assert verified.metadata["tsduck_version"] == builder.TSDUCK_VERSION
     assert verified.metadata["source_sha"] == "a" * 40
 
@@ -197,7 +190,7 @@ def test_provisioning_layout_contract_initdb_path_exists_once_extracted(
     prefix from the ZIP preserved verbatim), ``initdb.exe`` must exist at
     ``payload\\bin\\initdb.exe`` -- the exact default ``initdb_path``."""
 
-    postgres_root, nats_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
+    postgres_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
     _patch_minimal_pins(monkeypatch, pins)
 
     key = _dev_key()
@@ -205,7 +198,6 @@ def test_provisioning_layout_contract_initdb_path_exists_once_extracted(
     builder.build_server_pack(
         output=output,
         postgres_root=postgres_root,
-        nats_root=nats_root,
         tsduck_root=tsduck_root,
         signing_private_key=key,
         signing_key_id="development-test-key",
@@ -233,7 +225,7 @@ def test_provisioning_layout_contract_initdb_path_exists_once_extracted(
 
 
 def test_refuses_a_missing_pinned_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    postgres_root, nats_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
+    postgres_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
     _patch_minimal_pins(monkeypatch, pins)
 
     (postgres_root / "bin" / "initdb.exe").unlink()
@@ -242,7 +234,6 @@ def test_refuses_a_missing_pinned_binary(tmp_path: Path, monkeypatch: pytest.Mon
         builder.build_server_pack(
             output=tmp_path / "out.ccpack",
             postgres_root=postgres_root,
-            nats_root=nats_root,
             tsduck_root=tsduck_root,
             signing_private_key=_dev_key(),
             signing_key_id="development-test-key",
@@ -252,7 +243,7 @@ def test_refuses_a_missing_pinned_binary(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_refuses_a_hash_mismatched_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    postgres_root, nats_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
+    postgres_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
     _patch_minimal_pins(monkeypatch, pins)
 
     original_bytes, _ = pins["bin"]["postgres.exe"]
@@ -263,7 +254,6 @@ def test_refuses_a_hash_mismatched_binary(tmp_path: Path, monkeypatch: pytest.Mo
         builder.build_server_pack(
             output=tmp_path / "out.ccpack",
             postgres_root=postgres_root,
-            nats_root=nats_root,
             tsduck_root=tsduck_root,
             signing_private_key=_dev_key(),
             signing_key_id="development-test-key",
@@ -275,7 +265,7 @@ def test_refuses_a_hash_mismatched_binary(tmp_path: Path, monkeypatch: pytest.Mo
 def test_refuses_a_gpl_flagged_license_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    postgres_root, nats_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
+    postgres_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
     _patch_minimal_pins(monkeypatch, pins)
 
     # Patch the classifier's own lookup table (imported by reference into the
@@ -295,7 +285,6 @@ def test_refuses_a_gpl_flagged_license_entry(
         builder.build_server_pack(
             output=tmp_path / "out.ccpack",
             postgres_root=postgres_root,
-            nats_root=nats_root,
             tsduck_root=tsduck_root,
             signing_private_key=_dev_key(),
             signing_key_id="development-test-key",
@@ -307,7 +296,7 @@ def test_refuses_a_gpl_flagged_license_entry(
 def test_refuses_an_unconfirmed_license_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    postgres_root, nats_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
+    postgres_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
     _patch_minimal_pins(monkeypatch, pins)
 
     monkeypatch.setattr(builder, "classify_server_pack_file", lambda path: None)
@@ -316,7 +305,6 @@ def test_refuses_an_unconfirmed_license_path(
         builder.build_server_pack(
             output=tmp_path / "out.ccpack",
             postgres_root=postgres_root,
-            nats_root=nats_root,
             tsduck_root=tsduck_root,
             signing_private_key=_dev_key(),
             signing_key_id="development-test-key",
@@ -328,7 +316,7 @@ def test_refuses_an_unconfirmed_license_path(
 def test_acquire_refuses_a_lock_version_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """If the reviewed lock's pinned ``postgres``/``nats``/``tsduck`` version
+    """If the reviewed lock's pinned ``postgres``/``tsduck`` version
     ever drifts from what this builder's hand-verified pins were computed
     against, acquisition must refuse rather than silently fetch and pack an
     unreviewed version."""
@@ -337,7 +325,6 @@ def test_acquire_refuses_a_lock_version_drift(
         return {
             "artifacts": {
                 "postgres": {"version": "99.0-drifted"},
-                "nats": {"version": builder.NATS_VERSION},
                 "tsduck": {"version": builder.TSDUCK_VERSION},
             }
         }
@@ -360,14 +347,13 @@ def test_development_signing_key_requires_explicit_nonrelease_switch() -> None:
 def test_refuses_missing_or_malformed_source_sha(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_sha: object
 ) -> None:
-    postgres_root, nats_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
+    postgres_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
     _patch_minimal_pins(monkeypatch, pins)
 
     with pytest.raises(builder.ServerPackBuildError, match="source SHA"):
         builder.build_server_pack(
             output=tmp_path / "out.ccpack",
             postgres_root=postgres_root,
-            nats_root=nats_root,
             tsduck_root=tsduck_root,
             signing_private_key=_dev_key(),
             signing_key_id="development-test-key",
@@ -391,8 +377,6 @@ def test_every_real_pinned_path_has_a_confirmed_non_gpl_license() -> None:
     paths += [f"share/{name}" for name in builder.POSTGRES_SHARE_TOP_FILES]
     paths += [f"share/extension/{name}" for name in builder.POSTGRES_SHARE_EXTENSION_FILES]
     paths += [f"licenses/postgresql/{name}" for name in builder.POSTGRES_LICENSE_FILES]
-    paths += [f"bin/{name}" for name in builder.NATS_BIN_PINS]
-    paths += [f"licenses/nats/{name}" for name in builder.NATS_LICENSE_FILES]
     paths += [f"tsduck/bin/{name}" for name in builder.TSDUCK_BIN_PINS]
     paths += [f"licenses/tsduck/{name}" for name in builder.TSDUCK_LICENSE_FILES]
     for subdir in builder.POSTGRES_SHARE_DATA_DIRS:
@@ -480,7 +464,7 @@ class TestBootstrapProof:
     def test_runs_initdb_start_probe_stop_in_order_with_the_provisioning_argv_shape(
         self, tmp_path, monkeypatch
     ) -> None:
-        postgres_root, _nats, _tsduck, pins = _make_fixture_roots(tmp_path)
+        postgres_root, _tsduck, pins = _make_fixture_roots(tmp_path)
         _patch_minimal_pins(monkeypatch, pins)
         calls = []
 
@@ -512,7 +496,7 @@ class TestBootstrapProof:
         # re-exec could not read the scratch tree on the hosted runner and
         # died 0xC0000135 with no output. The proof must therefore grant the
         # current user's SID on the fully staged tree before the first spawn.
-        postgres_root, _nats, _tsduck, pins = _make_fixture_roots(tmp_path)
+        postgres_root, _tsduck, pins = _make_fixture_roots(tmp_path)
         _patch_minimal_pins(monkeypatch, pins)
         events = []
 
@@ -533,7 +517,7 @@ class TestBootstrapProof:
         assert events[1][0] == "run" and events[1][1].endswith("initdb.exe")
 
     def test_probe_failure_raises_and_still_stops_the_server(self, tmp_path, monkeypatch) -> None:
-        postgres_root, _nats, _tsduck, pins = _make_fixture_roots(tmp_path)
+        postgres_root, _tsduck, pins = _make_fixture_roots(tmp_path)
         _patch_minimal_pins(monkeypatch, pins)
         calls = []
 
@@ -552,7 +536,7 @@ class TestBootstrapProof:
         )
 
     def test_initdb_failure_names_the_selection_as_the_suspect(self, tmp_path, monkeypatch) -> None:
-        postgres_root, _nats, _tsduck, pins = _make_fixture_roots(tmp_path)
+        postgres_root, _tsduck, pins = _make_fixture_roots(tmp_path)
         _patch_minimal_pins(monkeypatch, pins)
 
         def failing_initdb(argv, **kwargs):

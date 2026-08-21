@@ -66,7 +66,7 @@ REQUIRED_TRANSCRIPT_PHRASES = (
     "next five on the list",
 )
 # A supported 16 GiB station must retain roughly 4 GiB for Windows, CivicCast,
-# PostgreSQL, NATS, and media processes while captions are active.
+# PostgreSQL, and media processes while captions are active.
 MAX_CAPTION_PROCESS_TREE_RSS_BYTES = 12 * 1024**3
 FASTER_WHISPER_VERSION = str(CAPTION_PACK_CONTRACT["runtime_version"])
 CTRANSLATE2_VERSION = str(CAPTION_PACK_CONTRACT["ctranslate2_version"])
