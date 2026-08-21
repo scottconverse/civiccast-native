@@ -150,7 +150,7 @@ def _package_lane(manifest_path: Path, acquisition: object) -> BetaHandoffLane:
         label="Package acquisition",
         status="blocked",
         message="Beta package acquisition is blocked until the release artifact manifest contains the handoff contract.",
-        operator_action="Run scripts/build_release_artifacts.py and verify beta_handoff_acquisition before handing artifacts to testers.",
+        operator_action="Populate the release artifact manifest's beta_handoff_acquisition contract (installer, wheel, wheelhouse, model manifest, hashes, install command) before handing artifacts to testers.",
         evidence_target=str(manifest_path),
     )
 
