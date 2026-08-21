@@ -381,9 +381,12 @@ class TestSingleAlembicHead:
         # unused here until the merge commit re-chains onto main's 0072.)
         # Updated to ``0075_offline_caption_jobs`` for the offline caption
         # job queue that captions published recordings (keystone K3), which
-        # chains after ``0074_caption_review_audio_evidence``.
-        assert heads[0] == "0075_offline_caption_jobs", (
-            f"Expected head '0075_offline_caption_jobs'; got {heads[0]!r}."
+        # chains after ``0074_caption_review_audio_evidence``. Updated to
+        # ``0076_media_lifecycle`` (S7 media lifecycle & readiness: the five
+        # net-new S7 tables + asset_archive_proofs + media_lifecycle_audit_log,
+        # plus assets.legal_hold/legal_hold_reason), chained after 0075.
+        assert heads[0] == "0076_media_lifecycle", (
+            f"Expected head '0076_media_lifecycle'; got {heads[0]!r}."
         )
 
 
