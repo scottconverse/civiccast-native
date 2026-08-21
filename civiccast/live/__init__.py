@@ -88,6 +88,11 @@ from civiccast.live.preflight import (
     PreflightEvaluator,
     PreflightInputs,
 )
+from civiccast.live.source_probe import (
+    DEFAULT_SOURCE_PROBE_TIMEOUT_SECONDS,
+    build_source_probe,
+    probe_live_source,
+)
 from civiccast.live.store import (
     LiveRelayConfigAlreadyExistsError,
     LiveRelayConfigNotFoundError,
@@ -103,6 +108,7 @@ from civiccast.live.store import (
 )
 
 __all__ = [
+    "DEFAULT_SOURCE_PROBE_TIMEOUT_SECONDS",
     "FINALIZATION_STATE_COMPLETED",
     "FINALIZATION_STATE_FAILED",
     "FINALIZATION_STATE_PENDING",
@@ -167,4 +173,6 @@ __all__ = [
     "RecordingTargetCreate",
     "RecordingTargetResponse",
     "RecordingTargetStore",
+    "build_source_probe",
+    "probe_live_source",
 ]
