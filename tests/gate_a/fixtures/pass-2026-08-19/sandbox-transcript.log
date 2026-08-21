@@ -1,0 +1,21 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20260819023913
+Username: 5DF7AA2B-98A8-4\WDAGUtilityAccount
+RunAs User: 5DF7AA2B-98A8-4\WDAGUtilityAccount
+Configuration Name: 
+Machine: 5DF7AA2B-98A8-4 (Microsoft Windows NT 10.0.26100.0)
+Host Application: powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastScripts\In-Sandbox-Report.ps1
+Process ID: 6460
+PSVersion: 5.1.26100.9168
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9168
+BuildVersion: 10.0.26100.9168
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+PS>TerminatingError(Invoke-WebRequest): "{"detail":"Missing Authorization header. Use Bearer ."}"
+PS>TerminatingError(Invoke-WebRequest): "{"detail":"Offline caption job not found: {job_id}"}"
+PS>TerminatingError(Wait-Process): "The running command stopped because the preference variable "ErrorActionPreference" or common parameter is set to Stop: This command stopped operation because process "tsp (7776)" is not stopped in the specified time-out."

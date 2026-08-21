@@ -1,0 +1,219 @@
+﻿{
+    "run_start_utc":  "2026-08-19T08:39:12.3696363Z",
+    "sandbox_has_gpu":  false,
+    "networking":  "disabled",
+    "installer_source":  "C:\\CivicCastPayload\\CivicCast (Native)_1.0.0-beta.1_x64-setup.exe",
+    "installer_sha256":  "a5671939b3cc70d11e2c0ba36910bea09ff8b51f414bdfe8892c5842c7d7f11a",
+    "silent_flag_used":  "/S /D=C:\\CivicCastHostStore\\install",
+    "installer_exit_code":  0,
+    "installer_launch_error":  null,
+    "install_dir_found":  "C:\\CivicCastHostStore\\install",
+    "install_dir_candidates":  "C:\\CivicCastHostStore\\install",
+    "install_tree_top_levels":  [
+                                    {
+                                        "name":  "components",
+                                        "type":  "dir",
+                                        "children":  [
+                                                         "summary-gemma4-12b",
+                                                         "summary-gemma4-e4b",
+                                                         "translation-translategemma-4b"
+                                                     ]
+                                    },
+                                    {
+                                        "name":  "dependencies",
+                                        "type":  "dir",
+                                        "children":  [
+                                                         "cuda",
+                                                         "ffmpeg",
+                                                         "ollama"
+                                                     ]
+                                    },
+                                    {
+                                        "name":  "models",
+                                        "type":  "dir",
+                                        "children":  "ollama"
+                                    },
+                                    {
+                                        "name":  "packs",
+                                        "type":  "dir",
+                                        "children":  [
+                                                         ".station-cache",
+                                                         "captions-floor",
+                                                         "native-server-binaries",
+                                                         "native-app-payload.ccpack",
+                                                         "native-cuda-runtime.ccpack",
+                                                         "native-ffmpeg-runtime.ccpack",
+                                                         "native-ollama-runtime.ccpack",
+                                                         "native-server-binaries.ccpack"
+                                                     ]
+                                    },
+                                    {
+                                        "name":  "runtime",
+                                        "type":  "dir",
+                                        "children":  [
+                                                         "dependencies",
+                                                         "Lib",
+                                                         "THIRD-PARTY-LICENSES",
+                                                         "WHEELS",
+                                                         "app-payload-manifest.json",
+                                                         "libcrypto-3.dll",
+                                                         "libffi-8.dll",
+                                                         "libssl-3.dll",
+                                                         "LICENSE-BOM.md",
+                                                         "LICENSE.txt",
+                                                         "msvcp140.dll",
+                                                         "pyexpat.pyd",
+                                                         "python.cat",
+                                                         "python.exe",
+                                                         "python3.dll",
+                                                         "python312.dll",
+                                                         "python312.zip",
+                                                         "python312._pth",
+                                                         "pythoncom312.dll",
+                                                         "pythonservice.exe",
+                                                         "pythonw.exe",
+                                                         "pywintypes312.dll",
+                                                         "select.pyd",
+                                                         "SHA256SUMS",
+                                                         "sqlite3.dll",
+                                                         "unicodedata.pyd",
+                                                         "vcruntime140.dll",
+                                                         "vcruntime140_1.dll",
+                                                         "winsound.pyd",
+                                                         "_asyncio.pyd",
+                                                         "_bz2.pyd",
+                                                         "_ctypes.pyd",
+                                                         "_decimal.pyd",
+                                                         "_elementtree.pyd",
+                                                         "_hashlib.pyd",
+                                                         "_lzma.pyd",
+                                                         "_msi.pyd",
+                                                         "_multiprocessing.pyd",
+                                                         "_overlapped.pyd",
+                                                         "_queue.pyd",
+                                                         "_socket.pyd",
+                                                         "_sqlite3.pyd",
+                                                         "_ssl.pyd",
+                                                         "_uuid.pyd",
+                                                         "_wmi.pyd",
+                                                         "_zoneinfo.pyd"
+                                                     ]
+                                    },
+                                    {
+                                        "name":  "activation-self-test.json",
+                                        "type":  "file"
+                                    },
+                                    {
+                                        "name":  "CivicCast Native.exe",
+                                        "type":  "file"
+                                    },
+                                    {
+                                        "name":  "station-set.json",
+                                        "type":  "file"
+                                    },
+                                    {
+                                        "name":  "uninstall.exe",
+                                        "type":  "file"
+                                    },
+                                    {
+                                        "name":  "vc_redist.x64.exe",
+                                        "type":  "file"
+                                    }
+                                ],
+    "station_set_json_found":  "C:\\CivicCastHostStore\\install\\station-set.json",
+    "activation_self_test_json_found":  "C:\\CivicCastHostStore\\install\\activation-self-test.json",
+    "marker_search_method":  "targeted (non-recursive) -- see HARDENED note at top of script",
+    "arp_entries":  [
+                        {
+                            "DisplayName":  "CivicCast (Native)",
+                            "DisplayVersion":  "1.0.0-beta.1",
+                            "InstallLocation":  "C:\\CivicCastHostStore\\install",
+                            "UninstallString":  "\"C:\\CivicCastHostStore\\install\\uninstall.exe\"",
+                            "EstimatedSize":  12412033
+                        }
+                    ],
+    "service_get_service":  {
+                                "Name":  "CivicCastSupervisor",
+                                "Status":  "Running",
+                                "StartType":  "Automatic"
+                            },
+    "service_sc_query_raw":  "\r\nSERVICE_NAME: CivicCastSupervisor \r\n        TYPE               : 10  WIN32_OWN_PROCESS  \r\n        STATE              : 4  RUNNING \r\n                                (STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)\r\n        WIN32_EXIT_CODE    : 0  (0x0)\r\n        SERVICE_EXIT_CODE  : 0  (0x0)\r\n        CHECKPOINT         : 0x0\r\n        WAIT_HINT          : 0x0\r\n",
+    "service_sc_qc_raw":  "[SC] QueryServiceConfig SUCCESS\r\n\r\nSERVICE_NAME: CivicCastSupervisor\r\n        TYPE               : 10  WIN32_OWN_PROCESS \r\n        START_TYPE         : 2   AUTO_START\r\n        ERROR_CONTROL      : 1   NORMAL\r\n        BINARY_PATH_NAME   : \"C:\\CivicCastHostStore\\install\\runtime\\pythonservice.exe\"\r\n        LOAD_ORDER_GROUP   : \r\n        TAG                : 0\r\n        DISPLAY_NAME       : CivicCast Native Supervisor\r\n        DEPENDENCIES       : \r\n        SERVICE_START_NAME : LocalSystem\r\n",
+    "service_start_attempt":  {
+                                  "attempted":  false,
+                                  "reason":  "already Running"
+                              },
+    "install_progress_log_found":  false,
+    "install_progress_log_tail":  [
+
+                                  ],
+    "installer_nsis_log_found":  false,
+    "event_log_errors":  [
+
+                         ],
+    "errors":  [
+                   "packs dir present: True; contents: native-app-payload.ccpack, native-cuda-runtime.ccpack, native-ffmpeg-runtime.ccpack, native-ollama-runtime.ccpack, native-server-binaries.ccpack"
+               ],
+    "last_completed_step":  "t5-soak-complete",
+    "run_end_utc":  null,
+    "skip_mode_opted_in":  false,
+    "skip_mode_station_set_present":  false,
+    "skip_reinstall":  false,
+    "runtime_checks":  {
+                           "health":  {
+                                          "url":  "http://127.0.0.1:8000/api/health",
+                                          "status":  200,
+                                          "ok":  true,
+                                          "bytes":  80,
+                                          "snippet":  "{\"status\":\"healthy\",\"version\":\"1.0.0-beta.1\",\"schema\":\"current\",\"mode\":\"normal\"}",
+                                          "error":  null,
+                                          "polls":  1
+                                      },
+                           "operator_console":  {
+                                                    "url":  "http://127.0.0.1:8000/operator/",
+                                                    "status":  200,
+                                                    "ok":  true,
+                                                    "bytes":  698,
+                                                    "snippet":  "\u003c!doctype html\u003e \u003chtml lang=\"en\" data-theme=\"light\"\u003e \u003chead\u003e \u003cmeta charset=\"UTF-8\" /\u003e \u003clink rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\" /\u003e \u003cmeta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" /\u003e \u003ctitle\u003eCivicCast Operator\u003c/title\u003e \u003cmeta name=\"description\" c",
+                                                    "error":  null,
+                                                    "polls":  1
+                                                },
+                           "resident_portal":  {
+                                                   "url":  "http://127.0.0.1:8000/",
+                                                   "status":  200,
+                                                   "ok":  true,
+                                                   "bytes":  588,
+                                                   "snippet":  "\u003c!doctype html\u003e \u003chtml lang=\"en\"\u003e \u003chead\u003e \u003cmeta charset=\"UTF-8\" /\u003e \u003clink rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\" /\u003e \u003cmeta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" /\u003e \u003ctitle\u003eCivicCast Portal\u003c/title\u003e \u003cmeta name=\"description\" content=\"CivicCast pub",
+                                                   "error":  null,
+                                                   "polls":  1
+                                               }
+                       },
+    "t2_render_checks":  {
+                             "portal":  {
+                                            "label":  "portal",
+                                            "url":  "http://127.0.0.1:8000/",
+                                            "raw_bytes":  588,
+                                            "dumped_bytes":  11893,
+                                            "ratio":  20.23,
+                                            "known_string_matched":  "No live broadcast is on air.",
+                                            "known_string_in_raw":  false,
+                                            "edge_ok":  true,
+                                            "timed_out":  false,
+                                            "error":  null,
+                                            "result":  "PASS"
+                                        },
+                             "operator":  {
+                                              "label":  "operator",
+                                              "url":  "http://127.0.0.1:8000/operator/",
+                                              "raw_bytes":  698,
+                                              "dumped_bytes":  5531,
+                                              "ratio":  7.92,
+                                              "known_string_matched":  "No live meeting broadcast",
+                                              "known_string_in_raw":  false,
+                                              "edge_ok":  true,
+                                              "timed_out":  false,
+                                              "error":  null,
+                                              "result":  "PASS"
+                                          }
+                         }
+}

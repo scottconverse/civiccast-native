@@ -1,0 +1,38 @@
+<Configuration>
+  <VGpu>Disable</VGpu>
+  <Networking>Disable</Networking>
+  <!-- 16 GB holds the K1 activation self-test peak model (~9GB) plus the sandbox OS
+       and services. Rationale and history live in the k1-activation-verified memory
+       note, not here. Bump on hosts with less headroom only after re-measuring. -->
+  <MemoryInMB>16384</MemoryInMB>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>{{ROOT}}\kit-download</HostFolder>
+      <SandboxFolder>C:\CivicCastPayload</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>{{ROOT}}\output</HostFolder>
+      <SandboxFolder>C:\CivicCastOutput</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>{{ROOT}}\scripts</HostFolder>
+      <SandboxFolder>C:\CivicCastScripts</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>{{ROOT}}\hoststore</HostFolder>
+      <SandboxFolder>C:\CivicCastHostStore</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>{{ROOT}}\soak-4h</HostFolder>
+      <SandboxFolder>C:\CivicCastSoak</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastScripts\In-Sandbox-Report.ps1</Command>
+  </LogonCommand>
+</Configuration>

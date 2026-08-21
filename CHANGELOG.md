@@ -30,6 +30,28 @@ came across and what deliberately did not.
 - `scripts/policy/check_workflow_timeouts.py` — fails the build when a workflow
   job declares no `timeout-minutes` (GitHub's default is 360) or exceeds the
   180-minute cap without a written exemption.
+- **Gate A — automated station-acceptance release gate.** Replaces
+  builder-authored "it works" claims with a machine verdict: a clean Windows
+  Sandbox install of a native-beta candidate kit, K1 activation, runtime
+  health, both UIs rendered, the clerk loop (upload → publish → captions),
+  the product egress engine verified with TSDuck, and a bounded soak —
+  judged fail-closed by `scripts/gate_a_verdict.py` against files a harness
+  wrote, never from prose. `sandbox-lab/` imports a standalone, manually-
+  proven harness (`Host-Launch-Sandbox-Test.ps1` + `In-Sandbox-Report.ps1`)
+  plus the v3.0 tester-handoff `soak-4h/` kit; `sandbox-lab/Run-GateA.ps1` is
+  the host orchestrator (kit resolution from a `native-beta-candidate-artifacts`
+  run, fresh install every run, evidence preservation); `.github/workflows/
+  gate-a-station-acceptance.yml` runs it after every successful candidate
+  build on a new `[self-hosted, windows, sandbox-lab]` runner
+  (`sandbox-lab/runner/Install-GateARunner.ps1`, an interactive-logon
+  scheduled task — Windows Sandbox cannot launch from a Session-0 service).
+  Informational only until 3 consecutive green runs; promotion to a required
+  check is owner-only. See `docs/ops/gate-a.md` for the full verdict-criteria
+  table with §12 citations, including the documented `t4_engine` policy
+  (`PASS_FFMPEG_FALLBACK` is a FAIL now that GStreamer is the default engine)
+  and the known Aug-19 reference-run harness quirk (that historical run has
+  no `DONE.json`, so its own fixture judges FAIL on `completion` alone — not
+  a bug, see the doc's "Known harness quirk" section).
 
 ### Changed
 

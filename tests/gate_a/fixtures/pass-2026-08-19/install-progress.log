@@ -1,0 +1,179 @@
+[2026-08-19 02:40:09] preinstall: checking for a live existing install (install-only refusal)
+[2026-08-19 02:40:09] preinstall: no live existing install found -- proceeding
+[2026-08-19 02:40:09] preinstall: stop native service (if a prior install exists)
+[2026-08-19 02:40:09] preinstall: stop native service SKIPPED (no prior install found)
+[2026-08-19 02:40:09] preinstall: stopping existing bootstrap
+[2026-08-19 02:40:09] preinstall: done
+[2026-08-19 02:40:11] postinstall: begin
+[2026-08-19 02:40:11] step vc-redist: begin
+[2026-08-19 02:44:14] step vc-redist: returned 0
+[2026-08-19 02:44:14] step stage-packs: begin
+[2026-08-19 02:50:32] step stage-packs: returned 0
+[2026-08-19 02:50:32] step stage-packs: manifest report: {
+  "optional": {
+    "already_present": [],
+    "copied_from_offline": [
+      "native-cuda-runtime"
+    ],
+    "extracted": [
+      "native-cuda-runtime"
+    ],
+    "optional_components": [
+      "native-cuda-runtime"
+    ],
+    "replaced_from_offline": [],
+    "skipped_absent": []
+  },
+  "required": {
+    "already_present": [],
+    "copied_from_offline": [
+      "native-server-binaries",
+      "native-app-payload",
+      "native-ffmpeg-runtime",
+      "native-ollama-runtime"
+    ],
+    "extracted": [
+      "native-server-binaries",
+      "native-app-payload",
+      "native-ffmpeg-runtime",
+      "native-ollama-runtime"
+    ],
+    "replaced_from_offline": [],
+    "required_components": [
+      "native-server-binaries",
+      "native-app-payload",
+      "native-ffmpeg-runtime",
+      "native-ollama-runtime"
+    ],
+    "satisfied_online": []
+  }
+}
+
+[2026-08-19 02:50:32] step d2-verify-server-binaries: begin
+[2026-08-19 02:50:37] step d2-verify-server-binaries: returned 0
+[2026-08-19 02:50:37] step d2-verify-server-binaries: verification report: {
+  "path": "C:\\CivicCastHostStore\\install\\packs\\native-server-binaries.ccpack",
+  "sha256": "e715ccb956862f86c52fbc766e7bf7f37912fe615b66915daafdcde4a8860925",
+  "component": "native-server-binaries",
+  "product_version": "1.0.0-beta.1",
+  "compatible_core": "1.0.0-beta.1",
+  "signing_key_id": "civiccast-production-2026-beta1",
+  "file_count": 722,
+  "total_bytes": 93547884,
+  "metadata": {
+    "nats_version": "2.14.3",
+    "postgres_version": "17.10-2",
+    "source_sha": "07caa156f281a0c8c7720a62119933d543753643",
+    "tsduck_version": "3.44-4676"
+  },
+  "files": [
+    {
+      "path": "bin/icudt67.dll",
+      "bytes": 28399104,
+      "sha256": "5ff9c8026344e886f280ddfa235a1e16e1bcd396e90f9ed600b6f71d9d881ae8"
+    },
+    {
+      "path": "bin/icuin67.dll",
+      "bytes": 2674176,
+      "sha256": "23d5914acf071f566df19aaf404373e5c73c9910c370e728976f6202c04cf6c3"
+    },
+    {
+      "path": "bin/icuuc67.dll",
+      "bytes": 1906688,
+[2026-08-19 02:50:37] step d2-verify-app-payload: begin
+[2026-08-19 02:51:41] step d2-verify-app-payload: returned 0
+[2026-08-19 02:51:41] step d2-verify-app-payload: verification report: {
+  "path": "C:\\CivicCastHostStore\\install\\packs\\native-app-payload.ccpack",
+  "sha256": "1ce718c6b15f0c35511a0795360bdf23715167bf156830e6d1b2031138b0e3d7",
+  "component": "native-app-payload",
+  "product_version": "1.0.0-beta.1",
+  "compatible_core": "1.0.0-beta.1",
+  "signing_key_id": "civiccast-production-2026-beta1",
+  "file_count": 9825,
+  "total_bytes": 555185142,
+  "metadata": {
+    "app_lock_sha256": "16a9fa5f22efd20405b48ef599f5cc9736a33b32bba60fe83faa751b66292426",
+    "civiccast_source_dirty": false,
+    "civiccast_source_head": "07caa156f281a0c8c7720a62119933d543753643",
+    "civiccast_version": "1.0.0rc18",
+    "closure_file_count": 224,
+    "closure_manifest_sha256": "1b0b62a737847df0b1ff9fa188cb791e4b735f6e4be2142751d8c72e7f286079",
+    "closure_payload_bytes": 75430287,
+    "closure_payload_tree_sha256": "2c869f881a5eb5d3c6ae1516d8efac6abb53ca33fc32f5cb6a880215934eb69e",
+    "gstreamer_version": "1.28.5",
+    "interpre[2026-08-19 02:51:41] step d2-verify-ffmpeg-runtime: begin
+[2026-08-19 02:51:42] step d2-verify-ffmpeg-runtime: verification report: {
+  "path": "C:\\CivicCastHostStore\\install\\packs\\native-ffmpeg-runtime.ccpack",
+  "sha256": "797c48dcc9cddb0519339b8fa6df1fbfde05f98eda840f752f348bd4f05b3420",
+  "component": "native-ffmpeg-runtime",
+  "product_version": "1.0.0-beta.1",
+  "compatible_core": "1.0.0-beta.1",
+  "signing_key_id": "civiccast-production-2026-beta1",
+  "file_count": 11,
+  "total_bytes": 143723943,
+  "metadata": {
+    "ffmpeg_executables": [
+      "ffmpeg.exe",
+      "ffprobe.exe"
+    ],
+    "ffmpeg_spdx_license": "LGPL-3.0-or-later",
+    "ffmpeg_version": "n8.1.2-34-g9b6c8969e0"
+  },
+  "files": [
+    {
+      "path": "bin/avcodec-62.dll",
+      "bytes": 70883840,
+      "sha256": "c6033284027a2da01018503b8677176878d7caa4836de71fa695ddee59fac64f"
+    },
+    {
+      "path": "bin/avdevice-62.dll",
+      "bytes": 3924992,
+      "sha256": "e50691bb3822f7bfc3aefc52c6b46ab013abb5ae6fa8ad158903663a21d98ad2"
+    },
+    {
+      "path": "bin/avfilter-11.dll",
+      "b[2026-08-19 02:51:42] step d2-verify-ollama-runtime: begin
+[2026-08-19 02:51:46] step d2-verify-ollama-runtime: verification report: {
+  "path": "C:\\CivicCastHostStore\\install\\packs\\native-ollama-runtime.ccpack",
+  "sha256": "51ac868423ac22e146d8da37919b47836a6832f275584c6ae794973241a19ff0",
+  "component": "native-ollama-runtime",
+  "product_version": "1.0.0-beta.1",
+  "compatible_core": "1.0.0-beta.1",
+  "signing_key_id": "civiccast-production-2026-beta1",
+  "file_count": 69,
+  "total_bytes": 1941210728,
+  "metadata": {
+    "ollama_executables": [
+      "ollama.exe"
+    ],
+    "ollama_spdx_license": "MIT",
+    "ollama_version": "0.30.6"
+  },
+  "files": [
+    {
+      "path": "lib/ollama/cuda_v12/concrt140.dll",
+      "bytes": 311688,
+      "sha256": "7d793fed7886cfb2305d7e17b8ba2db874abf3211e47e90d0876b86442b93a7f"
+    },
+    {
+      "path": "lib/ollama/cuda_v12/cublas64_12.dll",
+      "bytes": 113720712,
+      "sha256": "7966e503ce220c0697b486d7c788ac1b44a1635b554932f11399194511520f8b"
+    },
+    {
+      "path": "lib/ollama/cuda_v12/cublasLt64_12.dll",
+      "b[2026-08-19 02:51:46] step d3-engine: begin (old=none)
+[2026-08-19 02:51:54] step d3-engine: SKIPPED (routed to fresh install; existing data adopted, not deleted)
+[2026-08-19 02:51:54] step d4-provision: begin
+[2026-08-19 02:52:18] step d4-provision: returned 0
+[2026-08-19 02:52:18] step d4-activate-station: begin
+[2026-08-19 03:05:48] step d4-activate-station: returned 0
+[2026-08-19 03:05:48] step d4-service-registration: begin
+[2026-08-19 03:06:02] step d4-service-registration: returned 0
+[2026-08-19 03:06:03] step d4-service-registration: restored site-packages service host member
+[2026-08-19 03:06:03] step d4-firewall-rule: begin
+[2026-08-19 03:06:04] step d4-firewall-rule: returned 0
+[2026-08-19 03:06:58] postinstall: EstimatedSize corrected to 12412033 KB (measured C:\CivicCastHostStore\install: 10691 files, 960 dirs)
+[2026-08-19 03:06:58] postinstall: SUCCESS (InstalledVersion 1.0.0-beta.1 recorded)
+[2026-08-19 03:06:58] postinstall: QuietUninstallString registered (_?=C:\CivicCastHostStore\install)
+[2026-08-19 03:06:58] postinstall: InstallLocation rewritten unquoted

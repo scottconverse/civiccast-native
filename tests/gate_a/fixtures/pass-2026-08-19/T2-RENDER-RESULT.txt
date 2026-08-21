@@ -1,0 +1,5 @@
+﻿checked_utc=2026-08-19T09:07:15.6660552Z
+edge_exe=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+T2_portal raw=588 dumped=11893 ratio=20.23 known_matched=No live broadcast is on air. known_in_raw=False edge_ok=True timed_out=False error= result=PASS
+T2_operator raw=698 dumped=5531 ratio=7.92 known_matched=No live meeting broadcast known_in_raw=False edge_ok=True timed_out=False error= result=PASS
+T2_RENDER=PASS
