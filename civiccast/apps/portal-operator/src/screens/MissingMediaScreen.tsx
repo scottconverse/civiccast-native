@@ -28,7 +28,10 @@ function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
     <div
       role="alert"
       className="mx-6 my-6 flex flex-col gap-2 rounded-md p-4"
-      style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+      // --cc-err text on --cc-err-soft carries the same WCAG AA contrast
+      // risk measured (and axe-core-confirmed) for this pattern's ok/warn
+      // siblings elsewhere in this PR -- --cc-ink stays safe in both themes.
+      style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-ink)' }}
     >
       <div className="text-sm font-semibold">
         {is503 ? 'Durable storage is not ready.' : 'Could not load missing-media alerts.'}

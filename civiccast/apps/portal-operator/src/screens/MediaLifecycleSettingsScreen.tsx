@@ -51,8 +51,11 @@ function SectionCard({ title, subtitle, children }: { title: string; subtitle: s
 
 function InlineError({ error }: { error: Error }) {
   const isApiError = error instanceof ApiError
+  // --cc-err text on --cc-err-soft carries the same WCAG AA contrast risk
+  // measured (and confirmed via axe-core) for the ok/warn siblings of this
+  // pattern elsewhere in this PR -- --cc-ink stays safe regardless of theme.
   return (
-    <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+    <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-ink)' }}>
       {isApiError && error.detail ? error.detail : `Request failed: ${error.message}`}
     </div>
   )
@@ -137,14 +140,14 @@ function WatchFolderSection() {
             >
               <span className="cc-mono">{config.monitor_path}</span>
               <div className="flex items-center gap-2">
-                <span style={{ color: config.enabled ? 'var(--cc-ok)' : 'var(--cc-ink-3)' }}>
+                <span style={{ color: config.enabled ? 'var(--cc-ink)' : 'var(--cc-ink-3)' }}>
                   {config.enabled ? 'Enabled' : 'Disabled'}
                 </span>
                 <button
                   type="button"
                   onClick={() => deleteMutation.mutate(config.config_id)}
                   className="rounded-md px-2 py-1"
-                  style={{ border: '1px solid var(--cc-line)', color: 'var(--cc-err)' }}
+                  style={{ border: '1px solid var(--cc-err)', color: 'var(--cc-ink)' }}
                   aria-label={`Remove watch folder ${config.monitor_path}`}
                 >
                   Remove
@@ -294,7 +297,7 @@ function RetentionPolicySection() {
                   type="button"
                   onClick={() => deleteMutation.mutate(rule.policy_id)}
                   className="rounded-md px-2 py-1"
-                  style={{ border: '1px solid var(--cc-line)', color: 'var(--cc-err)' }}
+                  style={{ border: '1px solid var(--cc-err)', color: 'var(--cc-ink)' }}
                   aria-label={`Remove rule ${rule.name}`}
                 >
                   Remove
