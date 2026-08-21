@@ -69,7 +69,7 @@ LPM release candidate artifact details:
 | Release manifest | `civiccast-1.0.0-rc18-release-artifacts-manifest.json` |
 | Installer size | Verify against the release's own sidecar and complete manifest |
 | Installer SHA-256 | Verify the exact value in this release's sidecar and complete manifest; never reuse a copied hash from another candidate |
-| Signature | Valid Authenticode signature from Scott Converse; installer and manifest Sigstore verification passed |
+| Signature | Valid Authenticode signature from Scott Converse (Azure Trusted Signing; this release chain carries no Sigstore step) |
 | Status | Controlled beta; proof boundary recorded in the [rc18 verification record](../releases/v1.0.0-rc18-verification.md). |
 
 Optional reference files (proof kit, manifest, PDF, DOCX) must come from that

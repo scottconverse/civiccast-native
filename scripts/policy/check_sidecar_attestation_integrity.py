@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Policy: release sidecar signing and attestation claims need real proof.
+"""Policy: release sidecar signing claims need real proof.
 
 ``_installer_artifact_entry`` in ``scripts/build_release_artifacts.py`` writes
-a ``*.sidecar.json`` next to every release artifact. That sidecar may carry
-a non-null ``attestation`` only when a real cosign bundle
-(``*.sigstore.json``) sits next to the artifact. ``install_manifest.signed``
-may additionally be true for a Windows PE with embedded Authenticode evidence.
-This keeps the two claims distinct: signing does not fabricate an attestation.
+a ``*.sidecar.json`` next to every release artifact. This repo's release
+chain carries no cosign/Sigstore step anywhere (Azure Trusted Signing /
+Authenticode is the only signing mechanism -- see ``CODE_SIGNING_POLICY.md``),
+so a sidecar's ``attestation`` field is always ``null`` now; a non-null value
+is itself a policy violation (a stray or fabricated attestation claim).
+``install_manifest.signed`` may be ``true`` only for a Windows PE (``.exe``)
+that genuinely carries an embedded Authenticode certificate table -- a bare
+flag with no such evidence is rejected.
 """
 
 from __future__ import annotations
@@ -69,19 +72,6 @@ def _iter_sidecars(root: Path):
         yield path
 
 
-def _is_structurally_valid_sigstore_bundle(path: Path) -> bool:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    return (
-        isinstance(payload, dict)
-        and str(payload.get("mediaType", "")).startswith("application/vnd.dev.sigstore.bundle.")
-        and isinstance(payload.get("verificationMaterial"), dict)
-        and isinstance(payload.get("dsseEnvelope"), dict)
-    )
-
-
 def evaluate_sidecar_attestation_integrity(root: Path = REPO_ROOT) -> list[str]:
     """Return one violation string per unsupported signing/attestation claim."""
 
@@ -97,36 +87,31 @@ def evaluate_sidecar_attestation_integrity(root: Path = REPO_ROOT) -> list[str]:
         signed = isinstance(install_manifest, dict) and install_manifest.get("signed") is True
         attestation = payload.get("attestation")
 
-        if not signed and attestation is None:
-            continue  # honest unsigned/unattested claim -- nothing to flag
+        if attestation is not None:
+            # No code path produces a non-null attestation any more: this repo's
+            # release chain carries no cosign/Sigstore step, and nothing
+            # replaced the retired attest-blob mechanism. A non-null value is a
+            # stray or fabricated claim, not honest evidence.
+            violations.append(
+                f"{sidecar.relative_to(root)}: attestation={attestation!r} but this "
+                "release chain has no attestation mechanism (Azure Trusted Signing / "
+                "Authenticode only); the field must be null."
+            )
+
+        if not signed:
+            continue  # honest unsigned claim -- nothing to flag
 
         # Artifact name is the sidecar name with the trailing ".sidecar.json" stripped.
         artifact_name = sidecar.name[: -len(".sidecar.json")]
         artifact = sidecar.with_name(artifact_name)
-        bundle = sidecar.with_name(artifact_name + ".sigstore.json")
-        has_valid_bundle = _is_structurally_valid_sigstore_bundle(bundle)
-        has_signing_proof = has_valid_bundle or (
-            artifact.suffix.lower() == ".exe" and _pe_has_authenticode_evidence(artifact)
+        has_signing_proof = artifact.suffix.lower() == ".exe" and _pe_has_authenticode_evidence(
+            artifact
         )
-        if signed and not has_signing_proof:
+        if not has_signing_proof:
             violations.append(
                 f"{sidecar.relative_to(root)}: claims install_manifest.signed=true but "
-                "has neither a Sigstore bundle nor embedded Authenticode evidence."
-            )
-        if attestation is not None and not bundle.exists():
-            violations.append(
-                f"{sidecar.relative_to(root)}: claims attestation={attestation!r} but "
-                f"{bundle.name} does not exist next to it."
-            )
-        elif attestation is not None and not has_valid_bundle:
-            violations.append(
-                f"{sidecar.relative_to(root)}: {bundle.name} is not a structurally valid "
-                "Sigstore bundle."
-            )
-        elif attestation is not None and attestation != bundle.name:
-            violations.append(
-                f"{sidecar.relative_to(root)}: attestation={attestation!r} does not name "
-                f"the adjacent {bundle.name}."
+                "has no embedded Authenticode evidence (the only signing mechanism this "
+                "release chain has)."
             )
 
     return violations

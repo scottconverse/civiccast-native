@@ -75,20 +75,28 @@ class TestWorkflowRunnerPolicy:
 
 
 class TestWindowsAttestationDocumentation:
-    def test_trust_guide_requires_exe_sidecar_and_sigstore_bundle_together(self) -> None:
+    def test_trust_guide_requires_exe_and_sidecar_together_with_no_sigstore_bundle(self) -> None:
         text = Path("docs/install/windows-release-trust.md").read_text(encoding="utf-8")
 
         assert "windows-setup.exe`" in text
         assert "windows-setup.exe.sidecar.json`" in text
-        assert "windows-setup.exe.sigstore.json`" in text
         assert "keep them together in one folder" in text
+        # ADR 0022: Sigstore/cosign was evaluated and denied for this release
+        # chain. No release asset carries a `.sigstore.json` bundle, so the
+        # trust guide must not tell testers to fetch one -- the only
+        # permitted "sigstore" mention is the explicit denial statement.
+        assert "windows-setup.exe.sigstore.json`" not in text
+        assert "carries no Sigstore/cosign step" in text
 
-    def test_code_signing_policy_includes_windows_sigstore_provenance(self) -> None:
+    def test_code_signing_policy_documents_authenticode_only_chain(self) -> None:
         text = Path("CODE_SIGNING_POLICY.md").read_text(encoding="utf-8")
 
-        assert "Windows setup executable carries both" in text
-        assert "keyless blob signature" in text
-        assert "Every non-Windows-job release asset" not in text
+        assert "Authenticode code-signed" in text
+        assert "Azure Trusted Signing" in text
+        assert "evaluated and denied" in text
+        assert "docs/adr/0022-sigstore-attestation-denied.md" in text
+        assert "no cosign/sigstore step anywhere on the" in text
+        assert "no code in this repository generates a `.sigstore.json` bundle" in text
 
 
 class TestWorkflowCostDiscipline:

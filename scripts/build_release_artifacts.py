@@ -1148,19 +1148,21 @@ def _installer_artifact_entry(
 ) -> dict[str, object]:
     digest = _sha256(artifact)
     sidecar = artifact.with_name(artifact.name + ".sidecar.json")
-    sigstore_bundle = artifact.with_name(artifact.name + ".sigstore.json")
     # ponytail: signed/attestation must reflect real bytes on disk, never a
-    # literal claim. Linux/macOS artifacts prove signing via a cosign sigstore
-    # bundle (written by a separate attest-blob step in release-artifacts.yml);
-    # the Windows .exe proves it via an embedded Authenticode signature. Either
-    # counts as signed; a plain unsigned build has neither and reads false.
-    is_signed = sigstore_bundle.exists() or _pe_has_authenticode_evidence(artifact)
-    attestation = (
-        sigstore_bundle.relative_to(out_dir).as_posix() if sigstore_bundle.exists() else None
-    )
+    # literal claim. This repo's release chain signs only the Windows .exe,
+    # via Azure Trusted Signing (Authenticode); there is no cosign/Sigstore
+    # step anywhere on the native path (release-artifacts.yml, the legacy
+    # WSL-era pipeline that used to run `cosign attest-blob`, was retired
+    # under chore/retire-wsl-lane). "signed" is therefore true only when the
+    # artifact itself carries an embedded Authenticode certificate table; a
+    # non-Windows artifact or a plain unsigned build reads false. The
+    # "attestation" field is a legacy, always-null placeholder now that no
+    # attestation-bundle mechanism exists -- kept for sidecar schema
+    # stability, not because anything populates it.
+    is_signed = _pe_has_authenticode_evidence(artifact)
     sidecar_payload = {
         "sha256": digest,
-        "attestation": attestation,
+        "attestation": None,
         "install_manifest": {
             "signed": is_signed,
             "service": {
@@ -1389,7 +1391,7 @@ def merge_release_manifests(input_dirs: list[Path], out_dir: Path, version: str)
             else:
                 # A per-job CI bundle need not carry every artifact its manifest
                 # lists (the Windows bundle uploads the installer/tester-package/
-                # proof-kit/manifest but not the .sidecar.json or .sigstore.json).
+                # proof-kit/manifest but not the .sidecar.json).
                 # The building job already hashed the real bytes, so union on the
                 # recorded sha256 rather than failing closed on the missing file. A
                 # missing recorded sha256 is still a hard error. See gate-civiccast.

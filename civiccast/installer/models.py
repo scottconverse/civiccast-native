@@ -91,11 +91,16 @@ PackageVerificationReason = Literal[
     "missing_sidecar",
     "invalid_sidecar",
     "hash_mismatch",
+    "unsigned_artifact",
+    # Legacy values kept for API/schema compatibility; no longer emitted. This
+    # repo's release chain carries no cosign/Sigstore step (Azure Trusted
+    # Signing/Authenticode is the only signing mechanism -- see
+    # CODE_SIGNING_POLICY.md), so verification no longer looks for a
+    # Sigstore attestation bundle at all. "unsigned_artifact" is the current
+    # reason for a signed=true claim that has no real Authenticode evidence.
     "missing_attestation",
     "invalid_attestation",
     "attestation_mismatch",
-    # Legacy value kept for API compatibility; no longer emitted (verification
-    # now checks the real Sigstore bundle, not the sidecar's signed flag).
     "unsigned_install_manifest",
 ]
 AirGapReason = Literal[

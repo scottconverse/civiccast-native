@@ -6,7 +6,7 @@
 > the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
 > for exactly what has and has not been proven.
 
-> rc18's own signed installer, sidecar, Sigstore bundle, and complete manifest are public; its proof boundary is recorded in the [rc18 verification record](../releases/v1.0.0-rc18-verification.md).
+> rc18's own signed installer, sidecar, and complete manifest are public; its proof boundary is recorded in the [rc18 verification record](../releases/v1.0.0-rc18-verification.md).
 
 Use this path if you are validating the installer package, runtime bootstrap,
 and provider setup proofs.

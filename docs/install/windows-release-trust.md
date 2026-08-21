@@ -42,7 +42,7 @@ A CivicCast release can provide three different kinds of trust evidence:
 | --- | --- | --- |
 | SHA-256 checksum | The file on your machine matches the owner-approved package or published release. | It does not identify the publisher by itself. |
 | Release sidecar or manifest | The package, service metadata, and expected hash belong to the same release artifact set. | It does not replace checking the downloaded file hash. |
-| Signature or attestation | The artifact was signed or attested by the stated release process. The Windows `.sigstore.json` is a keyless blob-signature bundle bound to the exact EXE bytes. | It is not the same as Microsoft SmartScreen reputation unless Authenticode signing is explicitly present. |
+| Signature | The artifact was Authenticode-signed by the stated release process (Azure Trusted Signing). See [CODE_SIGNING_POLICY.md](../../CODE_SIGNING_POLICY.md) — this release chain carries no Sigstore/cosign step; Authenticode is the only code signature a Windows release asset carries. | It is not the same as Microsoft SmartScreen reputation unless Authenticode signing is explicitly present. |
 
 Do not assume a candidate is Authenticode-signed. The active handoff and exact
 artifact sidecar must state its actual signature status. A public beta should
@@ -59,7 +59,6 @@ be distributed as a public beta.
    and keep them together in one folder:
    - `civiccast-<approved-version>-windows-setup.exe`
    - `civiccast-<approved-version>-windows-setup.exe.sidecar.json`
-   - `civiccast-<approved-version>-windows-setup.exe.sigstore.json`
    The bundle should also include the release manifest for an
    artifact-set-wide check. Use the exact approved release page, not a draft,
    an older prerelease, or a generic "latest" link.
@@ -80,14 +79,13 @@ If they do not match, quarantine the package and request a replacement proof
 bundle from the owner. Do not run an installer with a mismatched hash.
 
 Do not trust stale local artifact paths or hashes copied from earlier proof
-runs. The manifest, setup sidecar, and Sigstore bundle published with the
-exact approved GitHub Release are the public source of truth.
+runs. The manifest and setup sidecar published with the exact approved
+GitHub Release are the public source of truth.
 
 ## Verify The Release Manifest
 
 Technical operators can also use CivicCast's package verifier after placing the
-setup executable, sidecar, and matching `.exe.sigstore.json` bundle in the same
-folder:
+setup executable and sidecar in the same folder:
 
 ```powershell
 uv run civiccast installer verify-package `
@@ -97,9 +95,10 @@ uv run civiccast installer verify-package `
 ```
 
 The verifier should report `ok` only when the artifact bytes, sidecar hash,
-install manifest, service/bootstrap metadata, and adjacent signature bundle
-line up. It should report blocked or failed when any one is missing or
-inconsistent.
+install manifest, and service/bootstrap metadata line up, and — when the
+sidecar claims `signed: true` — the `.exe` genuinely carries an embedded
+Authenticode certificate table. It should report blocked or failed when any
+one is missing or inconsistent.
 
 ## Authenticode And SmartScreen Status
 
