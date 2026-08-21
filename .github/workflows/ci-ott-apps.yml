@@ -140,19 +140,18 @@ jobs:
       matrix:
         include:
           - platform: ios
-            # Generic placeholder destination, not a specific device name —
-            # the concrete simulator device lineup (iPhone 15 vs 16e vs 17)
-            # drifts with every macos-latest/Xcode bump and a hardcoded name
-            # 404s the moment it's dropped (found on this PR's first real
-            # CI run: "Unable to find a device matching... name:iPhone 15").
-            destination: "platform=iOS Simulator,name=Any iOS Simulator Device"
+            # "generic/platform=..." is Apple's documented device-agnostic
+            # destination for a build-only pass (no concrete simulator
+            # needed) -- a concrete device name (iPhone 15) or even the
+            # "name=Any iOS Simulator Device" placeholder both 404 the
+            # moment the runner's Xcode/simulator lineup drifts (both
+            # failed on this PR's real CI runs; see the git history on
+            # this file for the exact errors).
+            destination: "generic/platform=iOS Simulator"
             products_dir: "Debug-iphonesimulator"
           - platform: tvos
-            # Generic placeholder destination — see the iOS row's comment.
-            # "Apple TV" resolved fine on this PR's first CI run, but pin to
-            # the same version-agnostic form so it doesn't silently break on
-            # a future macos-latest bump the way the iOS device name did.
-            destination: "platform=tvOS Simulator,name=Any tvOS Simulator Device"
+            # See the iOS row's comment -- same device-agnostic form.
+            destination: "generic/platform=tvOS Simulator"
             products_dir: "Debug-appletvsimulator"
     defaults:
       run:
