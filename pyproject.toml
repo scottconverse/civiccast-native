@@ -66,7 +66,6 @@ dependencies = [
   # CA only) so the finding wasn't reachable, but a fix exists so we upgrade
   # rather than allowlist per security/pip-audit-allowlist.json's own rule.
   "cryptography>=50.0.0",
-  "nats-py>=2.9.0",
   # asn1crypto is pure-Python and ships an RFC 3161 (`tsp`) module with
   # TimeStampReq / TimeStampResp / TSTInfo encoders + decoders. We use it
   # in civiccast/records/rfc3161.py to talk to real RFC 3161 TSAs (the
@@ -280,8 +279,6 @@ ignore = [
 # only role is to construct test apps inside a method (F401 false positive
 # at the module level when the symbol is consumed by a fixture/method).
 "tests/db/test_session.py" = ["B008", "F401"]
-"tests/platform/test_nats_broker_adapter.py" = ["B017", "RUF043"]
-"tests/platform/test_nats_broker_config.py" = ["B017", "RUF043"]
 # Per-module Alembic migration files: long-line tolerance for the
 # generated/hand-written DDL in upgrade()/downgrade() bodies. Lint
 # posture deferred to task 1b by ADR 0008 — settled here.
@@ -334,7 +331,6 @@ module = [
   "reportlab.*",
   "sacrebleu",
   "sacrebleu.*",
-  "nats.*",
   "asn1crypto",
   "asn1crypto.*",
   "huggingface_hub",
