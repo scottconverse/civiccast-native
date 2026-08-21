@@ -76,7 +76,7 @@ if ($PSCmdlet.ParameterSetName -eq 'ByRunId') {
     }
 
     Write-Step "Resolving head SHA for run $RunId in $Repo..."
-    $runJson = & gh run view $RunId -R $Repo --json headSha, status, conclusion, workflowName 2>&1
+    $runJson = & gh run view $RunId -R $Repo --json 'headSha,status,conclusion,workflowName' 2>&1
     if ($LASTEXITCODE -ne 0) {
         Exit-HarnessError "gh run view $RunId failed: $runJson"
     }
