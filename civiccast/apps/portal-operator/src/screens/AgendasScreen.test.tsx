@@ -317,14 +317,18 @@ describe('AgendasScreen import from doc', () => {
     })
     fireEvent.click(await findByRole('button', { name: /import agenda items from pasted text/i }))
     await waitFor(() =>
-      expect(vi.mocked(importAgendaFromDoc)).toHaveBeenCalledWith('council-2026-01', pasted),
+      expect(vi.mocked(importAgendaFromDoc)).toHaveBeenCalledWith(
+        'council-2026-01',
+        pasted,
+        'text/plain',
+      ),
     )
-    expect(await findByText(/Imported 2 items from the pasted text/i)).toBeTruthy()
+    expect(await findByText(/Imported 2 items\./i)).toBeTruthy()
   })
 
-  it('renders the plain-text-only follow-up message when the server returns 415', async () => {
+  it('renders the unsupported-format message when the server returns 415', async () => {
     vi.mocked(importAgendaFromDoc).mockRejectedValue(
-      new ApiError('Request failed: 415', 415, 'PDF/DOCX not supported.'),
+      new ApiError('Request failed: 415', 415, 'DOCX not supported.'),
     )
     const { findByLabelText, findByRole, findByText } = renderScreen()
     fireEvent.change(await findByLabelText('Plain-text agenda to import'), {
@@ -333,8 +337,43 @@ describe('AgendasScreen import from doc', () => {
     fireEvent.click(await findByRole('button', { name: /import agenda items from pasted text/i }))
     expect(
       await findByText(
-        /Only plain-text agendas import here today\. PDF support is a follow-up\./i,
+        /Only plain-text and PDF agendas import here today \(DOCX and other formats are a follow-up\)\./i,
       ),
+    ).toBeTruthy()
+  })
+
+  it('uploads a PDF file with contentType application/pdf and shows a low-confidence review banner', async () => {
+    vi.mocked(importAgendaFromDoc).mockResolvedValue([
+      item({ item_id: 'item-pdf-01', order: 0, confidence: 0.55 }),
+    ])
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    const file = new File(['%PDF-1.4 fake'], 'agenda.pdf', { type: 'application/pdf' })
+    const input = (await findByLabelText('PDF agenda to import')) as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+    fireEvent.click(await findByRole('button', { name: /import agenda items from uploaded pdf/i }))
+    await waitFor(() =>
+      expect(vi.mocked(importAgendaFromDoc)).toHaveBeenCalledWith(
+        'council-2026-01',
+        file,
+        'application/pdf',
+      ),
+    )
+    expect(
+      await findByText(/best-effort guess.*review them before publishing/i),
+    ).toBeTruthy()
+  })
+
+  it('renders the could-not-find-items message when the server returns 422', async () => {
+    vi.mocked(importAgendaFromDoc).mockRejectedValue(
+      new ApiError('Request failed: 422', 422, 'No recognizable agenda items were found.'),
+    )
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    const file = new File(['%PDF-1.4 fake'], 'agenda.pdf', { type: 'application/pdf' })
+    const input = (await findByLabelText('PDF agenda to import')) as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+    fireEvent.click(await findByRole('button', { name: /import agenda items from uploaded pdf/i }))
+    expect(
+      await findByText(/No recognizable agenda items were found\./i),
     ).toBeTruthy()
   })
 })

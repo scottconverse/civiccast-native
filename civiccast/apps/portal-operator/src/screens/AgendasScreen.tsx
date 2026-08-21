@@ -656,6 +656,7 @@ function ItemsTable({
             <th className="px-2 py-1 text-left">Title</th>
             <th className="px-2 py-1 text-left">Timecode</th>
             <th className="px-2 py-1 text-left">Doc anchor</th>
+            <th className="px-2 py-1 text-left">Confidence</th>
             <th className="px-2 py-1 text-right">Actions</th>
           </tr>
         </thead>
@@ -672,6 +673,27 @@ function ItemsTable({
                   {formatTimecode(item.video_timecode_s ?? null)}
                 </td>
                 <td className="cc-mono px-2 py-1 text-xs">{item.doc_anchor ?? '—'}</td>
+                <td className="px-2 py-1 text-xs">
+                  {item.confidence == null ? (
+                    '—'
+                  ) : (
+                    <span
+                      className="cc-mono rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                      title="Confidence score from the PDF import heuristic — review before publishing if low."
+                      style={{
+                        background:
+                          item.confidence >= 0.9
+                            ? 'var(--cc-ok-soft)'
+                            : item.confidence >= 0.5
+                              ? 'var(--cc-warn-soft)'
+                              : 'var(--cc-err-soft)',
+                        color: 'var(--cc-ink)',
+                      }}
+                    >
+                      {Math.round(item.confidence * 100)}%
+                    </span>
+                  )}
+                </td>
                 <td className="px-2 py-1 text-right">
                   <div className="inline-flex flex-wrap items-center gap-1">
                     <button
@@ -973,13 +995,23 @@ function SelectedAgendaSection({
   })
 
   const [importText, setImportText] = useState('')
+  const [importPdfFile, setImportPdfFile] = useState<File | null>(null)
   const importMut = useMutation({
-    mutationFn: (text: string) => importAgendaFromDoc(agendaId, text),
+    mutationFn: (doc: { body: string | File; contentType: string }) =>
+      importAgendaFromDoc(agendaId, doc.body, doc.contentType),
     onSuccess: () => {
       invalidateItems()
+      // A PDF import can silently reopen a published agenda to draft
+      // (AI/agenda non-negotiables Spec Sec4.2 -- heuristically-guessed
+      // items need operator review before they can be public again), so
+      // the agenda-level status badge has to refresh too, not just items.
+      invalidateAgendas()
       setImportText('')
+      setImportPdfFile(null)
     },
   })
+  const importedNeedsReview =
+    importMut.isSuccess && (importMut.data ?? []).some((item) => (item.confidence ?? 1) < 0.9)
 
   const handleSubmitItem = () => {
     const order = parseOptionalInt(itemForm.order)
@@ -1025,6 +1057,8 @@ function SelectedAgendaSection({
 
   const importIs415 =
     importMut.isError && importMut.error instanceof ApiError && importMut.error.status === 415
+  const importIs422 =
+    importMut.isError && importMut.error instanceof ApiError && importMut.error.status === 422
 
   return (
     <>
@@ -1178,28 +1212,74 @@ function SelectedAgendaSection({
               type="button"
               aria-label="Import agenda items from pasted text"
               disabled={importMut.isPending || importText.trim().length === 0}
-              onClick={() => importMut.mutate(importText)}
+              onClick={() =>
+                importMut.mutate({ body: importText, contentType: 'text/plain' })
+              }
               className="rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
               style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
             >
-              {importMut.isPending ? 'Importing…' : 'Import'}
+              {importMut.isPending && importText.trim().length > 0 ? 'Importing…' : 'Import'}
             </button>
             <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-              Plain text only today; PDF / DOCX support is a follow-up (the server returns 415
-              today, which we surface here).
+              Taken literally, one item per line — nothing to review.
             </span>
           </div>
+
+          <label className="grid gap-1 text-xs">
+            <span style={{ color: 'var(--cc-ink-3)' }}>
+              Or upload a PDF agenda (best-effort: numbered items, ALL-CAPS section headings, and
+              call-time markers are recognized; each imported item is scored with a confidence so
+              you can spot guesses that need a check)
+            </span>
+            <input
+              type="file"
+              accept="application/pdf"
+              aria-label="PDF agenda to import"
+              onChange={(e) => setImportPdfFile(e.target.files?.[0] ?? null)}
+              className="text-xs"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              aria-label="Import agenda items from uploaded PDF"
+              disabled={importMut.isPending || importPdfFile == null}
+              onClick={() =>
+                importPdfFile &&
+                importMut.mutate({ body: importPdfFile, contentType: 'application/pdf' })
+              }
+              className="rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
+            >
+              {importMut.isPending && importPdfFile != null ? 'Importing…' : 'Import PDF'}
+            </button>
+            {agenda.status === 'published' && (
+              <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+                This agenda is published. A PDF import will move it back to draft until you
+                review and republish.
+              </span>
+            )}
+          </div>
+
           {importMut.isSuccess && (
-            <Banner tone="ok">
+            <Banner tone={importedNeedsReview ? 'warn' : 'ok'}>
               Imported {importMut.data?.length ?? 0} item
-              {(importMut.data?.length ?? 0) === 1 ? '' : 's'} from the pasted text.
+              {(importMut.data?.length ?? 0) === 1 ? '' : 's'}.
+              {importedNeedsReview
+                ? ' Some items were a best-effort guess (see the Confidence marks below) — review them before publishing.'
+                : ''}
             </Banner>
           )}
           {importMut.isError && (
             <Banner tone="warn">
               {importIs415
-                ? 'Only plain-text agendas import here today. PDF support is a follow-up.'
-                : apiMessage(importMut.error, 'Could not import the agenda.')}
+                ? 'Only plain-text and PDF agendas import here today (DOCX and other formats are a follow-up).'
+                : importIs422
+                  ? apiMessage(
+                      importMut.error,
+                      "Couldn't find any recognizable items in that PDF. Try pasting the agenda's text instead.",
+                    )
+                  : apiMessage(importMut.error, 'Could not import the agenda.')}
             </Banner>
           )}
         </div>
