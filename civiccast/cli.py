@@ -113,6 +113,17 @@ dr_app = typer.Typer(
     help="Disaster-recovery drills (0.5.0): real backup/restore/crash-recovery proof.",
     no_args_is_help=True,
 )
+output_app = typer.Typer(
+    name="output",
+    help="S3 commissioning: quick output-path readiness checks.",
+    no_args_is_help=True,
+)
+egress_output_app = typer.Typer(
+    name="output",
+    help="S3 commissioning: drive a bounded test pattern through the playout engine.",
+    no_args_is_help=True,
+)
+egress_app.add_typer(egress_output_app)
 app.add_typer(installer_app)
 app.add_typer(model_app)
 app.add_typer(cert_app)
@@ -123,6 +134,7 @@ app.add_typer(egress_app)
 app.add_typer(live_takeover_app)
 app.add_typer(media_app)
 app.add_typer(dr_app)
+app.add_typer(output_app)
 # WS4 dual-runtime exclusion guard (slice:ws4-dual-runtime-guard): runtime_app
 # lives in civiccast/native/runtime_cli.py (not defined here like the other
 # sub-apps) because it is also registered standalone as the `civiccast-runtime`
@@ -177,15 +189,46 @@ def doctor(
             help="Filesystem path to probe for disk space (defaults to home directory).",
         ),
     ] = None,
+    profile: Annotated[
+        bool,
+        typer.Option(
+            "--profile",
+            help=(
+                "Render the full S1 StationBoxProfile (playout-engine "
+                "readiness, cable output, clock, AI default, PEG readiness) "
+                "instead of just the hardware probe."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Probe local hardware and report CPU, RAM, disk, GPU, OS, recommended tier.
 
-    The probe data is identical to what the `/api/hardware` endpoint
-    serves; this command is the operator-friendly view of it.
+    The plain (no ``--profile``) probe data is identical to what the
+    `/api/hardware` endpoint serves and its JSON shape is unchanged
+    (back-compat for existing consumers). ``--profile`` extends both the
+    human render and the JSON output to the full S1 ``StationBoxProfile`` —
+    playout-engine (GStreamer) readiness, cable output, clock, AI default,
+    and PEG readiness — with the plain ``HardwareProbe`` embedded verbatim
+    under ``hardware`` in the JSON so any consumer parsing the old flat
+    shape can migrate incrementally.
     """
     from pathlib import Path
 
-    result = probe(disk_path=Path(disk) if disk else None)
+    disk_path = Path(disk) if disk else None
+    if profile:
+        from civiccast.platform.station_box_profile import probe_station_box_profile
+
+        box_profile = probe_station_box_profile(
+            hardware_probe=probe(disk_path=disk_path),
+        )
+        if json_output:
+            typer.echo(box_profile.model_dump_json(indent=2))
+        else:
+            _render_probe_human(box_profile.hardware)
+            _render_station_box_profile_human(box_profile)
+        return
+
+    result = probe(disk_path=disk_path)
     if json_output:
         typer.echo(result.model_dump_json(indent=2))
     else:
@@ -466,6 +509,199 @@ def cable_ndi_plan(
     typer.echo("FFmpeg args:")
     typer.echo(" ".join(plan.ffmpeg_args))
     typer.echo(f"Next: {plan.next_step}")
+
+
+@cable_app.command("doctor")
+def cable_doctor(
+    profile: Annotated[
+        str,
+        typer.Option("--profile", help="Deployment profile to evaluate cable readiness for."),
+    ] = "public-meetings",
+    station_name: Annotated[
+        str, typer.Option("--station-name", help="Station name to stamp on the report.")
+    ] = "",
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
+) -> None:
+    """S3 Screen 8: run the first-run cable commissioning checks (read-only).
+
+    Cross-references S1's canonical `civiccast doctor --profile` rather than
+    duplicating the hardware/engine probe (RECONCILIATION D10) — this adds
+    the commissioning-specific checks (db, services, backup, timezone,
+    release integrity) on top of S1's StationBoxProfile.
+    """
+    from civiccast.installer.commissioning import run_first_run_cable_checks
+    from civiccast.installer.station_state import save_commissioning_checks
+
+    report = run_first_run_cable_checks(
+        deployment_profile=profile,  # type: ignore[arg-type]
+        station_name=station_name,
+    )
+    save_commissioning_checks(report)
+    if json_output:
+        typer.echo(report.model_dump_json(indent=2))
+    else:
+        typer.echo(f"First-run cable checks: {'READY' if report.ready else 'NOT READY'}")
+        for check in report.checks:
+            typer.echo(f"  [{check.status:8}] {check.label}: {check.detail}")
+            if check.next_step:
+                typer.echo(f"             next step: {check.next_step}")
+    if not report.ready:
+        raise typer.Exit(1)
+
+
+@cable_app.command("commission")
+def cable_commission(
+    channel_id: Annotated[str, typer.Option("--channel-id", help="Channel to commission.")],
+    headend_profile: Annotated[
+        str, typer.Option("--headend-profile", help="Headend profile id from the catalog.")
+    ],
+    destination: Annotated[
+        str, typer.Option("--destination", help="Headend destination address:port.")
+    ],
+    channel_name: Annotated[
+        str | None, typer.Option("--channel-name", help="Human-readable channel name.")
+    ] = None,
+    output_format: Annotated[
+        str, typer.Option("--output-format", help="720p30 | 1080i60 | 1080p30 | SD480i60.")
+    ] = "1080p30",
+    sdi_device: Annotated[
+        str | None, typer.Option("--sdi-device", help="DeckLink device name, if SDI is used.")
+    ] = None,
+    fill_policy: Annotated[
+        str, typer.Option("--fill-policy", help="slate | loop | silence.")
+    ] = "slate",
+    slate_asset_id: Annotated[
+        str | None, typer.Option("--slate-asset-id", help="Emergency slate asset id.")
+    ] = None,
+    duration_seconds: Annotated[
+        int, typer.Option("--duration-seconds", help="Output-proof run duration.")
+    ] = 60,
+    station_name: Annotated[
+        str, typer.Option("--station-name", help="Station name to stamp on the report.")
+    ] = "",
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
+) -> None:
+    """S3 screens 8-11: run the full cable commissioning flow end to end.
+
+    Runs first-run cable checks, validates the channel setup, runs the
+    bounded output proof, and builds the final commissioning report --
+    persisting each step to station-state as it completes (resumable: a
+    failure partway through leaves the earlier steps' results in place for
+    `civiccast doctor --profile` / a rerun to pick up).
+    """
+    from civiccast.egress.store import PostgresEgressStore
+    from civiccast.installer.commissioning import (
+        ChannelCommissioningSetup,
+        OutputProofSettings,
+        build_commissioning_report,
+        run_first_run_cable_checks,
+        run_output_proof,
+        validate_channel_commissioning_setup,
+    )
+    from civiccast.installer.station_state import (
+        save_channel_commissioning_setup,
+        save_commissioning_checks,
+        save_commissioning_proof_run,
+        save_commissioning_report,
+    )
+
+    checks = run_first_run_cable_checks(deployment_profile="peg-cable", station_name=station_name)
+    save_commissioning_checks(checks)
+    if not checks.ready:
+        if json_output:
+            typer.echo(checks.model_dump_json(indent=2))
+        else:
+            typer.echo("First-run cable checks failed; commissioning cannot continue.")
+            for blocker in checks.blockers:
+                typer.echo(f"  blocker: {blocker}")
+        raise typer.Exit(1)
+
+    setup = ChannelCommissioningSetup(
+        channel_id=channel_id,
+        channel_name=channel_name or channel_id,
+        output_format=output_format,  # type: ignore[arg-type]
+        headend_profile_id=headend_profile,
+        destination=destination,
+        sdi_device=sdi_device,
+        fill_policy=fill_policy,  # type: ignore[arg-type]
+        emergency_slate_asset_id=slate_asset_id,
+    )
+    try:
+        setup = validate_channel_commissioning_setup(setup)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    save_channel_commissioning_setup(setup)
+
+    store = PostgresEgressStore(_build_cli_session_factory())
+    config = store.get_config(channel_id)
+    if config is None:
+        raise typer.BadParameter(
+            f"No egress config for channel {channel_id!r}; apply a headend profile first "
+            "(civiccast cable package / the operator console publish-targets step)."
+        )
+
+    proof = run_output_proof(
+        OutputProofSettings(channel_id=channel_id, duration_seconds=duration_seconds),
+        config=config,
+        cea708_expected=setup.cea708_passthrough,
+    )
+    save_commissioning_proof_run(proof)
+
+    report = build_commissioning_report(
+        station_name=station_name, first_run_checks=checks, channel_setup=setup, proof_run=proof
+    )
+    save_commissioning_report(report)
+
+    if json_output:
+        typer.echo(report.model_dump_json(indent=2))
+    else:
+        typer.echo(
+            "Commissioning: "
+            + ("READY FOR BROADCAST" if report.ready_for_broadcast else "INCOMPLETE")
+        )
+        typer.echo(f"Channel: {report.channel_name}  Headend: {report.headend_profile_id}")
+        typer.echo(f"Output proof verdict: {proof.verdict}")
+        for step in report.next_steps:
+            typer.echo(f"  next step: {step}")
+    if not report.ready_for_broadcast:
+        raise typer.Exit(1)
+
+
+@cable_app.command("support-bundle")
+def cable_support_bundle(
+    output_dir: Annotated[
+        Path | None,
+        typer.Option("--output-dir", help="Unused placeholder; bundles are server-managed."),
+    ] = None,
+    note: Annotated[
+        str | None, typer.Option("--note", help="Optional operator note for the bundle.")
+    ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
+) -> None:
+    """S3 Screen 11: export a redacted support bundle (logs, config, health).
+
+    Thin wrapper over the existing `POST /api/staff/installer/support-bundle`
+    service function (`create_diagnostic_bundle`) -- S3 does not re-implement
+    bundle generation, only exposes it under the commissioning CLI surface.
+    """
+    from civiccast.installer.models import DiagnosticBundleRequest
+    from civiccast.installer.service import create_diagnostic_bundle
+
+    del output_dir  # server decides bundle storage location; kept for CLI parity with the spec
+    result = create_diagnostic_bundle(DiagnosticBundleRequest(operator_note=note))
+    if json_output:
+        typer.echo(result.model_dump_json(indent=2))
+    else:
+        typer.echo(f"Support bundle: {result.bundle_id}")
+        typer.echo(f"Path: {result.path}")
+        typer.echo(f"SHA-256: {result.sha256}")
+        typer.echo(f"Next: {result.next_step}")
 
 
 @installer_app.command("summary")
@@ -1113,6 +1349,118 @@ def egress_verify(
             typer.echo(f"  (boundary) {line}")
     if result.verdict != "pass":
         raise typer.Exit(1)
+
+
+@output_app.command("sdi-readiness")
+def output_sdi_readiness(
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
+) -> None:
+    """S3: quick check -- is the GStreamer SDI output path ready?
+
+    Cross-references S1's engine-readiness verdict (decklinkvideosink
+    element + DeckLink card heuristic + BMD Desktop Video SDK) rather than
+    probing a BYO ffmpeg build -- the SDI output path is the GStreamer
+    engine per S15.
+    """
+    from civiccast.platform.station_box_profile import probe_station_box_profile
+
+    profile = probe_station_box_profile()
+    decklink = profile.engine.decklink
+    if decklink.bmd_sdk_present and decklink.card_present:
+        status_value = "ok"
+    elif not decklink.bmd_sdk_present:
+        status_value = "bmd_sdk_unavailable"
+    elif "decklinkvideosink" in profile.engine.missing_plugins:
+        status_value = "decklinkvideosink_missing"
+    else:
+        status_value = "decklink_card_absent"
+    payload = {
+        "status": status_value,
+        "card_present": decklink.card_present,
+        "bmd_sdk_present": decklink.bmd_sdk_present,
+        "native_os": profile.engine.native_os,
+        "next_step": profile.engine.next_step,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    typer.echo(f"SDI output readiness: {status_value}")
+    typer.echo(f"  DeckLink card detected (heuristic): {'yes' if decklink.card_present else 'no'}")
+    typer.echo(
+        f"  BMD Desktop Video SDK:               {'yes' if decklink.bmd_sdk_present else 'no'}"
+    )
+    typer.echo(
+        f"  native OS:                            {'yes' if profile.engine.native_os else 'no'}"
+    )
+    if profile.engine.next_step:
+        typer.echo(f"Next: {profile.engine.next_step}")
+
+
+@egress_output_app.command("test-pattern")
+def egress_output_test_pattern(
+    channel_id: Annotated[
+        str, typer.Option("--channel-id", help="Channel to drive the test pattern to.")
+    ],
+    pattern: Annotated[str, typer.Option("--pattern", help="bars | tone | slate.")] = "bars",
+    duration_seconds: Annotated[
+        int, typer.Option("--duration-seconds", help="How long to run the test pattern.")
+    ] = 600,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
+) -> None:
+    """S3 Screen 10: drive a bounded test pattern through the GStreamer engine to the selected sink.
+
+    Blocks for the full duration (mirrors `egress verify`'s bounded-capture
+    posture) and exits non-zero if the pattern generator fails to start.
+    """
+    from civiccast.egress.store import PostgresEgressStore
+    from civiccast.installer.commissioning import (
+        _default_test_pattern_runner,
+        _extract_muxrate_kbps,
+    )
+
+    store = PostgresEgressStore(_build_cli_session_factory())
+    config = store.get_config(channel_id)
+    if config is None:
+        raise typer.BadParameter(f"No egress config for channel {channel_id!r}.")
+    from civiccast.egress.compliance import _udp_ts_sink
+
+    try:
+        sink = _udp_ts_sink(config)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    started_at = datetime.now(UTC)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "started_at": started_at.isoformat(),
+                    "pattern": pattern,
+                    "channel_id": channel_id,
+                },
+                indent=2,
+            )
+        )
+    else:
+        typer.echo(
+            f"Generating test {pattern} on channel {channel_id} through the GStreamer engine -> {sink.uri}..."
+        )
+    try:
+        _default_test_pattern_runner(
+            sink.uri,
+            duration_seconds,
+            pattern,
+            _extract_muxrate_kbps(sink),  # type: ignore[arg-type]
+        )
+    except Exception as exc:
+        typer.echo(f"Test pattern generation failed: {exc}")
+        raise typer.Exit(1) from exc
+    if not json_output:
+        typer.echo("Test pattern run complete.")
 
 
 @egress_app.command("trim-health")
@@ -1830,6 +2178,71 @@ def _render_probe_human(result: HardwareProbe) -> None:
 
     # S11a: the CEA-608/708 caption lane (decode-back + embed capability).
     _doctor_check_captions()
+
+
+def _render_station_box_profile_human(profile: Any) -> None:
+    """Render the S1 StationBoxProfile sections appended after the hardware probe.
+
+    ``profile`` is a ``StationBoxProfile`` (typed as Any here to avoid a
+    module-level import cycle risk between cli.py and the platform
+    package's growing surface -- callers always pass the real type).
+    Honest "—" everywhere a dimension is absent; never fabricates a pass.
+    """
+    typer.echo("")
+    typer.echo("Playout engine (S15 GStreamer)")
+    engine = profile.engine
+    if engine.gstreamer_present:
+        typer.echo(f"  GStreamer: {engine.gstreamer_version or 'present'}")
+    else:
+        typer.echo("  GStreamer: NOT FOUND")
+    if engine.missing_plugins:
+        typer.echo(f"  missing plugins: {', '.join(engine.missing_plugins)}")
+    else:
+        typer.echo("  required plugins: all present")
+    typer.echo(f"  OpenGL 4.5:      {'yes' if engine.opengl_45 else 'no'}")
+    typer.echo(f"  hardware encoder: {engine.hw_encoder}")
+    typer.echo(
+        f"  DeckLink/BMD SDK: {'present' if engine.decklink.bmd_sdk_present else 'not detected'}"
+    )
+    typer.echo(f"  NDI SDK:          {'present' if engine.ndi_sdk.sdk_present else 'not detected'}")
+    typer.echo(f"  native OS:        {'yes' if engine.native_os else 'no (WSL2)'}")
+    typer.echo(f"  qualified engine tier: {profile.qualified_engine_tier.qualifies_for}")
+    if engine.next_step:
+        typer.echo(f"  next step: {engine.next_step}")
+
+    typer.echo("")
+    typer.echo("Cable output")
+    typer.echo(f"  SDI (BYO ffmpeg): {profile.sdi.status}")
+    typer.echo(
+        f"  TSDuck:           {'installed ' + (profile.tsduck.version or '') if profile.tsduck.installed else 'not installed'}"
+    )
+
+    typer.echo("")
+    typer.echo("Clock")
+    typer.echo(f"  timezone: {profile.clock.timezone}  (UTC{profile.clock.utc_offset_minutes:+d}m)")
+    typer.echo(f"  NTP sync: {profile.clock.ntp_sync}")
+    if profile.clock.note:
+        typer.echo(f"  {profile.clock.note}")
+
+    typer.echo("")
+    typer.echo("AI default")
+    ai = profile.ai_default
+    typer.echo(f"  summary:   {ai.summary_model}  ({ai.basis})")
+    typer.echo(f"  translate: {ai.translate_model}")
+    typer.echo(f"  caption:   {ai.caption_model}")
+    typer.echo(f"  {ai.rationale}")
+
+    typer.echo("")
+    typer.echo("Cable-grade OS")
+    typer.echo(f"  {profile.cable_os_verdict.rationale}")
+
+    typer.echo("")
+    typer.echo(f"PEG readiness: {profile.peg_readiness.overall.upper()}")
+    for dimension in profile.peg_readiness.dimensions:
+        line = f"  [{dimension.color:6}] {dimension.label}: {dimension.message}"
+        typer.echo(line)
+        if dimension.next_step:
+            typer.echo(f"           next step: {dimension.next_step}")
 
 
 def _doctor_check_cdn() -> None:

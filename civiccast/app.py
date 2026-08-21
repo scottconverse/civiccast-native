@@ -153,6 +153,8 @@ from civiccast.egress.store import PostgresEgressStore
 from civiccast.egress.takeover_service import AlreadyLiveError, TakeoverService
 from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
 from civiccast.facility.router import staff_router as facility_staff_router
+from civiccast.installer.commissioning_router import get_commissioning_egress_store
+from civiccast.installer.commissioning_router import staff_router as commissioning_staff_router
 from civiccast.installer.router import get_live_recording_finalizer
 from civiccast.installer.router import public_router as installer_public_router
 from civiccast.installer.router import staff_router as installer_staff_router
@@ -230,6 +232,8 @@ from civiccast.paywall.service import PaywallService
 from civiccast.paywall.store import PaywallStore
 from civiccast.platform.hardware import HardwareProbe, probe, public_hardware_probe
 from civiccast.platform.providers import PROVIDER_KIND_WEBHOOK, default_registry
+from civiccast.platform.station_router import box_profile_router as station_box_profile_router
+from civiccast.platform.station_router import staff_router as station_profile_staff_router
 from civiccast.platform.stores import AppStoreBundle
 from civiccast.platform.worker_runtime import ThreadSupervisor
 from civiccast.playback_policy.router import public_router as playback_policy_public_router
@@ -692,14 +696,21 @@ def _station_tz() -> tzinfo:
     unknown/invalid IANA name. S18 dayparts are wall-clock in this zone —
     without it, "prime time 18:00" would fire at 18:00 UTC for an off-UTC
     station.
-    """
-    name = os.environ.get("CIVICCAST_STATION_TZ")
-    source = "CIVICCAST_STATION_TZ"
-    if not name:
-        from civiccast.installer.station_state import read_station_timezone
 
-        name = read_station_timezone()
-        source = "the persisted station_timezone"
+    S1 (StationBoxProfile): the actual env-override-vs-persisted-vs-default
+    precedence chain lives in exactly one place —
+    :func:`civiccast.installer.station_state.resolve_station_timezone` —
+    this function is just the ``str -> tzinfo`` conversion + honest-fallback
+    layer on top of that shared loader.
+    """
+    from civiccast.installer.station_state import resolve_station_timezone
+
+    name = resolve_station_timezone()
+    source = (
+        "CIVICCAST_STATION_TZ"
+        if os.environ.get("CIVICCAST_STATION_TZ")
+        else "the persisted station_timezone"
+    )
     if not name or name == "local":
         return UTC
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -1746,6 +1757,9 @@ def create_app() -> FastAPI:
     app.include_router(contribute_staff_router)
     app.include_router(installer_public_router)
     app.include_router(installer_staff_router)
+    app.include_router(station_box_profile_router)
+    app.include_router(station_profile_staff_router)
+    app.include_router(commissioning_staff_router)
     app.include_router(alerting_staff_router)
     app.include_router(control_room_staff_router)
     app.include_router(contribution_staff_router)
@@ -2140,6 +2154,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.dependency_overrides[get_live_finalization_worker] = _resolve_live_finalization_worker
     app.dependency_overrides[get_live_recording_finalizer] = _resolve_live_recording_finalizer
     app.dependency_overrides[get_egress_store] = _resolve_egress_store
+    app.dependency_overrides[get_commissioning_egress_store] = _resolve_egress_store
     # Enable the surge switch now that durable storage (egress store) is ready;
     # from_env returns None unless CIVICCAST_LIVE_SURGE_THRESHOLD is set.
     app.state.surge_switch_service = SurgeSwitchService.from_env(
