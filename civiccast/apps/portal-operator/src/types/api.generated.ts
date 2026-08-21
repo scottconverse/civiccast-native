@@ -249,6 +249,10 @@ export interface AnalyticsReport {
   podcast_downloads?: Array<AnalyticsDimensionCount>
   retained_fields: Array<string>
   privacy_boundary: string
+  vod_rollups?: Array<ViewershipRollupPoint>
+  live_rollups?: Array<ViewershipRollupPoint>
+  year_over_year?: Array<YearOverYearPoint>
+  ingest_configured?: boolean
 }
 
 export interface AppBuildProfile {
@@ -542,6 +546,20 @@ export interface BetaHandoffSummary {
 
 export interface BoardCreateRequest {
   template_id: string
+}
+
+export interface BoardPdfInclude {
+  totals?: boolean
+  top_content?: boolean
+  yoy?: boolean
+  live_peaks?: boolean
+}
+
+export interface BoardPdfRequest {
+  range_start: string
+  range_end: string
+  include?: BoardPdfInclude
+  station_label?: string
 }
 
 export interface BoardUpdateRequest {
@@ -3334,6 +3352,17 @@ export interface RollbackRequest {
   reason: string
 }
 
+export interface RollupStats {
+  total_viewer_count: number
+  total_time_viewed_seconds: number
+  peak_concurrent?: number | null
+}
+
+export interface RollupsResponse {
+  rollups: Array<ViewershipRollupPoint>
+  stats: RollupStats
+}
+
 export interface RoomDetail {
   room: ContributionRoom
   invites: Array<GuestInvite>
@@ -4389,6 +4418,18 @@ export interface ViewerTokenResponse {
   expires_at?: string | null
 }
 
+export interface ViewershipRollupPoint {
+  stream_type: 'vod' | 'live'
+  bucket_kind: 'day' | 'halfhour' | 'hour'
+  bucket_start: string
+  subject_id: string
+  viewer_count: number
+  time_viewed_seconds: number
+  peak_concurrent?: number | null
+  avg_concurrent?: number | null
+  samples: number
+}
+
 export interface VirtualRouterButton {
   button_id: string
   label: string
@@ -4445,6 +4486,13 @@ export interface VolunteerRole {
   active?: boolean
   created_at?: string
   updated_at?: string
+}
+
+export interface YearOverYearPoint {
+  metric: 'viewer_count' | 'time_viewed_seconds' | 'peak_concurrent'
+  current_period: number
+  prior_period: number
+  delta_pct?: number | null
 }
 
 export interface ZoneInput {

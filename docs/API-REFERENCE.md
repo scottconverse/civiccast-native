@@ -1037,6 +1037,15 @@ Update a tunable alert rule.
 - Request body: `AlertRuleUpdate`
 - Responses: 200 `AlertRule`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Rule not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
 
+### `GET /api/staff/analytics/export.csv`
+
+Download a flat rollup CSV (PEG automation coverage floor).
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: support_admin or publish_operator
+- Parameters: `stream_type` (query, required): `'vod' | 'live'`; `bucket` (query, optional): `'day' | 'halfhour' | 'hour' | null`; `range_days` (query, optional): `number`
+- Request body: none
+- Responses: 200 Successful Response; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/analytics/reports/audience`
 
 Build a packaged audience report — the franchise-authority deliverable. Use ?format=csv or ?format=xml for export-ready downloads..
@@ -1046,14 +1055,32 @@ Build a packaged audience report — the franchise-authority deliverable. Use ?f
 - Request body: none
 - Responses: 200 `AudienceReport`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `POST /api/staff/analytics/reports/board-pdf`
+
+Generate the one-click board-ready PDF (totals / top content / YoY / live peaks).
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: support_admin or publish_operator
+- Parameters: none
+- Request body: `BoardPdfRequest`
+- Responses: 200 Successful Response; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/analytics/reports/overview`
 
 Read aggregate-only station analytics report.
 
-- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
-- Parameters: `range_days` (query, optional): `number`
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: support_admin or publish_operator
+- Parameters: `range_days` (query, optional): `number`; `stream_type` (query, optional): `'vod' | 'live' | 'all'`; `metric` (query, optional): `'viewer_count' | 'time_viewed' | 'peak_concurrent'`
 - Request body: none
 - Responses: 200 `AnalyticsReport`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/analytics/rollups`
+
+Read pre-aggregated viewership rollups (bar chart + time-series + stats).
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: support_admin or publish_operator
+- Parameters: `stream_type` (query, required): `'vod' | 'live'`; `bucket` (query, optional): `'day' | 'halfhour' | 'hour' | null`; `range_days` (query, optional): `number`; `top_n` (query, optional): `number`
+- Request body: none
+- Responses: 200 `RollupsResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `GET /api/staff/app/builds`
 
@@ -4323,13 +4350,17 @@ Read CivicCast local federation metadata.
 - `device_breakdown` (optional): `Array<AnalyticsDimensionCount>`
 - `generated_at` (required): `string`
 - `geography` (optional): `Array<AnalyticsDimensionCount>`
+- `ingest_configured` (optional): `boolean`
 - `live_concurrent_viewers` (optional): `Array<LiveConcurrentPoint>`
+- `live_rollups` (optional): `Array<ViewershipRollupPoint>`
 - `platform_breakdown` (optional): `Array<AnalyticsDimensionCount>`
 - `podcast_downloads` (optional): `Array<AnalyticsDimensionCount>`
 - `privacy_boundary` (required): `string`
 - `range_days` (required): `number`
 - `retained_fields` (required): `Array<string>`
 - `subscription_growth` (optional): `Array<AnalyticsDimensionCount>`
+- `vod_rollups` (optional): `Array<ViewershipRollupPoint>`
+- `year_over_year` (optional): `Array<YearOverYearPoint>`
 
 ### `AppBuildProfile`
 
@@ -4623,6 +4654,20 @@ Read CivicCast local federation metadata.
 ### `BoardCreateRequest`
 
 - `template_id` (required): `string`
+
+### `BoardPdfInclude`
+
+- `live_peaks` (optional): `boolean`
+- `top_content` (optional): `boolean`
+- `totals` (optional): `boolean`
+- `yoy` (optional): `boolean`
+
+### `BoardPdfRequest`
+
+- `include` (optional): `BoardPdfInclude`
+- `range_end` (required): `string`
+- `range_start` (required): `string`
+- `station_label` (optional): `string`
 
 ### `BoardUpdateRequest`
 
@@ -7420,6 +7465,17 @@ rule (S13 §5.1).
 
 - `reason` (required): `string`
 
+### `RollupStats`
+
+- `peak_concurrent` (optional): `number | null`
+- `total_time_viewed_seconds` (required): `number`
+- `total_viewer_count` (required): `number`
+
+### `RollupsResponse`
+
+- `rollups` (required): `Array<ViewershipRollupPoint>`
+- `stats` (required): `RollupStats`
+
 ### `RoomDetail`
 
 - `invites` (required): `Array<GuestInvite>`
@@ -8477,6 +8533,18 @@ rule (S13 §5.1).
 - `token` (required): `string`
 - `viewer` (required): `ViewerAccount`
 
+### `ViewershipRollupPoint`
+
+- `avg_concurrent` (optional): `number | null`
+- `bucket_kind` (required): `'day' | 'halfhour' | 'hour'`
+- `bucket_start` (required): `string`
+- `peak_concurrent` (optional): `number | null`
+- `samples` (required): `number`
+- `stream_type` (required): `'vod' | 'live'`
+- `subject_id` (required): `string`
+- `time_viewed_seconds` (required): `number`
+- `viewer_count` (required): `number`
+
 ### `VirtualRouterButton`
 
 - `button_id` (required): `string`
@@ -8534,6 +8602,13 @@ rule (S13 §5.1).
 - `role_name` (required): `string`
 - `updated_at` (optional): `string`
 - `volunteer_id` (required): `string`
+
+### `YearOverYearPoint`
+
+- `current_period` (required): `number`
+- `delta_pct` (optional): `number | null`
+- `metric` (required): `'viewer_count' | 'time_viewed_seconds' | 'peak_concurrent'`
+- `prior_period` (required): `number`
 
 ### `ZoneInput`
 

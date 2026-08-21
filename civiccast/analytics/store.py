@@ -21,6 +21,7 @@ from civiccast.analytics.models import (
     AssetViewPoint,
     LiveConcurrentPoint,
     ReportDimension,
+    ViewershipRollupPoint,
 )
 from civiccast.app_platform.models import AnalyticsEvent
 from civiccast.installer.storage import default_storage_dir
@@ -65,6 +66,21 @@ class AnalyticsStoreProtocol(Protocol):
 
     def report(self, *, range_days: int = 30) -> AnalyticsReport: ...
 
+    def save_snapshot(
+        self,
+        *,
+        snapshot_id: str,
+        generated_at: datetime,
+        range_start: datetime,
+        range_end: datetime,
+        report_json: str,
+        created_by: str,
+    ) -> None: ...
+
+    def rollups(
+        self, *, stream_type: str, bucket_kind: str, range_days: int = 30
+    ) -> list[ViewershipRollupPoint]: ...
+
 
 class AnalyticsStore:
     """JSON-backed aggregate-only analytics store for compact station reports."""
@@ -104,6 +120,11 @@ class AnalyticsStore:
                 for event in self._events.values()
                 if event.occurred_at >= cutoff
             ]
+        # Local import: civiccast.app_platform.router already imports FROM
+        # civiccast.analytics.store (for the public ingest endpoint's store
+        # DI seam) -- importing it at module scope here would be circular.
+        from civiccast.app_platform.router import public_analytics_ingest_configured
+
         return AnalyticsReport(
             generated_at=datetime.now(UTC),
             range_days=range_days,
@@ -118,7 +139,34 @@ class AnalyticsStore:
             podcast_downloads=_podcast_downloads(events),
             retained_fields=list(_RETAINED_FIELDS),
             privacy_boundary="aggregate-only-no-session-ip-or-viewer-identity",
+            ingest_configured=public_analytics_ingest_configured(),
         )
+
+    def save_snapshot(
+        self,
+        *,
+        snapshot_id: str,
+        generated_at: datetime,
+        range_start: datetime,
+        range_end: datetime,
+        report_json: str,
+        created_by: str,
+    ) -> None:
+        # The JSON-file-backed store has no durable snapshot table (that's
+        # the S14 net-new AnalyticsReportSnapshotDb, Postgres-only). A board
+        # PDF still generates and downloads on this store; it just isn't
+        # persisted for later reproducibility -- an ephemeral-mode station
+        # has no durable storage to persist it into anyway.
+        return None
+
+    def rollups(
+        self, *, stream_type: str, bucket_kind: str, range_days: int = 30
+    ) -> list[ViewershipRollupPoint]:
+        # No rollup worker runs against the JSON-file store — S14's
+        # background rollup pass is Postgres-only. Returns empty rather than
+        # raising, so a station without durable storage sees an honest
+        # empty-state dashboard instead of a 500.
+        return []
 
     def _load_events(self) -> dict[str, AnalyticsRetainedEvent]:
         if self._state_path is None:

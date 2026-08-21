@@ -6346,6 +6346,7 @@
           "analytics"
         ],
         "summary": "Read aggregate-only station analytics report",
+        "description": "``stream_type``/``metric`` steer the dashboard's toolbar (S14 \u00a75 panel 1).\n\n``metric`` does not change which fields are present (every rollup point\nalready carries viewer_count/time_viewed_seconds/peak_concurrent); it is\naccepted here so the toolbar's full query contract round-trips, and the\n``/rollups`` endpoint is where it actually orders/limits results.",
         "operationId": "read_analytics_report_api_staff_analytics_reports_overview_get",
         "parameters": [
           {
@@ -6358,6 +6359,36 @@
               "minimum": 1,
               "default": 30,
               "title": "Range Days"
+            }
+          },
+          {
+            "name": "stream_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "vod",
+                "live",
+                "all"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Stream Type"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "viewer_count",
+                "time_viewed",
+                "peak_concurrent"
+              ],
+              "type": "string",
+              "default": "viewer_count",
+              "title": "Metric"
             }
           }
         ],
@@ -6397,6 +6428,10 @@
             }
           }
         },
+        "x-required-roles": [
+          "support_admin",
+          "publish_operator"
+        ],
         "security": [
           {
             "CivicCastStaffBearer": []
@@ -6545,6 +6580,289 @@
             }
           }
         },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/analytics/rollups": {
+      "get": {
+        "tags": [
+          "staff",
+          "analytics"
+        ],
+        "summary": "Read pre-aggregated viewership rollups (bar chart + time-series + stats)",
+        "description": "VOD is always ``bucket=day``; Live defaults to ``halfhour`` (hourly for\na single-day range is the dashboard's own display choice \u2014 pass\n``bucket=hour`` explicitly to get it; both granularities are persisted).",
+        "operationId": "read_rollups_api_staff_analytics_rollups_get",
+        "parameters": [
+          {
+            "name": "stream_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "vod",
+                "live"
+              ],
+              "type": "string",
+              "title": "Stream Type"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "day",
+                    "halfhour",
+                    "hour"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Bucket"
+            }
+          },
+          {
+            "name": "range_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 366,
+              "minimum": 1,
+              "default": 30,
+              "title": "Range Days"
+            }
+          },
+          {
+            "name": "top_n",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 10,
+              "title": "Top N"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RollupsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "support_admin",
+          "publish_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/analytics/export.csv": {
+      "get": {
+        "tags": [
+          "staff",
+          "analytics"
+        ],
+        "summary": "Download a flat rollup CSV (PEG automation coverage floor)",
+        "operationId": "export_rollups_api_staff_analytics_export_csv_get",
+        "parameters": [
+          {
+            "name": "stream_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "vod",
+                "live"
+              ],
+              "type": "string",
+              "title": "Stream Type"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "day",
+                    "halfhour",
+                    "hour"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Bucket"
+            }
+          },
+          {
+            "name": "range_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 366,
+              "minimum": 1,
+              "default": 30,
+              "title": "Range Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/csv": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "support_admin",
+          "publish_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/analytics/reports/board-pdf": {
+      "post": {
+        "tags": [
+          "staff",
+          "analytics"
+        ],
+        "summary": "Generate the one-click board-ready PDF (totals / top content / YoY / live peaks)",
+        "description": "Renders the PDF and persists an ``AnalyticsReportSnapshot`` (durable\nstorage only \u2014 the JSON-backed store's ``save_snapshot`` is a no-op, so\nthe PDF still downloads on an ephemeral/JSON-mode station; it just is\nnot reproducible from a stored snapshot later).",
+        "operationId": "generate_board_pdf_api_staff_analytics_reports_board_pdf_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoardPdfRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/pdf": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "support_admin",
+          "publish_operator"
+        ],
         "security": [
           {
             "CivicCastStaffBearer": []
@@ -29737,6 +30055,32 @@
           "privacy_boundary": {
             "type": "string",
             "title": "Privacy Boundary"
+          },
+          "vod_rollups": {
+            "items": {
+              "$ref": "#/components/schemas/ViewershipRollupPoint"
+            },
+            "type": "array",
+            "title": "Vod Rollups"
+          },
+          "live_rollups": {
+            "items": {
+              "$ref": "#/components/schemas/ViewershipRollupPoint"
+            },
+            "type": "array",
+            "title": "Live Rollups"
+          },
+          "year_over_year": {
+            "items": {
+              "$ref": "#/components/schemas/YearOverYearPoint"
+            },
+            "type": "array",
+            "title": "Year Over Year"
+          },
+          "ingest_configured": {
+            "type": "boolean",
+            "title": "Ingest Configured",
+            "default": true
           }
         },
         "additionalProperties": false,
@@ -31719,6 +32063,65 @@
         ],
         "title": "BoardCreateRequest",
         "description": "Body for ``POST /channels/{channel_id}/board``."
+      },
+      "BoardPdfInclude": {
+        "properties": {
+          "totals": {
+            "type": "boolean",
+            "title": "Totals",
+            "default": true
+          },
+          "top_content": {
+            "type": "boolean",
+            "title": "Top Content",
+            "default": true
+          },
+          "yoy": {
+            "type": "boolean",
+            "title": "Yoy",
+            "default": true
+          },
+          "live_peaks": {
+            "type": "boolean",
+            "title": "Live Peaks",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "BoardPdfInclude",
+        "description": "Which sections the board PDF renders (all default on \u2014 S14 \u00a75)."
+      },
+      "BoardPdfRequest": {
+        "properties": {
+          "range_start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Range Start"
+          },
+          "range_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Range End"
+          },
+          "include": {
+            "$ref": "#/components/schemas/BoardPdfInclude"
+          },
+          "station_label": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Station Label",
+            "default": "CivicCast station"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "range_start",
+          "range_end"
+        ],
+        "title": "BoardPdfRequest"
       },
       "BoardUpdateRequest": {
         "properties": {
@@ -49676,6 +50079,61 @@
         "title": "RollbackRequest",
         "description": "Body for ``POST /api/staff/playout/rollback/{report_id}``."
       },
+      "RollupStats": {
+        "properties": {
+          "total_viewer_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Viewer Count"
+          },
+          "total_time_viewed_seconds": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Time Viewed Seconds"
+          },
+          "peak_concurrent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peak Concurrent"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "total_viewer_count",
+          "total_time_viewed_seconds"
+        ],
+        "title": "RollupStats",
+        "description": "Summary stats accompanying a ``/rollups`` read (S14 \u00a74)."
+      },
+      "RollupsResponse": {
+        "properties": {
+          "rollups": {
+            "items": {
+              "$ref": "#/components/schemas/ViewershipRollupPoint"
+            },
+            "type": "array",
+            "title": "Rollups"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/RollupStats"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rollups",
+          "stats"
+        ],
+        "title": "RollupsResponse",
+        "description": "The dashboard's bar-chart + time-series + stats panels read this."
+      },
       "RoomDetail": {
         "properties": {
           "room": {
@@ -56729,6 +57187,88 @@
         "title": "ViewerTokenResponse",
         "description": "Server-signed resident playback entitlement."
       },
+      "ViewershipRollupPoint": {
+        "properties": {
+          "stream_type": {
+            "type": "string",
+            "enum": [
+              "vod",
+              "live"
+            ],
+            "title": "Stream Type"
+          },
+          "bucket_kind": {
+            "type": "string",
+            "enum": [
+              "day",
+              "halfhour",
+              "hour"
+            ],
+            "title": "Bucket Kind"
+          },
+          "bucket_start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Bucket Start"
+          },
+          "subject_id": {
+            "type": "string",
+            "title": "Subject Id"
+          },
+          "viewer_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Viewer Count"
+          },
+          "time_viewed_seconds": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Time Viewed Seconds"
+          },
+          "peak_concurrent": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peak Concurrent"
+          },
+          "avg_concurrent": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Concurrent"
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Samples"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "stream_type",
+          "bucket_kind",
+          "bucket_start",
+          "subject_id",
+          "viewer_count",
+          "time_viewed_seconds",
+          "samples"
+        ],
+        "title": "ViewershipRollupPoint",
+        "description": "One pre-aggregated rollup bucket (S14 \u00a73/\u00a76.1)."
+      },
       "VirtualRouterButton": {
         "properties": {
           "button_id": {
@@ -57138,6 +57678,49 @@
         ],
         "title": "VolunteerRole",
         "description": "One volunteer roster entry: a person with a named station role."
+      },
+      "YearOverYearPoint": {
+        "properties": {
+          "metric": {
+            "type": "string",
+            "enum": [
+              "viewer_count",
+              "time_viewed_seconds",
+              "peak_concurrent"
+            ],
+            "title": "Metric"
+          },
+          "current_period": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Current Period"
+          },
+          "prior_period": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Prior Period"
+          },
+          "delta_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Pct"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "metric",
+          "current_period",
+          "prior_period"
+        ],
+        "title": "YearOverYearPoint",
+        "description": "Current-vs-prior-year comparison for one headline metric (S14 \u00a76.2)."
       },
       "ZoneInput": {
         "properties": {
