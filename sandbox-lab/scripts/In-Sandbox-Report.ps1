@@ -356,7 +356,14 @@ function Invoke-StationDiagCapture {
                 Message      = ($_.Message -split "`n" | Select-Object -First 5) -join ' | '
             }
         })
-        ($eventRows | ConvertTo-Json -Depth 4) | Set-Content -Path (Join-Path $diagDir 'winevent-app-system.json') -Encoding UTF8
+        # (,$eventRows) forces ConvertTo-Json to keep serializing a
+        # single-element (or zero-element) collection as a JSON array --
+        # without the unary comma, PowerShell's pipeline unrolls a
+        # one-item array before ConvertTo-Json ever sees it, silently
+        # producing a bare JSON object instead of a one-element array (a
+        # real gap found reviewing 8579e66-run4's own captured evidence,
+        # which had exactly one Windows Event Log entry).
+        ((, $eventRows) | ConvertTo-Json -Depth 4) | Set-Content -Path (Join-Path $diagDir 'winevent-app-system.json') -Encoding UTF8
     } catch { "winevent capture failed: $_" | Add-Content -Path $note -Encoding UTF8 }
 
     if ($InstallDir) {
