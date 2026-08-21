@@ -82,16 +82,19 @@ def test_expected_head_matches_the_single_migration_head() -> None:
     # chain.) 0074_caption_review_audio_evidence (same owner decision; widens the
     # schedule_items_no_overlap EXCLUDE to also block on published items)
     # chains after 0070. 0075_offline_caption_jobs (CivicCast One keystone K3
-    # — the durable offline caption job for published recordings) is the
-    # current head, chained after 0074.
-    assert expected_migration_head() == "0075_offline_caption_jobs"
+    # — the durable offline caption job for published recordings) chains
+    # after 0074. 0076_analytics_viewership (S14 — durable
+    # viewership_events/viewership_rollups/analytics_report_snapshots,
+    # promoting the analytics-events.json store to Postgres) is the current
+    # head, chained after 0075.
+    assert expected_migration_head() == "0076_analytics_viewership"
 
 
 def test_expected_head_does_not_depend_on_current_working_directory(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     expected_migration_head.cache_clear()
     monkeypatch.chdir(tmp_path)
     try:
-        assert expected_migration_head() == "0075_offline_caption_jobs"
+        assert expected_migration_head() == "0076_analytics_viewership"
     finally:
         expected_migration_head.cache_clear()
 
@@ -106,7 +109,7 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
         conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL)")
         conn.execute(
             "INSERT INTO alembic_version (version_num) VALUES (?)",
-            ("0075_offline_caption_jobs",),
+            ("0076_analytics_viewership",),
         )
         conn.commit()
 
@@ -119,8 +122,8 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
 
     assert status == SchemaStatus(
         state="current",
-        db_revision="0075_offline_caption_jobs",
-        expected_head="0075_offline_caption_jobs",
+        db_revision="0076_analytics_viewership",
+        expected_head="0076_analytics_viewership",
     )
 
 
