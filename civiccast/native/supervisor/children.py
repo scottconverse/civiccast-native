@@ -155,6 +155,15 @@ class ChildSpec(BaseModel):
 
     readiness_budget_seconds: float = Field(gt=0)
 
+    # Gate A run #4 fix (2026-08-21): the file name (minus ``.log``, fed to
+    # ``child_log_path``) that ``_file_backed_popen_factory`` uses for THIS
+    # child's own inherited stdout/stderr capture, when it must differ from
+    # ``name``. None (the default) reproduces the prior behavior exactly:
+    # the launcher's own stdio is captured under ``child_log_path(name)``,
+    # same as every child that never sets this. See
+    # ``postgres_child_spec``'s docstring for why postgres needs the split.
+    stdio_log_name: str | None = None
+
     @model_validator(mode="after")
     def _check_graceful_stop_shape(self) -> ChildSpec:
         if self.graceful_stop_kind == "argv" and not self.graceful_stop_argv_template:
@@ -288,10 +297,41 @@ def postgres_child_spec(
     postmaster its own copies of those handles, and nothing in this module
     previously forced the postmaster to flush anything through them). ``pg_ctl
     -l`` is the documented, ops-recommended way to get postgres server output
-    into a file and does not depend on that inheritance chain at all. Additive:
-    the generic stdio redirect stays wired (still catches ``pg_ctl``'s own
-    console messages), so omitting ``log_path`` reproduces the prior behavior
-    exactly.
+    into a file and does not depend on that inheritance chain at all.
+
+    DAY-ONE REGRESSION fixed here (Gate A run #4, 2026-08-21): that
+    diagnosability fix, as landed, pointed pg_ctl's ``-l`` at THE SAME path
+    ``_file_backed_popen_factory`` already uses for pg_ctl's own generic
+    stdio capture (both resolve to ``child_log_path("postgres")``). On
+    Windows, ``pg_ctl start -l <file>`` is implemented by spawning
+    ``cmd /c "<postmaster invocation> >> <file> 2>&1"`` (see PostgreSQL's
+    ``src/bin/pg_ctl/pg_ctl.c``, ``start_postmaster``) -- a THIRD process
+    reopening the same path cmd's ``>>`` redirection requests a share mode
+    incompatible with the handle the supervisor's Python process already
+    has open (inherited by pg_ctl as its own stdout/stderr). The result is a
+    deterministic ``ERROR_SHARING_VIOLATION`` ("The process cannot access
+    the file because it is being used by another process."), so the
+    postmaster is NEVER spawned -- every fresh native install failed this
+    way (installer exit 0, service Running, nothing ever listens on 5432 or
+    8000). Confirmed by local repro: launching pg_ctl exactly as production
+    does, with BOTH pg_ctl's own stdio and ``-l`` pointed at one file,
+    reproduces the identical error text and a nonzero pg_ctl exit; pointing
+    them at two different files (this fix) starts the postmaster cleanly.
+    nats-server does NOT share this defect -- it is a single process that
+    opens its own ``-l`` file directly (no cmd.exe relaunch), and an
+    equivalent same-file repro against nats-server did not fail -- so this
+    fix is scoped to postgres only; ``nats_child_spec`` is unchanged.
+
+    The fix: when ``log_path`` is given, pg_ctl's OWN generic-capture stdio
+    (the file ``_file_backed_popen_factory`` opens and hands to ``Popen`` as
+    stdout/stderr) is redirected to a SEPARATE file, ``postgres-launcher.log``
+    (via :attr:`ChildSpec.stdio_log_name`), so nothing ever opens
+    ``postgres.log`` twice. ``postgres.log`` (the ``-l`` target) keeps being
+    the durable postmaster log operators and tooling already expect at that
+    name; ``postgres-launcher.log`` carries only pg_ctl's own transient
+    "waiting for server to start..." console chatter. Omitting ``log_path``
+    still reproduces the pre-diagnosability-fix behavior exactly (single
+    generic capture file, no ``-l``, ``stdio_log_name`` stays ``None``).
     """
 
     argv = [pg_ctl_path, "start", "-D", data_dir, "-w", "-o", f"-p {port} -h {host}"]
@@ -307,6 +347,9 @@ def postgres_child_spec(
         graceful_stop_argv_template=[pg_ctl_path, "stop", "-D", data_dir, "-m", "fast"],
         graceful_stop_deadline_seconds=graceful_stop_deadline_seconds,
         readiness_budget_seconds=readiness_budget_seconds,
+        # Gate A run #4 fix: never let pg_ctl's own stdio capture and its
+        # "-l" target collide on the same file -- see the docstring above.
+        stdio_log_name="postgres-launcher" if log_path is not None else None,
     )
 
 

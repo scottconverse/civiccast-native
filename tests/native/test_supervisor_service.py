@@ -1855,6 +1855,53 @@ def _captured_popen_call(
     return captured
 
 
+# ---------------------------------------------------------------------------
+# Gate A run #4 (2026-08-21): every fresh native install failed because
+# postgres_child_spec's "-l" target and _file_backed_popen_factory's own
+# generic stdio capture were the SAME file. On Windows, pg_ctl's "-l"
+# relaunches through cmd.exe ("cmd /c ... >> <file> 2>&1"), and a second
+# process reopening a file the supervisor already has open (inherited by
+# pg_ctl as its own stdout/stderr) hits ERROR_SHARING_VIOLATION
+# deterministically -- confirmed by local repro against the real pg_ctl.exe
+# extracted from the failing Gate A kit (same-file: pg_ctl exit 1, identical
+# "process cannot access the file" text; split-file: pg_ctl exit 0, clean
+# startup). These pin the invariant purely (fake Popen, no real postgres):
+# whenever a ChildSpec sets stdio_log_name, _file_backed_popen_factory must
+# resolve its OWN capture file from THAT name, never from spec.name.
+# ---------------------------------------------------------------------------
+
+
+def test_file_backed_popen_factory_honors_stdio_log_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    spec = _pg_spec().model_copy(update={"stdio_log_name": "postgres-launcher"})
+    call = _captured_popen_call(monkeypatch, spec, new_process_group=False, log_root=tmp_path)
+
+    stdout_handle = call["stdout"]
+    assert call["stderr"] is stdout_handle
+    resolved = getattr(stdout_handle, "name", None)
+    assert resolved == str(tmp_path / "postgres-launcher.log")
+    # The invariant: this must NEVER be the same path postgres_child_spec's
+    # "-l" flag would target for the same log_root (child_log_path("postgres",
+    # log_root=tmp_path)) -- that collision is exactly what caused every
+    # fresh install to fail Gate A run #4.
+    assert resolved != str(tmp_path / "postgres.log")
+
+
+def test_file_backed_popen_factory_defaults_to_name_without_stdio_log_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Backward compatibility: every child that never sets ``stdio_log_name``
+    (nats, control_plane, and postgres itself when no ``-l`` target is in
+    play) keeps resolving its capture file from ``spec.name``, unchanged."""
+
+    for spec in (_pg_spec(), _nats_spec(), _cp_spec()):
+        assert spec.stdio_log_name is None
+        call = _captured_popen_call(monkeypatch, spec, new_process_group=False, log_root=tmp_path)
+        resolved = getattr(call["stdout"], "name", None)
+        assert resolved == str(tmp_path / f"{spec.name}.log")
+
+
 @pytest.mark.windows_only
 def test_f13_no_supervisor_child_is_given_a_console_window(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

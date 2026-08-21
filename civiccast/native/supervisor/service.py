@@ -364,7 +364,19 @@ def _file_backed_popen_factory(
     Applies to EVERY child, not just the control plane. postgres.exe,
     nats-server.exe and ollama.exe are console-subsystem executables too; the
     re-walk only caught the control plane because that is the one whose window
-    the operator was left looking at."""
+    the operator was left looking at.
+
+    Gate A run #4 fix (2026-08-21): this capture file is keyed off
+    ``spec.stdio_log_name`` when the spec sets it, NOT unconditionally off
+    ``spec.name``. postgres is the one child that can set it -- when
+    ``postgres_child_spec`` is given a ``log_path`` (its ``pg_ctl -l``
+    target), it points ``stdio_log_name`` at a different file
+    (``postgres-launcher.log``) so this capture's own open of
+    ``child_log_path("postgres")`` never collides with pg_ctl's ``-l``
+    reopen of the SAME path -- see that function's docstring for the
+    Windows ``ERROR_SHARING_VIOLATION`` this closes. Every other child
+    (``stdio_log_name`` unset) keeps resolving to ``child_log_path(name)``
+    exactly as before."""
 
     import os
     import subprocess
@@ -373,7 +385,7 @@ def _file_backed_popen_factory(
     if new_process_group:
         creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     env = {**os.environ, **spec.env}
-    log_path = child_log_path(spec.name, log_root=log_root)
+    log_path = child_log_path(spec.stdio_log_name or spec.name, log_root=log_root)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("ab")  # closed in the finally block below
     try:
@@ -1591,10 +1603,16 @@ def build_production_service(
         pg_ctl_path=str(layout.pg_ctl_path),
         # Adjacent diagnosability fix (2026-08-12, TESTER2 b5 evidence):
         # postgres.log/nats.log were observed at 0 bytes for a 5+ hour run.
-        # Pointing pg_ctl/nats-server at their OWN ``-l`` log file (the SAME
-        # path child_log_path already names) makes each own its file
-        # directly, rather than depending solely on the inherited-stdio
-        # capture -- see children.py's postgres_child_spec/nats_child_spec.
+        # Pointing pg_ctl/nats-server at their OWN ``-l`` log file makes each
+        # own its file directly, rather than depending solely on the
+        # inherited-stdio capture -- see children.py's
+        # postgres_child_spec/nats_child_spec. This path is STILL
+        # ``child_log_path("postgres", ...)`` (the name operators and
+        # tooling expect); the fix for the sharing violation this
+        # originally caused on Windows (Gate A run #4, 2026-08-21) lives in
+        # ``postgres_child_spec`` diverting pg_ctl's OWN generic stdio
+        # capture to a different file, not in changing this path -- see
+        # that function's docstring and ``ChildSpec.stdio_log_name``.
         postgres_log_path=str(child_log_path("postgres", log_root=layout.log_root)),
         nats_server_path=str(layout.nats_server_path),
         nats_config_path=str(layout.nats_config_path),
