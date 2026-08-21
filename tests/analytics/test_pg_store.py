@@ -103,14 +103,22 @@ class TestRecordEventPrivacyShape:
 class TestStreamTypeDerivation:
     def test_content_id_is_vod(self, engine: Engine) -> None:
         store = PostgresAnalyticsStore(_factory_for(engine))
-        store.record_event(_event(event_id="e1", event_name="playback_start", occurred_at=_now(), content_id="asset-1"))
+        store.record_event(
+            _event(
+                event_id="e1", event_name="playback_start", occurred_at=_now(), content_id="asset-1"
+            )
+        )
         with _factory_for(engine)() as session:
             row = session.get(ViewershipEventDb, "e1")
         assert row.stream_type == "vod"
 
     def test_channel_only_is_live(self, engine: Engine) -> None:
         store = PostgresAnalyticsStore(_factory_for(engine))
-        store.record_event(_event(event_id="e2", event_name="playback_start", occurred_at=_now(), channel_id="public"))
+        store.record_event(
+            _event(
+                event_id="e2", event_name="playback_start", occurred_at=_now(), channel_id="public"
+            )
+        )
         with _factory_for(engine)() as session:
             row = session.get(ViewershipEventDb, "e2")
         assert row.stream_type == "live"
@@ -129,8 +137,12 @@ class TestViewerCountAndTimeViewed:
     def test_viewer_count_is_playback_start_count(self, engine: Engine) -> None:
         store = PostgresAnalyticsStore(_factory_for(engine))
         day = datetime.now(UTC) - timedelta(days=1)
-        store.record_event(_event(event_id="s1", event_name="playback_start", occurred_at=day, content_id="a1"))
-        store.record_event(_event(event_id="s2", event_name="playback_start", occurred_at=day, content_id="a1"))
+        store.record_event(
+            _event(event_id="s1", event_name="playback_start", occurred_at=day, content_id="a1")
+        )
+        store.record_event(
+            _event(event_id="s2", event_name="playback_start", occurred_at=day, content_id="a1")
+        )
         store.record_event(
             _event(
                 event_id="h1",
@@ -147,7 +159,9 @@ class TestViewerCountAndTimeViewed:
     def test_time_viewed_sums_heartbeats_and_complete_tail(self, engine: Engine) -> None:
         store = PostgresAnalyticsStore(_factory_for(engine))
         day = datetime.now(UTC) - timedelta(days=1)
-        store.record_event(_event(event_id="s1", event_name="playback_start", occurred_at=day, content_id="a1"))
+        store.record_event(
+            _event(event_id="s1", event_name="playback_start", occurred_at=day, content_id="a1")
+        )
         store.record_event(
             _event(
                 event_id="h1",
@@ -176,16 +190,29 @@ class TestRollupBucketMath:
         store = PostgresAnalyticsStore(_factory_for(engine))
         worker = AnalyticsRollupWorker(_factory_for(engine), settings=AnalyticsRollupSettings())
         day = datetime(2026, 6, 10, 3, 0, tzinfo=UTC)
-        store.record_event(_event(event_id="s1", event_name="playback_start", occurred_at=day, content_id="a1"))
         store.record_event(
-            _event(event_id="s2", event_name="playback_start", occurred_at=day + timedelta(hours=20), content_id="a1")
+            _event(event_id="s1", event_name="playback_start", occurred_at=day, content_id="a1")
+        )
+        store.record_event(
+            _event(
+                event_id="s2",
+                event_name="playback_start",
+                occurred_at=day + timedelta(hours=20),
+                content_id="a1",
+            )
         )
         worker.run_once(now=day + timedelta(days=1))
         with _factory_for(engine)() as session:
-            rows = session.query(ViewershipRollupDb).filter_by(stream_type="vod", bucket_kind="day").all()
+            rows = (
+                session.query(ViewershipRollupDb)
+                .filter_by(stream_type="vod", bucket_kind="day")
+                .all()
+            )
         assert len(rows) == 1  # both events fall in the same UTC day bucket
         assert rows[0].viewer_count == 2
-        assert _naive(rows[0].bucket_start) == datetime(2026, 6, 10, tzinfo=UTC).replace(tzinfo=None)
+        assert _naive(rows[0].bucket_start) == datetime(2026, 6, 10, tzinfo=UTC).replace(
+            tzinfo=None
+        )
 
     def test_midnight_utc_crossover_splits_into_two_day_buckets(self, engine: Engine) -> None:
         store = PostgresAnalyticsStore(_factory_for(engine))
@@ -193,10 +220,20 @@ class TestRollupBucketMath:
         before_midnight = datetime(2026, 6, 10, 23, 59, tzinfo=UTC)
         after_midnight = datetime(2026, 6, 11, 0, 1, tzinfo=UTC)
         store.record_event(
-            _event(event_id="s1", event_name="playback_start", occurred_at=before_midnight, content_id="a1")
+            _event(
+                event_id="s1",
+                event_name="playback_start",
+                occurred_at=before_midnight,
+                content_id="a1",
+            )
         )
         store.record_event(
-            _event(event_id="s2", event_name="playback_start", occurred_at=after_midnight, content_id="a1")
+            _event(
+                event_id="s2",
+                event_name="playback_start",
+                occurred_at=after_midnight,
+                content_id="a1",
+            )
         )
         worker.run_once(now=after_midnight + timedelta(hours=1))
         with _factory_for(engine)() as session:
@@ -207,8 +244,12 @@ class TestRollupBucketMath:
                 .all()
             )
         assert len(rows) == 2
-        assert _naive(rows[0].bucket_start) == datetime(2026, 6, 10, tzinfo=UTC).replace(tzinfo=None)
-        assert _naive(rows[1].bucket_start) == datetime(2026, 6, 11, tzinfo=UTC).replace(tzinfo=None)
+        assert _naive(rows[0].bucket_start) == datetime(2026, 6, 10, tzinfo=UTC).replace(
+            tzinfo=None
+        )
+        assert _naive(rows[1].bucket_start) == datetime(2026, 6, 11, tzinfo=UTC).replace(
+            tzinfo=None
+        )
         assert rows[0].viewer_count == 1
         assert rows[1].viewer_count == 1
 
@@ -218,10 +259,20 @@ class TestRollupBucketMath:
         first_half = datetime(2026, 6, 10, 14, 29, tzinfo=UTC)
         second_half = datetime(2026, 6, 10, 14, 31, tzinfo=UTC)
         store.record_event(
-            _event(event_id="s1", event_name="playback_start", occurred_at=first_half, channel_id="public")
+            _event(
+                event_id="s1",
+                event_name="playback_start",
+                occurred_at=first_half,
+                channel_id="public",
+            )
         )
         store.record_event(
-            _event(event_id="s2", event_name="playback_start", occurred_at=second_half, channel_id="public")
+            _event(
+                event_id="s2",
+                event_name="playback_start",
+                occurred_at=second_half,
+                channel_id="public",
+            )
         )
         worker.run_once(now=second_half + timedelta(hours=1))
         with _factory_for(engine)() as session:
@@ -232,21 +283,33 @@ class TestRollupBucketMath:
                 .all()
             )
         assert len(rows) == 2
-        assert _naive(rows[0].bucket_start) == datetime(2026, 6, 10, 14, 0, tzinfo=UTC).replace(tzinfo=None)
-        assert _naive(rows[1].bucket_start) == datetime(2026, 6, 10, 14, 30, tzinfo=UTC).replace(tzinfo=None)
+        assert _naive(rows[0].bucket_start) == datetime(2026, 6, 10, 14, 0, tzinfo=UTC).replace(
+            tzinfo=None
+        )
+        assert _naive(rows[1].bucket_start) == datetime(2026, 6, 10, 14, 30, tzinfo=UTC).replace(
+            tzinfo=None
+        )
 
     def test_live_hourly_single_day_bucket(self, engine: Engine) -> None:
         store = PostgresAnalyticsStore(_factory_for(engine))
         worker = AnalyticsRollupWorker(_factory_for(engine), settings=AnalyticsRollupSettings())
         moment = datetime(2026, 6, 10, 14, 45, tzinfo=UTC)
         store.record_event(
-            _event(event_id="s1", event_name="playback_start", occurred_at=moment, channel_id="public")
+            _event(
+                event_id="s1", event_name="playback_start", occurred_at=moment, channel_id="public"
+            )
         )
         worker.run_once(now=moment + timedelta(hours=1))
         with _factory_for(engine)() as session:
-            rows = session.query(ViewershipRollupDb).filter_by(stream_type="live", bucket_kind="hour").all()
+            rows = (
+                session.query(ViewershipRollupDb)
+                .filter_by(stream_type="live", bucket_kind="hour")
+                .all()
+            )
         assert len(rows) == 1
-        assert _naive(rows[0].bucket_start) == datetime(2026, 6, 10, 14, 0, tzinfo=UTC).replace(tzinfo=None)
+        assert _naive(rows[0].bucket_start) == datetime(2026, 6, 10, 14, 0, tzinfo=UTC).replace(
+            tzinfo=None
+        )
 
     def test_peak_concurrent_per_bucket(self, engine: Engine) -> None:
         store = PostgresAnalyticsStore(_factory_for(engine))
@@ -277,11 +340,17 @@ class TestRollupBucketMath:
         store = PostgresAnalyticsStore(_factory_for(engine))
         worker = AnalyticsRollupWorker(_factory_for(engine), settings=AnalyticsRollupSettings())
         moment = datetime(2026, 6, 10, 9, 0, tzinfo=UTC)
-        store.record_event(_event(event_id="s1", event_name="playback_start", occurred_at=moment, content_id="a1"))
+        store.record_event(
+            _event(event_id="s1", event_name="playback_start", occurred_at=moment, content_id="a1")
+        )
         worker.run_once(now=moment + timedelta(hours=1))
         worker.run_once(now=moment + timedelta(hours=2))  # re-run over same window
         with _factory_for(engine)() as session:
-            rows = session.query(ViewershipRollupDb).filter_by(stream_type="vod", bucket_kind="day").all()
+            rows = (
+                session.query(ViewershipRollupDb)
+                .filter_by(stream_type="vod", bucket_kind="day")
+                .all()
+            )
         assert len(rows) == 1  # no duplicate rows
         assert rows[0].viewer_count == 1  # not double-counted
 
@@ -291,7 +360,9 @@ class TestYearOverYear:
         store = PostgresAnalyticsStore(_factory_for(engine))
         worker = AnalyticsRollupWorker(_factory_for(engine), settings=AnalyticsRollupSettings())
         now = datetime.now(UTC) - timedelta(days=1)
-        store.record_event(_event(event_id="s1", event_name="playback_start", occurred_at=now, content_id="a1"))
+        store.record_event(
+            _event(event_id="s1", event_name="playback_start", occurred_at=now, content_id="a1")
+        )
         worker.run_once(now=now + timedelta(hours=1))
         report = store.report(range_days=30)
         yoy = {p.metric: p for p in report.year_over_year}
@@ -306,11 +377,21 @@ class TestYearOverYear:
         prior_year = now - timedelta(days=365)
         for i in range(4):
             store.record_event(
-                _event(event_id=f"cur{i}", event_name="playback_start", occurred_at=now, content_id="a1")
+                _event(
+                    event_id=f"cur{i}",
+                    event_name="playback_start",
+                    occurred_at=now,
+                    content_id="a1",
+                )
             )
         for i in range(2):
             store.record_event(
-                _event(event_id=f"pri{i}", event_name="playback_start", occurred_at=prior_year, content_id="a1")
+                _event(
+                    event_id=f"pri{i}",
+                    event_name="playback_start",
+                    occurred_at=prior_year,
+                    content_id="a1",
+                )
             )
         worker.run_once(now=now + timedelta(hours=1))
         # First run_once only backfills relative to "now"; the prior-year

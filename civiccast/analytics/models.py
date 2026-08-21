@@ -180,7 +180,9 @@ class ViewershipEventDb(Base):
     stream_type: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
     channel_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     content_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
-    view_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    view_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     concurrent_viewers: Mapped[int | None] = mapped_column(Integer, nullable=True)
     geo_bucket: Mapped[str | None] = mapped_column(String(80), nullable=True)
     # JSON-encoded remainder of the safe-property allowlist (device/platform/
@@ -215,7 +217,9 @@ class ViewershipRollupDb(Base):
     bucket_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     bucket_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(160), nullable=False)
-    viewer_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    viewer_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     time_viewed_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )

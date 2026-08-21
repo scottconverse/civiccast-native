@@ -90,9 +90,7 @@ def upgrade() -> None:
         sa.CheckConstraint("view_seconds >= 0", name="viewership_events_view_seconds_check"),
         schema=schema,
     )
-    op.create_index(
-        "ix_viewership_events_occurred_at", _EVENTS, ["occurred_at"], schema=schema
-    )
+    op.create_index("ix_viewership_events_occurred_at", _EVENTS, ["occurred_at"], schema=schema)
     op.create_index("ix_viewership_events_stream_type", _EVENTS, ["stream_type"], schema=schema)
     op.create_index("ix_viewership_events_channel_id", _EVENTS, ["channel_id"], schema=schema)
     op.create_index("ix_viewership_events_content_id", _EVENTS, ["content_id"], schema=schema)

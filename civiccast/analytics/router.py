@@ -201,7 +201,9 @@ def read_rollups(
             status_code=422, detail="stream_type=live supports bucket=halfhour or bucket=hour."
         )
 
-    points = store.rollups(stream_type=stream_type, bucket_kind=resolved_bucket, range_days=range_days)
+    points = store.rollups(
+        stream_type=stream_type, bucket_kind=resolved_bucket, range_days=range_days
+    )
 
     total_viewer_count = sum(p.viewer_count for p in points)
     total_time_viewed_seconds = sum(p.time_viewed_seconds for p in points)

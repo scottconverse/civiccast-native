@@ -33,8 +33,12 @@ from civiccast.auth.models import OperatorIdentity
 from civiccast.db import Base
 
 
-def _build(*, scopes: tuple[str, ...] | None = ("support_admin",)) -> tuple[FastAPI, PostgresAnalyticsStore]:
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+def _build(
+    *, scopes: tuple[str, ...] | None = ("support_admin",)
+) -> tuple[FastAPI, PostgresAnalyticsStore]:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
     Base.metadata.create_all(engine)
 
     @contextmanager
@@ -46,7 +50,9 @@ def _build(*, scopes: tuple[str, ...] | None = ("support_admin",)) -> tuple[Fast
     app = FastAPI()
 
     @app.middleware("http")
-    async def _ident(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+    async def _ident(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         if scopes is not None:
             request.state.operator_identity = OperatorIdentity(
                 operator_id="dana", operator_display_name="Dana", scopes=scopes
@@ -160,7 +166,9 @@ class TestIngestConfiguredFlag:
 
     def test_configured_when_allowed_origins_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("CIVICCAST_PUBLIC_ANALYTICS_KEY", raising=False)
-        monkeypatch.setenv("CIVICCAST_PUBLIC_ANALYTICS_ALLOWED_ORIGINS", "https://portal.example.org")
+        monkeypatch.setenv(
+            "CIVICCAST_PUBLIC_ANALYTICS_ALLOWED_ORIGINS", "https://portal.example.org"
+        )
         app, _store = _build()
         resp = TestClient(app).get("/api/staff/analytics/reports/overview")
         assert resp.json()["ingest_configured"] is True
@@ -217,6 +225,9 @@ class TestBoardPdf:
         now = datetime.now(UTC)
         resp = TestClient(app).post(
             "/api/staff/analytics/reports/board-pdf",
-            json={"range_start": now.isoformat(), "range_end": (now - timedelta(days=1)).isoformat()},
+            json={
+                "range_start": now.isoformat(),
+                "range_end": (now - timedelta(days=1)).isoformat(),
+            },
         )
         assert resp.status_code == 422

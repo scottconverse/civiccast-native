@@ -39,7 +39,9 @@ def _empty_report(**overrides) -> AnalyticsReport:
 
 class TestCsvExportShape:
     def test_header_and_rows(self) -> None:
-        csv_text = export_rollups_csv([_rollup_point(), _rollup_point(subject_id="asset-2", viewer_count=1)])
+        csv_text = export_rollups_csv(
+            [_rollup_point(), _rollup_point(subject_id="asset-2", viewer_count=1)]
+        )
         lines = csv_text.strip().splitlines()
         assert lines[0] == (
             "stream_type,bucket_kind,bucket_start,subject_id,viewer_count,"
@@ -80,8 +82,18 @@ class TestBoardPdfRenders:
                 }
             ],
             year_over_year=[
-                {"metric": "viewer_count", "current_period": 10, "prior_period": 0, "delta_pct": None},
-                {"metric": "time_viewed_seconds", "current_period": 20, "prior_period": 10, "delta_pct": 100.0},
+                {
+                    "metric": "viewer_count",
+                    "current_period": 10,
+                    "prior_period": 0,
+                    "delta_pct": None,
+                },
+                {
+                    "metric": "time_viewed_seconds",
+                    "current_period": 20,
+                    "prior_period": 10,
+                    "delta_pct": 100.0,
+                },
             ],
         )
         pdf_bytes = export_board_pdf(

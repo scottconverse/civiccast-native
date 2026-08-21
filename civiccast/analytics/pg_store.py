@@ -391,9 +391,7 @@ class AnalyticsRollupSettings:
             )
         defaults = cls()
         poll = _float_env("CIVICCAST_ANALYTICS_ROLLUP_POLL_SECONDS", defaults.poll_seconds)
-        lookback = _int_env(
-            "CIVICCAST_ANALYTICS_ROLLUP_LOOKBACK_DAYS", defaults.lookback_days
-        )
+        lookback = _int_env("CIVICCAST_ANALYTICS_ROLLUP_LOOKBACK_DAYS", defaults.lookback_days)
         return cls(mode=mode, poll_seconds=poll, lookback_days=lookback)
 
 
@@ -428,7 +426,9 @@ class AnalyticsRollupWorker:
     late-arriving beacons while staying cheap on a busy station.
     """
 
-    def __init__(self, session_factory: SessionFactory, *, settings: AnalyticsRollupSettings) -> None:
+    def __init__(
+        self, session_factory: SessionFactory, *, settings: AnalyticsRollupSettings
+    ) -> None:
         self._session_factory = session_factory
         self._settings = settings
 
@@ -608,7 +608,9 @@ def backfill_json_events(session_factory: SessionFactory, json_path: Path) -> in
         try:
             payload = json.loads(json_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            _LOG.warning("Could not read legacy analytics JSON at %s; skipping backfill.", json_path)
+            _LOG.warning(
+                "Could not read legacy analytics JSON at %s; skipping backfill.", json_path
+            )
             return 0
         items = payload.get("events", []) if isinstance(payload, dict) else []
         migrated = 0
