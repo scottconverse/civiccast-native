@@ -65,7 +65,6 @@ flowchart LR
     DB[("Durable DB")]
     CDN["CDN adapters"]
     AI["Local AI runtimes"]
-    Broker["NATS JetStream"]
     External["Archive, NAS, YouTube, email/webhooks"]
 
     Operator -->|staff bearer token| API
@@ -74,7 +73,6 @@ flowchart LR
     API --> DB
     API --> CDN
     API --> AI
-    API --> Broker
     API --> External
     Resident --> CDN
 ```
@@ -150,7 +148,7 @@ sequenceDiagram
 ### First Run
 
 The installer and CLI inspect the platform, verify package artifacts, check
-local models, confirm NATS and local-CA mTLS posture, and report external
+local models, confirm local-CA mTLS posture, and report external
 provider lanes as blocked until real credentials and controlled proof exist.
 Blocked lanes are instructions, not success claims.
 
@@ -200,8 +198,10 @@ retired WSL2/Ubuntu-with-systemd deployment described in earlier revisions
 of this section belonged to the separate, private `scottconverse/civiccast`
 repository. Native Linux is the Linux CI-oriented path. macOS package proof
 exists as metadata/posture until signing and notarization funding are
-available. NATS JetStream and local-CA mTLS are production-like
-foundations; in-process broker paths are development/test paths.
+available. Local-CA mTLS is a production-like foundation. The in-process
+broker (`civiccast.platform.broker.InProcessBrokerClient`) is the sole
+event-bus implementation for all deployments (see ADR 0023, which
+supersedes ADR 0001's NATS JetStream choice).
 
 ## Beta-Readiness Gates
 

@@ -36,7 +36,7 @@ support docs.
 | Check before meeting | Something optional or recoverable needs attention. | warning, degraded |
 | Do not broadcast yet | A required check failed for tonight's broadcast. | failed, error |
 | Not set up yet | Optional provider or feature has no credential or proof. | blocked, credential_or_secret_required |
-| Needs IT help | The next step requires admin, shell, certificate, database, or service work. | mTLS, NATS, DATABASE_URL, ACL |
+| Needs IT help | The next step requires admin, shell, certificate, database, or service work. | mTLS, DATABASE_URL, ACL |
 
 When a machine contract still uses exact enum values, keep those values in API
 responses and generated docs. Translate them at the product layer before they
@@ -60,7 +60,7 @@ Use **optional** for provider lanes such as YouTube, ActivityPub, subscriber
 notifications, podcast, or additional archives when the station has not chosen
 them for the meeting.
 
-Use **advanced** for certificate rotation, NATS, mTLS, ActivityPub policy,
+Use **advanced** for certificate rotation, mTLS, ActivityPub policy,
 manual model imports, and command-line proof collection. Advanced does not
 mean unsafe; it means a meeting operator should not have to handle it.
 

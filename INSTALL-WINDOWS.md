@@ -4,7 +4,7 @@
 > Windows station.** No WSL, no Docker, no Linux install target -- see
 > [BRANCHES.md](BRANCHES.md). It is a signed installer that registers a
 > Windows service through the SCM and supervises the control plane,
-> Postgres, NATS, and the media workers from a bundled runtime, at
+> Postgres, and the media workers from a bundled runtime, at
 > `C:\Program Files\CivicCast (Native)\`.
 >
 > **The native line is an owner-held development candidate and is not yet

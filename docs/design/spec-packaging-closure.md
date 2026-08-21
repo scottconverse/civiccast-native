@@ -14,8 +14,11 @@ Charter §7 "Runtime packaging": minimal, checksum-locked, license-reviewed.
   signature/hash page cited), the `gstreamer-python==1.28.5` wheel (PyPI
   hash from the lockfile), FFmpeg build (exact build + its published hash +
   its configuration string recorded — the config string is licensing
-  evidence), PostgreSQL 17 zip (EDB published hash), NATS server release
-  (GitHub release checksum), CPython (python.org/astral hash). Closure runs
+  evidence), PostgreSQL 17 zip (EDB published hash), CPython
+  (python.org/astral hash). (NATS server was pinned here until the
+  2026-08-20 owner decision removed NATS from the product entirely — see
+  ADR 0023; `nats-server.exe` is no longer part of this closure or the
+  `native-server-binaries` pack.) Closure runs
   in a CLEAN isolated environment (fresh Sandbox/VM or scrubbed-PATH,
   isolated-registry shell) so a contaminated dev box cannot leak DLLs in.
 - **D2. Closure = static + dynamic + resources (SDR-008).** Static PE-import
@@ -51,8 +54,8 @@ Charter §7 "Runtime packaging": minimal, checksum-locked, license-reviewed.
 - **D6. Verification suite (packaged-tree twin of the spike proofs):**
   isolated `GST_REGISTRY` + scrubbed PATH + packaged tree only: 51-factory
   sweep, caption embed + decode-back, one `SWAPS=2` engine run, D4 probe
-  matrix, pg initdb+start+SELECT 1 from the packaged binaries, NATS
-  start+JetStream ack, control-plane import smoke. Green = closure holds
+  matrix, pg initdb+start+SELECT 1 from the packaged binaries,
+  control-plane import smoke. Green = closure holds
   for the application paths we ship, not just for plugin loading.
 
 ## Acceptance criteria

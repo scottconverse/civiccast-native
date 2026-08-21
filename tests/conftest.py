@@ -117,7 +117,8 @@ def pytest_runtest_teardown() -> None:
     Every async test here is function-scoped (see ``asyncio_default_*_loop_scope``
     in pyproject.toml and the absence of any ``loop_scope`` marker), so a loop
     still installed at teardown is finished with. A running loop is never
-    touched: the NATS adapter parks one on a daemon thread deliberately.
+    touched: several background workers (``civiccast.platform.worker_runtime``
+    and its consumers) park one on a daemon thread deliberately.
     """
 
     loop = _installed_event_loop()

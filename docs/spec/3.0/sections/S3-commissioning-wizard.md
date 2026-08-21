@@ -61,7 +61,9 @@ The `build_first_run_plan()` function returns a `FirstRunPlan` with:
 4. operator-account — creates `StationProfile` via `station_state.py`
 5. publish-targets — gathers credentials (CDN, IA, YouTube, NAS, etc.)
 6. models — orchestrates model download
-7. health — runs `run_first_health_check()`, checks NATS/mTLS/external targets
+7. health — runs `run_first_health_check()`, checks mTLS/external targets (the
+   NATS/JetStream readiness check this used to run was removed along with
+   NATS itself -- owner decision 2026-08-20, see ADR 0023)
 
 ### Existing CLI commands ready to integrate
 

@@ -1,8 +1,9 @@
 # Execution spec — WSL→native migration contract (`slice:ws6-migration`)
 
 **Decision state: Proposed → revised per auditor design review SDR-007,
-SDR-010. Not owner-approved. The NATS-state and downtime-window items below
-are explicit OWNER-ACCEPTANCE entries, not settled facts.**
+SDR-010. Not owner-approved. The downtime-window items below are explicit
+OWNER-ACCEPTANCE entries, not settled facts. The NATS-state item (D6) is
+moot as of the 2026-08-20 NATS removal decision — see D6 below.**
 
 Charter §7 "Migration". Beta-scale: backup → native install → restore; the
 WSL line is the named rollback. No generalized in-place framework.
@@ -51,13 +52,18 @@ WSL line is the named rollback. No generalized in-place framework.
   post-copy icacls in evidence); every translated key enumerated.
 - **D5. Path rewrite:** one idempotent script over DB-stored media paths;
   dry-run prints every row; applied count must equal dry-run count (AC3).
-- **D6. NATS JetStream — OWNER DECISION, evidence first (SDR-010):** step 1
+- **D6. NATS JetStream — MOOT (2026-08-20 owner decision; see ADR 0023).**
+  This decision item is superseded: NATS JetStream was removed from the
+  product entirely, on both the WSL and native sides, so there is no
+  JetStream state to inventory, discard, or migrate. The original D6 text
+  is retained below for historical context only.
+  ~~OWNER DECISION, evidence first (SDR-010): step 1
   of implementation is a stream-catalog inventory proving what actually
   lives in JetStream durably. Only after that inventory does the owner
   accept/reject the discard posture ("fresh JetStream on native; in-flight
   events lost"). The spec RECOMMENDS discard based on the DB-is-record
   design, but does not settle it. If the inventory finds durable
-  public-record data in streams: HALT, re-spec.
+  public-record data in streams: HALT, re-spec.~~
 - **D7. Resume integrity (SDR-007):** the runbook journal binds every
   completed step to: run ID, source identity (distro name + DB cluster ID),
   destination identity, the step's input manifest hashes, tool versions, and
@@ -98,7 +104,8 @@ WSL line is the named rollback. No generalized in-place framework.
 
 ## Halt triggers
 
-- D6 inventory finds durable public-record data in JetStream.
+- ~~D6 inventory finds durable public-record data in JetStream.~~ (Moot —
+  NATS JetStream was removed from the product; see D6 above.)
 - WSL pg major version > native packaged pg version.
 - Any pressure to skip the freeze window: the coherent snapshot IS the
   contract; a no-downtime migration is a different (unchartered) product.

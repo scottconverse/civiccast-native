@@ -519,6 +519,12 @@ OTT apps present; exports a support bundle that explains failures without guessi
    a distinct, first-class product line in development alongside the existing
    WSL line; neither product line retires the other without a future owner
    decision.
+   **Amendment (2026-08-20):** NATS JetStream was removed from the product; see
+   ADR 0023, which supersedes ADR 0001. The in-process broker is now the sole
+   event-bus implementation. The NATS/Postgres references above describing the
+   "service/recovery layer" and "Windows services, path handling, NATS/Postgres
+   wrappers" are retained for historical context but no longer reflect the
+   shipped system.
 2. **DeckLink hardware — not a blocker.** The SDI output path is built regardless; only the rung-3
    *physical* SDI capture is gated on hardware. Scott will try to source a DeckLink (model TBD), but
    the proof most likely happens at LPM near the end of the build — it does not gate development.

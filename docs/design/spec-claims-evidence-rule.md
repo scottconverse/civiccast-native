@@ -66,11 +66,13 @@ context; nothing about a run is ever committed back.
     naming that producer's exact junit artifact name, metadata artifact
     name, `requires_checkout_attestation: true`, and that producer's OWN `junit_collection_floor` (a global floor can hide an empty-but-successful producer; floors are per producer). The verifier must
     never appear here; the verifier's `needs:` must equal the producer
-    keys exactly. (The current workflow has three test-producing jobs -
-    `test`, the GStreamer engine job, and the NATS boundary job - with
-    differently named or absent junit artifacts; the mapping is what makes
-    each one's proof obligations explicit. ws3 lands the workflow changes
-    that make every producer emit its junit + meta pair.)
+    keys exactly. (The current workflow has two test-producing jobs -
+    `test` and the GStreamer engine job - with differently named or absent
+    junit artifacts; the mapping is what makes each one's proof obligations
+    explicit. The NATS boundary job that used to exist here was removed
+    along with NATS itself (owner decision 2026-08-20; see ADR 0023). ws3
+    lands the workflow changes that make every producer emit its junit +
+    meta pair.)
 - **Per-producer one-commit identity:** EVERY producer job checks out the
   PR head explicitly (`actions/checkout` with
   `ref: github.event.pull_request.head.sha`) and uploads, beside its junit
