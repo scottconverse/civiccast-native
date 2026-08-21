@@ -6,21 +6,25 @@
 > the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
 > for exactly what has and has not been proven.
 
-> **Two product lines.** CivicCast ships two parallel Windows product lines
-> from this repository: the WSL2 beta this matrix describes (`main`, the
-> current public download) and a native-Windows beta under active parallel
-> development (`release/native-beta-1.0.0-beta.1-rc1`, not yet public).
-> Neither retires the other. See [BRANCHES.md](BRANCHES.md) for the full
-> breakdown.
+> **This repository ships one product line: native Windows.** Earlier
+> revisions of this notice described "two parallel Windows product lines"
+> shipping from this repository -- that described the OLD
+> `scottconverse/civiccast` repository. This repository (`civiccast-native`)
+> was created by copying only the native product out of it with fresh
+> history, and the WSL2 lane was retired outright under the owner's "no
+> linux" decision (2026-08-19). See [BRANCHES.md](BRANCHES.md) for the full
+> explanation and where the retired line's history now lives (private, not
+> archived).
 
 **This is the canonical, living record of what each CivicCast subsystem actually does today.**
 It exists so docs and release notes stop implying that proof integrations are production integrations. When a subsystem's real state changes, **update this file in the same commit**; do not let the matrix drift behind the code.
 
-_Product-line scope:_ The matrix's published Windows evidence describes the
-WSL line unless a row explicitly says otherwise. The native Windows
-product line (see the banner above) is tracked under
-[ADR 0021](docs/adr/0021-native-windows-runtime.md); its development evidence
-does not establish a public native beta, and it does not retire the WSL line.
+_Product-line scope:_ This matrix's published Windows evidence below
+describes the retired WSL2 line (historical, kept as record -- see the
+banner above) unless a row explicitly says otherwise. The native Windows
+product this repository ships is tracked under
+[ADR 0021](docs/adr/0021-native-windows-runtime.md); its own development
+evidence does not yet establish a public native beta.
 _Baseline observed at `v2.0.10` (commit `02c9e6c`), 2026-06-09 (source of record: the reconciled audit dated 2026-06-09); rows updated in-commit thereafter - see git history per row. `v2.0.10` is a pre-reset internal build-ladder version (used through June 2026, before the public version reset); it is a separate numbering track from the controlled-beta release line below (see `docs/releases/archive/pre-reset/README.md`). The current published release is **v1.0.0-rc18** (controlled beta), available from the [exact GitHub Release](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18); rc17 remains available only as the rollback target. The full recorded-media product path was last proven against **rc17's** exact published installer via a full clean-host walkthrough on 2026-07-20 (see [the rc17 verification record](docs/releases/v1.0.0-rc17-verification.md)); that full-path proof has not yet been repeated against rc18's exact bytes. Local 3.2 LPM contract-lab work is development proof only until its own gates pass and station-device evidence is attached._
 
 ---

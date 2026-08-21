@@ -6,11 +6,11 @@
 
 ## Line and target
 
-<!-- BRANCHES.md is the source of truth for which branch carries which
-product line and where PRs target. -->
+<!-- BRANCHES.md is the source of truth: this repository ships one product
+line (native Windows) and `main` carries it. There is no second line or
+base branch to choose. -->
 
-- **Product line:** <!-- native Windows line / WSL (main) line / cross-cutting -->
-- **Base branch:** <!-- `release/native-beta-1.0.0-beta.1-rc1` for native-runtime changes; `main` for WSL/rc-line and cross-cutting changes -->
+- **Base branch:** `main`
 - **Spec section(s) touched:** <!-- e.g., §8.2 civiccast-stream, or "none" -->
 - **ADR(s) created or updated:** <!-- e.g., ADR 0021, or "none" -->
 - **Closed architectural decisions touched:** <!-- "none" or list with justification per CLAUDE.md -->

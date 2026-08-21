@@ -30,12 +30,15 @@
 > production proof until its own gates pass and station-device evidence is
 > attached.
 
-> **Two product lines.** CivicCast ships two parallel Windows product lines
-> from this repository: the WSL2 beta this document describes (`main`, the
-> current public download) and a native-Windows beta under active parallel
-> development (`release/native-beta-1.0.0-beta.1-rc1`, not yet public).
-> Neither retires the other. See [BRANCHES.md](BRANCHES.md) for the full
-> breakdown, and "Deployment Posture" below for how the native runtime
+> **This repository ships one product line: native Windows.** Earlier
+> revisions of this notice described "two parallel Windows product lines"
+> shipping from this repository -- that described the OLD
+> `scottconverse/civiccast` repository. This repository (`civiccast-native`)
+> was created by copying only the native product out of it with fresh
+> history, and the WSL2 lane was retired outright under the owner's "no
+> linux" decision (2026-08-19). See [BRANCHES.md](BRANCHES.md) for the full
+> explanation and where the retired line's history now lives (private, not
+> archived).
 > differs architecturally.
 
 This document orients engineers and integrators to the current CivicCast
@@ -189,16 +192,16 @@ sequenceDiagram
 
 ## Deployment Posture
 
-The current public Windows beta runs CivicCast services inside WSL2 Ubuntu
-with systemd. A distinct native Windows product line is in development under
-[ADR 0021](docs/adr/0021-native-windows-runtime.md): it uses a session-0
-Windows service and a separate installer identity while sharing the
-application codebase. The WSL and native Windows lines are parallel products;
-neither retires the other without a future owner decision. Native Linux is the
-Linux CI-oriented path. macOS package proof exists as metadata/posture until
-signing and notarization funding are available. NATS JetStream and local-CA
-mTLS are production-like foundations; in-process broker paths are
-development/test paths.
+This repository's Windows product runs CivicCast as a native Windows
+service, registered through the SCM under a session-0 identity, built
+under [ADR 0021](docs/adr/0021-native-windows-runtime.md) -- no WSL, no
+Docker, no Linux install target (see [BRANCHES.md](BRANCHES.md)). The
+retired WSL2/Ubuntu-with-systemd deployment described in earlier revisions
+of this section belonged to the separate, private `scottconverse/civiccast`
+repository. Native Linux is the Linux CI-oriented path. macOS package proof
+exists as metadata/posture until signing and notarization funding are
+available. NATS JetStream and local-CA mTLS are production-like
+foundations; in-process broker paths are development/test paths.
 
 ## Beta-Readiness Gates
 

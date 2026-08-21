@@ -100,7 +100,11 @@ for both paths.
 
 ## Pull requests
 
-1. **Target the right base branch.** WSL/rc-line and cross-cutting changes target `main`; native-runtime changes target `release/native-beta-1.0.0-beta.1-rc1`. See [BRANCHES.md](BRANCHES.md) — it also lists the extra Windows-only gate (`native-beta-pack-contract` + `native-beta-installer`) that runs on PRs into the native line.
+1. **Target `main`.** This repository ships one product line (the native
+   Windows station) and `main` carries it — there is no second line to
+   branch or target. See [BRANCHES.md](BRANCHES.md), which also lists the
+   extra Windows-only gate (`native-beta-pack-contract` +
+   `native-beta-installer`) that runs on installer PRs.
 2. **Branch naming:** `fix/short-description` or `feat/short-description`.
 3. **Pre-flight checks before opening the PR:**
    - `ruff check .` and `ruff format --check .` pass

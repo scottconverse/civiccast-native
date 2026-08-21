@@ -21,12 +21,11 @@ body:
     attributes:
       label: Deployment context
       options:
-        - "Windows 11 + WSL2 (Ubuntu 24.04)"
+        - "Windows 11 (native)"
         - "Native Linux (Ubuntu / Debian)"
         - "Native Linux (other distro)"
         - "macOS (Apple Silicon)"
         - "macOS (Intel)"
-        - "Docker"
         - "Other (specify in description)"
     validations:
       required: true

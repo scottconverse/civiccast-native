@@ -32,7 +32,7 @@ In scope:
 - Code in this repository (all `civiccast.*` modules).
 - Default deployment configurations.
 - Documented installation procedures.
-- The reference Windows + WSL2 installer.
+- The native Windows installer.
 
 Out of scope:
 

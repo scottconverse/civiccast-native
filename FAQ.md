@@ -6,12 +6,15 @@
 > the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
 > for exactly what has and has not been proven.
 
-> **Two product lines.** CivicCast ships two parallel Windows product lines
-> from this repository: the WSL2 beta this FAQ covers (`main`, the current
-> public download) and a native-Windows beta under active parallel
-> development (`release/native-beta-1.0.0-beta.1-rc1`, not yet public).
-> Neither retires the other. See [BRANCHES.md](BRANCHES.md) for the full
-> breakdown.
+> **This repository ships one product line: native Windows.** Earlier
+> revisions of this notice described "two parallel Windows product lines"
+> shipping from this repository -- that described the OLD
+> `scottconverse/civiccast` repository. This repository (`civiccast-native`)
+> was created by copying only the native product out of it with fresh
+> history, and the WSL2 lane was retired outright under the owner's "no
+> linux" decision (2026-08-19). See [BRANCHES.md](BRANCHES.md) for the full
+> explanation and where the retired line's history now lives (private, not
+> archived).
 
 ## What is CivicCast?
 
@@ -35,16 +38,15 @@ the exact release, filename, SHA-256, signature status, and verification record.
 use `releases/latest` for a controlled beta unless that handoff explicitly says
 to do so.
 
-For the current public Windows beta, CivicCast runs its services inside Ubuntu
-on WSL2. That line's setup app is the guided entry point; it checks or installs
-WSL2 Ubuntu 24.04, prepares runtime dependencies, installs CivicCast from the
-bundled wheelhouse, prepares local storage and upload folders, starts the local
-service, and hands you to the operator console.
-
-A distinct native Windows product line is in development under
-[ADR 0021](docs/adr/0021-native-windows-runtime.md). It is not represented by
-the rc15 installer or its public-beta evidence, and it does not retire the WSL
-line.
+CivicCast's Windows product (this repository, [ADR 0021](docs/adr/0021-native-windows-runtime.md))
+runs its services as a native Windows service -- no WSL, no Ubuntu, no
+Linux runtime. The signed setup app is the guided entry point; it installs
+the bundled Python/GStreamer/FFmpeg runtime, prepares local storage and
+upload folders, registers the Windows service, and hands you to the
+operator console. (Earlier revisions of this FAQ described a retired
+WSL2/Ubuntu-hosted deployment; that lane's history lives in the separate,
+private `scottconverse/civiccast` repository -- see
+[BRANCHES.md](BRANCHES.md).)
 
 **rc17 and later:** the setup app also sets up the local Ollama AI runtime for you
 (reusing a healthy existing install, or installing a pinned version if none

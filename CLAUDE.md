@@ -89,8 +89,8 @@ CivicCast is a native Windows product. There is one product line in this
 repository and `main` carries it. The WSL2/Linux lane it once shipped
 alongside (ADR 0021's "parallel-shipped deployment line") was retired by owner
 decision on 2026-08-19 and is not present here -- no docker/, no systemd
-units, no WSL2 install target. Its history remains in the archived
-scottconverse/civiccast if something needs recovering. **Scott Converse is the owner** (merge, tag, release
+units, no WSL2 install target. Its history remains in the private (not
+archived) scottconverse/civiccast if something needs recovering. **Scott Converse is the owner** (merge, tag, release
 signing, publication, shipment, cutover, and tie-break decisions). The active
 coder is assigned by the owner's current handoff; the coder seat was
 transferred from Codex to Claude on 2026-07-29 (owner decision, recorded in
@@ -132,7 +132,8 @@ The full product narrative, audience model, deployment profiles, module catalog,
    MASTER; do not implement against it.)
 
 2. **`BRANCHES.md`** (repo root) records the single-line branch policy and
-   the archived repository's whereabouts. There is no line to choose.
+   the old (private, not archived) repository's whereabouts. There is no
+   line to choose.
 
 If a question isn't answered there, it's an open question — not an invitation
 to improvise; surface it to the human director.
