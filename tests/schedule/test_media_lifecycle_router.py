@@ -81,7 +81,11 @@ def factory() -> Iterator[Callable[[], Session]]:
 
 
 def _seed_asset(factory, **overrides: object) -> None:  # type: ignore[no-untyped-def]
-    defaults: dict[str, object] = {"asset_id": "a1", "title": "Council Meeting", "state": "validated"}
+    defaults: dict[str, object] = {
+        "asset_id": "a1",
+        "title": "Council Meeting",
+        "state": "validated",
+    }
     defaults.update(overrides)
     with factory() as session:
         session.add(Asset(**defaults))  # type: ignore[arg-type]
@@ -251,7 +255,11 @@ class TestRetentionPolicyApi:
         client = _client(factory, scopes=("records",))
         created = client.post(
             "/api/staff/media-lifecycle/retention-policies",
-            json={"name": "Council", "match_meeting_body": "City Council", "retention_policy": "meeting"},
+            json={
+                "name": "Council",
+                "match_meeting_body": "City Council",
+                "retention_policy": "meeting",
+            },
         )
         assert created.status_code == 201
         policy_id = created.json()["policy_id"]
@@ -267,7 +275,11 @@ class TestRetentionPolicyApi:
         client = _client(factory, scopes=("records",))
         client.post(
             "/api/staff/media-lifecycle/retention-policies",
-            json={"name": "Council", "match_meeting_body": "City Council", "retention_policy": "meeting"},
+            json={
+                "name": "Council",
+                "match_meeting_body": "City Council",
+                "retention_policy": "meeting",
+            },
         )
         resp = client.post("/api/staff/media-lifecycle/retention-policies/apply")
         assert resp.status_code == 200
@@ -305,7 +317,10 @@ class TestAuditLogApi:
 
 class TestReplaceSourceApi:
     def test_replace_source_unknown_asset_404s(
-        self, factory, tmp_path, monkeypatch: pytest.MonkeyPatch  # type: ignore[no-untyped-def]
+        self,
+        factory,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,  # type: ignore[no-untyped-def]
     ) -> None:
         monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path))
         client = _client(factory, scopes=("publish",))
@@ -316,7 +331,10 @@ class TestReplaceSourceApi:
         assert resp.status_code == 404
 
     def test_replace_source_happy_path(
-        self, factory, tmp_path, monkeypatch: pytest.MonkeyPatch  # type: ignore[no-untyped-def]
+        self,
+        factory,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,  # type: ignore[no-untyped-def]
     ) -> None:
         monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path))
         _seed_asset(factory, asset_id="a1", state="rejected", file_status="missing")

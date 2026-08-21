@@ -84,7 +84,9 @@ def _in_flight_jobs(session: Session, asset_id: str) -> list[InFlightTranscodeJo
     ]
 
 
-def _to_readiness_response(row: AssetReadiness, jobs: list[InFlightTranscodeJob]) -> AssetReadinessResponse:
+def _to_readiness_response(
+    row: AssetReadiness, jobs: list[InFlightTranscodeJob]
+) -> AssetReadinessResponse:
     return AssetReadinessResponse(
         asset_id=row.asset_id,
         readiness_state=row.readiness_state,  # type: ignore[arg-type]
@@ -212,7 +214,9 @@ class MediaLifecycleStore:
             ).scalars()
             return [WatchFolderConfigResponse.model_validate(r) for r in rows]
 
-    def create_watch_folder_config(self, payload: WatchFolderConfigInput) -> WatchFolderConfigResponse:
+    def create_watch_folder_config(
+        self, payload: WatchFolderConfigInput
+    ) -> WatchFolderConfigResponse:
         with self._session_factory() as session:
             row = WatchFolderConfig(**payload.model_dump())
             session.add(row)
@@ -344,7 +348,9 @@ class MediaLifecycleStore:
                 ).group_by(Asset.retention_policy)
             ).all()
             by_policy = [
-                StorageBudgetTierRow(retention_policy=policy, asset_count=count, bytes_used=int(total))
+                StorageBudgetTierRow(
+                    retention_policy=policy, asset_count=count, bytes_used=int(total)
+                )
                 for policy, count, total in rows
             ]
             total_bytes = sum(r.bytes_used for r in by_policy)

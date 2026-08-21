@@ -101,12 +101,20 @@ _LOG = logging.getLogger(__name__)
 
 MEDIA_LIFECYCLE_WORKER_MODE_INLINE = "inline"
 MEDIA_LIFECYCLE_WORKER_MODE_OFF = "off"
-_MEDIA_LIFECYCLE_WORKER_MODES = (MEDIA_LIFECYCLE_WORKER_MODE_INLINE, MEDIA_LIFECYCLE_WORKER_MODE_OFF)
+_MEDIA_LIFECYCLE_WORKER_MODES = (
+    MEDIA_LIFECYCLE_WORKER_MODE_INLINE,
+    MEDIA_LIFECYCLE_WORKER_MODE_OFF,
+)
 
 # Local NAS target types the archival gate accepts as the "NAS peer" tier
 # (any one non-simulated proof of these types satisfies the tier -- mirrors
 # civiccast.archive.models.ArchiveProof.target_type's local_nas_* set).
-_NAS_TARGET_TYPES = ("local_nas_rsync", "local_nas_zfs", "local_nas_copy", "local_nas_snapshot_copy")
+_NAS_TARGET_TYPES = (
+    "local_nas_rsync",
+    "local_nas_zfs",
+    "local_nas_copy",
+    "local_nas_snapshot_copy",
+)
 
 # Streaming default per civiccast.stream.loudness -- S2/S11 own per-sink
 # target selection at egress (D6); S7's ingest-time gate uses the station's
@@ -199,7 +207,9 @@ class FfmpegTranscodeExecutor:
         from civiccast.stream._ffmpeg import check_ffmpeg, run_ffmpeg
 
         if not asset.file_path:
-            return TranscodeExecutionResult(success=False, error_detail="Asset has no source file_path.")
+            return TranscodeExecutionResult(
+                success=False, error_detail="Asset has no source file_path."
+            )
         source = Path(asset.file_path)
         if not source.is_file():
             return TranscodeExecutionResult(
@@ -269,7 +279,10 @@ class MediaLifecycleWorkerSettings:
         dry_run_raw = os.environ.get("CIVICCAST_MEDIA_LIFECYCLE_WORKER_DRY_RUN", "").strip().lower()
         dry_run = dry_run_raw in ("1", "true", "yes", "on")
         formats_raw = os.environ.get("CIVICCAST_TRANSCODE_FORMATS", "").strip()
-        formats = tuple(f.strip() for f in formats_raw.split(",") if f.strip()) or defaults.transcode_formats
+        formats = (
+            tuple(f.strip() for f in formats_raw.split(",") if f.strip())
+            or defaults.transcode_formats
+        )
         horizon_raw = os.environ.get("CIVICCAST_MISSING_MEDIA_HORIZON_DAYS", "").strip()
         horizon = defaults.missing_media_horizon_days
         if horizon_raw:
@@ -289,9 +302,7 @@ class MediaLifecycleWorkerSettings:
         )
 
 
-def record_archive_proof(
-    session: Session, *, asset_id: str, proof: object
-) -> AssetArchiveProof:
+def record_archive_proof(session: Session, *, asset_id: str, proof: object) -> AssetArchiveProof:
     """Persist a produced :class:`civiccast.archive.models.ArchiveProof`.
 
     Called by whatever publish/archive pipeline performs the actual IA/NAS
@@ -395,9 +406,7 @@ class MediaLifecycleWorker:
             # audit trail dry-run mode exists to produce.
             session.commit()
 
-        dispatched, completed, failed = self._dispatch_pending_transcodes(
-            dry_run=effective_dry_run
-        )
+        dispatched, completed, failed = self._dispatch_pending_transcodes(dry_run=effective_dry_run)
 
         missing = self.list_missing_media(now=resolved_now)
         with self._session_factory() as session:
@@ -435,7 +444,9 @@ class MediaLifecycleWorker:
 
         row = session.get(AssetReadiness, asset.asset_id)
         before = (
-            (row.readiness_state, row.loudness_status, row.archive_complete) if row is not None else None
+            (row.readiness_state, row.loudness_status, row.archive_complete)
+            if row is not None
+            else None
         )
 
         seeded = 0
@@ -449,12 +460,16 @@ class MediaLifecycleWorker:
             readiness_state = READINESS_MISSING_FILE
             readiness_reason = "Backing file not found on disk; relink or replace the source."
         elif asset.state in (ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED):
-            in_flight = session.execute(
-                select(TranscodeJob).where(
-                    TranscodeJob.asset_id == asset.asset_id,
-                    TranscodeJob.status.in_((JOB_STATUS_PENDING, JOB_STATUS_RUNNING)),
+            in_flight = (
+                session.execute(
+                    select(TranscodeJob).where(
+                        TranscodeJob.asset_id == asset.asset_id,
+                        TranscodeJob.status.in_((JOB_STATUS_PENDING, JOB_STATUS_RUNNING)),
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             existing_any = session.execute(
                 select(TranscodeJob.job_id).where(TranscodeJob.asset_id == asset.asset_id).limit(1)
             ).first()
@@ -463,12 +478,16 @@ class MediaLifecycleWorker:
                     session.add(TranscodeJob(asset_id=asset.asset_id, output_format=fmt))
                     seeded += 1
                 session.flush()
-                in_flight = session.execute(
-                    select(TranscodeJob).where(
-                        TranscodeJob.asset_id == asset.asset_id,
-                        TranscodeJob.status.in_((JOB_STATUS_PENDING, JOB_STATUS_RUNNING)),
+                in_flight = (
+                    session.execute(
+                        select(TranscodeJob).where(
+                            TranscodeJob.asset_id == asset.asset_id,
+                            TranscodeJob.status.in_((JOB_STATUS_PENDING, JOB_STATUS_RUNNING)),
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
             elif existing_any is None and asset.file_path and dry_run:
                 seeded = len(self._settings.transcode_formats)
 
@@ -493,12 +512,16 @@ class MediaLifecycleWorker:
             loudness_status, measured_lufs = self._check_loudness(asset)
 
         portal_verified = asset.manifest_url is not None and asset.published_at is not None
-        proofs = session.execute(
-            select(AssetArchiveProof).where(
-                AssetArchiveProof.asset_id == asset.asset_id,
-                AssetArchiveProof.simulated.is_(False),
+        proofs = (
+            session.execute(
+                select(AssetArchiveProof).where(
+                    AssetArchiveProof.asset_id == asset.asset_id,
+                    AssetArchiveProof.simulated.is_(False),
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         ia_verified = any(p.target_type == ARCHIVE_TARGET_INTERNET_ARCHIVE for p in proofs)
         nas_verified = any(p.target_type in _NAS_TARGET_TYPES for p in proofs)
         archive_complete = portal_verified and ia_verified and nas_verified

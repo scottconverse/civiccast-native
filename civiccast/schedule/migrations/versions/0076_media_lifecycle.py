@@ -98,9 +98,7 @@ def upgrade() -> None:
     op.create_index(
         "ix_media_ingest_jobs_asset_id", "media_ingest_jobs", ["asset_id"], schema=schema
     )
-    op.create_index(
-        "ix_media_ingest_jobs_status", "media_ingest_jobs", ["status"], schema=schema
-    )
+    op.create_index("ix_media_ingest_jobs_status", "media_ingest_jobs", ["status"], schema=schema)
 
     op.create_table(
         "transcode_jobs",
@@ -133,7 +131,9 @@ def upgrade() -> None:
     op.create_table(
         "asset_readiness",
         sa.Column("asset_id", sa.String(length=64), nullable=False),
-        sa.Column("readiness_state", sa.String(length=20), nullable=False, server_default="not_ready"),
+        sa.Column(
+            "readiness_state", sa.String(length=20), nullable=False, server_default="not_ready"
+        ),
         sa.Column("readiness_reason", sa.Text(), nullable=True),
         sa.Column("loudness_status", sa.String(length=20), nullable=True),
         sa.Column("measured_lufs", sa.Numeric(6, 2), nullable=True),
