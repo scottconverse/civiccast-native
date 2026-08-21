@@ -75,7 +75,9 @@ try:  # package context (Windows can't reach here — gi import fails first)
         coerce_serialized_property,
         graph_from_json,
     )
-except ImportError:  # standalone context: WSL test adds the gst dir to sys.path
+except (
+    ImportError
+):  # standalone context: the POSIX/Windows GStreamer test adds the gst dir to sys.path
     from audio_tap import RollingWavSegmentWriter  # type: ignore[import-not-found,no-redef]
     from graph import (  # type: ignore[import-not-found,no-redef]
         AudioTapLeg,
@@ -335,7 +337,7 @@ class GstPlayoutEngine:
         'caption' pad; cccombiner attaches a caption meta and ``h264ccinserter``
         serializes it as A/53 SEI. Returns the inserter chain's tail (its src feeds the
         mux). A live ``appsrc`` source is captured into ``self.caption_appsrc`` so the
-        daemon can push cues. The live SEI presence is WSL/LPM-validated."""
+        daemon can push cues. The live SEI presence is POSIX/LPM-validated."""
         combiner = self._make(leg.combiner)
         self._link(video_prev, combiner)  # encoded H.264 → cccombiner 'sink' (video) pad
 
@@ -364,7 +366,7 @@ class GstPlayoutEngine:
         Returns False if no live caption source is built (no-op). The daemon calls this
         via the ``caption`` control command to feed continuous captions from the channel
         caption pipeline; the buffer carries PTS+duration so cccombiner schedules the
-        cue against the video. Live behavior is WSL/LPM-validated."""
+        cue against the video. Live behavior is POSIX/LPM-validated."""
         appsrc = self.caption_appsrc
         if appsrc is None:
             return False
@@ -450,7 +452,7 @@ class GstPlayoutEngine:
         audio pad appears dynamically); ``leg.encoder`` is the AAC chain. The encoder
         tail links to the mux, which assigns a new audio PID, and the stream is tagged
         with ``leg.language`` for the PID's ISO-639 language descriptor. Live PID
-        assignment + descriptor are WSL/LPM-validated."""
+        assignment + descriptor are POSIX/LPM-validated."""
         src_elements = [self._make(spec) for spec in leg.source]
         for upstream, downstream in pairwise(src_elements):
             if upstream.get_factory().get_name() not in self._DECODERS:
@@ -533,7 +535,7 @@ class GstPlayoutEngine:
     def _tag_audio_language(element: Gst.Element, language: str) -> None:
         """Best-effort: stamp the audio stream's ISO-639 language so mpegtsmux writes a
         language descriptor on the PID. Best-effort by design — a tagging hiccup must
-        never wedge playout; the live descriptor is WSL/LPM-validated."""
+        never wedge playout; the live descriptor is POSIX/LPM-validated."""
         try:
             src = element.get_static_pad("src")
             if src is None:
@@ -1003,7 +1005,7 @@ class GstPlayoutEngine:
         self._dispose_source_leg(
             pending["old_video_pad"], pending["old_audio_pad"], pending["old_elements"]
         )
-        # Element count proves disposal reclaimed (the WSL leak test asserts it is flat
+        # Element count proves disposal reclaimed (the POSIX leak test asserts it is flat
         # across many reloads — a dispose leak would grow it).
         print(f"CTRL reload committed (elements={self._element_count()})", flush=True)
         return False
