@@ -47,11 +47,11 @@ class TestCertificateRotation:
         authority = _authority_module()
         service = authority.LocalCertificateAuthority(tmp_path)
         service.create_ca(common_name="CivicCast Local CA")
-        before = service.issue_service_certificate("nats", valid_days=3)
+        before = service.issue_service_certificate("civiccast-worker", valid_days=3)
 
-        after = service.rotate_service_certificate("nats")
+        after = service.rotate_service_certificate("civiccast-worker")
 
-        assert after.service_identity == "nats"
+        assert after.service_identity == "civiccast-worker"
         assert after.issuer_fingerprint_sha256 == before.issuer_fingerprint_sha256
         assert after.fingerprint_sha256 != before.fingerprint_sha256
 

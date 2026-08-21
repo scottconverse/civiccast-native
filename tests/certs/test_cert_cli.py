@@ -40,7 +40,7 @@ class TestCertCLI:
     def test_cert_rotate_emits_no_private_key_material(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("CIVICCAST_CERT_ROOT", str(tmp_path))
 
-        result = CliRunner().invoke(app, ["cert", "rotate", "nats", "--json"])
+        result = CliRunner().invoke(app, ["cert", "rotate", "civiccast-worker", "--json"])
 
         assert result.exit_code == 0
         assert _pem_private_key_marker() not in result.output

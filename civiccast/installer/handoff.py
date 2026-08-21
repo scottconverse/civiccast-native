@@ -58,7 +58,6 @@ def build_beta_handoff_summary(
         _clean_windows_lane(clean_proof_path),
         _dependency_lane(),
         _model_lane(),
-        _nats_lane(),
         _mtls_lane(),
         _activitypub_lane(),
         _external_provider_lane(),
@@ -253,40 +252,16 @@ def _model_lane() -> BetaHandoffLane:
     )
 
 
-def _nats_lane() -> BetaHandoffLane:
-    try:
-        from civiccast.platform import broker_config
-
-        ready = broker_config.check_nats_readiness()
-    except Exception as exc:
-        return _lane(
-            lane_id="nats",
-            label="NATS JetStream",
-            status="blocked",
-            message=f"NATS JetStream readiness is blocked: {exc}",
-            operator_action="Configure CIVICCAST_NATS_URL, CIVICCAST_NATS_STREAM, and mTLS files, then rerun beta-handoff.",
-            evidence_target="docs/installer/nats-mtls-readiness.md",
-        )
-    if ready is True:
-        return _lane(
-            lane_id="nats",
-            label="NATS JetStream",
-            status="passed",
-            message="NATS JetStream readiness check returned a positive proof.",
-            operator_action="Keep the CIVICCAST_EVENTS stream running before publish.",
-            evidence_target="docs/installer/nats-mtls-readiness.md",
-        )
-    return _lane(
-        lane_id="nats",
-        label="NATS JetStream",
-        status="blocked",
-        message="NATS JetStream readiness did not return a positive proof.",
-        operator_action="Inspect broker configuration and rerun the NATS readiness check.",
-        evidence_target="docs/installer/nats-mtls-readiness.md",
-    )
-
-
 def _mtls_lane() -> BetaHandoffLane:
+    """Local CA mTLS readiness lane.
+
+    NATS JetStream was removed from the product (owner decision 2026-08-20;
+    see ADR 0023, which supersedes ADR 0001) -- this lane used to run
+    alongside a paired ``_nats_lane`` (deleted); local-CA mTLS readiness
+    stands on its own now, covering only the ``civiccast-api`` and
+    ``civiccast-worker`` service identities.
+    """
+
     try:
         from civiccast.certs import readiness
 
@@ -297,8 +272,8 @@ def _mtls_lane() -> BetaHandoffLane:
             label="Local CA mTLS",
             status="blocked",
             message=f"Local CA mTLS readiness is blocked: {exc}",
-            operator_action="Run civiccast cert rotate for civiccast-api, civiccast-worker, and nats.",
-            evidence_target="docs/installer/nats-mtls-readiness.md",
+            operator_action="Run civiccast cert rotate for civiccast-api and civiccast-worker.",
+            evidence_target="docs/ops/local-ca-mtls.md",
         )
     if ready is True:
         return _lane(
@@ -307,7 +282,7 @@ def _mtls_lane() -> BetaHandoffLane:
             status="passed",
             message="Local CA and service certificate readiness returned a positive proof.",
             operator_action="Retain certificate rotation evidence and rotate on schedule.",
-            evidence_target="docs/installer/nats-mtls-readiness.md",
+            evidence_target="docs/ops/local-ca-mtls.md",
         )
     return _lane(
         lane_id="mtls",
@@ -315,7 +290,7 @@ def _mtls_lane() -> BetaHandoffLane:
         status="blocked",
         message="Local CA mTLS readiness did not return a positive proof.",
         operator_action="Rotate required service certificates and rerun beta-handoff.",
-        evidence_target="docs/installer/nats-mtls-readiness.md",
+        evidence_target="docs/ops/local-ca-mtls.md",
     )
 
 
