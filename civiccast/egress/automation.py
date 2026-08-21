@@ -49,6 +49,7 @@ from civiccast.native.station_runtime import EGRESS_DEGRADED_REASON_ENV
 
 if TYPE_CHECKING:
     from civiccast.alerting.models import AlertConditionKind
+    from civiccast.reporting.asrun_outbox import AsRunOutbox
 
 _LOG = logging.getLogger(__name__)
 
@@ -176,12 +177,20 @@ class ChannelAutomationService:
         ndi_supervisor_factory: Any = None,
         sdi_supervisor_factory: Any = None,
         monotonic: Any = None,
+        as_run_outbox: AsRunOutbox | None = None,
     ) -> None:
         self._store = store
         self._daemon = daemon
         self._source_plan_provider = source_plan_provider
         self._settings = settings
         self._monotonic = monotonic or time.monotonic
+        # BUG C2 fix: periodic drain of the as-run durable outbox
+        # (civiccast.reporting.asrun_outbox). The recorder already drains
+        # opportunistically on every write; this tick is what retries a
+        # backlog left behind by a DB outage once the DB comes back, without
+        # needing a dedicated thread -- it rides the same poll cadence that
+        # already drives every other channel-automation concern.
+        self._as_run_outbox = as_run_outbox
         # Pacing prevents command storms WITHOUT the one-shot deadlock that
         # left a dark channel unstarted for an hour (issue #152, found live
         # in the CA-8 run): a dark auto_start channel is retried every
@@ -232,6 +241,7 @@ class ChannelAutomationService:
         """One pass over every enabled channel; returns the channel ids seen."""
 
         resolved_now = now or datetime.now(UTC)
+        self._drain_as_run_outbox()
         seen: list[str] = []
         for config in self._store.list_configs():
             if not config.enabled:
@@ -252,6 +262,28 @@ class ChannelAutomationService:
                     channel_id,
                 )
         return seen
+
+    def _drain_as_run_outbox(self) -> None:
+        """BUG C2 fix: retry a backlog left by a prior DB outage.
+
+        Routes through ``ensure_started()`` rather than ``drain_once()``
+        directly: this is the first of the two call sites
+        (``AsRunOutbox.ensure_started``'s docstring names the other --
+        the recorder's first opportunistic write) that can perform the
+        one-time startup replay, deferred out of ``build_channel_automation``
+        so create_app() never touches the database. In steady state (no
+        backlog, replay already done) this is a cheap no-op read. Neither
+        ``ensure_started`` nor ``drain_once`` ever raises for a store
+        failure (both log + alert internally); this try/except is
+        defense-in-depth against a genuinely unexpected bug, matching every
+        other per-tick guard in this loop.
+        """
+        if self._as_run_outbox is None:
+            return
+        try:
+            self._as_run_outbox.ensure_started()
+        except Exception:
+            _LOG.exception("As-run outbox drain tick failed unexpectedly; retrying next poll.")
 
     def _run_channel_pass(self, config: Any, channel_id: str, resolved_now: datetime) -> None:
         if self._daemon.has_live_process(channel_id):
@@ -583,6 +615,7 @@ def build_channel_automation(
     from civiccast.egress.supervisor import PlayoutSupervisor
     from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
     from civiccast.egress.ts_relay import TsRelaySupervisor
+    from civiccast.reporting.asrun_outbox import AsRunOutbox, default_asrun_outbox_path
     from civiccast.reporting.asrun_recorder import StoreAsRunRecorder
     from civiccast.reporting.store import ReportingStore
     from civiccast.schedule.models import SCHEDULE_STATE_PUBLISHED
@@ -598,6 +631,28 @@ def build_channel_automation(
         reap_predecessor_relays(boot_epoch=time.time(), store=store)
     except Exception:
         _LOG.exception("Predecessor relay reap failed; continuing startup.")
+    # BUG C2 fix (S23 §6.1 durable outbox): one AsRunOutbox for the process,
+    # rooted at the real station-data-dir journal, shared by the recorder
+    # (opportunistic drain on every write) and this service's periodic
+    # drain tick. Constructing it here only opens the LOCAL journal file
+    # (plain sqlite3, not the app's SQLAlchemy engine) -- cheap and safe to
+    # do synchronously. The startup replay itself is deliberately NOT run
+    # here: build_channel_automation runs inside civiccast.app.create_app()
+    # (via _wire_stage_f_workers / _wire_durable_stores /
+    # _install_durable_store_wiring when DATABASE_URL is set at boot), a
+    # path that must never touch the database (pinned by
+    # tests/schedule/test_app_wiring.py::TestAppFactorySetEnv::
+    # test_create_app_does_not_call_engine_connect). AsRunOutbox.
+    # ensure_started() defers the replay to the first real drain attempt
+    # instead (the recorder's first opportunistic write, or this service's
+    # first run_once poll tick -- see its docstring), which only happens
+    # once the app is actually serving, so the "a crash mid-drain loses
+    # nothing" guarantee still holds without an eager DB touch here.
+    as_run_outbox = AsRunOutbox(
+        ReportingStore(session_factory),
+        db_path=default_asrun_outbox_path(),
+        alert_session_factory=session_factory,
+    )
     asset_store = PostgresAssetStore(session_factory)
     schedule_store = PostgresScheduleStore(session_factory)
     source_plan_provider = ScheduleSourcePlanProvider(
@@ -664,8 +719,10 @@ def build_channel_automation(
         # S23: at each ACTUAL source transition the engine appends an as-run
         # entry (proof-of-performance) to the durable franchise-compliance
         # ledger. Append-only side-write; never blocks playout (every call is
-        # guarded). Distinct from the trimmed proof-event ring buffer.
-        as_run_recorder=StoreAsRunRecorder(ReportingStore(session_factory)),
+        # guarded). Distinct from the trimmed proof-event ring buffer. BUG C2
+        # fix: routed through the shared as_run_outbox (journal-first, never
+        # a bare direct store write) instead of a fresh unwired recorder.
+        as_run_recorder=StoreAsRunRecorder(ReportingStore(session_factory), outbox=as_run_outbox),
     )
     # GStreamer degraded-mode tier 3: if the station bootstrap found the
     # GStreamer closure corrupt/unrepairable and switched egress to FFmpeg
@@ -681,4 +738,8 @@ def build_channel_automation(
         daemon,
         source_plan_provider,
         settings=ChannelAutomationSettings.from_env(),
+        # BUG C2 fix: the periodic poll retries any as-run drain backlog
+        # left by a DB outage once the DB comes back (see run_once's
+        # _drain_as_run_outbox).
+        as_run_outbox=as_run_outbox,
     )
