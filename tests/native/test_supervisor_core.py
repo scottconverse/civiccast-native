@@ -269,7 +269,6 @@ def make_supervisor(
     job_api: FakeJobApi | None = None,
     clock: FakeClock | None = None,
     postgres_ready: bool = True,
-    nats_ready: bool = True,
     health=normal_health,
     interlock: str = "free",
     interlock_reader: Callable[[], str] | None = None,
@@ -279,7 +278,6 @@ def make_supervisor(
     control_plane_env: dict[str, str] | None = None,
     should_abort: Callable[[], bool] | None = None,
     postgres_log_path: str | None = None,
-    nats_log_path: str | None = None,
 ) -> Supervisor:
     guard = guard or FakeGuard(guard_decision("start", None))
     runner = runner or FakeRunner()
@@ -302,7 +300,6 @@ def make_supervisor(
         runner=runner,
         alert_outbox=outbox,
         postgres_probe=lambda: postgres_ready,
-        nats_probe=lambda: nats_ready,
         health_probe=health,
         clock=clock.now,
         sleep=clock.sleep,
@@ -314,14 +311,12 @@ def make_supervisor(
         postgres_data_dir="pgdata",
         control_plane_env=control_plane_env,
         postgres_log_path=postgres_log_path,
-        nats_log_path=nats_log_path,
     )
 
 
 # ---------------------------------------------------------------------------
 # Adjacent diagnosability fix (2026-08-12, TESTER2 b5 evidence): postgres_log_path
-# / nats_log_path threaded from Supervisor into postgres_child_spec /
-# nats_child_spec's own ``-l`` flag.
+# threaded from Supervisor into postgres_child_spec's own ``-l`` flag.
 # ---------------------------------------------------------------------------
 
 
@@ -344,19 +339,7 @@ def test_postgres_log_path_reaches_the_spawned_spec() -> None:
     )
 
 
-def test_nats_log_path_reaches_the_spawned_spec() -> None:
-    runner = FakeRunner()
-    sup = make_supervisor(runner=runner, nats_log_path=r"C:\ProgramData\CivicCast\logs\nats.log")
-
-    sup.start_child("postgres")  # nats is dependency-gated on postgres
-    sup.start_child("nats")
-
-    spawned = next(spec for spec in runner.spawned if spec.name == "nats")
-    assert "-l" in spawned.argv
-    assert spawned.argv[spawned.argv.index("-l") + 1] == r"C:\ProgramData\CivicCast\logs\nats.log"
-
-
-def test_postgres_and_nats_log_paths_are_optional() -> None:
+def test_postgres_log_path_is_optional() -> None:
     """No log path (the pre-existing call shape, e.g. every OTHER
     make_supervisor() call in this file) must reproduce the prior argv
     exactly -- no ``-l`` flag, no behavior change for callers that don't
@@ -366,12 +349,9 @@ def test_postgres_and_nats_log_paths_are_optional() -> None:
     sup = make_supervisor(runner=runner)
 
     sup.start_child("postgres")
-    sup.start_child("nats")
 
     postgres_spec = next(spec for spec in runner.spawned if spec.name == "postgres")
-    nats_spec = next(spec for spec in runner.spawned if spec.name == "nats")
     assert "-l" not in postgres_spec.argv
-    assert "-l" not in nats_spec.argv
 
 
 # ---------------------------------------------------------------------------
@@ -521,13 +501,13 @@ def test_maintenance_readiness_satisfied_when_attested() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_startup_order_brings_up_pg_nats_cp_in_order() -> None:
+def test_startup_order_brings_up_pg_cp_in_order() -> None:
     runner = FakeRunner()
     sup = make_supervisor(runner=runner)
 
     sup.start()
 
-    assert runner.spawned_names == ["postgres", "nats", "control_plane"]
+    assert runner.spawned_names == ["postgres", "control_plane"]
     assert sup.state == "ready"
 
 
@@ -539,18 +519,19 @@ def test_startup_assigns_every_child_to_the_job_object() -> None:
     sup.start()
 
     # One assigned pid per direct child; sweep ran before spawning.
-    assert len(job_api.assigned_pids) == 3
+    assert len(job_api.assigned_pids) == 2
     assert job_api.open_existing_calls >= 1
 
 
-def test_control_plane_not_eligible_until_nats_ready() -> None:
+def test_control_plane_not_eligible_until_postgres_ready() -> None:
     """D6: control_plane may (re)start only after ALL predecessors are ready.
-    With nats not ready, a control_plane restart is refused as not_eligible."""
+    With postgres not ready, a control_plane restart is refused as
+    not_eligible."""
     sup = make_supervisor()
     sup.start()  # everyone ready
 
-    # nats leaves ready; control_plane's dependency is now unmet.
-    sup.on_dependency_lost("nats")
+    # postgres leaves ready; control_plane's dependency is now unmet.
+    sup.on_dependency_lost("postgres")
     outcome = sup.try_restart_child("control_plane")
 
     assert outcome.status == "not_eligible"
@@ -562,9 +543,9 @@ def test_dependent_restart_after_dependency_reenters_ready() -> None:
     sup.start()
     spawn_count_after_start = len(runner.spawned)
 
-    sup.on_dependency_lost("nats")
-    # Bring the dependency (nats) back to ready first...
-    assert sup.try_restart_child("nats").status == "started_ready"
+    sup.on_dependency_lost("postgres")
+    # Bring the dependency (postgres) back to ready first...
+    assert sup.try_restart_child("postgres").status == "started_ready"
     # ...only now is control_plane eligible to restart.
     cp_outcome = sup.try_restart_child("control_plane")
 
@@ -586,35 +567,34 @@ def test_dependent_restart_after_dependency_reenters_ready() -> None:
 def test_g1_child_never_attempted_after_start_early_bail_is_retried_once_dependency_recovers() -> (
     None
 ):
-    """Repro of run 17's exact wedge: nats misses ONLY start()'s own 30s
+    """Repro of run 17's exact wedge: postgres misses ONLY start()'s own 60s
     readiness budget (transient), then answers ready forever after. Before the
     fix, start()'s early bail (core.py: STARTUP_ORDER[:-1] loop) never even
     attempts control_plane, and it is left at its boot-time 'stopped' init --
     'stopped' is fail-closed-retry-exempt (deliberate stop / the ollama skip),
     so _needs_restart never retries it and control_plane is never spawned in
-    15 minutes (900 ticks) of 1 Hz supervision, despite nats being healthy the
-    entire time the tick loop ran. After the fix, STARTUP_ORDER children boot
-    into a distinct 'pending' (retry-eligible) state, so the tick loop's
-    recovery path picks control_plane up as soon as nats is ready again."""
+    15 minutes (900 ticks) of 1 Hz supervision, despite postgres being healthy
+    the entire time the tick loop ran. After the fix, STARTUP_ORDER children
+    boot into a distinct 'pending' (retry-eligible) state, so the tick loop's
+    recovery path picks control_plane up as soon as postgres is ready again."""
 
     guard = FakeGuard(guard_decision("start", None))
     runner = FakeRunner()
     clock = FakeClock()
-    # DEFAULT_NATS_READY_BUDGET_SECONDS is 30s at a 1s poll interval ->
-    # EXACTLY 31 check() calls inside start()'s own poll_until_ready (deadline
-    # computed once at t=0; the t==deadline call is still made before the
-    # timeout check). 31 misses keeps nats unready for the ENTIRETY of
-    # start(), then healthy for every tick loop call after -- i.e.
-    # transiently unready only during start().
-    nats_probe = FlakyProbe(misses=31)
+    # POSTGRES_READY_BUDGET_SECONDS is 60s at a 1s poll interval -> EXACTLY 61
+    # check() calls inside start()'s own poll_until_ready (deadline computed
+    # once at t=0; the t==deadline call is still made before the timeout
+    # check). 61 misses keeps postgres unready for the ENTIRETY of start(),
+    # then healthy for every tick loop call after -- i.e. transiently unready
+    # only during start().
+    postgres_probe = FlakyProbe(misses=61)
     sup = Supervisor(
         config=SupervisorConfig(),
         guard=guard,
         job_api=FakeJobApi(),
         runner=runner,
         alert_outbox=FakeOutbox(),
-        postgres_probe=lambda: True,
-        nats_probe=nats_probe,
+        postgres_probe=postgres_probe,
         health_probe=normal_health,
         clock=clock.now,
         sleep=clock.sleep,
@@ -625,11 +605,11 @@ def test_g1_child_never_attempted_after_start_early_bail_is_retried_once_depende
     )
 
     sup.start()
-    # nats missed start()'s own readiness budget -> start() bails before ever
-    # attempting control_plane (D6 order: postgres, nats, control_plane).
+    # postgres missed start()'s own readiness budget -> start() bails before
+    # ever attempting control_plane (D6 order: postgres, control_plane).
     assert sup.state == "starting"
     assert "control_plane" not in runner.spawned_names
-    assert nats_probe.calls == nats_probe.misses, (
+    assert postgres_probe.calls == postgres_probe.misses, (
         "test setup: start()'s readiness budget must have exhausted exactly at "
         "the misses boundary, so every call after this point returns ready"
     )
@@ -639,7 +619,7 @@ def test_g1_child_never_attempted_after_start_early_bail_is_retried_once_depende
         clock.sleep(1.0)
 
     assert "control_plane" in runner.spawned_names, (
-        "control_plane was NEVER EVEN ATTEMPTED after nats recovered -- the "
+        "control_plane was NEVER EVEN ATTEMPTED after postgres recovered -- the "
         "never-attempted-children-are-never-retried wedge (G1)"
     )
     assert sup.state == "ready"
@@ -666,7 +646,7 @@ def test_g2a_start_bail_warns_once_per_distinct_reason_not_every_call(
     guard = FakeGuard(guard_decision("start", None))
     runner = FakeRunner()
     clock = FakeClock()
-    probes = {"postgres": True, "nats": False}
+    probes = {"postgres": False}
     sup = Supervisor(
         config=SupervisorConfig(),
         guard=guard,
@@ -674,7 +654,6 @@ def test_g2a_start_bail_warns_once_per_distinct_reason_not_every_call(
         runner=runner,
         alert_outbox=FakeOutbox(),
         postgres_probe=lambda: probes["postgres"],
-        nats_probe=lambda: probes["nats"],
         health_probe=normal_health,
         clock=clock.now,
         sleep=clock.sleep,
@@ -685,24 +664,25 @@ def test_g2a_start_bail_warns_once_per_distinct_reason_not_every_call(
     )
 
     with caplog.at_level("WARNING", logger=_CORE_LOGGER_NAME):
-        sup.start()  # postgres ready, nats never ready -> bails at nats
+        sup.start()  # postgres never ready -> bails at postgres
         assert sup.state == "starting"
         bail_records = [r for r in caplog.records if "startup halted at child" in r.getMessage()]
         assert len(bail_records) == 1
-        assert "startup halted at child nats" in bail_records[0].getMessage()
+        assert "startup halted at child postgres" in bail_records[0].getMessage()
 
         # Same scenario, same reason: a second start() attempt must NOT re-log.
         sup.start()
         bail_records = [r for r in caplog.records if "startup halted at child" in r.getMessage()]
         assert len(bail_records) == 1, "an unchanged bail reason must not be re-logged"
 
-        # A genuinely different reason (postgres now the one that fails, not
-        # nats) must log again.
-        probes["postgres"] = False
+        # A genuinely different reason (postgres now ready, so it bails at
+        # control_plane's guard instead) must log again.
+        probes["postgres"] = True
+        guard.decision = guard_decision("refuse", None)
         sup.start()
         bail_records = [r for r in caplog.records if "startup halted at child" in r.getMessage()]
         assert len(bail_records) == 2, "a genuinely different bail reason must log again"
-        assert "startup halted at child postgres" in bail_records[1].getMessage()
+        assert "startup halted at child control_plane" in bail_records[1].getMessage()
 
 
 def test_g2b_guard_withheld_warns_once_per_distinct_reason_not_every_tick(
@@ -755,7 +735,6 @@ def test_g2c_restart_not_ready_warns_once_per_distinct_detail_not_every_attempt(
         runner=runner,
         alert_outbox=FakeOutbox(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: ControlPlaneHealthProbe(status_code=health_status["code"]),
         clock=clock.now,
         sleep=clock.sleep,
@@ -1006,15 +985,14 @@ def test_dependency_death_restarts_downstream_children_in_startup_order() -> Non
     """CC-WS5-005 sub-fix 3 (dependent restart, D6): when a dependency dies and is
     relaunched, every DOWNSTREAM child (later in STARTUP_ORDER) must ALSO be
     restarted -- in order -- so it rebinds to the fresh dependency. Pre-fix,
-    killing postgres relaunched ONLY postgres and left nats + control_plane bound
-    to their stale pids."""
+    killing postgres relaunched ONLY postgres and left control_plane bound
+    to its stale pid."""
     runner = FakeRunner()
     sup = make_supervisor(runner=runner)
     sup.start()
     assert sup.state == "ready"
 
     pg_pid = sup.handles()["postgres"].pid
-    nats_pid = sup.handles()["nats"].pid
     cp_pid = sup.handles()["control_plane"].pid
     spawns_after_boot = len(runner.spawned)
 
@@ -1023,15 +1001,13 @@ def test_dependency_death_restarts_downstream_children_in_startup_order() -> Non
     sup.tick(now=0.0)
 
     assert sup.state == "ready"
-    # All three carry FRESH pids...
+    # Both carry FRESH pids...
     assert sup.handles()["postgres"].pid != pg_pid
-    assert sup.handles()["nats"].pid != nats_pid
     assert sup.handles()["control_plane"].pid != cp_pid
-    # ...the stale downstream processes were terminated to rebind them, and...
-    assert nats_pid in runner.terminated_pids
+    # ...the stale downstream process was terminated to rebind it, and...
     assert cp_pid in runner.terminated_pids
-    # ...the restart ran in D6 order (postgres -> nats -> control_plane).
-    assert runner.spawned_names[spawns_after_boot:] == ["postgres", "nats", "control_plane"]
+    # ...the restart ran in D6 order (postgres -> control_plane).
+    assert runner.spawned_names[spawns_after_boot:] == ["postgres", "control_plane"]
 
 
 def test_recovered_event_dispatched_once_after_return_to_fresh_readiness() -> None:
@@ -1080,9 +1056,8 @@ def test_pre_child_start_gates_transmission_child_on_blocked_guard() -> None:
     guard = FakeGuard(guard_decision("blocked_probe_unavailable", "blocked_probe_unavailable"))
     runner = FakeRunner()
     sup = make_supervisor(guard=guard, runner=runner)
-    # Bring pg + nats up so control_plane is dependency-eligible.
+    # Bring postgres up so control_plane is dependency-eligible.
     assert sup.start_child("postgres").status == "started_ready"
-    assert sup.start_child("nats").status == "started_ready"
 
     outcome = sup.start_child("control_plane")
 
@@ -1096,7 +1071,6 @@ def test_pre_child_start_allows_transmission_child_when_guard_starts() -> None:
     runner = FakeRunner()
     sup = make_supervisor(guard=guard, runner=runner)
     sup.start_child("postgres")
-    sup.start_child("nats")
 
     outcome = sup.start_child("control_plane")
 
@@ -1106,13 +1080,12 @@ def test_pre_child_start_allows_transmission_child_when_guard_starts() -> None:
 
 
 def test_infra_children_do_not_call_the_guard() -> None:
-    """postgres/nats are not writer-capable -- their start never invokes the
+    """postgres is not writer-capable -- its start never invokes the
     transmission guard gate."""
     guard = FakeGuard(guard_decision("start", None))
     sup = make_supervisor(guard=guard)
 
     sup.start_child("postgres")
-    sup.start_child("nats")
 
     assert guard.pre_child_start_calls == 0
 
@@ -1166,7 +1139,7 @@ def test_status_snapshot_shape() -> None:
     assert isinstance(snap, StatusSnapshot)
     assert snap.state == "ready"
     assert snap.workers_permitted is True
-    assert {c.name for c in snap.children} == {"postgres", "nats", "control_plane"}
+    assert {c.name for c in snap.children} == {"postgres", "control_plane"}
     assert all(c.state == "ready" for c in snap.children)
     assert snap.guard_last_action == "start"
     assert snap.protocol_version == 1
@@ -1237,7 +1210,7 @@ def test_run_boots_then_ticks_until_stop_set() -> None:
     sup.run(stop, poll_interval_seconds=0.0)  # type: ignore[arg-type]
 
     # Booted through the D6 order.
-    assert runner.spawned_names == ["postgres", "nats", "control_plane"]
+    assert runner.spawned_names == ["postgres", "control_plane"]
     assert sup.state == "ready"
     # Ran exactly three ticks (poll_interlock reads the interlock once per tick),
     # then the fourth wait() returned True and the loop exited.
@@ -1336,7 +1309,7 @@ def test_resume_to_serving_restarts_only_control_plane_not_infra() -> None:
     """F-REV-2 falsification (the reviewer's exact repro): after entering
     maintenance, the interlock held->free edge on a CLEAR guard verdict must
     resume to serving by restarting ONLY the control plane in normal mode --
-    postgres/nats stay alive+ready and are NOT respawned."""
+    postgres stays alive+ready and is NOT respawned."""
     runner = FakeRunner()
     guard = FakeGuard(guard_decision("start", None))
     reads = iter(["held", "free"])
@@ -1355,7 +1328,6 @@ def test_resume_to_serving_restarts_only_control_plane_not_infra() -> None:
         return runner.spawned_names.count(name)
 
     assert count("postgres") == 1
-    assert count("nats") == 1
     assert count("control_plane") == 1
 
     # Tick 1: interlock reads held -> records the held edge, reconcile is a no-op.
@@ -1367,7 +1339,6 @@ def test_resume_to_serving_restarts_only_control_plane_not_infra() -> None:
     sup.tick(now=1.0)
 
     assert count("postgres") == 1  # infra NOT respawned
-    assert count("nats") == 1  # infra NOT respawned
     assert count("control_plane") == 2  # restarted once, normal mode
     assert sup.state == "ready"
     assert sup.workers_permitted() is True
@@ -1673,7 +1644,7 @@ def test_ccws5_012_resume_withheld_start_is_restartable_not_wedged() -> None:
     guard = FakeGuard(guard_decision("never_start", None))  # withholds the normal start
     sup = make_supervisor(runner=runner, guard=guard, health=maintenance_health)
 
-    # Bring postgres/nats/maintenance-CP up, then take the resume edge directly.
+    # Bring postgres/maintenance-CP up, then take the resume edge directly.
     sup.enter_maintenance()
     assert sup.child_state("control_plane") == "ready"
     sup.force_state("starting")  # the interlock_freed_clear edge already advanced here
@@ -1901,7 +1872,7 @@ def test_ccws5_010_status_snapshot_survives_concurrent_handle_removal() -> None:
     assert isinstance(snapshot, StatusSnapshot)
     # Every child is present in the snapshot exactly once, consistently.
     names = [c.name for c in snapshot.children]
-    assert names == ["postgres", "nats", "control_plane"]
+    assert names == ["postgres", "control_plane"]
     cp_view = next(c for c in snapshot.children if c.name == "control_plane")
     assert cp_view.pid is None or isinstance(cp_view.pid, int)
 
@@ -1958,7 +1929,6 @@ def test_ccws5_003_no_spurious_relaunch_when_launcher_exits_but_postmaster_alive
     # The monitored postgres handle is the postmaster, not the launcher.
     assert sup.handles()["postgres"].pid == postmaster_pid
 
-    nats_pid = sup.handles()["nats"].pid
     cp_pid = sup.handles()["control_plane"].pid
 
     # The pg_ctl -w launcher (first spawn, pid 1001) self-exits after the
@@ -1975,10 +1945,8 @@ def test_ccws5_003_no_spurious_relaunch_when_launcher_exits_but_postmaster_alive
     )
     assert sup.state == "ready"
     assert sup.child_state("postgres") == "ready"
-    # No dependent-restart cascade: nats/control_plane were never terminated.
-    assert nats_pid not in runner.terminated_pids
+    # No dependent-restart cascade: control_plane was never terminated.
     assert cp_pid not in runner.terminated_pids
-    assert sup.handles()["nats"].pid == nats_pid
     assert sup.handles()["control_plane"].pid == cp_pid
 
 
@@ -1986,7 +1954,7 @@ def test_ccws5_003_pidfile_unresolvable_fails_closed_no_false_ready() -> None:
     """FAIL CLOSED: an unresolvable postmaster.pid (reader -> None) must NOT accept
     postgres ready while only the self-exiting launcher is contained. start_child
     returns not_ready + child_state failed, never opens a bogus handle, and full
-    bring-up HALTS (no children_ready, no nats/control_plane start)."""
+    bring-up HALTS (no children_ready, no control_plane start)."""
 
     runner = FakeRunner()
     sup = make_supervisor(runner=runner, postmaster_pid_reader=lambda: None)
@@ -2004,7 +1972,6 @@ def test_ccws5_003_pidfile_unresolvable_fails_closed_no_false_ready() -> None:
 
     assert sup2.state != "ready"
     assert sup2.child_state("postgres") == "failed"
-    assert "nats" not in runner2.spawned_names
     assert "control_plane" not in runner2.spawned_names
 
 
@@ -2020,7 +1987,6 @@ def test_ccws5_003_real_postmaster_death_recovers_with_new_swap_and_rebinds_depe
     sup.start()
     assert sup.state == "ready"
     assert sup.handles()["postgres"].pid == 1111
-    nats_pid = sup.handles()["nats"].pid
     cp_pid = sup.handles()["control_plane"].pid
 
     # The real postmaster dies.
@@ -2032,9 +1998,7 @@ def test_ccws5_003_real_postmaster_death_recovers_with_new_swap_and_rebinds_depe
     assert runner.opened_existing_pids == [1111, 2222]
     assert sup.handles()["postgres"].pid == 2222
     # Dependents rebound in D6 order (terminated + fresh pids).
-    assert nats_pid in runner.terminated_pids
     assert cp_pid in runner.terminated_pids
-    assert sup.handles()["nats"].pid != nats_pid
     assert sup.handles()["control_plane"].pid != cp_pid
 
 
@@ -2083,21 +2047,18 @@ def test_restart_control_plane_is_guard_gated() -> None:
 
 
 def test_restart_control_plane_only_touches_the_control_plane() -> None:
-    """Infra (postgres/nats) is untouched by a control-plane restart -- their
-    handles and pids are unchanged."""
+    """Infra (postgres) is untouched by a control-plane restart -- its
+    handle and pid are unchanged."""
 
     runner = FakeRunner()
     sup = make_supervisor(guard=FakeGuard(guard_decision("start", None)), runner=runner)
     sup.start()
     pg_before = sup.handles()["postgres"].pid
-    nats_before = sup.handles()["nats"].pid
 
     sup.restart_control_plane()
 
     assert sup.handles()["postgres"].pid == pg_before
-    assert sup.handles()["nats"].pid == nats_before
     assert pg_before not in runner.terminated_pids
-    assert nats_before not in runner.terminated_pids
 
 
 # ---------------------------------------------------------------------------
@@ -2599,7 +2560,7 @@ def test_f1_default_supervisor_never_aborts() -> None:
 
     sup.start()
 
-    assert runner.spawned_names == ["postgres", "nats", "control_plane"]
+    assert runner.spawned_names == ["postgres", "control_plane"]
     assert sup.state == "ready"
 
 

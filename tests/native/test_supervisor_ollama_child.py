@@ -214,7 +214,6 @@ def make_supervisor(
         runner=runner,
         alert_outbox=type("O", (), {"fire": lambda self, **kw: None})(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: ControlPlaneHealthProbe(status_code=200, mode="normal"),
         clock=clock.now,
         sleep=clock.sleep,
@@ -603,7 +602,7 @@ def test_dead_ollama_child_is_restarted_by_the_tick_loop() -> None:
 
 def test_ollama_death_never_moves_the_machine_out_of_ready() -> None:
     """The optional child's death is NOT a D6 dependency loss: the machine
-    stays serving (postgres/nats/CP untouched) while it is restarted."""
+    stays serving (postgres/CP untouched) while it is restarted."""
 
     provider = RecordingProvider(_launch_decision())
     sup, runner, _job, clock = make_supervisor(provider=provider, probe=lambda: True)
@@ -618,11 +617,11 @@ def test_ollama_death_never_moves_the_machine_out_of_ready() -> None:
     assert sup.handles()["control_plane"].pid == cp_pid, "the CP must not be touched"
 
 
-def test_unconfigured_supervisor_keeps_the_three_child_snapshot() -> None:
+def test_unconfigured_supervisor_keeps_the_two_child_snapshot() -> None:
     sup, _runner, _job, _clock = make_supervisor(provider=None, probe=None)
     sup.start()
     snap = sup.status_snapshot()
-    assert [c.name for c in snap.children] == ["postgres", "nats", "control_plane"]
+    assert [c.name for c in snap.children] == ["postgres", "control_plane"]
 
 
 def test_provider_and_probe_must_be_paired() -> None:
@@ -743,7 +742,7 @@ def test_spec_provider_logs_a_skip_once_per_reason(tmp_path: Path) -> None:
 
 def test_graceful_stop_chain_stops_ollama_after_the_control_plane() -> None:
     """RAT-004 ordering with the optional child: CP drains first (it is the
-    ollama consumer), then ollama, then nats, then postgres."""
+    ollama consumer), then ollama, then postgres."""
 
     from civiccast.native.supervisor.service import SupervisorService
 
@@ -775,7 +774,7 @@ def test_graceful_stop_chain_stops_ollama_after_the_control_plane() -> None:
     )
     results = service.graceful_stop_all()
 
-    assert stop_sequence == ["control_plane", "ollama", "nats", "postgres"]
+    assert stop_sequence == ["control_plane", "ollama", "postgres"]
     assert [r.name for r in results] == stop_sequence
     assert all(r.outcome == "exited" for r in results)
 
@@ -803,7 +802,6 @@ def test_build_production_service_wires_the_optional_child(tmp_path: Path) -> No
         guard=_Guard(),  # type: ignore[arg-type]
         alert_outbox=_Outbox(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: pytest.fail("probe must not run at wiring time"),  # type: ignore[arg-type,return-value]
         ollama_probe=lambda: True,
         layout=layout,
@@ -811,4 +809,4 @@ def test_build_production_service_wires_the_optional_child(tmp_path: Path) -> No
     )
 
     snap = service._supervisor.status_snapshot()
-    assert [c.name for c in snap.children] == ["postgres", "nats", "control_plane", "ollama"]
+    assert [c.name for c in snap.children] == ["postgres", "control_plane", "ollama"]
