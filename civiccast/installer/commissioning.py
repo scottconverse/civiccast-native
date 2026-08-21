@@ -210,7 +210,9 @@ def run_first_run_cable_checks(
             label="Operating system",
             status="pass" if os_ok else "warning",
             detail=f"{hw.os.system} {hw.os.release} ({hw.os.kind})",
-            next_step="" if os_ok else "Run CivicCast on native Windows 10+, Ubuntu 22.04+, or RHEL 8+.",
+            next_step=""
+            if os_ok
+            else "Run CivicCast on native Windows 10+, Ubuntu 22.04+, or RHEL 8+.",
         )
     )
 
@@ -222,7 +224,9 @@ def run_first_run_cable_checks(
             label="Disk space",
             status="pass" if disk_ok else "fail",
             detail=f"{hw.disk.free_gb} GB free on {hw.disk.path}",
-            next_step="" if disk_ok else "Free at least 100GB on the media volume before commissioning.",
+            next_step=""
+            if disk_ok
+            else "Free at least 100GB on the media volume before commissioning.",
         )
     )
 
@@ -289,7 +293,9 @@ def run_first_run_cable_checks(
             label="Database",
             status="pass" if db_ok else "fail",
             detail=getattr(storage_status, "operator_message", "") or "",
-            next_step="" if db_ok else "Open Setup and prepare durable storage before commissioning.",
+            next_step=""
+            if db_ok
+            else "Open Setup and prepare durable storage before commissioning.",
         )
     )
 
@@ -306,7 +312,9 @@ def run_first_run_cable_checks(
             id="services",
             label="Event bus (NATS JetStream)",
             status="pass" if nats_ready else "warning",
-            detail="JetStream reachable" if nats_ready else "JetStream readiness could not be confirmed.",
+            detail="JetStream reachable"
+            if nats_ready
+            else "JetStream readiness could not be confirmed.",
             next_step="" if nats_ready else "Start NATS with JetStream and mTLS, then retry.",
         )
     )
@@ -371,9 +379,7 @@ def run_first_run_cable_checks(
             )
         )
 
-    blockers = [
-        f"{check.label}: {check.detail}" for check in checks if check.status == "fail"
-    ]
+    blockers = [f"{check.label}: {check.detail}" for check in checks if check.status == "fail"]
     ready = not blockers
 
     return CommissioningCheckReport(
@@ -649,7 +655,9 @@ def build_commissioning_report(
     next_steps.extend(proof_run.blockers)
 
     ready_for_broadcast = (
-        first_run_checks.ready and proof_run.verdict in ("pass", "partial") and not proof_run.blockers
+        first_run_checks.ready
+        and proof_run.verdict in ("pass", "partial")
+        and not proof_run.blockers
     )
 
     return CommissioningReport(

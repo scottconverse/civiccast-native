@@ -43,7 +43,9 @@ def _hw(ram_gb: float, gpu: GPUInfo | None = None) -> HardwareProbe:
         ram=RAMInfo(total_gb=ram_gb, available_gb=ram_gb / 2),
         disk=DiskInfo(path="C:\\", total_gb=1000, free_gb=500),
         gpu=gpu,
-        os=OSContext(kind="windows", system="Windows", release="11", machine="AMD64", hostname="test"),
+        os=OSContext(
+            kind="windows", system="Windows", release="11", machine="AMD64", hostname="test"
+        ),
         recommended_tier="tier-0",
         civiccast_version="test",
     )
@@ -66,7 +68,9 @@ class TestSelectAiDefaults:
             (128, "ram-12b", "gemma4:12b"),
         ],
     )
-    def test_ram_truth_table(self, ram_gb: float, expected_basis: str, expected_summary: str) -> None:
+    def test_ram_truth_table(
+        self, ram_gb: float, expected_basis: str, expected_summary: str
+    ) -> None:
         result = select_ai_defaults(_hw(ram_gb))
         assert result.basis == expected_basis
         assert result.summary_model == expected_summary
@@ -199,7 +203,9 @@ class TestClockReport:
         assert report.ntp_sync == "unsynced"
 
 
-def _full_engine(*, native_os: bool, hw_encoder: str = "nvenc", opengl_45: bool = True) -> EngineReadiness:
+def _full_engine(
+    *, native_os: bool, hw_encoder: str = "nvenc", opengl_45: bool = True
+) -> EngineReadiness:
     return EngineReadiness(
         gstreamer_present=True,
         gstreamer_version="1.24.0",
@@ -277,7 +283,10 @@ class TestEngineTierVerdict:
         # opengl requirement it shares; verify blockers name premium-cg only
         # additively, never as the sole cause of a lower qualification when
         # sdi-broadcast's own prerequisites are otherwise satisfied.
-        assert all(b.tier != "premium-cg" or not verdict_no_gl.sdi_broadcast_ok for b in verdict_no_gl.blockers)
+        assert all(
+            b.tier != "premium-cg" or not verdict_no_gl.sdi_broadcast_ok
+            for b in verdict_no_gl.blockers
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +343,10 @@ class TestPegReadiness:
             "tsduck": _tsduck(True),
             "clock": probe_clock(ntp_query=lambda: True),
             "backup_destination": BackupDestinationRef(
-                configured=True, reachable=True, destination="nas://backup", last_probe_at=datetime.now(UTC)
+                configured=True,
+                reachable=True,
+                destination="nas://backup",
+                last_probe_at=datetime.now(UTC),
             ),
             "ram_total_gb": 32.0,
             "cable_os_verdict": CableOsVerdict(
@@ -400,7 +412,9 @@ class TestPegReadiness:
 
     def test_no_backup_destination_is_yellow(self) -> None:
         kwargs = self._base_kwargs()
-        kwargs["backup_destination"] = BackupDestinationRef(configured=False, reachable=None, destination=None)
+        kwargs["backup_destination"] = BackupDestinationRef(
+            configured=False, reachable=None, destination=None
+        )
         rollup = compute_peg_readiness(**kwargs)
         backup_dim = next(d for d in rollup.dimensions if d.id == "backup")
         assert backup_dim.color == "yellow"

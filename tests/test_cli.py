@@ -99,7 +99,9 @@ def _fixture_station_box_profile(*, cable_ready: bool) -> StationBoxProfile:
         ram=RAMInfo(total_gb=32.0, available_gb=16.0),
         disk=DiskInfo(path="C:\\", total_gb=1000, free_gb=500),
         gpu=None,
-        os=OSContext(kind="windows", system="Windows", release="11", machine="AMD64", hostname="fixture"),
+        os=OSContext(
+            kind="windows", system="Windows", release="11", machine="AMD64", hostname="fixture"
+        ),
         recommended_tier="tier-0",
         civiccast_version="test",
     )
@@ -131,16 +133,29 @@ def _fixture_station_box_profile(*, cable_ready: bool) -> StationBoxProfile:
             native_os=True,
             next_step="Install GStreamer.",
         )
-        tsduck = TsduckStatus(installed=False, path=None, version=None, install_hint="install tsduck")
+        tsduck = TsduckStatus(
+            installed=False, path=None, version=None, install_hint="install tsduck"
+        )
         sdi = SdiReadiness(
-            status="ffmpeg_unavailable", ffmpeg_detected=False, muxer_present=False, next_step="no ffmpeg"
+            status="ffmpeg_unavailable",
+            ffmpeg_detected=False,
+            muxer_present=False,
+            next_step="no ffmpeg",
         )
     qualified_tier: EngineTierVerdict = compute_engine_tier_verdict(engine)
     clock = ClockReport(
-        timezone="UTC", utc_offset_minutes=0, system_time=datetime.now(UTC), ntp_sync="synced", note=""
+        timezone="UTC",
+        utc_offset_minutes=0,
+        system_time=datetime.now(UTC),
+        ntp_sync="synced",
+        note="",
     )
     cable_os_verdict = (
-        CableOsVerdict(verdict="native-linux-recommended", os_kind="linux", rationale="Native Linux is recommended.")
+        CableOsVerdict(
+            verdict="native-linux-recommended",
+            os_kind="linux",
+            rationale="Native Linux is recommended.",
+        )
         if cable_ready
         else CableOsVerdict(
             verdict="soak-pending",
@@ -183,9 +198,13 @@ def _fixture_station_box_profile(*, cable_ready: bool) -> StationBoxProfile:
             next_step="",
         ),
         clock=clock,
-        network=NetworkReport(hostname="fixture", primary_interface_up=True, headend_interface_hint=None),
+        network=NetworkReport(
+            hostname="fixture", primary_interface_up=True, headend_interface_hint=None
+        ),
         backup_destination=backup_ref,
-        release_identity=ReleaseIdentityRef(version="test", package_verified=None, proof_state=None),
+        release_identity=ReleaseIdentityRef(
+            version="test", package_verified=None, proof_state=None
+        ),
         sdi=sdi,
         tsduck=tsduck,
         ndi_sdk=engine.ndi_sdk,
@@ -217,7 +236,8 @@ def test_doctor_profile_human_full_cable_readiness(monkeypatch: pytest.MonkeyPat
     assert "Playout engine (S15 GStreamer)" in result.stdout
     assert "PEG readiness: GREEN" in result.stdout
     assert any(
-        f"qualified engine tier: {tier}" in result.stdout for tier in ("sdi-broadcast", "premium-cg")
+        f"qualified engine tier: {tier}" in result.stdout
+        for tier in ("sdi-broadcast", "premium-cg")
     )
 
 
@@ -239,7 +259,9 @@ def test_doctor_profile_human_no_cable_readiness_is_honest(monkeypatch: pytest.M
     assert "DeckLink/BMD SDK: not detected" in result.stdout
 
 
-def test_doctor_profile_json_matches_station_box_profile_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_doctor_profile_json_matches_station_box_profile_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import civiccast.platform.station_box_profile as station_box_profile_module
 
     monkeypatch.setattr(

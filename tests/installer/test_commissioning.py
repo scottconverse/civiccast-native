@@ -65,7 +65,9 @@ def _box_profile(*, engine_ok: bool, sdi_ok: bool, tsduck_ok: bool) -> StationBo
         ram=RAMInfo(total_gb=32.0, available_gb=16.0),
         disk=DiskInfo(path="C:\\", total_gb=1000, free_gb=500),
         gpu=None,
-        os=OSContext(kind="windows", system="Windows", release="11", machine="AMD64", hostname="fixture"),
+        os=OSContext(
+            kind="windows", system="Windows", release="11", machine="AMD64", hostname="fixture"
+        ),
         recommended_tier="tier-0",
         civiccast_version="test",
     )
@@ -83,13 +85,22 @@ def _box_profile(*, engine_ok: bool, sdi_ok: bool, tsduck_ok: bool) -> StationBo
     )
     qualified_tier = compute_engine_tier_verdict(engine)
     clock = ClockReport(
-        timezone="America/Denver", utc_offset_minutes=-360, system_time=datetime.now(UTC), ntp_sync="synced"
+        timezone="America/Denver",
+        utc_offset_minutes=-360,
+        system_time=datetime.now(UTC),
+        ntp_sync="synced",
     )
     tsduck = TsduckStatus(
-        installed=tsduck_ok, path="/usr/bin/tsp" if tsduck_ok else None,
-        version="3.40" if tsduck_ok else None, install_hint="install tsduck",
+        installed=tsduck_ok,
+        path="/usr/bin/tsp" if tsduck_ok else None,
+        version="3.40" if tsduck_ok else None,
+        install_hint="install tsduck",
     )
-    sdi = SdiReadiness(status="ok" if sdi_ok else "ffmpeg_unavailable", ffmpeg_detected=sdi_ok, muxer_present=sdi_ok)
+    sdi = SdiReadiness(
+        status="ok" if sdi_ok else "ffmpeg_unavailable",
+        ffmpeg_detected=sdi_ok,
+        muxer_present=sdi_ok,
+    )
     backup = BackupDestinationRef(configured=True, reachable=True, destination="nas://backup")
     cable_os = CableOsVerdict(verdict="native-linux-recommended", os_kind="linux", rationale="ok")
     peg_readiness = compute_peg_readiness(
@@ -110,20 +121,34 @@ def _box_profile(*, engine_ok: bool, sdi_ok: bool, tsduck_ok: bool) -> StationBo
         system_ram_total_gb=32.0,
         engine=engine,
         ffmpeg=FfmpegFeatureReport(
-            detected=True, version="6.0", supported=True, has_decklink=False, has_ndi=False,
-            has_libx264=True, has_loudnorm=True, byo_sdi_binary=None,
+            detected=True,
+            version="6.0",
+            supported=True,
+            has_decklink=False,
+            has_ndi=False,
+            has_libx264=True,
+            has_loudnorm=True,
+            byo_sdi_binary=None,
         ),
         clock=clock,
-        network=NetworkReport(hostname="fixture", primary_interface_up=True, headend_interface_hint=None),
+        network=NetworkReport(
+            hostname="fixture", primary_interface_up=True, headend_interface_hint=None
+        ),
         backup_destination=backup,
-        release_identity=ReleaseIdentityRef(version="test", package_verified=None, proof_state=None),
+        release_identity=ReleaseIdentityRef(
+            version="test", package_verified=None, proof_state=None
+        ),
         sdi=sdi,
         tsduck=tsduck,
         ndi_sdk=engine.ndi_sdk,
         qualified_engine_tier=qualified_tier,
         ai_default=AiDefaultSelection(
-            summary_model="gemma4:12b", translate_model="translategemma:4b",
-            caption_model="whisper-large-v3", basis="ram-12b", detected_ram_gb=32.0, rationale="r",
+            summary_model="gemma4:12b",
+            translate_model="translategemma:4b",
+            caption_model="whisper-large-v3",
+            basis="ram-12b",
+            detected_ram_gb=32.0,
+            rationale="r",
         ),
         peg_readiness=peg_readiness,
         cable_os_verdict=cable_os,
@@ -313,7 +338,9 @@ class TestOutputProof:
     def test_pass_verdict_when_both_legs_succeed(self) -> None:
         calls: list[tuple[str, int, str, int]] = []
 
-        def fake_runner(destination_uri: str, duration_seconds: int, pattern: str, muxrate_kbps: int) -> None:
+        def fake_runner(
+            destination_uri: str, duration_seconds: int, pattern: str, muxrate_kbps: int
+        ) -> None:
             calls.append((destination_uri, duration_seconds, pattern, muxrate_kbps))
 
         def fake_prober(config: EgressConfig, seconds: int) -> ComplianceProbeResult:
@@ -408,7 +435,10 @@ class TestCommissioningReport:
             verdict="pass",
         )
         report = build_commissioning_report(
-            station_name="Test Station", first_run_checks=checks, channel_setup=setup, proof_run=proof
+            station_name="Test Station",
+            first_run_checks=checks,
+            channel_setup=setup,
+            proof_run=proof,
         )
         assert report.ready_for_broadcast is True
 
@@ -424,10 +454,17 @@ class TestCommissioningReport:
             destination="192.168.1.100:5000",
         )
         proof = CommissioningProofRun(
-            channel_id="government", proof_id="p1", started_at=datetime.now(UTC), test_pattern="bars", verdict="pass"
+            channel_id="government",
+            proof_id="p1",
+            started_at=datetime.now(UTC),
+            test_pattern="bars",
+            verdict="pass",
         )
         report = build_commissioning_report(
-            station_name="Test Station", first_run_checks=checks, channel_setup=setup, proof_run=proof
+            station_name="Test Station",
+            first_run_checks=checks,
+            channel_setup=setup,
+            proof_run=proof,
         )
         assert report.ready_for_broadcast is False
 
@@ -458,7 +495,11 @@ class TestResumability:
         assert resumed.first_run_checks is not None
 
         proof = CommissioningProofRun(
-            channel_id="government", proof_id="p1", started_at=datetime.now(UTC), test_pattern="bars", verdict="pass"
+            channel_id="government",
+            proof_id="p1",
+            started_at=datetime.now(UTC),
+            test_pattern="bars",
+            verdict="pass",
         )
         save_commissioning_proof_run(proof)
         report = build_commissioning_report(
