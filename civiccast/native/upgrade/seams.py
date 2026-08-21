@@ -169,12 +169,12 @@ def default_lay_tree(
 
     WP-4 Part B produced the BUILD-time half of D2: the audited closure is
     embedded in the signed bundle, byte-verified against runtime-manifest.json
-    (see ``scripts/build_native_installer.py``). TODO(WP-5, install-time): the
-    payload SOURCE here is whatever the NSIS installer unpacked to a staging
-    dir; D2's install-time verification (SHA256SUMS chained to the Authenticode
-    signature) is asserted by the installer BEFORE this runs, so this copy
-    trusts an already-verified staging tree. Wiring that install-time staging
-    path + verification call is WP-5.
+    (see ``scripts/build_native_installer.py``). The payload SOURCE here is
+    whatever the NSIS installer unpacked to a staging dir; D2's install-time
+    verification (SHA256SUMS chained to the Authenticode signature) is
+    asserted by the installer BEFORE this runs, so this copy trusts an
+    already-verified staging tree. Wiring that install-time staging path +
+    verification call is WP-5 -- see ``next-cleanup.md``.
     """
 
     def _lay(new_version: str) -> str:

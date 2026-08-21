@@ -376,10 +376,8 @@ def list_offline_caption_jobs(
     worker but nothing surfaced them; the only "retry" was re-approving
     publish. This is the read side of that gap.
 
-    TODO(operator console): no React screen calls this yet. The publish
-    dashboard or a captions ops screen would list rows from here (optionally
-    filtered to ``state=failed``) and wire the retry endpoint below to a
-    per-row action.
+    No React screen calls this yet; see ``next-cleanup.md`` for the
+    operator console wiring this route is waiting on.
     """
     if store is None:
         raise HTTPException(

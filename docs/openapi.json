@@ -16446,7 +16446,7 @@
           "captions"
         ],
         "summary": "List offline caption jobs (K3) for operator visibility",
-        "description": "Return offline caption job rows -- state, attempts, last_error.\n\nAudit finding 4: state/attempts/last_error were persisted by the K3\nworker but nothing surfaced them; the only \"retry\" was re-approving\npublish. This is the read side of that gap.\n\nTODO(operator console): no React screen calls this yet. The publish\ndashboard or a captions ops screen would list rows from here (optionally\nfiltered to ``state=failed``) and wire the retry endpoint below to a\nper-row action.",
+        "description": "Return offline caption job rows -- state, attempts, last_error.\n\nAudit finding 4: state/attempts/last_error were persisted by the K3\nworker but nothing surfaced them; the only \"retry\" was re-approving\npublish. This is the read side of that gap.\n\nNo React screen calls this yet; see ``next-cleanup.md`` for the\noperator console wiring this route is waiting on.",
         "operationId": "list_offline_caption_jobs_api_staff_captions_offline_jobs_get",
         "parameters": [
           {
@@ -27197,7 +27197,7 @@
           "egress"
         ],
         "summary": "Repair the GStreamer runtime and restore full egress (no reinstall)",
-        "description": "Operator recovery for a station degraded onto the FFmpeg egress engine by\na corrupt GStreamer closure.\n\nRe-verifies the closure in place. If it is healthy again (the common\ntransient AV-quarantine cause), nothing destructive runs and GStreamer\negress restores on the next control-plane environment re-derivation. If it\nstill has missing bytes, launches the installer's signed, scoped\n``native-app-payload`` re-stage DETACHED; on the service's next start the\nre-derived environment re-verifies the healthy closure and GStreamer egress\nAUTO-RESTORES. Never a reinstall.\n\nTODO(operator-console): add a 'Repair GStreamer runtime & restore full\negress' button to the operator console egress health surface that POSTs\nhere and surfaces ``detail`` / ``remedy`` (backend-only in this change per\nscope; no React built here).",
+        "description": "Operator recovery for a station degraded onto the FFmpeg egress engine by\na corrupt GStreamer closure.\n\nRe-verifies the closure in place. If it is healthy again (the common\ntransient AV-quarantine cause), nothing destructive runs and GStreamer\negress restores on the next control-plane environment re-derivation. If it\nstill has missing bytes, launches the installer's signed, scoped\n``native-app-payload`` re-stage DETACHED; on the service's next start the\nre-derived environment re-verifies the healthy closure and GStreamer egress\nAUTO-RESTORES. Never a reinstall.\n\nBackend-only in this change; no React built here. See\n``next-cleanup.md`` for the operator console button this route is\nwaiting on.",
         "operationId": "repair_gstreamer_runtime_api_staff_egress_repair_gstreamer_post",
         "responses": {
           "200": {

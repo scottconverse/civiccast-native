@@ -171,6 +171,108 @@ came across and what deliberately did not.
     before the retirement — it protects against a native install/repair
     silently clobbering that other product's ownership state, which is a
     different concern from installing or running CivicCast on WSL.
+- **The WSL2/Ubuntu leftovers wave 1 held back, finished (wave 2).**
+  - `scripts/build_release_artifacts.py` (~1,540 lines) — the WSL2-target
+    release-artifact pipeline (Linux wheelhouse build for the retired
+    WSL2 install target, a WSL clean-machine preflight script generator).
+    Not wired into any live workflow after `release-artifacts.yml` was
+    deleted; its only in-repo callers (`scripts/run_stage1_release_gate.py`,
+    `scripts/run_stage7_final_readiness_proof.py`, `scripts/stage_report.py`)
+    are themselves pre-Gate-A, pre-native-repo legacy orchestrators
+    (rung-numbered `3.3`→`4.0`, superseded by Gate A) that only embed its
+    path as a subprocess command string in unit tests, never execute it in
+    CI. Deleted with its dedicated test coverage
+    (`TestReleaseArtifactBuilderContracts` and the WSL clean-windows-verifier
+    test in `tests/installer/test_package_artifacts.py`, the release-manifest
+    coherence test in `tests/installer/test_beta_handoff.py`). Docstring/
+    comment references in `civiccast/installer/packages.py`,
+    `scripts/policy/check_sidecar_attestation_integrity.py`, and
+    `civiccast/installer/handoff.py`'s operator-facing guidance updated to
+    stop pointing at the deleted script.
+  - `scripts/run_airgap_vm_proof.py` and
+    `scripts/prove_native_inventory_reconciliation.py` — both required a
+    WSL2 VM / an extracted WSL installer's bootstrap+wheelhouse as
+    mandatory inputs that do not exist in this repository (the WSL backend
+    was already purged). Deleted with their tests
+    (`tests/integration/test_airgap_vm_proof.py`,
+    `tests/native/test_inventory_reconciliation.py`); the collection-count
+    floor in `tests/policy/test_native_caption_workflow_policy.py` re-derived
+    accordingly.
+  - `scripts/run_clean_windows_install_proof.py` — a genuinely native-Windows
+    proof runner; kept, with its `wsl2-fresh-distro`/`wsl2-fresh-user`
+    isolation strategies and their WSL-detection helpers
+    (`_detect_ubuntu_wsl_distro`, `_wsl_python312_ready`, `_to_wsl_path`,
+    the `partial` proof status they produced) removed, and its VirtualBox
+    report validator's dependency-absent first-run check fixed: it required
+    a `current_lane_id: "wsl2"` / "Set up Windows helper" installer state
+    that the installer can no longer produce at all (the whole "blocked,
+    needs a Windows helper" first-run status was retired with the WSL2
+    lane), which meant the check could never pass on a real report. Its
+    test suite (`tests/integration/test_clean_windows_install_proof.py`)
+    updated to match.
+  - `civiccast/apps/installer/scripts/verify-bundle-resources.mjs` — the
+    Tauri bundle-resource guard required a Linux wheelhouse and a Linux
+    GStreamer runtime tarball (for the retired WSL2 hand-off) that nothing
+    in the shipped app reads at runtime, and its error message pointed at
+    the now-deleted `build_release_artifacts.py`. `scripts/build_native_installer.py`
+    already bypassed this exact guard for that reason (see its updated
+    `run_tauri_build` docstring); the guard itself now only requires
+    `bootstrap-manifest.json`, the one resource `main.rs` actually reads.
+  - `civiccast/egress/gst/{engine,worker,graph,control}.py` — WSL-specific
+    docstring/comment wording (`"WSL/Linux"`, `"WSL/LPM-validated"`)
+    generalized to POSIX/Linux-macOS, since the dual-platform logic itself
+    (Windows named-pipe vs. POSIX FIFO control channel) was never
+    WSL-specific — it is unchanged. `docs/claims/claims.yaml` re-bound to
+    the new blob hashes for all four files (two claim entries plus the
+    `graph.py` fixtures entry); `audio_tap.py` had no WSL text and was not
+    touched.
+  - Rewrote `docs/USER-MANUAL.md`'s WSL2/Ubuntu install-flow claims (the
+    installer bootstrapping a WSL2 helper and SQLite storage, GStreamer
+    under `/opt/civiccast/gstreamer`, TSDuck installed into WSL2 Ubuntu,
+    provisioning "inside Ubuntu WSL2") to describe the real native install
+    (Windows service via SCM, bundled runtime tree, on-demand per-user
+    TSDuck fetch) and repointed all 41 `scottconverse/civiccast` blob/tree
+    links to `scottconverse/civiccast-native`; regenerated
+    `USER-MANUAL.pdf`/`.docx`/`.render.json` (`--check-current` PASS).
+    `docs/technical-ops-reference.md`'s stale WSL2 wheelhouse air-gap
+    instruction removed (the paragraph already disclosed the claim as
+    unproven for native).
+  - `civiccast/apps/installer/README.md`'s "Current Posture" section
+    described the retired WSL2 Ubuntu/systemd/`/opt/civiccast` runtime
+    wholesale; rewritten to describe the real native Windows service.
+  - Added historical banners (matching the existing pattern in
+    `docs/installer/beta-tester-handoff.md` and
+    `docs/installer/cross-platform-installer.md`) to
+    `docs/tester/known-limitations.md`'s WSL Public-Beta Line section and
+    `docs/tester/station-implementation-walkthrough.md`, both of which
+    described the retired rc-numbered WSL2 line's setup/release process
+    without any such disclaimer. Removed the WSL2 support-bundle caveat
+    from `docs/tester/support-bundle-instructions.md` and corrected its
+    claimed log source to the real native runtime-host log; removed the
+    WSL2 Ubuntu distro field from `docs/tester/bug-report-template.md`.
+  - `Makefile`'s `cleanroom`/`cleanroom-build`/`cleanroom-run`/
+    `cleanroom-shell` targets referenced `docker/cleanroom.Dockerfile`,
+    which does not exist in this repository (`docker/` was excluded with
+    the retired lane). Removed; `.pipelines/roles/pre-push-verifier.md`'s
+    matching "run `make cleanroom`" step rewritten to say plainly that no
+    automated clean-box gate exists here, per the same rule already stated
+    in this file's "Verification that actually gates this repo" section.
+  - Fixed `gh api repos/scottconverse/civiccast/...` commands that should
+    have targeted this repository in `docs/ops/branch-protection.md`,
+    `docs/ops/self-hosted-ci.md`, and this file's own cross-agent audit
+    protocol section — each would have queried or modified the wrong
+    (private, old) repository if actually run.
+  - `.github/ISSUE_TEMPLATE/config.yml`'s security-report and release-plan
+    contact links repointed to this repository (both exist here); its
+    Discussions link left pointing at the old repository with an honest
+    note, since `scottconverse/civiccast-native` does not have Discussions
+    enabled. `SUPPORT.md`'s GitHub Issues link repointed the same way.
+  - Three `TODO`/`FIXME`/`HACK` markers `scripts/policy/check_no_todos.py`
+    flags as blockers (`civiccast/captions/router.py`,
+    `civiccast/egress/router.py`, `civiccast/native/upgrade/seams.py`)
+    moved into a new `next-cleanup.md` and reworded in place per that
+    policy's own stated design; `docs/openapi.json` regenerated (the routes'
+    descriptions changed).
 
 ### Changed
 
@@ -214,9 +316,8 @@ came across and what deliberately did not.
   embedded Authenticode certificate-table evidence for a Windows `.exe`
   claiming `signed: true`; a `signed: true` claim for any non-Windows package
   kind is rejected outright, since this product line has no signing
-  mechanism for those. `scripts/build_release_artifacts.py`,
-  `scripts/policy/check_sidecar_attestation_integrity.py`, and
-  `scripts/policy/check_release_artifacts.py` follow the same rule; package
+  mechanism for those. `scripts/policy/check_sidecar_attestation_integrity.py`
+  and `scripts/policy/check_release_artifacts.py` follow the same rule; package
   sidecars now always carry a null `attestation` field. `CODE_SIGNING_POLICY.md`,
   `docs/install/windows-release-trust.md`, and
   `docs/installer/cross-platform-installer.md` describe the Authenticode +
