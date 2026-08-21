@@ -4647,7 +4647,7 @@ Read CivicCast local federation metadata.
 ### `BetaHandoffLane`
 
 - `evidence_target` (required): `string`
-- `id` (required): `'package-acquisition' | 'clean-windows-install-proof' | 'dependencies' | 'models' | 'nats' | 'mtls' | 'activitypub' | 'external-providers'`
+- `id` (required): `'package-acquisition' | 'clean-windows-install-proof' | 'dependencies' | 'models' | 'mtls' | 'activitypub' | 'external-providers'`
 - `label` (required): `string`
 - `message` (required): `string`
 - `operator_action` (required): `string`

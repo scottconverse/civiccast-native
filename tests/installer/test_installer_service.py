@@ -39,7 +39,6 @@ def test_first_run_health_check_fails_closed_for_unconfigured_publish_surfaces()
 
     assert report.ready is False
     assert {check.id for check in report.checks} == {
-        "nats-jetstream",
         "mtls-local-ca",
         "portal",
         "internet-archive",
