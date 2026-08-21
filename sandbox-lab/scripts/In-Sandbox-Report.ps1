@@ -31,6 +31,20 @@
 #       earlier marker (e.g. _AFTER_INSTALL.marker) can never be mistaken
 #       for real completion again.
 
+# HARDENED <gate-a-station-up-wait-and-log-capture>: bounded script-level
+# watchdog. -MaxScriptMinutes defaults to 100 (LogonCommand invokes this
+# script with no arguments, so the default always applies in production;
+# it exists as a parameter purely so a developer/dry-run can shorten it).
+# Deliberately NOT implemented with Start-Job -- service.py's own history
+# (see comment near the Get-WinEvent call further down) documents a real
+# System.OutOfMemoryException hit loading PSWorkflow/PSScheduledJob module
+# type data the moment Start-Job was invoked under this VM's memory
+# pressure, so the watchdog is a genuinely separate powershell.exe process
+# (Start-Process) instead -- it never touches the job-scheduling subsystem.
+param(
+    [int]$MaxScriptMinutes = 100
+)
+
 $ErrorActionPreference = 'Continue'
 $OutDir = 'C:\CivicCastOutput'
 $PayloadDir = 'C:\CivicCastPayload'
@@ -46,6 +60,45 @@ function Write-Marker {
 }
 
 Write-Marker -Name '_STARTED.marker' -Content "Started $RunStart"
+
+# Spawn the watchdog now, as early as possible, so it bounds the ENTIRE run
+# (installer through T5 soak) -- not just the parts of the script written
+# after it. If DONE.json still does not exist $MaxScriptMinutes minutes from
+# now, the watchdog writes WATCHDOG-TIMEOUT.txt and its own DONE.json so
+# Host-Launch-Sandbox-Test.ps1's poll loop can never wait on a zombie
+# in-sandbox script forever (bounded instead by its own -TimeoutMinutes,
+# which this makes moot in the common case).
+try {
+    $watchdogScript = @'
+param([string]$OutDir, [int]$Minutes)
+Start-Sleep -Seconds ([Math]::Max(60, $Minutes * 60))
+$donePath = Join-Path $OutDir 'DONE.json'
+if (-not (Test-Path $donePath)) {
+    $ts = (Get-Date).ToUniversalTime().ToString('o')
+    "watchdog_fired_utc=$ts max_script_minutes=$Minutes reason=DONE.json not present after the bounded deadline -- main script presumed hung or zombied" |
+        Set-Content -Path (Join-Path $OutDir 'WATCHDOG-TIMEOUT.txt') -Encoding UTF8
+    if (-not (Test-Path $donePath)) {
+        $doneObj = [ordered]@{
+            done_utc             = $ts
+            last_completed_step  = 'watchdog-timeout'
+            installer_exit_code  = $null
+            harness_completed    = $false
+            watchdog_timeout     = $true
+        }
+        ($doneObj | ConvertTo-Json -Depth 3) | Set-Content -Path $donePath -Encoding UTF8
+    }
+}
+'@
+    $watchdogPath = Join-Path $env:TEMP 'civiccast-gate-a-watchdog.ps1'
+    Set-Content -Path $watchdogPath -Value $watchdogScript -Encoding UTF8
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchdogPath,
+        '-OutDir', $OutDir, '-Minutes', $MaxScriptMinutes
+    ) -WindowStyle Hidden | Out-Null
+    Write-Marker -Name '_WATCHDOG_SPAWNED.marker' -Content "MaxScriptMinutes=$MaxScriptMinutes started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+} catch {
+    Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "watchdog spawn failed (non-fatal, continuing without a watchdog): $_"
+}
 
 $summary = [ordered]@{
     run_start_utc          = $RunStart.ToUniversalTime().ToString('o')
@@ -124,6 +177,110 @@ function Test-KnownPaths {
     if (Test-Path $p) { $hits.Add($p) }
 
     return ($hits | Select-Object -Unique)
+}
+
+# ============================================================================
+# HARDENED <gate-a-station-up-wait-and-log-capture> -- station diagnostics
+# capture. The 8579e66-run3 evidence proved the harness had NO way to see
+# why the station never listened on :8000: postgres.log / nats.log /
+# control_plane.log / supervisor.log all live under
+# %ProgramData%\CivicCast\logs INSIDE the sandbox, which resets every
+# session, and nothing copied them out before the VM was torn down. This
+# function is called twice -- once right after the station-up-wait
+# concludes (pass OR fail) and once, unconditionally, from the top-level
+# `finally` block -- so a diagnosis is preserved even if something later in
+# the run hangs or throws.
+#
+# Every operation here is BOUNDED and TARGETED, matching this file's
+# existing "no recursive scans over the 10k-file install tree" discipline:
+# robocopy of two small, known ProgramData subdirectories (never the
+# install tree), three non-blocking process/service queries, and a
+# `-MaxEvents`-capped Get-WinEvent call. Paths are taken from
+# civiccast/native/supervisor/install_layout.py's `resolve_install_layout`
+# (the single source of truth for the installed layout) rather than
+# re-guessed here: log_root = <ProgramData>\CivicCast\logs (every child's
+# <name>.log plus the rotating supervisor.log all land there in one place),
+# config lives at <ProgramData>\CivicCast\config (nats-server.conf etc --
+# explicitly NOT the sibling data\pgdata / data\nats-store directories,
+# which are excluded from the robocopy).
+function Invoke-StationDiagCapture {
+    param([string]$OutDir, [string]$InstallDir, [string]$Label, [datetime]$RunStart)
+    $diagDir = Join-Path $OutDir "station-diag\$Label"
+    New-Item -ItemType Directory -Force -Path $diagDir | Out-Null
+    $note = Join-Path $diagDir '_capture-note.txt'
+    "captured_utc=$((Get-Date).ToUniversalTime().ToString('o')) label=$Label" | Set-Content -Path $note -Encoding UTF8
+
+    $pdCivicCast = Join-Path $env:ProgramData 'CivicCast'
+
+    # Whole logs dir -- it is small (text logs, not media/model data), per
+    # the coordinator's note. Covers postgres.log, nats.log,
+    # control_plane.log, ollama.log, and the rotating supervisor.log in one
+    # bounded copy (see install_layout.default_log_root / service.py's
+    # child_log_path -- all children log to <log_root>\<name>.log).
+    $logsSrc = Join-Path $pdCivicCast 'logs'
+    if (Test-Path $logsSrc) {
+        try {
+            & robocopy.exe $logsSrc (Join-Path $diagDir 'logs') /E /R:1 /W:1 /NFL /NDL /NJH /NJS 2>&1 |
+                Out-File -FilePath (Join-Path $diagDir 'robocopy-logs.log') -Encoding UTF8
+        } catch { "robocopy logs failed: $_" | Add-Content -Path $note -Encoding UTF8 }
+    } else {
+        "logs dir not present at $logsSrc (station never got far enough to log, or ProgramData path differs)" | Add-Content -Path $note -Encoding UTF8
+    }
+
+    # Config only -- /XD excludes 'data' and 'pgdata' so a misplaced
+    # co-located data directory can never turn this into an unbounded copy
+    # of the postgres cluster or NATS JetStream store.
+    $configSrc = Join-Path $pdCivicCast 'config'
+    if (Test-Path $configSrc) {
+        try {
+            & robocopy.exe $configSrc (Join-Path $diagDir 'config') /E /XD 'data' 'pgdata' 'nats-store' /R:1 /W:1 /NFL /NDL /NJH /NJS 2>&1 |
+                Out-File -FilePath (Join-Path $diagDir 'robocopy-config.log') -Encoding UTF8
+        } catch { "robocopy config failed: $_" | Add-Content -Path $note -Encoding UTF8 }
+    } else {
+        "config dir not present at $configSrc" | Add-Content -Path $note -Encoding UTF8
+    }
+
+    try { (& sc.exe qc CivicCastSupervisor 2>&1 | Out-String) | Set-Content -Path (Join-Path $diagDir 'sc-qc.txt') -Encoding UTF8 } catch { "sc qc capture failed: $_" | Add-Content -Path $note -Encoding UTF8 }
+    try { (& sc.exe query CivicCastSupervisor 2>&1 | Out-String) | Set-Content -Path (Join-Path $diagDir 'sc-query.txt') -Encoding UTF8 } catch { "sc query capture failed: $_" | Add-Content -Path $note -Encoding UTF8 }
+    try {
+        $ns = (& netstat.exe -ano 2>&1)
+        ($ns | Select-String -Pattern 'LISTENING') | Out-String | Set-Content -Path (Join-Path $diagDir 'netstat-listening.txt') -Encoding UTF8
+    } catch { "netstat capture failed: $_" | Add-Content -Path $note -Encoding UTF8 }
+    try {
+        $taskPattern = 'python|pythonservice|civiccast|postgres|nats|ollama'
+        $rows = (& tasklist.exe /v /fo csv 2>&1) | ConvertFrom-Csv -ErrorAction SilentlyContinue |
+            Where-Object { $_.'Image Name' -match $taskPattern }
+        $rows | Format-Table -AutoSize | Out-String -Width 300 | Set-Content -Path (Join-Path $diagDir 'tasklist-filtered.txt') -Encoding UTF8
+    } catch { "tasklist capture failed: $_" | Add-Content -Path $note -Encoding UTF8 }
+
+    try {
+        $winEventStart = $RunStart
+        $startedMarker = Join-Path $OutDir '_STARTED.marker'
+        if (Test-Path $startedMarker) { $winEventStart = (Get-Item $startedMarker).CreationTime }
+        $events = Get-WinEvent -FilterHashtable @{
+            LogName = 'Application', 'System'; Level = 1, 2, 3; StartTime = $winEventStart
+        } -MaxEvents 200 -ErrorAction SilentlyContinue
+        $eventRows = @($events | ForEach-Object {
+            [ordered]@{
+                TimeCreated  = $_.TimeCreated.ToString('o')
+                LogName      = $_.LogName
+                LevelDisplay = $_.LevelDisplayName
+                ProviderName = $_.ProviderName
+                Id           = $_.Id
+                Message      = ($_.Message -split "`n" | Select-Object -First 5) -join ' | '
+            }
+        })
+        ($eventRows | ConvertTo-Json -Depth 4) | Set-Content -Path (Join-Path $diagDir 'winevent-app-system.json') -Encoding UTF8
+    } catch { "winevent capture failed: $_" | Add-Content -Path $note -Encoding UTF8 }
+
+    if ($InstallDir) {
+        foreach ($f in @('activation-self-test.json', 'station-set.json')) {
+            $src = Join-Path $InstallDir $f
+            if (Test-Path $src) {
+                Copy-Item -LiteralPath $src -Destination (Join-Path $diagDir $f) -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }
 
 # ============================================================================
@@ -488,6 +645,11 @@ try {
         $summary.installer_source = "SKIPPED (SKIP_MODE.txt opt-in + persistent station-set.json found at $PersistentInstallDir)"
         $summary.silent_flag_used = 'SKIPPED_PERSISTENT_EXPERIMENTAL'
         $summary.installer_exit_code = 'SKIPPED'
+        # No fresh install ran this session -- there is no real "just
+        # installed" boot to time. Use "now" so station_boot_seconds still
+        # reports a bounded, non-null number (time from re-registration
+        # attempt to health) instead of silently going null in this mode.
+        $script:AfterInstallTime = Get-Date
         Save-Summary -Step 'install-skipped-persistent'
 
         # EXPERIMENTAL, best-effort, NON-BLOCKING: attempt to re-register the
@@ -580,6 +742,10 @@ try {
             $summary.errors += "installer launch/wait failed: $_"
         }
         Write-Marker -Name '_AFTER_INSTALL.marker' -Content (Get-Date).ToString('o')
+        # station_boot_seconds (station-up-wait, below) is measured from this
+        # timestamp -- capture it as a real DateTime now rather than
+        # re-parsing the marker file back off disk later.
+        $script:AfterInstallTime = Get-Date
         Save-Summary -Step 'installer-ran'
 
         # Give any late-writing child processes (service self-registration, log
@@ -787,38 +953,103 @@ try {
     }
     Save-Summary -Step 'service-start-attempt'
 
-    # 5b. T1/T2 — station RUNTIME + UI wiring. Loopback (127.0.0.1:8000) works
-    #     even with Networking disabled. Bulletproof plain-text capture to
-    #     RUNTIME-RESULT.txt so a later hang can't swallow it.
+    # 5b. STATION-UP WAIT (HARDENED <gate-a-station-up-wait-and-log-capture>
+    #     after 8579e66-run3: the old version polled 3 endpoints
+    #     SEQUENTIALLY at up to 180s EACH -- ~9.5 minutes total -- then gave
+    #     up. The Aug-19 reference run only worked because ~25 minutes of
+    #     unrelated activation work happened to sit between install and this
+    #     check, giving the station time to cold-boot postgres+nats+
+    #     control-plane; 8579e66-run3 had no such gap and the station simply
+    #     never got there within the old bound. This version polls ONLY
+    #     /api/health on a single bounded 20-minute deadline (6s interval),
+    #     logs every poll's timestamp + outcome/error to
+    #     STATION-UP-WAIT.txt, and only probes /operator/ and / (short,
+    #     60s-bounded each) AFTER health itself has answered 200 --
+    #     matching the coordinator's exact spec. station_boot_seconds is
+    #     measured from _AFTER_INSTALL.marker (informational only: Gate A's
+    #     judge records it but does not fail on duration -- Gate B owns
+    #     timing).
     $rt = Join-Path $OutDir 'RUNTIME-RESULT.txt'
+    $stationWaitLog = Join-Path $OutDir 'STATION-UP-WAIT.txt'
     "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $rt -Encoding UTF8
+    $afterInstallIso = if ($script:AfterInstallTime) { $script:AfterInstallTime.ToUniversalTime().ToString('o') } else { '<not-set>' }
+    "wait_started_utc=$((Get-Date).ToUniversalTime().ToString('o')) after_install_marker_utc=$afterInstallIso deadline_minutes=20 poll_interval_seconds=6" |
+        Set-Content -Path $stationWaitLog -Encoding UTF8
+
     $endpoints = [ordered]@{
         health           = 'http://127.0.0.1:8000/api/health'
         operator_console = 'http://127.0.0.1:8000/operator/'
         resident_portal  = 'http://127.0.0.1:8000/'
     }
     $summary.runtime_checks = [ordered]@{}
-    foreach ($name in $endpoints.Keys) {
+
+    # ---- health: the ONLY endpoint with the long (20-minute) bound ----
+    $healthRes = [ordered]@{ url = $endpoints.health; status = $null; ok = $false; bytes = 0; snippet = $null; error = $null; polls = 0 }
+    $stationFirstHealthyTime = $null
+    $healthDeadline = (Get-Date).AddMinutes(20)
+    while ((Get-Date) -lt $healthDeadline) {
+        $healthRes.polls++
+        $pollTs = (Get-Date).ToUniversalTime().ToString('o')
+        try {
+            $r = Invoke-WebRequest -Uri $endpoints.health -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            $healthRes.status = [int]$r.StatusCode
+            $body = [string]$r.Content
+            $healthRes.bytes = $body.Length
+            $healthRes.snippet = ($body.Substring(0, [Math]::Min(300, $body.Length))) -replace '\s+', ' '
+            if ($healthRes.status -eq 200 -and $healthRes.bytes -gt 0) {
+                $healthRes.ok = $true
+                $stationFirstHealthyTime = Get-Date
+                "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) STATION HEALTHY" | Add-Content -Path $stationWaitLog -Encoding UTF8
+                break
+            }
+            "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) ok:false bytes:$($healthRes.bytes)" | Add-Content -Path $stationWaitLog -Encoding UTF8
+        } catch {
+            $healthRes.error = "$($_.Exception.Message)"
+            "poll #$($healthRes.polls) $pollTs -> ERROR: $($healthRes.error)" | Add-Content -Path $stationWaitLog -Encoding UTF8
+        }
+        Start-Sleep -Seconds 6
+    }
+    if (-not $healthRes.ok) {
+        "wait_ended_utc=$((Get-Date).ToUniversalTime().ToString('o')) result=TIMEOUT total_polls=$($healthRes.polls) (20-minute bounded deadline reached, station never answered /api/health)" |
+            Add-Content -Path $stationWaitLog -Encoding UTF8
+    }
+    $summary.runtime_checks['health'] = $healthRes
+    "health=status:$($healthRes.status) ok:$($healthRes.ok) bytes:$($healthRes.bytes) polls:$($healthRes.polls) err:$($healthRes.error)" | Add-Content -Path $rt -Encoding UTF8
+
+    $summary.station_up = [bool]$healthRes.ok
+    $summary.station_first_healthy_utc = if ($stationFirstHealthyTime) { $stationFirstHealthyTime.ToUniversalTime().ToString('o') } else { $null }
+    if ($stationFirstHealthyTime -and $script:AfterInstallTime) {
+        $summary.station_boot_seconds = [Math]::Round((New-TimeSpan -Start $script:AfterInstallTime -End $stationFirstHealthyTime).TotalSeconds, 1)
+    } else {
+        $summary.station_boot_seconds = $null
+    }
+    "station_up=$($summary.station_up) station_first_healthy_utc=$($summary.station_first_healthy_utc) station_boot_seconds=$($summary.station_boot_seconds)" |
+        Add-Content -Path $stationWaitLog -Encoding UTF8
+    Save-Summary -Step 'station-up-wait'
+
+    # ---- operator_console / resident_portal: ONLY after health=200, short 60s bound each ----
+    foreach ($name in @('operator_console', 'resident_portal')) {
         $url = $endpoints[$name]
         $res = [ordered]@{ url = $url; status = $null; ok = $false; bytes = 0; snippet = $null; error = $null; polls = 0 }
-        # Poll up to ~180s: the station starts postgres/nats/control-plane after
-        # service start, so the endpoints are not up instantly.
-        $deadline = (Get-Date).AddSeconds(180)
-        while ((Get-Date) -lt $deadline) {
-            $res.polls++
-            try {
-                $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-                $res.status = [int]$r.StatusCode
-                $body = [string]$r.Content
-                $res.bytes = $body.Length
-                $res.snippet = ($body.Substring(0, [Math]::Min(300, $body.Length))) -replace '\s+', ' '
-                # health: any 200 with a body. UI: 200 that looks like real HTML/JSON, not an error page.
-                if ($res.status -eq 200 -and $res.bytes -gt 0) { $res.ok = $true }
-                break
-            } catch {
-                $res.error = "$($_.Exception.Message)"
-                Start-Sleep -Seconds 6
+        if ($healthRes.ok) {
+            $deadline = (Get-Date).AddSeconds(60)
+            while ((Get-Date) -lt $deadline) {
+                $res.polls++
+                try {
+                    $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                    $res.status = [int]$r.StatusCode
+                    $body = [string]$r.Content
+                    $res.bytes = $body.Length
+                    $res.snippet = ($body.Substring(0, [Math]::Min(300, $body.Length))) -replace '\s+', ' '
+                    if ($res.status -eq 200 -and $res.bytes -gt 0) { $res.ok = $true }
+                    break
+                } catch {
+                    $res.error = "$($_.Exception.Message)"
+                    Start-Sleep -Seconds 6
+                }
             }
+        } else {
+            $res.error = 'skipped: /api/health did not answer 200 within the 20-minute station-up-wait deadline'
         }
         $summary.runtime_checks[$name] = $res
         "$name=status:$($res.status) ok:$($res.ok) bytes:$($res.bytes) polls:$($res.polls) err:$($res.error)" | Add-Content -Path $rt -Encoding UTF8
@@ -832,6 +1063,19 @@ try {
             [string]$r2.Content | Set-Content -Path (Join-Path $OutDir "ui-$name.html") -Encoding UTF8
         } catch {}
     }
+
+    # Station diagnostics -- FIRST capture, right after the station-up
+    # decision and BEFORE the runtime verdict downstream (Gate A's own
+    # judge, and this script's T2/T3/T4/T5 gating below) consumes it.
+    # Captured unconditionally (pass or fail) so a station that never came
+    # up still leaves behind whatever the supervisor/postgres/nats/control-
+    # plane children managed to log before giving up.
+    try {
+        Invoke-StationDiagCapture -OutDir $OutDir -InstallDir $installDir -Label 'after-station-up-wait' -RunStart $RunStart
+    } catch {
+        "station diag capture (after-station-up-wait) failed: $_" | Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Encoding UTF8
+    }
+    Save-Summary -Step 'station-diag-captured-after-wait'
     Save-Summary -Step 'runtime-ui-captured'
 
     # 5c. T2 RENDER ASSERT (QA-F1 fix). The T1 checks above only prove the
@@ -868,8 +1112,8 @@ try {
     $t35 = Join-Path $OutDir 'T3T5-RESULT.txt'
     "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $t35 -Encoding UTF8
     $stationUp = $false
-    try { $stationUp = ($summary.runtime_checks.health.ok -eq $true) } catch {}
-    "station_up=$stationUp" | Add-Content -Path $t35 -Encoding UTF8
+    try { $stationUp = ($summary.station_up -eq $true) } catch {}
+    "station_up=$stationUp station_boot_seconds=$($summary.station_boot_seconds)" | Add-Content -Path $t35 -Encoding UTF8
     $BASE = 'http://127.0.0.1:8000'
     $soakDir = 'C:\CivicCastSoak'
     $runRoot = 'C:\CivicCastSoakRun'
@@ -1434,8 +1678,51 @@ try {
         "T5_RESULT=$(if($soakFail -eq 0){'PASS'}else{'FAIL'}) beats=$beat unhealthy=$soakFail" | Add-Content -Path $t35 -Encoding UTF8
         Save-Summary -Step 't5-soak-complete'
     } else {
+        # HARDENED <gate-a-station-up-wait-and-log-capture>: EXPLICITLY skip
+        # T3/T4/T5 -- write each of their own result files with a real
+        # SKIPPED verdict line (never leave them absent/ambiguous, and never
+        # attempt T4's product-engine call, ffmpeg-fallback encoder run, or
+        # T5's 20-minute soak against a station that never came up; that is
+        # what left the 8579e66-run3 script hung with no forward progress
+        # for 30+ minutes after t2-render-assert). scripts/gate_a_verdict.py
+        # already fails closed on a SKIPPED value for every one of these
+        # (only an explicit PASS / PASS_PRODUCT_ENGINE line passes), so this
+        # is purely about leaving an honest, bounded, non-hanging trail --
+        # not a verdict-judge contract change.
         "T3T5_SKIPPED=station health check did not pass" | Add-Content -Path $t35 -Encoding UTF8
+        "T3_RESULT=SKIPPED(station-down)" | Add-Content -Path $t35 -Encoding UTF8
+        "T4_RESULT=SKIPPED(station-down)" | Add-Content -Path $t35 -Encoding UTF8
+        "T5_soak_minutes=0 (skipped)" | Add-Content -Path $t35 -Encoding UTF8
+        "T5_RESULT=SKIPPED beats=0 unhealthy=0" | Add-Content -Path $t35 -Encoding UTF8
+
+        $t3loopSkip = Join-Path $OutDir 'T3-LOOP.txt'
+        "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $t3loopSkip -Encoding UTF8
+        "SKIPPED: station health check did not pass within the 20-minute station-up-wait deadline -- see STATION-UP-WAIT.txt and station-diag\after-station-up-wait\ for why" | Add-Content -Path $t3loopSkip -Encoding UTF8
+        "T3_LOOP=SKIPPED(station-down)" | Add-Content -Path $t3loopSkip -Encoding UTF8
+        "CAPTIONS=SKIPPED(station-down)" | Add-Content -Path $t3loopSkip -Encoding UTF8
+
+        $t4notesSkip = Join-Path $OutDir 'T4-ENGINE-NOTES.txt'
+        "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $t4notesSkip -Encoding UTF8
+        "SKIPPED: station health check did not pass -- the product-engine attempt requires a staff bearer token from T3, which never ran" | Add-Content -Path $t4notesSkip -Encoding UTF8
+        "t4_engine_path_succeeded=false" | Add-Content -Path $t4notesSkip -Encoding UTF8
+
+        Save-Summary -Step 't3t5-skipped-station-down'
     }
+
+    # Station diagnostics -- SECOND capture point, still inside the try
+    # block right after the T3/T4/T5 decision (pass-through path OR the
+    # skip path above), before the installer-log/event-log tail steps.
+    # This is IN ADDITION TO the unconditional final capture in the
+    # `finally` block below (the task's "before ... AND again at the end"),
+    # so a soak-loop hang or an exception in steps 6/7 still leaves a
+    # post-T3/T4/T5 diagnostic snapshot on disk even if the true final
+    # capture never runs.
+    try {
+        Invoke-StationDiagCapture -OutDir $OutDir -InstallDir $installDir -Label 'after-t3t5' -RunStart $RunStart
+    } catch {
+        "station diag capture (after-t3t5) failed: $_" | Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Encoding UTF8
+    }
+    Save-Summary -Step 'station-diag-captured-after-t3t5'
 
     # 6. Installer logs: install-progress.log (the nsh's own breadcrumb log,
     #    always at $COMMONPROGRAMDATA\CivicCast\install-progress.log) plus any
@@ -1482,7 +1769,18 @@ try {
 } catch {
     $summary.errors += "top-level failure: $_"
 } finally {
+    # Station diagnostics -- THIRD and final capture point, unconditional,
+    # regardless of pass/fail/exception. This is the one capture guaranteed
+    # to run even if something above this `finally` threw before reaching
+    # either of the two earlier capture points.
+    try {
+        Invoke-StationDiagCapture -OutDir $OutDir -InstallDir $installDir -Label 'final' -RunStart $RunStart
+    } catch {
+        try { "station diag capture (final) failed: $_" | Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Encoding UTF8 } catch {}
+    }
+
     $summary.run_end_utc = (Get-Date).ToUniversalTime().ToString('o')
+    $summary.harness_completed = $true
     Save-Summary -Step 'finally-block'
 
     try { Stop-Transcript | Out-Null } catch {}
@@ -1491,11 +1789,39 @@ try {
     # is the LAST thing the script does, after every other write. The old
     # DONE.marker text file is kept too (harmless, backward compatible) but
     # Host-Launch-Sandbox-Test.ps1 now polls for DONE.json specifically.
+    #
+    # `harness_completed=true` / `watchdog_timeout=false` are the
+    # authoritative completion signal gate_a_verdict.py's check_completion
+    # actually gates on now -- NOT a specific `last_completed_step` string.
+    # (The prior contract required last_completed_step=='t5-soak-complete',
+    # but steps 6/7 below T5 -- install-progress-log-copied,
+    # event-log-checked -- and this very finally block ALWAYS run after
+    # T5 and legitimately advance last_completed_step past it, so that
+    # contract could never actually pass on a real completed run. Fixed as
+    # part of this change; see scripts/gate_a_verdict.py and its tests.)
+    # If the separate watchdog process (spawned at script entry) already
+    # wrote WATCHDOG-TIMEOUT.txt / a placeholder DONE.json before reaching
+    # here, this is the REAL completion and safely overwrites both.
     Write-Marker -Name 'DONE.marker' -Content (Get-Date).ToString('o')
     $doneObj = [ordered]@{
-        done_utc            = (Get-Date).ToUniversalTime().ToString('o')
-        last_completed_step = $summary.last_completed_step
-        installer_exit_code = $summary.installer_exit_code
+        done_utc              = (Get-Date).ToUniversalTime().ToString('o')
+        last_completed_step   = $summary.last_completed_step
+        installer_exit_code   = $summary.installer_exit_code
+        harness_completed     = $true
+        watchdog_timeout       = $false
+        station_up             = $summary.station_up
+        station_first_healthy_utc = $summary.station_first_healthy_utc
+        station_boot_seconds   = $summary.station_boot_seconds
     }
     ($doneObj | ConvertTo-Json -Depth 3) | Set-Content -Path (Join-Path $OutDir 'DONE.json') -Encoding UTF8
+    # The main script reached its real end -- remove the watchdog's own
+    # WATCHDOG-TIMEOUT.txt if the watchdog raced a slow-but-successful
+    # finish (extremely unlikely given the 100-minute default vs this
+    # script's own bounded steps, but the file's mere presence is what
+    # gate_a_verdict.py's completion check fails closed on, so a stale one
+    # from a genuinely-completed run must not linger).
+    try {
+        $wd = Join-Path $OutDir 'WATCHDOG-TIMEOUT.txt'
+        if (Test-Path $wd) { Remove-Item -Path $wd -Force -ErrorAction SilentlyContinue }
+    } catch {}
 }
