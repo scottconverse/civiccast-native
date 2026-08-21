@@ -55,7 +55,7 @@
 | 4 | Block / daypart scheduling | Autoscheduler | MISSING | common | S4 → `0043` (shipped) |
 | 5 | As-run / proof-of-performance + EPG X-List (CSV/XML to TV Guide/TitanTV/XMLTV) + franchise/hours reporting | Cablecast Reporting | PARTIAL (generic egress proof exists; no as-run suite / EPG export / hours-by-category) | essential | S14/S23 → `0055` (SHIPPED 2026-06-18) |
 | 6 | CG depth: uploaded bulletins, **live-video bulletins**, bulletin & channel background audio, zone tags/filtering, program-aware interstitials ("coming up next") | Cablecast CG | PARTIAL (S6 has templates/zones/feeds; these sub-features absent) | common | S6 → `0045` (shipped) |
-| 8 | GPI / serial (RS-232/422) + router/switcher control; Take-Delay/Post-Roll transition timing | Control Module Sets | PARTIAL (4 minimal refs) | common | S16 → extends `0047` (shipped) |
+| 8 | GPI / serial (RS-232/422) + router/switcher control; Take-Delay/Post-Roll transition timing | Control Module Sets | PARTIAL — router/switcher take + Take-Delay/Post-Roll timing are real (`ProductionDevice`/`DeviceProfile`/`DeviceCommand`, `0047`). **GPI and serial are honestly labeled network-relay triggers (TCP); direct GPI/serial hardware is not supported in this release** — `tsr_service/index.mjs` routes both `gpi`/`serial` device kinds through TSR's generic `TCPSEND` adapter (same as the plain `tcp` kind), disclosed at the `ProductionDevice.kind` field, the operator console's device-kind picker, `CAPABILITIES.md`, and the OpenAPI schema. A station needing real hardware fronts it with its own TCP-to-GPI or TCP-to-serial relay box. | common | S16 → extends `0047` (shipped) |
 | 9 | SAP / Multiple Audio Programs + descriptive-audio tracks (accessibility/ADA) | Cablecast Automation 7.8+ | MISSING (no secondary-audio routing) | common | S11 → `0052` (shipped) |
 | 10 | Underwriting spot management: spot-as-asset, trafficking/rotation (flights, freq caps, daypart), break insertion, **per-underwriter affidavits** + billing | Pre-Roll Messaging + Automation + Reporting | SHIPPED (S24, `0057_underwriting_spots`, 2026-06-18: linear spot-asset + trafficking compiler + per-underwriter affidavit via S23 as-run join + CSV/XML/PDF billing export; VOD/OTT pre-roll path unchanged) | essential | S24 → `0057_underwriting_spots` SHIPPED (renumbered from planned `0055` per RECONCILIATION D17 after S23 took `0055`) |
 | A | **Meeting agenda integration** — agenda items synced to video timecode (chaptered nav) + optional agenda-PDF beside player | Cablecast VOD Pro (PDF agenda) | SHIPPED (S25, `0058_meeting_agenda`, 2026-06-18: `meeting_agendas`/`agenda_items` + publish gate + sync-from-chapters + plain-text import + public read endpoint + portal-public agenda sidebar with seek + a11y per S20 DC-5) | essential (gov) | S25 → `0058_meeting_agenda` SHIPPED (renumbered from planned `0056` per RECONCILIATION D18 after S23 took `0055`) |
@@ -122,8 +122,12 @@ program log ("coming up next" / "you were just watching").
 
 ### Gap 8 — Device control (S16, extends `0047`)
 Extend `ProductionDevice`/`DeviceProfile` with `gpi` and `serial` (RS-232/422) device kinds + router/
-switcher control; add `device_command` audit + Take-Delay/Post-Roll transition-timing fields. (TSR
-already covers IP/ATEM/vMix; this adds the legacy contact-closure/serial path.)
+switcher control; add `device_command` audit + Take-Delay/Post-Roll transition-timing fields. Router/
+switcher take and the timing fields are real. **Honest label:** `gpi` and `serial` are network-relay
+triggers (TCP), not a legacy contact-closure/serial path — TSR has no dedicated GPI or RS-232/422
+device type, so `tsr_service/index.mjs` routes both through the generic `TCPSEND` adapter, same as
+the plain `tcp` kind. Direct GPI/serial hardware is not supported in this release; a station needing
+real hardware fronts it with its own TCP-to-GPI or TCP-to-serial relay box.
 
 ### Gap 9 — Secondary audio / SAP / descriptive audio (S11, `0052` — shipped)
 Entity: `AudioProgramTrack` (asset_id or channel_id, kind = primary|sap|descriptive, language,

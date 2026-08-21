@@ -433,6 +433,23 @@ came across and what deliberately did not.
   credential store reference) are not yet resolved by the probe — no
   resolver exists anywhere in this codebase yet; stated as a known
   limitation in the module docstring rather than silently glossed over.
+- **GPI / serial control-room device kinds mislabeled as hardware support.**
+  `tsr_service/index.mjs`'s `DEVICE_TYPE` map routes `gpi` and `serial`
+  `ProductionDevice` kinds through TSR's generic `TCPSEND` adapter — there
+  is no GPI contact-closure or RS-232/422 serial hardware driver, and none
+  is faked. Labeled honestly everywhere the capability is surfaced:
+  `ProductionDevice.kind`'s field description (feeds the OpenAPI schema and
+  `docs/API-REFERENCE.md`), the operator console's device-kind picker
+  (`ControlRoomSetupScreen`, relabeled "GPI (network relay)" / "Serial
+  (network relay)" with an inline note when either is selected, plus the
+  `gpi_pulse`/`serial_send` cue-action descriptions), `CAPABILITIES.md`,
+  `docs/spec/3.0/sections/S18-cablecast-parity-gap-closure.md`'s gap-8
+  status line and detail section, and the `civiccast/control_room/`
+  package/module docstrings. A station needing real hardware fronts it
+  with its own TCP-to-GPI or TCP-to-serial relay box — the existing TCP
+  payload path already reaches it. No behavior change (the TCPSEND routing
+  was already correct); this closes the honesty gap between what the UI/
+  docs implied and what the code does.
 - **Two working backend routes had no operator console button.** Both
   `civiccast/captions/router.py`'s offline-caption-job retry
   (`POST /api/staff/captions/offline-jobs/{job_id}/retry`) and

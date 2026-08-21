@@ -40,9 +40,17 @@ const DEVICE_TYPE = {
   osc: DeviceType.OSC,
   tcp: DeviceType.TCPSEND,
   http: DeviceType.HTTPSEND,
-  // GPI / serial have no dedicated TSR device; route them through the generic
-  // TCP/HTTP send adapters (S18 gap-8 facility control), payload carries the
-  // raw command. Audited as DeviceCommands on the CivicCast side.
+  // HONEST LABEL — do not "fix" this by faking a driver: 'gpi' and 'serial'
+  // are network-relay triggers (TCP); direct GPI/serial hardware is not
+  // supported in this release. TSR has no dedicated GPI-contact-closure or
+  // serial (RS-232/422) device type, so both route through the generic
+  // TCPSEND adapter (S18 gap-8 facility control) with the raw command as
+  // payload. Audited as DeviceCommands on the CivicCast side. A station that
+  // needs real hardware GPI/serial fronts it with its own TCP-to-GPI or
+  // TCP-to-serial relay box — this TCP path already reaches it. See
+  // ProductionDevice.kind's Field description (civiccast/control_room/
+  // models.py) and CAPABILITIES.md for the same disclosure surfaced to
+  // operators and API consumers.
   gpi: DeviceType.TCPSEND,
   serial: DeviceType.TCPSEND,
 };
