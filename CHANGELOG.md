@@ -259,6 +259,24 @@ came across and what deliberately did not.
   to tell "nowhere to send it" from "alerting is broken." Fixed to log a
   visible suppressed `AlertEventDelivery` on the no-channel gap (fire and
   resolve paths), per spec §6.2's "never a silent drop" contract.
+- **Gate A could hang indefinitely and gave no diagnosis when the station
+  never came up.** A real run (candidate `8579e66`) polled three endpoints
+  sequentially at up to 180s each (~9.5 min total), then the in-sandbox
+  script hung for 30+ minutes past `t2-render-assert` with no forward
+  progress and no `DONE.json` — and the station's own logs (postgres/nats/
+  control-plane/supervisor) were never captured, so there was no way to
+  tell why the station never listened on `:8000`. `In-Sandbox-Report.ps1`
+  now waits on `/api/health` alone with a single bounded 20-minute
+  deadline, captures bounded station diagnostics (logs, config, service
+  state, listening ports, filtered process list, Event Log) at three
+  points including unconditionally at the end, explicitly skips
+  T3/T4/T5 the moment the station is confirmed down instead of falling
+  through into whatever ran next, and carries a separate-process watchdog
+  that force-completes the run after `-MaxScriptMinutes` (default 100) so
+  the host can never wait on a zombie. `scripts/gate_a_verdict.py`'s
+  `completion` check now gates on a dedicated `harness_completed` flag
+  instead of a `last_completed_step` string that could never actually
+  match on a real completed run.
 
 ### Known gaps
 
