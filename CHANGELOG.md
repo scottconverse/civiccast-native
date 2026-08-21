@@ -433,6 +433,26 @@ came across and what deliberately did not.
   credential store reference) are not yet resolved by the probe — no
   resolver exists anywhere in this codebase yet; stated as a known
   limitation in the module docstring rather than silently glossed over.
+- **PDF agenda import — operator-upload path was a stub.**
+  `AgendaService.import_from_doc` (`civiccast/agenda/service.py`) raised
+  `NotImplementedError` for any non-`text/plain` upload, so an operator
+  uploading a PDF agenda (the common case — municipal agendas ship as PDF,
+  not plain text) always hit a 415 with no real parsing behind it. Added a
+  heuristic text-layer extractor (`civiccast/agenda/pdf_import.py`, `pypdf`
+  — already a repo dependency) that recognizes numbered/lettered items
+  (`1.`, `3.a`, `A.`, `IV.`), ALL-CAPS section headings, and standalone
+  clock-time markers, and scores each recognized line with a `confidence`
+  (new nullable `AgendaItem.confidence` field, migration
+  `0076_agenda_item_confidence`). `confidence` is always `None` for
+  operator-authored items and exact plain-text imports — only the PDF
+  heuristic path produces a score. Because PDF extraction is a guess, not a
+  literal transcription, importing PDF items onto an agenda that is
+  currently `published` reopens it to `draft` (AI/agenda non-negotiables
+  spec §4.2 — operator approval before publish); a PDF with no recognizable
+  lines now returns 422 instead of either a 415 or a silently empty import.
+  The operator console's agenda screen gained a PDF file-upload control
+  alongside the existing paste-text import, a per-item confidence badge in
+  the items table, and a published-agenda-will-reopen-to-draft notice.
 - **nanoid 3.3.17 → 3.3.18** (GHSA-2v37-7h3g-55p8, high) in both the operator
   console and the public portal.
 - **pypdf 6.14.2 → 6.16.1** (PYSEC-2026-3655, PYSEC-2026-3656) — resource

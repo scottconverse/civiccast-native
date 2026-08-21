@@ -244,6 +244,7 @@ class AgendaStore:
             row.video_timecode_s = item.video_timecode_s
             row.doc_anchor = item.doc_anchor
             row.notes = item.notes
+            row.confidence = item.confidence
             row.updated_at = _now()
             try:
                 session.commit()
@@ -318,6 +319,7 @@ def _item_to_model(row: AgendaItemDb) -> AgendaItem:
         video_timecode_s=row.video_timecode_s,
         doc_anchor=row.doc_anchor,
         notes=row.notes,
+        confidence=row.confidence,
         created_at=_as_utc(row.created_at),  # type: ignore[arg-type]
         updated_at=_as_utc(row.updated_at),  # type: ignore[arg-type]
     )

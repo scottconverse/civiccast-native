@@ -2675,9 +2675,9 @@ export function affidavitExportUrl(params: {
 // can never bypass the 422 refusal.
 //
 // `importAgendaFromDoc` POSTs a raw body with an explicit Content-Type
-// (default text/plain). The router refuses anything that is not text/plain
-// with 415 today; the UI surfaces the 415 message as "PDF/DOCX import is a
-// follow-up".
+// (default text/plain). The router parses `text/plain` (literal, line by
+// line) and `application/pdf` (heuristic extraction, confidence-scored,
+// civiccast/agenda/pdf_import.py) and refuses anything else with 415.
 
 const AGENDAS = '/api/staff/agendas'
 
@@ -2791,10 +2791,12 @@ export function syncAgendaFromChapters(agendaId: string): Promise<AgendaItem[]> 
 /**
  * POST /api/staff/agendas/{agenda_id}/import — parse a doc and seed items.
  *
- * The body is the doc bytes; `contentType` defaults to `text/plain` since
- * slice 2 only parses plain text (PDF / DOCX return 415 Unsupported Media
- * Type). Caller-controlled so a future slice can hand off PDF without a
- * client change.
+ * `doc` is either the pasted text (`string`, `contentType` defaults to
+ * `text/plain`) or an uploaded PDF's raw bytes (pass the `File`/`Blob`
+ * directly with `contentType: 'application/pdf'` — a `File` already
+ * satisfies `fetch`'s `BodyInit`, no manual read/convert needed). DOCX and
+ * anything else return 415 Unsupported Media Type. A readable PDF with no
+ * recognizable items returns 422 — the caller surfaces that message as-is.
  *
  * Raw-body POST — we cannot use the JSON `request<T>` helper here because
  * that one always sets Content-Type to application/json and JSON.stringifies
@@ -2803,7 +2805,7 @@ export function syncAgendaFromChapters(agendaId: string): Promise<AgendaItem[]> 
  */
 export async function importAgendaFromDoc(
   agendaId: string,
-  doc: string,
+  doc: string | Blob,
   contentType: string = 'text/plain',
 ): Promise<AgendaItem[]> {
   const staffToken = runtimeStaffToken()

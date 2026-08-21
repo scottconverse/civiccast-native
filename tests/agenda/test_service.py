@@ -12,14 +12,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from civiccast.agenda.models import AgendaItem, MeetingAgenda
 from civiccast.agenda.service import (
+    AgendaImportNoItemsError,
     AgendaPublishError,
     AgendaService,
     AgendaServiceError,
@@ -27,6 +30,22 @@ from civiccast.agenda.service import (
 from civiccast.agenda.store import AgendaNotFoundError, AgendaStore
 from civiccast.db import Base
 from civiccast.schedule.models import Chapter
+
+
+def _write_pdf(lines: list[str]) -> bytes:
+    """Synthesize a tiny PDF (via ``reportlab``, an existing repo dependency)
+    with one drawn text line per string. Mirrors the fixture pattern already
+    used in ``tests/agenda_import/test_docparse.py`` — no live vendor PDF is
+    fetchable anonymously, so this is an honest unit test of the heuristic,
+    not a golden test against a real municipal PDF."""
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer)
+    y = 750
+    for line in lines:
+        pdf.drawString(72, y, line)
+        y -= 20
+    pdf.save()
+    return buffer.getvalue()
 
 # --- fixtures ---------------------------------------------------------------
 
@@ -297,16 +316,22 @@ class TestImportFromDoc:
         # raw line length — proves the import doesn't 422.
         assert len(out[0].title) == 400
 
-    def test_pdf_content_type_raises_not_implemented(self, store: AgendaStore) -> None:
+    def test_docx_content_type_raises_not_implemented(self, store: AgendaStore) -> None:
         store.upsert_agenda(_agenda())
         svc = AgendaService(store)
         with pytest.raises(NotImplementedError) as exc:
-            svc.import_from_doc("ag-1", doc_bytes=b"%PDF-1.4...", content_type="application/pdf")
-        # Helpful message — mentions PDF + slice 2 scope so the operator/dev
-        # isn't left guessing.
+            svc.import_from_doc(
+                "ag-1",
+                doc_bytes=b"PK\x03\x04...",
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ),
+            )
+        # Helpful message — names the two content types that ARE parsed so
+        # the operator/dev isn't left guessing.
         msg = str(exc.value)
-        assert "application/pdf" in msg
         assert "text/plain" in msg
+        assert "application/pdf" in msg
 
     def test_content_type_with_charset_still_accepted(self, store: AgendaStore) -> None:
         # ``text/plain; charset=utf-8`` is the realistic header; the parser
@@ -344,6 +369,119 @@ class TestImportFromDoc:
         svc = AgendaService(store)
         with pytest.raises(AgendaNotFoundError):
             svc.import_from_doc("no-such", doc_bytes=b"1 One\n")
+
+
+# --- import_from_doc: application/pdf ----------------------------------------
+
+
+class TestImportFromDocPdf:
+    def test_numbered_items_headings_and_time_markers(self, store: AgendaStore) -> None:
+        store.upsert_agenda(_agenda())
+        pdf_bytes = _write_pdf(
+            [
+                "City Council Agenda -- 2026-07-08",
+                "CALL TO ORDER",
+                "1. Roll call - 7:00 PM",
+                "2. Approval of minutes",
+                "PUBLIC HEARING",
+                "Public comment period begins at 7:15 PM",
+                "3. Adjourn",
+            ]
+        )
+        svc = AgendaService(store)
+        out = svc.import_from_doc("ag-1", doc_bytes=pdf_bytes, content_type="application/pdf")
+
+        titles = [i.title for i in out]
+        assert "CALL TO ORDER" in titles
+        assert "PUBLIC HEARING" in titles
+        assert any("7:15 PM" in t for t in titles)
+        numbered = [i for i in out if i.number is not None]
+        assert [i.number for i in numbered] == ["1", "2", "3"]
+        assert [i.title for i in numbered] == ["Roll call - 7:00 PM", "Approval of minutes", "Adjourn"]
+
+        # Confidence: numbered lines score highest (boosted further when a
+        # time marker is present too), headings are medium, a standalone
+        # time-marker line is lowest -- and every value is in [0, 1].
+        by_title = {i.title: i.confidence for i in out}
+        assert by_title["Roll call - 7:00 PM"] == pytest.approx(0.98)  # numbered + time marker
+        assert by_title["Approval of minutes"] == pytest.approx(0.95)  # numbered only
+        assert by_title["CALL TO ORDER"] == pytest.approx(0.55)  # heading only
+        assert by_title["Public comment period begins at 7:15 PM"] == pytest.approx(0.4)  # time only
+        assert all(i.confidence is not None and 0.0 <= i.confidence <= 1.0 for i in out)
+
+    def test_plain_text_import_leaves_confidence_none(self, store: AgendaStore) -> None:
+        # Confidence is only meaningful for heuristic/AI-guessed extraction;
+        # an operator's own pasted text has nothing to be uncertain about.
+        store.upsert_agenda(_agenda())
+        svc = AgendaService(store)
+        out = svc.import_from_doc("ag-1", doc_bytes=b"1 Call to order\n")
+        assert out[0].confidence is None
+
+    def test_unrecognized_pdf_raises_no_items_error(self, store: AgendaStore) -> None:
+        store.upsert_agenda(_agenda())
+        pdf_bytes = _write_pdf(["just some prose, no structure here"])
+        svc = AgendaService(store)
+        with pytest.raises(AgendaImportNoItemsError):
+            svc.import_from_doc("ag-1", doc_bytes=pdf_bytes, content_type="application/pdf")
+
+    def test_corrupt_pdf_bytes_raise_no_items_error_not_a_crash(self, store: AgendaStore) -> None:
+        store.upsert_agenda(_agenda())
+        svc = AgendaService(store)
+        with pytest.raises(AgendaImportNoItemsError):
+            svc.import_from_doc(
+                "ag-1", doc_bytes=b"not actually a pdf", content_type="application/pdf"
+            )
+
+    def test_pdf_import_into_published_agenda_reopens_to_draft(self, store: AgendaStore) -> None:
+        # AI/agenda non-negotiables Spec Sec4.2: operator approval before
+        # publish. A PDF import is a heuristic guess, so landing new items on
+        # an already-published agenda must force a re-review, not silently
+        # extend what's already live.
+        store.upsert_agenda(_agenda())
+        # Seeded at a non-zero order so it doesn't collide with the PDF
+        # item's order=0 (idx = parsed.order - 1) under the skip-by-order
+        # idempotency rule -- this test is about the reopen-to-draft
+        # behavior, not the skip rule (that's covered separately below).
+        store.upsert_item(_item("seed-5", order=5, title="Seed item"))
+        store.publish_if_nonempty("ag-1")
+        assert store.get_agenda("ag-1").status == "published"  # type: ignore[union-attr]
+
+        pdf_bytes = _write_pdf(["1. New item from PDF"])
+        svc = AgendaService(store)
+        svc.import_from_doc("ag-1", doc_bytes=pdf_bytes, content_type="application/pdf")
+
+        assert store.get_agenda("ag-1").status == "draft"  # type: ignore[union-attr]
+
+    def test_pdf_import_into_draft_agenda_stays_draft(self, store: AgendaStore) -> None:
+        store.upsert_agenda(_agenda(status="draft"))
+        pdf_bytes = _write_pdf(["1. New item from PDF"])
+        svc = AgendaService(store)
+        svc.import_from_doc("ag-1", doc_bytes=pdf_bytes, content_type="application/pdf")
+        assert store.get_agenda("ag-1").status == "draft"  # type: ignore[union-attr]
+
+    def test_existing_order_skipped_on_pdf_reimport(self, store: AgendaStore) -> None:
+        store.upsert_agenda(_agenda())
+        store.upsert_item(
+            AgendaItem(
+                item_id="custom-0",
+                agenda_id="ag-1",
+                order=0,
+                title="Operator's curated item",
+            )
+        )
+        pdf_bytes = _write_pdf(["1. One", "2. Two"])
+        svc = AgendaService(store)
+        written = svc.import_from_doc("ag-1", doc_bytes=pdf_bytes, content_type="application/pdf")
+        assert [i.order for i in written] == [1]
+        survivor = store.get_item("custom-0")
+        assert survivor is not None
+        assert survivor.title == "Operator's curated item"
+
+    def test_unknown_agenda_raises(self, store: AgendaStore) -> None:
+        svc = AgendaService(store)
+        pdf_bytes = _write_pdf(["1. One"])
+        with pytest.raises(AgendaNotFoundError):
+            svc.import_from_doc("no-such", doc_bytes=pdf_bytes, content_type="application/pdf")
 
 
 # --- as_chapter_list --------------------------------------------------------

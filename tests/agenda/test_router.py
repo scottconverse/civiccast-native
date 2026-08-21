@@ -15,7 +15,9 @@ the DI seams with a SQLite-backed ``AgendaStore`` + ``AgendaService``. Covers:
 * PATCH ``status="published"`` empty-agenda → 422 (publish gate);
 * PATCH ``status="published"`` with items → 200 + published;
 * sync-from-chapters seeds items through a DI-mocked chapter provider;
-* import: ``text/plain`` parses; ``application/pdf`` → 415;
+* import: ``text/plain`` parses; ``application/pdf`` parses via the heuristic
+  extractor (confidence-scored, reopens a published agenda to draft); an
+  unreadable PDF → 422; any other content type → 415;
 * public GET: draft → 404; published → 200 with the PublicMeetingAgenda
   shape (no ``status`` / ``station_id`` / timestamps / per-item ``notes``).
 """
@@ -24,9 +26,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from io import BytesIO
 
+import pytest
 from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
+from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -94,6 +99,17 @@ def _build(
 
 def _client(**kw) -> TestClient:
     return TestClient(_build(**kw)[0])
+
+
+def _write_pdf(lines: list[str]) -> bytes:
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer)
+    y = 750
+    for line in lines:
+        pdf.drawString(72, y, line)
+        y -= 20
+    pdf.save()
+    return buffer.getvalue()
 
 
 def _agenda_payload(agenda_id: str = "ag-jan-2026", **overrides) -> dict:
@@ -513,7 +529,26 @@ def test_import_text_plain_parses() -> None:
     assert items[2]["title"] == "New business"
 
 
-def test_import_pdf_returns_415() -> None:
+def test_import_docx_returns_415() -> None:
+    # Any content type other than text/plain / application/pdf is 415.
+    client = TestClient(_build()[0])
+    client.post("/api/staff/agendas", json=_agenda_payload())
+    r = client.post(
+        "/api/staff/agendas/ag-jan-2026/import",
+        content=b"PK\x03\x04...",
+        headers={
+            "content-type": (
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        },
+    )
+    assert r.status_code == 415
+
+
+def test_import_unreadable_pdf_returns_422() -> None:
+    # Content type IS supported, but the bytes aren't a real PDF -- 422
+    # (distinct from the 415 "wrong format" cases), never a silent empty
+    # import or a raw 500.
     client = TestClient(_build()[0])
     client.post("/api/staff/agendas", json=_agenda_payload())
     r = client.post(
@@ -521,7 +556,49 @@ def test_import_pdf_returns_415() -> None:
         content=b"%PDF-1.4...",
         headers={"content-type": "application/pdf"},
     )
-    assert r.status_code == 415
+    assert r.status_code == 422
+
+
+def test_import_recognized_pdf_returns_200_with_confidence() -> None:
+    client = TestClient(_build()[0])
+    client.post("/api/staff/agendas", json=_agenda_payload())
+    pdf_bytes = _write_pdf(["1. Call to order", "2. Roll call"])
+    r = client.post(
+        "/api/staff/agendas/ag-jan-2026/import",
+        content=pdf_bytes,
+        headers={"content-type": "application/pdf"},
+    )
+    assert r.status_code == 200
+    items = r.json()
+    assert [i["title"] for i in items] == ["Call to order", "Roll call"]
+    assert all(i["confidence"] == pytest.approx(0.95) for i in items)
+
+
+def test_import_pdf_into_published_agenda_reopens_to_draft() -> None:
+    client = TestClient(_build()[0])
+    client.post("/api/staff/agendas", json=_agenda_payload())
+    # Seeded at a non-zero order so it doesn't collide with the PDF item's
+    # order=0 under the skip-by-order idempotency rule.
+    client.post(
+        "/api/staff/agendas/ag-jan-2026/items",
+        json=_item_payload(item_id="seed-5", order=5, title="Seed"),
+    )
+    published = client.patch(
+        "/api/staff/agendas/ag-jan-2026", json={"status": "published"}
+    )
+    assert published.status_code == 200
+    assert published.json()["status"] == "published"
+
+    pdf_bytes = _write_pdf(["1. New item"])
+    r = client.post(
+        "/api/staff/agendas/ag-jan-2026/import",
+        content=pdf_bytes,
+        headers={"content-type": "application/pdf"},
+    )
+    assert r.status_code == 200
+
+    refreshed = client.get("/api/staff/agendas/ag-jan-2026")
+    assert refreshed.json()["status"] == "draft"
 
 
 def test_import_missing_agenda_returns_404() -> None:
