@@ -12,11 +12,7 @@ from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
-from civiccast.platform.broker_config import (
-    BROKER_SUBJECT_REGISTRY,
-    BrokerConfig,
-    load_broker_config,
-)
+from civiccast.platform.broker_config import BROKER_SUBJECT_REGISTRY
 
 DOCUMENTED_BROKER_SUBJECTS = frozenset({"publish.asset.approved"})
 
@@ -97,16 +93,17 @@ class InProcessBrokerClient:
 _default_broker_client: BrokerClient = InProcessBrokerClient()
 
 
-def get_broker_client(config: BrokerConfig | None = None) -> BrokerClient:
-    """FastAPI dependency returning the app's broker client seam."""
+def get_broker_client() -> BrokerClient:
+    """FastAPI dependency returning the app's broker client seam.
 
-    selected_config = config or load_broker_config()
-    if selected_config.mode == "production":
-        from civiccast.platform.nats_broker import NATSJetStreamBrokerClient
+    NATS JetStream was removed from the product (owner decision 2026-08-20;
+    see ADR 0023, which supersedes ADR 0001) -- it never did real production
+    work here, since this dependency always returned the in-process adapter
+    below. :class:`InProcessBrokerClient` is now the only ``BrokerClient``
+    implementation; the ``BrokerClient`` Protocol seam stays so a future
+    adapter can still be swapped in behind it.
+    """
 
-        client = NATSJetStreamBrokerClient(selected_config)
-        client.ensure_ready()
-        return client
     return _default_broker_client
 
 
