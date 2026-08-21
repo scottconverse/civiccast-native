@@ -28,7 +28,7 @@
 ; verification, the D3 engine, and provisioning all run AFTER pack staging,
 ; not before, unlike the retired file's embedded-payload ordering):
 ;   stage required component packs -> D2 re-verify the extracted pack tree
-;   -> D3 journaled install/upgrade engine -> D4 PostgreSQL/NATS provisioning
+;   -> D3 journaled install/upgrade engine -> D4 PostgreSQL provisioning
 ;   -> D4 service registration + firewall rule. Every step fails loud on
 ;   failure via CIVICCAST_FAIL: a silent-safe operator report, a
 ;   step-identifying process exit code, and a real NSIS Abort so the wizard
@@ -444,7 +444,7 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; CivicCastSupervisor LocalSystem service before the D3 install/upgrade
   ; engine and D4 pack extraction delete and rebuild $INSTDIR\runtime and
   ; $INSTDIR\packs\...\payload -- the service's own pythonservice.exe (and its
-  ; long-lived postgres.exe/nats-server.exe children) run FROM that tree, so a
+  ; long-lived postgres.exe child) run FROM that tree, so a
   ; rebuild while it is still running can delete a binary out from under a
   ; live process. Stop it here, BEFORE the existing taskkill of the GUI exe.
   ; Only attempted when a prior install actually left the exe behind -- on a
@@ -458,7 +458,7 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; checks are the remaining safety nets." A 2026-07-30 adversarial audit
   ; refuted that, and it is not a safety net that belongs here:
   ;   * the taskkill targets "CivicCast Native.exe" (the GUI/bootstrap exe),
-  ;     never pythonservice.exe / postgres.exe / nats-server.exe;
+  ;     never pythonservice.exe / postgres.exe;
   ;   * the D3 engine's quiescence check runs in POSTINSTALL, AFTER
   ;     --civiccast-stage-packs has already rebuilt the tree it would protect.
   ; The real enforcement lives at the destructive seam itself, in Rust:
@@ -1027,7 +1027,7 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; D4 DATABASE/MESSAGING SERVER PROVISIONING (migrated unchanged from
   ; nsis-hooks-native.nsh's NSIS_HOOK_POSTINSTALL)
   ; ===================================================================
-  ; Runs the journaled PostgreSQL/NATS provisioning engine
+  ; Runs the journaled PostgreSQL provisioning engine
   ; (civiccast.native.provision). Reads the CURRENT DatabaseUrl registry
   ; value first (into $R3) so the CLI can tell a fresh install (no value, no
   ; cluster -- runs and generates a password) apart from a re-install over an
@@ -1041,7 +1041,7 @@ Var CIVICCAST_TEARDOWN_EXIT
   StrCpy $R3 ""
   ReadRegStr $R3 HKLM "Software\CivicCast\Native" "DatabaseUrl"
   !insertmacro CIVICCAST_STEP "step d4-provision: begin"
-  DetailPrint "Provisioning the CivicCast (Native) PostgreSQL/NATS servers (D4)..."
+  DetailPrint "Provisioning the CivicCast (Native) PostgreSQL server (D4)..."
   nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-provision --install-root "$INSTDIR" --owner-run-id "$R1" --existing-database-url "$R3"'
   Pop $0
   !insertmacro CIVICCAST_STEP "step d4-provision: returned $0"
@@ -1049,10 +1049,10 @@ Var CIVICCAST_TEARDOWN_EXIT
     DetailPrint "CivicCast (Native): database/messaging provisioning complete (or already provisioned; no-op)."
   ${ElseIf} $0 == 75
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning FAILED (exit 75) — see the installer log above and $COMMONPROGRAMDATA\CivicCast\provision\PROVISION-RECOVERY.md."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAILED} "CivicCast (Native) setup could not provision the PostgreSQL/NATS servers. See the installer log and $COMMONPROGRAMDATA\CivicCast\provision\PROVISION-RECOVERY.md for details."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAILED} "CivicCast (Native) setup could not provision the PostgreSQL server. See the installer log and $COMMONPROGRAMDATA\CivicCast\provision\PROVISION-RECOVERY.md for details."
   ${Else}
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning reported an unexpected fault (exit $0) — see the installer log above."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAULT} "CivicCast (Native) setup hit an unexpected fault while provisioning the PostgreSQL/NATS servers (exit code $0). See the installer log."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAULT} "CivicCast (Native) setup hit an unexpected fault while provisioning the PostgreSQL server (exit code $0). See the installer log."
   ${EndIf}
   ;
   ; ===================================================================
@@ -1271,7 +1271,7 @@ Var CIVICCAST_TEARDOWN_EXIT
     DetailPrint "CivicCast (Native): recorded InstalledVersion ${VERSION} for the next install/upgrade run."
     !insertmacro CIVICCAST_STEP "postinstall: SUCCESS (InstalledVersion ${VERSION} recorded)"
   ${EndIf}
-  DetailPrint "CivicCast (Native) bootstrap install complete: required component packs staged and D2-verified, D3 install/upgrade engine run, PostgreSQL/NATS provisioned, service and firewall rule registered."
+  DetailPrint "CivicCast (Native) bootstrap install complete: required component packs staged and D2-verified, D3 install/upgrade engine run, PostgreSQL provisioned, service and firewall rule registered."
   ; Reaching here means SUCCESS and nothing else. The former shared
   ; `civiccast_bootstrap_postinstall_done` unwind label is gone: it existed
   ; only so failure branches could skip the InstalledVersion write and fall
@@ -1561,7 +1561,7 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; teardown_exit_code (main.rs's --civiccast-teardown-native-state) returns
   ; 82 SPECIFICALLY when the "stop service" step could not confirm the
   ; CivicCastSupervisor service actually stopped -- meaning its
-  ; pythonservice.exe and long-lived postgres.exe/nats-server.exe children may
+  ; pythonservice.exe and long-lived postgres.exe child may
   ; still be running FROM those trees. Deleting the tree underneath them is
   ; the exact hazard the install/repair side already closed
   ; (native_pack_staging::ensure_pack_extracted requires a

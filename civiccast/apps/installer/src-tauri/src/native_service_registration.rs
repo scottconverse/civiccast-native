@@ -531,8 +531,8 @@ fn wait_for_service_stopped() -> Result<(), String> {
 /// Stop the LocalSystem supervisor service via `sc.exe stop`, then poll until
 /// it is genuinely STOPPED (never trusting `sc stop`'s immediate return,
 /// which only means the stop request was accepted, not that the process tree
-/// -- including the long-lived `postgres.exe`/`nats-server.exe` children
-/// whose binaries live under `$INSTDIR`) has actually exited. Idempotent:
+/// -- including the long-lived `postgres.exe` child
+/// whose binary lives under `$INSTDIR`) has actually exited. Idempotent:
 /// "service does not exist" (1060) and "service not started" (1062) are both
 /// SUCCESS, matching D5 Repair's and POSTUNINSTALL teardown's need to call
 /// this against a machine that may already be in the target state.
@@ -568,7 +568,7 @@ pub fn stop_native_service() -> Result<(), String> {
 // else: it does not start the service now, and no `StartService`/`sc start`
 // call existed anywhere under `src-tauri/src/` (grepped before writing this).
 // A freshly installed station therefore had a correctly registered, correctly
-// configured, entirely STOPPED service -- no postgres, no NATS, no control
+// configured, entirely STOPPED service -- no postgres, no control
 // plane on 127.0.0.1:8000, and so nothing behind the installer's "Open
 // operator console" button -- until the operator happened to reboot.
 //
@@ -748,7 +748,7 @@ pub fn start_native_service() -> Result<(), String> {
 /// Production [`crate::native_pack_staging::TreeRebuildAuthority`]: the ONE
 /// thing standing between `ensure_pack_extracted`'s destructive rebuild path
 /// and deleting the CivicCastSupervisor service's own binaries (and its
-/// long-lived `postgres.exe`/`nats-server.exe` children) out from under a
+/// long-lived `postgres.exe` child) out from under a
 /// still-running process. This module's own [`stop_native_service`] doc
 /// comment already named the obligation ("callers... MUST call this first");
 /// this struct is what makes that obligation impossible to skip -- every
@@ -806,7 +806,7 @@ impl crate::native_pack_staging::TreeRebuildAuthority for ServiceQuiescenceAutho
             format!(
                 "could not confirm {SERVICE_NAME} is stopped before rebuilding the extracted \
                  tree for {component} -- refusing to delete it while the service (and any \
-                 long-lived postgres.exe/nats-server.exe children running out of that tree) may \
+                 long-lived postgres.exe child running out of that tree) may \
                  still be live: {error}. Stop the service manually (`sc.exe stop {SERVICE_NAME}`) \
                  and re-run, or investigate why sc.exe stop failed."
             )
@@ -2465,8 +2465,8 @@ pub fn teardown_all_succeeded(steps: &[TeardownStepOutcome]) -> bool {
 /// "remove service" or "delete firewall rule" failure alone does NOT trip
 /// this, because those failures do not make it unsafe to delete
 /// `$INSTDIR`'s trees -- only an unconfirmed service stop does (its
-/// `pythonservice.exe` and long-lived `postgres.exe`/`nats-server.exe`
-/// children run FROM those trees). See [`teardown_exit_code`], which is what
+/// `pythonservice.exe` and its long-lived `postgres.exe`
+/// child run FROM those trees). See [`teardown_exit_code`], which is what
 /// actually maps this to a distinct process exit code for the NSIS hook to
 /// branch on.
 pub fn service_stop_failed(steps: &[TeardownStepOutcome]) -> bool {
