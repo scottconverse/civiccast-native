@@ -101,15 +101,26 @@ The default `Info.plist` ships with an explicit allow-entry for `civiccast.examp
 ```
 ios/
 ├── CivicCast/
-│   ├── CivicCastApp.swift     # @main, ConfigStore (ObservableObject)
-│   ├── ContentView.swift      # NavigationStack + channel list
-│   ├── PlayerView.swift       # AVPlayer (HLS) via VideoPlayer
-│   ├── CivicCastCore.swift    # NetworkClient, ConfigResponse, Channel
+│   ├── ContentView.swift      # NavigationStack + channel list (iOS-specific)
+│   ├── PlayerView.swift       # AVPlayer (HLS) via VideoPlayer (iOS-specific)
 │   └── Info.plist
 ├── CivicCast.xcodeproj/
-│   └── project.pbxproj
+│   └── project.pbxproj        # references ../apple-shared/*.swift directly (SOURCE_ROOT-relative)
 └── README.md
+
+../apple-shared/                # SHARED with tvos/ — single canonical copy, not duplicated
+├── CivicCastApp.swift          # @main, ConfigStore (ObservableObject)
+├── CivicCastCore.swift         # NetworkClient, ConfigResponse, Channel, LiveState
+└── ColorHex.swift              # Color(hex:) for ChannelBranding.color
 ```
+
+S12 de-duplication note: `CivicCastApp.swift` and `CivicCastCore.swift` used
+to be independently forked, byte-for-byte-near-identical copies in `ios/`
+and `tvos/`. They are now one file each, referenced by both Xcode projects
+via a `SOURCE_ROOT`-relative `PBXFileReference` — see
+`CivicCast.xcodeproj/project.pbxproj`. `ContentView.swift` and
+`PlayerView.swift` stay per-target on purpose: tvOS focus-engine layout and
+iOS touch layout are legitimately different, not duplicated code.
 
 ## Sideload checklist (TestFlight-free internal distribution)
 
@@ -136,13 +147,15 @@ These are the documented follow-ups to take the app from starter to App Store su
 
 ## Backend contract
 
-The app expects this simplified JSON shape (matches the Android variants — see [parent README](../README.md) for the full schema mapping note):
+The app calls the REAL CivicCast app-platform contract (not a flattened
+stand-in) — see `../apple-shared/CivicCastCore.swift`'s header for the
+exact shapes, and [parent README](../README.md) for the schema note shared
+across all six S12 targets:
 
-```json
-{
-  "station": { "name": "City of Example Civic TV", "logoUrl": "https://cdn.example.com/logo.png" },
-  "channels": [
-    { "id": "ch1", "name": "Government Channel", "hlsUrl": "https://cdn.example.com/hls/ch1/master.m3u8", "posterUrl": "https://cdn.example.com/posters/ch1.jpg" }
-  ]
-}
-```
+1. `GET <APIBaseURL>/api/public/app/config` → `StationAppConfig`
+   (`station_name`, `default_channel_id`, `channels[].branding.display_name`,
+   `channels[].live_state_url`, ...).
+2. `GET <APIBaseURL><channel.live_state_url>` → `LiveState`
+   (`state`, `playback_url`, ...) — `playback_url` is the HLS manifest
+   `PlayerView` hands to `AVPlayer`. `live_state_url` is a path relative to
+   `APIBaseURL`, resolved before fetching.

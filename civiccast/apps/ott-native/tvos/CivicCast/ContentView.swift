@@ -54,7 +54,7 @@ private struct StationView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(config.station.name)
+                Text(config.stationName)
                     .font(.largeTitle.bold())
                 Text("\(config.channels.count) channel\(config.channels.count == 1 ? "" : "s")")
                     .font(.title3)
@@ -90,17 +90,17 @@ private struct ChannelCard: View {
     var body: some View {
         HStack(spacing: 24) {
             RoundedRectangle(cornerRadius: 12)
-                .fill(.tint.opacity(0.20))
+                .fill(brandColor.opacity(0.20))
                 .frame(width: 220, height: 124)
                 .overlay(
                     Image(systemName: "tv")
                         .font(.system(size: 56))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(brandColor)
                 )
             VStack(alignment: .leading, spacing: 8) {
-                Text(channel.name)
+                Text(channel.branding.displayName)
                     .font(.title2)
-                Text(channel.id)
+                Text(channel.branding.shortName ?? channel.id)
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
@@ -108,5 +108,9 @@ private struct ChannelCard: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var brandColor: Color {
+        Color(hex: channel.branding.color) ?? .accentColor
     }
 }

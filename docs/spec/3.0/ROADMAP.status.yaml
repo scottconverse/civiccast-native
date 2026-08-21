@@ -30,10 +30,16 @@
 #     D3 ✓ = civiccast/alerting/delivery.py AlertSmsSender talks the real
 #       Twilio REST API with HTTP Basic auth + form body. Verified by
 #       tests/alerting/test_delivery.py::TestAlertSmsSender (9 cases).
-#     D1 ✓ = civiccast/apps/ott-native/ ships starter native app source
-#       trees for all 6 OTT targets (Roku, iOS, tvOS, android-mobile,
-#       android-tv, fire-tv). 83 files / ~3700 LOC across the toolchains.
-#       Polish-to-store-ready follow-ups documented per-target.
+#     D1 ✓ = civiccast/apps/ott-native/ ships starter native app source for
+#       all 6 OTT targets (Roku, iOS, tvOS, Android TV, Fire TV, Android
+#       mobile) plus the two that had no source at all (Tizen, webOS) — S12
+#       de-duplication (2026-08-21): android-tv/+fire-tv/ merged into one
+#       Gradle module (android/tv-app, flavors tv/firetv); ios/+tvos/ share
+#       one Swift source (apple-shared/) via two Xcode projects.
+#       .github/workflows/ci-ott-apps.yml now BUILDS every target on hosted
+#       runners — see that workflow and S12-ott-apps.md's status line for
+#       per-platform build status. Polish-to-store-ready follow-ups
+#       documented per-target.
 #
 # `source:` on every row cites master §10/§11 so this file is diffable against
 # the canonical spec, not anyone's memory.
@@ -126,12 +132,19 @@ rows:
 
   - id: step-8
     kind: build_step
-    title: "OTT apps (S12) — code + native app source for all 6 targets shipped 2026-06-18"
+    title: "OTT apps (S12) — code + native app source for 8 targets, CI-built 2026-08-21"
     source: "master §10 (step 8)"
     disposition: net-new
-    # FLIPPED to built 2026-06-18 — civiccast/apps/ott-native/ ships starter
-    # native app source trees for Roku, iOS, tvOS, android-mobile,
-    # android-tv, and fire-tv. Polish-to-store-ready (branded artwork,
+    # FLIPPED to built 2026-06-18, de-duplicated + CI-built 2026-08-21 —
+    # civiccast/apps/ott-native/ ships native app source for Roku, iOS,
+    # tvOS, Android TV, Fire TV, Android mobile, Samsung Tizen, and LG
+    # webOS. android-tv/+fire-tv/ (previously two copied Gradle projects)
+    # are now one module (android/tv-app, product flavors tv/firetv);
+    # ios/+tvos/ share one Swift source (apple-shared/) via a
+    # SOURCE_ROOT-relative Xcode file reference instead of a per-target
+    # fork. .github/workflows/ci-ott-apps.yml builds every target on
+    # hosted runners — see S12-ott-apps.md's status line for current
+    # per-platform build status. Polish-to-store-ready (branded artwork,
     # store metadata, age-gating, accessibility) is the documented
     # per-target follow-up but the "native source absent" D1 gap is
     # closed.
@@ -140,13 +153,14 @@ rows:
       modules:
         - civiccast/app_platform/router.py
         - civiccast/app_platform/build_orchestrator.py
+        - civiccast/apps/ott-native/tizen/config.xml
+        - civiccast/apps/ott-native/webos/appinfo.json
       symbols:
         - {file: civiccast/apps/ott-native/roku/source/main.brs, name: Main}
-        - {file: civiccast/apps/ott-native/ios/CivicCast/CivicCastApp.swift, name: CivicCastApp}
-        - {file: civiccast/apps/ott-native/tvos/CivicCast/CivicCastApp.swift, name: CivicCastApp}
-        - {file: civiccast/apps/ott-native/android-mobile/app/src/main/java/com/civiccast/mobile/MainActivity.kt, name: MainActivity}
-        - {file: civiccast/apps/ott-native/android-tv/app/src/main/java/com/civiccast/tv/MainActivity.kt, name: MainActivity}
-        - {file: civiccast/apps/ott-native/fire-tv/app/src/main/java/com/civiccast/firetv/MainActivity.kt, name: MainActivity}
+        - {file: civiccast/apps/ott-native/apple-shared/CivicCastApp.swift, name: CivicCastApp}
+        - {file: civiccast/apps/ott-native/android/tv-app/src/main/java/com/civiccast/tv/MainActivity.kt, name: MainActivity}
+        - {file: civiccast/apps/ott-native/android/mobile-app/src/main/java/com/civiccast/mobile/MainActivity.kt, name: MainActivity}
+        - {file: .github/workflows/ci-ott-apps.yml, name: roku}
 
   - id: step-9
     kind: build_step
@@ -377,14 +391,19 @@ rows:
 
   - id: S12
     kind: section
-    title: "OTT apps (feed/manifest/build + native source for 6 targets — shipped 2026-06-18)"
+    title: "OTT apps (feed/manifest/build + native source for 8 targets, CI-built 2026-08-21)"
     source: "master §11 (S12) — net-new (off app_platform/) + native trees off civiccast/apps/ott-native/"
     disposition: net-new
     owning_step: 8
-    # FLIPPED to built 2026-06-18 — D1 (native OTT app source absent)
-    # is closed by civiccast/apps/ott-native/ shipping starter source
-    # for Roku/iOS/tvOS/android-mobile/android-tv/fire-tv. 83 files,
-    # ~3700 LOC. Polish-to-store-ready (artwork, store metadata,
+    # FLIPPED to built 2026-06-18, de-duplicated + CI-built 2026-08-21 — D1
+    # (native OTT app source absent) is closed by civiccast/apps/ott-native/
+    # shipping native source for Roku/iOS/tvOS/Android TV/Fire TV/Android
+    # mobile/Tizen/webOS. android-tv/+fire-tv/ (two copied Gradle projects)
+    # are now one module (android/tv-app, flavors tv/firetv); ios/+tvos/
+    # share one Swift source (apple-shared/) instead of a per-target fork.
+    # .github/workflows/ci-ott-apps.yml builds every target on hosted
+    # runners — see S12-ott-apps.md's status line for current per-platform
+    # build status. Polish-to-store-ready (artwork, store metadata,
     # accessibility, search interfaces) is the documented per-target
     # follow-up; the "native source absent" claim is no longer true.
     status: built
@@ -392,13 +411,14 @@ rows:
       modules:
         - civiccast/app_platform/router.py
         - civiccast/app_platform/build_orchestrator.py
+        - civiccast/apps/ott-native/tizen/config.xml
+        - civiccast/apps/ott-native/webos/appinfo.json
       symbols:
         - {file: civiccast/apps/ott-native/roku/source/main.brs, name: Main}
-        - {file: civiccast/apps/ott-native/ios/CivicCast/CivicCastApp.swift, name: CivicCastApp}
-        - {file: civiccast/apps/ott-native/tvos/CivicCast/CivicCastApp.swift, name: CivicCastApp}
-        - {file: civiccast/apps/ott-native/android-mobile/app/src/main/java/com/civiccast/mobile/MainActivity.kt, name: MainActivity}
-        - {file: civiccast/apps/ott-native/android-tv/app/src/main/java/com/civiccast/tv/MainActivity.kt, name: MainActivity}
-        - {file: civiccast/apps/ott-native/fire-tv/app/src/main/java/com/civiccast/firetv/MainActivity.kt, name: MainActivity}
+        - {file: civiccast/apps/ott-native/apple-shared/CivicCastApp.swift, name: CivicCastApp}
+        - {file: civiccast/apps/ott-native/android/tv-app/src/main/java/com/civiccast/tv/MainActivity.kt, name: MainActivity}
+        - {file: civiccast/apps/ott-native/android/mobile-app/src/main/java/com/civiccast/mobile/MainActivity.kt, name: MainActivity}
+        - {file: .github/workflows/ci-ott-apps.yml, name: roku}
 
   - id: S13
     kind: section

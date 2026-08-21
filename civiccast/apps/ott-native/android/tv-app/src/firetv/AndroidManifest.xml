@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- "firetv" flavor overlay (Amazon Fire TV via the Amazon Appstore). Merged with
+         src/main/AndroidManifest.xml by the Android Gradle Plugin's manifest merger. -->
+
+    <!-- Amazon Appstore targeting hint. android:required="false" so the APK can also run on
+         non-Fire-TV devices for development (the Amazon storefront still uses this to surface the
+         app on Fire TV). -->
+    <uses-feature
+        android:name="amazon.hardware.fire_tv"
+        android:required="false" />
+
+    <!-- Fire OS is Android-based but some Fire tablets lack leanback; keep it optional. -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+
+    <application>
+        <activity android:name=".MainActivity">
+            <!-- Older Fire OS variants (and the Fire tablet line, if the same APK is shared) look
+                 for MAIN/LAUNCHER in addition to LEANBACK_LAUNCHER. Declaring both is the
+                 documented Amazon recommendation; the manifest merger unions this intent-filter
+                 with the LEANBACK_LAUNCHER one declared in src/main. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- "tv" flavor overlay (Android TV / Google TV via Google Play). Merged with
+         src/main/AndroidManifest.xml by the Android Gradle Plugin's manifest merger.
+         Google Play requires Android TV apps to declare leanback support required. -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="true" />
+
+</manifest>

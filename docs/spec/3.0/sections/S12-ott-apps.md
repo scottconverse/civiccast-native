@@ -1,6 +1,18 @@
 # S12 — Generic Multi-Platform OTT Apps
 
-**Status:** Built starter native app source for v3.0.0-beta1; app-store publication remains external.
+**Status:** Built starter native app source for all 8 targets (Roku, iOS, tvOS, Android TV, Fire TV,
+Android mobile, Samsung Tizen, LG webOS) and machine-CI-built on hosted runners as of 2026-08-21 —
+see `.github/workflows/ci-ott-apps.yml`. Per-platform build status: **Roku** — real BrightScript
+static check (`bsc`) + zip package, CI-green. **Android** (`tv`/`firetv`/mobile flavors) — real
+`gradle assemble*Debug` build, CI-pending-verification (pushed, first CI run in flight). **Apple**
+(iOS + tvOS) — real `xcodebuild build-for-testing` (unsigned, simulator destination) on
+`macos-latest`, CI-pending-verification. **LG webOS** — real `ares-package` build (`@webosose/ares-cli`
+installs from npm with no device/EULA), verified locally and CI-pending-verification. **Samsung
+Tizen** — best-effort real `tizen package` attempt (the Tizen Studio CLI is a ~260 MB license-gated
+download, not designed for unattended CI) with an honest static `config.xml`-contract-validation
+fallback when the real build doesn't complete on the runner; CI-pending-verification of which path
+actually ran. App-store publication remains external (owner decision 2026-06-14: code-verify only).
+This line is updated after each CI run — do not treat "pending-verification" as "green."
 **Scope:** Roku, Apple TV, Fire TV, Android TV, Android mobile, iOS/iPadOS, and Web/PWA shells  
 **Functional target:** incumbent PEG workflow "branded streaming app workflow" / templated streaming app workflow (basic apps free with the incumbent cloud service; up to 3 channels)
 **Key claim boundary:** Build + locally-prove generic multi-platform apps; app-store publication/certification is complete_with_external_dependency (rung gated by external store review)

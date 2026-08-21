@@ -22,12 +22,15 @@ roku/
 
 What it does:
 - Boots a Scene at launch.
-- Fetches `/api/public/app/config` from the CivicCast public API and renders
-  the channel list (title + HLS URL).
-- On row select, plays the HLS stream in a built-in `Video` node.
-- Falls back to a 3-channel placeholder list (Public / Education / Government)
-  when the API is unreachable, so a developer can sanity-check the surface
-  without a live backend.
+- Fetches `/api/public/app/config` (the real `StationAppConfig` contract —
+  see `civiccast/app_platform/models.py`) from the CivicCast public API and
+  renders the channel list from `channels[].branding.display_name`.
+- On row select, fetches that channel's `live_state_url` (a second request —
+  `LiveState.playback_url` is the HLS manifest, it is not on the config
+  response) and plays it in a built-in `Video` node.
+- Shows an explicit setup/error message (not fake content) when the API is
+  unreachable, returns no channels, or a channel has no live program —
+  see `showEmptyState()` / `fetchLiveStateAndPlay()` in `CivicCastScene.brs`.
 
 ## What it does NOT yet ship (the documented follow-up)
 

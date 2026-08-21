@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:tizen="http://tizen.org/ns/widgets"
+        id="https://civiccast.example.com/apps/tizen"
+        version="0.1.0"
+        viewmodes="maximized">
+
+    <!--
+      tizen:application id is "<10-char-package-id>.<app-name>". CivcstTv12
+      is a placeholder (S12 is code-verify only, no store submission per the
+      2026-06-14 owner decision) — a real submission needs an ID issued via
+      the Samsung Certificate portal.
+    -->
+    <tizen:application id="CivcstTv12.CivicCast"
+                        package="CivcstTv12"
+                        required_version="6.0"/>
+
+    <content src="index.html"/>
+    <icon src="icon.png"/>
+    <name>CivicCast</name>
+    <description>CivicCast public-broadcast live channels, schedule, and VOD.</description>
+
+    <tizen:profile name="tv"/>
+
+    <feature name="http://tizen.org/feature/screen.size.normal"/>
+
+    <tizen:privilege name="http://tizen.org/privilege/internet"/>
+
+    <tizen:setting screen-orientation="landscape"
+                    context-menu="disable"
+                    background-support="disable"
+                    encryption="disable"
+                    install-location="auto"
+                    hwkey-event="enable"/>
+
+</widget>

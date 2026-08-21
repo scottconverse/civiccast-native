@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1920, height=1080, user-scalable=no" />
+  <title>CivicCast</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      background: #1a1a1a;
+      color: #fff;
+      font-family: "LG Smart UI", -apple-system, sans-serif;
+    }
+    [data-civiccast-app] { padding: 60px; }
+    h1 { margin: 0 0 4px; }
+    [data-role="platform-label"] { color: #aaa; margin-top: 0; }
+    [data-role="video"] { width: 100%; max-width: 1600px; background: #000; }
+    [data-role="channel-list"] { list-style: none; padding: 0; display: flex; gap: 16px; flex-wrap: wrap; }
+    [data-role="channel-list"] button {
+      padding: 12px 20px;
+      background: var(--civiccast-brand, #2458A6);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 20px;
+      cursor: pointer;
+    }
+    [data-role="channel-list"] button:focus { outline: 4px solid #ffcc00; }
+  </style>
+</head>
+<body>
+  <div data-civiccast-app data-platform-label="CivicCast — LG webOS"></div>
+
+  <!--
+    civiccast-player.js is NOT checked in here — it is copied in from the
+    single canonical copy at ../web-shared/civiccast-player.js (shared with
+    ../tizen/) by the CI build step (.github/workflows/ci-ott-apps.yml)
+    before `ares-package` runs. It must land in THIS directory (same-dir
+    import below) because a packaged .ipk is sandboxed to its own folder at
+    runtime. For local dev: `cp ../web-shared/civiccast-player.js .` once,
+    then open this file via a static server (ES module imports need
+    http(s), not file://).
+  -->
+  <script type="module">
+    import { bootPlayer } from './civiccast-player.js'
+    bootPlayer({ platformLabel: 'CivicCast — LG webOS' })
+  </script>
+</body>
+</html>

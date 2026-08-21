@@ -1,0 +1,11 @@
+{
+  "name": "civiccast-roku-channel",
+  "private": true,
+  "description": "BrightScript static-check + zip packaging tooling for the CivicCast Roku channel. Not a runtime dependency of the channel itself (Roku ships plain .brs, not Node).",
+  "devDependencies": {
+    "brighterscript": "^0.67.0"
+  },
+  "scripts": {
+    "check": "bsc --project bsconfig.json"
+  }
+}

@@ -21,6 +21,12 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+# ...but NOT the Roku channel manifest — Roku's packaging spec requires that
+# exact lowercase filename at civiccast/apps/ott-native/roku/manifest, and
+# git on Windows matches gitignore patterns case-insensitively by default,
+# so the Python-sdist `MANIFEST` rule above silently swallowed it (found
+# while wiring up ci-ott-apps.yml, S12).
+!civiccast/apps/ott-native/roku/manifest
 
 # Virtual environments
 .venv/
@@ -232,3 +238,12 @@ sandbox-lab/evidence/*
 # run's output/ dir) carries real .log evidence files that must survive the
 # blanket *.log rule above -- same pattern as the .agent-runs negations.
 !tests/gate_a/fixtures/**/*.log
+
+# S12 OTT apps: civiccast-player.js is canonically ONE file at
+# civiccast/apps/ott-native/web-shared/civiccast-player.js, shared by the
+# Tizen and webOS targets. The build step (ci-ott-apps.yml) and local dev
+# (see each README) copy it into these directories before packaging; the
+# copy is a build artifact, not a second source of truth.
+civiccast/apps/ott-native/tizen/civiccast-player.js
+civiccast/apps/ott-native/webos/civiccast-player.js
+civiccast/apps/ott-native/roku/out/

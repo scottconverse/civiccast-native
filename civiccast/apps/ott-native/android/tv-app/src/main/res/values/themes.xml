@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shared by both the "tv" (Android TV/Google TV) and "firetv" (Amazon Fire TV) product
+         flavors — one Leanback theme for the single tv-app module, per the S12 de-duplication
+         (previously android-tv/ and fire-tv/ each carried their own differently-named copy). -->
+    <style name="Theme.CivicCastTV" parent="Theme.Leanback.Browse" />
+    <style name="Theme.CivicCastTV.Player" parent="Theme.Leanback">
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>

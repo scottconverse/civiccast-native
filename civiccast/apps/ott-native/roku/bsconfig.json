@@ -1,0 +1,11 @@
+{
+    "rootDir": "./",
+    "outFile": "./out/civiccast-roku-channel.zip",
+    "createPackage": false,
+    "files": [
+        "manifest",
+        "source/**/*.*",
+        "components/**/*.*",
+        "images/**/*.*"
+    ]
+}

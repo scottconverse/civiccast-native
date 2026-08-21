@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CivicCast</string>
+    <string name="row_channels">Channels</string>
+    <string name="row_error">Error</string>
+    <string name="error_loading">Could not load channels: %1$s</string>
+    <string name="empty_channels">No channels are configured yet. Finish station setup in the CivicCast operator console, then retry.</string>
+    <string name="preparing_stream">Preparing stream…</string>
+</resources>
