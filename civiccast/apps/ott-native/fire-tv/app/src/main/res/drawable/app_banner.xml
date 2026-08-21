@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Fire TV requires a 1280x720 launcher banner asset for the Appstore listing AND a 320x180 banner
-     referenced from android:banner in the manifest. Placeholder solid color — replace before publishing. -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#1565C0" />
-    <size android:width="320dp" android:height="180dp" />
-</shape>

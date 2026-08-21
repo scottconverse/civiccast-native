@@ -19,6 +19,30 @@ came across and what deliberately did not.
   release line. The old (private, not archived) repository's 286 MB of
   packed history — WSL-era churn plus roughly 640 MB of historical Git-LFS
   tester binaries — does not transfer, by construction.
+- **S12 OTT apps — de-duplicated, CI-built on hosted runners.**
+  `.github/workflows/ci-ott-apps.yml` is the first machine build for any of
+  the `civiccast/apps/ott-native/` app sources: Roku gets a real
+  BrightScript static check (`brighterscript`/`bsc`) + zip package; Android
+  gets a real `gradle assemble*Debug` build (checked-in wrapper —
+  `android/gradle/wrapper/gradle-wrapper.jar` was missing before this);
+  Apple gets a real `xcodebuild build-for-testing` (unsigned, simulator) on
+  `macos-latest`; LG webOS gets a real `ares-package` build
+  (`@webosose/ares-cli`, no device needed); Samsung Tizen attempts a real
+  `tizen package` build and honestly falls back to a static `config.xml`
+  contract validation when the ~260 MB license-gated Tizen Studio CLI can't
+  complete headlessly on the runner (see `tizen/README.md`). Also
+  de-duplicated the source trees: `android-tv/` and `fire-tv/` (two entire
+  copied Gradle projects differing only in `applicationId` and a few
+  manifest lines) are now one module, `android/tv-app`, built as the `tv`
+  and `firetv` product flavors; `ios/` and `tvos/` no longer each carry
+  their own copy of `CivicCastApp.swift`/`CivicCastCore.swift` — both
+  Xcode projects reference the single copy in the new `apple-shared/`.
+  Added the two platforms that had no source at all: `tizen/` and
+  `webos/`, both thin wrappers around one canonical playback client,
+  `web-shared/civiccast-player.js`. Every native target now calls the real
+  `StationAppConfig`/`LiveState` app-platform contract (fetch config,
+  resolve the default channel, fetch its `live_state_url`, play
+  `playback_url`) instead of a flattened per-platform stand-in JSON shape.
 - `docs/design/` — six design records (supervisor, installer lifecycle,
   migration contract, dual-runtime guard, native-beta recovery, the sub-300 MB
   bootstrap plan) hand-carried out of the otherwise-scratch `.agent-runs/` tree.

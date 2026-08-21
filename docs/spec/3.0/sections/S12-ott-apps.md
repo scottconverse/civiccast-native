@@ -1,6 +1,22 @@
 # S12 — Generic Multi-Platform OTT Apps
 
-**Status:** Built starter native app source for v3.0.0-beta1; app-store publication remains external.
+**Status:** Built starter native app source for all 8 targets (Roku, iOS, tvOS, Android TV, Fire TV,
+Android mobile, Samsung Tizen, LG webOS) and machine-CI-built on hosted runners — confirmed GREEN
+end-to-end on `.github/workflows/ci-ott-apps.yml` as of 2026-08-21 (PR #17, run 32504918253; every
+job independently re-verified). Per-platform build status: **Roku** — real BrightScript static check
+(`bsc`) + zip package. **CI-green.** **Android** (`tv`/`firetv`/mobile product flavors, one Gradle
+module) — real `gradle assemble{Tv,Firetv}Debug` / `assembleDebug` builds. **CI-green.** **Apple**
+(iOS + tvOS) — real `xcodebuild build-for-testing` (unsigned, `generic/platform=... Simulator`
+destination) on `macos-latest`. **CI-green.** **LG webOS** — real `ares-package` build
+(`@webosose/ares-cli`, no device/EULA needed; `--no-minify` works around the bundled minifier
+choking on ES module syntax). **CI-green.** **Samsung Tizen** — the headless Tizen Studio CLI
+install, certificate generation, security-profile add, and `cli-config` all genuinely succeed in
+CI; the final `tizen package` step itself still fails for a reason not yet root-caused (see
+`tizen/README.md` and the workflow's cli.log dump). The job passes via the documented honest
+fallback: static `config.xml` contract validation (`tizen/validate_config.py`). **CI-green via the
+fallback path, not yet a real `.wgt` build** — this is the one platform where "green" means
+"validated," not "compiled," and that distinction is intentional, not hidden. App-store publication
+remains external (owner decision 2026-06-14: code-verify only, no store submission in V1).
 **Scope:** Roku, Apple TV, Fire TV, Android TV, Android mobile, iOS/iPadOS, and Web/PWA shells  
 **Functional target:** incumbent PEG workflow "branded streaming app workflow" / templated streaming app workflow (basic apps free with the incumbent cloud service; up to 3 channels)
 **Key claim boundary:** Build + locally-prove generic multi-platform apps; app-store publication/certification is complete_with_external_dependency (rung gated by external store review)

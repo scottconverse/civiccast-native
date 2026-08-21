@@ -1,6 +1,8 @@
 // ContentView.swift
 //
-// iOS channel list. Tap a row to push the AVPlayer view.
+// iOS channel list. Tap a row to push the AVPlayer view. Reads the real
+// `StationAppConfig` contract via CivicCastCore's NetworkClient/ConfigStore
+// (station_name / channels[].branding.display_name / channels[].live_state_url).
 
 import SwiftUI
 
@@ -48,7 +50,7 @@ private struct StationView: View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(config.station.name)
+                    Text(config.stationName)
                         .font(.title2.bold())
                     Text("\(config.channels.count) channel\(config.channels.count == 1 ? "" : "s")")
                         .font(.subheadline)
@@ -77,21 +79,25 @@ private struct ChannelRow: View {
     var body: some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 6)
-                .fill(.tint.opacity(0.15))
+                .fill(brandColor.opacity(0.15))
                 .frame(width: 56, height: 32)
                 .overlay(
                     Image(systemName: "tv")
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(brandColor)
                 )
             VStack(alignment: .leading, spacing: 2) {
-                Text(channel.name)
+                Text(channel.branding.displayName)
                     .font(.body)
-                Text(channel.id)
+                Text(channel.branding.shortName ?? channel.id)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private var brandColor: Color {
+        Color(hex: channel.branding.color) ?? .accentColor
     }
 }
 

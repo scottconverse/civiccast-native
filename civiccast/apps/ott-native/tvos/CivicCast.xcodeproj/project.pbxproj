@@ -11,15 +11,17 @@
 		B2B2B2B2B2B2B2B2B2B20002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B2B2B2B2B2B2B2B2B21002 /* ContentView.swift */; };
 		B2B2B2B2B2B2B2B2B2B20003 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B2B2B2B2B2B2B2B2B21003 /* PlayerView.swift */; };
 		B2B2B2B2B2B2B2B2B2B20004 /* CivicCastCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B2B2B2B2B2B2B2B2B21004 /* CivicCastCore.swift */; };
+		B2B2B2B2B2B2B2B2B2B20005 /* ColorHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B2B2B2B2B2B2B2B2B21006 /* ColorHex.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		B2B2B2B2B2B2B2B2B2B22001 /* CivicCast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CivicCast.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		B2B2B2B2B2B2B2B2B2B21001 /* CivicCastApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CivicCastApp.swift; sourceTree = "<group>"; };
+		B2B2B2B2B2B2B2B2B2B21001 /* CivicCastApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CivicCastApp.swift; path = "../apple-shared/CivicCastApp.swift"; sourceTree = SOURCE_ROOT; };
 		B2B2B2B2B2B2B2B2B2B21002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B2B2B2B2B2B2B2B2B2B21003 /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
-		B2B2B2B2B2B2B2B2B2B21004 /* CivicCastCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CivicCastCore.swift; sourceTree = "<group>"; };
+		B2B2B2B2B2B2B2B2B2B21004 /* CivicCastCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CivicCastCore.swift; path = "../apple-shared/CivicCastCore.swift"; sourceTree = SOURCE_ROOT; };
 		B2B2B2B2B2B2B2B2B2B21005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B2B2B2B2B2B2B2B2B2B21006 /* ColorHex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ColorHex.swift; path = "../apple-shared/ColorHex.swift"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -48,6 +50,7 @@
 				B2B2B2B2B2B2B2B2B2B21002 /* ContentView.swift */,
 				B2B2B2B2B2B2B2B2B2B21003 /* PlayerView.swift */,
 				B2B2B2B2B2B2B2B2B2B21004 /* CivicCastCore.swift */,
+				B2B2B2B2B2B2B2B2B2B21006 /* ColorHex.swift */,
 				B2B2B2B2B2B2B2B2B2B21005 /* Info.plist */,
 			);
 			path = CivicCast;
@@ -133,6 +136,7 @@
 				B2B2B2B2B2B2B2B2B2B20002 /* ContentView.swift in Sources */,
 				B2B2B2B2B2B2B2B2B2B20003 /* PlayerView.swift in Sources */,
 				B2B2B2B2B2B2B2B2B2B20004 /* CivicCastCore.swift in Sources */,
+				B2B2B2B2B2B2B2B2B2B20005 /* ColorHex.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

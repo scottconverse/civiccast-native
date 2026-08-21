@@ -100,14 +100,17 @@ Same as the iOS target — override `APIBaseURL` in `CivicCast/Info.plist`. For 
 ```
 tvos/
 ├── CivicCast/
-│   ├── CivicCastApp.swift     # @main, ConfigStore
-│   ├── ContentView.swift      # NavigationStack + focusable card list
-│   ├── PlayerView.swift       # VideoPlayer (HLS)
-│   ├── CivicCastCore.swift    # NetworkClient, ConfigResponse, Channel (inline copy of ios/ counterpart)
+│   ├── ContentView.swift      # NavigationStack + focusable card list (tvOS-specific)
+│   ├── PlayerView.swift       # VideoPlayer (HLS) (tvOS-specific)
 │   └── Info.plist
 ├── CivicCast.xcodeproj/
-│   └── project.pbxproj
+│   └── project.pbxproj        # references ../apple-shared/*.swift directly (SOURCE_ROOT-relative)
 └── README.md
+
+../apple-shared/                # SHARED with ios/ — single canonical copy, not a per-target fork
+├── CivicCastApp.swift          # @main, ConfigStore
+├── CivicCastCore.swift         # NetworkClient, ConfigResponse, Channel, LiveState
+└── ColorHex.swift              # Color(hex:) for ChannelBranding.color
 ```
 
 ## Sideload checklist (TestFlight-free internal distribution)
@@ -134,4 +137,7 @@ These are the documented follow-ups to take the app from starter to App Store (A
 
 ## Backend contract
 
-Same shape as the iOS variant — see [parent README](../README.md) for the canonical JSON.
+Same real `StationAppConfig` / `LiveState` contract as the iOS variant (both
+targets share `../apple-shared/CivicCastCore.swift`) — see that file's
+header for the exact shapes, and [parent README](../README.md) for the
+schema note shared across all six S12 targets.

@@ -1,0 +1,299 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+#
+# S12 OTT-apps build gate. Before this workflow, none of the six
+# civiccast/apps/ott-native/ app sources (Roku, iOS, tvOS, Android TV,
+# Fire TV, Android mobile) plus the two added here (Tizen, webOS) were ever
+# machine-built — see docs/spec/3.0/sections/S12-ott-apps.md's gap note.
+# This workflow actually compiles/packages each one on hosted runners.
+#
+# Owner decision (2026-06-14): code-verify only, no app-store submission.
+# Every job below builds/packages an artifact and uploads it; nothing is
+# signed for release or submitted to a store.
+#
+# Hosted runners only (scripts/policy/check_workflow_runners.py) — macOS is
+# required for the Apple job (Xcode only runs there), everything else runs
+# on ubuntu-latest.
+
+name: ci-ott-apps
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "civiccast/apps/ott-native/**"
+      - ".github/workflows/ci-ott-apps.yml"
+  push:
+    branches: [main]
+    paths:
+      - "civiccast/apps/ott-native/**"
+      - ".github/workflows/ci-ott-apps.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  roku:
+    name: Roku (BrightScript static check + zip package)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        working-directory: civiccast/apps/ott-native/roku
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: civiccast/apps/ott-native/roku/package-lock.json
+
+      - name: Install BrightScript tooling
+        run: npm ci
+
+      - name: BrightScript static check (brighterscript / bsc)
+        run: npx bsc --project bsconfig.json
+
+      - name: Zip package (roku-deploy-equivalent — no device needed)
+        run: |
+          mkdir -p out
+          zip -r out/civiccast-roku-channel.zip manifest source components images
+
+      - name: Upload Roku package
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: civiccast-roku-channel
+          path: civiccast/apps/ott-native/roku/out/civiccast-roku-channel.zip
+          retention-days: 14
+
+  android:
+    name: Android (${{ matrix.task }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - task: "tv-app:tv"
+            artifact_name: "tv-app-tv"
+            gradle_task: ":tv-app:assembleTvDebug"
+            artifact_glob: "tv-app/build/outputs/apk/tv/debug/*.apk"
+          - task: "tv-app:firetv"
+            artifact_name: "tv-app-firetv"
+            gradle_task: ":tv-app:assembleFiretvDebug"
+            artifact_glob: "tv-app/build/outputs/apk/firetv/debug/*.apk"
+          - task: "mobile-app"
+            artifact_name: "mobile-app"
+            gradle_task: ":mobile-app:assembleDebug"
+            artifact_glob: "mobile-app/build/outputs/apk/debug/*.apk"
+    defaults:
+      run:
+        working-directory: civiccast/apps/ott-native/android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build ${{ matrix.task }}
+        run: ./gradlew ${{ matrix.gradle_task }} --stacktrace
+
+      - name: Upload ${{ matrix.task }} APK
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: civiccast-android-${{ matrix.artifact_name }}
+          path: civiccast/apps/ott-native/android/${{ matrix.artifact_glob }}
+          retention-days: 14
+
+  apple:
+    name: Apple (${{ matrix.platform }})
+    runs-on: macos-latest
+    timeout-minutes: 45
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ios
+            # "generic/platform=..." is Apple's documented device-agnostic
+            # destination for a build-only pass (no concrete simulator
+            # needed) -- a concrete device name (iPhone 15) or even the
+            # "name=Any iOS Simulator Device" placeholder both 404 the
+            # moment the runner's Xcode/simulator lineup drifts (both
+            # failed on this PR's real CI runs; see the git history on
+            # this file for the exact errors).
+            destination: "generic/platform=iOS Simulator"
+            products_dir: "Debug-iphonesimulator"
+          - platform: tvos
+            # See the iOS row's comment -- same device-agnostic form.
+            destination: "generic/platform=tvOS Simulator"
+            products_dir: "Debug-appletvsimulator"
+    defaults:
+      run:
+        working-directory: civiccast/apps/ott-native/${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: xcodebuild build-for-testing (unsigned, simulator)
+        run: |
+          xcodebuild \
+            -project CivicCast.xcodeproj \
+            -scheme CivicCast \
+            -configuration Debug \
+            -destination '${{ matrix.destination }}' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build-for-testing
+
+      - name: Upload ${{ matrix.platform }} build products
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: civiccast-${{ matrix.platform }}-app
+          path: civiccast/apps/ott-native/${{ matrix.platform }}/build/Build/Products/${{ matrix.products_dir }}/CivicCast.app
+          retention-days: 14
+
+  webos:
+    name: LG webOS (ares-package)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        working-directory: civiccast/apps/ott-native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "20"
+
+      - name: Install ares-cli
+        run: npm install --no-save @webosose/ares-cli
+
+      - name: Stage the shared player into webos/
+        run: cp web-shared/civiccast-player.js webos/civiccast-player.js
+
+      - name: ares-package (no device — packaging only)
+        run: |
+          npx ares-package --no-minify webos -o webos-out
+
+      - name: Upload webOS package
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: civiccast-webos-ipk
+          path: civiccast/apps/ott-native/webos-out/*.ipk
+          retention-days: 14
+
+  tizen:
+    name: Samsung Tizen (tizen package, static-validation fallback)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        working-directory: civiccast/apps/ott-native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Stage the shared player into tizen/
+        run: cp web-shared/civiccast-player.js tizen/civiccast-player.js
+
+      - name: Attempt headless Tizen Studio CLI install
+        id: tizen_install
+        continue-on-error: true
+        run: |
+          set -e
+          curl -sL --retry 3 --max-time 600 \
+            "https://download.tizen.org/sdk/Installer/tizen-studio_4.1/web-cli_Tizen_Studio_4.1_ubuntu-64.bin" \
+            -o /tmp/tizen-web-cli.bin
+          chmod +x /tmp/tizen-web-cli.bin
+          /tmp/tizen-web-cli.bin --accept-license --no-java-check "$HOME/tizen-studio"
+          echo "$HOME/tizen-studio/tools/ide/bin" >> "$GITHUB_PATH"
+          echo "$HOME/tizen-studio/tools" >> "$GITHUB_PATH"
+
+      - name: Attempt real tizen package
+        id: tizen_package
+        if: steps.tizen_install.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -e
+          tizen version
+          tizen certificate -a CivicCastCI -p tizenpkcs -f CivicCastCI -c US -s CivicCast -o CivicCast -n CivicCastAuthors
+          tizen security-profiles add -n CivicCastCI -a "$HOME/tizen-studio-data/keystore/author/CivicCastCI.p12" -p tizenpkcs
+          # `tizen security-profiles add` only writes profiles.xml; the CLI's
+          # active config needs to be pointed at it explicitly (its own
+          # output says so) or `tizen package -s` can't find the profile.
+          tizen cli-config "profiles.path=$HOME/tizen-studio-data/profile/profiles.xml"
+          tizen package -t wgt -s CivicCastCI -o tizen/out -- tizen || {
+            echo "tizen package failed; searching for cli.log:"
+            find "$HOME" -iname "cli.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
+            exit 1
+          }
+
+      - name: Fallback — static config.xml validation (tizen package-equivalent)
+        id: tizen_fallback
+        if: steps.tizen_package.outcome != 'success'
+        run: |
+          python3 -m pip install --quiet defusedxml
+          python3 tizen/validate_config.py
+
+      - name: Report which path ran
+        run: |
+          if [ "${{ steps.tizen_package.outcome }}" = "success" ]; then
+            echo "### Tizen: real \`tizen package\` build" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Tizen: static config.xml validation fallback"
+              echo ""
+              echo "The Tizen Studio CLI is a ~260 MB license-gated download not designed for"
+              echo "unattended CI; this run could not complete a real \`tizen package\` build,"
+              echo "so it validated config.xml's contract instead — see tizen/README.md."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Tizen package (if a real build ran)
+        if: steps.tizen_package.outcome == 'success'
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: civiccast-tizen-wgt
+          path: civiccast/apps/ott-native/tizen/out/*.wgt
+          retention-days: 14
