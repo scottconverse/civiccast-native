@@ -323,15 +323,12 @@ jobs:
               # already covered above) for the same git/glob/AST/text-scan
               # patterns, using the same faithful sandbox: candidates included
               # tests/cable/test_channel_vocabulary_policy.py's numbered-id
-              # source scan and tests/platform/test_broker_import_policy.py's
-              # nats-import AST scan, both of which also walk all of
-              # civiccast/. Neither is deselected -- confirmed passing inside
-              # the sandbox, because neither is vulnerable to duplicate-body
-              # inflation the way the engine-builder scan is: import
-              # statements live once at module scope (never duplicated per
-              # mutant), and the numbered-channel-id literals the vocabulary
-              # test forbids do not appear anywhere in the diff-scoped
-              # civiccast/*.py files, mutated or not.
+              # source scan, which also walks all of civiccast/. It is not
+              # deselected -- confirmed passing inside the sandbox, because it
+              # is not vulnerable to duplicate-body inflation the way the
+              # engine-builder scan is: the numbered-channel-id literals the
+              # vocabulary test forbids do not appear anywhere in the
+              # diff-scoped civiccast/*.py files, mutated or not.
               echo 'pytest_add_cli_args_test_selection = ["--ignore=tests/policy/test_claims_evidence.py", "--ignore=tests/policy/test_shipped_payload_db_driver.py", "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory", "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_caption_tier_recommendation_vram_thresholds_match_hardware_py_bidirectionally", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_hardware_py_tier_id_ladder_shape_is_the_one_the_rust_mirror_assumes", "--deselect=tests/policy/test_native_pack_source_sha_contract.py::test_checked_in_pack_builder_invocations_bind_a_valid_source_sha", "--deselect=tests/test_engine_connect_timeout.py::test_no_unbounded_postgres_engine_builder"]'
               echo -n "only_mutate = ["
               sed 's/.*/"&",/' changed_files.txt | tr -d '\n'
