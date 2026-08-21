@@ -49,6 +49,8 @@ import type {
   ComplianceProbeResult,
   EgressCaptionProofSample,
   EgressConfig,
+  GstreamerRepairResponse,
+  OfflineCaptionJobRecord,
   HeadendProfile,
   HeadendProfileApplyRequest,
   MaterializeResult,
@@ -866,6 +868,19 @@ export function queueEgressCommand(
       body: { action },
     },
   )
+}
+
+/**
+ * POST /api/staff/egress/repair-gstreamer — operator recovery for a station
+ * degraded onto the FFmpeg egress engine by a corrupt GStreamer closure
+ * (civiccast/egress/router.py's repair_gstreamer_runtime, setup_admin /
+ * support_admin gated). Re-verifies the closure in place, or launches a
+ * signed re-stage if it's still broken; never a reinstall.
+ */
+export function repairGstreamerRuntime(): Promise<GstreamerRepairResponse> {
+  return request<GstreamerRepairResponse>('/api/staff/egress/repair-gstreamer', {
+    method: 'POST',
+  })
 }
 
 export function updateStaffAsset(
@@ -1844,6 +1859,37 @@ export function getCaptionProofs(
   const qs = new URLSearchParams({ limit: String(limit) })
   return request<EgressCaptionProofSample[]>(
     `/api/staff/egress/channels/${encodeURIComponent(channelId)}/caption-proofs?${qs.toString()}`,
+  )
+}
+
+export type OfflineCaptionJobState = OfflineCaptionJobRecord['state']
+
+/**
+ * GET /api/staff/captions/offline-jobs — offline caption job rows (K3):
+ * state / attempts / last_error, for operator visibility. Optionally
+ * narrowed to one asset and/or one state (e.g. `state: 'failed'` for a
+ * retry queue view). No React screen called this before the captions job
+ * drawer (civiccast/captions/router.py's list_offline_caption_jobs).
+ */
+export function listOfflineCaptionJobs(
+  params: { assetId?: string; state?: OfflineCaptionJobState } = {},
+): Promise<OfflineCaptionJobRecord[]> {
+  const qs = new URLSearchParams()
+  if (params.assetId) qs.set('asset_id', params.assetId)
+  if (params.state) qs.set('state', params.state)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return request<OfflineCaptionJobRecord[]>(`/api/staff/captions/offline-jobs${suffix}`)
+}
+
+/**
+ * POST /api/staff/captions/offline-jobs/{job_id}/retry — manually retry a
+ * failed offline caption job (records_clerk gated). 409 if a different job
+ * is already active for the same asset; the caller surfaces that message.
+ */
+export function retryOfflineCaptionJob(jobId: string): Promise<OfflineCaptionJobRecord> {
+  return request<OfflineCaptionJobRecord>(
+    `/api/staff/captions/offline-jobs/${encodeURIComponent(jobId)}/retry`,
+    { method: 'POST' },
   )
 }
 
