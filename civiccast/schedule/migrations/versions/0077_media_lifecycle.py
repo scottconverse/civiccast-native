@@ -2,8 +2,8 @@
 # Copyright (c) The CivicCast Authors
 """S7 media lifecycle & readiness -- the five net-new S7 tables + archival gate.
 
-Revision ID: 0076_media_lifecycle
-Revises: 0075_offline_caption_jobs
+Revision ID: 0077_media_lifecycle
+Revises: 0076_analytics_viewership
 Create Date: 2026-08-21
 
 ``docs/spec/3.0/sections/S7-media-lifecycle-and-readiness.md`` §3 calls for
@@ -11,7 +11,9 @@ Create Date: 2026-08-21
 one revision. `0041` was already claimed by `0041_commit_rollback_fields`
 by the time this landed (revision numbers are repo-global, per the
 `0075_offline_caption_jobs` note) -- this is that migration, parented on
-the current single head instead.
+the current single head instead. Renumbered `0076` -> `0077` (and
+re-chained onto `0076_analytics_viewership`) when S14's migration reached
+`main` first and claimed `0076_media_lifecycle`'s original slot.
 
 Creates, in one revision:
 
@@ -38,8 +40,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0076_media_lifecycle"
-down_revision: str | None = "0075_offline_caption_jobs"
+revision = "0077_media_lifecycle"
+down_revision: str | None = "0076_analytics_viewership"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 

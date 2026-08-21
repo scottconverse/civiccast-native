@@ -835,13 +835,16 @@ class TestMigration0056AndMerge:
         # viewership_events/viewership_rollups/analytics_report_snapshots)
         # chains after 0075. 0078_agenda_item_confidence (product-hole fix:
         # adds agenda_items.confidence for the PDF-agenda-import heuristic)
-        # is the current head, chained after 0076_analytics_viewership.
-        # Renumbered from its original 0076 after PR #20 merged first and
-        # independently claimed that slot; 0077 is reserved for the still-
-        # unmerged feat/s7-media-lifecycle branch and deliberately left
-        # unused here.
-        assert list(heads) == ["0078_agenda_item_confidence"], (
-            f"Expected single head 0078_agenda_item_confidence, got {heads!r}"
+        # chains after 0076_analytics_viewership. Renumbered from its
+        # original 0076 after PR #20 merged first and independently claimed
+        # that slot; 0077 is reserved for feat/s7-media-lifecycle.
+        # 0077_media_lifecycle (S7 media lifecycle & readiness: the five
+        # net-new S7 tables + asset_archive_proofs + media_lifecycle_audit_log,
+        # plus assets.legal_hold/legal_hold_reason) is rechained after
+        # 0078_agenda_item_confidence (rather than the original 0076) so it
+        # lands after the already-merged 0078, and is the current head.
+        assert list(heads) == ["0077_media_lifecycle"], (
+            f"Expected single head 0077_media_lifecycle, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:
