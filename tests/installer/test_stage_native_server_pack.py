@@ -46,7 +46,6 @@ def _build_tiny_pack(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: Ed25519PrivateKey
 ) -> Path:
     postgres_root = tmp_path / "src" / "postgres"
-    nats_root = tmp_path / "src" / "nats"
     tsduck_root = tmp_path / "src" / "tsduck"
 
     bin_pins = {
@@ -69,10 +68,6 @@ def _build_tiny_pack(
     for name in pack_builder.POSTGRES_LICENSE_FILES:
         _write(postgres_root / name, f"license:{name}".encode())
 
-    nats_pins = {"nats-server.exe": _write(nats_root / "nats-server.exe", b"nats")}
-    for name in pack_builder.NATS_LICENSE_FILES:
-        _write(nats_root / name, f"license:{name}".encode())
-
     tsduck_pins = {}
     for name in (
         "tsp.exe",
@@ -90,14 +85,12 @@ def _build_tiny_pack(
     monkeypatch.setattr(pack_builder, "POSTGRES_BIN_PINS", bin_pins)
     monkeypatch.setattr(pack_builder, "POSTGRES_BIN_DLL_PINS", {})
     monkeypatch.setattr(pack_builder, "POSTGRES_LIB_PINS", {})
-    monkeypatch.setattr(pack_builder, "NATS_BIN_PINS", nats_pins)
     monkeypatch.setattr(pack_builder, "TSDUCK_BIN_PINS", tsduck_pins)
 
     output = tmp_path / "built" / "native-server-binaries.ccpack"
     pack_builder.build_server_pack(
         output=output,
         postgres_root=postgres_root,
-        nats_root=nats_root,
         tsduck_root=tsduck_root,
         signing_private_key=key,
         signing_key_id="development-test-key",

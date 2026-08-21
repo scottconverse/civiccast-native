@@ -657,8 +657,11 @@ def license_identifiers_in(license_expression: str) -> tuple[str, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Category 6 -- the native-server-binaries pack (PostgreSQL 17 + NATS +
-# TSDuck; WP2 Core-pack builder, `scripts/build_native_server_pack.py`)
+# Category 6 -- the native-server-binaries pack (PostgreSQL 17 +
+# TSDuck; WP2 Core-pack builder, `scripts/build_native_server_pack.py`).
+# NATS JetStream was removed from the product (owner decision 2026-08-20;
+# see ADR 0023, which supersedes ADR 0001) -- nats-server.exe is no longer
+# part of this pack.
 #
 # A SEPARATE table/function from `classify_shipped_file` above rather than
 # entries merged into its basename tables: that function's docstring and
@@ -677,8 +680,8 @@ def license_identifiers_in(license_expression: str) -> tuple[str, ...]:
 #
 # Evidence for every entry below: extracted and inspected directly from the
 # exact pinned upstream archives named in `native-windows-runtime-
-# dependencies.lock.json` (PostgreSQL 17.10-2 Windows x64 binaries, NATS
-# server v2.14.3 windows-amd64, TSDuck v3.44-4676 Win64 Portable) --
+# dependencies.lock.json` (PostgreSQL 17.10-2 Windows x64 binaries,
+# TSDuck v3.44-4676 Win64 Portable) --
 # verbatim command output and per-notice SHA-256 recorded in
 # `.agent-runs/native-windows/ws5-installer/evidence/
 # wp2-core-pack-2026-07-29.md`. Deny-by-default (AC7, same as
@@ -760,11 +763,6 @@ SERVER_PACK_BASENAME_LICENSE: Final[dict[str, str]] = {
     "liblz4.dll": "BSD-2-Clause",
     "libxml2.dll": "MIT",
     "zlib1.dll": "Zlib",
-    # --- NATS server: Apache-2.0 per its own upstream `LICENSE` (shipped
-    # inside the SAME release ZIP as `nats-server.exe`). A fully static Go
-    # binary -- confirmed by direct PE import-table inspection (zero
-    # bundled-DLL imports), so no further third-party notices apply.
-    "nats-server.exe": "Apache-2.0",
     # --- TSDuck: BSD-2-Clause per its own `LICENSE.txt`. `tsp.exe`,
     # `tscore.dll`, and `tsduck.dll` are TSDuck's own first-party code.
     # TSDuck's bundled-third-party notices (`OTHERS.txt`: DTAPI [proprietary,

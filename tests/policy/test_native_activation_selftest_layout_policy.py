@@ -19,7 +19,7 @@ that binding, closed from two directions a first pass left open:
 1. **The staging PREFIX itself is derived from the builder's source, not
    hard-coded here.** ``_pack_builder_staging_prefixes`` parses the
    ``sources[f"<prefix>/{filename}"] = path`` assignment inside each of
-   ``_postgres_sources`` / ``_nats_sources`` / ``_tsduck_sources`` via
+   ``_postgres_sources`` / ``_tsduck_sources`` via
    ``ast`` -- never assumes ``bin`` or ``tsduck/bin`` as literals. If the
    builder ever changes a destination prefix (e.g.
    ``sources[f"bin/{fn}"]`` -> ``sources[f"bin2/{fn}"]``) without touching a
@@ -91,13 +91,18 @@ SERVER_PACK_BUILDER = REPO_ROOT / "scripts" / "build_native_server_pack.py"
 #: everything below it -- the per-table PREFIX -- is derived, not assumed.
 STAGED_PAYLOAD_ROOT = "packs/native-server-binaries/payload"
 
-#: The three pin-table dict names this guard covers, in the order their
-#: staging loops appear in the builder.
-_TRACKED_PIN_TABLES = ("POSTGRES_BIN_PINS", "NATS_BIN_PINS", "TSDUCK_BIN_PINS")
+#: The pin-table dict names this guard covers, in the order their
+#: staging loops appear in the builder. NATS JetStream was removed from the
+#: product (owner decision 2026-08-20; see ADR 0023, which supersedes ADR
+#: 0001), so ``NATS_BIN_PINS`` no longer exists in the builder and is not
+#: tracked here.
+_TRACKED_PIN_TABLES = ("POSTGRES_BIN_PINS", "TSDUCK_BIN_PINS")
 
 #: The wrong convention the K1 incident shipped: paths nothing ever stages.
 #: Belt-and-suspenders at the Python-policy level against reintroducing it,
-#: checked against BOTH Rust probe lists.
+#: checked against BOTH Rust probe lists. ``dependencies/nats`` stays in this
+#: never-reappear list defensively even though NATS is no longer part of the
+#: product at all.
 _WRONG_LEGACY_PREFIXES = (
     "dependencies/postgresql",
     "dependencies/nats",
@@ -111,8 +116,8 @@ def _load_server_pack_builder():
 
     ``scripts/`` is not an importable package, so this is loaded through
     importlib rather than a plain import -- the point is to read the
-    BUILDER's own ``POSTGRES_BIN_PINS`` / ``NATS_BIN_PINS`` /
-    ``TSDUCK_BIN_PINS`` dict objects, never a re-declared copy of them.
+    BUILDER's own ``POSTGRES_BIN_PINS`` / ``TSDUCK_BIN_PINS`` dict objects,
+    never a re-declared copy of them.
     Matches the convention ``tests/policy/test_shipped_payload_db_driver.py``
     already uses for the same class of script (and the pattern
     ``tests/native/test_build_native_server_pack.py`` /

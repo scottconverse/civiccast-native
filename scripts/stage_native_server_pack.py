@@ -73,7 +73,7 @@ SRC_TAURI: Final[Path] = INSTALLER_DIR / "src-tauri"
 #: convention to `native-runtime/`/`runtime/`, not a reuse of the pre-existing
 #: (never wired up) `runtime-dependencies/` entry, which names a broader,
 #: differently-scoped tree (this pack's own docstring explains why it is
-#: NOT that tree: PostgreSQL/NATS/TSDuck only, minimized, not the general
+#: NOT that tree: PostgreSQL/TSDuck only, minimized, not the general
 #: closure).
 STAGED_PACK_FILE: Final[Path] = SRC_TAURI / "packs" / "native-server-binaries.ccpack"
 STAGED_PACK_EXTRACTED: Final[Path] = SRC_TAURI / "packs" / "native-server-binaries"
