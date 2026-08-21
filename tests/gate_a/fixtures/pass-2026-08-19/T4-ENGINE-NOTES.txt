@@ -1,0 +1,35 @@
+﻿checked_utc=2026-08-19T09:09:17.3630366Z
+Get http://127.0.0.1:8000/openapi.json -> status:200 ok:True err:
+discovered_egress_paths_count=23
+  /api/public/egress/channels/{channel_id}/now
+  /api/staff/egress/channels
+  /api/staff/egress/channels/{channel_id}
+  /api/staff/egress/channels/{channel_id}/caption-proofs
+  /api/staff/egress/channels/{channel_id}/caption-status
+  /api/staff/egress/channels/{channel_id}/commands
+  /api/staff/egress/channels/{channel_id}/compliance-probe
+  /api/staff/egress/channels/{channel_id}/config
+  /api/staff/egress/channels/{channel_id}/config/headend-profile
+  /api/staff/egress/channels/{channel_id}/health
+  /api/staff/egress/channels/{channel_id}/loudness-plan
+  /api/staff/egress/channels/{channel_id}/proof
+  /api/staff/egress/channels/{channel_id}/schema-currency
+  /api/staff/egress/channels/{channel_id}/state
+  /api/staff/egress/channels/{channel_id}/takeover
+  /api/staff/egress/channels/{channel_id}/takeover-audit
+  /api/staff/egress/channels/{channel_id}/takeover-state
+  /api/staff/egress/headend-device-probe
+  /api/staff/egress/headend-profiles
+  /api/staff/egress/headend-readiness
+  /api/staff/egress/ndi-readiness
+  /api/staff/egress/repair-gstreamer
+  /api/staff/egress/sdi-readiness
+config_url=http://127.0.0.1:8000/api/staff/egress/channels/government/config
+commands_url=http://127.0.0.1:8000/api/staff/egress/channels/government/commands
+Put http://127.0.0.1:8000/api/staff/egress/channels/government/config -> status:200 ok:True err:
+Post http://127.0.0.1:8000/api/staff/egress/channels/government/commands -> status:202 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+engine_state=FALLBACK_SLATE
+engine_tsp_verdict=pass invalid_syncs=0 transport_errors=0 discontinuities=0
+Post http://127.0.0.1:8000/api/staff/egress/channels/government/commands -> status:202 ok:True err:
+t4_engine_path_succeeded=True

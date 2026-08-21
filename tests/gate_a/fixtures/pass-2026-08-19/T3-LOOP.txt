@@ -1,0 +1,24 @@
+﻿checked_utc=2026-08-19T09:07:23.8783351Z
+nonce_present=true nonce_length=43
+Post http://127.0.0.1:8000/api/setup/first-admin -> status:200 ok:True err:
+token_acquired=true token_length=48
+t3_asset_source=real-lpm-clip (C:\CivicCastScripts\lpm-sample-short.mp4)
+t3_asset path=C:\CivicCastSoakRun\t3-test-asset.mp4 exists=True bytes=3848667
+POST http://127.0.0.1:8000/api/staff/assets/upload -> status:201 ok:True err:
+uploaded_asset_id=sandbox-proof-260819030724-akys
+Post http://127.0.0.1:8000/api/staff/assets/sandbox-proof-260819030724-akys/package -> status:200 ok:True err:
+Post http://127.0.0.1:8000/api/staff/publish/assets/sandbox-proof-260819030724-akys/approve -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/public/assets -> status:200 ok:True err:
+asset_found_public=True asset_id=sandbox-proof-260819030724-akys
+Get http://127.0.0.1:8000/openapi.json -> status:200 ok:True err:
+caption_endpoint=/api/staff/captions/offline-jobs
+caption_enqueue_endpoint=/api/staff/captions/offline-jobs/{job_id}/retry
+Get http://127.0.0.1:8000/api/staff/captions/offline-jobs -> status:200 ok:True err:
+Post http://127.0.0.1:8000/api/staff/captions/offline-jobs/{job_id}/retry -> status:404 ok:False err:{"detail":"Offline caption job not found: {job_id}"}
+  BODY: 
+Get http://127.0.0.1:8000/api/staff/captions/offline-jobs -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/captions/offline-jobs -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/captions/offline-jobs -> status:200 ok:True err:
+captions_result=PASS cue_count_found=true
+CAPTIONS=PASS
+T3_LOOP=PASS

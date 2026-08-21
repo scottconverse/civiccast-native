@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+#
+# Gate A -- the automated station-acceptance release gate.
+#
+# WHAT THIS PROVES: a clean Windows Sandbox install of a native-beta
+# candidate kit, K1 activation, the station coming up and answering
+# health/console/portal, both UIs actually rendering their SPA shell, the
+# clerk loop (upload -> package -> approve/publish -> public listing), the
+# offline caption pipeline producing real cues, the product egress engine
+# (GStreamer, not the ffmpeg fallback) passing TSDuck transport-stream
+# verification, and a bounded soak staying healthy -- judged by code
+# (scripts/gate_a_verdict.py), fail-closed, from files a harness wrote, never
+# from prose. See docs/ops/gate-a.md for the full verdict-criteria table with
+# spec citations.
+#
+# WHAT THIS DOES NOT PROVE: the full station-acceptance ladder in
+# docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md §12 -- the 24h/72h
+# real-hardware soaks, physical SDI proof, unattended-reboot survival, the
+# commissioning-wizard UI walkthrough, and OTT-app checks. Those remain
+# "Gate B" (a separate, real-hardware 24h reboot soak) and the existing
+# manual/Playwright acceptance work. Gate A is a fast, cheap, fail-closed
+# floor that runs on every candidate build, not a replacement for either.
+#
+# STATUS: informational only. It reports its verdict on every candidate but
+# does NOT block merges or releases until the owner promotes it to a required
+# check after 3 consecutive green runs (docs/ops/gate-a.md, "Promotion
+# rule"). No agent flips branch protection -- that is an owner-only action
+# per this repo's CLAUDE.md "Owner gates" section.
+
+name: gate-a-station-acceptance
+
+on:
+  workflow_run:
+    workflows: [native-beta-candidate-artifacts]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Workflow run id of the native-beta-candidate-artifacts run to judge"
+        required: true
+        type: string
+
+concurrency:
+  group: gate-a
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  station-acceptance:
+    name: Windows Sandbox station-acceptance run + verdict
+    # Skip (neutral, not failed) when the triggering candidate build itself
+    # did not succeed -- there is no installable kit to judge in that case,
+    # and a Gate A FAIL on top of an already-red candidate build would be
+    # noise, not signal.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, windows, sandbox-lab]
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve target run id
+        id: run_id
+        shell: pwsh
+        run: |
+          $runId = "${{ github.event.inputs.run_id }}"
+          if ([string]::IsNullOrWhiteSpace($runId)) {
+            $runId = "${{ github.event.workflow_run.id }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($runId)) {
+            throw "Could not resolve a run id from either workflow_dispatch input or workflow_run event."
+          }
+          "run_id=$runId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Run Gate A
+        id: gate_a
+        shell: pwsh
+        run: |
+          pwsh -File sandbox-lab/Run-GateA.ps1 -RunId ${{ steps.run_id.outputs.run_id }} -SoakMinutes 20 -TimeoutMinutes 150
+          $exitCode = $LASTEXITCODE
+          "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          # Locate the evidence dir this run just wrote so the upload step
+          # below can find it without re-deriving the sha/timestamp logic.
+          $latest = Get-ChildItem -Path "sandbox-lab/evidence" -Directory -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName "gate-a-verdict.json") } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($latest) {
+            "evidence_dir=$($latest.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+          exit $exitCode
+
+      - name: Upload verdict
+        if: always() && steps.gate_a.outputs.evidence_dir != ''
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 30
+        with:
+          name: gate-a-verdict-${{ steps.run_id.outputs.run_id }}
+          path: ${{ steps.gate_a.outputs.evidence_dir }}/gate-a-verdict.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload evidence
+        if: always() && steps.gate_a.outputs.evidence_dir != ''
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 30
+        with:
+          name: gate-a-${{ steps.run_id.outputs.run_id }}
+          path: ${{ steps.gate_a.outputs.evidence_dir }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail the job on a non-PASS verdict or harness error
+        if: always()
+        shell: pwsh
+        run: |
+          $code = "${{ steps.gate_a.outputs.exit_code }}"
+          if ($code -ne '0') {
+            Write-Error "Gate A did not PASS (Run-GateA.ps1 exit code: $code). See the uploaded gate-a-verdict / evidence artifacts."
+            exit 1
+          }
+          Write-Host "Gate A PASS."

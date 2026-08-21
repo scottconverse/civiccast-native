@@ -1,0 +1,85 @@
+# 4-hour soak channel manifest.
+#
+# Three PEG channels — the standard LPM/incumbent PEG platform triad. The soak loops each
+# channel against a synthetic source (color bars + 1 kHz tone, looped via
+# `ffmpeg -stream_loop -1`) so we don't need a real station feed on the
+# tester machine. Each channel writes to its own .ts capture file inside
+# $Run/captures/<channel_id>/ for the post-soak `tsanalyze` discontinuity
+# check.
+#
+# The dev directive's §2 step 2 reads this file and seeds the matching
+# civiccast egress_channels + egress_sinks rows. Field shapes track
+# civiccast/cable/models.py + civiccast/egress/models.py.
+
+version: 1
+
+# Soak duration. The dev directive treats this as a guard rail — the actual
+# clock-driven stop is in §4 (pass/fail criteria after 4 hours). The kit
+# uses it to size the heartbeat schedule (8 heartbeats at 30-min cadence).
+duration_seconds: 14400
+heartbeat_interval_seconds: 1800
+
+# Synthetic source preset shared across all three channels. The default uses
+# ffmpeg's built-in `lavfi` sources so no external content is required.
+synthetic_source:
+  video: "lavfi -re -i color=size=1280x720:rate=30:color=#1A1A1A,format=yuv420p"
+  audio: "lavfi -re -i sine=frequency=1000:sample_rate=48000"
+  duration: "indefinite"
+
+# Output encoder profile reused by every channel. Matches the
+# `hw-h264-720p` profile slug recording schedules can be created against
+# (S21). For the soak we want a stable, low-bitrate profile so 4h of 3
+# channels doesn't fill the tester's disk.
+encoder_profile:
+  slug: "hw-h264-720p"
+  video_bitrate_kbps: 1500
+  audio_bitrate_kbps: 96
+  audio_loudness_lufs: -23.0  # ATSC A/85 — applied at egress per S11
+
+# The three channels. Each gets a UDP egress sink the ffmpeg encoder
+# writes to + a file sink the tester captures from for `tsanalyze`.
+channels:
+  - channel_id: "public"
+    display_name: "Public"
+    program_number: 1
+    egress_sinks:
+      udp:
+        target: "udp://127.0.0.1:9001?pkt_size=1316"
+        target_loudness_lufs: -23.0
+      file:
+        target: "captures/public/public.ts"
+        target_loudness_lufs: -23.0
+
+  - channel_id: "education"
+    display_name: "Education"
+    program_number: 2
+    egress_sinks:
+      udp:
+        target: "udp://127.0.0.1:9002?pkt_size=1316"
+        target_loudness_lufs: -23.0
+      file:
+        target: "captures/education/education.ts"
+        target_loudness_lufs: -23.0
+
+  - channel_id: "government"
+    display_name: "Government"
+    program_number: 3
+    egress_sinks:
+      udp:
+        target: "udp://127.0.0.1:9003?pkt_size=1316"
+        target_loudness_lufs: -23.0
+      file:
+        target: "captures/government/government.ts"
+        target_loudness_lufs: -23.0
+
+# Per-process memory leak threshold. §4 pass/fail says > 15% growth
+# across the 4h window is a finding; the heartbeat script reads this
+# field to compute the comparison.
+memory_growth_threshold_percent: 15.0
+
+# Capture analyzer (used for the final tsanalyze sweep in §4).
+analyzer:
+  command: "tsanalyze"
+  pass_on:
+    discontinuities: 0
+    tef: 0  # transport_error_indicator count

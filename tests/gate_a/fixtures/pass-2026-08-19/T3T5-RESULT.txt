@@ -1,0 +1,13 @@
+﻿checked_utc=2026-08-19T09:07:23.5367697Z
+station_up=True
+ffmpeg_present=True tsp_present=True
+T3 health-200 -> 200 (expect 200) ok
+T3 operator-console-200 -> 200 (expect 200) ok
+T3 resident-portal-200 -> 200 (expect 200) ok
+T3 staff-agendas-401 -> 401 (expect 401) ok
+T3_RESULT=PASS
+T4_RESULT=PASS_PRODUCT_ENGINE
+T5_soak_minutes=10
+T5 beat=1 health=200 2026-08-19T03:10:08.1993126-06:00
+T5 beat=2 health=200 2026-08-19T03:15:08.2545336-06:00
+T5_RESULT=PASS beats=2 unhealthy=0
