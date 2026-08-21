@@ -14930,6 +14930,48 @@
         ]
       }
     },
+    "/api/staff/contribution/diagnostics/turn-test": {
+      "post": {
+        "tags": [
+          "staff",
+          "contribution"
+        ],
+        "summary": "Probe TURN reachability right now (does not wait for the next background poll)",
+        "description": "The \"Test TURN connectivity\" button in the contribution setup UI.\n\nCovers both postures: a locally-supervised coturn (Linux/macOS) and the\nowner-approved documented-external-TURN posture (coturn has no native\nWindows build \u2014 see civiccast/installer/contribution_install.py). Either\nway this probes the effective CIVICCAST_TURN_HOST/CIVICCAST_TURN_PORT\nright now and returns refreshed diagnostics, never a stale cached result.",
+        "operationId": "test_turn_connectivity_api_staff_contribution_diagnostics_turn_test_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VdoDiagnostics"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/public/contribution/invites/{invite_token}": {
       "get": {
         "tags": [
@@ -56588,6 +56630,28 @@
             "title": "Turn Reachable",
             "default": false
           },
+          "turn_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Host"
+          },
+          "turn_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Port"
+          },
           "vdo_process_up": {
             "type": "boolean",
             "title": "Vdo Process Up",
@@ -56612,7 +56676,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "VdoDiagnostics",
-        "description": "A read-only health snapshot for the operator diagnostics drawer (S17 \u00a75).\n\n``turn_reachable`` is the load-bearing commissioning signal (a guest behind\nNAT cannot join without it). The process-up flags come from the S9 co-process\nsupervisor (slice 3d)."
+        "description": "A read-only health snapshot for the operator diagnostics drawer (S17 \u00a75).\n\n``turn_reachable`` is the load-bearing commissioning signal (a guest behind\nNAT cannot join without it). The process-up flags come from the S9 co-process\nsupervisor (slice 3d).\n\n``turn_reachable`` reflects the most recent probe of ``turn_host``:\n``turn_port`` regardless of ``coturn_process_up`` \u2014 the owner-approved\n\"documented external TURN\" posture (coturn has no native Windows build;\nsee ``civiccast/installer/contribution_install.py``) means there is\ndeliberately no LOCAL coturn process to supervise, but the configured\nexternal server's reachability is still the thing that matters to a\nguest behind NAT, and is still probed.\n\n``turn_host`` / ``turn_port`` echo the effective, currently-configured\nTURN target (``CIVICCAST_TURN_HOST`` / ``CIVICCAST_TURN_PORT``, read at\nservice start) so the operator console can show what's actually\nconfigured, not just whether it's reachable."
       },
       "ViewerAccount": {
         "properties": {

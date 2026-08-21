@@ -21,6 +21,7 @@ import {
   createContributionRoom,
   dropContributionGuest,
   getContributionRoom,
+  getRemoteContributionInstallStatus,
   getStaffIdentity,
   listContributionRooms,
   mintGuestInvite,
@@ -28,8 +29,10 @@ import {
   openContributionRoom,
   putContributionGuestOnAir,
   takeContributionGuestOffAir,
+  testTurnConnectivity,
 } from '../api/client'
 import type {
+  ContributionInstallReport,
   ContributionRoom,
   GuestInvite,
   RemoteGuestSession,
@@ -162,6 +165,21 @@ export function RemoteContributionScreen() {
     queryFn: contributionDiagnostics,
     enabled: canDiag,
     refetchInterval: 15000,
+  })
+
+  const installStatusQuery = useQuery({
+    queryKey: ['contribution-install-status'],
+    queryFn: getRemoteContributionInstallStatus,
+    enabled: canDiag,
+  })
+
+  const turnTestMutation = useMutation({
+    mutationFn: testTurnConnectivity,
+    onSuccess: (diag) => {
+      // The test result IS a fresher diagnostics snapshot -- show it
+      // immediately instead of waiting for the next 15s poll.
+      qc.setQueryData(['contribution-diagnostics'], diag)
+    },
   })
 
   const invalidate = () => {
@@ -387,7 +405,13 @@ export function RemoteContributionScreen() {
               {apiMessage(diagnosticsQuery.error, 'Could not load diagnostics.')}
             </p>
           ) : diagnosticsQuery.data ? (
-            <DiagnosticsView diag={diagnosticsQuery.data} />
+            <DiagnosticsView
+              diag={diagnosticsQuery.data}
+              installReport={installStatusQuery.data}
+              onTestConnectivity={() => turnTestMutation.mutate()}
+              testing={turnTestMutation.isPending}
+              testError={turnTestMutation.error}
+            />
           ) : (
             <p className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>Loading diagnostics…</p>
           )}
@@ -647,25 +671,87 @@ function GuestButton({
   )
 }
 
-export function DiagnosticsView({ diag }: { diag: VdoDiagnostics }) {
+export function DiagnosticsView({
+  diag,
+  installReport,
+  onTestConnectivity,
+  testing,
+  testError,
+}: {
+  diag: VdoDiagnostics
+  installReport?: ContributionInstallReport
+  onTestConnectivity?: () => void
+  testing?: boolean
+  testError?: unknown
+}) {
   const turnReachable = diag.turn_reachable ?? false
   const vdoUp = diag.vdo_process_up ?? false
   const coturnUp = diag.coturn_process_up ?? false
-  const noCompositor = !vdoUp && !coturnUp
+  // Honest per PR #9: on the documented-external-TURN posture (coturn has no
+  // native Windows build), coturn's LOCAL process is never up by design.
+  // TURN reachability — not the local coturn process — is what actually
+  // determines whether a guest behind NAT can connect, so commissioning
+  // reads as satisfied on that signal even when coturn_process_up is false.
+  const turnCommissioned = coturnUp || turnReachable
+  const noCompositor = !vdoUp || !turnCommissioned
+  const externalTurnLikely = !coturnUp && turnReachable
   return (
     <div className="flex flex-col gap-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
       <div className="flex flex-wrap gap-2">
         <Pill label={`TURN ${turnReachable ? 'reachable' : 'unreachable'}`} tone={turnReachable ? 'ok' : 'warn'} />
         <Pill label={`VDO ${vdoUp ? 'up' : 'down'}`} tone={vdoUp ? 'ok' : 'warn'} />
-        <Pill label={`coturn ${coturnUp ? 'up' : 'down'}`} tone={coturnUp ? 'ok' : 'warn'} />
+        <Pill label={`coturn ${coturnUp ? 'up' : 'down'}`} tone={turnCommissioned ? 'ok' : 'warn'} />
       </div>
+      {(diag.turn_host || diag.turn_port != null) && (
+        <p className="cc-mono" style={{ color: 'var(--cc-ink-3)' }}>
+          Configured TURN target: {diag.turn_host ?? '—'}:{diag.turn_port ?? '—'}
+        </p>
+      )}
+      {externalTurnLikely && (
+        <p style={{ color: 'var(--cc-ink-3)' }}>
+          No local coturn process, but TURN is reachable — expected for a documented
+          external TURN server (see below).
+        </p>
+      )}
       {diag.ice_summary && <p>ICE: {diag.ice_summary}</p>}
       {noCompositor && (
         <p role="status" style={{ color: 'var(--cc-warn)' }}>
           Remote contribution requires a compositor (the GStreamer engine or OBS) plus
-          self-hosted VDO.Ninja and coturn — guests cannot reach the channel until they
-          are commissioned. {diag.detail}
+          self-hosted VDO.Ninja and a reachable TURN server (local coturn, or a
+          documented external one) — guests cannot reach the channel until they are
+          commissioned. {diag.detail}
         </p>
+      )}
+      {onTestConnectivity && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-label="Test TURN connectivity"
+            disabled={testing}
+            onClick={onTestConnectivity}
+            className="w-fit rounded-md px-2 py-1 text-xs font-semibold disabled:opacity-50"
+            style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
+          >
+            {testing ? 'Testing…' : 'Test TURN connectivity'}
+          </button>
+          <span style={{ color: 'var(--cc-ink-3)' }}>
+            Probes {diag.turn_host ?? 'the configured TURN host'} right now, rather than
+            waiting for the next automatic check.
+          </span>
+        </div>
+      )}
+      {Boolean(testError) && (
+        <p role="alert" style={{ color: 'var(--cc-err)' }}>
+          {apiMessage(testError, 'TURN connectivity test failed.')}
+        </p>
+      )}
+      {installReport?.coturn_action && (
+        <details>
+          <summary className="cursor-pointer font-semibold" style={{ color: 'var(--cc-ink)' }}>
+            How to point this station at coturn
+          </summary>
+          <p className="mt-1 whitespace-pre-wrap">{installReport.coturn_action}</p>
+        </details>
       )}
     </div>
   )

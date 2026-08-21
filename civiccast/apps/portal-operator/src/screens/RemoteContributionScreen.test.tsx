@@ -113,6 +113,80 @@ describe('DiagnosticsView', () => {
     expect(getByText('TURN reachable')).toBeTruthy()
     expect(queryByText(/requires a compositor/)).toBeNull()
   })
+
+  it('reads as commissioned when TURN is reachable with no local coturn process (documented external TURN, PR #9)', () => {
+    // Before this fix, coturn_process_up=false always showed the
+    // no-compositor warning -- a false negative for the owner-approved
+    // "external TURN, no native Windows coturn" posture.
+    const { getByText, queryByText } = render(
+      <DiagnosticsView
+        diag={{
+          turn_reachable: true,
+          turn_host: 'turn.example.org',
+          turn_port: 3478,
+          vdo_process_up: true,
+          coturn_process_up: false,
+          ice_summary: 'vdo=running; coturn=external (documented); turn=reachable',
+          detail: '',
+        }}
+      />,
+    )
+    expect(queryByText(/requires a compositor/)).toBeNull()
+    expect(getByText(/No local coturn process, but TURN is reachable/i)).toBeTruthy()
+    expect(getByText(/turn\.example\.org:3478/)).toBeTruthy()
+  })
+
+  it('still warns when coturn is down and TURN is unreachable', () => {
+    const { getByText } = render(
+      <DiagnosticsView
+        diag={{ turn_reachable: false, vdo_process_up: true, coturn_process_up: false, ice_summary: '', detail: '' }}
+      />,
+    )
+    expect(getByText(/requires a compositor/)).toBeTruthy()
+  })
+
+  it('wires the Test TURN connectivity button and shows a test error', () => {
+    const onTest = vi.fn()
+    const { getByRole, getByText } = render(
+      <DiagnosticsView
+        diag={{ turn_reachable: false, vdo_process_up: true, coturn_process_up: false }}
+        onTestConnectivity={onTest}
+        testing={false}
+        testError={new Error('probe timed out')}
+      />,
+    )
+    fireEvent.click(getByRole('button', { name: /Test TURN connectivity/i }))
+    expect(onTest).toHaveBeenCalledOnce()
+    expect(getByText(/probe timed out/i)).toBeTruthy()
+  })
+
+  it('disables the test button and shows a loading label while testing', () => {
+    const { getByRole } = render(
+      <DiagnosticsView
+        diag={{ turn_reachable: false }}
+        onTestConnectivity={vi.fn()}
+        testing
+      />,
+    )
+    // Accessible name comes from aria-label, not the visible "Testing…" text.
+    const button = getByRole('button', { name: /Test TURN connectivity/i }) as HTMLButtonElement
+    expect(button.textContent).toContain('Testing…')
+    expect(button.disabled).toBe(true)
+  })
+
+  it('shows the coturn setup guidance from the install report', () => {
+    const { getByText } = render(
+      <DiagnosticsView
+        diag={{ turn_reachable: false }}
+        installReport={{
+          vdo_installed: true,
+          coturn_action:
+            'coturn has no native Windows build. Configure an external TURN server...',
+        }}
+      />,
+    )
+    expect(getByText(/coturn has no native Windows build/i)).toBeTruthy()
+  })
 })
 
 describe('InviteComposer + CreateRoomForm + RoomRow', () => {

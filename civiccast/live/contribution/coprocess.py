@@ -292,17 +292,29 @@ class ContributionCoprocessSupervisor:
         )
 
     def ensure_running(self) -> None:
-        """One supervision tick: keep both co-processes up, probe TURN."""
+        """One supervision tick: keep both co-processes up, probe TURN.
+
+        The TURN probe runs whenever there's something meaningful to check:
+        either the locally-supervised coturn process is up (Linux/macOS,
+        ``CIVICCAST_COTURN_COMMAND`` set), OR no local coturn is configured
+        at all (the owner-approved "documented external TURN" posture --
+        coturn has no native Windows build, see
+        ``civiccast/installer/contribution_install.py``). In the second
+        case there is deliberately no local process to supervise, but the
+        configured external server's reachability is still exactly what
+        determines whether a guest behind NAT can join, so it must still be
+        probed. It's ONLY skipped while a local coturn IS configured but
+        hasn't come up yet (nothing to probe against yet)."""
         self._vdo.ensure_running()
         coturn_status = self._coturn.ensure_running()
-        if coturn_status.state == "running":
+        if coturn_status.state == "running" or self._settings.coturn_command is None:
             reachable = self._turn_probe(self._settings.turn_host, self._settings.turn_port)
             # Alert only on a transition into unreachable (the hub de-dupes too).
             if not reachable and self._last_turn_reachable is not False:
                 self._emit_alert(
                     ALERT_TURN_UNREACHABLE,
-                    f"coturn is up but TURN {self._settings.turn_host}:{self._settings.turn_port} "
-                    "is unreachable; guests behind NAT cannot connect.",
+                    f"TURN {self._settings.turn_host}:{self._settings.turn_port} is "
+                    "unreachable; guests behind NAT cannot connect.",
                 )
             self._last_turn_reachable = reachable
 
@@ -322,17 +334,42 @@ class ContributionCoprocessSupervisor:
             )
         vdo_up = self._vdo.running
         coturn_up = self._coturn.running
-        turn_reachable = bool(coturn_up and self._last_turn_reachable)
-        parts = [f"vdo={self._vdo.status.state}", f"coturn={self._coturn.status.state}"]
-        if coturn_up:
-            parts.append(f"turn={'reachable' if turn_reachable else 'unreachable'}")
+        external_turn = self._settings.coturn_command is None
+        # turn_reachable reflects the most recent probe regardless of whether a
+        # LOCAL coturn process is supervised -- under the external-TURN posture
+        # (coturn_command is None) there never is one, but the configured
+        # external server's reachability is still the load-bearing signal.
+        turn_reachable = bool(self._last_turn_reachable)
+        parts = [f"vdo={self._vdo.status.state}"]
+        parts.append(f"coturn={'external (documented)' if external_turn else self._coturn.status.state}")
+        if coturn_up or external_turn:
+            if self._last_turn_reachable is None:
+                parts.append("turn=not yet probed")
+            else:
+                parts.append(f"turn={'reachable' if turn_reachable else 'unreachable'}")
+        # A healthy station is "vdo up, and either a local coturn is up or TURN
+        # is documented-external" -- external posture never being reported as
+        # a co-process outage is the whole point of PR #9's decision.
+        healthy = vdo_up and (coturn_up or external_turn)
         return VdoDiagnostics(
             turn_reachable=turn_reachable,
+            turn_host=self._settings.turn_host,
+            turn_port=self._settings.turn_port,
             vdo_process_up=vdo_up,
             coturn_process_up=coturn_up,
             ice_summary="; ".join(parts),
-            detail="" if (vdo_up and coturn_up) else "One or more co-processes are not running.",
+            detail="" if healthy else "One or more co-processes are not running.",
         )
+
+    def test_turn_connectivity(self) -> VdoDiagnostics:
+        """Probe TURN reachability RIGHT NOW (bypassing the poll cadence) and
+        return refreshed diagnostics. Does not emit an alert -- an operator-
+        initiated test result is surfaced directly in the response, not
+        routed through the alert hub."""
+        self._last_turn_reachable = self._turn_probe(
+            self._settings.turn_host, self._settings.turn_port
+        )
+        return self.diagnostics()
 
     def stop(self) -> None:
         self._vdo.stop()
@@ -370,6 +407,17 @@ def contribution_diagnostics_snapshot() -> VdoDiagnostics:
     return sup.diagnostics()
 
 
+def contribution_turn_connectivity_test() -> VdoDiagnostics:
+    """The UrlVdoNinjaBridge connectivity-test callable — the operator
+    console's "Test TURN connectivity" button reaches this through the
+    ``POST /api/staff/contribution/diagnostics/turn-test`` route. Runs an
+    immediate probe rather than waiting for the next background poll tick."""
+    sup = _ACTIVE_SUPERVISOR
+    if sup is None:
+        return VdoDiagnostics(detail="Co-process supervision is not running.")
+    return sup.test_turn_connectivity()
+
+
 __all__ = [
     "ALERT_COPROCESS_DOWN",
     "ALERT_GUEST_DROP",
@@ -380,5 +428,6 @@ __all__ = [
     "CoprocessStatus",
     "clear_active_supervisor",
     "contribution_diagnostics_snapshot",
+    "contribution_turn_connectivity_test",
     "set_active_supervisor",
 ]

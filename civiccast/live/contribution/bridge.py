@@ -52,11 +52,26 @@ class VdoDiagnostics(BaseModel):
 
     ``turn_reachable`` is the load-bearing commissioning signal (a guest behind
     NAT cannot join without it). The process-up flags come from the S9 co-process
-    supervisor (slice 3d)."""
+    supervisor (slice 3d).
+
+    ``turn_reachable`` reflects the most recent probe of ``turn_host``:
+    ``turn_port`` regardless of ``coturn_process_up`` — the owner-approved
+    "documented external TURN" posture (coturn has no native Windows build;
+    see ``civiccast/installer/contribution_install.py``) means there is
+    deliberately no LOCAL coturn process to supervise, but the configured
+    external server's reachability is still the thing that matters to a
+    guest behind NAT, and is still probed.
+
+    ``turn_host`` / ``turn_port`` echo the effective, currently-configured
+    TURN target (``CIVICCAST_TURN_HOST`` / ``CIVICCAST_TURN_PORT``, read at
+    service start) so the operator console can show what's actually
+    configured, not just whether it's reachable."""
 
     model_config = ConfigDict(extra="forbid")
 
     turn_reachable: bool = False
+    turn_host: str | None = None
+    turn_port: int | None = None
     vdo_process_up: bool = False
     coturn_process_up: bool = False
     ice_summary: str = ""
@@ -85,6 +100,12 @@ class VdoNinjaBridge(Protocol):
         """TURN reachability + VDO/coturn co-process health + ICE summary."""
         ...
 
+    def test_turn_connectivity(self) -> VdoDiagnostics:
+        """Probe TURN reachability RIGHT NOW (not the last background poll) and
+        return the refreshed diagnostics. The operator console's "Test TURN
+        connectivity" button calls this synchronously."""
+        ...
+
 
 class NullVdoNinjaBridge:
     """Default bridge when the remote-contribution tier is NOT configured.
@@ -105,6 +126,10 @@ class NullVdoNinjaBridge:
     def diagnostics(self) -> VdoDiagnostics:
         return VdoDiagnostics(detail=self._UNAVAILABLE)
 
+    def test_turn_connectivity(self) -> VdoDiagnostics:
+        # Nothing to test — there is no supervisor to probe with.
+        return VdoDiagnostics(detail=self._UNAVAILABLE)
+
 
 class UrlVdoNinjaBridge:
     """Deterministic VDO.Ninja URL builder against a self-hosted instance.
@@ -119,6 +144,7 @@ class UrlVdoNinjaBridge:
         base_url: str,
         *,
         diagnostics_probe: Callable[[], VdoDiagnostics] | None = None,
+        connectivity_test: Callable[[], VdoDiagnostics] | None = None,
     ) -> None:
         base = base_url.strip().rstrip("/")
         if not base:
@@ -128,6 +154,7 @@ class UrlVdoNinjaBridge:
             raise VdoBridgeError("UrlVdoNinjaBridge requires a non-empty base_url")
         self._base = base
         self._diagnostics_probe = diagnostics_probe
+        self._connectivity_test = connectivity_test
 
     def director_url(self, room: ContributionRoom) -> str:
         return f"{self._base}/?{urlencode({'director': room.vdo_room_name})}"
@@ -148,6 +175,13 @@ class UrlVdoNinjaBridge:
                 detail="VDO/coturn health probe not wired (S9 supervisor, slice 3d)"
             )
         return self._diagnostics_probe()
+
+    def test_turn_connectivity(self) -> VdoDiagnostics:
+        if self._connectivity_test is None:
+            return VdoDiagnostics(
+                detail="TURN connectivity test not wired (S9 supervisor, slice 3d)"
+            )
+        return self._connectivity_test()
 
 
 __all__ = [

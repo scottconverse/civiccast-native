@@ -200,6 +200,7 @@ import type {
   TsrProbeResult,
 } from '../types/api.generated'
 import type {
+  ContributionInstallReport,
   ContributionRoom,
   CreateRoomInput,
   GuestInvite,
@@ -1439,6 +1440,27 @@ export const dropContributionGuest = (id: string) => guestAction(id, 'drop')
 
 export function contributionDiagnostics(): Promise<VdoDiagnostics> {
   return request<VdoDiagnostics>(`${RC}/diagnostics`)
+}
+
+/**
+ * POST /api/staff/contribution/diagnostics/turn-test — probe TURN
+ * reachability right now (not the last background poll tick) and return
+ * refreshed diagnostics. Covers both the locally-supervised coturn posture
+ * and the owner-approved documented-external-TURN posture (coturn has no
+ * native Windows build; civiccast/installer/contribution_install.py).
+ */
+export function testTurnConnectivity(): Promise<VdoDiagnostics> {
+  return request<VdoDiagnostics>(`${RC}/diagnostics/turn-test`, { method: 'POST' })
+}
+
+/**
+ * GET /api/staff/installer/remote-contribution — whether the pinned
+ * VDO.Ninja is installed/verified, plus `coturn_action`: the honest,
+ * platform-aware guidance for pointing the station at coturn (external TURN
+ * server on Windows; a local OS package on Linux/macOS).
+ */
+export function getRemoteContributionInstallStatus(): Promise<ContributionInstallReport> {
+  return request<ContributionInstallReport>('/api/staff/installer/remote-contribution')
 }
 
 export function updateControlSurface(
