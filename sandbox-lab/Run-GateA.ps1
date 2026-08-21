@@ -33,7 +33,7 @@
 [CmdletBinding(DefaultParameterSetName = 'ByRunId')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'ByRunId')]
-    [int]$RunId,
+    [long]$RunId,
 
     [Parameter(Mandatory = $true, ParameterSetName = 'ByKitDir')]
     [string]$KitDir,
