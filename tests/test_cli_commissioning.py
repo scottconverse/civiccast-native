@@ -55,7 +55,9 @@ def test_output_sdi_readiness_json() -> None:
     )
 
 
-def test_cable_commission_fails_closed_when_checks_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cable_commission_fails_closed_when_checks_not_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """On a box with no durable storage, commissioning must exit 1 before
     ever touching the channel/egress store -- fail-closed at Screen 8."""
 

@@ -520,7 +520,9 @@ def cable_doctor(
     station_name: Annotated[
         str, typer.Option("--station-name", help="Station name to stamp on the report.")
     ] = "",
-    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
 ) -> None:
     """S3 Screen 8: run the first-run cable commissioning checks (read-only).
 
@@ -579,7 +581,9 @@ def cable_commission(
     station_name: Annotated[
         str, typer.Option("--station-name", help="Station name to stamp on the report.")
     ] = "",
-    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
 ) -> None:
     """S3 screens 8-11: run the full cable commissioning flow end to end.
 
@@ -656,7 +660,8 @@ def cable_commission(
         typer.echo(report.model_dump_json(indent=2))
     else:
         typer.echo(
-            "Commissioning: " + ("READY FOR BROADCAST" if report.ready_for_broadcast else "INCOMPLETE")
+            "Commissioning: "
+            + ("READY FOR BROADCAST" if report.ready_for_broadcast else "INCOMPLETE")
         )
         typer.echo(f"Channel: {report.channel_name}  Headend: {report.headend_profile_id}")
         typer.echo(f"Output proof verdict: {proof.verdict}")
@@ -669,12 +674,15 @@ def cable_commission(
 @cable_app.command("support-bundle")
 def cable_support_bundle(
     output_dir: Annotated[
-        Path | None, typer.Option("--output-dir", help="Unused placeholder; bundles are server-managed.")
+        Path | None,
+        typer.Option("--output-dir", help="Unused placeholder; bundles are server-managed."),
     ] = None,
     note: Annotated[
         str | None, typer.Option("--note", help="Optional operator note for the bundle.")
     ] = None,
-    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
 ) -> None:
     """S3 Screen 11: export a redacted support bundle (logs, config, health).
 
@@ -1345,7 +1353,9 @@ def egress_verify(
 
 @output_app.command("sdi-readiness")
 def output_sdi_readiness(
-    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
 ) -> None:
     """S3: quick check -- is the GStreamer SDI output path ready?
 
@@ -1378,22 +1388,28 @@ def output_sdi_readiness(
         return
     typer.echo(f"SDI output readiness: {status_value}")
     typer.echo(f"  DeckLink card detected (heuristic): {'yes' if decklink.card_present else 'no'}")
-    typer.echo(f"  BMD Desktop Video SDK:               {'yes' if decklink.bmd_sdk_present else 'no'}")
-    typer.echo(f"  native OS:                            {'yes' if profile.engine.native_os else 'no'}")
+    typer.echo(
+        f"  BMD Desktop Video SDK:               {'yes' if decklink.bmd_sdk_present else 'no'}"
+    )
+    typer.echo(
+        f"  native OS:                            {'yes' if profile.engine.native_os else 'no'}"
+    )
     if profile.engine.next_step:
         typer.echo(f"Next: {profile.engine.next_step}")
 
 
 @egress_output_app.command("test-pattern")
 def egress_output_test_pattern(
-    channel_id: Annotated[str, typer.Option("--channel-id", help="Channel to drive the test pattern to.")],
-    pattern: Annotated[
-        str, typer.Option("--pattern", help="bars | tone | slate.")
-    ] = "bars",
+    channel_id: Annotated[
+        str, typer.Option("--channel-id", help="Channel to drive the test pattern to.")
+    ],
+    pattern: Annotated[str, typer.Option("--pattern", help="bars | tone | slate.")] = "bars",
     duration_seconds: Annotated[
         int, typer.Option("--duration-seconds", help="How long to run the test pattern.")
     ] = 600,
-    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON.")] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable JSON.")
+    ] = False,
 ) -> None:
     """S3 Screen 10: drive a bounded test pattern through the GStreamer engine to the selected sink.
 
@@ -1421,7 +1437,11 @@ def egress_output_test_pattern(
     if json_output:
         typer.echo(
             json.dumps(
-                {"started_at": started_at.isoformat(), "pattern": pattern, "channel_id": channel_id},
+                {
+                    "started_at": started_at.isoformat(),
+                    "pattern": pattern,
+                    "channel_id": channel_id,
+                },
                 indent=2,
             )
         )
@@ -1431,7 +1451,10 @@ def egress_output_test_pattern(
         )
     try:
         _default_test_pattern_runner(
-            sink.uri, duration_seconds, pattern, _extract_muxrate_kbps(sink)  # type: ignore[arg-type]
+            sink.uri,
+            duration_seconds,
+            pattern,
+            _extract_muxrate_kbps(sink),  # type: ignore[arg-type]
         )
     except Exception as exc:
         typer.echo(f"Test pattern generation failed: {exc}")
@@ -2190,7 +2213,9 @@ def _render_station_box_profile_human(profile: Any) -> None:
     typer.echo("")
     typer.echo("Cable output")
     typer.echo(f"  SDI (BYO ffmpeg): {profile.sdi.status}")
-    typer.echo(f"  TSDuck:           {'installed ' + (profile.tsduck.version or '') if profile.tsduck.installed else 'not installed'}")
+    typer.echo(
+        f"  TSDuck:           {'installed ' + (profile.tsduck.version or '') if profile.tsduck.installed else 'not installed'}"
+    )
 
     typer.echo("")
     typer.echo("Clock")

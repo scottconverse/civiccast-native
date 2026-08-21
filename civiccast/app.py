@@ -706,7 +706,11 @@ def _station_tz() -> tzinfo:
     from civiccast.installer.station_state import resolve_station_timezone
 
     name = resolve_station_timezone()
-    source = "CIVICCAST_STATION_TZ" if os.environ.get("CIVICCAST_STATION_TZ") else "the persisted station_timezone"
+    source = (
+        "CIVICCAST_STATION_TZ"
+        if os.environ.get("CIVICCAST_STATION_TZ")
+        else "the persisted station_timezone"
+    )
     if not name or name == "local":
         return UTC
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError

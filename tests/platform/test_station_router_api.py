@@ -142,7 +142,5 @@ class TestStationIdentityProfileApi:
     def test_put_profile_rejects_unknown_field(self) -> None:
         self._complete_setup()
         client = TestClient(create_app(), headers=_OPERATOR_HEADERS)
-        response = client.put(
-            "/api/staff/station/profile", json={"not_a_real_field": "nope"}
-        )
+        response = client.put("/api/staff/station/profile", json={"not_a_real_field": "nope"})
         assert response.status_code == 422

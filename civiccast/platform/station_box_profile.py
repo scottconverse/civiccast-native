@@ -54,9 +54,7 @@ SCHEMA_VERSION = 1
 EngineTier = Literal["base", "sdi-broadcast", "premium-cg"]
 HardwareEncoder = Literal["nvenc", "vaapi", "qsv", "none"]
 NtpSyncState = Literal["synced", "unsynced", "unknown"]
-CableOsVerdictKind = Literal[
-    "single-windows-pc-ok", "native-linux-recommended", "soak-pending"
-]
+CableOsVerdictKind = Literal["single-windows-pc-ok", "native-linux-recommended", "soak-pending"]
 PegReadinessColor = Literal["green", "yellow", "red"]
 AiDefaultBasis = Literal["ram-12b", "ram-e4b", "forced-cpu"]
 
@@ -431,9 +429,7 @@ def probe_engine_readiness(
     try:
         version_result = run(["--version"])
         gstreamer_present = version_result.returncode == 0
-        gstreamer_version = (
-            _parse_gst_version(version_result.stdout) if gstreamer_present else None
-        )
+        gstreamer_version = _parse_gst_version(version_result.stdout) if gstreamer_present else None
     except Exception:
         gstreamer_present = False
         gstreamer_version = None
@@ -506,8 +502,7 @@ def _engine_next_step(
         return "Install the NDI SDK 5/6 for ndisink."
     if not native_os:
         return (
-            "No native OS detected — SDI requires native OS; PCIe DeckLink "
-            "cannot passthrough WSL2."
+            "No native OS detected — SDI requires native OS; PCIe DeckLink cannot passthrough WSL2."
         )
     return ""
 
