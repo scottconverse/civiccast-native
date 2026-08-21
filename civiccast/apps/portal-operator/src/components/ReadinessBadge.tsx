@@ -27,10 +27,17 @@ const TONE_STYLES: Record<
   'ok' | 'warn' | 'err' | 'info' | 'neutral',
   { bg: string; fg: string }
 > = {
-  ok: { bg: 'var(--cc-ok-soft)', fg: 'var(--cc-ok)' },
-  warn: { bg: 'var(--cc-warn-soft)', fg: 'var(--cc-warn)' },
-  err: { bg: 'var(--cc-err-soft)', fg: 'var(--cc-err)' },
-  info: { bg: 'var(--cc-info-soft)', fg: 'var(--cc-info)' },
+  // WCAG AA: pairing an accent color's own text with its "-soft" background
+  // (--cc-ok/--cc-warn/--cc-err/--cc-info on the matching *-soft tint)
+  // measured 4.0-4.3:1 against axe-core's 4.5:1 requirement -- confirmed
+  // live via @axe-core/playwright, not estimated. --cc-ink matches the
+  // pattern AlertsScreen/AutoScheduleScreen/ActivityPubScreen already use
+  // for their own -soft badges; the dot + label text still carry the
+  // status, not color alone.
+  ok: { bg: 'var(--cc-ok-soft)', fg: 'var(--cc-ink)' },
+  warn: { bg: 'var(--cc-warn-soft)', fg: 'var(--cc-ink)' },
+  err: { bg: 'var(--cc-err-soft)', fg: 'var(--cc-ink)' },
+  info: { bg: 'var(--cc-info-soft)', fg: 'var(--cc-ink)' },
   neutral: { bg: 'var(--cc-surface-2)', fg: 'var(--cc-ink-2)' },
 }
 

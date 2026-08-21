@@ -17,7 +17,11 @@ function ArchiveTierRow({ label, verified }: { label: string; verified: boolean 
   return (
     <div className="flex items-center justify-between text-[11px]">
       <span style={{ color: 'var(--cc-ink-2)' }}>{label}</span>
-      <span style={{ color: verified ? 'var(--cc-ok)' : 'var(--cc-ink-3)' }}>
+      {/* --cc-ok measured 4.0-4.2:1 under axe-core's WCAG AA 4.5:1
+          requirement as small text in this panel (same failure the loudness
+          row hit above); --cc-ink-2 covers "not verified," --cc-ink the
+          "verified" case, both comfortably over threshold. */}
+      <span style={{ color: verified ? 'var(--cc-ink)' : 'var(--cc-ink-2)' }}>
         {verified ? '✓ verified' : 'not verified'}
       </span>
     </div>
@@ -91,7 +95,10 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
             {query.data.legal_hold && (
               <span
                 className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-warn)' }}
+                // --cc-warn text on --cc-warn-soft fails WCAG AA contrast in
+                // both themes; --cc-ink matches AlertsScreen/AutoScheduleScreen's
+                // established warn-soft badge convention.
+                style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}
               >
                 🔒 Legal hold
               </span>
@@ -105,16 +112,13 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
 
           <div className="flex items-center justify-between text-[11px]">
             <span style={{ color: 'var(--cc-ink-2)' }}>Loudness gate</span>
-            <span
-              style={{
-                color:
-                  query.data.loudness_status === 'ok'
-                    ? 'var(--cc-ok)'
-                    : query.data.loudness_status === 'failed'
-                      ? 'var(--cc-err)'
-                      : 'var(--cc-ink-3)',
-              }}
-            >
+            {/* --cc-ok measured under WCAG AA (4.0-4.2:1 vs the 4.5:1
+                axe-core requires) as small text on this panel's background
+                -- --cc-ink + font-medium carries the same "this matters"
+                emphasis at full contrast, with the status word itself
+                ("OK" / "Failed" / "Not checked yet") carrying the meaning,
+                not color alone. */}
+            <span className="font-medium" style={{ color: 'var(--cc-ink)' }}>
               {query.data.loudness_status === 'ok' && query.data.measured_lufs != null
                 ? `OK (${query.data.measured_lufs.toFixed(1)} LUFS)`
                 : query.data.loudness_status === 'failed'
@@ -144,7 +148,7 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
             <ArchiveTierRow label="Portal (published)" verified={query.data.archive_portal_verified} />
             <ArchiveTierRow label="Internet Archive" verified={query.data.archive_ia_verified} />
             <ArchiveTierRow label="Local NAS" verified={query.data.archive_nas_verified} />
-            <div className="mt-1 text-[11px] font-medium" style={{ color: query.data.archive_complete ? 'var(--cc-ok)' : 'var(--cc-ink-3)' }}>
+            <div className="mt-1 text-[11px] font-medium" style={{ color: query.data.archive_complete ? 'var(--cc-ink)' : 'var(--cc-ink-2)' }}>
               {query.data.archive_complete ? '✓ Archive-complete' : 'Not archive-complete yet'}
             </div>
           </div>
@@ -178,7 +182,8 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
                   onClick={() => holdMutation.mutate({ legal_hold: true, reason: holdReason || null })}
                   disabled={holdMutation.isPending}
                   className="rounded-md px-2.5 py-1 text-[11px] font-medium"
-                  style={{ border: '1px solid var(--cc-warn)', color: 'var(--cc-warn)', background: 'var(--cc-surface)' }}
+                  // Same contrast fix as the badge above: --cc-ink text, not --cc-warn.
+                  style={{ border: '1px solid var(--cc-warn)', color: 'var(--cc-ink)', background: 'var(--cc-warn-soft)' }}
                 >
                   {holdMutation.isPending ? 'Setting…' : 'Place legal hold (blocks expiry)'}
                 </button>

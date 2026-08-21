@@ -95,7 +95,9 @@ function AlertCard({ row, onOpenAsset }: { row: MissingMediaAlertRow; onOpenAsse
         </div>
         <span
           className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-warn)' }}
+          // --cc-warn text on --cc-warn-soft fails WCAG AA contrast; --cc-ink
+          // matches AlertsScreen/AutoScheduleScreen's warn-soft badge convention.
+          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}
         >
           🔴 Not ready
         </span>

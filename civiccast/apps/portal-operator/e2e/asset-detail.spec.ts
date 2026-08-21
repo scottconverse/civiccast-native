@@ -97,6 +97,33 @@ async function mockBackend(
       body: JSON.stringify(current),
     })
   })
+  // S7 media lifecycle: the asset detail sidebar's MediaLifecyclePanel
+  // fetches readiness on mount. Unmocked, that request 502s through the
+  // dev-server proxy and the panel's own error alert (role="alert")
+  // collides with this file's `getByRole('alert')` assertions on the
+  // unpublish-error flow. Mocked here (not per-test) so every test in this
+  // file sees a deterministic, ready state regardless of what it's actually
+  // testing.
+  await page.route('**/api/staff/assets/council-2026-05-08/readiness', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        asset_id: 'council-2026-05-08',
+        readiness_state: 'ready',
+        readiness_reason: null,
+        loudness_status: 'ok',
+        measured_lufs: -16.0,
+        in_flight_transcode_jobs: [],
+        archive_complete: false,
+        archive_portal_verified: false,
+        archive_ia_verified: false,
+        archive_nas_verified: false,
+        legal_hold: false,
+        updated_at: '2026-05-08T18:00:00Z',
+      }),
+    })
+  })
 }
 
 async function openDetail(page: import('@playwright/test').Page) {
