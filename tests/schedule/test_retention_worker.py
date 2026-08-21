@@ -57,6 +57,7 @@ def _seed_asset(
     *,
     retention_policy: str = "meeting",
     retention_until: datetime | None = None,
+    legal_hold: bool = False,
 ) -> None:
     with Session(bind=engine) as session:
         session.add(
@@ -67,6 +68,7 @@ def _seed_asset(
                 manifest_url=None,
                 retention_policy=retention_policy,
                 retention_until=retention_until,
+                legal_hold=legal_hold,
             )
         )
         session.commit()
@@ -101,6 +103,41 @@ class TestFlagging:
         assert len(first) == 1
         assert second == [], "an already-flagged asset must not be re-flagged"
         assert len(worker.list_disposition_reviews()) == 1
+
+    def test_legal_hold_blocks_flagging_even_when_expired(
+        self, engine: Engine, session_factory
+    ) -> None:
+        # S7 media lifecycle / CLAUDE.md §4.6: a legal hold blocks expiry
+        # outright, no matter how far past retention_until the asset is.
+        _seed_asset(
+            engine,
+            "held-1",
+            retention_until=_NOW - timedelta(days=400),
+            legal_hold=True,
+        )
+        assert _worker(session_factory).run_once(now=_NOW) == []
+        assert _worker(session_factory).list_disposition_reviews() == []
+
+    def test_clearing_legal_hold_lets_the_next_scan_flag_it(
+        self, engine: Engine, session_factory
+    ) -> None:
+        _seed_asset(
+            engine,
+            "held-1",
+            retention_until=_NOW - timedelta(days=400),
+            legal_hold=True,
+        )
+        worker = _worker(session_factory)
+        assert worker.run_once(now=_NOW) == []
+
+        with Session(bind=engine) as session:
+            row = session.get(Asset, "held-1")
+            assert row is not None
+            row.legal_hold = False
+            session.commit()
+
+        flagged = worker.run_once(now=_NOW + timedelta(hours=1))
+        assert [row.asset_id for row in flagged] == ["held-1"]
 
     def test_permanent_assets_are_never_flagged(self, engine: Engine, session_factory) -> None:
         _seed_asset(

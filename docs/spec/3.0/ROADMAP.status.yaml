@@ -338,8 +338,33 @@ rows:
     disposition: extend
     owning_step: 12
     status: built
+    # Correction 2026-08-21: the evidence below (finalization.py + the
+    # schedule router alone) was carried over from adjacent modules and
+    # never backed the five net-new S7 entities the spec itself calls out
+    # in section 2 ("Net-new (in scope for S7)") -- MediaIngestJob,
+    # TranscodeJob, AssetReadiness, WatchFolderConfig, AssetRetentionPolicy,
+    # ReplaceMediaWorkflow. None of those existed on disk (no model class,
+    # no migration past 0075) despite this status: built. Real S7 build
+    # (feat/s7-media-lifecycle) lands migration 0076_media_lifecycle,
+    # the five tables + asset_archive_proofs + media_lifecycle_audit_log,
+    # the readiness/transcode/missing-media/archival-gate worker, the
+    # staff API surface, and the operator console screens listed below.
+    # It also closes a previously-unflagged gap in CLAUDE.md's §4.6
+    # archival non-negotiable (portal+IA+NAS verification before
+    # archive-complete) and adds asset-level legal holds that block
+    # retention expiry.
     evidence:
-      modules: [civiccast/live/finalization.py, civiccast/schedule/router.py]
+      migrations: [0076_media_lifecycle]
+      modules:
+        - civiccast/live/finalization.py
+        - civiccast/schedule/router.py
+        - civiccast/schedule/media_lifecycle_models.py
+        - civiccast/schedule/media_lifecycle_worker.py
+        - civiccast/schedule/media_lifecycle_store.py
+        - civiccast/schedule/media_lifecycle_router.py
+        - civiccast/apps/portal-operator/src/screens/MediaLifecyclePanel.tsx
+        - civiccast/apps/portal-operator/src/screens/MissingMediaScreen.tsx
+        - civiccast/apps/portal-operator/src/screens/MediaLifecycleSettingsScreen.tsx
 
   - id: S8
     kind: section

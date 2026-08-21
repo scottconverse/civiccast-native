@@ -1181,6 +1181,15 @@ List groups of assets sharing identical file content.
 - Request body: none
 - Responses: 200 `Array<Array<StaffAssetRow>>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `GET /api/staff/assets/readiness-dashboard`
+
+Operator readiness dashboard across every asset.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `ReadinessDashboardResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready. Open Setup and choose Prepare storage, or set DATABASE_URL for a technical deployment.
+
 ### `POST /api/staff/assets/upload`
 
 Upload an asset file and run ffprobe ingest (staff).
@@ -1226,6 +1235,15 @@ Replace one asset's custom-field values (typed-validated).
 - Request body: `AssetCustomFieldsUpdate`
 - Responses: 200 `Array<CustomFieldValue>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 A value failed typed validation; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
 
+### `PUT /api/staff/assets/{asset_id}/legal-hold`
+
+Set or clear a legal hold (blocks retention expiry per CLAUDE.md §4.6).
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `asset_id` (path, required): `string`
+- Request body: `LegalHoldInput`
+- Responses: 200 `AssetReadinessResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Asset not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready. Open Setup and choose Prepare storage, or set DATABASE_URL for a technical deployment.
+
 ### `POST /api/staff/assets/{asset_id}/package`
 
 Package validated local media for resident playback.
@@ -1235,6 +1253,15 @@ Package validated local media for resident playback.
 - Request body: none
 - Responses: 200 `StaffAssetRow`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Asset not found; 409 Asset has no readable local source file; 422 Media packaging failed; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `GET /api/staff/assets/{asset_id}/readiness`
+
+One asset's readiness badge state.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `asset_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `AssetReadinessResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Asset not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready. Open Setup and choose Prepare storage, or set DATABASE_URL for a technical deployment.
+
 ### `POST /api/staff/assets/{asset_id}/relink`
 
 Point an asset at a replacement file after validating it matches.
@@ -1243,6 +1270,15 @@ Point an asset at a replacement file after validating it matches.
 - Parameters: `asset_id` (path, required): `string`
 - Request body: `RelinkAssetRequest`
 - Responses: 200 `StaffAssetRow`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Asset not found, or new_file_path does not exist; 409 Candidate file fails the duration/codec tolerance check; 422 new_file_path resolves outside the upload directory, or ffprobe could not read the candidate file; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+
+### `PUT /api/staff/assets/{asset_id}/replace-source`
+
+Swap out an asset's backing file; the old file is archived, not deleted.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `asset_id` (path, required): `string`
+- Request body: `Body_replace_asset_source_api_staff_assets__asset_id__replace_source_put`
+- Responses: 200 `AssetReadinessResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Asset not found; 422 Unsupported file format; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready. Open Setup and choose Prepare storage, or set DATABASE_URL for a technical deployment.
 
 ### `GET /api/staff/assets/{asset_id}/thumbnail`
 
@@ -3143,6 +3179,114 @@ Get one live source.
 - Request body: none
 - Responses: 200 `LiveSourceResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 LiveSource not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `GET /api/staff/media-lifecycle/audit-log`
+
+Media lifecycle worker audit trail (dry-run entries included).
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `asset_id` (query, optional): `string | null`; `limit` (query, optional): `number`
+- Request body: none
+- Responses: 200 `Array<LifecycleAuditEntryResponse>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/media-lifecycle/missing-media`
+
+Scheduled items whose backing asset is not ready within the horizon.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `Array<MissingMediaAlertRow>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/media-lifecycle/retention-policies`
+
+List retention automation rules.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `Array<AssetRetentionPolicyResponse>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/media-lifecycle/retention-policies`
+
+Add a retention automation rule.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `AssetRetentionPolicyInput`
+- Responses: 201 `AssetRetentionPolicyResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/media-lifecycle/retention-policies/apply`
+
+Apply enabled retention rules to every asset now.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `Record<string, number>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `DELETE /api/staff/media-lifecycle/retention-policies/{policy_id}`
+
+Remove a retention automation rule.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `policy_id` (path, required): `string`
+- Request body: none
+- Responses: 204 Successful Response; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Retention policy not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PUT /api/staff/media-lifecycle/retention-policies/{policy_id}`
+
+Update a retention automation rule.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `policy_id` (path, required): `string`
+- Request body: `AssetRetentionPolicyInput`
+- Responses: 200 `AssetRetentionPolicyResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Retention policy not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/media-lifecycle/storage-budget`
+
+Storage used vs the configured budget, by retention tier.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `StorageBudgetResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/media-lifecycle/watch-folder-configs`
+
+List configured auto-ingest watch folders.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `Array<WatchFolderConfigResponse>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/media-lifecycle/watch-folder-configs`
+
+Add a watch folder (local disk, USB, or NAS/SMB path).
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `WatchFolderConfigInput`
+- Responses: 201 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `DELETE /api/staff/media-lifecycle/watch-folder-configs/{config_id}`
+
+Remove a watch folder config.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `config_id` (path, required): `string`
+- Request body: none
+- Responses: 204 Successful Response; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PUT /api/staff/media-lifecycle/watch-folder-configs/{config_id}`
+
+Update a watch folder config.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `config_id` (path, required): `string`
+- Request body: `WatchFolderConfigInput`
+- Responses: 200 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `POST /api/staff/migrate/apply`
 
 Apply a dry-run plan: create the proposed shows + schedule items for real.
@@ -4451,6 +4595,40 @@ Read CivicCast local federation metadata.
 - `states` (optional): `Array<'pending_ingest' | 'ingesting' | 'validated' | 'rejected' | 'recorded'>`
 - `title_contains` (optional): `string | null`
 
+### `AssetReadinessResponse`
+
+- `archive_complete` (required): `boolean`
+- `archive_ia_verified` (required): `boolean`
+- `archive_nas_verified` (required): `boolean`
+- `archive_portal_verified` (required): `boolean`
+- `asset_id` (required): `string`
+- `in_flight_transcode_jobs` (optional): `Array<InFlightTranscodeJob>`
+- `legal_hold` (required): `boolean`
+- `loudness_status` (required): `'ok' | 'failed' | 'not_checked' | null`
+- `measured_lufs` (required): `number | null`
+- `readiness_reason` (required): `string | null`
+- `readiness_state` (required): `'not_ready' | 'pending_transcode' | 'transcoding' | 'ready' | 'missing_file' | 'rejected'`
+- `updated_at` (required): `string`
+
+### `AssetRetentionPolicyInput`
+
+- `enabled` (optional): `boolean`
+- `match_meeting_body` (optional): `string | null`
+- `name` (required): `string`
+- `priority` (optional): `number`
+- `retention_policy` (required): `string`
+
+### `AssetRetentionPolicyResponse`
+
+- `created_at` (required): `string`
+- `enabled` (required): `boolean`
+- `match_meeting_body` (required): `string | null`
+- `name` (required): `string`
+- `policy_id` (required): `string`
+- `priority` (required): `number`
+- `retention_policy` (required): `string`
+- `updated_at` (required): `string`
+
 ### `AssetViewPoint`
 
 - `content_id` (required): `string`
@@ -4640,6 +4818,10 @@ Read CivicCast local federation metadata.
 - `candidates` (required): `Array<CandidateBreakSlot>` -- Program-log break slots the compiler should fill
 - `for_date` (required): `string` -- ISO date the candidate slots cover
 - `local_tz_offset_minutes` (optional): `number` -- Operator's offset from UTC in minutes (daypart filter input)
+
+### `Body_replace_asset_source_api_staff_assets__asset_id__replace_source_put`
+
+- `file` (required): `string` -- Replacement video file.
 
 ### `Body_upload_asset_api_staff_assets_upload_post`
 
@@ -6138,6 +6320,13 @@ rule (S13 §5.1).
 - `skipped` (optional): `Array<PlanSkip>`
 - `source_system` (required): `string`
 
+### `InFlightTranscodeJob`
+
+- `estimated_remaining_secs` (optional): `number | null`
+- `job_id` (required): `string`
+- `output_format` (required): `string`
+- `progress_percent` (required): `number`
+
 ### `InstallerStep`
 
 - `id` (required): `string`
@@ -6161,6 +6350,20 @@ rule (S13 §5.1).
 - `session_id` (optional): `string | null`
 - `terms_version` (optional): `string | null`
 - `view_url` (optional): `string | null`
+
+### `LegalHoldInput`
+
+- `legal_hold` (required): `boolean`
+- `reason` (optional): `string | null`
+
+### `LifecycleAuditEntryResponse`
+
+- `action` (required): `string`
+- `asset_id` (required): `string | null`
+- `created_at` (required): `string`
+- `detail` (required): `string`
+- `dry_run` (required): `boolean`
+- `entry_id` (required): `string`
 
 ### `LiveConcurrentPoint`
 
@@ -6393,6 +6596,16 @@ rule (S13 §5.1).
 
 - `guest_display_name` (required): `string`
 - `role` (required): `'council_member' | 'presenter' | 'public_comment'`
+
+### `MissingMediaAlertRow`
+
+- `asset_id` (required): `string`
+- `asset_state` (required): `string`
+- `asset_title` (required): `string`
+- `channel_id` (required): `string`
+- `reason` (required): `string`
+- `schedule_id` (required): `string`
+- `scheduled_start` (required): `string`
 
 ### `ModelBundleItem`
 
@@ -7179,6 +7392,23 @@ rule (S13 §5.1).
 
 - `available_gb` (required): `number` -- Available RAM in GB.
 - `total_gb` (required): `number` -- Total system RAM in GB.
+
+### `ReadinessDashboardResponse`
+
+- `by_asset` (required): `Array<ReadinessDashboardRow>`
+- `missing_count` (required): `number`
+- `ready_count` (required): `number`
+- `rejected_count` (required): `number`
+- `total_assets` (required): `number`
+- `transcoding_count` (required): `number`
+
+### `ReadinessDashboardRow`
+
+- `asset_id` (required): `string`
+- `in_flight_jobs_count` (required): `number`
+- `readiness_reason` (required): `string | null`
+- `readiness_state` (required): `'not_ready' | 'pending_transcode' | 'transcoding' | 'ready' | 'missing_file' | 'rejected'`
+- `title` (required): `string`
 
 ### `RecordExportApiRequest`
 
@@ -8040,6 +8270,19 @@ rule (S13 §5.1).
 - `media_library` (required): `string`
 - `recordings` (required): `string`
 
+### `StorageBudgetResponse`
+
+- `budget_bytes` (required): `number | null`
+- `by_retention_policy` (required): `Array<StorageBudgetTierRow>`
+- `percent_used` (required): `number | null`
+- `total_bytes_used` (required): `number`
+
+### `StorageBudgetTierRow`
+
+- `asset_count` (required): `number`
+- `bytes_used` (required): `number`
+- `retention_policy` (required): `string`
+
 ### `StorageSetupRequest`
 
 - `storage_dir` (optional): `string | null`
@@ -8534,6 +8777,27 @@ rule (S13 §5.1).
 - `role_name` (required): `string`
 - `updated_at` (optional): `string`
 - `volunteer_id` (required): `string`
+
+### `WatchFolderConfigInput`
+
+- `enabled` (optional): `boolean`
+- `import_naming_pattern` (optional): `string | null`
+- `monitor_path` (required): `string`
+- `retention_policy_default` (optional): `string | null`
+- `settle_window_seconds` (optional): `number`
+
+### `WatchFolderConfigResponse`
+
+- `config_id` (required): `string`
+- `created_at` (required): `string`
+- `enabled` (required): `boolean`
+- `import_naming_pattern` (required): `string | null`
+- `last_scan_files_found` (required): `number`
+- `last_scanned_at` (required): `string | null`
+- `monitor_path` (required): `string`
+- `retention_policy_default` (required): `string | null`
+- `settle_window_seconds` (required): `number`
+- `updated_at` (required): `string`
 
 ### `ZoneInput`
 

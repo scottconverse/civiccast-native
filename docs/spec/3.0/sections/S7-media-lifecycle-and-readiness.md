@@ -1,5 +1,13 @@
 # S7 — Media Lifecycle and Readiness
 
+> **Status (2026-08-21):** Built for v3.0.0-beta1 at Rung 1 (lab-proven: unit
+> + API + migration-reversibility tests; see `feat/s7-media-lifecycle`).
+> `docs/spec/3.0/ROADMAP.status.yaml` previously carried `status: built` for
+> this section with evidence that never actually covered the five net-new
+> entities below (§2) — corrected in the same change that built them.
+> Rung 2 (24h unattended soak per §7) has not been run; nothing here is a
+> field-ready claim.
+
 ## 1. Goal & PEG automation rationale
 
 CivicCast must manage the complete media lifecycle from operator upload through archive, with

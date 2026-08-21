@@ -17,9 +17,15 @@ vi.mock('../api/client', () => ({
   listStaffAssets: vi.fn(),
   packageStaffAsset: vi.fn(),
   getStaffIdentity: vi.fn(),
+  getReadinessDashboard: vi.fn(),
 }))
 
-import { getStaffIdentity, listStaffAssets, packageStaffAsset } from '../api/client'
+import {
+  getReadinessDashboard,
+  getStaffIdentity,
+  listStaffAssets,
+  packageStaffAsset,
+} from '../api/client'
 import { AssetsScreen } from './AssetsScreen'
 
 afterEach(cleanup)
@@ -75,6 +81,14 @@ beforeEach(() => {
     operator_display_name: 'Publisher',
     roles: ['publish_operator'],
   })
+  vi.mocked(getReadinessDashboard).mockResolvedValue({
+    total_assets: 0,
+    ready_count: 0,
+    transcoding_count: 0,
+    missing_count: 0,
+    rejected_count: 0,
+    by_asset: [],
+  })
 })
 
 describe('AssetsScreen action labels', () => {
@@ -128,5 +142,66 @@ describe('AssetsScreen action labels', () => {
 
     expect(action.hasAttribute('disabled')).toBe(true)
     expect(await findByText(/publish operator or setup administrator must package/i)).toBeTruthy()
+  })
+})
+
+describe('AssetsScreen readiness badges (S7)', () => {
+  it('shows a readiness badge for an asset the dashboard reports', async () => {
+    vi.mocked(getReadinessDashboard).mockResolvedValue({
+      total_assets: 2,
+      ready_count: 1,
+      transcoding_count: 1,
+      missing_count: 0,
+      rejected_count: 0,
+      by_asset: [
+        {
+          asset_id: 'asset-public',
+          title: 'x',
+          readiness_state: 'ready',
+          readiness_reason: null,
+          in_flight_jobs_count: 0,
+        },
+        {
+          asset_id: 'asset-education',
+          title: 'x',
+          readiness_state: 'transcoding',
+          readiness_reason: null,
+          in_flight_jobs_count: 2,
+        },
+      ],
+    })
+    const { findByText } = renderScreen()
+
+    expect(await findByText('Ready')).toBeTruthy()
+    expect(await findByText(/Transcoding \(2\)/)).toBeTruthy()
+  })
+
+  it('falls back to a dash when the dashboard has no row for an asset', async () => {
+    vi.mocked(getReadinessDashboard).mockResolvedValue({
+      total_assets: 0,
+      ready_count: 0,
+      transcoding_count: 0,
+      missing_count: 0,
+      rejected_count: 0,
+      by_asset: [],
+    })
+    const { findAllByText } = renderScreen()
+
+    const dashes = await findAllByText('—')
+    expect(dashes.length).toBeGreaterThan(0)
+  })
+
+  it('does not break the asset list when the readiness dashboard request fails', async () => {
+    vi.mocked(getReadinessDashboard).mockRejectedValue(new Error('boom'))
+    const { findByRole } = renderScreen()
+
+    // The primary asset list still renders even though the secondary
+    // readiness signal failed -- readiness is best-effort, not a hard
+    // dependency of the library screen.
+    expect(
+      await findByRole('button', {
+        name: /Open detail for Scheduled recording 2026-06-28 15:44 UTC \(asset-public\)/,
+      }),
+    ).toBeTruthy()
   })
 })

@@ -207,6 +207,18 @@ import type {
   RoomOpened,
   VdoDiagnostics,
 } from '../types/api.generated'
+// S7 media lifecycle & readiness.
+import type {
+  AssetReadinessResponse,
+  AssetRetentionPolicyInput,
+  AssetRetentionPolicyResponse,
+  LifecycleAuditEntryResponse,
+  MissingMediaAlertRow,
+  ReadinessDashboardResponse,
+  StorageBudgetResponse,
+  WatchFolderConfigInput,
+  WatchFolderConfigResponse,
+} from '../types/api.generated'
 import type {
   CaptionReviewDecision,
   CaptionReviewEdit,
@@ -462,7 +474,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return (await res.json()) as T
 }
 
-async function requestForm<T>(path: string, body: FormData): Promise<T> {
+async function requestForm<T>(
+  path: string,
+  body: FormData,
+  method: 'POST' | 'PUT' = 'POST',
+): Promise<T> {
   const staffToken = runtimeStaffToken()
   const setupNonce = runtimeSetupNonce()
 
@@ -471,7 +487,7 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
   }
 
   const res = await fetch(`${runtimeApiBase()}${path}`, {
-    method: 'POST',
+    method,
     headers: {
       Accept: 'application/json',
       ...(staffToken ? { Authorization: `Bearer ${staffToken}` } : {}),
@@ -833,6 +849,123 @@ export function packageStaffAsset(assetId: string): Promise<AssetRow> {
 export function unpublishStaffAsset(assetId: string): Promise<AssetRow> {
   return request<AssetRow>(
     `/api/staff/assets/${encodeURIComponent(assetId)}/unpublish`,
+    { method: 'POST' },
+  )
+}
+
+// ---------------------------------------------------------------------------
+// S7 media lifecycle & readiness
+// ---------------------------------------------------------------------------
+
+export function getReadinessDashboard(): Promise<ReadinessDashboardResponse> {
+  return request<ReadinessDashboardResponse>('/api/staff/assets/readiness-dashboard')
+}
+
+export function getAssetReadiness(assetId: string): Promise<AssetReadinessResponse> {
+  return request<AssetReadinessResponse>(
+    `/api/staff/assets/${encodeURIComponent(assetId)}/readiness`,
+  )
+}
+
+export function setAssetLegalHold(
+  assetId: string,
+  payload: { legal_hold: boolean; reason?: string | null },
+): Promise<AssetReadinessResponse> {
+  return request<AssetReadinessResponse>(
+    `/api/staff/assets/${encodeURIComponent(assetId)}/legal-hold`,
+    { method: 'PUT', body: payload },
+  )
+}
+
+export function replaceAssetSource(
+  assetId: string,
+  file: File,
+): Promise<AssetReadinessResponse> {
+  const body = new FormData()
+  body.set('file', file)
+  return requestForm<AssetReadinessResponse>(
+    `/api/staff/assets/${encodeURIComponent(assetId)}/replace-source`,
+    body,
+    'PUT',
+  )
+}
+
+export function listMissingMedia(): Promise<MissingMediaAlertRow[]> {
+  return request<MissingMediaAlertRow[]>('/api/staff/media-lifecycle/missing-media')
+}
+
+export function listLifecycleAuditLog(assetId?: string): Promise<LifecycleAuditEntryResponse[]> {
+  const query = assetId ? `?asset_id=${encodeURIComponent(assetId)}` : ''
+  return request<LifecycleAuditEntryResponse[]>(`/api/staff/media-lifecycle/audit-log${query}`)
+}
+
+export function getStorageBudget(): Promise<StorageBudgetResponse> {
+  return request<StorageBudgetResponse>('/api/staff/media-lifecycle/storage-budget')
+}
+
+export function listWatchFolderConfigs(): Promise<WatchFolderConfigResponse[]> {
+  return request<WatchFolderConfigResponse[]>('/api/staff/media-lifecycle/watch-folder-configs')
+}
+
+export function createWatchFolderConfig(
+  payload: WatchFolderConfigInput,
+): Promise<WatchFolderConfigResponse> {
+  return request<WatchFolderConfigResponse>('/api/staff/media-lifecycle/watch-folder-configs', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export function updateWatchFolderConfig(
+  configId: string,
+  payload: WatchFolderConfigInput,
+): Promise<WatchFolderConfigResponse> {
+  return request<WatchFolderConfigResponse>(
+    `/api/staff/media-lifecycle/watch-folder-configs/${encodeURIComponent(configId)}`,
+    { method: 'PUT', body: payload },
+  )
+}
+
+export function deleteWatchFolderConfig(configId: string): Promise<void> {
+  return request<void>(
+    `/api/staff/media-lifecycle/watch-folder-configs/${encodeURIComponent(configId)}`,
+    { method: 'DELETE' },
+  )
+}
+
+export function listRetentionPolicies(): Promise<AssetRetentionPolicyResponse[]> {
+  return request<AssetRetentionPolicyResponse[]>('/api/staff/media-lifecycle/retention-policies')
+}
+
+export function createRetentionPolicy(
+  payload: AssetRetentionPolicyInput,
+): Promise<AssetRetentionPolicyResponse> {
+  return request<AssetRetentionPolicyResponse>('/api/staff/media-lifecycle/retention-policies', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export function updateRetentionPolicy(
+  policyId: string,
+  payload: AssetRetentionPolicyInput,
+): Promise<AssetRetentionPolicyResponse> {
+  return request<AssetRetentionPolicyResponse>(
+    `/api/staff/media-lifecycle/retention-policies/${encodeURIComponent(policyId)}`,
+    { method: 'PUT', body: payload },
+  )
+}
+
+export function deleteRetentionPolicy(policyId: string): Promise<void> {
+  return request<void>(
+    `/api/staff/media-lifecycle/retention-policies/${encodeURIComponent(policyId)}`,
+    { method: 'DELETE' },
+  )
+}
+
+export function applyRetentionPolicies(): Promise<{ assets_changed: number }> {
+  return request<{ assets_changed: number }>(
+    '/api/staff/media-lifecycle/retention-policies/apply',
     { method: 'POST' },
   )
 }
