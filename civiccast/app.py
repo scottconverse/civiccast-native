@@ -299,6 +299,16 @@ from civiccast.schedule.media_integrity_worker import (
     MediaIntegrityWorker,
     MediaIntegrityWorkerSettings,
 )
+from civiccast.schedule.media_lifecycle_router import (
+    get_media_lifecycle_store,
+    get_missing_media_reader,
+)
+from civiccast.schedule.media_lifecycle_router import staff_router as media_lifecycle_staff_router
+from civiccast.schedule.media_lifecycle_store import MediaLifecycleStore
+from civiccast.schedule.media_lifecycle_worker import (
+    MediaLifecycleWorker,
+    MediaLifecycleWorkerSettings,
+)
 from civiccast.schedule.models import (
     ASSET_STATE_VALIDATED,
     SCHEDULE_STATE_CANCELLED,
@@ -783,6 +793,16 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
     media_integrity_worker = MediaIntegrityWorker(
         session_factory, settings=media_integrity_settings
     )
+    # S7 media lifecycle: readiness computation, ingest-time transcode
+    # dispatch, and the CLAUDE.md §4.6 archival verification gate. Same
+    # env-gated inline/off + poll-seconds shape as the workers above;
+    # CIVICCAST_MEDIA_LIFECYCLE_WORKER_DRY_RUN additionally lets an operator
+    # audit what a pass WOULD do before it writes anything.
+    media_lifecycle_settings = MediaLifecycleWorkerSettings.from_env()
+    media_lifecycle_worker = MediaLifecycleWorker(
+        session_factory, settings=media_lifecycle_settings
+    )
+    app.state.media_lifecycle_worker = media_lifecycle_worker
     # Issue #111: failed subscriber webhook deliveries are re-driven from the
     # durable queue with backoff; the client is the config-selected provider
     # (mock by default), so the worker only ever sees real traffic when the
@@ -818,6 +838,12 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             run_forever=media_integrity_worker.run_forever,
             poll_seconds=media_integrity_settings.poll_seconds,
             enabled=media_integrity_settings.mode == "inline",
+        ),
+        ThreadSupervisor(
+            name="civiccast-media-lifecycle-worker",
+            run_forever=media_lifecycle_worker.run_forever,
+            poll_seconds=media_lifecycle_settings.poll_seconds,
+            enabled=media_lifecycle_settings.mode == "inline",
         ),
     ]
     # QA-2 (Critical): reap stale, unreferenced contributor uploads so an
@@ -1126,6 +1152,7 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             )
         )
     app.dependency_overrides[get_disposition_review_reader] = lambda: retention_worker
+    app.dependency_overrides[get_missing_media_reader] = lambda: media_lifecycle_worker
     _maybe_start_background_supervisors(app)
 
 
@@ -1724,6 +1751,11 @@ def create_app() -> FastAPI:
     app.include_router(vod_router)
     app.include_router(auth_staff_router)
     app.include_router(schedule_public_router)
+    # S7 media lifecycle: MUST be registered before schedule_staff_router --
+    # its literal /assets/readiness-dashboard path would otherwise be
+    # swallowed by schedule_staff_router's GET /assets/{asset_id} (see the
+    # route-ordering note in civiccast.schedule.media_lifecycle_router).
+    app.include_router(media_lifecycle_staff_router)
     app.include_router(schedule_staff_router)
     app.include_router(playout_staff_router)
     app.include_router(autoschedule_staff_router)
@@ -1985,6 +2017,12 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # different conflict-detection rules.
         return PostgresScheduleStore(_session_factory)
 
+    def _resolve_media_lifecycle_store() -> MediaLifecycleStore:
+        # S7 media lifecycle: readiness/watch-folder/retention-policy/
+        # storage-budget queries. Same lazy per-request posture as every
+        # other store above.
+        return MediaLifecycleStore(_session_factory)
+
     def _resolve_live_session_store() -> LiveSessionStore:
         return LiveSessionStore(_session_factory)
 
@@ -2132,6 +2170,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.dependency_overrides[get_postgres_store] = _resolve_postgres_store
     app.dependency_overrides[get_summary_model] = _resolve_summary_model
     app.dependency_overrides[get_schedule_store] = _resolve_schedule_store
+    app.dependency_overrides[get_media_lifecycle_store] = _resolve_media_lifecycle_store
     app.dependency_overrides[get_live_session_store] = _resolve_live_session_store
     app.dependency_overrides[get_preflight_evaluator] = _resolve_preflight_evaluator
     app.dependency_overrides[get_live_source_store] = _resolve_live_source_store

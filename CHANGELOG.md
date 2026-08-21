@@ -15,6 +15,36 @@ came across and what deliberately did not.
 
 ### Added
 
+- **S7 media lifecycle & readiness (real build; corrects a false `status:
+  built` in `ROADMAP.status.yaml`).** The five net-new S7 entities
+  (`MediaIngestJob`, `TranscodeJob`, `AssetReadiness`, `WatchFolderConfig`,
+  `AssetRetentionPolicy`) plus `AssetArchiveProof` and an append-only
+  `media_lifecycle_audit_log` land in one migration
+  (`0076_media_lifecycle`), backed by `civiccast/schedule/
+  media_lifecycle_{models,worker,store,router}.py`. The worker (mirrors
+  `retention_worker.py`'s inline/off + poll-seconds + dry-run shape)
+  recomputes each asset's readiness badge, seeds and dispatches ingest-time
+  transcode jobs through an injectable `TranscodeExecutor` (production:
+  `FfmpegTranscodeExecutor`; tests: a stub), and verifies archival. Staff
+  API: `GET /api/staff/assets/readiness-dashboard`,
+  `GET /api/staff/assets/{asset_id}/readiness`,
+  `PUT /api/staff/assets/{asset_id}/replace-source` (old file archived, not
+  deleted), `PUT /api/staff/assets/{asset_id}/legal-hold`, and CRUD +
+  storage-budget + missing-media + audit-log routes under
+  `/api/staff/media-lifecycle/*`. Operator console: a Readiness column on
+  the Assets screen, a Media Lifecycle detail panel on the asset editor
+  (loudness gate, archive tiers, legal hold, replace-source), a new
+  Missing Media screen, and a new Media Lifecycle Settings screen
+  (watch folders, retention automation, storage budget).
+  Also closes a previously-unflagged gap behind CLAUDE.md's §4.6 archival
+  non-negotiable ("nothing is marked archive-complete unless portal + IA +
+  local NAS copies are verified"): nothing persisted `ArchiveProof` values
+  before this, and `public_archive_complete` was an operator-settable bool
+  with no verification behind it. `AssetReadiness.archive_complete` is now
+  computed by the worker from verified, non-simulated `AssetArchiveProof`
+  rows only. New `Asset.legal_hold` / `legal_hold_reason` columns;
+  `retention_worker.py` now skips held assets outright, regardless of how
+  far past `retention_until` they are.
 - **This repository.** 2,090 files, ~24 MB, copied from the native-Windows
   release line. The old (private, not archived) repository's 286 MB of
   packed history — WSL-era churn plus roughly 640 MB of historical Git-LFS

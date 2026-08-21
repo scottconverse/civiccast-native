@@ -169,6 +169,13 @@ class RetentionEnforcementWorker:
             for asset in expired:
                 if asset.retention_until is None:  # guarded by the query; narrows the type
                     continue
+                if asset.legal_hold:
+                    # S7 media lifecycle / CLAUDE.md §4.6: a legal hold blocks
+                    # expiry outright. The asset is never queued for
+                    # disposition review while the hold is active, no matter
+                    # how far past retention_until it is; clearing the hold
+                    # lets the NEXT scan flag it normally.
+                    continue
                 if session.get(AssetDispositionReview, asset.asset_id) is not None:
                     continue
                 review = AssetDispositionReview(

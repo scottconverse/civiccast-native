@@ -4,10 +4,13 @@ import {
   listStaffAssets,
   packageStaffAsset,
   getStaffIdentity,
+  getReadinessDashboard,
   ApiError,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
 import { StateBadge } from '../components/StateBadge'
+import { ReadinessBadge } from '../components/ReadinessBadge'
+import type { ReadinessState } from '../components/ReadinessBadge'
 import type { AssetRow, AssetState } from '../types/asset'
 
 type FilterId = 'all' | AssetState
@@ -171,6 +174,26 @@ export function AssetsScreen({
     queryFn: getStaffIdentity,
     retry: false,
   })
+  // S7 media lifecycle: readiness badges are a secondary, best-effort
+  // signal layered onto the asset list -- a failure here must never block
+  // or error the primary asset list render, so this query's error/loading
+  // states are consumed silently (a missing badge just falls back to
+  // nothing rendered in that cell).
+  const readinessQuery = useQuery({
+    queryKey: ['readiness-dashboard'],
+    queryFn: getReadinessDashboard,
+    retry: false,
+  })
+  const readinessByAssetId = useMemo(() => {
+    const map = new Map<string, { readiness_state: ReadinessState; in_flight_jobs_count: number }>()
+    for (const row of readinessQuery.data?.by_asset ?? []) {
+      map.set(row.asset_id, {
+        readiness_state: row.readiness_state as ReadinessState,
+        in_flight_jobs_count: row.in_flight_jobs_count,
+      })
+    }
+    return map
+  }, [readinessQuery.data])
   const canPackage =
     identityQuery.isSuccess &&
     (hasOperatorRole(identityQuery.data, 'publish_operator') ||
@@ -288,6 +311,7 @@ export function AssetsScreen({
               >
                 <th className="px-3 py-2">Title</th>
                 <th className="px-3 py-2">State</th>
+                <th className="px-3 py-2">Readiness</th>
                 <th className="px-3 py-2">Duration</th>
                 <th className="px-3 py-2">Size</th>
                 <th className="px-3 py-2">Codec</th>
@@ -332,6 +356,18 @@ export function AssetsScreen({
                   </td>
                   <td className="px-3 py-3 align-top">
                     <StateBadge state={row.state} />
+                  </td>
+                  <td className="px-3 py-3 align-top">
+                    {readinessByAssetId.has(row.asset_id) ? (
+                      <ReadinessBadge
+                        state={readinessByAssetId.get(row.asset_id)!.readiness_state}
+                        inFlightJobsCount={readinessByAssetId.get(row.asset_id)!.in_flight_jobs_count}
+                      />
+                    ) : (
+                      <span className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+                        —
+                      </span>
+                    )}
                   </td>
                   <td
                     className="cc-mono cc-tabular px-3 py-3 align-top text-xs"
