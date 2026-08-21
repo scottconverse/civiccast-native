@@ -245,6 +245,76 @@ def test_no_loss_no_duplicates_across_simulated_crash(
     assert entries[0].entry_id == entry.entry_id
 
 
+def test_construction_does_not_replay_pending_rows(
+    db: tuple[ReportingStore, object], tmp_path: Path
+) -> None:
+    """App-factory contract (test_app_wiring.py::test_create_app_does_not_
+    call_engine_connect): AsRunOutbox.__init__ must never touch the store —
+    build_channel_automation constructs it synchronously inside
+    civiccast.app.create_app(), a path that must never open a DB connection.
+    A pending row left by a prior process must still be sitting there,
+    undrained, right after construction."""
+
+    store, factory = db
+    outbox_path = tmp_path / "outbox.sqlite3"
+    # Leave a row pending, the same way the crash-simulation tests do.
+    setup = AsRunOutbox(store, db_path=outbox_path, alert_session_factory=factory)
+    op = make_append_op(_entry())
+    setup._journal(op)
+    del setup  # no drain, no replay -- purely journaled
+
+    fresh = AsRunOutbox(store, db_path=outbox_path, alert_session_factory=factory)
+
+    assert fresh.pending_count() == 1  # construction alone did not touch it
+    assert store.list_as_run("civiccast-station") == []  # store untouched
+
+
+def test_ensure_started_replays_once_then_behaves_as_drain_once(
+    db: tuple[ReportingStore, object], tmp_path: Path
+) -> None:
+    """ensure_started() is what StoreAsRunRecorder's first opportunistic
+    write and ChannelAutomationService.run_once's first poll tick call
+    (never AsRunOutbox.__init__ / build_channel_automation directly — see
+    the module docstring). It must perform the crash-recovery replay
+    exactly once, then fall back to an ordinary drain_once on every later
+    call, even if more rows show up in between."""
+
+    store, factory = db
+    outbox_path = tmp_path / "outbox.sqlite3"
+    setup = AsRunOutbox(store, db_path=outbox_path, alert_session_factory=factory)
+    leftover = make_append_op(_entry(entry_id="asrun-leftover"))
+    setup._journal(leftover)
+    del setup
+
+    outbox = AsRunOutbox(store, db_path=outbox_path, alert_session_factory=factory)
+    replay_calls: list[int] = []
+    real_replay = outbox.replay_pending
+
+    def counting_replay() -> int:
+        replay_calls.append(1)
+        return real_replay()
+
+    outbox.replay_pending = counting_replay  # type: ignore[method-assign]
+
+    # First call: the leftover row is still pending (construction didn't
+    # touch it) -- ensure_started() must perform the real replay.
+    assert outbox.pending_count() == 1
+    first = outbox.ensure_started()
+    assert first == 1
+    assert len(replay_calls) == 1
+    assert outbox.pending_count() == 0
+    assert len(store.list_as_run("civiccast-station")) == 1
+
+    # A second row arrives later (a normal new transition, not a crash
+    # leftover). ensure_started() must NOT replay again -- just drain it
+    # once, same as a routine automation poll tick / opportunistic write.
+    outbox._journal(make_append_op(_entry(entry_id="asrun-later", channel_id="edu")))
+    second = outbox.ensure_started()
+    assert second == 1
+    assert len(replay_calls) == 1  # still only the one real replay call
+    assert len(store.list_as_run("civiccast-station")) == 2
+
+
 def test_close_op_replay_is_idempotent_across_simulated_crash(
     db: tuple[ReportingStore, object], tmp_path: Path
 ) -> None:

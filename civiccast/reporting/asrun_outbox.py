@@ -46,12 +46,21 @@ The fix is a transactional outbox:
    legitimately happen across a crash between "DB commit" and "mark
    drained", writes the identical result rather than a duplicate or a
    clobber.
-5. **Startup replay.** :meth:`AsRunOutbox.replay_pending` drains every row
-   left over from a prior process — a crash between journaling and marking
-   a row drained loses nothing, because the row is still ``drained_at IS
-   NULL`` when the new process opens the same journal file. Wired into
-   ``build_channel_automation`` before the engine emits its first proof
-   event of the new run.
+5. **Lazy startup replay.** :meth:`AsRunOutbox.replay_pending` drains every
+   row left over from a prior process — a crash between journaling and
+   marking a row drained loses nothing, because the row is still
+   ``drained_at IS NULL`` when a new process opens the same journal file.
+   Reached via :meth:`AsRunOutbox.ensure_started`, which runs it exactly
+   once, on the first real drain attempt — NOT eagerly at construction.
+   ``build_channel_automation`` (which constructs the outbox) runs
+   synchronously inside ``civiccast.app.create_app()`` when
+   ``DATABASE_URL`` is set at boot, and that path must never touch the
+   database (see ``tests/schedule/test_app_wiring.py::
+   TestAppFactorySetEnv::test_create_app_does_not_call_engine_connect``).
+   The replay instead fires the first time the engine actually emits a
+   proof event (the recorder's first opportunistic write) or the first
+   channel-automation poll tick — whichever comes first — both of which
+   only happen once the app is genuinely serving.
 
 This module is reporting-owned and imports nothing from ``civiccast.egress``
 (the engine-side seam stays dependency-free per ``civiccast/egress/asrun.py``'s
@@ -238,6 +247,18 @@ class AsRunOutbox:
         self._db_path = db_path or default_asrun_outbox_path()
         self._alert_session_factory = alert_session_factory
         self._lock = threading.Lock()
+        # Lazy startup replay (app-factory contract fix): AsRunOutbox is
+        # constructed synchronously inside build_channel_automation, which
+        # itself runs during create_app() (civiccast/app.py's
+        # _wire_stage_f_workers, called from _wire_durable_stores /
+        # _install_durable_store_wiring) -- a path that must NEVER touch the
+        # SQLAlchemy-backed store (pinned by tests/schedule/test_app_wiring.py::
+        # TestAppFactorySetEnv::test_create_app_does_not_call_engine_connect).
+        # Opening THIS journal file below is fine (a local sqlite3 handle, not
+        # the app's SQLAlchemy Engine) -- what must not happen at construction
+        # is replay_pending()'s store/alert-hub reads. Deferred to the first
+        # real drain attempt instead: see ensure_started().
+        self._did_startup_replay = False
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             self._conn = self._open_connection()
@@ -275,12 +296,13 @@ class AsRunOutbox:
 
         self._journal(op)
         try:
-            self.drain_once()
+            self.ensure_started()
         except Exception:
-            # drain_once() already logs + alerts internally for the DB
-            # failures it expects; a second, unexpected exception class
-            # escaping it (a bug, not a DB error) must still not reach the
-            # playout thread — the event is safely journaled either way.
+            # ensure_started()/drain_once() already log + alert internally
+            # for the DB failures they expect; a second, unexpected
+            # exception class escaping it (a bug, not a DB error) must still
+            # not reach the playout thread — the event is safely journaled
+            # either way.
             _LOG.exception("Unexpected error during opportunistic as-run drain.")
 
     def _journal(self, op: _OutboxRow) -> None:
@@ -376,13 +398,18 @@ class AsRunOutbox:
     def replay_pending(self) -> int:
         """Drain every row left pending by a crash mid-drain, in order.
 
-        Call once at daemon startup (``build_channel_automation``), before
-        the engine emits any new proof events: a prior crash between
-        journaling and the DB commit loses nothing, because the row is still
-        ``drained_at IS NULL`` and gets re-applied — idempotently, per the
-        module docstring's exactly-once contract. Terminates once a call
-        makes zero progress (the backlog is empty, or the remaining rows are
-        failing immediately) rather than spinning against an unreachable DB.
+        A prior crash between journaling and the DB commit loses nothing,
+        because the row is still ``drained_at IS NULL`` and gets re-applied
+        — idempotently, per the module docstring's exactly-once contract.
+        Terminates once a call makes zero progress (the backlog is empty, or
+        the remaining rows are failing immediately) rather than spinning
+        against an unreachable DB.
+
+        Callable directly (e.g. a fresh process resuming the same journal
+        file, as the crash-recovery tests do). Production callers should use
+        :meth:`ensure_started` instead — see its docstring for why this
+        method is never called eagerly from ``__init__``/
+        ``build_channel_automation``.
         """
 
         total = 0
@@ -392,6 +419,36 @@ class AsRunOutbox:
             if n == 0:
                 break
         return total
+
+    def ensure_started(self) -> int:
+        """Lazy startup replay: performs :meth:`replay_pending` on the FIRST
+        call only, then behaves as an ordinary :meth:`drain_once` on every
+        call after that.
+
+        This is what makes the durability guarantee ("a crash mid-drain
+        loses nothing") hold WITHOUT touching the database during
+        ``AsRunOutbox.__init__``/``build_channel_automation`` — both of
+        which run synchronously inside ``civiccast.app.create_app()`` (via
+        ``_wire_stage_f_workers``) when ``DATABASE_URL`` is set at boot, a
+        path that must never open a DB connection (see
+        ``tests/schedule/test_app_wiring.py::TestAppFactorySetEnv::
+        test_create_app_does_not_call_engine_connect``). The replay instead
+        runs on the first REAL drain attempt — whichever comes first:
+        ``StoreAsRunRecorder``'s first opportunistic write (``append_and_
+        drain``, called only once the playout engine actually emits a proof
+        event) or ``ChannelAutomationService.run_once``'s first poll tick
+        (``_drain_as_run_outbox``, called only once the app lifespan
+        actually starts the automation loop thread — never during a bare
+        ``create_app()``). Both call sites route through this method rather
+        than ``drain_once`` directly.
+        """
+
+        with self._lock:
+            needs_replay = not self._did_startup_replay
+            self._did_startup_replay = True
+        if needs_replay:
+            return self.replay_pending()
+        return self.drain_once()
 
     # -- health/alert plumbing ----------------------------------------------
 

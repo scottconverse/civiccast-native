@@ -266,17 +266,22 @@ class ChannelAutomationService:
     def _drain_as_run_outbox(self) -> None:
         """BUG C2 fix: retry a backlog left by a prior DB outage.
 
-        ``StoreAsRunRecorder`` already drains opportunistically on every
-        write, so in steady state this is a cheap no-op read (an empty
-        ``WHERE drained_at IS NULL`` scan). ``AsRunOutbox.drain_once`` itself
-        never raises for a store failure (it logs + alerts internally); this
-        try/except is defense-in-depth against a genuinely unexpected bug,
-        matching every other per-tick guard in this loop.
+        Routes through ``ensure_started()`` rather than ``drain_once()``
+        directly: this is the first of the two call sites
+        (``AsRunOutbox.ensure_started``'s docstring names the other --
+        the recorder's first opportunistic write) that can perform the
+        one-time startup replay, deferred out of ``build_channel_automation``
+        so create_app() never touches the database. In steady state (no
+        backlog, replay already done) this is a cheap no-op read. Neither
+        ``ensure_started`` nor ``drain_once`` ever raises for a store
+        failure (both log + alert internally); this try/except is
+        defense-in-depth against a genuinely unexpected bug, matching every
+        other per-tick guard in this loop.
         """
         if self._as_run_outbox is None:
             return
         try:
-            self._as_run_outbox.drain_once()
+            self._as_run_outbox.ensure_started()
         except Exception:
             _LOG.exception("As-run outbox drain tick failed unexpectedly; retrying next poll.")
 
@@ -629,25 +634,25 @@ def build_channel_automation(
     # BUG C2 fix (S23 §6.1 durable outbox): one AsRunOutbox for the process,
     # rooted at the real station-data-dir journal, shared by the recorder
     # (opportunistic drain on every write) and this service's periodic
-    # drain tick. Startup replay runs BEFORE the engine emits its first
-    # proof event of this run, so a crash mid-drain in a previous run loses
-    # nothing -- see AsRunOutbox.replay_pending's docstring. Never blocks
-    # startup: a replay failure (e.g. DB still down) just means the backlog
-    # waits for the periodic drain tick, same as any other drain failure.
+    # drain tick. Constructing it here only opens the LOCAL journal file
+    # (plain sqlite3, not the app's SQLAlchemy engine) -- cheap and safe to
+    # do synchronously. The startup replay itself is deliberately NOT run
+    # here: build_channel_automation runs inside civiccast.app.create_app()
+    # (via _wire_stage_f_workers / _wire_durable_stores /
+    # _install_durable_store_wiring when DATABASE_URL is set at boot), a
+    # path that must never touch the database (pinned by
+    # tests/schedule/test_app_wiring.py::TestAppFactorySetEnv::
+    # test_create_app_does_not_call_engine_connect). AsRunOutbox.
+    # ensure_started() defers the replay to the first real drain attempt
+    # instead (the recorder's first opportunistic write, or this service's
+    # first run_once poll tick -- see its docstring), which only happens
+    # once the app is actually serving, so the "a crash mid-drain loses
+    # nothing" guarantee still holds without an eager DB touch here.
     as_run_outbox = AsRunOutbox(
         ReportingStore(session_factory),
         db_path=default_asrun_outbox_path(),
         alert_session_factory=session_factory,
     )
-    try:
-        replayed = as_run_outbox.replay_pending()
-        if replayed:
-            _LOG.info("As-run outbox startup replay drained %d pending event(s).", replayed)
-    except Exception:
-        _LOG.exception(
-            "As-run outbox startup replay failed; continuing startup -- the "
-            "periodic drain tick will retry."
-        )
     asset_store = PostgresAssetStore(session_factory)
     schedule_store = PostgresScheduleStore(session_factory)
     source_plan_provider = ScheduleSourcePlanProvider(
