@@ -448,8 +448,8 @@ came across and what deliberately did not.
   (`ControlRoomSetupScreen`, relabeled "GPI (network relay)" / "Serial
   (network relay)" with an inline note when either is selected, plus the
   `gpi_pulse`/`serial_send` cue-action descriptions), `CAPABILITIES.md`,
-  `docs/spec/3.0/sections/S18-cablecast-parity-gap-closure.md`'s gap-8
-  status line and detail section, and the `civiccast/control_room/`
+  the S18 incumbent-parity spec section's gap-8 status line and detail
+  section, and the `civiccast/control_room/`
   package/module docstrings. A station needing real hardware fronts it
   with its own TCP-to-GPI or TCP-to-serial relay box — the existing TCP
   payload path already reaches it. No behavior change (the TCPSEND routing
