@@ -350,7 +350,7 @@ station needs.
 
 #### Channel egress, GStreamer engine, automation
 
-- **`CIVICCAST_EGRESS_ENGINE`** — `ffmpeg-concat` (default) or `gstreamer` (S15).
+- **`CIVICCAST_EGRESS_ENGINE`** — `gstreamer` (default, S15) or `ffmpeg-concat` (legacy fallback).
 - **`CIVICCAST_EGRESS_WORK_DIR`** — Per-channel temporary directory for egress plans.
 - **`CIVICCAST_EGRESS_EMBED_CAPTIONS`** — Attempts the native GStreamer caption-SEI path when the required GStreamer elements are available. The Windows helper installer extracts the CivicCast-bundled private GStreamer runtime under `/opt/civiccast/gstreamer` and verifies `cccombiner`, `ccconverter`, `h264ccinserter`, and `tttocea608` with the private `gst-inspect-1.0`; if any required element remains unavailable, setup stops with an explicit native caption-SEI runtime error instead of claiming the embed path is ready. The beta proof passed with the bundled runtime on a clean Ubuntu 24.04 dependency substrate.
 - **`CIVICCAST_GST_ALLOW_HARDWARE_DECODE`** — Optional expert override. By default, the GStreamer worker demotes GPU H.264/H.265 decoders so live UDP/SRT decode stays in system memory before the CPU conform/encode chain. Set to `1` only when the station has validated its hardware decode path end-to-end.
@@ -858,10 +858,10 @@ pipeline plus hot-swap. The two relevant pieces:
 - `worker.py` — the in-process worker the egress daemon supervises.
   This is what the beta release-artifact soak (step 13) targets.
 
-`CIVICCAST_EGRESS_ENGINE=gstreamer` switches the daemon to the new
-engine; the default is still `ffmpeg-concat` for backwards
-compatibility. Per-station, the v3.0 station-in-a-box specification recommends
-`gstreamer`.
+`gstreamer` is the default engine, matching the v3.0 station-in-a-box
+specification's recommendation and the native station bootstrap's own
+runtime contract. Set `CIVICCAST_EGRESS_ENGINE=ffmpeg-concat` to opt back
+into the legacy ffmpeg-relay model for backwards compatibility.
 
 ### The Three Protocol Seams
 

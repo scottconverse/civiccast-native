@@ -2,7 +2,7 @@
 # Copyright (c) The CivicCast Authors
 """Persistent per-channel TS relay: one mux session across encoder relaunches.
 
-#151: on the default ffmpeg-concat engine every plan boundary/reload/crash
+#151: on the legacy ffmpeg-concat engine every plan boundary/reload/crash
 relaunches the encoder, which starts a fresh MPEG-TS session — new continuity
 counters on every PID and a new ephemeral UDP source port. A cable plant's
 TR 101 290 monitoring logs CC errors at every such splice (CA-8 capture:

@@ -102,7 +102,7 @@ class SourcePreparer:
         playout_trim_supported: bool = False,
     ) -> None:
         """``playout_trim_supported``: the consuming encoder honors per-segment
-        ``inpoint``/``outpoint`` on prepared segments (true for the default
+        ``inpoint``/``outpoint`` on prepared segments (true for the legacy
         ffmpeg-concat engine via its ffconcat plan; the GStreamer engine reads
         only ``segment.path``). When False — the safe default — cache hits are
         emitted as a fast ``-c copy`` trim into the per-plan output instead, so

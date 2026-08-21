@@ -11,17 +11,40 @@ from civiccast.egress.engine_select import build_encoder_strategy, selected_engi
 from civiccast.egress.gst.strategy import GstPlayoutStrategy
 
 
-def test_default_is_ffmpeg_concat(monkeypatch) -> None:
+def test_default_is_gstreamer(monkeypatch) -> None:
     monkeypatch.delenv("CIVICCAST_EGRESS_ENGINE", raising=False)
-    assert selected_engine_name() == "ffmpeg-concat"
-    assert isinstance(build_encoder_strategy(), ConcatEncoderStrategy)
+    assert selected_engine_name() == "gstreamer"
+    strategy = build_encoder_strategy()
+    assert isinstance(strategy, GstPlayoutStrategy)
+    assert strategy.supports_live_swap is True
 
 
-def test_gstreamer_selected(monkeypatch) -> None:
+def test_blank_env_value_falls_back_to_the_default_not_ffmpeg(monkeypatch) -> None:
+    """A present-but-empty ``CIVICCAST_EGRESS_ENGINE=`` (e.g. an unset value in a
+    deployment's env file) must resolve to the same engine as a fully unset
+    variable -- never silently pin ffmpeg-concat just because "" used to be one of
+    its aliases."""
+    monkeypatch.setenv("CIVICCAST_EGRESS_ENGINE", "")
+    assert selected_engine_name() == "gstreamer"
+    assert isinstance(build_encoder_strategy(), GstPlayoutStrategy)
+    monkeypatch.setenv("CIVICCAST_EGRESS_ENGINE", "   ")
+    assert selected_engine_name() == "gstreamer"
+
+
+def test_gstreamer_selected_explicitly(monkeypatch) -> None:
     monkeypatch.setenv("CIVICCAST_EGRESS_ENGINE", "gstreamer")
     strategy = build_encoder_strategy()
     assert isinstance(strategy, GstPlayoutStrategy)
     assert strategy.supports_live_swap is True
+
+
+def test_ffmpeg_concat_selected_explicitly(monkeypatch) -> None:
+    """The legacy engine stays a live, explicit opt-in override after the
+    default flip to GStreamer (owner-approved: preserve every existing
+    override path)."""
+    monkeypatch.setenv("CIVICCAST_EGRESS_ENGINE", "ffmpeg-concat")
+    assert selected_engine_name() == "ffmpeg-concat"
+    assert isinstance(build_encoder_strategy(), ConcatEncoderStrategy)
 
 
 def test_explicit_arg_overrides_env(monkeypatch) -> None:

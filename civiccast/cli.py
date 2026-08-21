@@ -969,7 +969,8 @@ def _run_egress_service(
         ),
         source_preparer=SourcePreparer(work_dir=work_dir).prepare,
         resolve_secret=lambda ref: os.environ.get(ref),
-        # S15: ffmpeg-concat (default) or the GStreamer engine, per CIVICCAST_EGRESS_ENGINE.
+        # S15: the GStreamer engine (default) or ffmpeg-concat (legacy), per
+        # CIVICCAST_EGRESS_ENGINE.
         encoder_strategy=build_encoder_strategy(),
     )
     with _egress_stop_signal_context(enabled=not once) as should_stop:

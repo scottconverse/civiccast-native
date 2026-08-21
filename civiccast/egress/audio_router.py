@@ -113,9 +113,10 @@ def public_audio_tracks(
 ) -> list[PublicAudioTrack]:
     """The enabled audio tracks for a channel, for the web/OTT player's track toggle.
 
-    Secondary audio PIDs are only emitted by the GStreamer engine, so on the default
-    ffmpeg engine this returns just the implicit primary program (no secondary tracks) —
-    the player toggle must never advertise a track the running engine cannot emit."""
+    Secondary audio PIDs are only emitted by the GStreamer engine, so on the legacy
+    ffmpeg-concat engine this returns just the implicit primary program (no secondary
+    tracks) — the player toggle must never advertise a track the running engine
+    cannot emit."""
     from civiccast.egress.engine_select import gstreamer_engine_selected
 
     if not gstreamer_engine_selected():
