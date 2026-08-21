@@ -9,7 +9,7 @@ Docker, no Linux install target.
 | | `main` |
 |---|---|
 | Product | Native Windows line |
-| Install shape | Signed installer registers a session-0 Windows service that supervises the control plane, Postgres, NATS and the media workers from a bundled runtime |
+| Install shape | Signed installer registers a session-0 Windows service that supervises the control plane, Postgres, and the media workers from a bundled runtime |
 | Governing decision | [ADR 0021](docs/adr/0021-native-windows-runtime.md) introduced the native runtime; the owner retired the WSL2 lane on 2026-08-19 |
 
 Branch from `main`, target `main`. There is no second line to choose between.

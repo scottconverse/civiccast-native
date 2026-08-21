@@ -4,13 +4,13 @@ This directory contains the Tauri-compatible installer shell for CivicCast's
 native Windows product ([ADR 0021](../../../docs/adr/0021-native-windows-runtime.md)
 -- see [BRANCHES.md](../../../BRANCHES.md)). No WSL, no Docker, no Linux
 install target. The app verifies platform bootstrap, package artifacts,
-model setup, NATS, local-CA mTLS, clean-install evidence, and
+model setup, local-CA mTLS, clean-install evidence, and
 external-provider gates.
 
 ## Current Posture
 
 - The signed setup app registers a Windows service through the SCM and
-  supervises the control plane, Postgres, NATS, and the media workers from a
+  supervises the control plane, Postgres, and the media workers from a
   bundled runtime, at `C:\Program Files\CivicCast (Native)\` -- no separate
   Windows-feature bootstrap, no elevated multi-step servicing UI.
 - The setup app extracts the bundled Python/GStreamer/FFmpeg runtime, prepares

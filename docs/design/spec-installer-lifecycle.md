@@ -91,11 +91,13 @@ Charter §7 installer obligations. Produces the beta artifact.
   recovery point now precedes every mutation and no discarded-writes window
   exists; (4) lay `app\<new>\`, flip `current` junction;
   (5) `alembic upgrade head`; (6) start service in **maintenance/read-only
-  health mode** (the supervisor, seeing the interlock, starts pg/NATS/
+  health mode** (the supervisor, seeing the interlock, starts pg/
   control-plane read paths but refuses mutating endpoints and starts no
   workers — this is how "the freeze holds" survives step 6's health gate);
   (7) health green ⇒ release the interlock (commit) and resume normal
-  operation; journal complete. Failure at/after (5):
+  operation; journal complete. (NATS is no longer part of this path -- the
+  supervisor's only children are postgres and control_plane, per the
+  in-process broker decision, ADR 0023.) Failure at/after (5):
   flip junction back AND restore the step-3 backup, so the old binary never
   runs against a newer schema. **Rollback-failure is itself defined:** if
   the restore fails, the installer HALTS with the service stopped (never

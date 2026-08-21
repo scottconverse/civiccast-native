@@ -10,8 +10,14 @@ Charter §7 step 1. Session-0 viability proven (spike-session0).
 - **D1. Language/runtime:** Python 3.12 + `pywin32` ServiceFramework.
   Production registers a real service; NSSM was spike scaffolding only.
 - **D2. Process/ownership model (revised per SDR-003 — the seam preserves
-  the production contract instead of breaking it):** the supervisor's DIRECT
-  children are PostgreSQL, NATS, and the FastAPI control plane. **Media
+  the production contract instead of breaking it; further revised
+  2026-08-20 — NATS removed from the product, see ADR 0023):** the
+  supervisor's DIRECT children are PostgreSQL and the FastAPI control
+  plane (`STARTUP_ORDER = ("postgres", "control_plane")` in
+  `civiccast/native/supervisor/config.py`). NATS was a third direct child
+  in the original design; it never did real production work in this
+  codebase and has been cut entirely, along with its child-process spec,
+  graceful-stop signal, and readiness check below. **Media
   workers remain owned by the egress daemon inside the control plane**, spawned
   by `GstPlayoutStrategy.start()` exactly as production does today — the
   supervisor does NOT take over per-channel worker lifecycle, schedules,
@@ -73,20 +79,20 @@ Charter §7 step 1. Session-0 viability proven (spike-session0).
   "existing alerting" is checkable). Graceful-stop contracts, each with a
   15s deadline then `TerminateProcess`, each PROVEN by a dedicated test:
   - PostgreSQL: `pg_ctl stop -m fast` (documented, upstream-supported);
-  - NATS: lame-duck mode (`nats-server --signal ldm=<pid>`), then terminate;
-    JetStream durability proven by the falsification in AC-N4 (publish-ack'd
-    messages survive stop/start);
   - control plane: CTRL_BREAK_EVENT to its process group (uvicorn graceful),
     deadline, terminate;
   - workers: owned by the strategy (D2) — the supervisor never signals them
     directly; stopping the control plane gracefully drains channels through
     the existing daemon shutdown path; the Job Object is the backstop.
-- **D6. Startup order + readiness (measurable, SDR-009):**
+- **D6. Startup order + readiness (measurable, SDR-009; revised
+  2026-08-20 — NATS removed, see ADR 0023):**
   postgres → ready = `SELECT 1` (psycopg, 60s budget) →
-  NATS → ready = **authenticated JetStream round-trip**: publish to a probe
-  stream and receive the ack (TCP accept is explicitly NOT readiness) →
-  control plane → ready = `GET /healthz` 200 with body reporting DB+NATS
-  connectivity → (workers come up via the daemon as scheduled). State machine
+  control plane → ready = `GET /healthz` 200 with body reporting DB
+  connectivity → (workers come up via the daemon as scheduled). The
+  original design inserted a NATS step here — ready = authenticated
+  JetStream round-trip (publish to a probe stream and receive the ack,
+  since TCP accept is not readiness) — between postgres and the control
+  plane; that step no longer exists. State machine
   states: `starting / ready / degraded / blocked_wsl_active / stopping`,
   transitions logged with timestamps; "dependent behavior" = a child whose
   dependency leaves `ready` gets a controlled restart AFTER the dependency
@@ -148,8 +154,9 @@ Charter §7 step 1. Session-0 viability proven (spike-session0).
 - AC3 Restart-storm ⇒ `degraded`, service up, alert fired (assert against
   the alerting module's outbox/test transport).
 - AC4 **Kill the SUPERVISOR mid-playout** (SDR-002): Job Object kills the
-  tree (no orphan `postgres.exe`/`nats-server.exe`/python workers survive —
-  asserted by process sweep), SCM restarts it, singleton mutex holds, full
+  tree (no orphan `postgres.exe`/python workers survive — asserted by
+  process sweep; `nats-server.exe` dropped from this list 2026-08-20, NATS
+  removed, see ADR 0023), SCM restarts it, singleton mutex holds, full
   recovery to `ready`.
 - AC5 Tauri console restart during playout: zero playout interruption.
 - AC6 Worker control over the D2 named pipe on Windows: hot reload, source
@@ -165,8 +172,10 @@ Charter §7 step 1. Session-0 viability proven (spike-session0).
   test, not a simulation.
 - AC-N3 Malformed/oversized frames and command floods: connection closed,
   service healthy.
-- AC-N4 JetStream durability: publish-ack'd messages survive `stop`/`start`
-  of NATS via D5's graceful path.
+- ~~AC-N4 JetStream durability: publish-ack'd messages survive `stop`/`start`
+  of NATS via D5's graceful path.~~ Removed 2026-08-20: NATS was cut from
+  the product, so there is no JetStream durability contract to prove. See
+  ADR 0023.
 - AC-N5 Concurrent conflicting commands (stop+restart+cutover): serialized
   or rejected deterministically; no torn state.
 

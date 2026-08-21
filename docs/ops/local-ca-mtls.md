@@ -8,7 +8,6 @@ loopback deployments.
 
 - `civiccast-api`
 - `civiccast-worker`
-- `nats`
 
 The certificate root defaults to `~/.civiccast/certs` and can be overridden:
 
@@ -23,7 +22,6 @@ Run:
 ```bash
 civiccast cert rotate civiccast-api
 civiccast cert rotate civiccast-worker
-civiccast cert rotate nats
 ```
 
 Service certificates are issued for a 90-day cadence. Certificates inside the

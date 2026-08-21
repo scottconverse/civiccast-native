@@ -66,9 +66,8 @@ Windows package lane passed.
    open while recording release evidence.
 5. Technical testers can run `civiccast installer beta-handoff --json` and
    keep every blocked lane in the handoff record.
-6. Technical testers: if this test includes advanced broker/certificate
-   lanes, configure NATS JetStream with mTLS, rotate local CA certificates,
-   and rerun the handoff check.
+6. Technical testers: if this test includes advanced certificate lanes,
+   rotate local CA certificates and rerun the handoff check.
 7. Confirm FFmpeg and any local NDI runtime or sender required for the station
    workflow. NDI and third-party installer redistribution remains an
    operator-gated acquisition step. Ollama itself is provisioned by the
