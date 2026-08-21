@@ -172,6 +172,10 @@ dependency, against the actual code.
 | `0070_grandfather_scheduled_to_published` | Scheduling | data migration for the Commit-to-Air state model |
 | `0071_published_blocks_overlap` | Scheduling | published schedule items participate in overlap exclusion |
 | `0072_normalize_recording_file_uris` | Recording repair | rc16 rehearsal/recording rows re-pointed from raw file:// URIs to usable local paths (rc17 D3) |
+| `0073_egress_allow_software_fallback` | Egress | `allow_software_fallback` operator opt-in on `egress_configs` |
+| `0074_caption_review_audio_evidence` | Captions | private live-audio evidence retention for caption review items |
+| `0075_offline_caption_jobs` | Captions | `offline_caption_jobs` queue (CivicCast One keystone K3) |
+| `0076_analytics_viewership` | S14 | `viewership_events`/`viewership_rollups`/`analytics_report_snapshots`; promotes `analytics-events.json` to a durable, migrated store (idempotent app-level backfill, not in-migration — see the migration's own docstring for why) |
 
 (S1, S3, S10, S12 add no migrations — S1/S3 are config/state-file + CLI; S10 is doc/gate; S12 is
 app-build artifacts.
@@ -186,7 +190,7 @@ single line through `0072_normalize_recording_file_uris`. The full shape is:
 ```
 0054 → 0055 ─┬→ 0056 ─────┐
              │             ↓
-             └→ 0057 → 0058 → 0059 → 0060 → 0061 → … → 0071 (HEAD)
+             └→ 0057 → 0058 → 0059 → 0060 → 0061 → … → 0072 → 0073 → 0074 → 0075 → 0076 (HEAD)
 ```
 
 The head pin in `tests/live/test_real_postgres.py` is `0072_normalize_recording_file_uris`. **All S18
@@ -233,7 +237,11 @@ ship.)
 - §12: wizard step count to match S3.
 
 ## Gaps flagged for Scott (no silent deferral)
-- **Analytics / Audience Measurement** has no owning section. Decision needed: add a section, or
-  state explicitly it's out of V1 scope. (the incumbent cloud telemetry baseline has it.)
+- ~~**Analytics / Audience Measurement** has no owning section.~~ RESOLVED: owned by
+  `docs/spec/3.0/sections/S14-analytics-audience-measurement.md`, built out (migration
+  `0076_analytics_viewership`, durable rollups + rollup worker, role-gated API surface, CSV +
+  board-ready PDF export, four-panel operator dashboard). As-run / proof-of-performance reporting
+  (Schedule Report + Shows Report parity) is owned by `civiccast/reporting` (S18/S23,
+  `0055_asrun_and_epg`) rather than duplicated inside S14 — S14 §4 cross-references it.
 - **Interlaced profiles, full CG template set, functional hosted adapters** are pulled into V1 per
   D13 — confirm the added scope is acceptable.

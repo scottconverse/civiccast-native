@@ -382,8 +382,12 @@ class TestSingleAlembicHead:
         # Updated to ``0075_offline_caption_jobs`` for the offline caption
         # job queue that captions published recordings (keystone K3), which
         # chains after ``0074_caption_review_audio_evidence``.
-        assert heads[0] == "0075_offline_caption_jobs", (
-            f"Expected head '0075_offline_caption_jobs'; got {heads[0]!r}."
+        # Updated to ``0076_analytics_viewership`` for S14 (Analytics /
+        # Audience Measurement) — durable viewership_events /
+        # viewership_rollups / analytics_report_snapshots tables, chained
+        # after ``0075_offline_caption_jobs``.
+        assert heads[0] == "0076_analytics_viewership", (
+            f"Expected head '0076_analytics_viewership'; got {heads[0]!r}."
         )
 
 

@@ -6,15 +6,33 @@
 > Improves on the incumbent PEG workflow's cloud-telemetry-gated "Audience Measurement" by being self-hosted with **no
 > paid-cloud-CDN dependency**.
 >
-> **Status:** Build spec for Scott's review. Implementation has NOT started. Code references
-> ground all "what exists" claims (verified on `main @ 69cc676`).
+> **Status:** Built on branch `feat/s14-analytics-durable` (PR open against `main`, not yet
+> merged) — migration `0076_analytics_viewership`, `PostgresAnalyticsStore` +
+> `AnalyticsRollupWorker`, the role-gated `/reports/overview` + `/rollups` + `/export.csv` +
+> `/reports/board-pdf` endpoints, and the four-panel operator dashboard (toolbar, bar +
+> time-series charts, stats + expandable table, CSV/PDF export, honest "telemetry off" state) all
+> exist and are tested (unit + API + rollup-worker + Alembic up/down/head + vitest). **Not yet
+> built:** OTT/embedded beacon parity (the Roku/tvOS/Fire TV/Android TV/mobile shells do not emit
+> analytics events at all today — greenfield, no existing pattern to extend), opt-in coarse geo
+> derivation (the `geo_bucket` column exists, off by default per the recommended §10 decision, but
+> nothing populates it), the VOD-24h/Live-30-min "hourly for a single selected day" auto-switch in
+> the UI (the API supports `bucket=hour`; the toolbar does not yet auto-select it), and the master
+> §12 24/72h soak run (no soak infrastructure was exercised this session). The real-Postgres
+> migration up/down was verified against SQLite + a full local chain replay, not against
+> `testcontainers`/Docker (unavailable in this environment) — `tests/live/test_real_postgres.py`'s
+> pinned head assertion was updated to `0076_analytics_viewership` but has not itself been run.
 >
-> **Disposition:** *extend* — a working playback-beacon → aggregate-report chain already exists
-> (`analytics/`, the portal `HlsPlayer`/`analytics.ts` emitter, the hardened public ingest
-> endpoint). S14 closes the gaps to true parity-plus: durable Postgres-backed rollups, an auth
-> role on the staff read, the dashboard UI, exports, and the proof-of-performance reports. This
-> section resolves the **"Analytics / Audience Measurement has no owning section"** gap flagged
-> for Scott in `RECONCILIATION.md` (§"Gaps flagged for Scott").
+> **Disposition:** *extended* — the playback-beacon → aggregate-report chain (`analytics/`, the
+> portal `HlsPlayer`/`analytics.ts` emitter, the hardened public ingest endpoint) is now backed by
+> durable Postgres storage instead of a JSON file. This section resolves the **"Analytics /
+> Audience Measurement has no owning section"** gap flagged for Scott in `RECONCILIATION.md`
+> (§"Gaps flagged for Scott") — see that file for the closure note. As-run / proof-of-performance
+> reporting (the Schedule Report + Shows Report equivalents named in §4/§8d below) is **not**
+> duplicated here: `civiccast/reporting` (S18/S23, migration `0055_asrun_and_epg`) already ships
+> `GET /api/staff/reports/as-run`, `/shows`, `/hours-by-category`, and CSV/XML export, gated on
+> `support_admin` — functionally equivalent to (and, with hours-by-category, broader than) the
+> `/api/staff/reports/schedule` + `/shows` endpoints this section originally sketched in §4. S14
+> cross-references that surface rather than re-implementing it.
 
 ---
 
@@ -246,6 +264,15 @@ X-List** equivalent (program metadata as CSV). They live under `/api/staff/repor
 report on *playout*, not *audience*, and they read the **program log** (the authoritative as-run
 record), so they remain accurate even when audience telemetry is off.
 
+> **Build note (2026-08-21):** this pair is served by `civiccast/reporting`'s existing
+> `GET /api/staff/reports/as-run` and `/shows` (S18/S23, migration `0055_asrun_and_epg`) rather than
+> new S14-owned routes at these exact paths — that surface already exists, is role-gated
+> (`support_admin`), reads the same program-log/schedule data this section names, and additionally
+> ships `/hours-by-category` and a unified `/reports/export?type=as-run|shows&format=csv|xml`. S14
+> did not duplicate it. The one real gap — `civiccast/reporting`'s role gate is `support_admin`
+> only, not `+ publish_operator + meeting_operator` as sketched above — is a pre-existing S18/S23
+> decision, out of this branch's scope to change.
+
 ---
 
 ## 5. Operator UI surface
@@ -453,24 +480,42 @@ extra, **not** as PEG automation coverage (the incumbent PEG baseline has no geo
 
 ## 10. DONE criteria; Dependencies & cross-refs; Open decisions
 
-### DONE criteria
+### DONE criteria (2026-08-21 status against each — branch, not yet merged)
 
-1. Migration merged — single `0046_analytics_viewership` on the global chain (head `0037` → … →
-   `0045` → `0046`); three tables + idempotent JSON backfill; head pin advanced in
-   `tests/live/test_real_postgres.py`.
-2. `GET /reports/overview` carries `require_any_role("support_admin","publish_operator")` and the
-   `stream_type`/`metric` query params; all §4 endpoints shipped + role-gated.
-3. Durable `ViewershipEvent` store replaces the JSON file; rollup job produces VOD-24h + Live-30-
-   min/hourly buckets; raw-sum == rollup-sum verified in soak.
-4. Four-panel dashboard wired (toolbar / bar / time-series / stats+table), phone-friendly, with the
-   honest "telemetry off" empty state.
-5. CSV export **and** board-ready PDF (totals / top content / YoY / live peaks) ship; PDF persists
-   an `AnalyticsReportSnapshot`.
-6. As-run Schedule Report + Shows Report ship off `programlog`/`schedule`, work with telemetry off.
-7. Beacon parity across web/VOD/live/portal/OTT/embedded (`app_target` tagged).
-8. Honest claim boundary documented: streaming-only, play-count not unique, concurrency estimated,
-   no linear/QAM claim, geo opt-in and not claimed as PEG automation coverage.
-9. 0/0/0/0/0 audit; rung 1 (lab) reached via tests + soak.
+1. ✅ **Migration built** — single `0076_analytics_viewership` on the global chain (real head was
+   `0075_offline_caption_jobs`, not `0045` as this section originally assumed — corrected). Three
+   tables; idempotent JSON backfill runs from app code, not the migration (documented deviation,
+   see migration docstring). Head pin advanced in `tests/live/test_real_postgres.py`. Verified via
+   SQLite upgrade→downgrade→upgrade + a full local chain replay (0000→0076); **not** verified
+   against real Postgres/testcontainers (Docker unavailable in the build environment) — that
+   remains open before a release candidate cites this migration as production-proven.
+2. ✅ `GET /reports/overview` carries `require_any_role("support_admin","publish_operator")` and
+   the `stream_type`/`metric` query params; `/rollups`, `/export.csv`, `/reports/board-pdf` shipped
+   + role-gated the same way.
+3. ✅ Durable `ViewershipEvent`/`ViewershipRollup` store replaces the JSON file when durable storage
+   is active; `AnalyticsRollupWorker` produces VOD-24h + Live-30-min **and** hourly buckets (both
+   granularities persisted). ⚠️ raw-sum == rollup-sum is verified by unit test on fixture data, not
+   by a live soak (criterion 9's soak did not run this session).
+4. ✅ Four-panel dashboard wired (toolbar / bar+time-series charts / stats+expandable table) with the
+   honest "telemetry off" empty state (`AnalyticsReport.ingest_configured`, net-new field). Built
+   with a small dependency-free SVG chart component (no chart library exists anywhere in
+   `portal-operator`). ⚠️ Responsive/phone-friendly by virtue of the existing Tailwind grid classes;
+   not independently verified at a phone viewport in a real browser this session.
+5. ✅ CSV export **and** board-ready PDF (totals / top content / YoY / live peaks, each toggleable)
+   ship; PDF persists an `AnalyticsReportSnapshot` on the durable store (a no-op, documented, on the
+   ephemeral/JSON store).
+6. ✅ As-run Schedule Report + Shows Report parity ships and works with telemetry off — via
+   `civiccast/reporting`'s existing `/reports/as-run` + `/shows` (S18/S23), cross-referenced from §4
+   rather than duplicated.
+7. ❌ **Not built.** Beacon parity across OTT/embedded is greenfield — the shells emit no analytics
+   events today and this branch does not add any. Flagged, not silently dropped.
+8. ✅ Honest claim boundary documented (this section, §7) — unchanged from the original draft, still
+   accurate to what's built: streaming-only, play-count not unique, concurrency estimated, no
+   linear/QAM claim, geo opt-in (column exists, `OFF` by default, nothing derives it yet).
+9. ❌ **Not run.** 0/0/0/0/0 audit and the master §12 soak are unrun this session — unit + API +
+   rollup-worker + Alembic-chain + vitest tests all pass, which is proof tier CONTRACT extending
+   toward LAB, not LAB itself. A soak run against real traffic (or synthetic beacons) is required
+   before claiming rung 1.
 
 ### Dependencies & cross-refs
 
