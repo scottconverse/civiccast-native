@@ -27,8 +27,7 @@
     "resources": ["resources/**/*"],
     "windows": {
       "nsis": {
-        "installMode": "currentUser",
-        "installerHooks": "nsis-hooks.nsh"
+        "installMode": "currentUser"
       }
     }
   }

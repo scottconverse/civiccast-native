@@ -4249,9 +4249,11 @@ fn run_native_pack_staging_cli(args: &[String]) -> Option<i32> {
 /// "repair that detects and restores corruption in the installed
 /// application, version, selector, runtime, dependency, and caption
 /// trees"). For operator/service use OUTSIDE the interactive installer:
-/// Tauri's NSIS "reinstall page" (see `nsis-hooks.nsh`'s header comment,
-/// "Tauri's reinstall page runs before the normal install hook") already
-/// re-runs the idempotent POSTINSTALL chain in `nsis-hooks-bootstrap.nsh`
+/// Tauri's NSIS "reinstall page" (the built-in interstitial that runs before
+/// the normal install hook whenever setup detects an existing install --
+/// see `nsis-hooks-bootstrap.nsh`'s own notes on what it reads to decide a
+/// machine is "Already Installed") already re-runs the idempotent
+/// POSTINSTALL chain in `nsis-hooks-bootstrap.nsh`
 /// (pack staging -> D2 re-verify -> D4 provision -> D4 service/firewall
 /// registration, every step already idempotent) whenever the installer
 /// `.exe` is re-launched over an existing install -- Tauri's NSIS template

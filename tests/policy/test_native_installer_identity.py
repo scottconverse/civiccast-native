@@ -2,23 +2,36 @@
 # Copyright (c) The CivicCast Authors
 """Native installer product identity (spec D1 / SDR-004).
 
-The native Windows product ("CivicCast (Native)") is a SEPARATE product from the
-WSL product ("CivicCast Installer"). It is built as a Tauri v2 config OVERLAY in
-the same app (``tauri.native.conf.json`` + ``nsis-hooks-bootstrap.nsh``), merged
-over the WSL base config by ``tauri build --config``.
+CivicCast (Native) is the only installer product this repository ships. The
+WSL2 lane ("CivicCast Installer", the base tauri.conf.json built WITHOUT the
+native overlay) was retired under the owner's "no linux" decision
+(2026-08-19); its hook file, nsis-hooks.nsh, is deleted, and the base
+config no longer declares any installerHooks of its own.
 
-These tests are RED-first: they fail until the native overlay + native hook file
-exist. They assert three things the SDR-004 hazard demands:
+The native product is still built as a Tauri v2 config OVERLAY in the same
+app (``tauri.native.conf.json`` + ``nsis-hooks-bootstrap.nsh``), merged over
+the base ``tauri.conf.json`` by ``tauri build --config``, rather than a
+forked app directory -- D1's "two products, one codebase" decision predates
+the WSL lane's retirement, and the overlay mechanism itself did not change,
+only the number of real products that use it.
 
-1. the native NSIS hook set contains ZERO WSL-touching steps;
-2. the two products' identities (identifier, product name, executable name,
-   install mode, hook file) are DISJOINT — computed on the EFFECTIVE (deep-merged)
-   native config, so an overlay that silently inherited the WSL hooks would be
-   caught; and
+These tests assert:
+
+1. the native NSIS hook set contains ZERO WSL-touching steps -- a permanent
+   regression guard, not a two-product disjointness check: if wsl.exe or
+   distro-lifecycle code ever reappeared in the shipped hook set, this
+   fails;
+2. the EFFECTIVE (deep-merged) native config carries the native product's
+   own identity, install mode, and hook file, computed the same way Tauri's
+   CLI computes it, so an overlay that silently dropped an override would
+   be caught; and
 3. the native product installs perMachine (with elevation), per D1.
 
-They also assert the WSL product's own identity files are UNCHANGED, so the
-native work never edited the WSL product (a charter halt trigger).
+The base tauri.conf.json is kept only because Tauri's CLI always reads it as
+the file a ``--config`` overlay merges on top of -- nothing in this
+repository's build scripts or CI workflows ever builds it directly (see
+``scripts/build_native_installer.py``'s own ``run_tauri_build()``, which
+always passes ``--config``).
 """
 
 from __future__ import annotations
@@ -31,16 +44,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "civiccast" / "apps" / "installer" / "src-tauri"
-WSL_CONFIG = INSTALLER / "tauri.conf.json"
-WSL_HOOKS = INSTALLER / "nsis-hooks.nsh"
+BASE_CONFIG = INSTALLER / "tauri.conf.json"
 NATIVE_CONFIG = INSTALLER / "tauri.native.conf.json"
 NATIVE_HOOKS = INSTALLER / "nsis-hooks-bootstrap.nsh"
 NATIVE_VERSION_FILE = ROOT / "civiccast" / "_native_version.py"
 INSTALLER_MAIN_RS = INSTALLER / "src" / "main.rs"
 
-# Tokens that only ever belong to the WSL product's lifecycle. Any of these in
-# the native hook set would re-introduce the SDR-004 hazard (the native product
-# terminating/unregistering the WSL distro, or deleting its autostart).
+# Tokens that only ever belonged to the retired WSL product's lifecycle. Any
+# of these appearing in the native hook set would mean WSL distro-lifecycle
+# code (terminating/unregistering the distro, deleting its autostart) had
+# come back -- the SDR-004 hazard this test cluster exists to catch.
 WSL_ONLY_TOKENS = (
     "wsl.exe",
     "wsl --",
@@ -59,7 +72,8 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     """Replicate Tauri v2's ``--config`` deep merge: objects merge recursively,
     scalars and arrays are replaced by the overlay. Used to compute the EFFECTIVE
     native config so an override that is *missing* from the overlay (and would
-    therefore inherit the WSL value) is caught rather than silently trusted."""
+    therefore inherit the base config's value) is caught rather than silently
+    trusted."""
     merged = copy.deepcopy(base)
     for key, value in overlay.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -99,62 +113,38 @@ def test_native_hook_set_contains_zero_wsl_touching_steps() -> None:
 
 
 def test_effective_native_config_declares_permachine_elevation() -> None:
-    effective = _deep_merge(_load(WSL_CONFIG), _load(NATIVE_CONFIG))
+    effective = _deep_merge(_load(BASE_CONFIG), _load(NATIVE_CONFIG))
     assert _nsis(effective).get("installMode") == "perMachine", (
         "native product installs perMachine with elevation (D1); "
-        "an overlay that omits installMode would inherit the WSL 'currentUser'"
+        "an overlay that omits installMode would inherit the base config's default"
     )
 
 
-def test_effective_native_config_uses_its_own_hook_set_not_the_wsl_hooks() -> None:
+def test_effective_native_config_uses_its_own_hook_set() -> None:
     """The SDR-004 inheritance footgun: Tauri deep-merges the overlay OVER the
-    WSL base, so a missing installerHooks override would silently keep the WSL
-    hooks (which unregister the distro). Assert the EFFECTIVE hook path is the
-    native file."""
-    effective = _deep_merge(_load(WSL_CONFIG), _load(NATIVE_CONFIG))
+    base config, so a missing installerHooks override would silently keep
+    whatever (if anything) the base config declares. Assert the EFFECTIVE
+    hook path is the native file explicitly."""
+    effective = _deep_merge(_load(BASE_CONFIG), _load(NATIVE_CONFIG))
     assert _nsis(effective).get("installerHooks") == "nsis-hooks-bootstrap.nsh"
 
 
-def test_native_and_wsl_product_identities_are_disjoint() -> None:
-    wsl = _load(WSL_CONFIG)
-    native_effective = _deep_merge(wsl, _load(NATIVE_CONFIG))
-
-    # Bundle identifier.
-    assert native_effective["identifier"] == "org.civiccast.native"
-    assert wsl["identifier"] == "org.civiccast.installer"
-    assert native_effective["identifier"] != wsl["identifier"]
-
-    # Product name (drives install root + ARP display name + shortcut).
-    assert native_effective["productName"] == "CivicCast (Native)"
-    assert wsl["productName"] == "CivicCast Installer"
-    assert native_effective["productName"] != wsl["productName"]
-
-    # Installed executable base name.
-    assert _binary_name(native_effective) != _binary_name(wsl)
-
-    # Install mode differs (perMachine Program Files vs. currentUser).
-    assert _nsis(native_effective).get("installMode") == "perMachine"
-    assert _nsis(wsl).get("installMode") == "currentUser"
-
-    # Hook sets are different files.
-    assert _nsis(native_effective).get("installerHooks") == "nsis-hooks-bootstrap.nsh"
-    assert _nsis(wsl).get("installerHooks") == "nsis-hooks.nsh"
-
-
-def test_wsl_product_identity_files_are_unchanged_by_the_native_work() -> None:
-    """Charter halt trigger: the native slice must not modify the WSL product.
-    Pin the WSL identity to what it was so an accidental edit fails here."""
-    wsl = _load(WSL_CONFIG)
-    assert wsl["identifier"] == "org.civiccast.installer"
-    assert wsl["productName"] == "CivicCast Installer"
-    assert _nsis(wsl).get("installMode") == "currentUser"
-    assert _nsis(wsl).get("installerHooks") == "nsis-hooks.nsh"
-
-    # The WSL hooks still own the distro lifecycle (proves they were not gutted
-    # or moved into the native product).
-    wsl_hooks = WSL_HOOKS.read_text(encoding="utf-8")
-    assert "--terminate CivicCast-Ubuntu-24.04" in wsl_hooks
-    assert "--unregister CivicCast-Ubuntu-24.04" in wsl_hooks
+def test_base_config_declares_no_installer_hooks_of_its_own() -> None:
+    """The base tauri.conf.json is never built directly by anything in this
+    repository (see module docstring) -- it exists only as the file Tauri's
+    CLI always merges a ``--config`` overlay on top of. It used to point
+    installerHooks at the retired WSL product's nsis-hooks.nsh; that file
+    and the reference to it are both gone, so a bare ``tauri build`` (no
+    ``--config``, which nothing here runs) now produces an installer with
+    no custom hooks at all rather than the retired WSL lane's."""
+    base = _load(BASE_CONFIG)
+    assert "installerHooks" not in _nsis(base), (
+        "the base tauri.conf.json must not declare installerHooks -- the file it "
+        "used to point at (nsis-hooks.nsh) is deleted"
+    )
+    assert not (INSTALLER / "nsis-hooks.nsh").exists(), (
+        "the retired WSL product's nsis-hooks.nsh must stay deleted"
+    )
 
 
 def test_native_uninstall_preflight_is_the_only_gate_before_native_taskkill() -> None:
@@ -2556,7 +2546,7 @@ STOCK_ENGLISH_LANGSTRING_KEYS = frozenset(
 
 
 def _effective_native_nsis_config() -> dict:
-    effective = _deep_merge(_load(WSL_CONFIG), _load(NATIVE_CONFIG))
+    effective = _deep_merge(_load(BASE_CONFIG), _load(NATIVE_CONFIG))
     return _nsis(effective)
 
 
@@ -2844,16 +2834,19 @@ def test_native_overlay_version_matches_the_native_python_source_of_truth() -> N
     )
 
 
-def test_native_and_wsl_tauri_configs_never_report_the_same_version() -> None:
+def test_native_and_base_tauri_configs_never_report_the_same_version() -> None:
     """The regression this chain exists to prevent. A machine's Add/Remove
     Programs list must never show two entries with the same version string
     under different product names -- that IS the "two rc15 installers"
-    confusion."""
+    confusion the retired WSL product used to risk. The base config no
+    longer builds a shipped product on its own, but its "version" field is
+    still the one Tauri's CLI reads by default, so the two must keep
+    disjoint identities."""
     native_config = _load(NATIVE_CONFIG)
-    wsl_config = _load(WSL_CONFIG)
+    base_config = _load(BASE_CONFIG)
 
-    assert native_config.get("version") != wsl_config.get("version"), (
-        "native and WSL Tauri configs report the identical version "
+    assert native_config.get("version") != base_config.get("version"), (
+        "native and base Tauri configs report the identical version "
         f"{native_config.get('version')!r} -- they must never match"
     )
 
