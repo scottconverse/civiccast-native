@@ -263,8 +263,8 @@ jobs:
           # output says so) or `tizen package -s` can't find the profile.
           tizen cli-config "profiles.path=$HOME/tizen-studio-data/profile/profiles.xml"
           tizen package -t wgt -s CivicCastCI -o tizen/out -- tizen || {
-            echo "tizen package failed; cli.log follows:"
-            cat "$HOME/tizen-studio/tools/ide/cli.log" 2>/dev/null || true
+            echo "tizen package failed; searching for cli.log:"
+            find "$HOME" -iname "cli.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
             exit 1
           }
 
