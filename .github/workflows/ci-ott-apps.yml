@@ -90,12 +90,15 @@ jobs:
       matrix:
         include:
           - task: "tv-app:tv"
+            artifact_name: "tv-app-tv"
             gradle_task: ":tv-app:assembleTvDebug"
             artifact_glob: "tv-app/build/outputs/apk/tv/debug/*.apk"
           - task: "tv-app:firetv"
+            artifact_name: "tv-app-firetv"
             gradle_task: ":tv-app:assembleFiretvDebug"
             artifact_glob: "tv-app/build/outputs/apk/firetv/debug/*.apk"
           - task: "mobile-app"
+            artifact_name: "mobile-app"
             gradle_task: ":mobile-app:assembleDebug"
             artifact_glob: "mobile-app/build/outputs/apk/debug/*.apk"
     defaults:
@@ -121,7 +124,7 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         timeout-minutes: 10
         with:
-          name: civiccast-android-${{ matrix.task }}
+          name: civiccast-android-${{ matrix.artifact_name }}
           path: civiccast/apps/ott-native/android/${{ matrix.artifact_glob }}
           retention-days: 14
 
@@ -137,10 +140,19 @@ jobs:
       matrix:
         include:
           - platform: ios
-            destination: "platform=iOS Simulator,name=iPhone 15,OS=latest"
+            # Generic placeholder destination, not a specific device name —
+            # the concrete simulator device lineup (iPhone 15 vs 16e vs 17)
+            # drifts with every macos-latest/Xcode bump and a hardcoded name
+            # 404s the moment it's dropped (found on this PR's first real
+            # CI run: "Unable to find a device matching... name:iPhone 15").
+            destination: "platform=iOS Simulator,name=Any iOS Simulator Device"
             products_dir: "Debug-iphonesimulator"
           - platform: tvos
-            destination: "platform=tvOS Simulator,name=Apple TV,OS=latest"
+            # Generic placeholder destination — see the iOS row's comment.
+            # "Apple TV" resolved fine on this PR's first CI run, but pin to
+            # the same version-agnostic form so it doesn't silently break on
+            # a future macos-latest bump the way the iOS device name did.
+            destination: "platform=tvOS Simulator,name=Any tvOS Simulator Device"
             products_dir: "Debug-appletvsimulator"
     defaults:
       run:
@@ -247,12 +259,22 @@ jobs:
           tizen version
           tizen certificate -a CivicCastCI -p tizenpkcs -f CivicCastCI -c US -s CivicCast -o CivicCast -n CivicCastAuthors
           tizen security-profiles add -n CivicCastCI -a "$HOME/tizen-studio-data/keystore/author/CivicCastCI.p12" -p tizenpkcs
-          tizen package -t wgt -s CivicCastCI -o out -- tizen
+          # `tizen security-profiles add` only writes profiles.xml; the CLI's
+          # active config needs to be pointed at it explicitly (its own
+          # output says so) or `tizen package -s` can't find the profile.
+          tizen cli-config "profiles.path=$HOME/tizen-studio-data/profile/profiles.xml"
+          tizen package -t wgt -s CivicCastCI -o tizen/out -- tizen || {
+            echo "tizen package failed; cli.log follows:"
+            cat "$HOME/tizen-studio/tools/ide/cli.log" 2>/dev/null || true
+            exit 1
+          }
 
       - name: Fallback — static config.xml validation (tizen package-equivalent)
         id: tizen_fallback
         if: steps.tizen_package.outcome != 'success'
-        run: python3 tizen/validate_config.py
+        run: |
+          python3 -m pip install --quiet defusedxml
+          python3 tizen/validate_config.py
 
       - name: Report which path ran
         run: |
