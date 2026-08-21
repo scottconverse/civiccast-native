@@ -1,26 +1,32 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Cross-platform installer bootstrap contracts."""
+"""Cross-platform installer bootstrap contracts.
+
+Covers the Linux (systemd) and macOS (launchd) native deployments only.
+Windows deployment readiness is decided separately, by
+``civiccast.installer.service``'s native-station detection
+(``_native_windows_station`` / ``_native_station_activated``) -- the
+retired WSL2/Ubuntu lane this module used to also model for Windows was
+removed under the owner's "no linux" decision (2026-08-19); Windows never
+had a native-vs-WSL choice to reject here, it has its own dedicated,
+non-generic bootstrap path.
+"""
 
 from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.installer.models import BootstrapMetadata, ServiceMetadata
 
-OsFamily = Literal["linux", "macos", "windows"]
+OsFamily = Literal["linux", "macos"]
 BootstrapStatus = Literal["ready", "blocked"]
 
 
 class PlatformBootstrapPlan(BaseModel):
-    """Fail-closed platform bootstrap plan.
-
-    Windows is intentionally WSL2 Ubuntu only. Native Windows host services are
-    rejected at validation time so docs, API routes, and release manifests all
-    share the same contract.
-    """
+    """Fail-closed platform bootstrap plan for the Linux/macOS native
+    deployments."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -31,15 +37,6 @@ class PlatformBootstrapPlan(BaseModel):
     bootstrap_metadata: BootstrapMetadata
     blockers: list[str]
     next_step: Annotated[str, Field(min_length=1)]
-
-    @model_validator(mode="after")
-    def _reject_native_windows_service(self) -> PlatformBootstrapPlan:
-        if self.os_family == "windows":
-            if self.runtime != "wsl2-ubuntu" or self.service_metadata.host_service:
-                raise ValueError("Windows installer support is WSL2 Ubuntu 24.04 only.")
-            if self.service_metadata.manager != "systemd":
-                raise ValueError("Windows host plans must manage CivicCast inside WSL2 systemd.")
-        return self
 
 
 def build_bootstrap_plan(
@@ -76,52 +73,17 @@ def build_bootstrap_plan(
             next_step="Install the package, then run systemctl enable civiccast --now.",
         )
 
-    if os_family == "macos":
-        ready = bool(tools.get("launchd")) and bool(tools.get("pkgbuild"))
-        return PlatformBootstrapPlan(
-            os_family="macos",
-            runtime="native-macos",
-            status="ready" if ready else "blocked",
-            service_metadata=ServiceMetadata(manager="launchd"),
-            bootstrap_metadata=BootstrapMetadata(package_kind="pkg"),
-            blockers=[] if ready else ["launchd and pkgbuild tooling are required."],
-            next_step=(
-                "Install the signed .pkg, then load org.civiccast.civiccast with launchctl."
-                if ready
-                else "Install Xcode command line packaging tools, then rebuild the .pkg."
-            ),
-        )
-
-    has_wsl = bool(tools.get("wsl"))
-    has_ubuntu = bool(tools.get("ubuntu"))
-    has_ubuntu_wsl2 = bool(tools.get("ubuntu_wsl2"))
-    wsl_ready = has_wsl and has_ubuntu and has_ubuntu_wsl2
-    blockers = []
-    if not has_wsl:
-        blockers.append(
-            "CivicCast needs a Windows helper before it can finish setup. "
-            "The helper lets CivicCast run its local meeting tools on this computer."
-        )
-    if not has_ubuntu:
-        blockers.append("The helper for this Windows user is missing.")
-    elif not has_ubuntu_wsl2:
-        blockers.append(
-            "CivicCast found the helper, but Windows is running it in an older mode "
-            "that CivicCast cannot use."
-        )
+    ready = bool(tools.get("launchd")) and bool(tools.get("pkgbuild"))
     return PlatformBootstrapPlan(
-        os_family="windows",
-        runtime="wsl2-ubuntu",
-        status="ready" if wsl_ready else "blocked",
-        service_metadata=ServiceMetadata(manager="systemd", host_service=False),
-        bootstrap_metadata=BootstrapMetadata(package_kind="windows-wsl2-bootstrap-manifest"),
-        blockers=blockers,
+        os_family="macos",
+        runtime="native-macos",
+        status="ready" if ready else "blocked",
+        service_metadata=ServiceMetadata(manager="launchd"),
+        bootstrap_metadata=BootstrapMetadata(package_kind="pkg"),
+        blockers=[] if ready else ["launchd and pkgbuild tooling are required."],
         next_step=(
-            "CivicCast's Windows helper is ready. It can run the local meeting tools on this computer. Continue setup and open the dashboard."
-            if wsl_ready
-            else (
-                "Choose Set up Windows helper. Approve the Windows security prompt, "
-                "restart if Windows asks, then reopen CivicCast Installer."
-            )
+            "Install the signed .pkg, then load org.civiccast.civiccast with launchctl."
+            if ready
+            else "Install Xcode command line packaging tools, then rebuild the .pkg."
         ),
     )

@@ -269,7 +269,14 @@ def installer_health_check(
 def installer_platform_plan(
     os_family: Annotated[
         str,
-        typer.Option("--os-family", help="Platform family: linux, macos, or windows."),
+        typer.Option(
+            "--os-family",
+            help=(
+                "Platform family: linux or macos. Windows deployment readiness "
+                "is decided separately, by the native station's own activation "
+                "state (civiccast.installer.service), not this generic plan."
+            ),
+        ),
     ] = "linux",
     json_output: Annotated[
         bool,

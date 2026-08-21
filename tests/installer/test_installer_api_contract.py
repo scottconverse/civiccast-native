@@ -23,7 +23,7 @@ class TestInstallerApiContract:
         )
         staff_response = staff_client.get(
             "/api/staff/installer/platform-plan",
-            params={"os_family": "windows"},
+            params={"os_family": "linux"},
         )
         assert staff_response.status_code == 200
 
@@ -32,14 +32,28 @@ class TestInstallerApiContract:
 
         response = client.get(
             "/api/staff/installer/platform-plan",
-            params={"os_family": "windows"},
+            params={"os_family": "linux"},
         )
 
         assert response.status_code == 200
         payload = response.json()
-        assert payload["runtime"] == "wsl2-ubuntu"
+        assert payload["runtime"] == "native-linux"
         assert payload["model_config"]["extra"] == "forbid"
-        assert payload["service_metadata"]["host_service"] is False
+        assert payload["service_metadata"]["manager"] == "systemd"
+
+    def test_platform_plan_endpoint_rejects_the_retired_windows_os_family(self) -> None:
+        """Windows deployment readiness is decided by the native-station
+        signals in build_installer_summary now, never by this generic
+        multi-OS plan -- os_family no longer accepts "windows" at all."""
+
+        client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
+
+        response = client.get(
+            "/api/staff/installer/platform-plan",
+            params={"os_family": "windows"},
+        )
+
+        assert response.status_code == 422
 
     def test_package_verification_endpoint_blocks_missing_proof(self) -> None:
         client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
@@ -106,7 +120,7 @@ class TestInstallerApiContract:
         assert response.status_code == 200
         payload = response.json()
         assert payload["ready"] is False
-        assert payload["platform"] in {"linux", "macos", "windows-wsl2"}
+        assert payload["platform"] in {"linux", "macos", "windows-native"}
         assert {
             "platform",
             "runtime",
@@ -118,23 +132,31 @@ class TestInstallerApiContract:
             "dashboard",
         } == {lane["id"] for lane in payload["lanes"]}
 
-    def test_installer_summary_maps_windows_hosts_to_wsl2_platform(
+    def test_installer_summary_maps_every_windows_host_to_native_platform(
         self,
         monkeypatch,
     ) -> None:
+        """Every Windows control plane running today's code is the native
+        station -- the retired WSL2 lane's own control plane always ran as a
+        Linux process, so `platform.system() == "Windows"` alone is now a
+        reliable signal on its own, with no ambiguous fallback."""
+
         monkeypatch.setattr(service.platform, "system", lambda: "Windows")
 
         summary = service.build_installer_summary()
 
-        assert summary.platform == "windows-wsl2"
+        assert summary.platform == "windows-native"
 
     @staticmethod
     def _force_ready_host(monkeypatch, *, ffmpeg: bool) -> None:
-        """Put the summary on a host whose required lanes all pass."""
+        """Put the summary on a Linux host whose required lanes all pass."""
 
         monkeypatch.setattr(service.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(service, "_running_inside_wsl", lambda: True)
-        monkeypatch.setattr(service, "_running_inside_wsl2", lambda: True)
+        ready_plan = service.build_bootstrap_plan(
+            os_family="linux",
+            detected_tools={"systemd": True, "package_manager": "apt"},
+        )
+        monkeypatch.setattr(service, "_detected_bootstrap_plan", lambda: ready_plan)
         ready_storage = service.durable_storage_status().model_copy(
             update={"status": "ready", "migrations_applied": True}
         )
@@ -216,12 +238,14 @@ class TestInstallerApiContract:
     # ------------------------------------------------------------------
     # Native Windows station platform lane
     #
-    # ``_detected_bootstrap_plan`` hard-codes ``ubuntu``/``ubuntu_wsl2`` to
-    # False on a Windows host and ``PlatformBootstrapPlan`` rejects a native
-    # Windows runtime outright, so before this fix the platform lane could
-    # never clear on the native product -- and it dragged ``service``,
-    # ``dashboard``, and the summary's ``ready`` flag down with it forever.
-    # The WSL2 deployment shares this endpoint, so both halves are pinned.
+    # This used to be decided by ``_detected_bootstrap_plan``, which
+    # hard-coded ``ubuntu``/``ubuntu_wsl2`` to False on a Windows host, and
+    # ``PlatformBootstrapPlan`` rejected a native Windows runtime outright --
+    # so the platform lane could never clear on the native product, and it
+    # dragged ``service``, ``dashboard``, and the summary's ``ready`` flag
+    # down with it forever. Windows is now decided entirely by this
+    # process's own native-station activation signals, never by that
+    # generic multi-OS plan (which now only covers Linux/macOS).
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -492,8 +516,9 @@ class TestInstallerApiContract:
         assert "not in a form CivicCast understands" in lanes["storage"].next_step
 
     # ------------------------------------------------------------------
-    # summary.platform must name the DEPLOYMENT, because the GUI switches
-    # WSL-only affordances on it (apps/installer/src/wsl-affordances.ts).
+    # summary.platform must name the DEPLOYMENT: apps/installer/src/lane-
+    # affordances.ts's isWindowsPlatform gates "Open installer log" on it
+    # being exactly "windows-native".
     # ------------------------------------------------------------------
 
     def test_native_station_reports_a_native_platform(
@@ -532,16 +557,16 @@ class TestInstallerApiContract:
 
         assert service.build_installer_summary().platform == "windows-native"
 
-    def test_windows_host_without_a_native_install_keeps_the_wsl_bootstrap_plan(
+    def test_windows_host_without_a_native_install_still_reports_native_platform(
         self,
         monkeypatch,
     ) -> None:
-        """The WSL deployment's Windows-host probe is untouched.
-
-        Neither native signal is present here (no station env, and the
-        interpreter is not the installed ``<root>\\runtime`` one), so the
-        WSL bootstrap plan must still decide the lane, verbatim.
-        """
+        """A Windows host with neither native signal present (no station
+        env, interpreter not the installed ``<root>\\runtime`` one) is an
+        UNACTIVATED native station, not a different deployment -- there is
+        no other Windows deployment left to fall back to. It must report
+        honestly as blocked, never claim readiness, and never mention a
+        Windows helper this product does not have."""
 
         monkeypatch.delenv("CIVICCAST_NATIVE_STATION", raising=False)
         monkeypatch.delenv("CIVICCAST_NATIVE_STATION_MANIFEST", raising=False)
@@ -550,47 +575,8 @@ class TestInstallerApiContract:
         summary = service.build_installer_summary()
         lanes = {lane.id: lane for lane in summary.lanes}
 
-        assert summary.platform == "windows-wsl2"
+        assert summary.platform == "windows-native"
         assert lanes["platform"].ready is False
         assert lanes["platform"].status == "blocked"
-        assert "helper" in lanes["platform"].next_step.lower()
+        assert "helper" not in lanes["platform"].next_step.lower()
         assert summary.ready is False
-
-    def test_wsl2_guest_platform_lane_wording_and_readiness_are_unchanged(
-        self,
-        monkeypatch,
-    ) -> None:
-        """The WSL2 guest control plane's ready path is byte-identical."""
-
-        monkeypatch.delenv("CIVICCAST_NATIVE_STATION", raising=False)
-        monkeypatch.delenv("CIVICCAST_NATIVE_STATION_MANIFEST", raising=False)
-        self._force_ready_host(monkeypatch, ffmpeg=True)
-
-        summary = service.build_installer_summary()
-        lanes = {lane.id: lane for lane in summary.lanes}
-
-        assert summary.platform == "windows-wsl2"
-        assert lanes["platform"].ready is True
-        assert lanes["platform"].status == "ready"
-        assert lanes["platform"].next_step == (
-            "CivicCast's Windows helper is ready. It can run the local meeting "
-            "tools on this computer. Continue setup and open the dashboard."
-        )
-        assert summary.ready is True
-
-    def test_installer_summary_blocks_wsl1_runtime(
-        self,
-        monkeypatch,
-    ) -> None:
-        monkeypatch.setattr(service.platform, "system", lambda: "Linux")
-        monkeypatch.setattr(service, "_running_inside_wsl", lambda: True)
-        monkeypatch.setattr(service, "_running_inside_wsl2", lambda: False)
-
-        summary = service.build_installer_summary()
-        platform_lane = next(lane for lane in summary.lanes if lane.id == "platform")
-
-        assert summary.platform == "windows-wsl2"
-        assert summary.ready is False
-        assert platform_lane.ready is False
-        assert platform_lane.status == "blocked"
-        assert "older mode" in platform_lane.next_step
