@@ -1,0 +1,67 @@
+# PyAV wheel byte-exact reproducibility — hosted vs. self-hosted
+
+`scripts/build_native_pyav_wheel.py` compiles CivicCast's pinned LGPL-only
+PyAV wheel from source (PyAV + a minimal FFmpeg build) and, on success,
+asserts the compiled wheel's **byte-exact** size and SHA-256 match a
+reviewed reference (`EXPECTED_WHEEL_BYTES` / `EXPECTED_WHEEL_SHA256`). Every
+input the build downloads first — the pinned `uv` executable, the FFmpeg
+source archive, the MSYS2 base, the PyAV sdist — is verified against its own
+pinned hash and that check is **always strict**, on every build lane. This
+document is only about the *output* check: the compiled wheel itself.
+
+## Why the same pinned toolchain can still produce different bytes
+
+The toolchain the build compiles with (MSVC Build Tools, node, python, uv)
+is byte-identical across machines: `scripts/provision_native_build_toolchain.py`
+downloads the exact pinned artifacts named in
+`native-windows-build-toolchain.lock.json`, verified by SHA-256, regardless
+of which physical machine runs the provisioning step.
+
+That does not make the *compiled output* byte-identical across machines.
+MSVC's linker and compiler can embed build-machine-dependent state into the
+binary even with an identical toolchain: absolute scratch/build paths
+(`$RUNNER_TEMP` differs per machine and per run), PDB paths, and similar
+build-environment artifacts. The FFmpeg DLLs PyAV links against have been
+observed to differ in *content* at *identical sizes* between two build runs
+that used the same reviewed SDK — see the standing project note on this
+(`/pyav-wheel-pin-unreproducible` in Scott's working memory): the fix is to
+pin the SDK identity tightly (already done, via the toolchain lock) and
+**not** chase this with more compiler flags — `/Brepro`, `/pathmap`, and a
+pinned `nasm` are already set, and adding more has not closed the gap.
+
+## What changed for the self-hosted build lane
+
+`native-beta-candidate-artifacts.yml`'s `build_target: self-hosted` path
+(see `docs/ops/gate-a.md` and the workflow's own header) runs the exact same
+pack-build scripts on a different physical machine than the `windows-latest`
+hosted runners the reviewed hash was captured against. To avoid failing a
+release candidate purely because of the machine it happened to compile on —
+while never weakening the *input* verification — the self-hosted lane passes
+`--advisory-pyav-wheel-hash` down the call chain:
+
+- `scripts/build_native_pyav_wheel.py --advisory-wheel-hash`
+- `scripts/build_native_app_payload.py --advisory-pyav-wheel-hash`
+- `scripts/build_native_app_payload_pack.py --advisory-pyav-wheel-hash`
+
+With this flag, `verify_artifact()`'s mismatch on the **final compiled
+wheel only** (the `candidate` / `output` call sites in `build()`) logs a
+`::warning::` naming the actual vs. expected bytes/hash and continues,
+instead of raising `PyAvWheelBuildError`. Every other `verify_artifact()`
+call in the file — all four pinned downloads — has no `advisory` argument
+and stays a hard failure on every lane, self-hosted included.
+
+The hosted lane (`build_target: hosted`, the default, and every
+`push`-triggered candidate build on the release branch) never passes this
+flag: hosted builds keep the byte-exact assertion as a hard failure, exactly
+as before this change.
+
+## What this does and does not prove
+
+A self-hosted candidate build whose PyAV wheel hash triggered the advisory
+warning is **not** proof the wheel is wrong — the runtime probe
+(`run_runtime_probe`) still executes the compiled wheel and decodes real
+audio frames as part of the same build, and the license/provenance gate in
+`build_native_app_payload.py` still runs unconditionally. It **is** a signal
+that this specific candidate's PyAV wheel bytes were not independently
+reproduced against the hosted-reviewed reference, which is worth carrying
+into release-candidate review notes for that run.

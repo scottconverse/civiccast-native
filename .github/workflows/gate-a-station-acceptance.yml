@@ -36,6 +36,18 @@
 # remains supported on the script itself for manual local use, where a
 # slower single-stream `gh run download` is an acceptable trade for not
 # needing a workflow around it.
+#
+# LOCAL-FIRST KIT: native-beta-candidate-artifacts.yml's build_target:
+# self-hosted lane builds on THIS SAME box (self-hosted, windows,
+# sandbox-lab) and writes the kit to C:\CivicCastTester\candidates\<sha>\kit
+# instead of only uploading the ~21 GB artifact. Every candidate run --
+# hosted or self-hosted -- also uploads a tiny native-beta-manifest-<sha>
+# artifact naming which case applies. This workflow downloads that manifest
+# FIRST (cheap either way) and, when it says the kit is already local on
+# this box, skips the big download entirely and points Run-GateA.ps1's
+# -KitDir straight at it -- see "Resolve the kit directory" below. Any
+# candidate the manifest doesn't cover (an older run, or a hosted build)
+# falls back to the download exactly as before this change.
 
 name: gate-a-station-acceptance
 
@@ -51,7 +63,14 @@ on:
         type: string
 
 concurrency:
-  group: gate-a
+  # Shared with native-beta-candidate-artifacts.yml's build_target:
+  # self-hosted lane (group: sandbox-lab there too) so a self-hosted candidate
+  # build and a Gate A run never execute on this one physical box at the
+  # same time -- the later one queues (cancel-in-progress: false) instead of
+  # contending for the same hardware/Windows Sandbox feature. This also still
+  # fully serializes Gate A runs against each other, as the old "gate-a" name
+  # did.
+  group: sandbox-lab
   cancel-in-progress: false
 
 permissions:
@@ -126,7 +145,41 @@ jobs:
             New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
           }
 
-      - name: Download the candidate kit artifact (parallel, chunked)
+      - name: Download the candidate manifest (small; always fetched first)
+        id: manifest_download
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/download-artifact@v4
+        with:
+          name: native-beta-manifest-${{ steps.run_id.outputs.source_sha }}
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: sandbox-lab/kit-staging/manifest-${{ steps.run_id.outputs.source_sha }}
+
+      - name: Resolve the kit directory (prefer the local candidate root)
+        id: kit_dir
+        shell: pwsh
+        run: |
+          $sourceSha = "${{ steps.run_id.outputs.source_sha }}"
+          $manifestPath = "sandbox-lab/kit-staging/manifest-$sourceSha/native-beta-manifest.json"
+          $kitDir = $null
+          if (Test-Path -LiteralPath $manifestPath) {
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            Write-Host "Candidate manifest: build_target=$($manifest.build_target) kit_local_path=$($manifest.kit_local_path)"
+            if ($manifest.build_target -eq "self-hosted" -and $manifest.kit_local_path -and (Test-Path -LiteralPath $manifest.kit_local_path)) {
+              $kitDir = $manifest.kit_local_path
+              Write-Host "Kit is already local on this box at $kitDir -- skipping the artifact download."
+            } elseif ($manifest.build_target -eq "self-hosted") {
+              Write-Host "Manifest says self-hosted but kit_local_path is missing or not present on this box ($($manifest.kit_local_path)) -- falling back to artifact download."
+            }
+          } else {
+            Write-Host "No candidate manifest available (older candidate run predating this contract, or the manifest step did not complete) -- falling back to artifact download."
+          }
+          "kit_dir=$kitDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "use_local=$(if ($kitDir) { 'true' } else { 'false' })" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Download the candidate kit artifact (parallel, chunked; skipped when the kit is already local)
+        if: steps.kit_dir.outputs.use_local != 'true'
         uses: actions/download-artifact@v4
         timeout-minutes: 30
         with:
@@ -139,7 +192,12 @@ jobs:
         id: gate_a
         shell: pwsh
         run: |
-          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -SoakMinutes 20 -TimeoutMinutes 150
+          $kitDir = "${{ steps.kit_dir.outputs.kit_dir }}"
+          if ([string]::IsNullOrWhiteSpace($kitDir)) {
+            $kitDir = "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}"
+          }
+          Write-Host "Gate A kit directory: $kitDir (local=${{ steps.kit_dir.outputs.use_local }})"
+          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir $kitDir -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -SoakMinutes 20 -TimeoutMinutes 150
           $exitCode = $LASTEXITCODE
           "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           # Locate the evidence dir this run just wrote so the upload step

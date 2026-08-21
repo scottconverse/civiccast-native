@@ -100,6 +100,118 @@ def test_verify_artifact_reports_hash_when_byte_length_is_wrong(tmp_path: Path) 
         )
 
 
+def test_verify_artifact_advisory_mode_warns_instead_of_raising(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifact = tmp_path / "input.bin"
+    artifact.write_bytes(b"wrong")
+
+    # Must not raise -- this is the whole point of advisory mode.
+    builder.verify_artifact(
+        artifact,
+        expected_bytes=len(b"wrong"),
+        expected_sha256="0" * 64,
+        advisory=True,
+    )
+    captured = capsys.readouterr()
+    assert "::warning::" in captured.out
+    assert "advisory" in captured.out.lower()
+    assert "SHA-256" in captured.out
+
+
+def test_verify_artifact_advisory_mode_is_silent_on_a_match(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifact = tmp_path / "input.bin"
+    artifact.write_bytes(b"right")
+    actual_sha256 = hashlib.sha256(b"right").hexdigest()
+
+    builder.verify_artifact(
+        artifact,
+        expected_bytes=len(b"right"),
+        expected_sha256=actual_sha256,
+        advisory=True,
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_verify_artifact_default_advisory_false_still_raises(tmp_path: Path) -> None:
+    """Every pinned-download call site omits ``advisory`` -- confirm the
+    default keeps them a hard failure, not just the explicit-False callers
+    already covered above."""
+    artifact = tmp_path / "input.bin"
+    artifact.write_bytes(b"wrong")
+
+    with pytest.raises(builder.PyAvWheelBuildError, match="SHA-256"):
+        builder.verify_artifact(
+            artifact,
+            expected_bytes=len(b"wrong"),
+            expected_sha256="0" * 64,
+        )
+
+
+def test_main_forwards_advisory_wheel_hash_flag_to_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real CLI parser in main() must accept --advisory-wheel-hash and
+    forward it through to build() -- not a reimplemented parser."""
+    received: dict[str, object] = {}
+
+    def _fake_build(*, output_dir: Path, cache_dir: Path, scratch: Path, advisory_wheel_hash: bool = False):
+        received["advisory_wheel_hash"] = advisory_wheel_hash
+        wheel = output_dir / "av-18.0.0-cp312-cp312-win_amd64.whl"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        wheel.write_bytes(b"stub")
+        return wheel, {}
+
+    monkeypatch.setattr(builder, "build", _fake_build)
+    exit_code = builder.main(
+        [
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--scratch",
+            str(tmp_path / "scratch"),
+            "--advisory-wheel-hash",
+        ]
+    )
+    assert exit_code == 0
+    assert received["advisory_wheel_hash"] is True
+
+
+def test_main_defaults_advisory_wheel_hash_to_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, object] = {}
+
+    def _fake_build(*, output_dir: Path, cache_dir: Path, scratch: Path, advisory_wheel_hash: bool = False):
+        received["advisory_wheel_hash"] = advisory_wheel_hash
+        wheel = output_dir / "av-18.0.0-cp312-cp312-win_amd64.whl"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        wheel.write_bytes(b"stub")
+        return wheel, {}
+
+    monkeypatch.setattr(builder, "build", _fake_build)
+    exit_code = builder.main(
+        [
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--scratch",
+            str(tmp_path / "scratch"),
+        ]
+    )
+    assert exit_code == 0
+    assert received["advisory_wheel_hash"] is False
+
+
 def test_safe_zip_extract_rejects_path_traversal(tmp_path: Path) -> None:
     archive = tmp_path / "bad.zip"
     with zipfile.ZipFile(archive, "w") as zipped:
