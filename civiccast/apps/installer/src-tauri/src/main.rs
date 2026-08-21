@@ -20,8 +20,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
-use std::sync::OnceLock;
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,34 +32,9 @@ const RESIDENT_PORTAL_URL: &str = "http://127.0.0.1:8000/";
 const SERVICE_URL: &str = "http://127.0.0.1:8000";
 const SERVICE_HEALTH_ADDR: &str = "127.0.0.1:8000";
 const RUNTIME_HOST_MUTEX_ADDR: &str = "127.0.0.1:38474";
-const WSL_BOOTSTRAP_MUTEX_ADDR: &str = "127.0.0.1:38475";
 const CIVICCAST_VERSION: &str = "1.0.0-beta.1";
 const INSTALLER_SHUTDOWN_MARKER: &str = "shutdown-request";
-const UBUNTU_WSL_SOURCE_NAME: &str = "Ubuntu-24.04";
-const CIVICCAST_WSL_DISTRO_NAME: &str = "CivicCast-Ubuntu-24.04";
-const CIVICCAST_WSL_HEALTH_PROBE: &str = concat!(
-    "python3 -c \"import sys; ",
-    "raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)\"",
-    " >/dev/null && apt-get check >/dev/null"
-);
-// The probe ends in `apt-get check`, which fails transiently while apt is still
-// busy/locked immediately after provisioning. On slower machines (observed on
-// nested WSL2) that race left a healthy install stuck at "helper missing". Retry
-// with a bounded backoff so a transient apt-busy does not wrongly block; a real
-// failure still blocks once the budget is spent. ~6 x 10s covers the settle window.
-const HEALTH_PROBE_MAX_ATTEMPTS: u32 = 6;
-const HEALTH_PROBE_RETRY_SECS: u64 = 10;
-const HEALTH_PROBE_TIMEOUT_SECS: u64 = 30;
 
-struct InstallerActionMessage {
-    status: String,
-    message: String,
-    reboot_required: bool,
-}
-
-fn is_wsl_bootstrap_lane(lane_id: &str) -> bool {
-    matches!(lane_id, "wsl2" | "platform")
-}
 
 fn is_runtime_bootstrap_lane(lane_id: &str) -> bool {
     matches!(
@@ -101,27 +75,15 @@ fn installer_state_path() -> Result<PathBuf, String> {
     Ok(installer_state_root()?.join("installer-state.json"))
 }
 
-fn installer_log_candidates(root: &Path) -> [PathBuf; 2] {
-    [
-        root.join("headless-bootstrap.log"),
-        root.join("bootstrap-wsl2-ubuntu.log"),
-    ]
+/// The native runtime host's own diagnostic log (`runtime_host_log`'s
+/// output). The retired WSL product's headless-bootstrap and WSL2/Ubuntu
+/// bootstrap logs used to be candidates here too, but both those scripts
+/// were removed with the WSL lane, and this is now the only log
+/// `open_installer_log` / `newest_installer_log_path` has to serve.
+fn installer_log_candidates(root: &Path) -> [PathBuf; 1] {
+    [root.join("runtime-host.log")]
 }
 
-/// Every on-disk artifact a WSL helper-setup attempt leaves behind under
-/// ``root`` (script, log, and both result files). rc17 D5: "Reset progress"
-/// used to remove only ``installer-state.json`` and leave these -- so a
-/// returning operator's "Open installer log" (`newest_installer_log_path`,
-/// which reads whichever of these is newest) could still show a stale prior
-/// attempt's log/result as if it were current.
-fn wsl_bootstrap_artifact_paths(root: &Path) -> [PathBuf; 4] {
-    [
-        root.join("bootstrap-wsl2-ubuntu.ps1"),
-        root.join("bootstrap-wsl2-ubuntu.log"),
-        root.join("bootstrap-wsl2-ubuntu-result.txt"),
-        root.join("bootstrap-wsl2-ubuntu.result.json"),
-    ]
-}
 
 fn newest_installer_log_path() -> Result<PathBuf, String> {
     let root = installer_state_root()?;
@@ -252,21 +214,6 @@ fn newest_existing_installer_state_path() -> Result<Option<PathBuf>, String> {
     ))
 }
 
-/// Strip Windows extended-length prefixes (`\\?\C:\...`, `\\?\UNC\host\...`).
-/// Tauri's `resource_dir()` returns canonicalized paths carrying this prefix;
-/// PowerShell 5.1 provider cmdlets (`Join-Path`, `Test-Path`) cannot map a
-/// PSDrive for it and die with "argument \"drive\" is null" — which killed the
-/// whole first-run bootstrap on the installer's resume path.
-fn simplify_verbatim_path(path: &Path) -> PathBuf {
-    let text = path.to_string_lossy();
-    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{rest}"));
-    }
-    if let Some(rest) = text.strip_prefix(r"\\?\") {
-        return PathBuf::from(rest);
-    }
-    path.to_path_buf()
-}
 
 /// The nonce-bearing operator URL is written once by the bootstrap success
 /// path; every later plain `write_installer_state` used to clobber it back to
@@ -278,9 +225,7 @@ fn simplify_verbatim_path(path: &Path) -> PathBuf {
 fn preserved_operator_console_url() -> Option<String> {
     let path = newest_existing_installer_state_path().ok()??;
     let raw = fs::read_to_string(path).ok()?;
-    let branch = STARTUP_BRANCH.get().copied();
-    let cached_present = nonce_operator_url_from_state(&raw).is_some();
-    let current_nonce = current_setup_nonce_for_reverification(branch, cached_present);
+    let current_nonce = current_setup_nonce_for_reverification();
     resolved_operator_console_url(Some(&raw), current_nonce.as_deref())
 }
 
@@ -332,40 +277,22 @@ fn resolved_operator_console_url(
     }
 }
 
-/// Whether cheaply re-checking the CURRENT authoritative nonce -- even when
-/// the cache already has one -- is safe to do on every state write/poll.
+/// The authoritative nonce to compare the cache against right now.
 ///
 /// The native station's authoritative source is a local registry read
-/// (`native_setup_nonce_from_registry`): cheap, synchronous, no subprocess.
-/// Re-checking it on every write is exactly what fixes BLOCKER N-02.
+/// (`native_setup_nonce_from_registry`): cheap, synchronous, no subprocess,
+/// so re-checking it on every write/poll -- cached or not -- is always safe.
+/// That is exactly what fixes BLOCKER N-02 (a stale cached nonce surviving a
+/// reinstall must never outrank the current one just because something was
+/// already cached).
 ///
-/// The WSL product's authoritative source is `setup_nonce_from_wsl`, which
-/// shells out to `wsl.exe`. Re-probing THAT on every write/poll once a nonce
-/// is already cached would reintroduce the `wsl.exe` storm
-/// `may_probe_wsl_for_setup_nonce` was written to stop (see its doc comment)
-/// -- so the WSL lane keeps trusting a cached nonce once present, and only
-/// re-derives when the cache is empty (the existing, already-guarded
-/// recovery path).
-fn may_cheaply_reverify_setup_nonce(branch: Option<StartupBranch>) -> bool {
-    matches!(branch, Some(StartupBranch::NativeStatus))
-}
-
-/// The authoritative nonce to compare the cache against right now, or `None`
-/// if re-checking should be skipped this time.
-///
-/// Thin impure gate around [`setup_nonce_for_this_product`]: when the cache
-/// already has a value AND cheap re-verification is not available for this
-/// branch (the WSL storm guard), the authoritative read is skipped entirely
-/// -- not just ignored after the fact -- so no extra `wsl.exe` process is
-/// ever spawned for it.
-fn current_setup_nonce_for_reverification(
-    branch: Option<StartupBranch>,
-    cached_present: bool,
-) -> Option<String> {
-    if cached_present && !may_cheaply_reverify_setup_nonce(branch) {
-        return None;
-    }
-    setup_nonce_for_this_product(branch)
+/// The retired WSL product used to gate this on a "cheap to re-verify?"
+/// question, because its own authoritative source shelled out to `wsl.exe`
+/// on every call and re-probing that on every write/poll was a process
+/// storm. The native product has no such cost, so the gate was removed along
+/// with the WSL lane rather than carried forward unused.
+fn current_setup_nonce_for_reverification() -> Option<String> {
+    native_setup_nonce_from_registry()
 }
 
 /// The operator-console URL `reset_local_installer_state` should hand back
@@ -394,38 +321,16 @@ fn validated_setup_nonce(raw: &str) -> Option<String> {
     Some(nonce.to_string())
 }
 
-#[cfg(target_os = "windows")]
-fn setup_nonce_from_wsl() -> Option<String> {
-    let args = [
-        "--distribution",
-        CIVICCAST_WSL_DISTRO_NAME,
-        "--user",
-        "root",
-        "--cd",
-        "/",
-        "--exec",
-        "/bin/cat",
-        "/var/lib/civiccast/setup-nonce",
-    ];
-    match run_bounded_command("wsl.exe", "setup-handoff-recovery", &args, 5) {
-        Ok((0, output)) => validated_setup_nonce(&output),
-        _ => None,
-    }
-}
 
-#[cfg(not(target_os = "windows"))]
-fn setup_nonce_from_wsl() -> Option<String> {
-    None
-}
 
 /// The native station's setup-handoff nonce, read from the ACL-hardened
 /// `HKLM\SOFTWARE\CivicCast\Native\SetupNonce` the elevated installer wrote at
 /// provision time (`native_service_registration::write_setup_nonce`, same key
 /// and same SYSTEM+Administrators DACL as `DatabaseUrl`).
 ///
-/// This is the NATIVE counterpart to [`setup_nonce_from_wsl`]: the WSL product
-/// keeps its nonce inside the distro at `/var/lib/civiccast/setup-nonce`, a
-/// path a native station does not have and must never shell out to look for.
+/// This is now the ONLY setup-nonce source: the retired WSL product used to
+/// keep its own nonce inside its distro at `/var/lib/civiccast/setup-nonce`,
+/// a path a native station never had and never shells out to look for.
 #[cfg(target_os = "windows")]
 fn native_setup_nonce_from_registry() -> Option<String> {
     native_service_registration::read_setup_nonce().and_then(|nonce| validated_setup_nonce(&nonce))
@@ -436,47 +341,14 @@ fn native_setup_nonce_from_registry() -> Option<String> {
     None
 }
 
-/// The setup-handoff nonce for the product THIS BINARY IS, or `None`.
-///
-/// The native station and the WSL product persist the nonce in two entirely
-/// different places, so the lane has to be decided before anything is read --
-/// never "try WSL and see". See [`may_probe_wsl_for_setup_nonce`] for the
-/// blocker the WSL side of this guard closes.
-///
-/// The native branch is what puts the `?nonce=` on the operator-console URL
-/// behind the installer's "Open operator console" button. Without it the
-/// button opened `http://127.0.0.1:8000/operator/` bare, the SPA found no
-/// nonce in the query string (`portal-operator/src/api/client.ts`'s
-/// `runtimeSetupNonce` reads `?nonce=` / `#...?nonce=`, then falls back to
-/// sessionStorage), sent no `X-CivicCast-Setup-Nonce` header, and every setup
-/// mutation came back 403.
-fn setup_nonce_for_this_product(branch: Option<StartupBranch>) -> Option<String> {
-    match branch {
-        Some(StartupBranch::NativeStatus) => native_setup_nonce_from_registry(),
-        Some(StartupBranch::WslBootstrap) => {
-            debug_assert!(may_probe_wsl_for_setup_nonce(branch));
-            setup_nonce_from_wsl()
-        }
-        // Unlatched: no Tauri app is running (a CLI subcommand path). Neither
-        // read has a window to recover a handoff URL for.
-        None => None,
-    }
-}
-
 fn restore_setup_handoff_url_if_available(raw: String) -> String {
-    let branch = STARTUP_BRANCH.get().copied();
     let cached_url = nonce_operator_url_from_state(&raw);
-    // Lane guard (see `may_cheaply_reverify_setup_nonce` /
-    // `may_probe_wsl_for_setup_nonce`): the WSL product may shell out to
-    // `wsl.exe` here only when nothing is cached yet -- this function is
-    // polled continuously by `read_local_installer_state`, so re-probing on
-    // every poll once a nonce is already cached is a `wsl.exe` storm and a
-    // temp-file leak on every native station. The native station's own
-    // authoritative source is a cheap local registry read, so IT always
-    // re-checks, cached or not -- that is the BLOCKER N-02 fix: a stale
-    // cached nonce (surviving a reinstall) must never outrank the current
-    // one just because something was already cached.
-    let current_nonce = current_setup_nonce_for_reverification(branch, cached_url.is_some());
+    // The native station's authoritative source is a cheap local registry
+    // read (`native_setup_nonce_from_registry`), so it always re-checks,
+    // cached or not -- that is the BLOCKER N-02 fix: a stale cached nonce
+    // (surviving a reinstall) must never outrank the current one just
+    // because something was already cached.
+    let current_nonce = current_setup_nonce_for_reverification();
     let Some(operator_url) = resolved_operator_console_url(Some(&raw), current_nonce.as_deref())
     else {
         return raw;
@@ -531,31 +403,9 @@ fn unix_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-fn installer_state_needs_post_reboot_wsl_reprobe(raw: &str) -> bool {
-    let compact: String = raw
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
-    let is_wsl_lane = compact.contains("\"current_lane_id\":\"wsl2\"")
-        || compact.contains("\"current_lane_id\":\"platform\"");
-    is_wsl_lane && compact.contains("\"reboot_required\":true")
-}
 
-fn should_resume_post_reboot_wsl_bootstrap(
-    raw: &str,
-    wsl_core_available: bool,
-    ubuntu_ready: bool,
-) -> bool {
-    installer_state_needs_post_reboot_wsl_reprobe(raw) && wsl_core_available && !ubuntu_ready
-}
 
-fn startup_missing_wsl_message() -> &'static str {
-    "CivicCast needs the Windows helper before it can finish setup. Choose Set up Windows helper to continue."
-}
 
-fn startup_post_reboot_wsl_missing_message() -> &'static str {
-    "Windows helper setup is not finished yet (a restart may be part of it). Choose Set up Windows helper to continue."
-}
 
 fn write_installer_state(
     lane_id: &str,
@@ -610,40 +460,6 @@ fn write_installer_state_with_operator_url(
     );
     fs::write(&path, payload)
         .map_err(|error| format!("Could not write installer state file: {error}"))
-}
-
-fn write_installer_activity_state(
-    lane_id: &str,
-    message: &str,
-    activity_phase: &str,
-    activity_current: u32,
-    activity_total: u32,
-    started_at_unix: u64,
-    elapsed_seconds: u64,
-) -> Result<(), String> {
-    let path = installer_state_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Could not create installer state directory: {error}"))?;
-    }
-    let operator_console_url =
-        preserved_operator_console_url().unwrap_or_else(|| OPERATOR_CONSOLE_URL.to_string());
-    let payload = format!(
-        "{{\n  \"schema_version\": 1,\n  \"current_lane_id\": \"{}\",\n  \"status\": \"running\",\n  \"message\": \"{}\",\n  \"reboot_required\": false,\n  \"updated_at_unix\": {},\n  \"started_at_unix\": {},\n  \"elapsed_seconds\": {},\n  \"activity_current\": {},\n  \"activity_total\": {},\n  \"activity_phase\": \"{}\",\n  \"service_url\": \"{}\",\n  \"operator_console_url\": \"{}\",\n  \"resident_portal_url\": \"{}\"\n}}\n",
-        json_escape(lane_id),
-        json_escape(message),
-        unix_timestamp(),
-        started_at_unix,
-        elapsed_seconds,
-        activity_current,
-        activity_total,
-        json_escape(activity_phase),
-        SERVICE_URL,
-        json_escape(&operator_console_url),
-        RESIDENT_PORTAL_URL
-    );
-    fs::write(&path, payload)
-        .map_err(|error| format!("Could not write installer activity state file: {error}"))
 }
 
 fn health_response_is_ok(
@@ -760,47 +576,7 @@ fn app_bundled_runtime_build_id(app: &tauri::AppHandle) -> Option<String> {
     resource_dir(app, "bootstrap-manifest.json").and_then(runtime_build_id_from_manifest_path)
 }
 
-/// Read a top-level unsigned integer field out of the persisted state JSON.
-fn installer_state_u64_field(raw: &str, key: &str) -> Option<u64> {
-    let needle = format!("\"{key}\"");
-    let key_at = raw.find(&needle)?;
-    let after = &raw[key_at + needle.len()..];
-    let colon = after.find(':')?;
-    let rest = after[colon + 1..].trim_start();
-    let digits: String = rest.chars().take_while(|ch| ch.is_ascii_digit()).collect();
-    if digits.is_empty() {
-        return None;
-    }
-    digits.parse().ok()
-}
 
-/// A newly opened installer must preserve the elevated bootstrap's heartbeat.
-/// The short freshness window recovers automatically if that elevated process
-/// died without recording a terminal state.
-fn installer_state_has_fresh_wsl_bootstrap(raw: &str, now_unix: u64) -> bool {
-    const HEARTBEAT_FRESHNESS_SECONDS: u64 = 15;
-    if installer_state_reboot_required(raw)
-        || installer_state_string_field(raw, "current_lane_id").as_deref() != Some("wsl2")
-    {
-        return false;
-    }
-    let status = installer_state_string_field(raw, "status");
-    if !matches!(status.as_deref(), Some("running" | "wsl_install_requested")) {
-        return false;
-    }
-    installer_state_u64_field(raw, "updated_at_unix")
-        .map(|updated| now_unix.saturating_sub(updated) <= HEARTBEAT_FRESHNESS_SECONDS)
-        .unwrap_or(false)
-}
-
-fn persisted_wsl_bootstrap_is_freshly_active() -> bool {
-    newest_existing_installer_state_path()
-        .ok()
-        .flatten()
-        .and_then(|path| fs::read_to_string(path).ok())
-        .map(|raw| installer_state_has_fresh_wsl_bootstrap(&raw, unix_timestamp()))
-        .unwrap_or(false)
-}
 
 #[derive(Debug, PartialEq, Eq)]
 enum RuntimeStateTransition {
@@ -823,7 +599,10 @@ fn runtime_state_transition(raw: &str, service_healthy: bool) -> RuntimeStateTra
     }
 }
 
-fn wait_for_service_health_after_wsl_bootstrap(
+/// Poll `/health` for up to 10 seconds, one probe per second, and succeed as
+/// soon as one answers. Used after (re)starting the native runtime host to
+/// confirm the service actually came up before declaring the lane ready.
+fn wait_for_service_health_after_runtime_start(
     expected_instance_id: Option<&str>,
     expected_runtime_build_id: Option<&str>,
 ) -> Result<(), String> {
@@ -834,7 +613,7 @@ fn wait_for_service_health_after_wsl_bootstrap(
         thread::sleep(Duration::from_secs(1));
     }
     Err(format!(
-        "CivicCast reported ready inside the Windows helper, but Windows could not verify the new {CIVICCAST_VERSION} service at {SERVICE_URL}/health after setup finished. Start setup again. If it repeats, save the helper logs and send them to support."
+        "CivicCast's runtime host started, but Windows could not verify the {CIVICCAST_VERSION} service at {SERVICE_URL}/health. Try again. If it repeats, save the runtime host log and send it to support."
     ))
 }
 
@@ -859,62 +638,17 @@ fn runtime_host_log(message: &str) {
         .and_then(|mut file| writeln!(file, "{} {message}", unix_timestamp()));
 }
 
-#[cfg(target_os = "windows")]
-fn spawn_civiccast_wsl_keepalive() -> Result<Child, String> {
-    let mut command = Command::new("wsl.exe");
-    command.args([
-        "--distribution",
-        CIVICCAST_WSL_DISTRO_NAME,
-        "--user",
-        "root",
-        "--exec",
-        "/usr/bin/sleep",
-        "infinity",
-    ]);
-    hide_windows_command(&mut command);
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("Could not start the CivicCast Windows helper runtime: {error}"))
-}
 
-#[cfg(target_os = "windows")]
-fn recover_civiccast_service() {
-    let args = [
-        "--distribution",
-        CIVICCAST_WSL_DISTRO_NAME,
-        "--user",
-        "root",
-        "--exec",
-        "/usr/bin/systemctl",
-        "restart",
-        "civiccast.service",
-    ];
-    match run_bounded_command("wsl.exe", "runtime-host-service-restart", &args, 30) {
-        Ok((0, _)) => runtime_host_log("Requested civiccast.service recovery."),
-        Ok((code, output)) => runtime_host_log(&format!(
-            "civiccast.service recovery exited {code}: {}",
-            output.replace(['\r', '\n'], " ")
-        )),
-        Err(error) => runtime_host_log(&format!("civiccast.service recovery failed: {error}")),
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn runtime_host_backoff_seconds(failures: u32) -> u64 {
-    1_u64.checked_shl(failures.min(5)).unwrap_or(30).min(30)
-}
 
 #[cfg(target_os = "windows")]
 fn acquire_runtime_host_lifetime_guard(address: &str) -> Option<TcpListener> {
     // A repair install terminates the previous background host immediately
     // before the newly installed GUI starts. Windows can keep the old host's
     // loopback guard occupied for a brief overlap; an immediate one-shot bind
-    // makes the replacement silently exit and WSL later shuts down. Wait out
-    // that bounded handoff race. If a healthy host continues to own the guard,
-    // this duplicate exits harmlessly after the budget expires.
+    // makes the replacement silently exit before it can take over health
+    // monitoring. Wait out that bounded handoff race. If a healthy host
+    // continues to own the guard, this duplicate exits harmlessly after the
+    // budget expires.
     const ATTEMPTS: u32 = 40;
     const RETRY_DELAY: Duration = Duration::from_millis(250);
     for attempt in 0..ATTEMPTS {
@@ -928,6 +662,18 @@ fn acquire_runtime_host_lifetime_guard(address: &str) -> Option<TcpListener> {
     None
 }
 
+/// Watch the native `CivicCastSupervisor` Windows service's health for as
+/// long as this process lives, logging transitions for support diagnostics.
+///
+/// The retired WSL product used this loop to ALSO spawn and monitor a
+/// companion `wsl.exe` process (the WSL distro is not itself a Windows
+/// process the OS can supervise) and to shell into that distro to restart
+/// `civiccast.service` on repeated health failures. The native product has
+/// no companion process: `CivicCastSupervisor` is a real Windows service,
+/// and its own SCM restart-on-failure actions (5s/10s/30s ladder, see
+/// `native_service_registration::service_failure_actions_command`) already
+/// recover it. This loop's job for native is honest observation only -- it
+/// does not attempt to start, repair, or recover the service itself.
 #[cfg(target_os = "windows")]
 fn run_civiccast_runtime_host() -> i32 {
     // Holding this loopback listener is a process-lifetime singleton. A second
@@ -938,52 +684,14 @@ fn run_civiccast_runtime_host() -> i32 {
     };
     runtime_host_log("Runtime host started.");
 
-    let mut keepalive: Option<Child> = None;
-    let mut spawn_failures = 0_u32;
     let mut health_failures = 0_u32;
     loop {
         if installer_shutdown_marker_paths()
             .iter()
             .any(|path| path.exists())
         {
-            if let Some(child) = keepalive.as_mut() {
-                let _ = child.kill();
-            }
             runtime_host_log("Runtime host stopped by uninstall request.");
             return 0;
-        }
-
-        if let Some(child) = keepalive.as_mut() {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    runtime_host_log(&format!("WSL lifetime process exited: {status}."));
-                    keepalive = None;
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    runtime_host_log(&format!("Could not inspect WSL lifetime process: {error}"));
-                    keepalive = None;
-                }
-            }
-        }
-
-        if keepalive.is_none() {
-            match spawn_civiccast_wsl_keepalive() {
-                Ok(child) => {
-                    keepalive = Some(child);
-                    spawn_failures = 0;
-                    health_failures = 0;
-                    runtime_host_log("WSL lifetime process started.");
-                }
-                Err(error) => {
-                    spawn_failures = spawn_failures.saturating_add(1);
-                    runtime_host_log(&error);
-                    thread::sleep(Duration::from_secs(runtime_host_backoff_seconds(
-                        spawn_failures,
-                    )));
-                    continue;
-                }
-            }
         }
 
         if service_health_reachable_once(None, None) {
@@ -993,10 +701,10 @@ fn run_civiccast_runtime_host() -> i32 {
             health_failures = 0;
         } else {
             health_failures = health_failures.saturating_add(1);
-            if health_failures >= 3 {
-                runtime_host_log("CivicCast service remained unhealthy; requesting recovery.");
-                recover_civiccast_service();
-                health_failures = 0;
+            if health_failures == 3 {
+                runtime_host_log(
+                    "CivicCast service remained unhealthy; the Windows service manager's own restart-on-failure actions apply.",
+                );
             }
         }
         thread::sleep(Duration::from_secs(5));
@@ -1544,218 +1252,14 @@ try {{
         );
     }
 
-    #[test]
-    fn temporarily_unavailable_runtime_is_still_provisioned_on_relaunch() {
-        let unavailable = r#"{"current_lane_id":"runtime","status":"unavailable"}"#;
-        assert!(
-            installer_state_has_provisioned_runtime(unavailable),
-            "relaunch must recover the existing service instead of rerunning full provisioning"
-        );
-    }
 
-    // The rc10 clean-VM cleanroom found the WSL health probe blocking a healthy
-    // install because `apt-get check` fails transiently while apt is still busy
-    // on slower machines. The retry predicate must retry a plain non-zero but NOT
-    // burn retries on a terminal reboot / wsl-not-ready / virtualization signal.
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn health_probe_retries_transient_nonzero_but_not_terminal_signals() {
-        assert!(health_probe_should_retry(
-            1,
-            "E: Could not get lock /var/lib/dpkg/lock-frontend; apt-get check failed"
-        ));
-        assert!(!health_probe_should_retry(0, "probe ok"));
-        assert!(!health_probe_should_retry(
-            1,
-            "A restart is required to finish setup"
-        ));
-        assert!(!health_probe_should_retry(
-            1,
-            "please install by running wsl --install"
-        ));
-        assert!(!health_probe_should_retry(
-            1,
-            "HCS_E_HYPERV_NOT_INSTALLED: virtualization is not enabled"
-        ));
-        assert!(!health_probe_should_retry(124, "probe timed out"));
-        assert!(!health_probe_should_retry(1, "python 3.12 is missing"));
-    }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn health_probe_retry_loop_retries_transient_failures_until_success() {
-        let mut results = vec![
-            (
-                100,
-                "Could not get lock /var/lib/dpkg/lock-frontend; apt lock one".to_string(),
-            ),
-            (
-                100,
-                "Unable to acquire the dpkg frontend lock; apt lock two".to_string(),
-            ),
-            (0, "ready".to_string()),
-        ]
-        .into_iter();
-        let mut delays = Vec::new();
 
-        let (code, text, attempts) = run_health_probe_with_retry(
-            || Ok(results.next().expect("probe called at most three times")),
-            |seconds| delays.push(seconds),
-        )
-        .expect("probe loop succeeds");
 
-        assert_eq!((code, text.as_str(), attempts), (0, "ready", 3));
-        assert_eq!(delays, vec![HEALTH_PROBE_RETRY_SECS; 2]);
-    }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn health_probe_retry_loop_exhausts_budget_without_extra_delay() {
-        let mut calls = 0;
-        let mut delays = Vec::new();
 
-        let (code, _, attempts) = run_health_probe_with_retry(
-            || {
-                calls += 1;
-                Ok((
-                    100,
-                    format!("Could not get lock /var/lib/dpkg/lock-frontend; attempt {calls}"),
-                ))
-            },
-            |seconds| delays.push(seconds),
-        )
-        .expect("probe failures are results, not runner errors");
 
-        assert_eq!(code, 100);
-        assert_eq!(attempts, HEALTH_PROBE_MAX_ATTEMPTS);
-        assert_eq!(calls, HEALTH_PROBE_MAX_ATTEMPTS);
-        assert_eq!(delays.len() as u32, HEALTH_PROBE_MAX_ATTEMPTS - 1);
-    }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn health_probe_retry_loop_stops_immediately_on_terminal_results() {
-        for (code, text) in [
-            (0, "ready"),
-            (124, "probe timed out after 30 seconds"),
-            (1, "A restart is required to finish setup"),
-            (1, "please install by running wsl --install"),
-            (1, "HCS_E_HYPERV_NOT_INSTALLED"),
-        ] {
-            let mut calls = 0;
-            let mut delays = Vec::new();
-            let result = run_health_probe_with_retry(
-                || {
-                    calls += 1;
-                    Ok((code, text.to_string()))
-                },
-                |seconds| delays.push(seconds),
-            )
-            .expect("terminal probe is returned");
-
-            assert_eq!(result, (code, text.to_string(), 1));
-            assert_eq!(calls, 1);
-            assert!(delays.is_empty());
-        }
-        assert_eq!(HEALTH_PROBE_TIMEOUT_SECS, 30);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn health_probe_retry_loop_propagates_runner_errors_without_delay() {
-        let mut delayed = false;
-
-        let error = run_health_probe_with_retry(
-            || Err("wsl probe spawn failed".to_string()),
-            |_| delayed = true,
-        )
-        .expect_err("runner failure must abort the retry loop");
-
-        assert_eq!(error, "wsl probe spawn failed");
-        assert!(!delayed);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn wsl_health_sequence_stops_after_terminal_status_or_timeout() {
-        for (status_code, status_text) in [
-            (1, "A restart is required to finish setup"),
-            (1, "please install by running wsl --install"),
-            (1, "HCS_E_HYPERV_NOT_INSTALLED"),
-            (124, "wsl-status-user timed out after 300 seconds"),
-        ] {
-            let mut list_calls = 0;
-            let mut probe_calls = 0;
-            let result = run_wsl_health_sequence(
-                || Ok((status_code, status_text.to_string())),
-                || {
-                    list_calls += 1;
-                    Ok((0, "list ok".to_string()))
-                },
-                || {
-                    probe_calls += 1;
-                    Ok((0, "probe ok".to_string()))
-                },
-                |_| panic!("terminal status must not delay"),
-            )
-            .expect("terminal status is returned");
-
-            assert_eq!(list_calls, 0);
-            assert_eq!(probe_calls, 0);
-            assert_eq!(result.probe_exit_code, None);
-            assert_eq!(
-                health_probe_summary(&result),
-                "== ubuntu-python-probe-summary attempts=0 skipped=prior-terminal-context =="
-            );
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn wsl_health_sequence_stops_after_terminal_list_before_probe() {
-        let mut probe_calls = 0;
-        let result = run_wsl_health_sequence(
-            || Ok((0, "status ok".to_string())),
-            || Ok((124, "wsl-list-user timed out after 300 seconds".to_string())),
-            || {
-                probe_calls += 1;
-                Ok((0, "probe ok".to_string()))
-            },
-            |_| panic!("terminal list result must not delay"),
-        )
-        .expect("terminal list result is returned");
-
-        assert_eq!(probe_calls, 0);
-        assert_eq!(result.probe_exit_code, None);
-        assert_eq!(
-            result.list_text,
-            "wsl-list-user timed out after 300 seconds"
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn wsl_health_sequence_reaches_probe_only_after_clean_context() {
-        let mut probe_calls = 0;
-        let result = run_wsl_health_sequence(
-            || Ok((0, "status ok".to_string())),
-            || Ok((0, "CivicCast-Ubuntu-24.04 Running 2".to_string())),
-            || {
-                probe_calls += 1;
-                Ok((0, "probe ok".to_string()))
-            },
-            |_| panic!("success must not delay"),
-        )
-        .expect("clean context reaches health probe");
-
-        assert_eq!(probe_calls, 1);
-        assert_eq!(result.probe_exit_code, Some(0));
-        assert_eq!(result.probe_attempts, 1);
-        assert_eq!(
-            health_probe_summary(&result),
-            "== ubuntu-python-probe-summary attempts=1 exit_code=0 =="
-        );
-    }
 
     // Reproduces the DESKTOP-2BR3SJR clean-machine finding: a hung wsl.exe
     // wedged the installer's status pre-check forever because the pre-check
@@ -1945,7 +1449,7 @@ try {{
 
     // F-RC3-1: the live-panel self-heal decision core.
     const STATE_RUNNING: &str = r#"{"schema_version":1,"current_lane_id":"runtime","status":"running","reboot_required":false}"#;
-    const STATE_REBOOT_PENDING: &str = r#"{"schema_version":1,"current_lane_id":"wsl2","status":"wsl_install_started","reboot_required":true}"#;
+    const STATE_REBOOT_PENDING: &str = r#"{"schema_version":1,"current_lane_id":"dashboard","status":"pending_reboot","reboot_required":true}"#;
     const STATE_READY: &str = r#"{"schema_version":1,"current_lane_id":"runtime","status":"ready","reboot_required":false}"#;
 
     #[test]
@@ -1973,40 +1477,7 @@ try {{
         );
     }
 
-    #[test]
-    fn completed_runtime_supersedes_a_late_windows_bootstrap_result() {
-        let runtime_ready =
-            r#"{"current_lane_id":"runtime","status":"ready","reboot_required":false}"#;
-        let dashboard_ready =
-            r#"{"current_lane_id":"dashboard","status":"ready","reboot_required":false}"#;
-        let runtime_running =
-            r#"{"current_lane_id":"runtime","status":"running","reboot_required":false}"#;
-        let windows_ready =
-            r#"{"current_lane_id":"wsl2","status":"ready","reboot_required":false}"#;
 
-        assert!(windows_bootstrap_result_is_superseded(runtime_ready));
-        assert!(windows_bootstrap_result_is_superseded(dashboard_ready));
-        assert!(!windows_bootstrap_result_is_superseded(runtime_running));
-        assert!(!windows_bootstrap_result_is_superseded(windows_ready));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn current_user_windows_bootstrap_replaces_stale_result_artifacts() {
-        let result = InstallerActionMessage {
-            status: "ready".to_string(),
-            reboot_required: false,
-            message: "The Windows helper is ready.".to_string(),
-        };
-
-        let (text, json) = wsl_bootstrap_result_payloads(&result, 123);
-
-        assert!(text.contains("STATUS: ready"));
-        assert!(text.contains("REBOOT_REQUIRED: false"));
-        assert!(json.contains("\"status\": \"ready\""));
-        assert!(json.contains("\"reboot_required\": false"));
-        assert!(json.contains("\"updated_at_unix\": 123"));
-    }
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -2018,29 +1489,6 @@ try {{
         );
     }
 
-    #[test]
-    fn post_reboot_resume_continues_wsl_provisioning_without_another_setup_click() {
-        assert!(should_resume_post_reboot_wsl_bootstrap(
-            STATE_REBOOT_PENDING,
-            true,
-            false,
-        ));
-        assert!(!should_resume_post_reboot_wsl_bootstrap(
-            STATE_REBOOT_PENDING,
-            false,
-            false,
-        ));
-        assert!(!should_resume_post_reboot_wsl_bootstrap(
-            STATE_REBOOT_PENDING,
-            true,
-            true,
-        ));
-        assert!(!should_resume_post_reboot_wsl_bootstrap(
-            STATE_RUNNING,
-            true,
-            false,
-        ));
-    }
 
     #[test]
     fn reconcile_preserves_the_lane_the_operator_is_watching() {
@@ -2050,7 +1498,7 @@ try {{
         );
         assert_eq!(
             installer_state_string_field(STATE_REBOOT_PENDING, "current_lane_id").as_deref(),
-            Some("wsl2")
+            Some("dashboard")
         );
         assert_eq!(
             installer_state_string_field(STATE_RUNNING, "status").as_deref(),
@@ -2059,20 +1507,6 @@ try {{
         assert_eq!(installer_state_string_field(STATE_RUNNING, "nope"), None);
     }
 
-    #[test]
-    fn fresh_windows_bootstrap_heartbeat_survives_an_installer_relaunch() {
-        let active = r#"{"current_lane_id":"wsl2","status":"running","reboot_required":false,"updated_at_unix":100}"#;
-        let requested = r#"{"current_lane_id":"wsl2","status":"wsl_install_requested","reboot_required":false,"updated_at_unix":100}"#;
-        let stale = r#"{"current_lane_id":"wsl2","status":"running","reboot_required":false,"updated_at_unix":80}"#;
-        let other_lane = r#"{"current_lane_id":"runtime","status":"running","reboot_required":false,"updated_at_unix":100}"#;
-        let reboot = r#"{"current_lane_id":"wsl2","status":"wsl_install_started","reboot_required":true,"updated_at_unix":100}"#;
-
-        assert!(installer_state_has_fresh_wsl_bootstrap(active, 110));
-        assert!(installer_state_has_fresh_wsl_bootstrap(requested, 110));
-        assert!(!installer_state_has_fresh_wsl_bootstrap(stale, 110));
-        assert!(!installer_state_has_fresh_wsl_bootstrap(other_lane, 110));
-        assert!(!installer_state_has_fresh_wsl_bootstrap(reboot, 110));
-    }
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -2141,58 +1575,14 @@ try {{
         );
     }
 
-    #[test]
-    fn simplify_verbatim_path_strips_extended_length_prefix() {
-        // The exact path shape Tauri's resource_dir() produced in the failed
-        // rc1 clean-install run (headless-bootstrap.log, 2026-07-08).
-        assert_eq!(
-            simplify_verbatim_path(Path::new(
-                r"\\?\C:\Users\proofuser\AppData\Local\CivicCast Installer"
-            )),
-            PathBuf::from(r"C:\Users\proofuser\AppData\Local\CivicCast Installer")
-        );
-        assert_eq!(
-            simplify_verbatim_path(Path::new(r"\\?\UNC\server\share\dir")),
-            PathBuf::from(r"\\server\share\dir")
-        );
-        // Plain paths pass through untouched.
-        assert_eq!(
-            simplify_verbatim_path(Path::new(r"C:\plain\path")),
-            PathBuf::from(r"C:\plain\path")
-        );
-    }
 
     #[test]
-    fn installer_log_candidates_cover_windows_and_runtime_bootstrap() {
+    fn installer_log_candidates_cover_the_native_runtime_host_log() {
         let root = Path::new(r"C:\Users\tester\AppData\Local\CivicCast");
         assert_eq!(
             installer_log_candidates(root),
-            [
-                root.join("headless-bootstrap.log"),
-                root.join("bootstrap-wsl2-ubuntu.log"),
-            ]
+            [root.join("runtime-host.log")]
         );
-    }
-
-    #[test]
-    fn wsl_bootstrap_artifact_paths_cover_every_file_a_setup_attempt_writes() {
-        // rc17 D5 (returning-Setup): reset_local_installer_state must clear
-        // every one of these, not just installer-state.json, or a returning
-        // operator's next attempt can read back a prior attempt's stale
-        // script/log/result as if it were current.
-        let root = Path::new(r"C:\Users\tester\AppData\Local\CivicCast");
-        assert_eq!(
-            wsl_bootstrap_artifact_paths(root),
-            [
-                root.join("bootstrap-wsl2-ubuntu.ps1"),
-                root.join("bootstrap-wsl2-ubuntu.log"),
-                root.join("bootstrap-wsl2-ubuntu-result.txt"),
-                root.join("bootstrap-wsl2-ubuntu.result.json"),
-            ]
-        );
-        // Same log file `newest_installer_log_path` can serve back to the
-        // operator -- the reset path must cover it too, not just the state.
-        assert!(wsl_bootstrap_artifact_paths(root).contains(&installer_log_candidates(root)[1]));
     }
 
     #[test]
@@ -2268,43 +1658,6 @@ try {{
     }
 
     #[test]
-    fn native_branch_may_cheaply_reverify_the_setup_nonce_on_every_write() {
-        // The native station's authoritative source is a local registry
-        // read: cheap, synchronous, no subprocess -- safe to re-check every
-        // time, which is exactly what BLOCKER N-02's fix depends on.
-        assert!(may_cheaply_reverify_setup_nonce(Some(
-            StartupBranch::NativeStatus
-        )));
-    }
-
-    #[test]
-    fn wsl_branch_must_not_cheaply_reverify_the_setup_nonce() {
-        // Re-checking on every write/poll would reintroduce the wsl.exe
-        // storm `may_probe_wsl_for_setup_nonce` was written to stop.
-        assert!(!may_cheaply_reverify_setup_nonce(Some(
-            StartupBranch::WslBootstrap
-        )));
-    }
-
-    #[test]
-    fn unlatched_branch_must_not_cheaply_reverify_the_setup_nonce() {
-        assert!(!may_cheaply_reverify_setup_nonce(None));
-    }
-
-    #[test]
-    fn reverification_gate_skips_the_authoritative_read_entirely_once_a_wsl_nonce_is_cached() {
-        // Proves the skip happens BEFORE the expensive/impure read: this call
-        // must never touch wsl.exe (it deterministically returns None
-        // without attempting setup_nonce_for_this_product at all when the
-        // cache already has something and cheap re-verification is
-        // unavailable for this branch).
-        assert_eq!(
-            current_setup_nonce_for_reverification(Some(StartupBranch::WslBootstrap), true),
-            None
-        );
-    }
-
-    #[test]
     fn reset_progress_prefers_authoritative_nonce_over_populated_stale_cache() {
         // Part (b) of BLOCKER N-02 continued: reset_operator_console_url
         // hard-codes cache=None when calling resolved_operator_console_url,
@@ -2353,7 +1706,6 @@ try {{
         // outcome the manifest is deliberately `asInvoker` to avoid.
         for ordinary in [
             vec![],
-            vec!["--civiccast-bootstrap-unattended".to_string()],
             vec!["--civiccast-runtime-host".to_string()],
             vec!["--civiccast-repair".to_string(), r"C:\CivicCast".to_string()],
         ] {
@@ -2445,11 +1797,9 @@ try {{
 
     #[test]
     fn restore_setup_handoff_elevation_command_quotes_an_awkward_install_path() {
-        // Same breakout hazard `elevated_bootstrap_argument_list_quotes_the_
-        // native_script_path` pins for the WSL helper: the real install path
-        // is `C:\Program Files\CivicCast (Native)\...`, and an operator's
-        // machine can carry an apostrophe. Quote via powershell_single_quote,
-        // never by interpolating raw.
+        // The real install path is `C:\Program Files\CivicCast (Native)\...`,
+        // and an operator's machine can carry an apostrophe. Quote via
+        // powershell_single_quote, never by interpolating raw.
         let executable = r#"C:\Program Files\O'Brien Lab\CivicCast Setup.exe"#;
         let quoted = powershell_single_quote(executable);
         assert_eq!(
@@ -2547,173 +1897,36 @@ try {{
     }
 
     #[test]
-    #[cfg(target_os = "windows")]
-    fn prefers_civiccast_owned_wsl_distribution() {
-        let output = r#"
-  NAME                         STATE           VERSION
-* Ubuntu                       Running         2
-  Ubuntu-24.04                 Running         2
-  CivicCast-Ubuntu-24.04       Running         2
-"#;
-
-        let candidates = parse_ubuntu_distributions(output);
-
-        assert_eq!(
-            candidates.first().map(String::as_str),
-            Some(CIVICCAST_WSL_DISTRO_NAME)
-        );
-    }
-
-    #[test]
-    fn stale_wsl_bootstrap_attempt_without_reboot_does_not_need_post_reboot_reprobe() {
-        let raw = r#"{
-          "current_lane_id": "wsl2",
-          "status": "wsl_install_requested",
-          "reboot_required": false
-        }"#;
-
-        assert!(!installer_state_needs_post_reboot_wsl_reprobe(raw));
-    }
-
-    #[test]
-    fn pending_reboot_wsl_state_needs_post_reboot_reprobe() {
-        let raw = r#"{
-          "current_lane_id": "wsl2",
-          "status": "wsl_install_started",
-          "reboot_required": true
-        }"#;
-
-        assert!(installer_state_needs_post_reboot_wsl_reprobe(raw));
-    }
-
-    #[test]
-    fn ignores_unrelated_installer_state_for_wsl_bootstrap_attempt() {
-        let raw = r#"{
-          "current_lane_id": "runtime",
-          "status": "running"
-        }"#;
-
-        assert!(!installer_state_needs_post_reboot_wsl_reprobe(raw));
-    }
-
-    #[test]
-    fn startup_missing_wsl_message_requires_explicit_user_action() {
-        assert!(startup_missing_wsl_message().contains("Choose Set up Windows helper"));
-        // The post-reboot message must ask for the same explicit action, and
-        // must NOT claim a restart already happened -- it also shows on a
-        // fresh install where the reboot is still pending (rc1 finding).
-        assert!(startup_post_reboot_wsl_missing_message().contains("Choose Set up Windows helper"));
-        assert!(!startup_post_reboot_wsl_missing_message().contains("restarted after"));
-    }
-
-    // --- Native-vs-WSL startup identity (native no-arg launch must never
-    // take the WSL bootstrap branch or surface its setup message) ---
-
-    #[test]
-    fn native_identifier_takes_the_native_status_branch() {
-        assert!(matches!(
-            startup_branch_for_identifier("org.civiccast.native"),
-            StartupBranch::NativeStatus
-        ));
-    }
-
-    #[test]
-    fn wsl_product_identifier_still_takes_the_wsl_bootstrap_branch() {
-        assert!(matches!(
-            startup_branch_for_identifier("org.civiccast.installer"),
-            StartupBranch::WslBootstrap
-        ));
-    }
-
-    #[test]
-    fn unknown_identifier_falls_back_to_the_wsl_bootstrap_branch() {
-        // Fail closed to today's existing (WSL) behavior for anything that
-        // is not recognizably the native product's compiled-in identifier,
-        // rather than silently skipping WSL bootstrap for an unrecognized
-        // build.
-        assert!(matches!(
-            startup_branch_for_identifier("something.unexpected"),
-            StartupBranch::WslBootstrap
-        ));
-    }
-
-    // --- Setup-handoff nonce lane guard (BLOCKER: the wsl.exe storm) ---
-
-    #[test]
-    fn native_station_never_probes_wsl_for_the_setup_nonce() {
-        assert!(!may_probe_wsl_for_setup_nonce(Some(
-            StartupBranch::NativeStatus
-        )));
-    }
-
-    #[test]
-    fn wsl_product_still_probes_wsl_for_the_setup_nonce() {
-        assert!(may_probe_wsl_for_setup_nonce(Some(
-            StartupBranch::WslBootstrap
-        )));
-    }
-
-    #[test]
-    fn unlatched_startup_branch_never_probes_wsl_for_the_setup_nonce() {
-        // Fails CLOSED, unlike `startup_branch_for_identifier`'s
-        // unknown-identifier fallback: an unlatched branch means no Tauri app
-        // is running at all (a CLI subcommand), where recovering a handoff URL
-        // for a window that does not exist has no purpose and spawning
-        // `wsl.exe` for it has real cost.
-        assert!(!may_probe_wsl_for_setup_nonce(None));
-    }
-
-    #[test]
-    fn an_unlatched_branch_resolves_no_setup_nonce_at_all() {
-        // End-to-end over the lane switch the polling caller actually uses:
-        // with no branch latched, neither lane's read is reached.
-        assert_eq!(setup_nonce_for_this_product(None), None);
-    }
-
-    #[test]
-    fn native_runtime_status_message_never_uses_the_wsl_setup_message() {
+    fn native_runtime_status_message_never_mentions_a_windows_helper() {
+        // The retired WSL product's status messages talked about "the
+        // Windows helper CivicCast needs" (the WSL/Ubuntu distro). The
+        // native product has no such dependency and must never say so.
         for is_healthy in [true, false] {
             let (_lane_id, _status, message) = native_runtime_status_message(is_healthy);
-            assert_ne!(message, startup_missing_wsl_message());
-            assert_ne!(message, startup_post_reboot_wsl_missing_message());
             assert!(!message.contains("Windows helper"));
         }
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn detects_nul_padded_wsl_not_installed_output() {
-        let output = "T\0h\0e\0 \0W\0i\0n\0d\0o\0w\0s\0 \0S\0u\0b\0s\0y\0s\0t\0e\0m\0 \0f\0o\0r\0 \0L\0i\0n\0u\0x\0 \0i\0s\0 \0n\0o\0t\0 \0i\0n\0s\0t\0a\0l\0l\0e\0d\0.\0";
-
-        assert!(output_wsl_not_ready(output));
     }
 
     #[test]
     fn command_line_arg_detection_handles_quoted_windows_arguments() {
         let args = vec![
             "\"--help\"".to_string(),
-            "\"--civiccast-bootstrap-unattended\"".to_string(),
+            "\"--civiccast-runtime-host\"".to_string(),
         ];
 
         assert!(command_line_has_arg(&args, "--help"));
-        assert!(command_line_has_arg(
-            &args,
-            "--civiccast-bootstrap-unattended"
-        ));
+        assert!(command_line_has_arg(&args, "--civiccast-runtime-host"));
         assert!(!command_line_has_arg(&args, "--other"));
     }
 
     #[test]
     fn command_line_arg_detection_rejects_substring_matches() {
         let args = vec![
-            "--not--civiccast-bootstrap-unattended".to_string(),
-            "--civiccast-bootstrap-unattended=false".to_string(),
+            "--not--civiccast-runtime-host".to_string(),
+            "--civiccast-runtime-host=false".to_string(),
         ];
 
-        assert!(!command_line_has_arg(
-            &args,
-            "--civiccast-bootstrap-unattended"
-        ));
+        assert!(!command_line_has_arg(&args, "--civiccast-runtime-host"));
     }
 
     #[test]
@@ -2781,44 +1994,15 @@ try {{
         assert_eq!(powershell_single_quote("'; rm -rf /"), "'''; rm -rf /'");
     }
 
-    #[test]
-    fn windows_command_line_quote_keeps_one_argument_with_spaces_and_quotes() {
-        assert_eq!(windows_command_line_quote("plain"), "plain");
-        assert_eq!(
-            windows_command_line_quote(r#"C:\Users\O'Brien Lab\bootstrap.ps1"#),
-            r#""C:\Users\O'Brien Lab\bootstrap.ps1""#
-        );
-        assert_eq!(windows_command_line_quote(r#"a\"b"#), r#""a\\\"b""#);
-    }
 
-    #[test]
-    fn elevated_bootstrap_argument_list_quotes_the_native_script_path() {
-        let script = r#"C:\Users\O'Brien Lab\bootstrap.ps1"#;
-        let elevated_argument_list = format!(
-            "-NoProfile -ExecutionPolicy Bypass -File {}",
-            windows_command_line_quote(script)
-        );
-        assert_eq!(
-            powershell_single_quote(&elevated_argument_list),
-            r#"'-NoProfile -ExecutionPolicy Bypass -File "C:\Users\O''Brien Lab\bootstrap.ps1"'"#
-        );
-    }
 
-    #[test]
-    fn is_wsl_bootstrap_lane_matches_only_the_two_wsl_lanes() {
-        assert!(is_wsl_bootstrap_lane("wsl2"));
-        assert!(is_wsl_bootstrap_lane("platform"));
-        assert!(!is_wsl_bootstrap_lane("runtime"));
-        assert!(!is_wsl_bootstrap_lane(""));
-    }
 
     #[test]
     fn retry_reruns_provisioning_for_every_runtime_bootstrap_lane() {
         for lane in ["runtime", "ffmpeg", "storage", "service", "dashboard"] {
             assert!(is_runtime_bootstrap_lane(lane));
         }
-        assert!(!is_runtime_bootstrap_lane("platform"));
-        assert!(!is_runtime_bootstrap_lane("wsl2"));
+        assert!(!is_runtime_bootstrap_lane("unknown-lane"));
     }
 
     #[test]
@@ -2833,126 +2017,14 @@ try {{
         );
     }
 
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn parse_wsl_bootstrap_result_reads_status_reboot_and_message_lines() {
-        let raw = "\u{feff}STATUS: wsl_ready\r\nREBOOT_REQUIRED: false\r\nMESSAGE: All set.\r\n";
-        let parsed = parse_wsl_bootstrap_result(raw);
-        assert_eq!(parsed.status, "wsl_ready");
-        assert!(!parsed.reboot_required);
-        assert_eq!(parsed.message, "All set.");
-    }
 
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn parse_wsl_bootstrap_result_defaults_to_reboot_when_unspecified() {
-        // No REBOOT_REQUIRED line -> assume a reboot is needed (the safe default).
-        let parsed = parse_wsl_bootstrap_result("STATUS: wsl_install_started\n");
-        assert_eq!(parsed.status, "wsl_install_started");
-        assert!(parsed.reboot_required);
-    }
 
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn output_classifiers_detect_their_signals() {
-        assert!(output_needs_reboot("A restart is required to finish."));
-        assert!(output_needs_reboot(
-            "changes will not be effective until you reboot"
-        ));
-        assert!(!output_needs_reboot("installation complete"));
 
-        assert!(output_wsl_not_ready(
-            "Windows Subsystem for Linux is not installed"
-        ));
-        assert!(output_wsl_not_ready("please run wsl --install"));
-        assert!(output_wsl_not_ready(
-            "WSL1 is not supported with your current machine configuration. Please enable the \"Windows Subsystem for Linux\" optional component."
-        ));
-        assert!(output_wsl_not_ready(
-            "WSL2 is not supported with your current machine configuration. Please enable the Virtual Machine Platform Windows feature."
-        ));
-        assert!(!output_wsl_not_ready("ubuntu is ready"));
 
-        assert!(output_virtualization_blocked("HCS_E_HYPERV_NOT_INSTALLED"));
-        assert!(output_virtualization_blocked(
-            "Virtualization is not enabled in firmware"
-        ));
-        assert!(!output_virtualization_blocked("all good"));
-    }
 
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn required_windows_features_require_both_enabled_markers() {
-        assert!(required_windows_features_enabled(
-            "Microsoft-Windows-Subsystem-Linux=1\r\nVirtualMachinePlatform=1\r\n"
-        ));
-        // Windows PowerShell 5.1 preserved the backslashes from an earlier
-        // over-escaped embedded probe. Treat that observed shape as enabled too
-        // so a harmless quoting difference cannot strand a post-reboot install.
-        assert!(required_windows_features_enabled(
-            "\\Microsoft-Windows-Subsystem-Linux=1\\\r\n\\VirtualMachinePlatform=1\\\r\n"
-        ));
-        assert!(!required_windows_features_enabled(
-            "Microsoft-Windows-Subsystem-Linux=1\r\nVirtualMachinePlatform=2\r\n"
-        ));
-    }
 
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn required_windows_features_fail_closed_on_missing_or_malformed_output() {
-        assert!(!required_windows_features_enabled(
-            "Microsoft-Windows-Subsystem-Linux=1\r\n"
-        ));
-        assert!(!required_windows_features_enabled("unexpected output"));
-        assert!(!required_windows_features_enabled(
-            "Microsoft-Windows-Subsystem-Linux=1\0\r\nVirtualMachinePlatform=enabled\0\r\n"
-        ));
-    }
 
-    #[test]
-    fn resolved_bootstrap_paths_strips_verbatim_prefix_and_derives_both_outputs() {
-        // G-14/T-1: the composition (normalize, THEN derive both the script
-        // path and the install dir from the normalized value) is what must be
-        // tested -- not just that the two substrings appear somewhere in the
-        // source file in the right order.
-        let (script, install_dir) = resolved_bootstrap_paths(Path::new(
-            r"\\?\C:\Users\proofuser\AppData\Local\CivicCast Installer\resources",
-        ))
-        .expect("resources root has a parent");
-        assert_eq!(
-            script,
-            PathBuf::from(
-                r"C:\Users\proofuser\AppData\Local\CivicCast Installer\resources\headless-bootstrap.ps1"
-            )
-        );
-        assert_eq!(
-            install_dir,
-            PathBuf::from(r"C:\Users\proofuser\AppData\Local\CivicCast Installer")
-        );
-    }
 
-    #[test]
-    fn resolved_bootstrap_paths_rejects_a_resources_root_with_no_parent() {
-        assert!(resolved_bootstrap_paths(Path::new(r"\\?\C:\")).is_err());
-    }
-
-    #[test]
-    fn headless_bootstrap_was_mutex_noop_detects_the_marker_line() {
-        // G-4/PE-ENG-2: distinguishes "a peer instance owns this attempt" from
-        // "the script actually ran" so the Rust caller never writes a false
-        // "error" state over a live, healthy peer bootstrap.
-        assert!(headless_bootstrap_was_mutex_noop(
-            "[2026-07-08T00:00:00Z] Another CivicCast bootstrap is already running; leaving it to finish.\nBOOTSTRAP_NOOP_MUTEX_HELD\n"
-        ));
-    }
-
-    #[test]
-    fn headless_bootstrap_was_mutex_noop_is_false_for_a_real_completed_run() {
-        assert!(!headless_bootstrap_was_mutex_noop(
-            "BOOTSTRAP_COMPLETE BOOTSTRAP_INSTANCE_ID=abc123\n"
-        ));
-        assert!(!headless_bootstrap_was_mutex_noop(""));
-    }
 
     #[test]
     fn blocking_installer_commands_stay_async_offloaded() {
@@ -2977,25 +2049,6 @@ try {{
         }
         requires_async3(run_local_installer_action);
         requires_async0(read_local_installer_state);
-    }
-
-    #[test]
-    fn already_finished_install_is_runtime_or_dashboard_ready() {
-        // QA-7: the relaunch guard treats a finished install (runtime/dashboard +
-        // ready) as "leave alone", but a WSL/platform lane that just became ready
-        // is NOT finished (it still needs to continue to runtime bootstrap).
-        assert!(installer_state_is_runtime_or_dashboard_ready(
-            r#"{"current_lane_id":"runtime","status":"ready"}"#
-        ));
-        assert!(installer_state_is_runtime_or_dashboard_ready(
-            r#"{"current_lane_id":"dashboard","status":"ready"}"#
-        ));
-        assert!(!installer_state_is_runtime_or_dashboard_ready(
-            r#"{"current_lane_id":"platform","status":"ready"}"#
-        ));
-        assert!(!installer_state_is_runtime_or_dashboard_ready(
-            r#"{"current_lane_id":"runtime","status":"running"}"#
-        ));
     }
 
     // -----------------------------------------------------------------
@@ -3074,9 +2127,9 @@ try {{
 
     #[test]
     fn acquisition_persist_fields_preserves_the_existing_lane_status_and_message() {
-        let existing = r#"{"current_lane_id":"wsl2","status":"running","message":"Setting up.","reboot_required":true}"#;
+        let existing = r#"{"current_lane_id":"dashboard","status":"running","message":"Setting up.","reboot_required":true}"#;
         let (lane_id, status, message, reboot_required) = acquisition_persist_fields(Some(existing));
-        assert_eq!(lane_id, "wsl2");
+        assert_eq!(lane_id, "dashboard");
         assert_eq!(status, "running");
         assert_eq!(message, "Setting up.");
         assert!(reboot_required);
@@ -3721,18 +2774,6 @@ fn reset_local_installer_state() -> Result<String, String> {
                 .map_err(|error| format!("Could not remove installer state file: {error}"))?;
         }
     }
-    // rc17 D5 (returning-Setup): a reset must not leave a prior attempt's WSL
-    // helper-setup script/log/result on disk -- "Open installer log" reads
-    // whichever WSL log/state file is newest and would otherwise resurface a
-    // stale, already-superseded run as if it were the current one.
-    if let Ok(root) = installer_state_root() {
-        for path in wsl_bootstrap_artifact_paths(&root) {
-            if path.exists() {
-                fs::remove_file(&path)
-                    .map_err(|error| format!("Could not remove WSL helper setup file: {error}"))?;
-            }
-        }
-    }
     rebuild_operator_console_handoff_after_reset();
     Ok("CivicCast reset installer progress. Durable records were not deleted.".to_string())
 }
@@ -3754,11 +2795,10 @@ fn reset_local_installer_state() -> Result<String, String> {
 /// writes NOTHING, leaving the just-cleared "fresh start" state intact rather
 /// than resurrecting a state file carrying a useless bare URL.
 fn rebuild_operator_console_handoff_after_reset() {
-    let branch = STARTUP_BRANCH.get().copied();
-    // Cache is gone by now, so pass `false`: on the native lane this always
-    // performs the (cheap, local) authoritative read, which is the entire
-    // point of rebuilding here.
-    let Some(nonce) = current_setup_nonce_for_reverification(branch, false) else {
+    // Cache is gone by now; this always performs the (cheap, local)
+    // authoritative registry read, which is the entire point of rebuilding
+    // here.
+    let Some(nonce) = current_setup_nonce_for_reverification() else {
         return;
     };
     let operator_url = reset_operator_console_url(Some(nonce.as_str()));
@@ -4512,388 +3552,30 @@ fn decode_windows_command_output(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).to_string()
 }
 
-#[cfg(target_os = "windows")]
-fn parse_ubuntu_distributions(output: &str) -> Vec<String> {
-    let mut candidates: Vec<String> = output
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim().trim_start_matches('*').trim();
-            if !trimmed.to_lowercase().contains("ubuntu") {
-                return None;
-            }
-            let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            let name = parts.first().copied()?;
-            let version = parts.last().copied().unwrap_or_default();
-            if !name.to_lowercase().contains("ubuntu") || version != "2" {
-                return None;
-            }
-            Some(name.to_string())
-        })
-        .collect();
-    candidates.sort_by_key(|name| {
-        (
-            if name == CIVICCAST_WSL_DISTRO_NAME {
-                0
-            } else if name.contains("24.04") {
-                1
-            } else {
-                2
-            },
-            name.to_lowercase(),
-        )
-    });
-    candidates
-}
 
-// Pre-check timeout: these run on every UI status refresh, and an unbounded
-// wsl.exe spawn here froze the installer indefinitely on a machine whose
-// inbox wsl.exe stub hangs (missing/broken WSL runtime -- observed on a
-// debloated Win11 image, and any microsoft/WSL#13589-style interactive
-// prompt does the same). 120s covers a legitimate cold distro start; a true
-// hang is tree-killed and reported as not-ready instead of wedging the UI.
-#[cfg(target_os = "windows")]
-const WSL_PRECHECK_TIMEOUT_SECS: u64 = 120;
 
-#[cfg(target_os = "windows")]
-fn civiccast_ubuntu_runtime_ready(distro: &str) -> bool {
-    run_bounded_command(
-        "wsl.exe",
-        "wsl-runtime-probe-precheck",
-        &[
-            "-d",
-            distro,
-            "-u",
-            "root",
-            "--exec",
-            "bash",
-            "-lc",
-            CIVICCAST_WSL_HEALTH_PROBE,
-        ],
-        WSL_PRECHECK_TIMEOUT_SECS,
-    )
-    .map(|(exit_code, _)| exit_code == 0)
-    .unwrap_or(false)
-}
 
-#[cfg(target_os = "windows")]
-fn wsl_ubuntu_distribution() -> Option<String> {
-    run_bounded_command(
-        "wsl.exe",
-        "wsl-list-precheck",
-        &["-l", "-v"],
-        WSL_PRECHECK_TIMEOUT_SECS,
-    )
-    .ok()
-    .filter(|(exit_code, _)| *exit_code == 0)
-    .and_then(|(_, text)| {
-        parse_ubuntu_distributions(&text)
-            .into_iter()
-            .find(|candidate| {
-                candidate == CIVICCAST_WSL_DISTRO_NAME && civiccast_ubuntu_runtime_ready(candidate)
-            })
-    })
-}
-
-#[cfg(target_os = "windows")]
-fn wsl_ubuntu_ready() -> bool {
-    wsl_ubuntu_distribution().is_some()
-}
-
-#[cfg(not(target_os = "windows"))]
-fn wsl_ubuntu_ready() -> bool {
-    false
-}
-
-#[cfg(not(target_os = "windows"))]
-fn wsl_ubuntu_distribution() -> Option<String> {
-    None
-}
 
 #[cfg(target_os = "windows")]
 fn powershell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-#[cfg(target_os = "windows")]
-fn windows_command_line_quote(value: &str) -> String {
-    if !value.is_empty()
-        && !value
-            .chars()
-            .any(|character| character.is_whitespace() || character == '"')
-    {
-        return value.to_string();
-    }
 
-    let mut quoted = String::from("\"");
-    let mut backslashes = 0usize;
-    for character in value.chars() {
-        if character == '\\' {
-            backslashes += 1;
-            continue;
-        }
-        if character == '"' {
-            quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
-            quoted.push('"');
-        } else {
-            quoted.push_str(&"\\".repeat(backslashes));
-            quoted.push(character);
-        }
-        backslashes = 0;
-    }
-    quoted.push_str(&"\\".repeat(backslashes * 2));
-    quoted.push('"');
-    quoted
-}
 
-#[cfg(target_os = "windows")]
-fn parse_wsl_bootstrap_result(raw: &str) -> InstallerActionMessage {
-    let mut status = "wsl_install_started".to_string();
-    let mut reboot_required = true;
-    let mut message =
-        "CivicCast asked Windows to set up the helper it needs. Restart if Windows asks, then reopen CivicCast Installer."
-            .to_string();
-    for line in raw.lines() {
-        let line = line.trim_start_matches('\u{feff}');
-        if let Some(value) = line.strip_prefix("STATUS:") {
-            status = value.trim().to_string();
-        } else if let Some(value) = line.strip_prefix("REBOOT_REQUIRED:") {
-            reboot_required = value.trim().eq_ignore_ascii_case("true");
-        } else if let Some(value) = line.strip_prefix("MESSAGE:") {
-            message = value.trim().to_string();
-        }
-    }
-    InstallerActionMessage {
-        status,
-        message,
-        reboot_required,
-    }
-}
 
-#[cfg(target_os = "windows")]
-fn wsl_bootstrap_result_payloads(
-    result: &InstallerActionMessage,
-    updated_at_unix: u64,
-) -> (String, String) {
-    let message = result.message.replace(['\r', '\n'], " ").trim().to_string();
-    let text = format!(
-        "STATUS: {}\nREBOOT_REQUIRED: {}\nMESSAGE: {}\n",
-        result.status, result.reboot_required, message
-    );
-    let json = format!(
-        "{{\n  \"schema_version\": 1,\n  \"status\": \"{}\",\n  \"reboot_required\": {},\n  \"message\": \"{}\",\n  \"updated_at_unix\": {}\n}}\n",
-        json_escape(&result.status),
-        result.reboot_required,
-        json_escape(&message),
-        updated_at_unix
-    );
-    (text, json)
-}
 
-#[cfg(target_os = "windows")]
-fn write_wsl_bootstrap_result_artifacts(
-    root: &Path,
-    result: &InstallerActionMessage,
-) -> Result<(), String> {
-    let (text, json) = wsl_bootstrap_result_payloads(result, unix_timestamp());
-    fs::write(root.join("bootstrap-wsl2-ubuntu-result.txt"), text)
-        .map_err(|error| format!("Could not update WSL2 bootstrap result file: {error}"))?;
-    fs::write(root.join("bootstrap-wsl2-ubuntu.result.json"), json)
-        .map_err(|error| format!("Could not update WSL2 bootstrap result JSON: {error}"))
-}
 
-#[cfg(target_os = "windows")]
-fn output_needs_reboot(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    lower.contains("restart")
-        || lower.contains("reboot")
-        || lower.contains("reboot is required")
-        || lower.contains("restart-computer")
-        || lower.contains("changes will not be effective")
-}
 
-#[cfg(target_os = "windows")]
-fn output_wsl_not_ready(text: &str) -> bool {
-    let lower = text.replace('\0', "").to_lowercase();
-    lower.contains("windows subsystem for linux is not installed")
-        || lower.contains("install by running 'wsl.exe --install'")
-        || lower.contains("install by running wsl.exe --install")
-        || lower.contains("wsl --install")
-        || lower.contains("wsl1 is not supported with your current machine configuration")
-        || lower.contains("wsl2 is not supported with your current machine configuration")
-        || lower.contains("enable the \"windows subsystem for linux\" optional component")
-        || lower.contains("enable the virtual machine platform windows feature")
-}
 
-#[cfg(target_os = "windows")]
-fn output_virtualization_blocked(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    lower.contains("hcs_e_hyperv_not_installed")
-        || lower.contains("virtualization is not enabled")
-        || lower.contains("enablevirtualization")
-}
 
-#[cfg(target_os = "windows")]
-fn virtualization_blocked_message() -> String {
-    "WSL2 cannot start because virtualization is unavailable on this computer. Ask IT to enable CPU virtualization, Windows Virtual Machine Platform, and Windows Subsystem for Linux, then rerun CivicCast Installer. No reboot should be started remotely unless an operator is present to approve it.".to_string()
-}
 
-#[cfg(target_os = "windows")]
-fn health_probe_should_retry(code: i32, text: &str) -> bool {
-    // Retry only recognized apt/dpkg lock contention right after provisioning.
-    // Timeouts, unknown non-zero failures, reboot / WSL-not-ready, and
-    // virtualization signals are terminal and retain their actionable outcome.
-    let lower = text.replace('\0', "").to_lowercase();
-    let apt_lock_contention = lower.contains("could not get lock /var/lib/dpkg")
-        || lower.contains("could not get lock /var/lib/apt")
-        || lower.contains("unable to acquire the dpkg frontend lock")
-        || lower.contains("is another process using it");
-    code != 0
-        && code != 124
-        && apt_lock_contention
-        && !output_needs_reboot(text)
-        && !output_wsl_not_ready(text)
-        && !output_virtualization_blocked(text)
-}
 
-#[cfg(target_os = "windows")]
-fn run_health_probe_with_retry<Probe, Delay>(
-    mut probe: Probe,
-    mut delay: Delay,
-) -> Result<(i32, String, u32), String>
-where
-    Probe: FnMut() -> Result<(i32, String), String>,
-    Delay: FnMut(u64),
-{
-    for attempt in 1..=HEALTH_PROBE_MAX_ATTEMPTS {
-        let (code, text) = probe()?;
-        if !health_probe_should_retry(code, &text) || attempt == HEALTH_PROBE_MAX_ATTEMPTS {
-            return Ok((code, text, attempt));
-        }
-        delay(HEALTH_PROBE_RETRY_SECS);
-    }
-    unreachable!("the bounded health-probe loop always returns on its final attempt")
-}
 
-#[cfg(target_os = "windows")]
-struct WslHealthSequenceResult {
-    status_text: String,
-    list_text: String,
-    probe_exit_code: Option<i32>,
-    probe_text: String,
-    probe_attempts: u32,
-}
 
-#[cfg(target_os = "windows")]
-fn context_step_is_terminal(code: i32, text: &str) -> bool {
-    code == 124
-        || output_needs_reboot(text)
-        || output_wsl_not_ready(text)
-        || output_virtualization_blocked(text)
-}
 
-#[cfg(target_os = "windows")]
-fn run_wsl_health_sequence<Status, List, Probe, Delay>(
-    mut status: Status,
-    mut list: List,
-    probe: Probe,
-    delay: Delay,
-) -> Result<WslHealthSequenceResult, String>
-where
-    Status: FnMut() -> Result<(i32, String), String>,
-    List: FnMut() -> Result<(i32, String), String>,
-    Probe: FnMut() -> Result<(i32, String), String>,
-    Delay: FnMut(u64),
-{
-    let (status_code, status_text) = status()?;
-    if context_step_is_terminal(status_code, &status_text) {
-        return Ok(WslHealthSequenceResult {
-            status_text,
-            list_text: String::new(),
-            probe_exit_code: None,
-            probe_text: String::new(),
-            probe_attempts: 0,
-        });
-    }
-    let (list_code, list_text) = list()?;
-    if context_step_is_terminal(list_code, &list_text) {
-        return Ok(WslHealthSequenceResult {
-            status_text,
-            list_text,
-            probe_exit_code: None,
-            probe_text: String::new(),
-            probe_attempts: 0,
-        });
-    }
-    let (probe_code, probe_text, probe_attempts) = run_health_probe_with_retry(probe, delay)?;
-    Ok(WslHealthSequenceResult {
-        status_text,
-        list_text,
-        probe_exit_code: Some(probe_code),
-        probe_text,
-        probe_attempts,
-    })
-}
 
-#[cfg(target_os = "windows")]
-fn health_probe_summary(result: &WslHealthSequenceResult) -> String {
-    match result.probe_exit_code {
-        Some(code) => format!(
-            "== ubuntu-python-probe-summary attempts={} exit_code={code} ==",
-            result.probe_attempts
-        ),
-        None => "== ubuntu-python-probe-summary attempts=0 skipped=prior-terminal-context =="
-            .to_string(),
-    }
-}
 
-#[cfg(target_os = "windows")]
-fn run_user_wsl_step(
-    log_path: &PathBuf,
-    name: &str,
-    args: &[&str],
-    timeout_secs: u64,
-) -> Result<(i32, String), String> {
-    let (exit_code, text) = run_bounded_command("wsl.exe", name, args, timeout_secs)?;
-    let _ = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-        .and_then(|mut file| {
-            use std::io::Write;
-
-            writeln!(file, "== {name} exit_code={exit_code} ==")?;
-            writeln!(file, "{text}")?;
-            Ok(())
-        });
-    Ok((exit_code, text))
-}
-
-#[cfg(target_os = "windows")]
-fn run_user_wsl_step_with_progress<Progress>(
-    log_path: &PathBuf,
-    name: &str,
-    args: &[&str],
-    timeout_secs: u64,
-    on_progress: Progress,
-) -> Result<(i32, String), String>
-where
-    Progress: FnMut(u64),
-{
-    let (exit_code, text) =
-        run_bounded_command_with_progress("wsl.exe", name, args, timeout_secs, on_progress)?;
-    let _ = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-        .and_then(|mut file| {
-            use std::io::Write;
-
-            writeln!(file, "== {name} exit_code={exit_code} ==")?;
-            writeln!(file, "{text}")?;
-            Ok(())
-        });
-    Ok((exit_code, text))
-}
 
 #[cfg(target_os = "windows")]
 fn run_bounded_command(
@@ -5019,645 +3701,11 @@ where
     Ok((exit_code, text))
 }
 
-#[cfg(target_os = "windows")]
-fn install_wsl_ubuntu_for_current_user(
-    log_path: &PathBuf,
-    lane_id: &str,
-) -> Result<InstallerActionMessage, String> {
-    let install_attempts: &[(&str, &[&str])] = &[
-        (
-            "install-ubuntu-2404-user-web-download",
-            &[
-                "--install",
-                "-d",
-                UBUNTU_WSL_SOURCE_NAME,
-                "--name",
-                CIVICCAST_WSL_DISTRO_NAME,
-                "--no-launch",
-                "--web-download",
-            ],
-        ),
-        (
-            "install-ubuntu-2404-user",
-            &[
-                "--install",
-                "-d",
-                UBUNTU_WSL_SOURCE_NAME,
-                "--name",
-                CIVICCAST_WSL_DISTRO_NAME,
-                "--no-launch",
-            ],
-        ),
-    ];
-    let mut install_text = String::new();
-    let mut install_code = -1;
-    let started_at_unix = unix_timestamp();
-    for (index, (name, args)) in install_attempts.iter().enumerate() {
-        let activity_current = (index + 1) as u32;
-        let activity_phase = if index == 0 {
-            "Downloading and installing Ubuntu 24.04"
-        } else {
-            "Retrying the Ubuntu 24.04 installation"
-        };
-        let (code, text) =
-            run_user_wsl_step_with_progress(log_path, name, args, 7200, |elapsed_seconds| {
-                let message = format!(
-                    "Windows is still working: {activity_phase}. {elapsed_seconds} seconds elapsed."
-                );
-                let _ = write_installer_activity_state(
-                    lane_id,
-                    &message,
-                    activity_phase,
-                    activity_current,
-                    install_attempts.len() as u32,
-                    started_at_unix,
-                    elapsed_seconds,
-                );
-            })?;
-        install_code = code;
-        install_text.push_str(&text);
-        install_text.push('\n');
-        let lower = text.to_lowercase();
-        if code == 0 || lower.contains("already installed") || lower.contains("already exists") {
-            break;
-        }
-    }
-    if install_code == 3010 || output_needs_reboot(&install_text) {
-        return Ok(InstallerActionMessage {
-            status: "wsl_install_started".to_string(),
-            reboot_required: true,
-            message: "Windows made a setup change and needs a restart. Restart this computer, then reopen CivicCast Installer.".to_string(),
-        });
-    }
-    let install_text_lower = install_text.to_lowercase();
-    if install_code != 0
-        && !install_text_lower.contains("already installed")
-        && !install_text_lower.contains("already exists")
-    {
-        if output_wsl_not_ready(&install_text) {
-            return Ok(InstallerActionMessage {
-                status: "wsl_install_started".to_string(),
-                reboot_required: true,
-                message: "Windows prepared the helper CivicCast needs and now needs a restart. Restart this computer, then reopen CivicCast Installer.".to_string(),
-            });
-        }
-        if output_virtualization_blocked(&install_text) {
-            return Ok(InstallerActionMessage {
-                status: "blocked".to_string(),
-                reboot_required: false,
-                message: virtualization_blocked_message(),
-            });
-        }
-        return Ok(InstallerActionMessage {
-            status: "blocked".to_string(),
-            reboot_required: false,
-            message: format!(
-                "Windows could not finish setting up the helper for this user. Open the installer log at {} or ask IT for help, then retry.",
-                log_path.display()
-            ),
-        });
-    }
 
-    let probe_args = [
-        "-d",
-        CIVICCAST_WSL_DISTRO_NAME,
-        "-u",
-        "root",
-        "--exec",
-        "bash",
-        "-lc",
-        CIVICCAST_WSL_HEALTH_PROBE,
-    ];
-    let mut next_probe_attempt = 0;
-    let sequence = run_wsl_health_sequence(
-        || run_user_wsl_step(log_path, "wsl-status-user", &["--status"], 300),
-        || run_user_wsl_step(log_path, "wsl-list-user", &["-l", "-v"], 300),
-        || {
-            next_probe_attempt += 1;
-            let name = format!(
-                "ubuntu-python-probe-user-{next_probe_attempt}-of-{HEALTH_PROBE_MAX_ATTEMPTS}"
-            );
-            run_user_wsl_step(log_path, &name, &probe_args, HEALTH_PROBE_TIMEOUT_SECS)
-        },
-        |seconds| thread::sleep(Duration::from_secs(seconds)),
-    )?;
-    let probe_code = sequence.probe_exit_code.unwrap_or(1);
-    let _ = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-        .and_then(|mut file| writeln!(file, "{}", health_probe_summary(&sequence)));
-    let all = format!(
-        "{install_text}\n{}\n{}\n{}",
-        sequence.status_text, sequence.list_text, sequence.probe_text
-    );
-    if probe_code == 0 {
-        return Ok(InstallerActionMessage {
-            status: "ready".to_string(),
-            reboot_required: false,
-            message: "The Windows helper CivicCast needs is ready. It lets CivicCast run its local meeting tools on this computer. CivicCast will continue with storage and dashboard setup.".to_string(),
-        });
-    }
-    if output_needs_reboot(&all) || output_wsl_not_ready(&all) {
-        return Ok(InstallerActionMessage {
-            status: "wsl_install_started".to_string(),
-            reboot_required: true,
-            message: "Windows prepared the helper CivicCast needs and now needs a restart. Restart this computer, then reopen CivicCast Installer.".to_string(),
-        });
-    }
-    if output_virtualization_blocked(&all) {
-        return Ok(InstallerActionMessage {
-            status: "blocked".to_string(),
-            reboot_required: false,
-            message: virtualization_blocked_message(),
-        });
-    }
-    Ok(InstallerActionMessage {
-        status: "blocked".to_string(),
-        reboot_required: false,
-        message: format!(
-            "CivicCast could not finish setting up the Windows helper that runs its local meeting tools on this computer. Open the installer log at {} or ask IT for help, then retry.",
-            log_path.display()
-        ),
-    })
-}
 
-#[cfg(target_os = "windows")]
-fn required_windows_features_enabled(text: &str) -> bool {
-    let normalized = text.replace('\0', "");
-    let mut wsl_enabled = false;
-    let mut virtual_machine_platform_enabled = false;
-    for line in normalized
-        .lines()
-        .map(str::trim)
-        .map(|line| line.trim_matches(['\\', '"']))
-    {
-        match line {
-            "Microsoft-Windows-Subsystem-Linux=1" => wsl_enabled = true,
-            "VirtualMachinePlatform=1" => virtual_machine_platform_enabled = true,
-            _ => {}
-        }
-    }
-    wsl_enabled && virtual_machine_platform_enabled
-}
 
-#[cfg(target_os = "windows")]
-fn required_windows_features_available(log_path: &PathBuf) -> Result<bool, String> {
-    // `wsl --status` is not a reliable feature-state gate: after the first
-    // servicing reboot it can exit successfully while Virtual Machine
-    // Platform is still disabled. Query both required Windows features
-    // explicitly and fail closed on missing, malformed, or non-enabled state.
-    const FEATURE_PROBE: &str = r#"$required = @('Microsoft-Windows-Subsystem-Linux','VirtualMachinePlatform'); $features = @(Get-CimInstance Win32_OptionalFeature | Where-Object { $_.Name -in $required }); foreach ($name in $required) { $feature = $features | Where-Object { $_.Name -eq $name } | Select-Object -First 1; if ($null -eq $feature) { Write-Output "$name=missing" } else { Write-Output "$name=$($feature.InstallState)" } }"#;
-    let (exit_code, text) = run_bounded_command(
-        "powershell.exe",
-        "windows-feature-preflight",
-        &["-NoProfile", "-NonInteractive", "-Command", FEATURE_PROBE],
-        30,
-    )?;
-    let _ = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-        .and_then(|mut file| {
-            use std::io::Write;
 
-            writeln!(
-                file,
-                "== windows-feature-preflight exit_code={exit_code} =="
-            )?;
-            writeln!(file, "{text}")?;
-            Ok(())
-        });
-    Ok(exit_code == 0 && required_windows_features_enabled(&text))
-}
 
-#[cfg(target_os = "windows")]
-fn wsl_core_available_for_current_user(log_path: &PathBuf) -> Result<bool, String> {
-    if !required_windows_features_available(log_path)? {
-        return Ok(false);
-    }
-    let (code, text) = run_user_wsl_step(log_path, "wsl-status-preflight", &["--status"], 300)?;
-    Ok(code == 0 && !output_needs_reboot(&text) && !output_wsl_not_ready(&text))
-}
-
-#[cfg(target_os = "windows")]
-fn launch_wsl_ubuntu_install(lane_id: &str) -> Result<InstallerActionMessage, String> {
-    // Process-lifetime guard for duplicate clicks, keyboard activation, a
-    // second installer window, or the unattended lane racing the GUI lane.
-    // The elevated PowerShell script carries its own named mutex too, so the
-    // guard survives if this parent window closes while Windows servicing runs.
-    if persisted_wsl_bootstrap_is_freshly_active() {
-        return Ok(InstallerActionMessage {
-            status: "already_running".to_string(),
-            reboot_required: false,
-            message: "Windows helper setup is already running. Keep CivicCast Installer open; the activity display will continue updating every few seconds.".to_string(),
-        });
-    }
-    let _bootstrap_guard = match TcpListener::bind(WSL_BOOTSTRAP_MUTEX_ADDR) {
-        Ok(listener) => listener,
-        Err(_) => {
-            return Ok(InstallerActionMessage {
-                status: "already_running".to_string(),
-                reboot_required: false,
-                message: "Windows helper setup is already running. Keep CivicCast Installer open; the activity display will continue updating every few seconds.".to_string(),
-            })
-        }
-    };
-    let root = installer_state_root()?;
-    fs::create_dir_all(&root)
-        .map_err(|error| format!("Could not create installer state directory: {error}"))?;
-    let script_path = root.join("bootstrap-wsl2-ubuntu.ps1");
-    let result_path = root.join("bootstrap-wsl2-ubuntu-result.txt");
-    let result_json_path = root.join("bootstrap-wsl2-ubuntu.result.json");
-    let installer_state_path = installer_state_path()?;
-    let log_path = root.join("bootstrap-wsl2-ubuntu.log");
-    let result_ps = powershell_single_quote(&result_path.to_string_lossy());
-    let result_json_ps = powershell_single_quote(&result_json_path.to_string_lossy());
-    let installer_state_ps = powershell_single_quote(&installer_state_path.to_string_lossy());
-    let log_ps = powershell_single_quote(&log_path.to_string_lossy());
-    let lane_id_ps = powershell_single_quote(lane_id);
-    let service_url_ps = powershell_single_quote(SERVICE_URL);
-    let operator_url_ps = powershell_single_quote(OPERATOR_CONSOLE_URL);
-    let resident_url_ps = powershell_single_quote(RESIDENT_PORTAL_URL);
-    let script = format!(
-        r#"$ErrorActionPreference = "Continue"
-$resultPath = {result_path}
-$resultJsonPath = {result_json_path}
-$installerStatePath = {installer_state_path}
-$logPath = {log_path}
-$laneId = {lane_id}
-$serviceUrl = {service_url}
-$operatorConsoleUrl = {operator_console_url}
-$residentPortalUrl = {resident_portal_url}
-$bootstrapStartedAtUnix = [int][double]::Parse((Get-Date -UFormat %s))
-function Write-TextAtomically([string]$Path, [string]$Content) {{
-  $tempPath = "$Path.$PID.tmp"
-  try {{
-    $utf8 = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($tempPath, $Content, $utf8)
-    Move-Item -LiteralPath $tempPath -Destination $Path -Force
-  }} finally {{
-    Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
-  }}
-}}
-function Write-InstallerState([string]$Status, [bool]$RebootRequired, [string]$Message, [int]$ActivityCurrent = 0, [int]$ActivityTotal = 0, [string]$ActivityPhase = "", [int]$ElapsedSeconds = 0) {{
-  $clean = ($Message -replace "\r|\n", " ").Trim()
-  $now = [int][double]::Parse((Get-Date -UFormat %s))
-  $stateParent = Split-Path -Parent $installerStatePath
-  if ($stateParent) {{ New-Item -ItemType Directory -Force -Path $stateParent | Out-Null }}
-  $state = [ordered]@{{
-    schema_version = 1
-    current_lane_id = $laneId
-    status = $Status
-    message = $clean
-    reboot_required = $RebootRequired
-    updated_at_unix = $now
-    service_url = $serviceUrl
-    operator_console_url = $operatorConsoleUrl
-    resident_portal_url = $residentPortalUrl
-  }}
-  if ($ActivityTotal -gt 0) {{
-    $state.started_at_unix = $bootstrapStartedAtUnix
-    $state.elapsed_seconds = $ElapsedSeconds
-    $state.activity_current = $ActivityCurrent
-    $state.activity_total = $ActivityTotal
-    $state.activity_phase = $ActivityPhase
-  }}
-  Write-TextAtomically $installerStatePath (($state | ConvertTo-Json -Depth 4) + "`n")
-}}
-function Write-ProgressState([string]$ActivityPhase, [int]$ActivityCurrent, [int]$ActivityTotal, [int]$ElapsedSeconds) {{
-  $message = "Windows is still working: $ActivityPhase. $ElapsedSeconds seconds elapsed."
-  Write-InstallerState "running" $false $message $ActivityCurrent $ActivityTotal $ActivityPhase $ElapsedSeconds
-}}
-function Finish([string]$Status, [bool]$RebootRequired, [string]$Message) {{
-  $clean = ($Message -replace "\r|\n", " ").Trim()
-  $now = [int][double]::Parse((Get-Date -UFormat %s))
-  Write-TextAtomically $resultPath "STATUS: $Status`nREBOOT_REQUIRED: $RebootRequired`nMESSAGE: $clean`n"
-  $resultJson = [ordered]@{{
-    schema_version = 1
-    status = $Status
-    reboot_required = $RebootRequired
-    message = $clean
-    updated_at_unix = $now
-  }}
-  Write-TextAtomically $resultJsonPath (($resultJson | ConvertTo-Json -Depth 4) + "`n")
-  Write-InstallerState $Status $RebootRequired $clean
-}}
-function ConvertTo-NativeArgumentString([string[]]$Arguments) {{
-  # Start-Process -ArgumentList <string[]> joins elements with spaces WITHOUT
-  # quoting, re-splitting any element that contains spaces into multiple argv
-  # tokens. Build one pre-quoted Win32 (CommandLineToArgvW) command line and
-  # pass it as a SINGLE -ArgumentList string so multi-word args stay atomic.
-  $quoted = foreach ($a in $Arguments) {{
-    if ($a.Length -gt 0 -and ($a -notmatch '[ \t\n\v"]')) {{
-      $a
-    }} else {{
-      $sb = New-Object System.Text.StringBuilder
-      [void]$sb.Append('"')
-      for ($i = 0; $i -lt $a.Length; $i++) {{
-        $bs = 0
-        while ($i -lt $a.Length -and $a[$i] -eq '\') {{ $i++; $bs++ }}
-        if ($i -eq $a.Length) {{ [void]$sb.Append('\', $bs * 2); break }}
-        elseif ($a[$i] -eq '"') {{ [void]$sb.Append('\', $bs * 2 + 1); [void]$sb.Append('"') }}
-        else {{ [void]$sb.Append('\', $bs); [void]$sb.Append($a[$i]) }}
-      }}
-      [void]$sb.Append('"')
-      $sb.ToString()
-    }}
-  }}
-  return ($quoted -join ' ')
-}}
-function Run-Step([string]$Name, [string]$Exe, [string[]]$ArgList, [int]$TimeoutSeconds = 900, [int]$ActivityCurrent = 0, [int]$ActivityTotal = 5, [string]$ActivityPhase = "Windows setup") {{
-  # rc.4's proven invocation (stdin INHERITED, so wsl.exe parses its own flags
-  # and `wsl --install` actually installs) PLUS a real timeout+kill, so a hung
-  # child (e.g. wsl.exe blocking on an interactive prompt in an unattended run,
-  # or a stalled download) fails cleanly instead of hanging the installer
-  # forever. Start-Process WITHOUT -RedirectStandardInput: redirecting only
-  # stdout/stderr does NOT break wsl flag parsing (verified on a real box --
-  # `wsl --status` -> exit 0 "Default Version: 2", identical to `& wsl.exe`),
-  # whereas the 0.1.0 ProcessStartInfo that redirected+closed stdin broke it
-  # (exit 127 misroute / `wsl --install` no-op -> enable/reboot loop). stdin
-  # here is inherited exactly as rc.4's `& $Block` had it. Do NOT add
-  # -RedirectStandardInput without a fresh clean-machine cleanroom.
-  Add-Content -Path $logPath -Value "== $Name =="
-  $outF = [System.IO.Path]::GetTempFileName()
-  $errF = [System.IO.Path]::GetTempFileName()
-  try {{
-    $spParams = @{{
-      FilePath = $Exe
-      WindowStyle = "Hidden"
-      PassThru = $true
-      RedirectStandardOutput = $outF
-      RedirectStandardError = $errF
-    }}
-    $argString = ConvertTo-NativeArgumentString $ArgList
-    if ($argString) {{ $spParams.ArgumentList = $argString }}
-    $proc = Start-Process @spParams
-    $null = $proc.Handle
-    $stepStarted = Get-Date
-    $lastHeartbeat = [datetime]::MinValue
-    $timedOut = $false
-    while (-not $proc.HasExited) {{
-      $now = Get-Date
-      $elapsed = [int]($now - $stepStarted).TotalSeconds
-      if (($now - $lastHeartbeat).TotalSeconds -ge 3) {{
-        Write-ProgressState $ActivityPhase $ActivityCurrent $ActivityTotal $elapsed
-        Add-Content -Path $logPath -Value "[$($now.ToString('o'))] $Name is still running ($elapsed seconds elapsed)."
-        $lastHeartbeat = $now
-      }}
-      if ($TimeoutSeconds -gt 0 -and $elapsed -ge $TimeoutSeconds) {{
-        # wsl.exe can hang on an unattended interactive prompt. Tree-kill those
-        # bounded WSL utility calls, but NEVER use this path for DISM/CBS
-        # servicing; Run-ServicingStep deliberately passes no timeout.
-        & taskkill.exe /T /F /PID $proc.Id 2>&1 | Out-Null
-        if (-not $proc.HasExited) {{ try {{ $proc.Kill() }} catch {{}} }}
-        $proc.WaitForExit(5000) | Out-Null
-        $timedOut = $true
-        break
-      }}
-      Start-Sleep -Milliseconds 500
-      $proc.Refresh()
-    }}
-    if (-not $timedOut) {{ $proc.WaitForExit() }}
-    $stdout = Get-Content -Raw -Path $outF -ErrorAction SilentlyContinue
-    $stderr = Get-Content -Raw -Path $errF -ErrorAction SilentlyContinue
-    if ($null -eq $stdout) {{ $stdout = "" }}
-    if ($null -eq $stderr) {{ $stderr = "" }}
-    $output = ($stdout + $stderr).Replace([string][char]0, "")
-    if ($timedOut) {{
-      $exitCode = 124
-      $output = $output + "`nRun-Step '$Name' timed out after $TimeoutSeconds seconds and was terminated."
-    }} else {{
-      $exitCode = $proc.ExitCode
-    }}
-    Add-Content -Path $logPath -Value $output
-    [pscustomobject]@{{ ExitCode = $exitCode; Output = $output }}
-  }} finally {{
-    Remove-Item -Path $outF, $errF -Force -ErrorAction SilentlyContinue
-  }}
-}}
-function Run-ServicingStep([string]$Name, [string]$Exe, [string[]]$ArgList, [int]$ActivityCurrent, [int]$ActivityTotal, [string]$ActivityPhase) {{
-  # DISM owns Windows component servicing. Killing it mid-CBS can damage the
-  # servicing transaction, so it has no CivicCast timeout. The heartbeat keeps
-  # the UI and log visibly alive for however long Windows legitimately needs.
-  return Run-Step $Name $Exe $ArgList 0 $ActivityCurrent $ActivityTotal $ActivityPhase
-}}
-function Needs-Reboot([string]$Text) {{
-  return $Text -match "(?i)restart|reboot|reboot is required|Restart-Computer|Changes will not be effective"
-}}
-function Is-Wsl-Not-Ready([string]$Text) {{
-  return $Text -match "(?i)Windows Subsystem for Linux is not installed|install by running 'wsl.exe --install'|install by running wsl.exe --install|wsl --install"
-}}
-function Test-RebootPending() {{
-  if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') {{ return $true }}
-  if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') {{ return $true }}
-  $sessionManager = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
-  return ($null -ne $sessionManager)
-}}
-$bootstrapMutex = New-Object System.Threading.Mutex($false, 'Local\CivicCastWslBootstrap')
-try {{
-  try {{ $hasBootstrapMutex = $bootstrapMutex.WaitOne(0) }}
-  catch [System.Threading.AbandonedMutexException] {{ $hasBootstrapMutex = $true }}
-  if (-not $hasBootstrapMutex) {{ exit 73 }}
-  try {{
-Write-TextAtomically $logPath "CivicCast WSL2 Ubuntu bootstrap $(Get-Date -Format o)`n"
-Write-ProgressState "Windows approved the helper setup and is preparing required settings" 0 5 0
-function Get-FeatureEnabled([string]$Name) {{
-  return ((Get-WindowsOptionalFeature -Online -FeatureName $Name -ErrorAction SilentlyContinue).State -eq "Enabled")
-}}
-# Enable and verify one Windows feature at a time. A failed or reboot-pending
-# servicing step always exits before the next DISM call; rc13 incorrectly fell
-# through and started a second servicing transaction after the first timed out.
-if (-not (Get-FeatureEnabled "Microsoft-Windows-Subsystem-Linux")) {{
-  $enableWsl = Run-ServicingStep "enable-wsl-feature" "dism.exe" @("/online", "/enable-feature", "/featurename:Microsoft-Windows-Subsystem-Linux", "/all", "/norestart") 1 5 "Turning on Windows Subsystem for Linux"
-  if ($enableWsl.ExitCode -ne 0 -and $enableWsl.ExitCode -ne 3010) {{
-    if (Test-RebootPending) {{
-      Finish "wsl_install_started" $true "Windows servicing needs a restart before CivicCast can continue. Restart this computer, then reopen CivicCast Installer."
-    }} else {{
-      Finish "blocked" $false "Windows could not turn on the helper CivicCast needs. Open the installer log at $logPath or ask IT for help. Do not retry while Windows servicing is still active."
-    }}
-    exit 0
-  }}
-  if ($enableWsl.ExitCode -eq 3010 -or (Needs-Reboot $enableWsl.Output) -or (Test-RebootPending) -or (-not (Get-FeatureEnabled "Microsoft-Windows-Subsystem-Linux"))) {{
-    Finish "wsl_install_started" $true "Windows turned on a required setting and needs a restart. Restart this computer, then reopen CivicCast Installer."
-    exit 0
-  }}
-}}
-if (-not (Get-FeatureEnabled "VirtualMachinePlatform")) {{
-  $enableVm = Run-ServicingStep "enable-virtual-machine-platform" "dism.exe" @("/online", "/enable-feature", "/featurename:VirtualMachinePlatform", "/all", "/norestart") 2 5 "Turning on the Windows virtual machine platform"
-  if ($enableVm.ExitCode -ne 0 -and $enableVm.ExitCode -ne 3010) {{
-    if (Test-RebootPending) {{
-      Finish "wsl_install_started" $true "Windows servicing needs a restart before CivicCast can continue. Restart this computer, then reopen CivicCast Installer."
-    }} else {{
-      Finish "blocked" $false "Windows could not turn on the helper CivicCast needs. Open the installer log at $logPath or ask IT for help. Do not retry while Windows servicing is still active."
-    }}
-    exit 0
-  }}
-  if ($enableVm.ExitCode -eq 3010 -or (Needs-Reboot $enableVm.Output) -or (Test-RebootPending) -or (-not (Get-FeatureEnabled "VirtualMachinePlatform"))) {{
-    Finish "wsl_install_started" $true "Windows turned on a required setting and needs a restart. Restart this computer, then reopen CivicCast Installer."
-    exit 0
-  }}
-}}
-# 30min: `wsl --update` can download+install the WSL2 kernel MSI over a slow
-# municipal link; sized to only fire on a true hang, not a slow-but-working line.
-$updateCore = Run-Step "update-wsl-core" "wsl.exe" @("--update") 1800 3 5 "Updating the Windows helper"
-$updateOutput = $updateCore.Output
-if ($updateCore.ExitCode -eq 3010 -or (Needs-Reboot $updateOutput)) {{
-  Finish "wsl_install_started" $true "Windows updated the helper CivicCast needs and now needs a restart. Restart this computer, then reopen CivicCast Installer."
-  exit 0
-}}
-if ($updateCore.ExitCode -ne 0 -and $updateOutput -match "(?i)REGDB_E_CLASSNOTREG|Class not registered|Wsl/CallMsi") {{
-  # Debloated/locked-down Windows images (broken Store / MSI-COM path) cannot
-  # install the WSL runtime via `wsl --update` at all; observed on the
-  # DESKTOP-2BR3SJR clean-machine run. Name the actual fix instead of the
-  # generic retry, because retrying can never succeed on such an image.
-  Finish "blocked" $false "Windows could not update the helper because this Windows image cannot install WSL through Windows Update (its Store/MSI path is unavailable, common on debloated or IT-locked-down images). Ask IT to install the Windows Subsystem for Linux package directly from Microsoft's WSL releases page (github.com/microsoft/WSL), then retry. Log: $logPath"
-  exit 0
-}}
-if ($updateCore.ExitCode -ne 0 -and -not (Is-Wsl-Not-Ready $updateOutput) -and $updateOutput -notmatch "(?i)already up to date|already installed|latest version|no updates are available") {{
-  Finish "blocked" $false "Windows could not update the helper CivicCast needs. Open the installer log at $logPath or ask IT for help, then retry."
-  exit 0
-}}
-$installCore = Run-Step "install-wsl-core" "wsl.exe" @("--install", "--no-distribution") 900 4 5 "Installing the Windows helper"
-$coreOutput = $installCore.Output
-if ($installCore.ExitCode -eq 3010 -or (Needs-Reboot $coreOutput)) {{
-  Finish "wsl_install_started" $true "Windows made a setup change and needs a restart before CivicCast can continue. Restart this computer, then reopen CivicCast Installer."
-  exit 0
-}}
-if ($installCore.ExitCode -ne 0 -and $coreOutput -notmatch "(?i)already installed") {{
-  if (Is-Wsl-Not-Ready $coreOutput) {{
-    Finish "wsl_install_started" $true "Windows turned on the helper, but it is not ready yet. Restart this computer, then reopen CivicCast Installer."
-    exit 0
-  }}
-  Finish "blocked" $false "Windows could not install the helper CivicCast needs. Open the installer log at $logPath or ask IT for help, then retry."
-  exit 0
-}}
-$statusAfterCore = Run-Step "wsl-status-after-core" "wsl.exe" @("--status") 900 5 5 "Checking the Windows helper"
-if ($statusAfterCore.ExitCode -ne 0 -and (Is-Wsl-Not-Ready $statusAfterCore.Output)) {{
-  Finish "wsl_install_started" $true "Windows prepared the helper CivicCast needs and now needs a restart. Restart this computer, then reopen CivicCast Installer."
-  exit 0
-}}
-Finish "wsl_core_ready" $false "Windows prepared the helper CivicCast needs. CivicCast will finish setting it up for this Windows user."
-  }} finally {{
-    if ($hasBootstrapMutex) {{ try {{ $bootstrapMutex.ReleaseMutex() }} catch {{}} }}
-  }}
-}} finally {{
-  $bootstrapMutex.Dispose()
-}}
-"#,
-        result_path = result_ps,
-        result_json_path = result_json_ps,
-        installer_state_path = installer_state_ps,
-        log_path = log_ps,
-        lane_id = lane_id_ps,
-        service_url = service_url_ps,
-        operator_console_url = operator_url_ps,
-        resident_portal_url = resident_url_ps,
-    );
-    fs::write(&script_path, script)
-        .map_err(|error| format!("Could not write WSL2 bootstrap script: {error}"))?;
-    fs::write(
-        &log_path,
-        format!(
-            "CivicCast is checking Windows helper setup at unix time {}.\n",
-            unix_timestamp()
-        ),
-    )
-    .map_err(|error| format!("Could not write WSL2 bootstrap log file: {error}"))?;
-    if wsl_core_available_for_current_user(&log_path)? {
-        write_installer_state(
-            lane_id,
-            "running",
-            "CivicCast is setting up the Windows helper for this user.",
-            false,
-        )?;
-        let result = install_wsl_ubuntu_for_current_user(&log_path, lane_id)?;
-        write_wsl_bootstrap_result_artifacts(&root, &result)?;
-        return Ok(result);
-    }
-    // Reaching this point requires an explicit operator action. Do not turn a
-    // saved reboot_required flag into a permanent loop: after a real reboot a
-    // transient or malformed feature probe can still return false. Re-enter
-    // the elevated, idempotent helper so Windows itself decides whether a
-    // restart is still pending. Startup never takes this path automatically,
-    // so there is no surprise second UAC prompt on the original boot.
-    fs::write(
-        &result_json_path,
-        format!(
-            "{{\n  \"schema_version\": 1,\n  \"status\": \"wsl_install_requested\",\n  \"reboot_required\": false,\n  \"message\": \"{}\",\n  \"updated_at_unix\": {}\n}}\n",
-            json_escape("CivicCast is asking Windows for permission to set up the helper it needs."),
-            unix_timestamp()
-        ),
-    )
-    .map_err(|error| format!("Could not write WSL2 bootstrap result file: {error}"))?;
-    write_installer_state(
-        lane_id,
-        "wsl_install_requested",
-        "CivicCast is asking Windows for permission to set up the helper it needs.",
-        false,
-    )?;
-    let elevated_argument_list = format!(
-        "-NoProfile -ExecutionPolicy Bypass -File {}",
-        windows_command_line_quote(&script_path.to_string_lossy())
-    );
-    let elevated = format!(
-        "$ErrorActionPreference='Stop'; $process = Start-Process -FilePath powershell.exe -ArgumentList {} -Verb RunAs -WindowStyle Hidden -Wait -PassThru; if ($null -eq $process) {{ throw 'Windows did not return a helper setup process.' }}; exit $process.ExitCode",
-        powershell_single_quote(&elevated_argument_list)
-    );
-    let mut command = Command::new("powershell.exe");
-    command.args([
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        &elevated,
-    ]);
-    hide_windows_command(&mut command);
-    let output = command
-        .output()
-        .map_err(|error| format!("Unable to launch Windows helper setup: {error}"))?;
-    if output.status.success() {
-        if let Ok(raw) = fs::read_to_string(&result_path) {
-            let elevated_result = parse_wsl_bootstrap_result(&raw);
-            if elevated_result.reboot_required || elevated_result.status == "blocked" {
-                return Ok(elevated_result);
-            }
-            return install_wsl_ubuntu_for_current_user(&log_path, lane_id);
-        }
-        return Ok(InstallerActionMessage {
-            status: "wsl_install_started".to_string(),
-            reboot_required: true,
-            message: format!("CivicCast asked Windows to set up the helper it needs, but setup has not finished yet. Approve the Windows prompt if it is still open, then check {} and reopen CivicCast Installer.", log_path.display()),
-        });
-    }
-    if output.status.code() == Some(73) {
-        return Ok(InstallerActionMessage {
-            status: "already_running".to_string(),
-            reboot_required: false,
-            message: "Windows helper setup is already running. Keep CivicCast Installer open; the activity display will continue updating every few seconds.".to_string(),
-        });
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let message = if stderr.is_empty() {
-        format!(
-            "Windows helper setup exited with status {}. {stdout}",
-            output.status
-        )
-    } else {
-        format!(
-            "Windows helper setup exited with status {}. {stderr}",
-            output.status
-        )
-    };
-    write_installer_state(lane_id, "error", &message, false)?;
-    Err(message)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn launch_wsl_ubuntu_install(_lane_id: &str) -> Result<InstallerActionMessage, String> {
-    Err("Windows helper setup is only available from the Windows installer.".to_string())
-}
 
 fn executable_resource_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
@@ -5690,191 +3738,21 @@ fn headless_resource_dir(name: &str) -> Option<PathBuf> {
     resource_dir_from_roots(executable_resource_roots(), name)
 }
 
-fn headless_bootstrap_script_path(resources_root: &Path) -> PathBuf {
-    resources_root.join("headless-bootstrap.ps1")
-}
-
-/// Resolve the two paths `bootstrap_civiccast_runtime_via_script` needs from a
-/// bundled resources root: the bootstrap script itself, and the install
-/// directory to pass it. Pulled out as a pure function (T-1/G-14) so the
-/// *composition* -- resources_root gets normalized via
-/// `simplify_verbatim_path` and BOTH outputs are derived from that normalized
-/// value -- is unit-tested on its actual return values, not inferred from
-/// which of the two substrings happens to sit earlier in the source file.
-fn resolved_bootstrap_paths(resources_root: &Path) -> Result<(PathBuf, PathBuf), String> {
-    let resources_root = simplify_verbatim_path(resources_root);
-    let script = headless_bootstrap_script_path(&resources_root);
-    let install_dir = resources_root
-        .parent()
-        .ok_or_else(|| {
-            "Could not determine the CivicCast install directory from the resources path."
-                .to_string()
-        })?
-        .to_path_buf();
-    Ok((script, install_dir))
-}
-
-/// Marker line `headless-bootstrap.ps1` prints to stdout when its
-/// single-instance mutex guard finds a peer instance already running and
-/// no-ops (see `Local\CivicCastHeadlessBootstrap` in that script). Distinct
-/// from a real run so the Rust caller can tell "nothing happened here, a peer
-/// owns the outcome" apart from "the script actually ran" (PE-ENG-2) --
-/// conflating the two made a false "error" get written over a live, healthy
-/// peer bootstrap whenever the GUI and the autostart-triggered relaunch
-/// overlapped.
-const HEADLESS_BOOTSTRAP_MUTEX_NOOP_MARKER: &str = "BOOTSTRAP_NOOP_MUTEX_HELD";
-
-fn headless_bootstrap_was_mutex_noop(stdout: &str) -> bool {
-    stdout.contains(HEADLESS_BOOTSTRAP_MUTEX_NOOP_MARKER)
-}
-
-/// Run the single-source-of-truth runtime bootstrap: shells out to the same
-/// `headless-bootstrap.ps1` the NSIS postinstall hook invokes (see
-/// `nsis-hooks.nsh`), instead of maintaining a second, independent
-/// reimplementation of the WSL provisioning + venv/wheel install + service
-/// start pipeline in Rust. Two copies of that pipeline drifting apart (a
-/// literal env-key typo in one but not the other) was the rc.3 -> rc.4
-/// show-stopper; this keeps exactly one copy to fix.
+/// Start (or restart) the native runtime host and re-verify service health.
 ///
-/// The script writes the same `installer-state.json` schema Rust's own
-/// `write_installer_state_with_operator_url` produces (same path, same
-/// fields), so the installer UI's polling contract is unchanged. After the
-/// script reports success, Rust still independently re-verifies `/health`
-/// over a real TCP connection (`wait_for_service_health_after_wsl_bootstrap`)
-/// before declaring the lane ready -- that check is orthogonal to *which*
-/// process did the provisioning and is worth keeping as a second, Windows-side
-/// witness of the outcome.
-fn bootstrap_civiccast_runtime_via_script(
-    lane_id: &str,
-    resources_root: PathBuf,
-) -> Result<String, String> {
-    let (script, install_dir) = resolved_bootstrap_paths(&resources_root)?;
-    let expected_runtime_build_id = bundled_runtime_build_id(&resources_root)?;
-    if !script.exists() {
-        return Err(format!(
-            "The installer package is missing its bundled runtime bootstrap script: {}. Download the full Windows setup asset from the official CivicCast GitHub release and rerun the installer.",
-            script.display()
-        ));
-    }
-
-    write_installer_state(
-        lane_id,
-        "running",
-        "CivicCast is finishing setup. Keep this window open.",
-        false,
-    )?;
-
-    let output = run_headless_bootstrap_script(&script, &install_dir)?;
-    let mutex_noop = headless_bootstrap_was_mutex_noop(&String::from_utf8_lossy(&output.stdout));
-
-    // Ground truth for "setup succeeded" is a healthy service at the expected
-    // version -- NOT the script's exit code or its state file. The runtime bash
-    // script exits 43 if its own 90s health poll times out, and it can lose its
-    // BOOTSTRAP_INSTANCE_ID proof line to the `exec > >(tee ...)` flush race on
-    // exit; either makes the script self-report failure while the service is
-    // (or is moments from being) healthy. headless-bootstrap.ps1 already has a
-    // health fallback for the lost-proof-line case; this is the same guard at
-    // the Rust layer so an exit-43/stale-state self-report cannot mark a
-    // genuinely-running station as failed. Probe /health directly first.
-    if wait_for_service_health_after_wsl_bootstrap(None, Some(&expected_runtime_build_id)).is_ok() {
-        // Reconcile persisted state with the healthy reality. The PS script may
-        // have exited non-zero and written status:error (or left a stale
-        // running/error from a prior attempt) even though the service is up, so
-        // the installer UI would show this working station as failed. Only fix a
-        // state that disagrees -- do NOT clobber an existing status:ready, which
-        // carries the nonce-bearing operator URL written by the PS success path.
-        let already_ready = installer_state_path()
-            .ok()
-            .and_then(|path| fs::read_to_string(path).ok())
-            .map(|raw| {
-                raw.split_whitespace()
-                    .collect::<String>()
-                    .contains("\"status\":\"ready\"")
-            })
-            .unwrap_or(false);
-        if !already_ready {
-            let _ = write_installer_state(
-                lane_id,
-                "ready",
-                "CivicCast is running and healthy on this computer.",
-                false,
-            );
-        }
-        return Ok(format!(
-            "CivicCast is running at {SERVICE_URL}. Open the operator console to create the first admin and run rehearsal."
-        ));
-    }
-
-    if mutex_noop {
-        // A peer instance (the other of GUI-vs-autostart) held the
-        // single-instance mutex and this attempt no-op'd -- it is that peer's
-        // job to write installer-state.json, not ours. It hasn't reported
-        // healthy yet (checked above), but that's expected mid-bootstrap, not
-        // a failure: writing "error" here would clobber a live, in-progress
-        // (or about-to-succeed) peer run with a false failure (PE-ENG-2).
-        // Leave state untouched and let the owning instance or the next poll
-        // report the real outcome.
-        return Ok(
-            "Another CivicCast setup is already in progress on this computer. Waiting for it to finish."
-                .to_string(),
-        );
-    }
-
-    // Service is not healthy -- surface the most specific failure detail we have.
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if stderr.is_empty() { stdout } else { stderr };
-        return Err(format!(
-            "CivicCast runtime setup failed ({}). {detail}",
-            output.status
-        ));
-    }
-
-    Err(format!(
-        "CivicCast runtime setup finished, but Windows could not verify the new {CIVICCAST_VERSION} service at {SERVICE_URL}/health. Start setup again. If it repeats, save the headless bootstrap log and send it to support."
-    ))
-}
-
-#[cfg(target_os = "windows")]
-fn run_headless_bootstrap_script(script: &Path, install_dir: &Path) -> Result<Output, String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-    Command::new("powershell.exe")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-        .arg(script)
-        .arg("-InstallDir")
-        .arg(install_dir)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|error| format!("Could not run the CivicCast runtime bootstrap script: {error}"))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn run_headless_bootstrap_script(_script: &Path, _install_dir: &Path) -> Result<Output, String> {
-    Err("CivicCast runtime setup is only available from the Windows installer.".to_string())
-}
-
-fn bootstrap_civiccast_runtime(app: &tauri::AppHandle, lane_id: &str) -> Result<String, String> {
-    let resources_root = resource_dir(app, "headless-bootstrap.ps1")
-        .and_then(|path| path.parent().map(PathBuf::from))
-        .or_else(|| resource_dir(app, "wheelhouse").and_then(|path| path.parent().map(PathBuf::from)))
-        .ok_or_else(|| {
-            "The installer package is missing its bundled runtime bootstrap resources. Download the full Windows setup asset from the official CivicCast GitHub release and rerun the installer.".to_string()
-        })?;
-    bootstrap_civiccast_runtime_via_script(lane_id, resources_root)
-}
-
-fn bootstrap_civiccast_runtime_headless(lane_id: &str) -> Result<String, String> {
-    let resources_root = headless_resource_dir("headless-bootstrap.ps1")
-        .and_then(|path| path.parent().map(PathBuf::from))
-        .or_else(|| headless_resource_dir("wheelhouse").and_then(|path| path.parent().map(PathBuf::from)))
-        .ok_or_else(|| {
-            "The installer package is missing its bundled runtime bootstrap resources. Download the full Windows setup asset from the official CivicCast GitHub release and rerun the installer.".to_string()
-        })?;
-    bootstrap_civiccast_runtime_via_script(lane_id, resources_root)
-}
-
+/// This is the "repair"/"retry"/"continue" recovery for the runtime-family
+/// installer lanes (`runtime`/`ffmpeg`/`storage`/`service`/`dashboard`). The
+/// retired WSL product's version of this function shelled out to
+/// `headless-bootstrap.ps1` (a bundled resource script that provisioned the
+/// runtime inside the WSL distro's `apt-get install`) -- that script no
+/// longer ships, so this now calls the same native runtime-host launch
+/// [`launch_startup_native_status_if_ready`] already uses at process start,
+/// then re-probes `/health` with [`wait_for_service_health_after_runtime_start`]
+/// before reporting the lane's outcome. The native product's actual
+/// provisioning happens in the NSIS postinstall hook
+/// (`nsis-hooks-bootstrap.nsh`) and the Windows service
+/// (`CivicCastSupervisor`, registered by `native_service_registration.rs`);
+/// this only starts/reverifies that already-installed service.
 fn launch_civiccast_runtime_bootstrap(
     app: tauri::AppHandle,
     lane_id: String,
@@ -5882,199 +3760,43 @@ fn launch_civiccast_runtime_bootstrap(
     write_installer_state(
         &lane_id,
         "running",
-        "CivicCast is finishing setup. Keep this window open.",
+        "CivicCast is starting its background runtime host.",
         false,
     )?;
     std::thread::spawn(move || {
-        if let Err(error) = bootstrap_civiccast_runtime(&app, &lane_id) {
+        let expected_build_id = app_bundled_runtime_build_id(&app);
+        if let Err(error) = launch_runtime_host_process(&app) {
             let _ = write_installer_state(
                 &lane_id,
                 "error",
-                &format!("Broadcast engine setup failed: {error}"),
+                &format!("Could not start the CivicCast runtime host: {error}"),
                 false,
             );
+            return;
+        }
+        match wait_for_service_health_after_runtime_start(None, expected_build_id.as_deref()) {
+            Ok(()) => {
+                let _ = write_installer_state(
+                    &lane_id,
+                    "ready",
+                    "CivicCast is running and healthy on this computer.",
+                    false,
+                );
+            }
+            Err(error) => {
+                let _ = write_installer_state(&lane_id, "error", &error, false);
+            }
         }
     });
     Ok(
-        "CivicCast is finishing setup. Keep this window open while the dashboard starts."
+        "CivicCast is starting its background runtime host. Keep this window open while the dashboard starts."
             .to_string(),
     )
 }
 
-fn installer_state_requests_runtime_bootstrap(raw: &str) -> bool {
-    let compact: String = raw
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
-    let platform_ready = (compact.contains("\"current_lane_id\":\"platform\"")
-        || compact.contains("\"current_lane_id\":\"wsl2\""))
-        && compact.contains("\"status\":\"ready\"");
-    platform_ready && !compact.contains("\"reboot_required\":true")
-}
 
-/// True when the saved state already shows a FINISHED install (the runtime or
-/// dashboard lane at "ready"). QA-7 (gate-civiccast): used to skip re-launching
-/// runtime bootstrap on relaunch of an already-complete install, which briefly
-/// rewrites "ready" back to "running/finishing setup".
-fn installer_state_is_runtime_or_dashboard_ready(raw: &str) -> bool {
-    let compact: String = raw
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
-    (compact.contains("\"current_lane_id\":\"runtime\"")
-        || compact.contains("\"current_lane_id\":\"dashboard\""))
-        && compact.contains("\"status\":\"ready\"")
-}
 
-/// A Windows-helper result can finish after the runtime bootstrap it enabled.
-/// Never let that late result move an already completed installation back to
-/// a restart or setup-required screen.
-fn windows_bootstrap_result_is_superseded(raw: &str) -> bool {
-    installer_state_is_runtime_or_dashboard_ready(raw)
-}
 
-fn persisted_windows_bootstrap_result_is_superseded() -> bool {
-    newest_existing_installer_state_path()
-        .ok()
-        .flatten()
-        .and_then(|path| fs::read_to_string(path).ok())
-        .map(|raw| windows_bootstrap_result_is_superseded(&raw))
-        .unwrap_or(false)
-}
-
-fn installer_state_has_provisioned_runtime(raw: &str) -> bool {
-    if installer_state_is_runtime_or_dashboard_ready(raw) {
-        return true;
-    }
-    let compact: String = raw
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
-    let is_runtime_lane = compact.contains("\"current_lane_id\":\"runtime\"")
-        || compact.contains("\"current_lane_id\":\"dashboard\"");
-    is_runtime_lane && compact.contains("\"status\":\"unavailable\"")
-}
-
-fn launch_startup_runtime_bootstrap_if_ready(app: tauri::AppHandle) {
-    let should_start = newest_existing_installer_state_path()
-        .ok()
-        .flatten()
-        .and_then(|path| fs::read_to_string(path).ok())
-        .map(|raw| installer_state_requests_runtime_bootstrap(&raw))
-        .unwrap_or(false);
-    if should_start && wsl_ubuntu_ready() {
-        let _ = launch_civiccast_runtime_bootstrap(app, "runtime".to_string());
-    }
-}
-
-fn continue_to_runtime_after_wsl_ready(
-    app: tauri::AppHandle,
-    result: &InstallerActionMessage,
-) -> Result<bool, String> {
-    if result.status == "ready" && !result.reboot_required && wsl_ubuntu_ready() {
-        launch_civiccast_runtime_bootstrap(app, "runtime".to_string())?;
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-/// The `tauri.conf.json` identifier of the native product's build. Baked in
-/// at COMPILE TIME: the native build runs `tauri build` with a `TAURI_CONFIG`
-/// env override (merging `tauri.native.conf.json`'s `identifier`,
-/// `productName`, and `mainBinaryName` on top of the base config) BEFORE
-/// `tauri::generate_context!()` embeds the result into the binary. See
-/// `civiccast/apps/installer/src-tauri/tauri.native.conf.json`.
-const NATIVE_PRODUCT_IDENTIFIER: &str = "org.civiccast.native";
-
-/// Which startup branch a no-argument launch should take. Kept as a small
-/// pure decision separate from `app.config()` access so it is unit-testable
-/// without a live `tauri::AppHandle`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StartupBranch {
-    /// The native product: no WSL dependency, so never probe for or report
-    /// on WSL.
-    NativeStatus,
-    /// The WSL product: keep today's behavior exactly as-is.
-    WslBootstrap,
-}
-
-/// Decide which startup branch applies, given the identifier baked into
-/// this binary by `tauri::generate_context!()`.
-///
-/// This identifier is the signal used to answer "which product is THIS
-/// EXECUTABLE", and it was chosen over the alternatives investigated for
-/// this fix because it is the only one guaranteed correct at the very first,
-/// no-argument launch of a freshly installed native product:
-///
-///   - `HKLM\SOFTWARE\CivicCast\ActiveRuntime` (see `native_uninstall.rs`)
-///     answers a DIFFERENT question -- "which product currently OWNS this
-///     machine" -- a separate, mutable, cross-product piece of state. Native
-///     must never run WSL bootstrap logic regardless of which product
-///     currently owns the machine, so this would be the wrong signal even if
-///     it were always present. It is also written by later provisioning /
-///     NSIS-hook steps, so on a machine where that step failed, was skipped,
-///     or simply has not run yet relative to the shortcut being clicked, it
-///     can legitimately be absent -- useless for a decision that has to be
-///     correct on the very first click.
-///   - The `HKLM\SOFTWARE\CivicCast\Native` registry subkey (see
-///     `native_service_registration.rs`) is likewise written by a
-///     provisioning step (service/firewall/database registration) that runs
-///     as part of setup, not guaranteed to exist at the instant setup
-///     finishes and the shortcut is clicked.
-///   - The install path (`$INSTDIR`) is operator-customizable during setup;
-///     a string match against a default path is not a safe assumption.
-///   - The `.exe` file name (`mainBinaryName`) is compiled in by the exact
-///     same mechanism as `identifier` (the same `TAURI_CONFIG` override), so
-///     it is equally reliable, but reading it means an extra
-///     `std::env::current_exe()` OS round trip to recover a fact
-///     `tauri::generate_context!()` already embedded directly. Reading
-///     `identifier` is the more direct route to the same compile-time truth.
-fn startup_branch_for_identifier(identifier: &str) -> StartupBranch {
-    if identifier == NATIVE_PRODUCT_IDENTIFIER {
-        StartupBranch::NativeStatus
-    } else {
-        StartupBranch::WslBootstrap
-    }
-}
-
-fn startup_branch_for_app(app: &tauri::AppHandle) -> StartupBranch {
-    startup_branch_for_identifier(&app.config().identifier)
-}
-
-/// The startup branch THIS PROCESS is running as, latched exactly once from
-/// the compiled-in identifier inside Tauri's `setup()` hook.
-///
-/// [`startup_branch_for_app`] needs a live `tauri::AppHandle`, and the deepest
-/// consumer of this decision -- [`restore_setup_handoff_url_if_available`],
-/// reached from the `read_local_installer_state` command through
-/// `spawn_blocking` -- has no handle to pass down. Latching the answer in
-/// `setup()` (which always runs before any command can be invoked) is the
-/// smallest way to make the same compile-time truth readable from there
-/// without threading an `AppHandle` through six call frames or inventing a
-/// second, weaker discriminator.
-static STARTUP_BRANCH: OnceLock<StartupBranch> = OnceLock::new();
-
-fn latch_startup_branch(branch: StartupBranch) {
-    let _ = STARTUP_BRANCH.set(branch);
-}
-
-/// Whether this process is allowed to shell out to `wsl.exe` while recovering
-/// the setup-handoff nonce.
-///
-/// Pure so it can be asserted directly. Fails CLOSED on `None`: an unlatched
-/// branch means no Tauri app is running (a CLI subcommand path), and a
-/// no-WSL-dependency native station must never be the thing that guesses.
-///
-/// BLOCKER this closes: [`setup_nonce_from_wsl`] was gated ONLY by
-/// `cfg(target_os = "windows")`, and its caller runs on EVERY
-/// `read_local_installer_state` poll (every ~2s for the whole multi-minute
-/// first run). On a native station -- which has no CivicCast WSL distro at
-/// all -- that spawned a `wsl.exe` process every two seconds forever, each one
-/// failing and each one leaving `run_bounded_command`'s capture temp files
-/// behind.
-fn may_probe_wsl_for_setup_nonce(branch: Option<StartupBranch>) -> bool {
-    matches!(branch, Some(StartupBranch::WslBootstrap))
-}
 
 /// The (lane_id, status, message) triple a no-argument NATIVE launch should
 /// report, given whether the native background service answered its health
@@ -6090,14 +3812,15 @@ fn may_probe_wsl_for_setup_nonce(branch: Option<StartupBranch>) -> bool {
 /// it here is not a fabricated capability; it is the one control-plane
 /// health signal the two products already agree on.
 ///
-/// GAP, reported rather than papered over: the native product has no
-/// startup-time recovery path of its own yet (no equivalent of the WSL
-/// product's bootstrap-and-retry lane, which can install/repair the Windows
-/// helper and restart the runtime host). If the native service is not
-/// reachable, this only reports that honestly -- it does not attempt to
-/// start, repair, or recover the Windows service. Whether the native product
-/// needs its own startup recovery UI is a product-scope question for the
-/// owner, not something this fix should invent.
+/// GAP, reported rather than papered over: a no-argument launch has no
+/// startup-time recovery of its own. If the native service is not
+/// reachable, THIS reports that honestly -- it does not attempt to start,
+/// repair, or recover the service. (The operator-initiated "repair"/"retry"
+/// installer actions do have a recovery path -- see
+/// `launch_civiccast_runtime_bootstrap` -- this is specifically about the
+/// automatic, no-argument launch.) Whether a no-argument launch should also
+/// auto-recover is a product-scope question for the owner, not something
+/// this fix should invent.
 fn native_runtime_status_message(is_healthy: bool) -> (&'static str, &'static str, &'static str) {
     if is_healthy {
         (
@@ -6115,10 +3838,10 @@ fn native_runtime_status_message(is_healthy: bool) -> (&'static str, &'static st
 }
 
 /// No-argument launch of the NATIVE product: report the real, currently
-/// observed health of the native background service. Deliberately does NOT
-/// call `launch_startup_wsl_bootstrap_if_missing` or anything that can reach
-/// `startup_missing_wsl_message()` -- the native product has no WSL
-/// dependency, so it must never tell an operator to set one up.
+/// observed health of the native background service. The retired WSL
+/// product used to have a startup branch here that could report a missing
+/// Windows-helper setup message -- the native product has no such
+/// dependency and must never tell an operator to set one up.
 fn launch_startup_native_status_if_ready(app: tauri::AppHandle) {
     thread::spawn(move || {
         let expected_build_id = app_bundled_runtime_build_id(&app);
@@ -6128,142 +3851,7 @@ fn launch_startup_native_status_if_ready(app: tauri::AppHandle) {
     });
 }
 
-#[cfg(target_os = "windows")]
-fn launch_startup_wsl_bootstrap_if_missing(app: tauri::AppHandle) {
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(1500));
-        // A prior installer window may have closed while its elevated Windows
-        // servicing child kept running. Preserve that child's live heartbeat;
-        // do not replace it with a synthetic blocked state on relaunch.
-        if persisted_wsl_bootstrap_is_freshly_active() {
-            return;
-        }
-        let saved_state = newest_existing_installer_state_path()
-            .ok()
-            .flatten()
-            .and_then(|path| fs::read_to_string(path).ok());
-        let needs_post_reboot_reprobe = saved_state
-            .as_deref()
-            .map(installer_state_needs_post_reboot_wsl_reprobe)
-            .unwrap_or(false);
-        let ubuntu_ready = wsl_ubuntu_ready();
-        if needs_post_reboot_reprobe && !ubuntu_ready {
-            let log_path =
-                installer_state_root().map(|root| root.join("bootstrap-wsl2-ubuntu.log"));
-            let wsl_core_available = log_path
-                .as_ref()
-                .ok()
-                .and_then(|path| wsl_core_available_for_current_user(path).ok())
-                .unwrap_or(false);
-            if saved_state
-                .as_deref()
-                .map(|raw| {
-                    should_resume_post_reboot_wsl_bootstrap(raw, wsl_core_available, ubuntu_ready)
-                })
-                .unwrap_or(false)
-            {
-                let _ = write_installer_state(
-                    "wsl2",
-                    "wsl_resume_requested",
-                    // rc17 D5: this resume re-elevates (a fresh process, no admin
-                    // token survives the reboot) and shows the Windows prompt
-                    // again -- say so, instead of leaving the operator to wonder
-                    // why a prompt they were told to expect "once" reappeared.
-                    "Windows restarted successfully. CivicCast is resuming Windows helper setup for this user. Approve the Windows security prompt again if it appears.",
-                    false,
-                );
-                match launch_wsl_ubuntu_install("wsl2") {
-                    Ok(result) => {
-                        let _ = write_installer_state(
-                            "wsl2",
-                            &result.status,
-                            &result.message,
-                            result.reboot_required,
-                        );
-                        let _ = continue_to_runtime_after_wsl_ready(app, &result);
-                    }
-                    Err(error) => {
-                        let _ = write_installer_state(
-                            "wsl2",
-                            "error",
-                            &format!("Windows helper setup failed: {error}"),
-                            false,
-                        );
-                    }
-                }
-                return;
-            }
-            // The feature servicing reboot has not actually happened yet. Keep
-            // the durable restart-required state intact and never ask for UAC a
-            // second time while the same boot is still active.
-            return;
-        }
-        if ubuntu_ready {
-            // QA-7: if the install already finished (runtime/dashboard lane at
-            // "ready" on disk) AND the service is genuinely reachable, leave it
-            // alone. Re-launching runtime bootstrap here would rewrite the persisted
-            // "ready" back to "running/finishing setup" on every relaunch (a
-            // cosmetic flash). The live /health check is required (audit-lite): a
-            // stale "ready" state file whose service is actually DOWN — e.g. after a
-            // reinstall on a machine where WSL already exists — must NOT skip; it
-            // still needs the runtime bootstrap to start the service.
-            let already_finished = newest_existing_installer_state_path()
-                .ok()
-                .flatten()
-                .and_then(|path| fs::read_to_string(path).ok())
-                .map(|raw| installer_state_has_provisioned_runtime(&raw))
-                .unwrap_or(false);
-            if already_finished {
-                let expected_build_id = app_bundled_runtime_build_id(&app);
-                if service_health_reachable_once(None, expected_build_id.as_deref()) {
-                    let _ = launch_runtime_host_process(&app);
-                    return;
-                }
-                if expected_build_id.is_some() && service_health_reachable_once(None, None) {
-                    // A same-version repair can find a healthy process from an
-                    // older same-version build. Version alone is not proof that the
-                    // installed runtime matches this installer's bytes.
-                    let _ = launch_civiccast_runtime_bootstrap(app, "runtime".to_string());
-                    return;
-                }
-                // A completed installation needs runtime ownership/recovery,
-                // not another apt/venv/database provisioning pass.
-                let _ = write_installer_state(
-                    "runtime",
-                    "unavailable",
-                    "CivicCast is starting its background runtime host.",
-                    false,
-                );
-                let _ = launch_runtime_host_process(&app);
-                return;
-            }
-            let result = InstallerActionMessage {
-                status: "ready".to_string(),
-                message: "The Windows helper CivicCast needs is already ready. It lets CivicCast run its local meeting tools on this computer.".to_string(),
-                reboot_required: false,
-            };
-            if continue_to_runtime_after_wsl_ready(app, &result).unwrap_or(false) {
-                return;
-            }
-            let _ = write_installer_state(
-                "wsl2",
-                &result.status,
-                &result.message,
-                result.reboot_required,
-            );
-            return;
-        }
-        let message = if needs_post_reboot_reprobe {
-            startup_post_reboot_wsl_missing_message()
-        } else {
-            startup_missing_wsl_message()
-        };
-        let _ = write_installer_state("wsl2", "blocked", message, false);
-    });
-}
 
-#[cfg(not(target_os = "windows"))]
-fn launch_startup_wsl_bootstrap_if_missing(_app: tauri::AppHandle) {}
 
 #[tauri::command(rename_all = "camelCase")]
 async fn run_local_installer_action(
@@ -6340,48 +3928,6 @@ fn run_local_installer_action_blocking(
         // headless bootstrap is idempotent and health-first, so Retry must
         // re-enter it; an already-healthy install remains a fast no-op.
         return launch_civiccast_runtime_bootstrap(app, lane_id);
-    }
-    if is_wsl_bootstrap_lane(&lane_id) {
-        if wsl_ubuntu_ready() {
-            write_installer_state(
-                &lane_id,
-                "ready",
-                "The Windows helper CivicCast needs is already ready. It lets CivicCast run its local meeting tools on this computer.",
-                false,
-            )?;
-            if action == "continue" {
-                return launch_civiccast_runtime_bootstrap(app, "runtime".to_string());
-            }
-            return Ok(
-                "The Windows helper CivicCast needs is ready. It lets CivicCast run its local meeting tools on this computer. CivicCast will continue setup."
-                    .to_string(),
-            );
-        }
-        if action == "retry" {
-            return Ok("The Windows helper CivicCast needs is still missing. It lets CivicCast run its local meeting tools on this computer. Choose Set up Windows helper to continue.".to_string());
-        }
-        if action == "continue" {
-            let result = launch_wsl_ubuntu_install(&lane_id)?;
-            if result.status == "already_running" {
-                return Ok(result.message);
-            }
-            if persisted_windows_bootstrap_result_is_superseded() {
-                return Ok(
-                    "CivicCast is already running and healthy. A late Windows helper result was ignored."
-                        .to_string(),
-                );
-            }
-            if continue_to_runtime_after_wsl_ready(app, &result)? {
-                return Ok("The Windows helper is ready. It lets CivicCast run its local meeting tools on this computer. CivicCast is continuing with storage and dashboard setup.".to_string());
-            }
-            write_installer_state(
-                &lane_id,
-                &result.status,
-                &result.message,
-                result.reboot_required,
-            )?;
-            return Ok(result.message);
-        }
     }
     if action == "continue"
         && matches!(
@@ -8067,10 +5613,8 @@ fn persist_operator_console_url(operator_url: &str) -> Result<(), String> {
 /// Re-launch THIS binary elevated for one recovery pass, and hand back its
 /// exit code.
 ///
-/// Reuses the `Start-Process -Verb RunAs` pattern already in this file (see
-/// the WSL bootstrap's elevated helper launch) rather than inventing a second
-/// elevation mechanism. `-Wait -PassThru` so the operator's exit code is the
-/// elevated child's real verdict, not "we managed to ask".
+/// `-Wait -PassThru` so the operator's exit code is the elevated child's
+/// real verdict, not "we managed to ask".
 #[cfg(target_os = "windows")]
 fn relaunch_elevated_for_setup_handoff() -> i32 {
     let executable = match std::env::current_exe() {
@@ -8255,9 +5799,6 @@ fn main() {
     {
         println!("CivicCast Installer {CIVICCAST_VERSION}");
         println!(
-            "  --civiccast-bootstrap-unattended   run post-install setup without opening the UI"
-        );
-        println!(
             "  --civiccast-runtime-host          keep the installed CivicCast runtime available"
         );
         println!("  --civiccast-verify-pack PATH      verify a signed native component pack");
@@ -8338,9 +5879,6 @@ fn main() {
     if let Some(exit_code) = run_native_pack_staging_cli(&args) {
         std::process::exit(exit_code);
     }
-    if command_line_has_arg(&args, "--civiccast-bootstrap-unattended") {
-        std::process::exit(run_headless_bootstrap());
-    }
     if command_line_has_arg(&args, "--civiccast-runtime-host") {
         std::process::exit(run_civiccast_runtime_host());
     }
@@ -8349,24 +5887,10 @@ fn main() {
         .setup(|app| {
             remove_stale_shutdown_markers();
             launch_shutdown_marker_watcher();
-            launch_startup_runtime_bootstrap_if_ready(app.handle().clone());
-            // The native product must never take the WSL-bootstrap branch --
-            // see `startup_branch_for_identifier`'s doc comment for why the
-            // compiled-in identifier is the reliable signal for this.
-            let branch = startup_branch_for_app(app.handle());
-            // Latch BEFORE branching: `read_local_installer_state` (and the
-            // WSL-probe guard it reaches through
-            // `restore_setup_handoff_url_if_available`) has no `AppHandle` of
-            // its own -- see `STARTUP_BRANCH`.
-            latch_startup_branch(branch);
-            match branch {
-                StartupBranch::NativeStatus => {
-                    launch_startup_native_status_if_ready(app.handle().clone())
-                }
-                StartupBranch::WslBootstrap => {
-                    launch_startup_wsl_bootstrap_if_missing(app.handle().clone())
-                }
-            }
+            // The native product is the only product this binary ever is --
+            // see native_runtime_status_message's doc comment for what a
+            // no-argument launch reports.
+            launch_startup_native_status_if_ready(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -8389,62 +5913,6 @@ fn main() {
         .expect("failed to run CivicCast installer");
 }
 
-fn run_headless_bootstrap() -> i32 {
-    remove_stale_shutdown_markers();
-    match launch_wsl_ubuntu_install("wsl2") {
-        Ok(result) => {
-            if result.status == "already_running" {
-                println!("{}", result.message);
-                return 0;
-            }
-            if persisted_windows_bootstrap_result_is_superseded() {
-                println!(
-                    "CivicCast is already running and healthy. A late Windows helper result was ignored."
-                );
-                return 0;
-            }
-            let _ = write_installer_state(
-                "wsl2",
-                &result.status,
-                &result.message,
-                result.reboot_required,
-            );
-            if result.status == "ready" && !result.reboot_required && wsl_ubuntu_ready() {
-                match bootstrap_civiccast_runtime_headless("runtime") {
-                    Ok(message) => {
-                        println!("{message}");
-                        0
-                    }
-                    Err(error) => {
-                        if output_wsl_not_ready(&error) {
-                            let _ = write_installer_state(
-                                "wsl2",
-                                "blocked",
-                                startup_missing_wsl_message(),
-                                false,
-                            );
-                        } else {
-                            let _ = write_installer_state("runtime", "error", &error, false);
-                        }
-                        eprintln!("{error}");
-                        43
-                    }
-                }
-            } else if result.reboot_required {
-                println!("{}", result.message);
-                0
-            } else {
-                eprintln!("{}", result.message);
-                42
-            }
-        }
-        Err(error) => {
-            let _ = write_installer_state("wsl2", "error", &error, false);
-            eprintln!("{error}");
-            41
-        }
-    }
-}
 
 #[cfg(test)]
 mod acquisition_destination_tests {

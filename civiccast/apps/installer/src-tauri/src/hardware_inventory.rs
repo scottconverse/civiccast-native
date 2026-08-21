@@ -512,7 +512,9 @@ mod windows_collectors {
 
 /// Collect the full native hardware inventory. Real Win32/DXGI calls on
 /// Windows; a placeholder (zeroed, floor-tier) result on any other target so
-/// the crate still compiles for the WSL product's cross-platform build.
+/// the crate still compiles (and `cargo check`/`cargo test` still run) on a
+/// non-Windows dev machine or CI runner -- this installer only ever ships
+/// for Windows.
 pub fn collect_hardware_inventory() -> HardwareInventory {
     #[cfg(target_os = "windows")]
     {
