@@ -2,7 +2,7 @@
 # Copyright (c) The CivicCast Authors
 """Gi-free, pydantic-free element graph for the S15 playout engine.
 
-Importable on BOTH Windows (unit tests + the EgressSinkSpec→graph mapping) and WSL
+Importable on BOTH Windows (unit tests + the EgressSinkSpec→graph mapping) and POSIX
 (the live engine), because it depends only on the stdlib. The live runtime
 (``engine.py``) consumes a ``PlayoutGraph`` and builds GStreamer elements from it via
 element factories + ``set_property`` — never string ``parse_launch`` — so URI/path
@@ -111,7 +111,7 @@ class CaptionEmbedLeg:
     (``GstPlayoutEngine.push_caption_cue`` via the worker ``caption`` control command).
 
     Gi-free data only; the live engine (``engine.py``) builds + pad-links this. The live
-    run (SEI actually present in the emitted stream) is WSL/LPM-validated; the decode-back
+    run (SEI actually present in the emitted stream) is POSIX/LPM-validated; the decode-back
     proof loop (``caption_proof_worker``) is what flips ``caption_status`` to ``on``.
     """
 
@@ -139,7 +139,7 @@ class SecondaryAudioLeg:
     is the BCP-47/ISO-639 tag stamped on the PID's language descriptor. Unlike the
     program audio (which swaps with the active video source), a secondary track is its
     own continuous program. Live PID assignment + the language descriptor are
-    WSL/LPM-validated."""
+    POSIX/LPM-validated."""
 
     label: str
     language: str

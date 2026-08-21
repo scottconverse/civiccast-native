@@ -13,8 +13,6 @@ ISOLATION_STRATEGIES = {
     "hyper-v-vm",
     "windows-sandbox",
     "virtualbox-vm",
-    "wsl2-fresh-distro",
-    "wsl2-fresh-user",
 }
 
 
@@ -108,64 +106,6 @@ class TestCleanWindowsInstallProofContract:
         assert payload["attempts"][0]["stderr"] == "Hyper-V module is not available"
         assert payload["attempts"][1]["strategy"] == "virtualbox-vm"
 
-    def test_detects_installed_ubuntu_distro_without_hardcoded_name(
-        self,
-        monkeypatch,
-    ) -> None:
-        proof = importlib.import_module("scripts.run_clean_windows_install_proof")
-
-        class CompletedList:
-            returncode = 0
-            stdout = "Debian\nUbuntu-24.04\n"
-            stderr = ""
-
-        class CompletedPython:
-            returncode = 0
-            stdout = "3.12.3\n"
-            stderr = ""
-
-        calls = []
-
-        def fake_run(*args, **kwargs):
-            calls.append(args[0])
-            if args[0][:3] == ["wsl.exe", "-d", "Ubuntu-24.04"]:
-                return CompletedPython()
-            return CompletedList()
-
-        monkeypatch.setattr(proof.subprocess, "run", fake_run)
-
-        distro, evidence = proof._detect_ubuntu_wsl_distro()
-
-        assert distro == "Ubuntu-24.04"
-        assert "Ubuntu-24.04" in evidence
-        assert any(call[:3] == ["wsl.exe", "-d", "Ubuntu-24.04"] for call in calls)
-
-    def test_rejects_ubuntu_distro_without_python312(self, monkeypatch) -> None:
-        proof = importlib.import_module("scripts.run_clean_windows_install_proof")
-
-        class CompletedList:
-            returncode = 0
-            stdout = "Ubuntu\n"
-            stderr = ""
-
-        class CompletedPython:
-            returncode = 1
-            stdout = "3.14.4\n"
-            stderr = ""
-
-        def fake_run(*args, **kwargs):
-            if args[0][:3] == ["wsl.exe", "-d", "Ubuntu"]:
-                return CompletedPython()
-            return CompletedList()
-
-        monkeypatch.setattr(proof.subprocess, "run", fake_run)
-
-        distro, evidence = proof._detect_ubuntu_wsl_distro()
-
-        assert distro is None
-        assert "Python 3.12" in evidence
-        assert "3.14.4" in evidence
-
     def test_markdown_evidence_uses_release_manifest_version(self, tmp_path: Path) -> None:
         proof = importlib.import_module("scripts.run_clean_windows_install_proof")
         release_manifest = tmp_path / "civiccast-1.3.0-release-artifacts-manifest.json"
@@ -180,11 +120,11 @@ class TestCleanWindowsInstallProofContract:
             evidence_path=evidence_path,
             attempts=[
                 {
-                    "strategy": "wsl2-fresh-user",
+                    "strategy": "windows-sandbox",
                     "status": "passed",
-                    "command": "wsl.exe -d Ubuntu-24.04 --exec bash -lc 'python -V'",
+                    "command": "start sandbox and run installer transcript",
                     "returncode": 0,
-                    "stdout": "1.3.0",
+                    "stdout": "dashboard opened",
                     "stderr": "",
                     "blocker_evidence": "",
                 }
@@ -195,13 +135,9 @@ class TestCleanWindowsInstallProofContract:
 
         proof._write_markdown_evidence(markdown_path, result)
 
-        assert result.status == "partial"
+        assert result.status == "passed"
         assert markdown_path.read_text(encoding="utf-8").startswith(
             "# v1.3.0 clean Windows install proof"
-        )
-        assert (
-            "native isolated Windows installer proof is still required"
-            in markdown_path.read_text(encoding="utf-8")
         )
 
     def test_overall_pass_requires_booted_native_isolated_windows_target(
@@ -220,15 +156,6 @@ class TestCleanWindowsInstallProofContract:
                     "command": "start sandbox and run installer transcript",
                     "returncode": 0,
                     "stdout": "dashboard opened",
-                    "stderr": "",
-                    "blocker_evidence": "",
-                },
-                {
-                    "strategy": "wsl2-fresh-user",
-                    "status": "passed",
-                    "command": "wsl.exe -d Ubuntu-24.04 --exec bash -lc 'python -V'",
-                    "returncode": 0,
-                    "stdout": "1.3.0",
                     "stderr": "",
                     "blocker_evidence": "",
                 },
@@ -281,17 +208,6 @@ class TestCleanWindowsInstallProofContract:
                         "product_version": "3.3.0",
                         "launch_started": True,
                         "launch_still_running_after_15s": True,
-                    },
-                    "first_run_state": {
-                        "installer_state_exists": True,
-                        "installer_state": {
-                            "current_lane_id": "wsl2",
-                            "status": "blocked",
-                            "message": "CivicCast needs the Windows helper before it can finish setup. Choose Set up Windows helper to continue.",
-                            "reboot_required": False,
-                        },
-                        "expected_dependency_absent_action": "Choose Set up Windows helper",
-                        "bootstrap_log_exists": False,
                     },
                     "pending_reboot_keys": {
                         "cbs_reboot_pending": False,
@@ -352,17 +268,6 @@ class TestCleanWindowsInstallProofContract:
                         "launch_started": True,
                         "launch_still_running_after_15s": True,
                     },
-                    "first_run_state": {
-                        "installer_state_exists": True,
-                        "installer_state": {
-                            "current_lane_id": "wsl2",
-                            "status": "blocked",
-                            "message": "CivicCast needs the Windows helper before it can finish setup. Choose Set up Windows helper to continue.",
-                            "reboot_required": False,
-                        },
-                        "expected_dependency_absent_action": "Choose Set up Windows helper",
-                        "bootstrap_log_exists": False,
-                    },
                     "pending_reboot_keys": {
                         "cbs_reboot_pending": False,
                         "windows_update_reboot_required": False,
@@ -404,17 +309,6 @@ class TestCleanWindowsInstallProofContract:
                         "product_version": "3.3.0",
                         "launch_started": True,
                         "launch_still_running_after_15s": True,
-                    },
-                    "first_run_state": {
-                        "installer_state_exists": True,
-                        "installer_state": {
-                            "current_lane_id": "wsl2",
-                            "status": "blocked",
-                            "message": "CivicCast needs the Windows helper before it can finish setup. Choose Set up Windows helper to continue.",
-                            "reboot_required": False,
-                        },
-                        "expected_dependency_absent_action": "Choose Set up Windows helper",
-                        "bootstrap_log_exists": False,
                     },
                     "pending_reboot_keys": {
                         "cbs_reboot_pending": False,
@@ -463,17 +357,6 @@ class TestCleanWindowsInstallProofContract:
                         "launch_started": True,
                         "launch_still_running_after_15s": True,
                     },
-                    "first_run_state": {
-                        "installer_state_exists": True,
-                        "installer_state": {
-                            "current_lane_id": "wsl2",
-                            "status": "blocked",
-                            "message": "CivicCast needs the Windows helper before it can finish setup. Choose Set up Windows helper to continue.",
-                            "reboot_required": False,
-                        },
-                        "expected_dependency_absent_action": "Choose Set up Windows helper",
-                        "bootstrap_log_exists": False,
-                    },
                     "pending_reboot_baseline": pending,
                     "pending_reboot_keys": pending,
                 }
@@ -509,17 +392,6 @@ class TestCleanWindowsInstallProofContract:
                         "launch_started": True,
                         "launch_still_running_after_15s": True,
                     },
-                    "first_run_state": {
-                        "installer_state_exists": True,
-                        "installer_state": {
-                            "current_lane_id": "wsl2",
-                            "status": "blocked",
-                            "message": "CivicCast needs the Windows helper before it can finish setup. Choose Set up Windows helper to continue.",
-                            "reboot_required": False,
-                        },
-                        "expected_dependency_absent_action": "Choose Set up Windows helper",
-                        "bootstrap_log_exists": False,
-                    },
                     "pending_reboot_baseline": {
                         "cbs_reboot_pending": False,
                         "windows_update_reboot_required": False,
@@ -547,39 +419,6 @@ class TestCleanWindowsInstallProofContract:
         assert attempt.status == "passed"
         assert json.loads(attempt.stdout)["pending_reboot_clear"] is True
 
-    def test_virtualbox_probe_rejects_report_without_first_run_setup_path(
-        self,
-        tmp_path: Path,
-        monkeypatch,
-    ) -> None:
-        proof = importlib.import_module("scripts.run_clean_windows_install_proof")
-        report = tmp_path / "post-proof-state.json"
-        report.write_text(
-            json.dumps(
-                {
-                    "generated_at": _now_iso(),
-                    "status": "passed_native_package_install_launch",
-                    "version": "3.3.0",
-                    "vm": "civiccast-cleanwin-v2",
-                    "snapshot": "clean-windows-base-20260602",
-                    "package": {"installer_exit_code": 0},
-                    "installed_app": {
-                        "product_version": "3.3.0",
-                        "launch_started": True,
-                        "launch_still_running_after_15s": True,
-                    },
-                }
-            ),
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("CIVICAST_CLEANROOM_VBOX_REPORT", str(report))
-
-        attempt = proof._run_virtualbox_vm_check("civiccast-cleanwin-v2")
-
-        assert attempt.strategy == "virtualbox-vm"
-        assert attempt.status == "blocked"
-        assert "first-run state" in attempt.blocker_evidence
-
     def test_virtualbox_probe_rejects_stale_explicit_report(
         self,
         tmp_path: Path,
@@ -600,17 +439,6 @@ class TestCleanWindowsInstallProofContract:
                         "product_version": "3.3.0",
                         "launch_started": True,
                         "launch_still_running_after_15s": True,
-                    },
-                    "first_run_state": {
-                        "installer_state_exists": True,
-                        "installer_state": {
-                            "current_lane_id": "wsl2",
-                            "status": "blocked",
-                            "message": "CivicCast needs the Windows helper before it can finish setup. Choose Set up Windows helper to continue.",
-                            "reboot_required": False,
-                        },
-                        "expected_dependency_absent_action": "Choose Set up Windows helper",
-                        "bootstrap_log_exists": False,
                     },
                     "pending_reboot_keys": {
                         "cbs_reboot_pending": False,

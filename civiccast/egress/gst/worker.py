@@ -4,7 +4,7 @@
 """Per-channel GStreamer playout worker. Runs as a subprocess.
 
 Ships and runs on native Windows (the product's shipped platform, via the bundled
-GStreamer runtime and the D2 named-pipe control-channel seam) and on WSL/Linux
+GStreamer runtime and the D2 named-pipe control-channel seam) and on Linux/macOS
 (a system GStreamer install, via the POSIX FIFO control channel below) — see the
 D2 Windows worker-pipe seam note further down for how the control channel differs
 per platform.
@@ -41,7 +41,7 @@ import graph as graphmod  # type: ignore[import-not-found]
 
 # -- D2 Windows worker-pipe seam (spec-supervisor D2, design.md sec4) --------------
 #
-# On WSL/Linux the control channel is the POSIX FIFO below (unchanged). On native
+# On Linux/macOS the control channel is the POSIX FIFO below (unchanged). On native
 # Windows ``os.mkfifo`` does not exist, so argv[2] is instead the NAME of a duplex
 # named pipe (``\\.\pipe\civiccast-worker-<channel_id>``) the STRATEGY already
 # created and is serving (civiccast.egress.gst.strategy.WindowsWorkerPipeServer) --
@@ -305,13 +305,13 @@ def main() -> int:
         # D2 Windows worker-pipe seam: argv[2] is a named-pipe NAME
         # (`\\.\pipe\civiccast-worker-<channel_id>`) created+served by the
         # strategy; the worker connects as CLIENT and never creates it -- the
-        # POSIX mkfifo branch below is for WSL/Linux only and is simply not
+        # POSIX mkfifo branch below is for Linux/macOS only and is simply not
         # reached here.
         pass
     elif control_fifo and not Path(control_fifo).exists():
         Path(control_fifo).parent.mkdir(parents=True, exist_ok=True)
         if not hasattr(os, "mkfifo"):
-            raise RuntimeError("control FIFO support requires WSL/Linux")
+            raise RuntimeError("control FIFO support requires a POSIX host (Linux/macOS)")
         os.mkfifo(control_fifo)
     reload_timeout = float(os.environ.get("CIVICCAST_RELOAD_TIMEOUT_S", "10"))
     stall_timeout = float(os.environ.get("CIVICCAST_STALL_TIMEOUT_S", "10"))

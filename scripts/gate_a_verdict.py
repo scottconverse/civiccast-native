@@ -314,26 +314,79 @@ def check_t5_soak(output_dir: Path) -> CheckResult:
 
 
 def check_completion(output_dir: Path) -> CheckResult:
+    """The harness reached its own authoritative completion signal.
+
+    Contract as of the gate-a-station-up-wait-and-log-capture change: gated
+    on ``DONE.json.harness_completed is True`` and the ABSENCE of
+    ``WATCHDOG-TIMEOUT.txt`` / ``STALL-TIMEOUT.txt`` -- not on a specific
+    ``last_completed_step`` string. The previous contract required
+    ``last_completed_step == "t5-soak-complete"``, but
+    ``In-Sandbox-Report.ps1`` always runs two more numbered steps after T5
+    (install-progress-log-copied, event-log-checked) and then its own
+    ``finally`` block, every one of which legitimately advances
+    ``last_completed_step`` past T5 -- so that contract could never actually
+    pass on a real, fully-completed run (it only ever "passed" in this
+    module's own synthetic test fixture, which fabricated the stale value
+    directly). ``harness_completed`` is a dedicated, stable field the
+    `finally` block sets unconditionally right before writing DONE.json, so
+    the completion contract no longer depends on how many diagnostic steps
+    happen to run after T5.
+
+    A run the watchdog force-completed (``WATCHDOG-TIMEOUT.txt`` present, or
+    ``DONE.json.watchdog_timeout is True``) is a FAIL here even if a
+    DONE.json exists -- the watchdog's placeholder DONE.json is a bounded
+    escape hatch for the HOST's poll loop, not a real completion.
+
+    ``STALL-TIMEOUT.txt`` is a second, narrower watchdog trigger (added
+    after 8579e66-run4, which stalled 6+ minutes past
+    'station-diag-captured-after-t3t5' with no forward progress and no
+    DONE.json): the same background watchdog process polls
+    ``summary.json.last_completed_step`` every 30s once the run reaches the
+    runtime verdict, and fires if that step stops changing for 8 minutes --
+    a much tighter bound than the overall ``-MaxScriptMinutes`` deadline.
+    Its presence is a FAIL here for the same reason as
+    ``WATCHDOG-TIMEOUT.txt``: a stall-forced placeholder DONE.json is not a
+    genuine completion.
+    """
+    if (output_dir / "WATCHDOG-TIMEOUT.txt").is_file():
+        return _fail(
+            "WATCHDOG-TIMEOUT.txt is present -- the harness hit its bounded script-level "
+            "watchdog before completing; this is not a genuine run completion"
+        )
+    if (output_dir / "STALL-TIMEOUT.txt").is_file():
+        return _fail(
+            "STALL-TIMEOUT.txt is present -- the watchdog detected last_completed_step had "
+            "stopped advancing (stalled) before the run completed; this is not a genuine run "
+            "completion"
+        )
     done, err = _read_json(output_dir, "DONE.json")
     if err is not None:
         return _fail(err)
     assert isinstance(done, dict)
-    step = done.get("last_completed_step")
-    if step != "t5-soak-complete":
-        return _fail(f"DONE.json.last_completed_step={step!r} (expected 't5-soak-complete')")
+    if done.get("watchdog_timeout") is True:
+        return _fail(
+            "DONE.json.watchdog_timeout=true -- the watchdog fired, not a genuine completion"
+        )
+    if done.get("stall_timeout") is True:
+        return _fail(
+            "DONE.json.stall_timeout=true -- the watchdog detected a stall, not a genuine completion"
+        )
+    if done.get("harness_completed") is not True:
+        return _fail(
+            f"DONE.json.harness_completed={done.get('harness_completed')!r} (expected true)"
+        )
     summary, serr = _read_json(output_dir, "summary.json")
     if serr is not None:
         return _fail(serr)
     assert isinstance(summary, dict)
+    done_step = done.get("last_completed_step")
     summary_step = summary.get("last_completed_step")
-    if summary_step != "t5-soak-complete":
+    if summary_step != done_step:
         return _fail(
             f"summary.json.last_completed_step={summary_step!r} does not match "
-            "DONE.json.last_completed_step='t5-soak-complete'"
+            f"DONE.json.last_completed_step={done_step!r}"
         )
-    return _pass(
-        "DONE.json present, last_completed_step=t5-soak-complete (confirmed in summary.json)"
-    )
+    return _pass(f"DONE.json present, harness_completed=true, last_completed_step={done_step!r}")
 
 
 CHECKS: dict[str, Callable[[Path], CheckResult]] = {
@@ -361,12 +414,31 @@ def judge(output_dir: Path, source_sha: str | None, run_id: str | None) -> dict[
 
     verdict = "PASS" if all(c["status"] == "PASS" for c in checks.values()) else "FAIL"
 
+    # station_up / station_boot_seconds / station_first_healthy_utc are
+    # INFORMATIONAL ONLY -- recorded for the human report, never gating.
+    # Gate A's judge intentionally does not fail on boot duration (Gate B
+    # owns timing); these are surfaced here purely so a run's boot time is
+    # visible without having to open summary.json separately. Absent/
+    # unparseable summary.json degrades to nulls rather than affecting the
+    # verdict at all -- this block never raises.
+    station_up: bool | None = None
+    station_boot_seconds: float | None = None
+    station_first_healthy_utc: str | None = None
+    summary, _summary_err = _read_json(output_dir, "summary.json")
+    if isinstance(summary, dict):
+        station_up = summary.get("station_up")
+        station_boot_seconds = summary.get("station_boot_seconds")
+        station_first_healthy_utc = summary.get("station_first_healthy_utc")
+
     return {
         "schema_version": SCHEMA_VERSION,
         "source_sha": source_sha,
         "run_id": run_id,
         "verdict": verdict,
         "checks": checks,
+        "station_up": station_up,
+        "station_boot_seconds": station_boot_seconds,
+        "station_first_healthy_utc": station_first_healthy_utc,
         "evidence_dir": str(output_dir),
         "judged_utc": datetime.now(UTC).isoformat(),
     }

@@ -191,10 +191,10 @@ def run_tauri_build() -> None:
     """Stage 5: run the unsigned native Tauri/NSIS build.
 
     Invokes the Tauri CLI directly with the native config overlay (NOT the
-    `npm run tauri:build` script, whose `verify-bundle-resources.mjs` guard
-    demands the WSL product's Linux runtime resources, which the native product
-    does not carry). No signing is configured, so the emitted `.exe` is unsigned
-    by design for this work package."""
+    `npm run tauri:build` script) because `tauri.native.conf.json` stages the
+    audited native runtime tree into `bundle.resources` itself, per D2 -- see
+    this module's docstring. No signing is configured, so the emitted `.exe`
+    is unsigned by design for this work package."""
 
     rel_config = NATIVE_TAURI_CONFIG.relative_to(SRC_TAURI).as_posix()
     npx = shutil.which("npx")

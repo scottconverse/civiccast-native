@@ -40,8 +40,7 @@ def verify_package_artifact(artifact: Path, sidecar: Path) -> PackageVerificatio
     Windows PE (``.exe``) artifact, this function requires the artifact bytes
     to actually carry an embedded Authenticode certificate table (data
     directory index 4) — the same real, on-disk evidence
-    ``scripts/build_release_artifacts.py`` and
-    ``scripts/policy/check_sidecar_attestation_integrity.py`` check. Full
+    ``scripts/policy/check_sidecar_attestation_integrity.py`` checks. Full
     certificate-chain and timestamp validity remain the CI
     ``Get-AuthenticodeSignature`` fail-closed step's job, not this function's.
     Non-Windows package kinds (``.deb``, ``.rpm``, ``.pkg``, portable
@@ -140,9 +139,8 @@ def _pe_has_authenticode_evidence(path: Path) -> bool:
     Full chain/timestamp validity is enforced separately by the CI
     ``Get-AuthenticodeSignature`` fail-closed step (see
     ``.github/workflows/sign-native-installer.yml``). Duplicated (rather than
-    imported) from ``scripts/build_release_artifacts.py`` and
-    ``scripts/policy/check_sidecar_attestation_integrity.py`` so this runtime
-    module never depends on the build/policy script tree.
+    imported) from ``scripts/policy/check_sidecar_attestation_integrity.py``
+    so this runtime module never depends on the policy script tree.
     """
     try:
         data = path.read_bytes()

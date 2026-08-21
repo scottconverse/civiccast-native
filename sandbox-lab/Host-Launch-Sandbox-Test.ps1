@@ -70,7 +70,7 @@ Write-Host "Rendered $WsbPath from template (Root=$Root)"
 # 1. Stamp a clean output dir so a stale DONE.marker from a previous run can
 #    never be mistaken for this run's completion.
 if (Test-Path $OutDir) {
-    Get-ChildItem -Path $OutDir -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $OutDir -Force | Where-Object { $_.Name -ne '.gitkeep' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 } else {
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 }

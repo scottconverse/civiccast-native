@@ -46,8 +46,13 @@ output lines into `.agent-runs/<run-id>/pre-push-verification-report.md`.
      checks, and any repository smoke script. If no single script exists, list
      the commands used.
 8. **Cleanroom From Scratch**
-   - Run the repo cleanroom gate (`make cleanroom` when available). This must
-     build the cleanroom image and run the full install gate from a clean copy.
+   - There is no automated clean-box/cleanroom gate in this repository --
+     say so plainly rather than citing one that is not here. The retired
+     `ci-cleanroom-e2e.yml` Docker/Linux full-install gate did not come
+     across when the WSL2 lane was retired (`docker/` was excluded with
+     it), and nothing replaced it. A change claiming release-candidate
+     readiness needs a real install on a clean Windows box, recorded --
+     see Gate A (`docs/ops/gate-a.md`) when that evidence is required.
 9. **Control-Loop Gate**
    - Prove `.agent-runs/<run-id>/active-control-state.md` exists before any
      final response during an authorized run.

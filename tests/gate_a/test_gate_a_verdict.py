@@ -72,10 +72,27 @@ def _synthetic_pass_dir(tmp_path: Path) -> Path:
     station-acceptance evidence.
     """
     run_dir = _copy_fixture(tmp_path / "run")
+    # last_completed_step mirrors what In-Sandbox-Report.ps1 actually writes
+    # as its true final step (the `finally` block's own Save-Summary call),
+    # not an intermediate step like "t5-soak-complete" -- steps 6/7
+    # (install-progress-log-copied, event-log-checked) and the finally block
+    # itself always run after T5 on a real completed harness run. Both
+    # DONE.json and summary.json must agree on this value; `summary.json`
+    # in the copied fixture already ends on a step name of its own, so this
+    # helper does not touch it -- see test_verdict_document_shape and the
+    # completion tests below for the cross-file consistency check itself.
+    summary_path = run_dir / "summary.json"
+    fixture_summary = json.loads(summary_path.read_text(encoding="utf-8-sig"))
+    fixture_last_step = fixture_summary.get("last_completed_step")
     done = {
         "done_utc": "2026-08-19T09:29:32.000Z",
-        "last_completed_step": "t5-soak-complete",
+        "last_completed_step": fixture_last_step,
         "installer_exit_code": 0,
+        "harness_completed": True,
+        "watchdog_timeout": False,
+        "station_up": True,
+        "station_first_healthy_utc": "2026-08-19T09:05:12.000Z",
+        "station_boot_seconds": 87.0,
     }
     (run_dir / "DONE.json").write_text(json.dumps(done), encoding="utf-8")
     return run_dir
@@ -314,6 +331,101 @@ def test_completion_wrong_last_step_fails(tmp_path: Path) -> None:
     result = gav.judge(run_dir, None, None)
     assert result["checks"]["completion"]["status"] == "FAIL"
     assert "t4-egress-product-engine" in result["checks"]["completion"]["detail"]
+
+
+def test_watchdog_timeout_file_fails_completion(tmp_path: Path) -> None:
+    """A WATCHDOG-TIMEOUT.txt present must fail completion even with an
+    otherwise-well-formed harness_completed=true DONE.json -- the watchdog's
+    placeholder DONE.json is a bounded escape hatch for the host's poll
+    loop, never a genuine completion signal."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "WATCHDOG-TIMEOUT.txt").write_text(
+        "watchdog_fired_utc=2026-08-21T00:00:00Z max_script_minutes=100 reason=test\n",
+        encoding="utf-8",
+    )
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["completion"]["status"] == "FAIL"
+    assert "WATCHDOG-TIMEOUT.txt" in result["checks"]["completion"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_watchdog_timeout_field_true_fails_completion(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    done_path = run_dir / "DONE.json"
+    done = json.loads(done_path.read_text(encoding="utf-8"))
+    done["watchdog_timeout"] = True
+    done_path.write_text(json.dumps(done), encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["completion"]["status"] == "FAIL"
+    assert "watchdog_timeout" in result["checks"]["completion"]["detail"]
+
+
+def test_stall_timeout_file_fails_completion(tmp_path: Path) -> None:
+    """A STALL-TIMEOUT.txt present must fail completion even with an
+    otherwise-well-formed harness_completed=true DONE.json -- the
+    staleness watchdog's placeholder DONE.json (fired because
+    last_completed_step stopped advancing for 8 minutes past the runtime
+    verdict) is a bounded escape hatch, never a genuine completion."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "STALL-TIMEOUT.txt").write_text(
+        "stall_detected_utc=2026-08-21T00:00:00Z stuck_step=station-diag-captured-after-t3t5 "
+        "stuck_since_utc=2026-08-20T23:52:00Z stalled_seconds=480 threshold_seconds=480\n",
+        encoding="utf-8",
+    )
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["completion"]["status"] == "FAIL"
+    assert "STALL-TIMEOUT.txt" in result["checks"]["completion"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_stall_timeout_field_true_fails_completion(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    done_path = run_dir / "DONE.json"
+    done = json.loads(done_path.read_text(encoding="utf-8"))
+    done["stall_timeout"] = True
+    done_path.write_text(json.dumps(done), encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["completion"]["status"] == "FAIL"
+    assert "stall_timeout" in result["checks"]["completion"]["detail"]
+
+
+def test_harness_completed_false_fails_completion(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    done_path = run_dir / "DONE.json"
+    done = json.loads(done_path.read_text(encoding="utf-8"))
+    done["harness_completed"] = False
+    done_path.write_text(json.dumps(done), encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["completion"]["status"] == "FAIL"
+    assert "harness_completed" in result["checks"]["completion"]["detail"]
+
+
+def test_verdict_carries_informational_station_boot_fields(tmp_path: Path) -> None:
+    """station_up / station_boot_seconds / station_first_healthy_utc are
+    informational-only fields surfaced from summary.json -- present in the
+    verdict document but never part of the checks dict / pass-fail gate."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    summary_path = run_dir / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8-sig"))
+    summary["station_up"] = True
+    summary["station_boot_seconds"] = 123.4
+    summary["station_first_healthy_utc"] = "2026-08-21T00:01:03.000Z"
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["station_up"] is True
+    assert result["station_boot_seconds"] == 123.4
+    assert result["station_first_healthy_utc"] == "2026-08-21T00:01:03.000Z"
+    assert "station_up" not in result["checks"]
+    assert result["verdict"] == "PASS"
+
+
+def test_verdict_station_fields_null_when_summary_missing(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "summary.json").unlink()
+    result = gav.judge(run_dir, None, None)
+    assert result["station_up"] is None
+    assert result["station_boot_seconds"] is None
+    assert result["station_first_healthy_utc"] is None
 
 
 def test_t3_loop_missing_result_line_fails(tmp_path: Path) -> None:

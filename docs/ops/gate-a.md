@@ -28,7 +28,7 @@ builds before this repository absorbed it. See "Provenance" below.
 | `captions` | The offline caption pipeline produced real cues from a real speech clip (not a synthetic sine tone) | `T3-LOOP.txt`, `T3-caption-artifact.json` |
 | `t4_engine` | The product egress engine (GStreamer) started and passed TSDuck transport-stream verification — `PASS_FFMPEG_FALLBACK` is a FAIL, see below | `T3T5-RESULT.txt` |
 | `t5_soak` | The bounded soak stayed healthy for its whole window (`unhealthy=0`) | `T3T5-RESULT.txt` |
-| `completion` | The harness itself reached its own authoritative completion signal | `DONE.json`, `summary.json` |
+| `completion` | The harness itself reached its own authoritative completion signal (`DONE.json.harness_completed == true`, no `WATCHDOG-TIMEOUT.txt`/`STALL-TIMEOUT.txt`) | `DONE.json`, `summary.json` |
 
 Each row cites the 3.0 MASTER spec's station-acceptance gate
 (`docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md` §12, "Station
@@ -64,6 +64,72 @@ GStreamer is the shipped default engine, a candidate that only proves the
 fallback path has not proven what a real station actually runs — so Gate A's
 `t4_engine` check treats `PASS_FFMPEG_FALLBACK` as a named FAIL, not a
 degraded pass, and only accepts `T4_RESULT=PASS_PRODUCT_ENGINE`.
+
+## Station-up wait, diagnostics capture, and the script-level watchdog
+
+Added after the 8579e66-run3 evidence showed the station's own process
+never listened on `:8000` and the harness had no way to see why (its
+child-process logs live under `%ProgramData%\CivicCast\logs`, ephemeral
+inside Windows Sandbox, and nothing copied them out before the VM was
+torn down):
+
+- **Station-up wait.** `In-Sandbox-Report.ps1` polls **only**
+  `/api/health` on a single bounded 20-minute deadline (6s interval),
+  logging every poll's timestamp and outcome to `STATION-UP-WAIT.txt`.
+  `/operator/` and `/` are only probed (60s bound each) once health has
+  answered 200. `summary.json` records `station_up`,
+  `station_first_healthy_utc`, and `station_boot_seconds` (measured from
+  `_AFTER_INSTALL.marker`) — `station_boot_seconds` is **informational
+  only** in `gate-a-verdict.json`; Gate A does not fail on boot duration
+  (Gate B owns timing).
+- **Station diagnostics capture.** `Invoke-StationDiagCapture` runs at
+  three points — right after the station-up wait concludes (pass or
+  fail), right after the T3/T4/T5 decision, and unconditionally in the
+  top-level `finally` block — writing bounded snapshots to
+  `output/station-diag/<after-station-up-wait|after-t3t5|final>/`: a
+  `robocopy` of `%ProgramData%\CivicCast\logs` (every child's `<name>.log`
+  plus the rotating `supervisor.log`, per
+  `civiccast/native/supervisor/install_layout.py`), a `robocopy` of
+  `%ProgramData%\CivicCast\config` (excluding `data`/`pgdata`/`nats-store`),
+  `sc qc`/`sc query` output, `netstat -ano` LISTENING lines, a filtered
+  `tasklist /v`, and up to 200 Application/System Windows Event Log
+  errors/warnings since `_STARTED.marker`. None of these operations scan
+  the multi-GB install tree.
+- **No hangs when the station never comes up.** If `station_up` is
+  `False`, T3/T4/T5 are explicitly skipped (never attempted) — each
+  writes its own result file with a `SKIPPED(station-down)` verdict line
+  rather than being left absent or hanging in an unbounded loop.
+  `scripts/gate_a_verdict.py` already fails closed on any non-`PASS`
+  value for these checks, so this changes the evidence trail, not the
+  judge's pass/fail contract for `t3_loop`/`captions`/`t4_engine`/`t5_soak`.
+- **Script-level watchdog — two triggers, one process.** A genuinely
+  separate `powershell.exe` process (`Start-Process`, deliberately **not**
+  `Start-Job` — see the code comment for the documented `Start-Job`/
+  PSWorkflow out-of-memory history on this VM) is spawned at script entry
+  and polls every 30s:
+  - **Overall bound.** If `DONE.json` still does not exist
+    `-MaxScriptMinutes` minutes later (default 100), it writes
+    `WATCHDOG-TIMEOUT.txt` and a placeholder `DONE.json` so
+    `Host-Launch-Sandbox-Test.ps1`'s poll loop can never wait on a zombie
+    in-sandbox script forever.
+  - **Staleness bound**, added after `8579e66-run4` stalled 6+ minutes
+    past `station-diag-captured-after-t3t5` (block 6's install-progress-log
+    copy) with no forward progress and no `DONE.json` — `-MaxScriptMinutes`
+    alone was far too coarse to catch that promptly. Once
+    `summary.json.last_completed_step` first reaches a step at or after the
+    runtime verdict (`runtime-check-*`, `t3t5-skipped-station-down`, or
+    `t5-soak-complete`), the watchdog tracks it; if it stops changing for 8
+    minutes, the watchdog writes `STALL-TIMEOUT.txt` and a placeholder
+    `DONE.json` (`stall_timeout: true`).
+
+  Either `WATCHDOG-TIMEOUT.txt` or `STALL-TIMEOUT.txt` is a named FAIL in
+  the `completion` check regardless of what else in `DONE.json` looks
+  complete. Block 6's install-progress.log `-Tail` read was also changed to
+  read the just-copied destination file (on the host-mapped, real-disk
+  `output/`) instead of re-reading the source a second time from
+  `%ProgramData%` (the Sandbox's own virtualized C:) — a cheap tightening
+  at the exact spot `run4` stalled, though the staleness watchdog above is
+  the real guarantee, not this alone.
 
 ## Known harness quirk: the Aug-19 reference run's `completion` check
 
@@ -148,6 +214,11 @@ sandbox-lab/
 ├── output/        (gitignored)         # Live run output — wiped at the start of every run
 ├── hoststore/      (gitignored)        # Persistent install dir — reset at the start of every run
 ├── kit-download/   (gitignored)        # Junction to the resolved kit — never a copy
+│   # (no .gitkeep here -- Run-GateA.ps1 deletes and replaces this whole
+│   #  directory with an NTFS junction on every run, so a tracked placeholder
+│   #  file inside it can never survive a run; kit-staging/ and evidence/
+│   #  keep theirs because those directories are only written INTO, never
+│   #  replaced wholesale)
 ├── kit-staging/    (gitignored)        # Downloaded candidate artifacts, keyed by source SHA
 └── evidence/       (gitignored)        # Every run's preserved output, keyed by <sha>/<timestamp>
 ```

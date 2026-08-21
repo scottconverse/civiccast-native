@@ -710,10 +710,9 @@ def repair_gstreamer_runtime() -> GstreamerRepairResponse:
     re-derived environment re-verifies the healthy closure and GStreamer egress
     AUTO-RESTORES. Never a reinstall.
 
-    TODO(operator-console): add a 'Repair GStreamer runtime & restore full
-    egress' button to the operator console egress health surface that POSTs
-    here and surfaces ``detail`` / ``remedy`` (backend-only in this change per
-    scope; no React built here).
+    Backend-only in this change; no React built here. See
+    ``next-cleanup.md`` for the operator console button this route is
+    waiting on.
     """
 
     # Imported lazily so the egress router module graph stays light and the

@@ -1,5 +1,15 @@
 # Public Station Implementation Walkthrough
 
+> **Historical: describes the retired public WSL2 line's rc-numbered
+> release-artifact workflow, not this repository.** `civiccast-native`
+> ships one product, the native Windows station (session-0 Windows
+> service, no WSL) -- see [BRANCHES.md](../../BRANCHES.md). This
+> walkthrough's rc13/rc-artifact-soak process belongs to the separate,
+> private `scottconverse/civiccast` repository and does not apply here.
+> The native line's station-acceptance gate is Gate A -- see
+> [docs/ops/gate-a.md](../ops/gate-a.md). Kept as historical reference
+> pending a native-line station-implementation walkthrough.
+
 Use this walkthrough when CivicCast is ready for a station-side hands-on pass.
 It is written for the release owner and station implementer, not for CI. It is
 also the checklist that decides whether the product is ready to hand to a public

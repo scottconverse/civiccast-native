@@ -26,7 +26,7 @@ except ModuleNotFoundError:
     from collect_source_state import collect_source_state
 
 Status = Literal["planned", "available", "blocked", "passed"]
-ProofStatus = Literal["planned", "blocked", "partial", "passed"]
+ProofStatus = Literal["planned", "blocked", "passed"]
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_VBOX_REPORT_AGE_SECONDS = 6 * 60 * 60
@@ -45,8 +45,6 @@ class CleanInstallAttempt(BaseModel):
         "hyper-v-vm",
         "windows-sandbox",
         "virtualbox-vm",
-        "wsl2-fresh-distro",
-        "wsl2-fresh-user",
     ]
     status: Status
     command: str = Field(min_length=1)
@@ -84,12 +82,6 @@ def isolation_strategy_commands() -> list[tuple[str, str]]:
         (
             "virtualbox-vm",
             "VBoxManage list vms; target from CIVICAST_CLEANROOM_VBOX_VM or civiccast-v3-r6-cleanwin",
-        ),
-        ("wsl2-fresh-distro", "wsl.exe --list --verbose"),
-        (
-            "wsl2-fresh-user",
-            "wsl.exe --list --quiet; wsl.exe -d <detected Ubuntu distro> "
-            "--exec bash -lc '<isolated wheelhouse install>'",
         ),
     ]
 
@@ -137,9 +129,7 @@ def execute_clean_windows_install_proof(
 
     attempts = []
     for strategy, command in isolation_strategy_commands():
-        if strategy == "wsl2-fresh-user":
-            attempts.append(_run_wsl_fresh_user_install(release_manifest))
-        elif strategy == "virtualbox-vm":
+        if strategy == "virtualbox-vm":
             attempts.append(
                 _run_virtualbox_vm_check(
                     os.environ.get("CIVICAST_CLEANROOM_VBOX_VM", "civiccast-v3-r6-cleanwin"),
@@ -196,181 +186,6 @@ def _release_manifest_identity(path: Path | None) -> dict[str, object] | None:
         "version": manifest.get("version"),
         "source_head": source_state.get("head") if isinstance(source_state, dict) else None,
     }
-
-
-def _to_wsl_path(path: Path) -> str:
-    resolved = path.resolve()
-    drive = resolved.drive.rstrip(":").lower()
-    if drive:
-        rest = resolved.relative_to(resolved.anchor).as_posix()
-        return f"/mnt/{drive}/{rest}"
-    return resolved.as_posix()
-
-
-def _run_wsl_fresh_user_install(release_manifest: Path) -> CleanInstallAttempt:
-    distro, detection_evidence = _detect_ubuntu_wsl_distro()
-    if distro is None:
-        return CleanInstallAttempt(
-            strategy="wsl2-fresh-user",
-            status="blocked",
-            command="wsl.exe --list --quiet",
-            returncode=1,
-            blocker_evidence=(
-                "No Ubuntu WSL2 distro was detected for the fresh-user install. "
-                f"{detection_evidence}".strip()
-            ),
-        )
-
-    manifest = _read_release_manifest(release_manifest)
-    acquisition = manifest.get("beta_handoff_acquisition")
-    if not isinstance(acquisition, dict):
-        return CleanInstallAttempt(
-            strategy="wsl2-fresh-user",
-            status="blocked",
-            command=f"read beta_handoff_acquisition from {release_manifest}",
-            returncode=1,
-            blocker_evidence="release manifest is missing beta_handoff_acquisition",
-        )
-    wheel = acquisition.get("wheel")
-    wheelhouse = acquisition.get("wheelhouse")
-    if not isinstance(wheel, dict) or not isinstance(wheelhouse, dict):
-        return CleanInstallAttempt(
-            strategy="wsl2-fresh-user",
-            status="blocked",
-            command=f"read wheel and wheelhouse from {release_manifest}",
-            returncode=1,
-            blocker_evidence="release manifest is missing wheel or wheelhouse records",
-        )
-    wheel_filename = wheel.get("filename")
-    if not isinstance(wheel_filename, str) or not wheel_filename:
-        return CleanInstallAttempt(
-            strategy="wsl2-fresh-user",
-            status="blocked",
-            command=f"read wheel filename from {release_manifest}",
-            returncode=1,
-            blocker_evidence="release manifest wheel record has no filename",
-        )
-
-    release_dir = release_manifest.resolve().parent
-    wsl_release_dir = _to_wsl_path(release_dir)
-    wsl_wheelhouse = f"{wsl_release_dir}/wheelhouse"
-    wsl_wheel = f"{wsl_release_dir}/{wheel_filename}"
-    script = (
-        "set -euo pipefail; "
-        "sandbox=$(mktemp -d); "
-        "trap 'rm -rf \"$sandbox\"' EXIT; "
-        'python3 -m venv "$sandbox/venv"; '
-        '"$sandbox/venv/bin/python" -m pip install --no-index '
-        f"--find-links '{wsl_wheelhouse}' '{wsl_wheel}[captions-runtime]'; "
-        '"$sandbox/venv/bin/python" -c '
-        "'import civiccast; print(civiccast.__version__)'"
-    )
-    command = f"wsl.exe -d {distro} --exec bash -lc {script!r}"
-    proc = subprocess.run(
-        [
-            "wsl.exe",
-            "-d",
-            distro,
-            "--exec",
-            "bash",
-            "-lc",
-            script,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=300,
-    )
-    stdout = _clean_output(proc.stdout)
-    stderr = _clean_output(proc.stderr)
-    if proc.returncode == 0:
-        return CleanInstallAttempt(
-            strategy="wsl2-fresh-user",
-            status="passed",
-            command=command,
-            returncode=proc.returncode,
-            stdout=stdout,
-            stderr=stderr,
-            blocker_evidence="",
-        )
-    return CleanInstallAttempt(
-        strategy="wsl2-fresh-user",
-        status="blocked",
-        command=command,
-        returncode=proc.returncode,
-        stdout=stdout,
-        stderr=stderr,
-        blocker_evidence=stderr or stdout or "offline wheelhouse install command failed",
-    )
-
-
-def _detect_ubuntu_wsl_distro() -> tuple[str | None, str]:
-    """Return an installed Ubuntu WSL distro with the wheelhouse Python runtime."""
-
-    try:
-        proc = subprocess.run(
-            ["wsl.exe", "--list", "--quiet"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=45,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return None, str(exc)
-
-    stdout = _clean_output(proc.stdout)
-    stderr = _clean_output(proc.stderr)
-    if proc.returncode != 0:
-        return None, stderr or stdout or "wsl.exe --list --quiet returned non-zero status"
-    candidates = _parse_ubuntu_wsl_distros(stdout)
-    if not candidates:
-        return None, stdout or "wsl.exe listed no installed Ubuntu distributions"
-    version_evidence: list[str] = []
-    for candidate in candidates:
-        ready, evidence = _wsl_python312_ready(candidate)
-        version_evidence.append(f"{candidate}: {evidence}")
-        if ready:
-            return candidate, "\n".join([stdout, *version_evidence]).strip()
-    return (
-        None,
-        "Ubuntu WSL distros were found, but none reported Python 3.12: "
-        + "; ".join(version_evidence),
-    )
-
-
-def _parse_ubuntu_wsl_distros(output: str) -> list[str]:
-    candidates: list[str] = []
-    for line in output.splitlines():
-        candidate = line.strip().lstrip("*").strip()
-        if candidate.lower().startswith("ubuntu"):
-            candidates.append(candidate)
-    return sorted(
-        candidates,
-        key=lambda name: (0 if "24.04" in name else 1, name.lower()),
-    )
-
-
-def _wsl_python312_ready(distro: str) -> tuple[bool, str]:
-    script = (
-        "import sys; "
-        "print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}'); "
-        "raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)"
-    )
-    try:
-        proc = subprocess.run(
-            ["wsl.exe", "-d", distro, "--exec", "python3", "-c", script],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=45,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, str(exc)
-    stdout = _clean_output(proc.stdout)
-    stderr = _clean_output(proc.stderr)
-    if proc.returncode == 0:
-        return True, stdout or "python3 reported 3.12"
-    return False, stderr or stdout or "python3 did not report CPython 3.12"
 
 
 def _run_host_check(strategy: str, command: str) -> CleanInstallAttempt:
@@ -526,7 +341,6 @@ def _read_virtualbox_vm_proof_report(
         payload,
         release_manifest,
     )
-    first_run_match, first_run_blocker = _virtualbox_report_has_first_run_setup_path(payload)
     reboot_clear, reboot_blocker = _virtualbox_report_has_no_pending_reboot(payload)
     freshness_ok, freshness_blocker, freshness = _virtualbox_report_freshness(path, payload)
     report_sha256 = ""
@@ -544,7 +358,6 @@ def _read_virtualbox_vm_proof_report(
         and product_version == version
         and launch_started is True
         and manifest_match
-        and first_run_match
         and reboot_clear
         and freshness_ok
         and bool(report_sha256)
@@ -559,7 +372,6 @@ def _read_virtualbox_vm_proof_report(
             "product_version": product_version,
             "launch_started": launch_started,
             "manifest_match": manifest_match,
-            "first_run_setup_path": first_run_match,
             "pending_reboot_clear": reboot_clear,
             "report_fresh": freshness_ok,
             "report_sha256": report_sha256,
@@ -586,7 +398,6 @@ def _read_virtualbox_vm_proof_report(
         stdout=stdout,
         blocker_evidence=(
             manifest_blocker
-            or first_run_blocker
             or reboot_blocker
             or freshness_blocker
             or "VirtualBox proof report did not meet pass criteria."
@@ -701,32 +512,6 @@ def _pending_file_rename_is_edgeupdate_only(pending: dict[str, object]) -> bool:
     return bool(concrete) and all("Microsoft\\EdgeUpdate" in operation for operation in concrete)
 
 
-def _virtualbox_report_has_first_run_setup_path(payload: dict[str, object]) -> tuple[bool, str]:
-    first_run = payload.get("first_run_state")
-    if not isinstance(first_run, dict):
-        return False, "VirtualBox proof report is missing first-run state."
-    state = first_run.get("installer_state")
-    if not isinstance(state, dict):
-        return False, "VirtualBox proof report is missing installer-state JSON."
-    message = state.get("message")
-    expected_action = first_run.get("expected_dependency_absent_action")
-    if (
-        first_run.get("installer_state_exists") is True
-        and state.get("current_lane_id") == "wsl2"
-        and state.get("status") == "blocked"
-        and state.get("reboot_required") is False
-        and isinstance(message, str)
-        and "Set up Windows helper" in message
-        and expected_action == "Choose Set up Windows helper"
-        and first_run.get("bootstrap_log_exists") is False
-    ):
-        return True, ""
-    return (
-        False,
-        "VirtualBox proof report does not prove the dependency-absent first-run setup path.",
-    )
-
-
 def _virtualbox_report_matches_release_manifest(
     payload: dict[str, object],
     release_manifest: Path | None,
@@ -783,16 +568,7 @@ def write_clean_windows_install_evidence(
         and attempt.status == "passed"
         for attempt in parsed_attempts
     )
-    wsl_runtime_passed = any(
-        attempt.strategy == "wsl2-fresh-user" and attempt.status == "passed"
-        for attempt in parsed_attempts
-    )
-    if vm_booted:
-        status: ProofStatus = "passed"
-    elif wsl_runtime_passed:
-        status = "partial"
-    else:
-        status = "blocked"
+    status: ProofStatus = "passed" if vm_booted else "blocked"
     result = CleanInstallProofResult(
         status=status,
         dry_run=dry_run,
@@ -821,13 +597,6 @@ def _write_markdown_evidence(path: Path, result: CleanInstallProofResult) -> Non
         f"VM booted: `{str(result.vm_booted).lower()}`",
         f"Release manifest: `{result.release_manifest or 'not provided'}`",
     ]
-    if result.status == "partial":
-        lines.extend(
-            [
-                "",
-                "Result: `runtime-only proof; a native isolated Windows installer proof is still required before public release.`",
-            ]
-        )
     lines.extend(["", "## Attempts", ""])
     for attempt in result.attempts:
         blocker_evidence = _markdown_blocker_evidence(attempt.blocker_evidence)

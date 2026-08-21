@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Policy: release sidecar signing claims need real proof.
 
-``_installer_artifact_entry`` in ``scripts/build_release_artifacts.py`` writes
-a ``*.sidecar.json`` next to every release artifact. This repo's release
+A ``*.sidecar.json`` sits next to every release artifact. This repo's release
 chain carries no cosign/Sigstore step anywhere (Azure Trusted Signing /
 Authenticode is the only signing mechanism -- see ``CODE_SIGNING_POLICY.md``),
 so a sidecar's ``attestation`` field is always ``null`` now; a non-null value
