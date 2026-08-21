@@ -5,8 +5,15 @@
 # acceptance release gate. Runs ON THE HOST (not in Sandbox).
 #
 # What it does, in order:
-#   1. Resolve the candidate kit -- either download it (-RunId) or use an
-#      already-extracted directory (-KitDir).
+#   1. Resolve the candidate kit -- either download it via `gh run download`
+#      (-RunId, a single throttled stream -- fine for manual/local use) or
+#      use an already-extracted directory (-KitDir, the shape
+#      gate-a-station-acceptance.yml hands in after its own parallel,
+#      chunked actions/download-artifact@v4 fetch -- see that workflow's
+#      header for why the workflow no longer calls -RunId itself).
+#      With -KitDir, -SourceSha and -RunId are accepted as optional metadata
+#      so the verdict JSON still carries the candidate sha and run id even
+#      though this script did not do the resolving itself.
 #   2. Validate the kit layout (glob for the installer, don't assume a name;
 #      confirm the station bundle is present).
 #   3. Point sandbox-lab\kit-download at the resolved kit via an NTFS
@@ -33,10 +40,21 @@
 [CmdletBinding(DefaultParameterSetName = 'ByRunId')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'ByRunId')]
-    [long]$RunId,
+    [Parameter(Mandatory = $false, ParameterSetName = 'ByKitDir')]
+    [Nullable[long]]$RunId,
 
     [Parameter(Mandatory = $true, ParameterSetName = 'ByKitDir')]
     [string]$KitDir,
+
+    # Optional metadata, -KitDir only: the caller (gate-a-station-
+    # acceptance.yml) already resolved the candidate sha itself to name the
+    # `native-beta-kit-<sha>` artifact for download, so it hands that same
+    # sha back here rather than making this script re-derive it. When
+    # omitted, the kit's own station\native-station-bundle-report.json is
+    # tried next, then the -KitDir leaf directory name, then
+    # 'unknown-local'.
+    [Parameter(ParameterSetName = 'ByKitDir')]
+    [string]$SourceSha,
 
     [string]$Root = $PSScriptRoot,
     [int]$SoakMinutes = 20,
@@ -63,6 +81,12 @@ Write-Step "SoakMinutes=$SoakMinutes TimeoutMinutes=$TimeoutMinutes Repo=$Repo"
 # --------------------------------------------------------------------------
 # 1. Resolve the candidate kit.
 # --------------------------------------------------------------------------
+
+# PowerShell variable names are case-insensitive, so the working variable
+# below (`$sourceSha`) and the `-SourceSha` parameter are THE SAME variable
+# -- capture the caller's value under a distinct name before it gets reset,
+# or `$sourceSha = $null` two lines down silently wipes out -SourceSha.
+$callerSourceSha = $SourceSha
 
 $sourceSha = $null
 $kitSourceDir = $null
@@ -110,17 +134,48 @@ if ($PSCmdlet.ParameterSetName -eq 'ByRunId') {
         Exit-HarnessError "-KitDir does not exist: $KitDir"
     }
     $kitSourceDir = (Resolve-Path $KitDir).Path
-    # Best-effort SHA recovery for an already-extracted kit: the assembled
-    # kit itself carries no receipt (that lives in the separate
-    # native-beta-candidate artifact), so this is "unknown-local" unless the
-    # caller's directory name IS the sha (kit-staging\<sha>\ convention).
-    $leaf = Split-Path -Leaf $kitSourceDir
-    if ($leaf -match '^[0-9a-f]{7,40}$') {
-        $sourceSha = $leaf
-    } else {
-        $sourceSha = 'unknown-local'
+
+    if ($RunId) {
+        $resolvedRunId = $RunId
     }
-    Write-Step "Using pre-extracted kit at $kitSourceDir (source_sha=$sourceSha)"
+
+    if ($callerSourceSha) {
+        # Caller (gate-a-station-acceptance.yml) already resolved this
+        # itself to name the artifact it downloaded -- trust it outright.
+        $sourceSha = $callerSourceSha
+        Write-Step "Using caller-supplied source_sha=$sourceSha"
+    } else {
+        # No -SourceSha given: try the kit's own build report next (best
+        # effort -- as of this writing native-station-bundle-report.json's
+        # schema in scripts/build_native_station_bundle.py does not carry a
+        # sha-shaped field, so this is forward-looking, not a currently
+        # populated path), then fall back to sniffing the -KitDir leaf name
+        # against the kit-staging\<sha>\ convention, then give up honestly.
+        $reportPath = Get-ChildItem -Path $kitSourceDir -Filter 'native-station-bundle-report.json' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($reportPath) {
+            try {
+                $report = Get-Content -Path $reportPath.FullName -Raw | ConvertFrom-Json
+                $candidate = $report.source_sha
+                if (-not $candidate) { $candidate = $report.git_sha }
+                if ($candidate -and ($candidate -match '^[0-9a-f]{7,40}$')) {
+                    $sourceSha = $candidate
+                    Write-Step "Recovered source_sha=$sourceSha from $($reportPath.FullName)"
+                }
+            } catch {
+                Write-Warning "Could not parse $($reportPath.FullName) for a source_sha: $_"
+            }
+        }
+
+        if (-not $sourceSha) {
+            $leaf = Split-Path -Leaf $kitSourceDir
+            if ($leaf -match '^[0-9a-f]{7,40}$') {
+                $sourceSha = $leaf
+            } else {
+                $sourceSha = 'unknown-local'
+            }
+        }
+    }
+    Write-Step "Using pre-extracted kit at $kitSourceDir (source_sha=$sourceSha, run_id=$resolvedRunId)"
 }
 
 # --------------------------------------------------------------------------

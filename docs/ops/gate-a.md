@@ -165,7 +165,24 @@ the run truly completes; `Watch-Run.ps1` is kept in `sandbox-lab/scripts/`
 only for interactive manual debugging, and Gate A's own orchestration never
 invokes it.
 
-## Running Gate A locally
+## Running Gate A in CI vs. locally
+
+The workflow (`.github/workflows/gate-a-station-acceptance.yml`) does **not**
+call `Run-GateA.ps1 -RunId` any more. `gh run download`'s single stream was
+measured at ~1.3 GB/10min against the ~21 GB `native-beta-kit-<sha>`
+artifact — ~2.5h per gate just to fetch the kit. Instead the workflow
+resolves the candidate sha itself, prunes `kit-staging/` down to that sha
+(21 GB/run adds up fast on a runner with finite disk), fetches the artifact
+with `actions/download-artifact@v4` (parallel, chunked — a few minutes
+instead of hours), and calls `Run-GateA.ps1 -KitDir sandbox-lab/kit-staging/<sha>
+-SourceSha <sha> -RunId <id>` — the sha and run id are passed through as
+metadata so `gate-a-verdict.json` still carries them even though the script
+itself didn't do the resolving.
+
+`-RunId` alone (the single-stream `gh run download` path) still works and is
+the right choice for a one-off local run against a completed
+`native-beta-candidate-artifacts` build, where standing up the parallel-
+download step isn't worth it for a single kit fetch.
 
 Prerequisites: Windows with the Windows Sandbox feature enabled, `gh`
 (GitHub CLI, authenticated) if using `-RunId`, `uv` on PATH.
@@ -174,12 +191,19 @@ Prerequisites: Windows with the Windows Sandbox feature enabled, `gh`
 # From a completed native-beta-candidate-artifacts workflow run:
 pwsh -File sandbox-lab/Run-GateA.ps1 -RunId 32444504123
 
-# Against an already-extracted kit directory (skip the gh download):
-pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir C:\path\to\extracted-kit
+# Against an already-extracted kit directory (skip the gh download) --
+# the shape CI itself uses after its own parallel download:
+pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir C:\path\to\extracted-kit -SourceSha abc1234 -RunId 32444504123
 
 # Shorter soak window for a quick local check:
 pwsh -File sandbox-lab/Run-GateA.ps1 -RunId 32444504123 -SoakMinutes 5 -TimeoutMinutes 60
 ```
+
+`-SourceSha` and `-RunId` are optional with `-KitDir`. Without `-SourceSha`,
+the script tries the kit's own `station\native-station-bundle-report.json`
+next (forward-looking — that report does not carry a sha-shaped field as of
+this writing), then the `-KitDir` leaf directory name if it looks like a sha
+(the `kit-staging\<sha>\` convention), then falls back to `unknown-local`.
 
 Exit codes: `0` = PASS, `1` = FAIL (a real station-acceptance finding —
 see `gate-a-verdict.json`), `2` = harness error (timeout waiting for
@@ -220,6 +244,8 @@ sandbox-lab/
 │   #  keep theirs because those directories are only written INTO, never
 │   #  replaced wholesale)
 ├── kit-staging/    (gitignored)        # Downloaded candidate artifacts, keyed by source SHA
+│   #  (in CI: pruned to only the current candidate's sha before every
+│   #   download -- kits run ~21 GB each and the runner's disk is finite)
 └── evidence/       (gitignored)        # Every run's preserved output, keyed by <sha>/<timestamp>
 ```
 
