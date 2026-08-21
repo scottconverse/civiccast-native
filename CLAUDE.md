@@ -178,7 +178,7 @@ below is currently enforced, not aspirational.
    merge while any review thread is open, regardless of approval count.
    `main` does not currently carry that same branch-protection setting —
    don't assume thread-resolution enforcement applies there without
-   checking `gh api repos/scottconverse/civiccast/branches/main/protection`
+   checking `gh api repos/scottconverse/civiccast-native/branches/main/protection`
    first.
 4. **Claims-evidence binding for proof-bearing changes.** Prose claims in
    the governed doc set (README, CAPABILITIES, DR docs, release

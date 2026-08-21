@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Gi-free control-command parsing for the playout worker (Windows + WSL).
+"""Gi-free control-command parsing for the playout worker (Windows + POSIX).
 
 The per-channel worker reads newline-delimited commands from a control FIFO; this
 parser is kept gi-free so it is unit-testable without GStreamer.
@@ -43,7 +43,7 @@ def install_unix_signal_handlers(
 
     PyGObject's native-Windows GLib binding has no ``unix_signal_add`` symbol.
     The worker is stopped through its named-pipe control channel on Windows, so
-    skipping Unix signal registration there is intentional.  POSIX/WSL keeps
+    skipping Unix signal registration there is intentional.  POSIX keeps
     the existing SIGINT/SIGTERM behavior.
     """
 

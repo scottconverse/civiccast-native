@@ -422,13 +422,13 @@ entries:
       # goes red and requires another current-source external proof.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 73e45ac972668945eeff43ed35334795609f538a
+          blob: b21875effd5b5bfab36b65a92f03574e0b82e264
         - path: civiccast/egress/gst/engine.py
-          blob: 9d3a7c91b86da09f087759521075cd225f644706
+          blob: bdaa1ad26f65879a8c904742e2bd49c187289aeb
         - path: civiccast/egress/gst/graph.py
-          blob: 476e7ec4311fd2a1929ac8663ddc2f62167f08ad
+          blob: 7bd347a1ebe3749721c889df5795e0605d8d5445
         - path: civiccast/egress/gst/control.py
-          blob: d082b89d08277a4408824aa507703226d5afaac9
+          blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
@@ -464,7 +464,7 @@ entries:
       # exact-config artifact that was never committed for this spike.
       fixtures:
         - path: civiccast/egress/gst/graph.py
-          blob: 476e7ec4311fd2a1929ac8663ddc2f62167f08ad
+          blob: 7bd347a1ebe3749721c889df5795e0605d8d5445
     controls:
       - id: native-decision-gate-authority-record
         command: >-
@@ -551,13 +551,13 @@ entries:
       # goes red and requires another current-source session-0 proof.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 73e45ac972668945eeff43ed35334795609f538a
+          blob: b21875effd5b5bfab36b65a92f03574e0b82e264
         - path: civiccast/egress/gst/engine.py
-          blob: 9d3a7c91b86da09f087759521075cd225f644706
+          blob: bdaa1ad26f65879a8c904742e2bd49c187289aeb
         - path: civiccast/egress/gst/graph.py
-          blob: 476e7ec4311fd2a1929ac8663ddc2f62167f08ad
+          blob: 7bd347a1ebe3749721c889df5795e0605d8d5445
         - path: civiccast/egress/gst/control.py
-          blob: d082b89d08277a4408824aa507703226d5afaac9
+          blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:

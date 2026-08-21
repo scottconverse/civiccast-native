@@ -55,9 +55,9 @@ install, launch, reinstall, uninstall and the rc17 upgrade.
 
 | Reader | Start In | Then See |
 | --- | --- | --- |
-| First-time user / board member / clerk | [Section A](#section-a-end-user-guide) | [Meeting Operator Guide](https://github.com/scottconverse/civiccast/blob/main/docs/meeting-operator-guide.md), [Records Clerk Guide](https://github.com/scottconverse/civiccast/blob/main/docs/records-clerk-guide.md) |
-| Station admin / IT lead | [Section B](#section-b-technical-reference) | [Admin Guide](https://github.com/scottconverse/civiccast/blob/main/docs/admin-guide.md), [Technical Operations Reference](https://github.com/scottconverse/civiccast/blob/main/docs/technical-ops-reference.md) |
-| Developer / integrator / auditor | [Section C](#section-c-architecture-reference) | [docs/spec/3.0/](https://github.com/scottconverse/civiccast/tree/main/docs/spec/3.0), [RECONCILIATION.md](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/RECONCILIATION.md) |
+| First-time user / board member / clerk | [Section A](#section-a-end-user-guide) | [Meeting Operator Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/meeting-operator-guide.md), [Records Clerk Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/records-clerk-guide.md) |
+| Station admin / IT lead | [Section B](#section-b-technical-reference) | [Admin Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/admin-guide.md), [Technical Operations Reference](https://github.com/scottconverse/civiccast-native/blob/main/docs/technical-ops-reference.md) |
+| Developer / integrator / auditor | [Section C](#section-c-architecture-reference) | [docs/spec/3.0/](https://github.com/scottconverse/civiccast-native/tree/main/docs/spec/3.0), [RECONCILIATION.md](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/RECONCILIATION.md) |
 
 ---
 
@@ -175,8 +175,7 @@ credentials; those require separate station backup and restore procedures.
 **How do I send support a bundle from Windows?** In **System Health**, add a
 short note, choose **Create support bundle**, then choose **Download support
 bundle**. Send the downloaded JSON file and its displayed SHA-256 through the
-private beta support channel. The Linux/WSL path shown on screen is diagnostic
-context, not the Windows handoff method.
+private beta support channel.
 
 **What if there's an emergency during a meeting?** CivicCast contains optional
 EAS (Emergency Alert System) / CAP (Common Alerting Protocol) software
@@ -207,16 +206,16 @@ For routine workflow questions, use the role-specific guides:
 
 ### Admin Quick Guide
 
-- [Admin Guide](https://github.com/scottconverse/civiccast/blob/main/docs/admin-guide.md) — first install, recovery, backups.
+- [Admin Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/admin-guide.md) — first install, recovery, backups.
 
 ### Meeting Operator Quick Guide
 
-- [Meeting Operator Guide](https://github.com/scottconverse/civiccast/blob/main/docs/meeting-operator-guide.md) — night-of-meeting.
+- [Meeting Operator Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/meeting-operator-guide.md) — night-of-meeting.
 
 ### Records Clerk Quick Guide
 
-- [Records Clerk Guide](https://github.com/scottconverse/civiccast/blob/main/docs/records-clerk-guide.md) — caption review, publish.
-- [Operator Language Guide](https://github.com/scottconverse/civiccast/blob/main/docs/operator-language-guide.md) — the words the
+- [Records Clerk Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/records-clerk-guide.md) — caption review, publish.
+- [Operator Language Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/operator-language-guide.md) — the words the
   console uses and what they mean.
 
 For a problem the role guides do not cover, the project's GitHub Issues
@@ -236,9 +235,9 @@ variables, and HTTP services.
 
 For deeper command, credential, certificate, storage, model, and
 release-proof detail, see
-[Technical Operations Reference](https://github.com/scottconverse/civiccast/blob/main/docs/technical-ops-reference.md). For the
+[Technical Operations Reference](https://github.com/scottconverse/civiccast-native/blob/main/docs/technical-ops-reference.md). For the
 narrative install procedure on Windows, see
-[INSTALL-WINDOWS.md](https://github.com/scottconverse/civiccast/blob/main/INSTALL-WINDOWS.md).
+[INSTALL-WINDOWS.md](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md).
 
 ### Install And First Boot
 
@@ -247,13 +246,14 @@ bounded recorded-media workflow while each new signed candidate repeats the
 genuine clean-host run first completed by rc14:
 
 1. **Windows installer (controlled beta for testing).** The release `.exe`
-   from the GitHub Release page bootstraps a WSL2 helper, installs
-   the FastAPI service, brings up SQLite-backed durable storage, and
+   from the GitHub Release page registers a Windows service through the SCM,
+   which supervises the control plane, Postgres, NATS, and the media workers
+   from a bundled runtime under `C:\Program Files\CivicCast (Native)\`, and
    walks the operator through a recovery-kit and first-admin flow.
    Verify the SHA-256 hash against the release's `.sidecar.json` before
    running it. Do not assume the candidate is signed: compare its actual
    Authenticode status and publisher with the exact approved handoff.
-   See [INSTALL-WINDOWS.md](https://github.com/scottconverse/civiccast/blob/main/INSTALL-WINDOWS.md).
+   See [INSTALL-WINDOWS.md](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md).
 
    Leave at least **5 GB free** for the base installation. Recordings, station
    media, backups, and downloaded caption models require additional storage.
@@ -352,7 +352,7 @@ station needs.
 
 - **`CIVICCAST_EGRESS_ENGINE`** — `gstreamer` (default, S15) or `ffmpeg-concat` (legacy fallback).
 - **`CIVICCAST_EGRESS_WORK_DIR`** — Per-channel temporary directory for egress plans.
-- **`CIVICCAST_EGRESS_EMBED_CAPTIONS`** — Attempts the native GStreamer caption-SEI path when the required GStreamer elements are available. The Windows helper installer extracts the CivicCast-bundled private GStreamer runtime under `/opt/civiccast/gstreamer` and verifies `cccombiner`, `ccconverter`, `h264ccinserter`, and `tttocea608` with the private `gst-inspect-1.0`; if any required element remains unavailable, setup stops with an explicit native caption-SEI runtime error instead of claiming the embed path is ready. The beta proof passed with the bundled runtime on a clean Ubuntu 24.04 dependency substrate.
+- **`CIVICCAST_EGRESS_EMBED_CAPTIONS`** — Attempts the native GStreamer caption-SEI path when the required GStreamer elements are available. The Windows installer stages the CivicCast-bundled private GStreamer runtime under the install root's `runtime\dependencies\gstreamer` and verifies `cccombiner`, `ccconverter`, `h264ccinserter`, and `tttocea608` with the bundled `gst-inspect-1.0.exe`; if any required element remains unavailable, setup stops with an explicit native caption-SEI runtime error instead of claiming the embed path is ready.
 - **`CIVICCAST_GST_ALLOW_HARDWARE_DECODE`** — Optional expert override. By default, the GStreamer worker demotes GPU H.264/H.265 decoders so live UDP/SRT decode stays in system memory before the CPU conform/encode chain. Set to `1` only when the station has validated its hardware decode path end-to-end.
 - **`CIVICCAST_CHANNEL_AUTOMATION`** — Enable the channel automation driver and its poll cadence.
 - **`CIVICCAST_CHANNEL_AUTOMATION_POLL_SECONDS`** — Enable the channel automation driver and its poll cadence.
@@ -524,10 +524,10 @@ secrets. It is for tests only and must never be enabled at a station.
 - **`CIVICCAST_NDI_RUNTIME_DIR`** — NDI output relay configuration.
 - **`CIVICCAST_SDI_RELAY`** — SDI output relay (descoped from 3.0 default but available).
 - **`CIVICCAST_SDI_FFMPEG`** — SDI output relay (descoped from 3.0 default but available).
-- **`CIVICCAST_TSDUCK_HOME`** — TSDuck compliance-probe toolchain. The Windows helper installer now installs the pinned Ubuntu 24.04 TSDuck package in WSL2 and verifies `tsp --version` before setup can claim the runtime is ready.
-- **`CIVICCAST_TSDUCK_PATH`** — TSDuck compliance-probe toolchain. The Windows helper installer now installs the pinned Ubuntu 24.04 TSDuck package in WSL2 and verifies `tsp --version` before setup can claim the runtime is ready.
-- **`CIVICCAST_TSDUCK_RCVBUF_BYTES`** — TSDuck compliance-probe toolchain. The Windows helper installer now installs the pinned Ubuntu 24.04 TSDuck package in WSL2 and verifies `tsp --version` before setup can claim the runtime is ready.
-- **`CIVICCAST_TSDUCK_NETWORK_TESTS`** — TSDuck compliance-probe toolchain. The Windows helper installer now installs the pinned Ubuntu 24.04 TSDuck package in WSL2 and verifies `tsp --version` before setup can claim the runtime is ready.
+- **`CIVICCAST_TSDUCK_HOME`** — TSDuck compliance-probe toolchain. CivicCast fetches and installs a pinned, checksum-verified TSDuck portable build into a contained per-user directory on demand (no admin rights, no system installer) and verifies `tsp --version` before setup can claim the runtime is ready.
+- **`CIVICCAST_TSDUCK_PATH`** — TSDuck compliance-probe toolchain. CivicCast fetches and installs a pinned, checksum-verified TSDuck portable build into a contained per-user directory on demand (no admin rights, no system installer) and verifies `tsp --version` before setup can claim the runtime is ready.
+- **`CIVICCAST_TSDUCK_RCVBUF_BYTES`** — TSDuck compliance-probe toolchain. CivicCast fetches and installs a pinned, checksum-verified TSDuck portable build into a contained per-user directory on demand (no admin rights, no system installer) and verifies `tsp --version` before setup can claim the runtime is ready.
+- **`CIVICCAST_TSDUCK_NETWORK_TESTS`** — TSDuck compliance-probe toolchain. CivicCast fetches and installs a pinned, checksum-verified TSDuck portable build into a contained per-user directory on demand (no admin rights, no system installer) and verifies `tsp --version` before setup can claim the runtime is ready.
 - **`CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR`** — Cable file-package output.
 - **`CIVICCAST_CABLE_CAPTIONS_DIR`** — Cable file-package output.
 
@@ -628,7 +628,10 @@ civiccast doctor [--json] [--disk PATH]
 civiccast installer plan \
     [--profile public-meetings] [--recommended-tier tier-1]
 civiccast installer health-check [--profile public-meetings]
-civiccast installer platform-plan [--os-family linux|macos|windows]
+civiccast installer platform-plan [--os-family linux|macos]
+    # Generic Linux/macOS bootstrap planning only. Windows deployment
+    # readiness is decided separately by the native station's own
+    # activation state (civiccast.installer.service), not this plan.
 civiccast installer verify-package --artifact PATH --sidecar PATH
 civiccast installer summary
 civiccast installer beta-handoff \
@@ -657,8 +660,6 @@ civiccast activitypub …         (key + config helpers; see civiccast/activityp
 civiccast egress run --channel-id CH [--work-dir D] \
     [--poll-seconds 2] [--once]
 civiccast egress verify --channel-id CH [--seconds 10]
-civiccast egress enable --channel-id CH \
-    --civiccast-bin PATH …        # systemd unit
 civiccast egress recovery-proof --channel-id CH \
     --measured-seconds N …
 civiccast egress continuity-proof --source-plan-json J \
@@ -698,14 +699,17 @@ and Stripe secrets must never appear on a command line in production.
 
 For deeper trouble — TSDuck failures, GStreamer decode-back proofs,
 veraPDF validation, certificate rotation, mTLS — see
-[Technical Operations Reference](https://github.com/scottconverse/civiccast/blob/main/docs/technical-ops-reference.md).
+[Technical Operations Reference](https://github.com/scottconverse/civiccast-native/blob/main/docs/technical-ops-reference.md).
 
-The Windows helper installer provisions the beta runtime inside Ubuntu WSL2:
-Python, FFmpeg/FFprobe, the CivicCast-bundled private GStreamer runtime with
-the caption-SEI elements, Faster Whisper from the bundled wheelhouse, and
-TSDuck for cable verification. NDI runtime/SDK, DeckLink hardware/drivers,
-app-store provider accounts, and live station headend equipment remain
-operator/provider supplied.
+The Windows installer provisions the native beta runtime directly on the
+host, under the bundled runtime tree at
+`C:\Program Files\CivicCast (Native)\runtime\`: Python, FFmpeg/FFprobe, the
+CivicCast-bundled private GStreamer runtime with the caption-SEI elements,
+and Faster Whisper. TSDuck for cable verification is fetched and verified
+on demand into a contained per-user directory when cable verification is
+enabled — no admin rights, no system installer. NDI runtime/SDK, DeckLink
+hardware/drivers, app-store provider accounts, and live station headend
+equipment remain operator/provider supplied.
 
 **Local AI provisioning (rc17 and later).** CivicCast also provisions the local Ollama runtime for
 on-station AI (reusing a healthy existing install if one is already present
@@ -717,14 +721,14 @@ honestly without blocking the rest of the install.
 
 ### Cross-references
 
-- [Admin Guide](https://github.com/scottconverse/civiccast/blob/main/docs/admin-guide.md) — first install, recovery, backups.
-- [Meeting Operator Guide](https://github.com/scottconverse/civiccast/blob/main/docs/meeting-operator-guide.md) — night-of-meeting.
-- [Records Clerk Guide](https://github.com/scottconverse/civiccast/blob/main/docs/records-clerk-guide.md) — caption review, publish.
-- [Technical Operations Reference](https://github.com/scottconverse/civiccast/blob/main/docs/technical-ops-reference.md) — exact
+- [Admin Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/admin-guide.md) — first install, recovery, backups.
+- [Meeting Operator Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/meeting-operator-guide.md) — night-of-meeting.
+- [Records Clerk Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/records-clerk-guide.md) — caption review, publish.
+- [Technical Operations Reference](https://github.com/scottconverse/civiccast-native/blob/main/docs/technical-ops-reference.md) — exact
   commands, certificate operations, release proofs.
-- [Operator Language Guide](https://github.com/scottconverse/civiccast/blob/main/docs/operator-language-guide.md) — UI vocabulary.
-- [Channel Egress Operator And Tester Runbook](https://github.com/scottconverse/civiccast/blob/main/docs/ops/channel-egress-runbook.md).
-- [Windows Release Trust And Verification](https://github.com/scottconverse/civiccast/blob/main/docs/install/windows-release-trust.md).
+- [Operator Language Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/operator-language-guide.md) — UI vocabulary.
+- [Channel Egress Operator And Tester Runbook](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/channel-egress-runbook.md).
+- [Windows Release Trust And Verification](https://github.com/scottconverse/civiccast-native/blob/main/docs/install/windows-release-trust.md).
 
 ---
 
@@ -736,11 +740,11 @@ need to understand the source architecture and its relationship to the CivicCast
 cross-references a spec section or a concrete module path.
 
 The canonical specification is at
-[docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md).
+[docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md).
 The repo-verified per-section status manifest is at
-[docs/spec/3.0/ROADMAP.status.yaml](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/ROADMAP.status.yaml). The
+[docs/spec/3.0/ROADMAP.status.yaml](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/ROADMAP.status.yaml). The
 migration-chain reconciliation history is at
-[docs/spec/3.0/RECONCILIATION.md](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/RECONCILIATION.md).
+[docs/spec/3.0/RECONCILIATION.md](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/RECONCILIATION.md).
 
 ![CivicCast channel-egress architecture](assets/architecture/civiccast-egress-proof-architecture.png)
 
@@ -785,7 +789,7 @@ civiccast/
 
 ### The Five-Role Model
 
-Defined in [`civiccast/auth/roles.py`](https://github.com/scottconverse/civiccast/blob/main/civiccast/auth/roles.py):
+Defined in [`civiccast/auth/roles.py`](https://github.com/scottconverse/civiccast-native/blob/main/civiccast/auth/roles.py):
 
 ```python
 KNOWN_ROLES = (
@@ -809,7 +813,7 @@ The migration chain is single-headed at `0072_normalize_recording_file_uris`. Th
 shape — including the late-landing sibling for S21 — is below in ASCII
 form; the canonical version (with each revision's down-revision pointer
 and the reasoning for the sibling) is in
-[RECONCILIATION.md](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/RECONCILIATION.md).
+[RECONCILIATION.md](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/RECONCILIATION.md).
 
 ```text
 0049_per_sink_loudness
@@ -841,12 +845,12 @@ and the reasoning for the sibling) is in
 `0060` is the historical data-free merge revision that unified the `0056`
 sibling with the `0059` linear head. Later subsystem revisions extend that
 line through the current `0071` head. Automated schema-head tests enforce that
-single-head identity; [ROADMAP.status.yaml](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/ROADMAP.status.yaml)
+single-head identity; [ROADMAP.status.yaml](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/ROADMAP.status.yaml)
 tracks the capability evidence associated with the chain.
 
 ### The S15 GStreamer Playout Engine
 
-The S15 playout engine ([`civiccast/egress/gst/`](https://github.com/scottconverse/civiccast/tree/main/civiccast/egress/gst))
+The S15 playout engine ([`civiccast/egress/gst/`](https://github.com/scottconverse/civiccast-native/tree/main/civiccast/egress/gst))
 replaces the previous ffmpeg-relay model with a persistent GStreamer
 pipeline plus hot-swap. The two relevant pieces:
 
@@ -868,7 +872,7 @@ into the legacy ffmpeg-relay model for backwards compatibility.
 The three modules built last in the v3.0 sprint (scheduled recording,
 asset finalization, alerting) connect to the rest of the station via
 explicit `typing.Protocol` seams. The pattern lives in
-[`civiccast/recording/service.py`](https://github.com/scottconverse/civiccast/blob/main/civiccast/recording/service.py),
+[`civiccast/recording/service.py`](https://github.com/scottconverse/civiccast-native/blob/main/civiccast/recording/service.py),
 which is the most thorough example.
 
 ```python
@@ -937,7 +941,7 @@ emits XMLTV for downstream guides.
 
 ### The CDN-Aware Trusted-Proxy Resolver
 
-Located at [`civiccast/common/trusted_proxy.py`](https://github.com/scottconverse/civiccast/blob/main/civiccast/common/trusted_proxy.py).
+Located at [`civiccast/common/trusted_proxy.py`](https://github.com/scottconverse/civiccast-native/blob/main/civiccast/common/trusted_proxy.py).
 Everything that consumes "real client IP" goes through this resolver:
 paywall rate limiter, recording cross-station guard, audit logger,
 analytics ingestion filter.
@@ -969,7 +973,7 @@ runtime.
 ### Comparative Capability Status {#comparative-capability-status}
 
 The repository software-capability table is tracked in
-[ROADMAP.status.yaml](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/ROADMAP.status.yaml). A `shipped` row means the
+[ROADMAP.status.yaml](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/ROADMAP.status.yaml). A `shipped` row means the
 software surface exists; it does not by itself prove the installer,
 station hardware, external provider, or field workflow:
 
@@ -1036,20 +1040,20 @@ devices, and external providers require separate proof.
 
 For deeper section reading:
 
-- [S15 — Playout engine (GStreamer)](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/sections/S15-playout-engine-gstreamer.md)
-- [S7 — Media lifecycle & readiness](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/sections/S7-media-lifecycle-and-readiness.md)
-- [S8 — Health, alerting, support updates](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/sections/S8-health-alerting-support-updates.md)
-- [Legal Notices](https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md)
-- [Patent Risk Notes](https://github.com/scottconverse/civiccast/blob/main/docs/legal/patent-watchlist.md)
-- [S21 — Scheduled recording](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/sections/S21-scheduled-recording.md)
-- [S25 — Meeting-agenda integration](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/sections/S25-meeting-agenda-integration.md)
-- [S26 — Subscription paywall](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/sections/S26-subscription-paywall.md)
-- [S10 — Field certification & proof ladder](https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/sections/S10-field-certification-and-proof-ladder.md)
+- [S15 — Playout engine (GStreamer)](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/sections/S15-playout-engine-gstreamer.md)
+- [S7 — Media lifecycle & readiness](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/sections/S7-media-lifecycle-and-readiness.md)
+- [S8 — Health, alerting, support updates](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/sections/S8-health-alerting-support-updates.md)
+- [Legal Notices](https://github.com/scottconverse/civiccast-native/blob/main/LEGAL-NOTICES.md)
+- [Patent Risk Notes](https://github.com/scottconverse/civiccast-native/blob/main/docs/legal/patent-watchlist.md)
+- [S21 — Scheduled recording](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/sections/S21-scheduled-recording.md)
+- [S25 — Meeting-agenda integration](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/sections/S25-meeting-agenda-integration.md)
+- [S26 — Subscription paywall](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/sections/S26-subscription-paywall.md)
+- [S10 — Field certification & proof ladder](https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/sections/S10-field-certification-and-proof-ladder.md)
 
 ## Language Standard
 
 All user-facing CivicCast copy follows the
-[Operator Language Guide](https://github.com/scottconverse/civiccast/blob/main/docs/operator-language-guide.md). In short:
+[Operator Language Guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/operator-language-guide.md). In short:
 
 - **Broadcast** for the live or recorded meeting the public watches.
 - **Publish** for making approved records available after review.

@@ -1,36 +1,24 @@
 # CivicCast Installer App
 
-This directory contains the Tauri-compatible installer shell for CivicCast. The
-installer is part of the `1.0.0-rc17` beta-blocker repair line. rc13 is withdrawn from beta
-installation while this repair is verified. The app verifies
-platform bootstrap, package artifacts, model setup, NATS, local-CA mTLS,
-clean-install evidence, and external-provider gates.
+This directory contains the Tauri-compatible installer shell for CivicCast's
+native Windows product ([ADR 0021](../../../docs/adr/0021-native-windows-runtime.md)
+-- see [BRANCHES.md](../../../BRANCHES.md)). No WSL, no Docker, no Linux
+install target. The app verifies platform bootstrap, package artifacts,
+model setup, NATS, local-CA mTLS, clean-install evidence, and
+external-provider gates.
 
 ## Current Posture
 
-- On Windows, CivicCast uses a Windows helper to run its local meeting tools on
-  the user's computer.
-- The app can launch setup for that Windows helper and ask Windows for the
-  required approval.
-- Windows helper setup is single-instance across clicks, installer processes,
-  and installer close/reopen cycles while an elevated bootstrap is active.
-  While Windows servicing runs, the UI shows the active phase, step count,
-  elapsed time, and a heartbeat every few seconds. CivicCast never force-kills
-  DISM or starts a second Windows-feature step after a failed or reboot-pending
-  first step. Helper consoles stay hidden; the Windows administrator-consent
-  prompt remains visible.
-- The Windows helper setup writes a local diagnostic log under
-  `%USERPROFILE%\.civiccast\bootstrap-wsl2-ubuntu.log`, writes structured state
-  under `%USERPROFILE%\.civiccast\bootstrap-wsl2-ubuntu.result.json`, and tells
-  the operator when a restart or IT help is required.
-- For IT: the Windows helper is WSL2 Ubuntu 24.04 with Python 3.12 and systemd.
-  CivicCast requires WSL2, not WSL1.
-- Inside the dedicated distro, `civiccast.service` runs as the unprivileged
-  `civiccast` account. Root-owned releases and the `current` link live under
-  `/opt/civiccast`; mutable station data lives under `/var/lib/civiccast`.
-  Runtime output is in `/var/lib/civiccast/logs/civiccast.log`, bootstrap output
-  is in `/var/lib/civiccast/logs/bootstrap.log`, and `journalctl -u civiccast`
-  shows supervisor diagnostics.
+- The signed setup app registers a Windows service through the SCM and
+  supervises the control plane, Postgres, NATS, and the media workers from a
+  bundled runtime, at `C:\Program Files\CivicCast (Native)\` -- no separate
+  Windows-feature bootstrap, no elevated multi-step servicing UI.
+- The setup app extracts the bundled Python/GStreamer/FFmpeg runtime, prepares
+  local durable storage and upload folders, registers the Windows service, and
+  hands the operator to the operator console.
+- The native runtime host's own diagnostic log lives under
+  `%USERPROFILE%\.civiccast\runtime-host.log` (see
+  `civiccast.installer.service._installer_bootstrap_log_path`).
 - The current UI is a guided setup flow with readiness lanes and a concrete
   operator-console handoff.
 - External providers remain credential-gated until controlled live proof exists.

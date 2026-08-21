@@ -39,9 +39,18 @@ a later GauntletGate rebuild.
 
 ## WSL Public-Beta Line - Windows Runtime
 
-This section applies to the current rc15 WSL product line. A distinct native
-Windows product line is in development under ADR 0021 and follows its own
-exact tester directives and evidence boundaries.
+> **Historical: describes the retired public WSL2 line, not this
+> repository.** `civiccast-native` ships one product, the native Windows
+> station (session-0 Windows service, no WSL) -- see
+> [BRANCHES.md](../../BRANCHES.md). This section's `rc15`/WSL2 setup
+> behavior belongs to the separate, private `scottconverse/civiccast`
+> repository and does not apply here. Kept as historical reference pending
+> a native-line known-limitations section.
+
+This section applied to the retired rc-numbered WSL product line. The
+native Windows product line this repository ships was developed under
+ADR 0021 and follows its own exact tester directives and evidence
+boundaries.
 
 WSL-line Windows testers run CivicCast services inside WSL2 Ubuntu 24.04. The setup app hides
 that layer, but the host still needs Windows 11 support for WSL2 and may need a

@@ -376,7 +376,7 @@ def test_posix_fifo_branch_source_is_unchanged() -> None:
     replaced, or mutated by the Windows addition."""
     text = _WORKER_PY.read_text(encoding="utf-8")
     assert "os.mkfifo(control_fifo)" in text
-    assert 'raise RuntimeError("control FIFO support requires WSL/Linux")' in text
+    assert 'raise RuntimeError("control FIFO support requires a POSIX host (Linux/macOS)")' in text
     assert 'not hasattr(os, "mkfifo")' in text
     assert "Path(control_fifo).parent.mkdir(parents=True, exist_ok=True)" in text
 

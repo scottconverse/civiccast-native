@@ -569,7 +569,18 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # none marked `windows_only`, so both lanes move by +12. Re-derived by an
     # actual `--collect-only` run on this tree, not by arithmetic: (1634,
     # 1826) -> (1646, 1838).
-    assert (collect("not windows_only"), collect()) == (1646, 1838)
+    #
+    # WSL/Linux-leftover purge wave 2 (2026-08-21): -9 pure, 0 windows_only --
+    # tests/native/test_inventory_reconciliation.py deleted along with
+    # scripts/prove_native_inventory_reconciliation.py, which required
+    # --wsl-installer/--wsl-extracted-root inputs and reconciled the shipped
+    # WSL runtime inventory against the native plan. The WSL side's required
+    # inputs (the rc18 installer's bootstrap, resolved Linux requirements,
+    # wheelhouse manifest) do not exist in this repository, so the script and
+    # its 9 tests (none marked windows_only, all plain-fixture) could never
+    # run here. Re-derived by an actual `--collect-only` run on this tree,
+    # not by arithmetic: (1646, 1838) -> (1637, 1829).
+    assert (collect("not windows_only"), collect()) == (1637, 1829)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

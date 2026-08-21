@@ -10,9 +10,7 @@ review problem.
 3. Select **Create support bundle**.
 4. Select **Download support bundle** and save the JSON file on the Windows
    computer.
-5. Copy the downloaded filename and displayed SHA-256 into the bug report. The
-   bundle may also display a Linux/WSL file path for the same data; that path
-   is diagnostic context, not the file-handoff method.
+5. Copy the downloaded filename and displayed SHA-256 into the bug report.
 6. Send the report and downloaded bundle through the private beta issue,
    discussion, or support
    channel Scott provided. Do not post bundles publicly unless a maintainer
@@ -28,7 +26,7 @@ review problem.
 - Source setup guidance.
 - System Health and safe-to-broadcast state.
 - Recent setup/support context.
-- A tail of the installer's WSL bootstrap log, if it ran on this machine.
+- A tail of the native runtime host's own diagnostic log, if it ran on this machine.
 - A tail of each live channel's recent FFmpeg logs.
 
 ## What It Redacts

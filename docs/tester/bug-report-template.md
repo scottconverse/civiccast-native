@@ -20,7 +20,6 @@ What were you trying to do?
 - Installer filename:
 - Installer SHA-256, if checked:
 - Windows version:
-- WSL2 Ubuntu distro/version if known:
 - Computer model or CPU/RAM/GPU if known:
 
 ## Where It Stopped
