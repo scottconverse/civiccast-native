@@ -130,7 +130,9 @@ def get_asset_readiness(
     resolved = _require_store(store)
     result = resolved.get_readiness(asset_id)
     if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Asset not found: {asset_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Asset not found: {asset_id}"
+        )
     return result
 
 
@@ -196,7 +198,9 @@ async def replace_asset_source(
         )
     existing = resolved.get_readiness(asset_id)
     if existing is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Asset not found: {asset_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Asset not found: {asset_id}"
+        )
 
     upload_dir = Path(upload_dir_str).resolve()
     asset_dir = (upload_dir / asset_id).resolve()
@@ -213,7 +217,9 @@ async def replace_asset_source(
         safe_name = "replacement"
     dest_path = (asset_dir / safe_name).resolve()
     if not dest_path.is_relative_to(asset_dir):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Invalid filename.")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Invalid filename."
+        )
 
     await asyncio.to_thread(incoming_dir.mkdir, parents=True, exist_ok=True)
     temp_path = (incoming_dir / f"{asset_id}-{uuid.uuid4().hex}.replace").resolve()
@@ -243,7 +249,9 @@ async def replace_asset_source(
         try:
             ffprobe_result = await asyncio.to_thread(run_ffprobe, temp_path)
         except FfprobeNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            ) from exc
         try:
             validate_ingest(ffprobe_result)
         except UnsupportedFormatError as exc:
@@ -260,8 +268,10 @@ async def replace_asset_source(
         archived_old_path: str | None = None
         await asyncio.to_thread(asset_dir.mkdir, parents=True, exist_ok=True)
         for candidate in asset_dir.glob("*"):
-            if candidate.is_file() and candidate != dest_path and not candidate.name.startswith(
-                f"{asset_id}.replaced-"
+            if (
+                candidate.is_file()
+                and candidate != dest_path
+                and not candidate.name.startswith(f"{asset_id}.replaced-")
             ):
                 archived_name = f"{asset_id}.replaced-{uuid.uuid4().hex[:8]}-{candidate.name}"
                 archived_path = asset_dir / archived_name
@@ -347,7 +357,8 @@ def update_watch_folder_config(
         return _require_store(store).update_watch_folder_config(config_id, payload)
     except WatchFolderConfigNotFoundError as exc:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Watch folder config not found: {config_id}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Watch folder config not found: {config_id}",
         ) from exc
 
 
@@ -365,7 +376,8 @@ def delete_watch_folder_config(
         _require_store(store).delete_watch_folder_config(config_id)
     except WatchFolderConfigNotFoundError as exc:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Watch folder config not found: {config_id}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Watch folder config not found: {config_id}",
         ) from exc
 
 
@@ -407,7 +419,9 @@ def create_retention_policy(
     responses={404: {"description": "Retention policy not found"}},
 )
 def update_retention_policy(
-    policy_id: str, payload: AssetRetentionPolicyInput, store: Any = Depends(get_media_lifecycle_store)
+    policy_id: str,
+    payload: AssetRetentionPolicyInput,
+    store: Any = Depends(get_media_lifecycle_store),
 ) -> AssetRetentionPolicyResponse:
     try:
         return _require_store(store).update_retention_policy(policy_id, payload)
@@ -424,7 +438,9 @@ def update_retention_policy(
     dependencies=[Depends(require_any_role("records_clerk", "setup_admin"))],
     responses={404: {"description": "Retention policy not found"}},
 )
-def delete_retention_policy(policy_id: str, store: Any = Depends(get_media_lifecycle_store)) -> None:
+def delete_retention_policy(
+    policy_id: str, store: Any = Depends(get_media_lifecycle_store)
+) -> None:
     try:
         _require_store(store).delete_retention_policy(policy_id)
     except AssetRetentionPolicyNotFoundError as exc:
@@ -476,7 +492,9 @@ def get_missing_media_reader() -> Any:
     summary="Scheduled items whose backing asset is not ready within the horizon",
     dependencies=[Depends(require_any_role(*_READ_ROLES))],
 )
-def list_missing_media(reader: Any = Depends(get_missing_media_reader)) -> list[MissingMediaAlertRow]:
+def list_missing_media(
+    reader: Any = Depends(get_missing_media_reader),
+) -> list[MissingMediaAlertRow]:
     if reader is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_DB_NOT_READY_DETAIL

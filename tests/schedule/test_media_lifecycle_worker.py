@@ -128,7 +128,9 @@ class TestReadinessStateComputation:
             assert row.readiness_state == READINESS_NOT_READY
 
     def test_validated_no_file_path_skips_transcode_seed_stays_ready(
-        self, engine: Engine, session_factory  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,  # type: ignore[no-untyped-def]
     ) -> None:
         # No file_path -> nothing to transcode; the asset is as "ready" as
         # a manifest-only row can be (no in-flight jobs, none possible).
@@ -141,7 +143,10 @@ class TestReadinessStateComputation:
             assert row.readiness_state == READINESS_READY
 
     def test_validated_with_file_seeds_transcode_jobs_first_pass(
-        self, engine: Engine, session_factory, tmp_path: Path  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
     ) -> None:
         media_file = tmp_path / "meeting.mp4"
         media_file.write_bytes(b"\x00")
@@ -158,10 +163,15 @@ class TestReadinessStateComputation:
             assert {j.status for j in jobs} == {"completed"}
             row = session.get(AssetReadiness, "a1")
             assert row is not None
-            assert row.readiness_state == READINESS_PENDING_TRANSCODE  # not dispatched yet this pass
+            assert (
+                row.readiness_state == READINESS_PENDING_TRANSCODE
+            )  # not dispatched yet this pass
 
     def test_second_pass_after_dispatch_reads_ready(
-        self, engine: Engine, session_factory, tmp_path: Path  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
     ) -> None:
         media_file = tmp_path / "meeting.mp4"
         media_file.write_bytes(b"\x00")
@@ -182,7 +192,10 @@ class TestReadinessStateComputation:
 
 class TestDryRunVsApply:
     def test_dry_run_writes_no_readiness_row(
-        self, engine: Engine, session_factory, tmp_path: Path  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
     ) -> None:
         media_file = tmp_path / "meeting.mp4"
         media_file.write_bytes(b"\x00")
@@ -197,7 +210,10 @@ class TestDryRunVsApply:
             assert session.query(TranscodeJob).count() == 0
 
     def test_dry_run_still_writes_audit_entries_tagged_dry_run(
-        self, engine: Engine, session_factory, tmp_path: Path  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
     ) -> None:
         media_file = tmp_path / "meeting.mp4"
         media_file.write_bytes(b"\x00")
@@ -207,14 +223,19 @@ class TestDryRunVsApply:
         worker.run_once(now=_NOW, dry_run=True)
 
         with Session(bind=engine) as session:
-            entries = session.query(MediaLifecycleAuditEntry).filter(
-                MediaLifecycleAuditEntry.asset_id == "a1"
-            ).all()
+            entries = (
+                session.query(MediaLifecycleAuditEntry)
+                .filter(MediaLifecycleAuditEntry.asset_id == "a1")
+                .all()
+            )
             assert entries, "dry run must still record what it would have done"
             assert all(e.dry_run for e in entries)
 
     def test_apply_mode_writes_readiness_row_and_unflagged_audit_entries(
-        self, engine: Engine, session_factory, tmp_path: Path  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
     ) -> None:
         media_file = tmp_path / "meeting.mp4"
         media_file.write_bytes(b"\x00")
@@ -225,9 +246,11 @@ class TestDryRunVsApply:
 
         with Session(bind=engine) as session:
             assert session.get(AssetReadiness, "a1") is not None
-            entries = session.query(MediaLifecycleAuditEntry).filter(
-                MediaLifecycleAuditEntry.asset_id == "a1"
-            ).all()
+            entries = (
+                session.query(MediaLifecycleAuditEntry)
+                .filter(MediaLifecycleAuditEntry.asset_id == "a1")
+                .all()
+            )
             assert entries
             assert all(not e.dry_run for e in entries)
 
@@ -244,7 +267,10 @@ class _FailingExecutor:
 
 class TestTranscodeDispatch:
     def test_failed_transcode_job_records_error_detail(
-        self, engine: Engine, session_factory, tmp_path: Path  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
     ) -> None:
         media_file = tmp_path / "meeting.mp4"
         media_file.write_bytes(b"\x00")
@@ -262,7 +288,9 @@ class TestTranscodeDispatch:
 
     def test_ffmpeg_executor_reports_missing_source_file_as_failure(self, tmp_path: Path) -> None:
         executor = FfmpegTranscodeExecutor()
-        asset = Asset(asset_id="a1", title="x", state="validated", file_path=str(tmp_path / "missing.mp4"))
+        asset = Asset(
+            asset_id="a1", title="x", state="validated", file_path=str(tmp_path / "missing.mp4")
+        )
         result = executor.run(asset=asset, output_format="h264_720p_5mbps", output_dir=tmp_path)
         assert result.success is False
         assert result.error_detail is not None and "not found" in result.error_detail
@@ -290,7 +318,9 @@ class TestArchiveCompleteGate:
             assert row.archive_complete is False
 
     def test_simulated_proofs_never_count_toward_archive_complete(
-        self, engine: Engine, session_factory  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,  # type: ignore[no-untyped-def]
     ) -> None:
         _seed_asset(
             engine,
@@ -324,10 +354,14 @@ class TestArchiveCompleteGate:
         with Session(bind=engine) as session:
             row = session.get(AssetReadiness, "a1")
             assert row is not None
-            assert row.archive_complete is False, "a mock/simulated proof must never satisfy the gate"
+            assert row.archive_complete is False, (
+                "a mock/simulated proof must never satisfy the gate"
+            )
 
     def test_real_proofs_across_all_three_tiers_flip_archive_complete_true(
-        self, engine: Engine, session_factory  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,  # type: ignore[no-untyped-def]
     ) -> None:
         _seed_asset(
             engine,
@@ -367,7 +401,9 @@ class TestArchiveCompleteGate:
             assert row.archive_nas_verified_at is not None
 
     def test_missing_portal_publish_blocks_archive_complete_even_with_both_proofs(
-        self, engine: Engine, session_factory  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,  # type: ignore[no-untyped-def]
     ) -> None:
         _seed_asset(engine, asset_id="a1", state="recorded", manifest_url=None, published_at=None)
         with Session(bind=engine) as session:
@@ -405,7 +441,9 @@ class TestArchiveCompleteGate:
 
 class TestMissingMedia:
     def test_scheduled_item_with_unvalidated_asset_is_flagged(
-        self, engine: Engine, session_factory  # type: ignore[no-untyped-def]
+        self,
+        engine: Engine,
+        session_factory,  # type: ignore[no-untyped-def]
     ) -> None:
         _seed_asset(engine, asset_id="a1", state="pending_ingest")
         with Session(bind=engine) as session:

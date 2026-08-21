@@ -171,16 +171,24 @@ class MediaIngestJob(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=JOB_STATUS_PENDING, server_default=JOB_STATUS_PENDING
     )
-    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    progress_percent: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -207,17 +215,25 @@ class TranscodeJob(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=JOB_STATUS_PENDING, server_default=JOB_STATUS_PENDING
     )
-    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    progress_percent: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     output_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -261,7 +277,9 @@ class AssetReadiness(Base):
     )
     readiness_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     loudness_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    measured_lufs: Mapped[float | None] = mapped_column(Numeric(6, 2, asdecimal=False), nullable=True)
+    measured_lufs: Mapped[float | None] = mapped_column(
+        Numeric(6, 2, asdecimal=False), nullable=True
+    )
     archive_portal_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -271,9 +289,14 @@ class AssetReadiness(Base):
     archive_nas_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    archive_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    archive_complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -282,7 +305,9 @@ class WatchFolderConfig(Base):
 
     __tablename__ = "watch_folder_configs"
     __table_args__ = (
-        CheckConstraint("settle_window_seconds >= 1", name="watch_folder_configs_settle_window_check"),
+        CheckConstraint(
+            "settle_window_seconds >= 1", name="watch_folder_configs_settle_window_check"
+        ),
         CheckConstraint(
             "retention_policy_default IS NULL OR retention_policy_default IN "
             "('default', 'permanent', 'meeting', 'short')",
@@ -298,15 +323,25 @@ class WatchFolderConfig(Base):
     # file is considered write-complete. Operator-configurable per the
     # spec's resolution note ("remaining tuning -- settle-window duration --
     # is operator-configurable").
-    settle_window_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10, server_default="10")
+    settle_window_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10, server_default="10"
+    )
     retention_policy_default: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_scan_files_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_scan_files_found: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -334,10 +369,16 @@ class AssetRetentionPolicy(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -369,9 +410,14 @@ class AssetArchiveProof(Base):
     target_type: Mapped[str] = mapped_column(String(40), nullable=False)
     target_url_or_path: Mapped[str] = mapped_column(Text, nullable=False)
     verification_hash: Mapped[str] = mapped_column(String(71), nullable=False)
-    simulated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    simulated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     verified_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -391,9 +437,14 @@ class MediaLifecycleAuditEntry(Base):
     asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     action: Mapped[str] = mapped_column(String(60), nullable=False)
     detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    dry_run: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_now, server_default=text("CURRENT_TIMESTAMP")
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 

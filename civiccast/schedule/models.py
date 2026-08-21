@@ -530,7 +530,9 @@ class Asset(Base):
     # skips any asset with legal_hold=True when flagging expired assets for
     # records-clerk disposition review -- a held asset is never queued for
     # disposition while the hold is active, regardless of retention_until.
-    legal_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    legal_hold: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     legal_hold_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # QA-008 (audit-team v0.3.0): optimistic concurrency on PATCH.

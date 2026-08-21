@@ -57,7 +57,11 @@ def store(session_factory) -> MediaLifecycleStore:  # type: ignore[no-untyped-de
 
 
 def _seed_asset(engine: Engine, **overrides: object) -> None:
-    defaults: dict[str, object] = {"asset_id": "a1", "title": "Council Meeting", "state": "validated"}
+    defaults: dict[str, object] = {
+        "asset_id": "a1",
+        "title": "Council Meeting",
+        "state": "validated",
+    }
     defaults.update(overrides)
     with Session(bind=engine) as session:
         session.add(Asset(**defaults))  # type: ignore[arg-type]
@@ -144,9 +148,7 @@ class TestWatchFolderConfigCrud:
 
     def test_update_unknown_config_raises(self, store: MediaLifecycleStore) -> None:
         with pytest.raises(WatchFolderConfigNotFoundError):
-            store.update_watch_folder_config(
-                "nope", WatchFolderConfigInput(monitor_path="/x")
-            )
+            store.update_watch_folder_config("nope", WatchFolderConfigInput(monitor_path="/x"))
 
     def test_delete_unknown_config_raises(self, store: MediaLifecycleStore) -> None:
         with pytest.raises(WatchFolderConfigNotFoundError):
@@ -157,7 +159,9 @@ class TestRetentionPolicyCrud:
     def test_create_list_update_delete_round_trip(self, store: MediaLifecycleStore) -> None:
         created = store.create_retention_policy(
             AssetRetentionPolicyInput(
-                name="Council meetings", match_meeting_body="City Council", retention_policy="meeting"
+                name="Council meetings",
+                match_meeting_body="City Council",
+                retention_policy="meeting",
             )
         )
         assert created.retention_policy == "meeting"
@@ -168,7 +172,9 @@ class TestRetentionPolicyCrud:
         updated = store.update_retention_policy(
             created.policy_id,
             AssetRetentionPolicyInput(
-                name="Council meetings", match_meeting_body="City Council", retention_policy="permanent"
+                name="Council meetings",
+                match_meeting_body="City Council",
+                retention_policy="permanent",
             ),
         )
         assert updated.retention_policy == "permanent"
@@ -187,10 +193,14 @@ class TestRetentionPolicyCrud:
         self, engine: Engine, store: MediaLifecycleStore
     ) -> None:
         _seed_asset(engine, asset_id="a1", meeting_body="City Council", retention_policy="default")
-        _seed_asset(engine, asset_id="a2", meeting_body="Planning Board", retention_policy="default")
+        _seed_asset(
+            engine, asset_id="a2", meeting_body="Planning Board", retention_policy="default"
+        )
         store.create_retention_policy(
             AssetRetentionPolicyInput(
-                name="Council -> meeting", match_meeting_body="City Council", retention_policy="meeting"
+                name="Council -> meeting",
+                match_meeting_body="City Council",
+                retention_policy="meeting",
             )
         )
         changed = store.apply_retention_policies()
@@ -209,7 +219,9 @@ class TestRetentionPolicyCrud:
 
 
 class TestStorageBudget:
-    def test_totals_grouped_by_retention_policy(self, engine: Engine, store: MediaLifecycleStore) -> None:
+    def test_totals_grouped_by_retention_policy(
+        self, engine: Engine, store: MediaLifecycleStore
+    ) -> None:
         _seed_asset(engine, asset_id="a1", retention_policy="default", file_size_bytes=1000)
         _seed_asset(engine, asset_id="a2", retention_policy="default", file_size_bytes=2000)
         _seed_asset(engine, asset_id="a3", retention_policy="permanent", file_size_bytes=500)
@@ -269,7 +281,9 @@ class TestReplaceSource:
         )
         with Session(bind=engine) as session:
             session.add(AssetReadiness(asset_id="a1", readiness_state="rejected"))
-            session.add(TranscodeJob(asset_id="a1", output_format="h264_720p_5mbps", status="failed"))
+            session.add(
+                TranscodeJob(asset_id="a1", output_format="h264_720p_5mbps", status="failed")
+            )
             session.commit()
 
         store.apply_replace_source(
