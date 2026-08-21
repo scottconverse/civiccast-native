@@ -184,14 +184,30 @@ Nine checks in canonical order, defined at `civiccast/live/preflight.py`:
    (`live_source.not_probed`), never a silent pass.
 5. `recording_target` -- DB lookup: any `RecordingTarget` exists.
 6. `operator_confirm` -- caller-supplied boolean.
-7. `syndication` -- placeholder (always `not_configured` in Slice 1).
-8. `internet_archive` -- placeholder.
-9. `nas` -- placeholder.
+7. `syndication` -- publish-surface posture (YouTube), via
+   `civiccast.platform.providers.describe_provider`.
+8. `internet_archive` -- publish-surface posture (Internet Archive), via
+   `describe_provider`.
+9. `nas` -- publish-surface posture (local NAS archive), via
+   `describe_provider`.
+
+Checks 7-9 report the station's real provider posture (GauntletGate PE-2) --
+the same registry the publish path itself resolves through, so the
+checklist and the publish run cannot disagree. Each resolves to one of
+three postures: **real and usable** -> `pass`; **real but misconfigured**
+(credentials missing or wrong) -> `fail`, naming the missing variables in
+the message; **simulated** (the shipped default) -> `not_configured`, said
+plainly -- nothing will be written anywhere. These three tiers complete
+asynchronously after the recording, so none of them -- including a
+`fail` -- ever blocks readiness; the operator is told the posture before
+the meeting so a simulated or broken archive is never discovered after
+the fact.
 
 Readiness rule: required checks (network, storage, live_source,
 recording_target, operator_confirm) must be `pass`. AI runtime can be
-`pass` or `not_configured`; `fail` blocks readiness. Placeholders never
-block.
+`pass` or `not_configured`; `fail` blocks readiness. The three publish
+surfaces (syndication, internet_archive, nas) never block readiness in
+any status.
 
 Each non-pass check carries a stable machine-readable `reason_code` so the
 operator UI can map directly to per-failure copy without re-mapping
