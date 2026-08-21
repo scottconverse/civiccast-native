@@ -341,7 +341,9 @@ class ContributionCoprocessSupervisor:
         # external server's reachability is still the load-bearing signal.
         turn_reachable = bool(self._last_turn_reachable)
         parts = [f"vdo={self._vdo.status.state}"]
-        parts.append(f"coturn={'external (documented)' if external_turn else self._coturn.status.state}")
+        parts.append(
+            f"coturn={'external (documented)' if external_turn else self._coturn.status.state}"
+        )
         if coturn_up or external_turn:
             if self._last_turn_reachable is None:
                 parts.append("turn=not yet probed")

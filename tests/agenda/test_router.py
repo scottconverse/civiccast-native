@@ -583,9 +583,7 @@ def test_import_pdf_into_published_agenda_reopens_to_draft() -> None:
         "/api/staff/agendas/ag-jan-2026/items",
         json=_item_payload(item_id="seed-5", order=5, title="Seed"),
     )
-    published = client.patch(
-        "/api/staff/agendas/ag-jan-2026", json={"status": "published"}
-    )
+    published = client.patch("/api/staff/agendas/ag-jan-2026", json={"status": "published"})
     assert published.status_code == 200
     assert published.json()["status"] == "published"
 

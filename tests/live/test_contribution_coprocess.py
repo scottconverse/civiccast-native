@@ -378,7 +378,9 @@ def test_test_turn_connectivity_does_not_emit_an_alert() -> None:
 def test_active_supervisor_connectivity_test_snapshot() -> None:
     clear_active_supervisor()
     assert "not running" in contribution_turn_connectivity_test().detail
-    sup = ContributionCoprocessSupervisor(_settings(coturn_command=None), turn_probe=lambda h, p: True)
+    sup = ContributionCoprocessSupervisor(
+        _settings(coturn_command=None), turn_probe=lambda h, p: True
+    )
     set_active_supervisor(sup)
     try:
         diag = contribution_turn_connectivity_test()

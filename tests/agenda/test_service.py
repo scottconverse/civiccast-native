@@ -47,6 +47,7 @@ def _write_pdf(lines: list[str]) -> bytes:
     pdf.save()
     return buffer.getvalue()
 
+
 # --- fixtures ---------------------------------------------------------------
 
 
@@ -397,7 +398,11 @@ class TestImportFromDocPdf:
         assert any("7:15 PM" in t for t in titles)
         numbered = [i for i in out if i.number is not None]
         assert [i.number for i in numbered] == ["1", "2", "3"]
-        assert [i.title for i in numbered] == ["Roll call - 7:00 PM", "Approval of minutes", "Adjourn"]
+        assert [i.title for i in numbered] == [
+            "Roll call - 7:00 PM",
+            "Approval of minutes",
+            "Adjourn",
+        ]
 
         # Confidence: numbered lines score highest (boosted further when a
         # time marker is present too), headings are medium, a standalone
@@ -406,7 +411,9 @@ class TestImportFromDocPdf:
         assert by_title["Roll call - 7:00 PM"] == pytest.approx(0.98)  # numbered + time marker
         assert by_title["Approval of minutes"] == pytest.approx(0.95)  # numbered only
         assert by_title["CALL TO ORDER"] == pytest.approx(0.55)  # heading only
-        assert by_title["Public comment period begins at 7:15 PM"] == pytest.approx(0.4)  # time only
+        assert by_title["Public comment period begins at 7:15 PM"] == pytest.approx(
+            0.4
+        )  # time only
         assert all(i.confidence is not None and 0.0 <= i.confidence <= 1.0 for i in out)
 
     def test_plain_text_import_leaves_confidence_none(self, store: AgendaStore) -> None:
