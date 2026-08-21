@@ -39,6 +39,8 @@ export type RouteId =
   | 'alerts'
   | 'eas'
   | 'ai-models'
+  | 'station-profile'
+  | 'commissioning'
   | 'custom-fields'
   | 'reports'
   | 'epg'
@@ -81,6 +83,16 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { id: 'setup', label: 'First Setup' },
       { id: 'controlroomsetup', label: 'Control Room Setup', requiredRoles: ['setup_admin'] },
+      {
+        id: 'station-profile',
+        label: 'Station Profile',
+        requiredRoles: ['setup_admin', 'meeting_operator', 'support_admin'],
+      },
+      {
+        id: 'commissioning',
+        label: 'Cable Commissioning',
+        requiredRoles: ['setup_admin', 'support_admin'],
+      },
       { id: 'ai-models', label: 'AI Models', requiredRoles: ['setup_admin', 'meeting_operator'] },
       { id: 'custom-fields', label: 'Custom Fields', requiredRoles: ['setup_admin'] },
       { id: 'paywall', label: 'Paywall', requiredRoles: ['setup_admin'] },

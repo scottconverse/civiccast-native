@@ -17,7 +17,7 @@ import secrets
 import stat
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +38,15 @@ from civiccast.installer.models import (
     StationSetupState,
     StationStorageLocations,
 )
+
+if TYPE_CHECKING:
+    from civiccast.installer.commissioning import (
+        ChannelCommissioningSetup,
+        CommissioningCheckReport,
+        CommissioningProofRun,
+        CommissioningReport,
+        CommissioningState,
+    )
 
 _SCHEMA_VERSION = 1
 _PASSWORD_ITERATIONS = 210_000
@@ -196,6 +205,220 @@ def read_station_timezone() -> str | None:
     if not value:
         return None
     return str(value)
+
+
+def resolve_station_timezone() -> str:
+    """Effective station timezone: env override > persisted profile > default.
+
+    This is the canonical S1 precedence loader for the timezone field.
+    ``app.py``'s ``_station_tz`` delegates to this function rather than
+    re-implementing the ``CIVICCAST_STATION_TZ`` / persisted-profile /
+    default chain inline, so the precedence rule lives in exactly one
+    place. Returns the raw zone name (or the ``"local"`` sentinel) — the
+    caller resolves it to a ``tzinfo``.
+    """
+
+    env_value = os.environ.get("CIVICCAST_STATION_TZ")
+    if env_value:
+        return env_value
+    persisted = read_station_timezone()
+    if persisted:
+        return persisted
+    return "local"
+
+
+def resolve_station_display_name() -> str:
+    """Effective station display name: env override > persisted profile > default.
+
+    ``CIVICCAST_STATION_NAME`` is a distinct concept from
+    ``CIVICCAST_STATION_ID`` (a separate, unrelated slug/id used by the
+    trafficking log identifiers) -- this function governs the human-facing
+    station name only.
+    """
+
+    env_value = os.environ.get("CIVICCAST_STATION_NAME")
+    if env_value:
+        return env_value
+    raw = _load_raw_state()
+    station = raw.get("station")
+    if isinstance(station, dict):
+        name = station.get("station_name")
+        if isinstance(name, str) and name.strip():
+            return name
+    return "CivicCast Station"
+
+
+def resolve_station_storage_locations() -> StationStorageLocations:
+    """Effective storage roots: per-field env override > persisted profile > default.
+
+    Individual env overrides (``CIVICCAST_STATION_MEDIA_LIBRARY``,
+    ``CIVICCAST_STATION_RECORDINGS``, ``CIVICCAST_STATION_BACKUPS``) exist
+    for advanced/offline scenarios; they are read here rather than
+    scattered across callers. NOTE: this loader is deliberately scoped to
+    the ``StationProfile.storage_locations`` identity fields set at
+    first-admin setup. It does NOT govern ``CIVICCAST_UPLOAD_DIR`` /
+    ``CIVICCAST_NAS_ARCHIVE_PATH`` -- those are a separate, more deeply
+    cross-cutting env-driven contract (native supervisor child-process env
+    inheritance, schedule/vod path resolution) that this slice
+    intentionally does not fold in; see the S1/S3 PR description.
+    """
+
+    raw = _load_raw_state()
+    station = raw.get("station")
+    persisted = (
+        _storage_locations_from_state(station.get("storage_locations"))
+        if isinstance(station, dict)
+        else _default_storage_locations()
+    )
+    return StationStorageLocations(
+        media_library=os.environ.get("CIVICCAST_STATION_MEDIA_LIBRARY") or persisted.media_library,
+        recordings=os.environ.get("CIVICCAST_STATION_RECORDINGS") or persisted.recordings,
+        backups=os.environ.get("CIVICCAST_STATION_BACKUPS") or persisted.backups,
+    )
+
+
+class StationProfileUpdateRequest(BaseModel):
+    """Mutable subset of ``StationProfile`` an operator can edit post-setup.
+
+    Identity (``admin_username``), recovery-kit, and role fields are not
+    editable through this surface -- they have their own dedicated flows
+    (recovery, role management). Every field is optional so a PUT can
+    change just one of them.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    station_name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
+    station_timezone: Annotated[str, Field(min_length=1, max_length=120)] | None = None
+    public_base_url: Annotated[str, Field(min_length=1, max_length=240)] | None = None
+    default_channel_id: Annotated[str, Field(min_length=1, max_length=80)] | None = None
+    storage_locations: StationStorageLocations | None = None
+
+
+def update_station_profile_fields(update: StationProfileUpdateRequest) -> StationProfile:
+    """Validate and persist an operator edit to the mutable profile subset.
+
+    Raises :class:`StationSetupNotCompleteError` if first-admin setup has
+    not completed yet (there is no profile to edit). Returns the full,
+    round-tripped ``StationProfile`` after the edit.
+    """
+
+    raw = _load_raw_state()
+    station = raw.get("station")
+    if not isinstance(station, dict) or not raw.get("setup_complete"):
+        raise StationSetupNotCompleteError(
+            "First-admin setup is not complete, so there is no station profile to edit."
+        )
+
+    if update.station_name is not None:
+        station["station_name"] = update.station_name.strip()
+    if update.station_timezone is not None:
+        station["station_timezone"] = update.station_timezone.strip()
+    if update.public_base_url is not None:
+        station["public_base_url"] = update.public_base_url.strip()
+    if update.default_channel_id is not None:
+        station["default_channel_id"] = update.default_channel_id.strip()
+    if update.storage_locations is not None:
+        station["storage_locations"] = update.storage_locations.model_dump()
+
+    raw["station"] = station
+    _save_raw_state(raw)
+
+    profile = _profile_from_state(raw)
+    if profile is None:  # pragma: no cover - defensive; validated above
+        raise StationSetupNotCompleteError("Station profile could not be re-read after update.")
+    return profile
+
+
+def read_commissioning_state() -> CommissioningState:
+    """Return the persisted S3 commissioning progress (resumable across restarts).
+
+    Mirrors the ``ai_models`` seed pattern exactly (S3 §3: commissioning
+    state rides station-state JSON under its own namespaced top-level key,
+    no DB table, no ``_SCHEMA_VERSION`` bump — that constant is not a
+    migration gate in this file). Absent/malformed sub-blocks fail closed
+    to ``None`` per field rather than raising, so a partially-written state
+    file never blocks the wizard from resuming what it *can* read.
+    """
+
+    from civiccast.installer.commissioning import (
+        ChannelCommissioningSetup,
+        CommissioningCheckReport,
+        CommissioningProofRun,
+        CommissioningReport,
+        CommissioningState,
+    )
+
+    raw = _load_raw_state()
+    block = raw.get("commissioning")
+    if not isinstance(block, dict):
+        return CommissioningState()
+
+    def _parse(model: type[BaseModel], key: str) -> Any:
+        value = block.get(key)
+        if not isinstance(value, dict):
+            return None
+        try:
+            return model.model_validate(value)
+        except Exception:
+            return None
+
+    return CommissioningState(
+        first_run_checks=_parse(CommissioningCheckReport, "first_run_checks"),
+        channel_setup=_parse(ChannelCommissioningSetup, "channel_setup"),
+        proof_run=_parse(CommissioningProofRun, "proof_run"),
+        report=_parse(CommissioningReport, "report"),
+    )
+
+
+def _save_commissioning_state(state: CommissioningState) -> None:
+    raw = _load_raw_state()
+    raw["commissioning"] = json.loads(state.model_dump_json())
+    _save_raw_state(raw)
+
+
+def save_commissioning_checks(report: CommissioningCheckReport) -> CommissioningState:
+    """Persist the Screen 8 first-run cable check results."""
+
+    state = read_commissioning_state()
+    updated = state.model_copy(update={"first_run_checks": report})
+    _save_commissioning_state(updated)
+    return updated
+
+
+def save_channel_commissioning_setup(setup: ChannelCommissioningSetup) -> CommissioningState:
+    """Persist the Screen 9 channel setup choices."""
+
+    state = read_commissioning_state()
+    updated = state.model_copy(update={"channel_setup": setup})
+    _save_commissioning_state(updated)
+    return updated
+
+
+def save_commissioning_proof_run(run: CommissioningProofRun) -> CommissioningState:
+    """Persist the Screen 10 output-proof result."""
+
+    state = read_commissioning_state()
+    updated = state.model_copy(update={"proof_run": run})
+    _save_commissioning_state(updated)
+    return updated
+
+
+def save_commissioning_report(report: CommissioningReport) -> CommissioningState:
+    """Persist the Screen 11 final commissioning report."""
+
+    state = read_commissioning_state()
+    updated = state.model_copy(update={"report": report})
+    _save_commissioning_state(updated)
+    return updated
+
+
+def reset_commissioning_state() -> None:
+    """Clear all persisted commissioning progress (used by tests and re-commissioning)."""
+
+    raw = _load_raw_state()
+    raw.pop("commissioning", None)
+    _save_raw_state(raw)
 
 
 def set_ai_model_override(feature: str, model_key: str | None) -> AiModelSeed:
