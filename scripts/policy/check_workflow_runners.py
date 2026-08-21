@@ -31,6 +31,7 @@ SELF_HOSTED_ALLOWLIST = {
     "diagnose-blackwell-runtime.yml": "needs the local RTX GPU",
     "vm-cleanroom-release.yml": "needs the local Hyper-V VM harness",
     "six-hour-soak.yml": "exceeds the hosted 6-hour job ceiling",
+    "gate-a-station-acceptance.yml": "needs Windows Sandbox on the local sandbox-lab runner for the clean-box station-acceptance gate",
 }
 HOSTED_EXPRESSION_ALLOWLIST = {
     (
