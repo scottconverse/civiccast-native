@@ -474,7 +474,9 @@ def sync_from_chapters(
     openapi_extra=_AUTHOR_EXTRA,
     responses={
         404: {"description": "Meeting agenda not found"},
-        415: {"description": "Unsupported content type (only text/plain and application/pdf are parsed)"},
+        415: {
+            "description": "Unsupported content type (only text/plain and application/pdf are parsed)"
+        },
         422: {"description": "PDF was readable but no recognizable agenda items were found in it"},
         503: {"description": _DB_NOT_READY},
     },
