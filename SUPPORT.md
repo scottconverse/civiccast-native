@@ -31,7 +31,7 @@ there is no commercial support contract or SLA.
    [docs/adoption/support-intake.md](docs/adoption/support-intake.md),
    [FAQ.md](FAQ.md), [docs/USER-MANUAL.md](docs/USER-MANUAL.md), and
    [docs/installer/beta-tester-handoff.md](docs/installer/beta-tester-handoff.md).
-2. **Search existing issues.** [GitHub Issues](https://github.com/scottconverse/civiccast/issues)
+2. **Search existing issues.** [GitHub Issues](https://github.com/scottconverse/civiccast-native/issues)
    may already cover your question.
 3. **Open a question or bug issue.** Use **Report a beta issue** in the
    installer, operator console, or resident portal, or open the repository's
