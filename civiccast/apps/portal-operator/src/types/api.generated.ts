@@ -4393,6 +4393,8 @@ export interface ValidationError {
 
 export interface VdoDiagnostics {
   turn_reachable?: boolean
+  turn_host?: string | null
+  turn_port?: number | null
   vdo_process_up?: boolean
   coturn_process_up?: boolean
   ice_summary?: string

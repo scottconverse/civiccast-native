@@ -1820,6 +1820,15 @@ Diagnostics.
 - Request body: none
 - Responses: 200 `VdoDiagnostics`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `POST /api/staff/contribution/diagnostics/turn-test`
+
+Probe TURN reachability right now (does not wait for the next background poll).
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `VdoDiagnostics`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/contribution/rooms`
 
 List Rooms.
@@ -8511,6 +8520,8 @@ rule (S13 §5.1).
 - `coturn_process_up` (optional): `boolean`
 - `detail` (optional): `string`
 - `ice_summary` (optional): `string`
+- `turn_host` (optional): `string | null`
+- `turn_port` (optional): `number | null`
 - `turn_reachable` (optional): `boolean`
 - `vdo_process_up` (optional): `boolean`
 

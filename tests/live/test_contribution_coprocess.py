@@ -20,6 +20,7 @@ from civiccast.live.contribution.coprocess import (
     ContributionCoprocessSupervisor,
     clear_active_supervisor,
     contribution_diagnostics_snapshot,
+    contribution_turn_connectivity_test,
     set_active_supervisor,
 )
 
@@ -270,5 +271,117 @@ def test_active_supervisor_snapshot() -> None:
     set_active_supervisor(sup)
     try:
         assert contribution_diagnostics_snapshot().vdo_process_up is True
+    finally:
+        clear_active_supervisor()
+
+
+# --- external-TURN posture (owner-approved: documented external TURN, PR #9) -
+
+
+def test_external_turn_is_probed_even_with_no_local_coturn_process() -> None:
+    """coturn has no native Windows build (civiccast/installer/
+    contribution_install.py); CIVICCAST_COTURN_COMMAND is left unset and the
+    operator points CIVICCAST_TURN_HOST/PORT at a documented external server.
+    The reachability probe must still run -- this was the bug: it used to be
+    gated on a LOCAL coturn process being 'running', which can never happen
+    when coturn_command is None, so the probe (and the alert) silently never
+    fired for the exact posture PR #9 declared supported."""
+    starter = _Starter()
+    probed: list[tuple[str, int]] = []
+
+    def probe(host: str, port: int) -> bool:
+        probed.append((host, port))
+        return True
+
+    sup = ContributionCoprocessSupervisor(
+        _settings(coturn_command=None, turn_host="turn.example.org", turn_port=3478),
+        process_starter=starter,
+        turn_probe=probe,
+    )
+    sup.ensure_running()
+    assert probed == [("turn.example.org", 3478)]
+    diag = sup.diagnostics()
+    assert diag.turn_reachable is True
+    assert diag.coturn_process_up is False  # honest -- no local process, never claimed
+    assert diag.turn_host == "turn.example.org"
+    assert diag.turn_port == 3478
+    assert "external (documented)" in diag.ice_summary
+
+
+def test_external_turn_unreachable_still_alerts() -> None:
+    alerts: list[tuple[str, str]] = []
+    sup = ContributionCoprocessSupervisor(
+        _settings(coturn_command=None),
+        process_starter=_Starter(),
+        turn_probe=lambda h, p: False,
+        alert_hook=lambda k, d: alerts.append((k, d)),
+    )
+    sup.ensure_running()
+    assert any(k == ALERT_TURN_UNREACHABLE for k, _ in alerts)
+
+
+def test_diagnostics_healthy_for_external_turn_does_not_report_coturn_down() -> None:
+    # Before the fix, a station correctly configured for external TURN would
+    # show "one or more co-processes are not running" forever (coturn's local
+    # process is never up by design) -- a false negative baked into the
+    # honest posture. It must read as healthy once vdo is up and TURN reachable.
+    sup = ContributionCoprocessSupervisor(
+        _settings(coturn_command=None), process_starter=_Starter(), turn_probe=lambda h, p: True
+    )
+    sup.ensure_running()
+    diag = sup.diagnostics()
+    assert diag.detail == ""
+
+
+def test_local_coturn_still_gates_the_probe_until_it_is_up() -> None:
+    # When coturn IS locally managed (Linux/macOS) but hasn't started yet,
+    # there is nothing to probe against -- unaffected by the external-TURN fix.
+    sup = ContributionCoprocessSupervisor(
+        _settings(vdo_command=None, coturn_command=("t-does-not-exist",)),
+        turn_probe=lambda h, p: pytest.fail("must not probe before coturn is up"),
+    )
+    sup.ensure_running()
+    diag = sup.diagnostics()
+    assert diag.turn_reachable is False
+    assert diag.coturn_process_up is False
+
+
+# --- on-demand "Test TURN connectivity" (operator console button) -----------
+
+
+def test_test_turn_connectivity_probes_immediately() -> None:
+    reachable = [False]
+    sup = ContributionCoprocessSupervisor(
+        _settings(coturn_command=None), turn_probe=lambda h, p: reachable[0]
+    )
+    # No ensure_running() tick at all -- the button must not depend on the
+    # background poll having run first.
+    diag = sup.test_turn_connectivity()
+    assert diag.turn_reachable is False
+
+    reachable[0] = True
+    diag = sup.test_turn_connectivity()
+    assert diag.turn_reachable is True
+
+
+def test_test_turn_connectivity_does_not_emit_an_alert() -> None:
+    alerts: list[tuple[str, str]] = []
+    sup = ContributionCoprocessSupervisor(
+        _settings(coturn_command=None),
+        turn_probe=lambda h, p: False,
+        alert_hook=lambda k, d: alerts.append((k, d)),
+    )
+    sup.test_turn_connectivity()
+    assert alerts == []
+
+
+def test_active_supervisor_connectivity_test_snapshot() -> None:
+    clear_active_supervisor()
+    assert "not running" in contribution_turn_connectivity_test().detail
+    sup = ContributionCoprocessSupervisor(_settings(coturn_command=None), turn_probe=lambda h, p: True)
+    set_active_supervisor(sup)
+    try:
+        diag = contribution_turn_connectivity_test()
+        assert diag.turn_reachable is True
     finally:
         clear_active_supervisor()

@@ -412,6 +412,11 @@ class ContributionService:
     def diagnostics(self) -> VdoDiagnostics:
         return self._bridge.diagnostics()
 
+    def test_turn_connectivity(self) -> VdoDiagnostics:
+        """Probe TURN reachability right now and return refreshed diagnostics
+        (the operator console's "Test TURN connectivity" button)."""
+        return self._bridge.test_turn_connectivity()
+
     # --- helpers ---------------------------------------------------------
 
     def _emit_alert(self, kind: str, detail: str) -> None:

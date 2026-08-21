@@ -433,6 +433,34 @@ came across and what deliberately did not.
   credential store reference) are not yet resolved by the probe — no
   resolver exists anywhere in this codebase yet; stated as a known
   limitation in the module docstring rather than silently glossed over.
+- **Coturn posture (documented external TURN, PR #9) didn't read correctly
+  end to end.** `civiccast/installer/contribution_install.py`'s honest
+  Windows guidance ("coturn has no native Windows build... point
+  `CIVICCAST_TURN_HOST`/`CIVICCAST_TURN_PORT` at a documented external TURN
+  server") was correct, but two real gaps kept it from actually reaching an
+  operator or doing its job: (1) `civiccast/live/contribution/coprocess.py`'s
+  TURN-reachability probe and its unreachable-alert were both gated on a
+  LOCAL coturn co-process being `"running"` — which can never happen once
+  `CIVICCAST_COTURN_COMMAND` is intentionally left unset, so the probe (and
+  the alert) silently never ran under the exact posture PR #9 declared
+  supported; `diagnostics()` also always reported the station as unhealthy
+  ("one or more co-processes are not running") in that posture, a
+  permanent false negative. (2) `ContributionInstallReport`'s
+  `coturn_action` guidance text had zero frontend consumer — no screen ever
+  fetched `GET /api/staff/installer/remote-contribution`.
+  Fixed: the probe now runs whenever a local coturn is up OR none is
+  configured at all, `VdoDiagnostics` gained `turn_host`/`turn_port` (the
+  effective, currently-configured target) and reports the station healthy
+  once TURN is reachable regardless of whether a local process is
+  supervised, and a new `POST /api/staff/contribution/diagnostics/turn-test`
+  runs an on-demand probe (not the last background poll). The Remote
+  Contribution screen's Diagnostics drawer now shows the configured
+  TURN target, a **Test TURN connectivity** button (confirm-free since it's
+  read-only; loading/success/error states), and a collapsible "How to point
+  this station at coturn" section carrying the install report's platform-
+  aware guidance verbatim. `docs/USER-MANUAL.md`'s env-var reference for
+  `CIVICCAST_TURN_HOST`/`CIVICCAST_TURN_PORT`/`CIVICCAST_COTURN_COMMAND`
+  expanded from a one-line stub to the same guidance.
 - **GPI / serial control-room device kinds mislabeled as hardware support.**
   `tsr_service/index.mjs`'s `DEVICE_TYPE` map routes `gpi` and `serial`
   `ProductionDevice` kinds through TSR's generic `TCPSEND` adapter — there

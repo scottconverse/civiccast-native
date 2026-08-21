@@ -375,6 +375,26 @@ def diagnostics(
     return _require_service(svc).diagnostics()
 
 
+@staff_router.post(
+    "/diagnostics/turn-test",
+    response_model=VdoDiagnostics,
+    summary="Probe TURN reachability right now (does not wait for the next background poll)",
+    dependencies=[Depends(require_any_role(*_DIAG))],
+)
+def test_turn_connectivity(
+    svc: ContributionService | None = Depends(get_contribution_service),
+) -> VdoDiagnostics:
+    """The "Test TURN connectivity" button in the contribution setup UI.
+
+    Covers both postures: a locally-supervised coturn (Linux/macOS) and the
+    owner-approved documented-external-TURN posture (coturn has no native
+    Windows build — see civiccast/installer/contribution_install.py). Either
+    way this probes the effective CIVICCAST_TURN_HOST/CIVICCAST_TURN_PORT
+    right now and returns refreshed diagnostics, never a stale cached result.
+    """
+    return _require_service(svc).test_turn_connectivity()
+
+
 # --- public: token-gated join + terms ---------------------------------------
 
 
