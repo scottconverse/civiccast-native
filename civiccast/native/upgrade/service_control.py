@@ -12,7 +12,7 @@ This module wires all three to real production callables:
   ALREADY held (step 1): every native start path honors it and the RUNNING
   supervisor, observing the held interlock, transitions to ``maintenance`` --
   it controlled-stops the writer-capable control plane and starts NO media
-  workers, while Postgres + NATS stay up (the read paths the backup/migrate
+  workers, while Postgres stays up (the read path the backup/migrate
   need). We therefore do NOT issue a service/graceful stop here (that would
   also stop Postgres, which the pre-upgrade backup and ``alembic upgrade`` both
   connect to). Instead we (a) CONFIRM the writers actually drained by polling

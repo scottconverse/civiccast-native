@@ -51,8 +51,11 @@ CONTROL_PIPE_NAME = r"\\.\pipe\civiccast-supervisor"
 # D6 startup order: each entry depends on ALL predecessors being ``ready``
 # before it may (re)start. ``postgres`` has no dependency. Media workers are
 # owned by the control-plane daemon (D2), NOT the supervisor, so they are
-# deliberately absent from this supervisor-child ordering.
-STARTUP_ORDER: tuple[str, ...] = ("postgres", "nats", "control_plane")
+# deliberately absent from this supervisor-child ordering. NATS JetStream was
+# removed from the product (owner decision 2026-08-20; see ADR 0023) -- the
+# platform substrate is the in-process broker only, so it has no supervised
+# child and is absent here.
+STARTUP_ORDER: tuple[str, ...] = ("postgres", "control_plane")
 
 
 class SupervisorConfig(BaseModel):

@@ -72,7 +72,9 @@ def test_identity_constants() -> None:
     assert SINGLETON_MUTEX_SDDL == MUTEX_SDDL
 
 
-def test_startup_order_is_the_three_direct_children() -> None:
+def test_startup_order_is_the_two_direct_children() -> None:
     # Workers are owned by the control plane (D2), not the supervisor, so they
-    # are deliberately absent.
-    assert STARTUP_ORDER == ("postgres", "nats", "control_plane")
+    # are deliberately absent. NATS JetStream was removed from the product
+    # (owner decision 2026-08-20; see ADR 0023, which supersedes ADR 0001),
+    # so it never had a supervised child and is absent here too.
+    assert STARTUP_ORDER == ("postgres", "control_plane")

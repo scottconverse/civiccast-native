@@ -27,10 +27,13 @@ What this module OWNS (design.md Sec.3 ``core.py`` + the ratification addendum):
   set by ``children.control_plane_child_spec``). The maintenance-ready gate is
   satisfied ONLY when ``children.check_control_plane_maintenance_ready`` passes;
   otherwise the supervisor STAYS in maintenance (fail-closed).
-* **Startup order / readiness (D5/D6).** ``start`` brings up postgres -> nats ->
+* **Startup order / readiness (D5/D6).** ``start`` brings up postgres ->
   control plane in ``STARTUP_ORDER``, each gated by ``restart_eligible`` and
   polled ready via ``children.poll_until_ready``. A child that leaves ready is a
-  controlled restart eligible only after its dependency re-enters ready.
+  controlled restart eligible only after its dependency re-enters ready. NATS
+  JetStream was removed from the product (owner decision 2026-08-20, ADR
+  0023) and was never a supervised child of its own -- ``STARTUP_ORDER`` is
+  ``(postgres, control_plane)``.
 * **Restart storm (D5).** ``evaluate_restart_storm`` demotes to ``degraded`` and
   fires an alert through the injected outbox seam.
 * **Drain-all (RAT-004).** ``graceful_stop`` drives ``stop`` -> ``stopping`` and
@@ -79,12 +82,10 @@ from civiccast.native.supervisor.children import (
     backoff_with_jitter,
     check_control_plane_maintenance_ready,
     check_control_plane_ready,
-    check_nats_ready,
     check_ollama_ready,
     check_postgres_ready,
     control_plane_child_spec,
     default_egress_work_dir,
-    nats_child_spec,
     poll_until_ready,
     postgres_child_spec,
     read_postmaster_pid,
@@ -124,15 +125,15 @@ _LOGGER = logging.getLogger(__name__)
 # start (D5/D9 pre-start gate).
 _GUARD_START_ACTIONS: frozenset[str] = frozenset({"start", "start_degraded"})
 
-# The one writer-capable direct child. postgres/nats are infrastructure; only
+# The one writer-capable direct child. postgres is infrastructure; only
 # the control plane owns the media-worker/transmission surfaces, so only its
 # NORMAL-mode start is gated by the runtime guard. The maintenance-mode control
 # plane is read-only (workers never start there), so it is NOT writer-capable.
 _WRITER_CAPABLE_CHILD = "control_plane"
 
-# Task #57 D2: the OPTIONAL fourth child -- the local-AI runtime. Deliberately
+# Task #57 D2: the OPTIONAL third child -- the local-AI runtime. Deliberately
 # NOT in config.STARTUP_ORDER: it has no D6 dependency edge in either
-# direction (postgres/nats/control_plane neither need it nor feed it), and the
+# direction (postgres/control_plane neither need it nor feed it), and the
 # ``children_ready`` gate must never wait on a child that may be legitimately
 # skipped (binary or staged store absent -> degraded AI, service healthy).
 _OLLAMA_CHILD = "ollama"
@@ -219,7 +220,6 @@ InterlockReaderFn = Callable[[], InterlockStatus]
 # postgres start fails CLOSED rather than monitoring the self-exited launcher.
 PostmasterPidReaderFn = Callable[[], int | None]
 PostgresProbeFn = Callable[[], bool]
-NatsProbeFn = Callable[[], bool]
 HealthProbeFn = Callable[[], ControlPlaneHealthProbe]
 # Task #57 D2: the OPTIONAL ollama child's seams. The spec provider is
 # evaluated at every (re)start attempt at the SERVICE layer (the only layer
@@ -342,7 +342,6 @@ class Supervisor:
         runner: ChildProcessRunner,
         alert_outbox: AlertOutbox,
         postgres_probe: PostgresProbeFn,
-        nats_probe: NatsProbeFn,
         health_probe: HealthProbeFn,
         clock: ClockFn,
         sleep: SleepFn,
@@ -358,9 +357,6 @@ class Supervisor:
         db_host: str = "127.0.0.1",
         db_port: int = 5432,
         postgres_log_path: str | None = None,
-        nats_server_path: str = "nats-server",
-        nats_config_path: str | None = None,
-        nats_log_path: str | None = None,
         python_path: str = "python",
         control_plane_env: Mapping[str, str] | None = None,
         control_plane_host: str = "127.0.0.1",
@@ -373,7 +369,6 @@ class Supervisor:
         self._runner = runner
         self._alert = alert_outbox
         self._postgres_probe = postgres_probe
-        self._nats_probe = nats_probe
         self._health_probe = health_probe
         self._clock = clock
         self._sleep = sleep
@@ -436,14 +431,11 @@ class Supervisor:
         self._db_host = db_host
         self._db_port = db_port
         # Adjacent diagnosability fix (2026-08-12, TESTER2 b5 evidence): when
-        # given, threaded into postgres_child_spec/nats_child_spec's own
-        # ``-l`` flag so each writes its OWN log file directly instead of
-        # relying solely on the generic inherited-stdio capture. None
-        # reproduces the prior behavior exactly (see children.py).
+        # given, threaded into postgres_child_spec's own ``-l`` flag so it
+        # writes its OWN log file directly instead of relying solely on the
+        # generic inherited-stdio capture. None reproduces the prior behavior
+        # exactly (see children.py).
         self._postgres_log_path = postgres_log_path
-        self._nats_server_path = nats_server_path
-        self._nats_config_path = nats_config_path
-        self._nats_log_path = nats_log_path
         self._python_path = python_path
         self._control_plane_env = dict(control_plane_env or {})
         self._cp_host = control_plane_host
@@ -550,12 +542,6 @@ class Supervisor:
                 port=self._db_port,
                 log_path=self._postgres_log_path,
             )
-        if name == "nats":
-            return nats_child_spec(
-                nats_server_path=self._nats_server_path,
-                config_path=self._nats_config_path,
-                log_path=self._nats_log_path,
-            )
         if name == "control_plane":
             mode: Literal["normal", "maintenance"] = "maintenance" if maintenance else "normal"
             return control_plane_child_spec(
@@ -573,8 +559,6 @@ class Supervisor:
     ) -> Callable[[], ReadinessResult]:
         if name == "postgres":
             return lambda: check_postgres_ready(self._postgres_probe)
-        if name == "nats":
-            return lambda: check_nats_ready(self._nats_probe)
         if name == "control_plane":
             if maintenance:
                 return lambda: check_control_plane_maintenance_ready(self._health_probe)
@@ -740,8 +724,8 @@ class Supervisor:
             # pid lives in ``<data_dir>/postmaster.pid``), which is not known
             # until readiness. So postgres does NOT assign the launcher here; it
             # resolves, assigns, and SWAPS IN the postmaster AFTER the readiness
-            # poll below. nats and the control plane are durable DIRECT children
-            # -> keep assign-on-spawn. Inside the lock with the spawn (CC-WS5-016)
+            # poll below. The control plane is a durable DIRECT child ->
+            # keep assign-on-spawn. Inside the lock with the spawn (CC-WS5-016)
             # so spawn and containment are one indivisible step against
             # ``_job.close()``.
             if name != "postgres":
@@ -928,13 +912,13 @@ class Supervisor:
     # -- full startup (D5/D6 order) ---------------------------------------
 
     def start(self) -> None:
-        """Bring up postgres -> nats, then -- CC-WS5-001 -- poll+ENFORCE the
+        """Bring up postgres, then -- CC-WS5-001 -- poll+ENFORCE the
         maintenance interlock BEFORE the writer-capable control plane, then the
         control plane, in ``STARTUP_ORDER``.
 
         A boot-HELD interlock must NEVER leave a normal (writer-capable) control
-        plane live: the interlock is read after the infra children (postgres +
-        nats, which are not writer-capable and come up regardless) and before the
+        plane live: the interlock is read after the infra child (postgres,
+        which is not writer-capable and comes up regardless) and before the
         control plane. If it is HELD, the machine enters ``maintenance`` and the
         control plane is launched in READ-ONLY maintenance mode
         (:meth:`_start_control_plane_maintenance`) -- the normal writer CP is
@@ -947,8 +931,8 @@ class Supervisor:
         child (and, via ``poll_until_ready``, inside each readiness poll), so a
         stop requested during bring-up returns from here after at most ONE
         in-flight probe attempt instead of after every remaining child's full
-        readiness budget (postgres 60s + nats 30s + control_plane 30s + ollama
-        60s chained into a single uninterruptible ~180s stretch, which blew the
+        readiness budget (postgres 60s + control_plane 30s + ollama
+        60s chained into a single uninterruptible ~150s stretch, which blew the
         150s stop watchdog mid-chain and hard-killed the postgres cluster)."""
 
         self._sweep_once()
@@ -962,7 +946,7 @@ class Supervisor:
             if self._abort_bring_up("ollama"):
                 return
             self.start_child(_OLLAMA_CHILD)
-        # Infra (postgres, nats) is not writer-capable -> it comes up regardless
+        # Infra (postgres) is not writer-capable -> it comes up regardless
         # of the interlock. STARTUP_ORDER[-1] is the writer-capable control plane,
         # gated by the interlock check below.
         for name in STARTUP_ORDER[:-1]:
@@ -1039,7 +1023,6 @@ class Supervisor:
             self._sweep_once()
         # Read-path infrastructure comes up normally (no guard gate on infra).
         self.start_child("postgres")
-        self.start_child("nats")
         return self._start_control_plane_maintenance()
 
     def _start_control_plane_maintenance(self) -> ReadinessResult:
@@ -1118,7 +1101,7 @@ class Supervisor:
             # or a probe cannot be trusted. Mirrors the continuous-guard block
             # path (``_guard_block_if_dual_runtime`` -> ``_stop_control_plane``).
             # A clear verdict instead resumes via ``_resume_to_serving`` in the
-            # tick loop. Infra (postgres/nats) is untouched.
+            # tick loop. Infra (postgres) is untouched.
             self._stop_control_plane()
         return event
 
@@ -1316,7 +1299,7 @@ class Supervisor:
           maintenance CP every tick).
         * Only when no live CP handle exists is a maintenance CP (re)launched.
 
-        Infra (postgres/nats) is already up from boot and is never respawned."""
+        Infra (postgres) is already up from boot and is never respawned."""
 
         cp = self._handles.get("control_plane")
         if self._cp_mode == "normal" and cp is not None:
@@ -1337,7 +1320,7 @@ class Supervisor:
         """Controlled stop of the control plane: terminate its process, drop the
         handle, mark it stopped, and clear the tracked CP mode. Used to replace a
         normal CP in maintenance (CC-WS5-001) and to halt the writer when the
-        continuous guard blocks mid-operation (CC-WS5-002). Infra (postgres/nats)
+        continuous guard blocks mid-operation (CC-WS5-002). Infra (postgres)
         is untouched."""
 
         cp = self._handles.get("control_plane")
@@ -1349,8 +1332,8 @@ class Supervisor:
 
     def _resume_to_serving(self) -> None:
         """F-REV-2 fix: correctly resume to serving after a maintenance-exit
-        clear verdict. Postgres and NATS are STILL alive+ready (they were never
-        stopped in maintenance) -> they are NOT respawned. Only the control
+        clear verdict. Postgres is STILL alive+ready (it was never
+        stopped in maintenance) -> it is NOT respawned. Only the control
         plane was maintenance-mode; restart it in NORMAL mode (the writer-capable
         ``pre_child_start`` guard gate applies), then, if every child is ready,
         dispatch ``children_ready`` to reach ``ready``. If the guard withholds
@@ -1690,7 +1673,7 @@ class Supervisor:
         returns ``guard_blocked`` and brings no writer up). Idempotent-safe:
         each call performs at most one clean controlled restart (the old handle
         is always terminated + popped before the respawn, so handles never
-        accumulate). Infra (postgres/nats) is untouched -- this restarts ONLY
+        accumulate). Infra (postgres) is untouched -- this restarts ONLY
         the control plane. Mirrors the CP-restart step of ``_resume_to_serving``;
         used by the service layer's admin router, never by the tick loop."""
 
