@@ -50,6 +50,6 @@ Before a macOS package is called supported, record:
 - Gatekeeper warning text and approved operator guidance;
 - screenshots or terminal logs with secrets redacted.
 
-CI or durable manual evidence must also show package artifact build, sidecar or
-attestation generation, sidecar verification, release upload, and the explicit
+CI or durable manual evidence must also show package artifact build, sidecar
+generation, sidecar verification, release upload, and the explicit
 Apple Silicon package result.

@@ -35,9 +35,7 @@ class TestCrossPlatformInstallerPolicy:
         assert result.status == "failed"
         assert "proof_unavailable" in result.next_step
 
-    def test_policy_rejects_package_artifacts_without_sidecars_and_attestations(
-        self, tmp_path: Path
-    ) -> None:
+    def test_policy_rejects_package_artifacts_without_sidecars(self, tmp_path: Path) -> None:
         policy = importlib.import_module("scripts.policy.check_release_artifacts")
         artifact = tmp_path / "civiccast_1.0.0_all.deb"
         artifact.write_bytes(b"package bytes")
@@ -46,7 +44,35 @@ class TestCrossPlatformInstallerPolicy:
 
         assert result.status == "failed"
         assert "sidecar" in result.next_step.lower()
-        assert "attestation" in result.next_step.lower()
+
+    def test_policy_rejects_sidecar_with_no_sha256_field(self, tmp_path: Path) -> None:
+        import json
+
+        policy = importlib.import_module("scripts.policy.check_release_artifacts")
+        artifact = tmp_path / "civiccast_1.0.0_all.deb"
+        artifact.write_bytes(b"package bytes")
+        sidecar = artifact.with_name(artifact.name + ".sidecar.json")
+        sidecar.write_text(json.dumps({"install_manifest": {"signed": False}}), encoding="utf-8")
+
+        result = policy.check_installer_artifact_directory(tmp_path)
+
+        assert result.status == "failed"
+        assert "sha256" in result.next_step.lower()
+
+    def test_policy_accepts_package_artifact_with_a_real_sidecar_hash(self, tmp_path: Path) -> None:
+        # This release chain has no cosign/Sigstore step (ADR 0022); a sidecar
+        # needs a real sha256, not an attestation reference.
+        import json
+
+        policy = importlib.import_module("scripts.policy.check_release_artifacts")
+        artifact = tmp_path / "civiccast_1.0.0_all.deb"
+        artifact.write_bytes(b"package bytes")
+        sidecar = artifact.with_name(artifact.name + ".sidecar.json")
+        sidecar.write_text(json.dumps({"sha256": "0" * 64}), encoding="utf-8")
+
+        result = policy.check_installer_artifact_directory(tmp_path)
+
+        assert result.status == "passed"
 
     def test_evaluate_flags_current_release_manifest_missing_beta_handoff(
         self, tmp_path: Path

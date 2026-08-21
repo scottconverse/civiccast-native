@@ -1,6 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Tests for the sidecar attestation integrity policy check."""
+"""Tests for the sidecar attestation integrity policy check.
+
+ADR 0022: Sigstore/cosign keyless attestation was evaluated and denied for
+this release chain. Azure Trusted Signing (Authenticode) is the only signing
+mechanism a Windows artifact carries; nothing produces a ``.sigstore.json``
+bundle any more, so a non-null ``attestation`` field is itself a violation,
+and a ``signed: true`` claim is verified against real embedded Authenticode
+evidence, never a bundle file.
+"""
 
 from __future__ import annotations
 
@@ -19,19 +27,6 @@ def _write_sidecar(root: Path, name: str, payload: dict) -> Path:
     path = root / name
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
-
-
-def _write_bundle(path: Path) -> None:
-    path.write_text(
-        json.dumps(
-            {
-                "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
-                "verificationMaterial": {},
-                "dsseEnvelope": {},
-            }
-        ),
-        encoding="utf-8",
-    )
 
 
 def _signed_pe_bytes() -> bytes:
@@ -76,8 +71,8 @@ def test_plain_script_entrypoint_is_not_redirected_by_ambient_pythonpath(tmp_pat
     assert "check_sidecar_attestation_integrity: PASS" in result.stdout
 
 
-def test_passes_when_unsigned_sidecar_has_no_bundle(tmp_path: Path) -> None:
-    # Honest claim: nothing signed, no attestation, no bundle needed.
+def test_passes_when_unsigned_sidecar_has_null_attestation(tmp_path: Path) -> None:
+    # Honest claim: nothing signed, no attestation mechanism exists.
     _write_sidecar(
         tmp_path,
         "civiccast-1.0.0-windows-setup.exe.sidecar.json",
@@ -91,87 +86,7 @@ def test_passes_when_unsigned_sidecar_has_no_bundle(tmp_path: Path) -> None:
     assert evaluate_sidecar_attestation_integrity(tmp_path) == []
 
 
-def test_passes_when_signed_sidecar_has_a_real_bundle(tmp_path: Path) -> None:
-    _write_bundle(tmp_path / "civiccast-1.0.0-linux.tar.gz.sigstore.json")
-    _write_sidecar(
-        tmp_path,
-        "civiccast-1.0.0-linux.tar.gz.sidecar.json",
-        {
-            "sha256": "0" * 64,
-            "attestation": "civiccast-1.0.0-linux.tar.gz.sigstore.json",
-            "install_manifest": {"signed": True},
-        },
-    )
-
-    assert evaluate_sidecar_attestation_integrity(tmp_path) == []
-
-
-def test_fails_when_attestation_names_a_different_bundle(tmp_path: Path) -> None:
-    artifact = tmp_path / "civiccast-1.0.0-linux.tar.gz"
-    artifact.write_bytes(b"release bytes")
-    _write_bundle(artifact.with_name(artifact.name + ".sigstore.json"))
-    sidecar = _write_sidecar(
-        tmp_path,
-        artifact.name + ".sidecar.json",
-        {
-            "sha256": "0" * 64,
-            "attestation": "wrong-name.sigstore.json",
-            "install_manifest": {"signed": True},
-        },
-    )
-
-    violations = evaluate_sidecar_attestation_integrity(tmp_path)
-
-    assert len(violations) == 1
-    assert sidecar.name in violations[0]
-    assert "does not name" in violations[0]
-
-
-def test_fails_when_attestation_uses_traversal_to_name_adjacent_bundle(tmp_path: Path) -> None:
-    artifact = tmp_path / "civiccast-1.0.0-linux.tar.gz"
-    artifact.write_bytes(b"release bytes")
-    _write_bundle(artifact.with_name(artifact.name + ".sigstore.json"))
-    sidecar = _write_sidecar(
-        tmp_path,
-        artifact.name + ".sidecar.json",
-        {
-            "sha256": "0" * 64,
-            "attestation": "../" + artifact.name + ".sigstore.json",
-            "install_manifest": {"signed": True},
-        },
-    )
-
-    violations = evaluate_sidecar_attestation_integrity(tmp_path)
-
-    assert len(violations) == 1
-    assert sidecar.name in violations[0]
-    assert "does not name" in violations[0]
-
-
-def test_fails_when_adjacent_sigstore_bundle_is_not_structurally_valid(tmp_path: Path) -> None:
-    artifact = tmp_path / "civiccast-1.0.0-linux.tar.gz"
-    artifact.write_bytes(b"release bytes")
-    bundle = artifact.with_name(artifact.name + ".sigstore.json")
-    bundle.write_text("{}", encoding="utf-8")
-    sidecar = _write_sidecar(
-        tmp_path,
-        artifact.name + ".sidecar.json",
-        {
-            "sha256": "0" * 64,
-            "attestation": bundle.name,
-            "install_manifest": {"signed": True},
-        },
-    )
-
-    violations = evaluate_sidecar_attestation_integrity(tmp_path)
-
-    assert len(violations) == 2
-    assert all(sidecar.name in violation for violation in violations)
-    assert any("signed=true" in violation for violation in violations)
-    assert any("not a structurally valid Sigstore bundle" in violation for violation in violations)
-
-
-def test_passes_when_authenticode_signed_sidecar_has_no_sigstore_bundle(tmp_path: Path) -> None:
+def test_passes_when_authenticode_signed_sidecar_has_null_attestation(tmp_path: Path) -> None:
     artifact = tmp_path / "civiccast-1.0.0-windows-setup.exe"
     artifact.write_bytes(_signed_pe_bytes())
     _write_sidecar(
@@ -187,7 +102,7 @@ def test_passes_when_authenticode_signed_sidecar_has_no_sigstore_bundle(tmp_path
     assert evaluate_sidecar_attestation_integrity(tmp_path) == []
 
 
-def test_fails_when_unsigned_pe_claims_signed_without_a_bundle(tmp_path: Path) -> None:
+def test_fails_when_unsigned_pe_claims_signed(tmp_path: Path) -> None:
     artifact = tmp_path / "civiccast-1.0.0-windows-setup.exe"
     artifact.write_bytes(b"unsigned executable bytes")
     sidecar = _write_sidecar(
@@ -204,12 +119,50 @@ def test_fails_when_unsigned_pe_claims_signed_without_a_bundle(tmp_path: Path) -
 
     assert len(violations) == 1
     assert sidecar.name in violations[0]
-    assert "neither a Sigstore bundle nor embedded Authenticode evidence" in violations[0]
+    assert "no embedded Authenticode evidence" in violations[0]
 
 
-def test_fails_on_fabricated_signed_true_without_a_real_bundle(tmp_path: Path) -> None:
-    # This is the PE-ENG-1 shape: the artifact was never signed or attested,
-    # but the sidecar claims otherwise -- no *.sigstore.json bundle on disk.
+def test_fails_when_non_exe_artifact_claims_signed(tmp_path: Path) -> None:
+    sidecar = _write_sidecar(
+        tmp_path,
+        "civiccast-1.0.0-portable.tar.gz.sidecar.json",
+        {
+            "sha256": "0" * 64,
+            "attestation": None,
+            "install_manifest": {"signed": True},
+        },
+    )
+
+    violations = evaluate_sidecar_attestation_integrity(tmp_path)
+
+    assert len(violations) == 1
+    assert sidecar.name in violations[0]
+    assert "no embedded Authenticode evidence" in violations[0]
+
+
+def test_fails_on_any_non_null_attestation_reference(tmp_path: Path) -> None:
+    # ADR 0022: no code path may populate a non-null attestation any more --
+    # this release chain has no attestation mechanism at all.
+    sidecar = _write_sidecar(
+        tmp_path,
+        "civiccast-1.0.0-windows-setup.exe.sidecar.json",
+        {
+            "sha256": "0" * 64,
+            "attestation": "sigstore://civiccast/civiccast-1.0.0-windows-setup.exe",
+            "install_manifest": {"signed": False},
+        },
+    )
+
+    violations = evaluate_sidecar_attestation_integrity(tmp_path)
+
+    assert len(violations) == 1
+    assert sidecar.name in violations[0]
+    assert "the field must be null" in violations[0]
+
+
+def test_fails_on_both_stray_attestation_and_fabricated_signed_claim(tmp_path: Path) -> None:
+    # PE-ENG-1 shape: the artifact was never signed, but the sidecar claims
+    # otherwise AND carries a stray attestation reference -- two violations.
     sidecar = _write_sidecar(
         tmp_path,
         "civiccast-1.0.0-windows-setup.exe.sidecar.json",
@@ -222,27 +175,7 @@ def test_fails_on_fabricated_signed_true_without_a_real_bundle(tmp_path: Path) -
 
     violations = evaluate_sidecar_attestation_integrity(tmp_path)
 
-    assert len(violations) == 2  # one for signed=true, one for the attestation string
+    assert len(violations) == 2
     assert all(sidecar.name in violation for violation in violations)
-    assert any("signed=true" in violation for violation in violations)
-    assert any("attestation=" in violation for violation in violations)
-
-
-def test_fails_on_attestation_reference_without_a_real_bundle_even_if_unsigned(
-    tmp_path: Path,
-) -> None:
-    sidecar = _write_sidecar(
-        tmp_path,
-        "civiccast-1.0.0-portable.tar.gz.sidecar.json",
-        {
-            "sha256": "0" * 64,
-            "attestation": "sigstore://civiccast/civiccast-1.0.0-portable.tar.gz",
-            "install_manifest": {"signed": False},
-        },
-    )
-
-    violations = evaluate_sidecar_attestation_integrity(tmp_path)
-
-    assert len(violations) == 1
-    assert sidecar.name in violations[0]
-    assert "attestation=" in violations[0]
+    assert any("the field must be null" in violation for violation in violations)
+    assert any("no embedded Authenticode evidence" in violation for violation in violations)

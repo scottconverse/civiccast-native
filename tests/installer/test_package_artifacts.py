@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import importlib
 import io
@@ -35,33 +34,21 @@ def _write_minimal_gstreamer_runtime(runtime_dir: Path) -> None:
     )
 
 
-def _write_attestation_bundle(
-    artifact: Path, *, subject_sha256: str | None = None, base64_mod=None
-) -> Path:
-    """Write a cosign-shaped Sigstore bundle whose DSSE in-toto payload names
-    the artifact's bytes (or an arbitrary digest, for mismatch fixtures)."""
-    import base64 as _base64
-
-    b64 = base64_mod or _base64
-    digest = subject_sha256 or hashlib.sha256(artifact.read_bytes()).hexdigest()
-    statement = {
-        "_type": "https://in-toto.io/Statement/v1",
-        "subject": [{"name": artifact.name, "digest": {"sha256": digest}}],
-        "predicateType": "https://civiccast.example/release-proof",
-        "predicate": {"release": "test"},
-    }
-    bundle = {
-        "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
-        "verificationMaterial": {"certificate": {"rawBytes": "dGVzdA=="}},
-        "dsseEnvelope": {
-            "payload": b64.b64encode(json.dumps(statement).encode()).decode(),
-            "payloadType": "application/vnd.in-toto+json",
-            "signatures": [{"sig": "dGVzdC1zaWduYXR1cmU="}],
-        },
-    }
-    bundle_path = artifact.with_name(artifact.name + ".sigstore.json")
-    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
-    return bundle_path
+def _signed_pe_bytes() -> bytes:
+    """Return minimal bytes for a PE with a non-empty Authenticode certificate
+    table (data directory index 4) -- the real, on-disk evidence this repo's
+    release chain checks now that Sigstore/cosign is denied (ADR 0022)."""
+    buf = bytearray(0x400)
+    e_lfanew = 0x80
+    buf[0:2] = b"MZ"
+    buf[0x3C:0x40] = e_lfanew.to_bytes(4, "little")
+    buf[e_lfanew : e_lfanew + 4] = b"PE\x00\x00"
+    optional_header = e_lfanew + 24
+    buf[optional_header : optional_header + 2] = (0x10B).to_bytes(2, "little")
+    certificate_table = optional_header + 96 + (4 * 8)
+    buf[certificate_table : certificate_table + 4] = (0x300).to_bytes(4, "little")
+    buf[certificate_table + 4 : certificate_table + 8] = (0x100).to_bytes(4, "little")
+    return bytes(buf)
 
 
 def test_runtime_resource_build_id_tracks_exact_staged_bytes(tmp_path: Path) -> None:
@@ -82,22 +69,29 @@ def test_runtime_resource_build_id_tracks_exact_staged_bytes(tmp_path: Path) -> 
 
 
 class TestPackageArtifactValidation:
-    def test_package_accepts_real_hash_and_service_metadata_when_attested(
+    """ADR 0022: Sigstore/cosign was evaluated and denied for this release
+    chain. Azure Trusted Signing (Authenticode) is the only signing
+    mechanism; verify_package_artifact checks real embedded Authenticode
+    evidence for a Windows .exe, never a .sigstore.json bundle. Non-Windows
+    package kinds have no code-signing mechanism at all, so a signed=true
+    claim for one is rejected rather than trusted blind.
+    """
+
+    def test_package_accepts_real_hash_and_service_metadata_when_unsigned(
         self, tmp_path: Path
     ) -> None:
         packages = importlib.import_module("civiccast.installer.packages")
         artifact = tmp_path / "civiccast_1.0.0_all.deb"
         artifact.write_bytes(b"real package bytes")
-        _write_attestation_bundle(artifact)
         sidecar = tmp_path / "civiccast_1.0.0_all.deb.sidecar.json"
         digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
         sidecar.write_text(
             json.dumps(
                 {
                     "sha256": digest,
-                    "attestation": "https://github.com/scottconverse/CivicCast/attestations/1",
+                    "attestation": None,
                     "install_manifest": {
-                        "signed": True,
+                        "signed": False,
                         "service": {"manager": "systemd", "name": "civiccast"},
                         "bootstrap": {"package_kind": "deb"},
                     },
@@ -112,21 +106,21 @@ class TestPackageArtifactValidation:
         assert result.sha256 == digest
         assert result.service_metadata.manager == "systemd"
         assert result.additional_services == []
+        assert result.attestation is None
 
     def test_package_preserves_egress_supervision_metadata(self, tmp_path: Path) -> None:
         packages = importlib.import_module("civiccast.installer.packages")
         artifact = tmp_path / "civiccast_1.0.0_all.deb"
         artifact.write_bytes(b"real package bytes")
-        _write_attestation_bundle(artifact)
         sidecar = tmp_path / "civiccast_1.0.0_all.deb.sidecar.json"
         digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
         sidecar.write_text(
             json.dumps(
                 {
                     "sha256": digest,
-                    "attestation": "sigstore://example",
+                    "attestation": None,
                     "install_manifest": {
-                        "signed": True,
+                        "signed": False,
                         "service": {"manager": "systemd", "name": "civiccast"},
                         "additional_services": [
                             {
@@ -158,7 +152,7 @@ class TestPackageArtifactValidation:
         packages = importlib.import_module("civiccast.installer.packages")
         sidecar = tmp_path / "missing.deb.sidecar.json"
         sidecar.write_text(
-            json.dumps({"sha256": "0" * 64, "attestation": "sigstore://example"}),
+            json.dumps({"sha256": "0" * 64, "attestation": None}),
             encoding="utf-8",
         )
 
@@ -177,9 +171,9 @@ class TestPackageArtifactValidation:
             json.dumps(
                 {
                     "sha256": hashlib.sha256(b"original package bytes").hexdigest(),
-                    "attestation": "sigstore://example",
+                    "attestation": None,
                     "install_manifest": {
-                        "signed": True,
+                        "signed": False,
                         "service": {"manager": "launchd", "name": "civiccast"},
                         "bootstrap": {"package_kind": "pkg"},
                     },
@@ -193,7 +187,10 @@ class TestPackageArtifactValidation:
         assert result.status == "blocked"
         assert result.reason == "hash_mismatch"
 
-    def test_package_rejects_missing_attestation_reference(self, tmp_path: Path) -> None:
+    def test_package_rejects_signed_true_claim_for_non_windows_kind(self, tmp_path: Path) -> None:
+        # This product line has no code-signing mechanism for non-Windows
+        # package kinds (portable archives, .deb, .rpm, .pkg): a signed=true
+        # claim for one of those cannot be independently verified.
         packages = importlib.import_module("civiccast.installer.packages")
         artifact = tmp_path / "civiccast.tar.gz"
         artifact.write_bytes(b"portable bytes")
@@ -215,26 +212,24 @@ class TestPackageArtifactValidation:
         result = packages.verify_package_artifact(artifact, sidecar)
 
         assert result.status == "blocked"
-        assert result.reason == "missing_attestation"
+        assert result.reason == "unsigned_artifact"
 
-    def test_signed_false_sidecar_with_real_bundle_verifies_ok(self, tmp_path: Path) -> None:
-        """NF-2: the release pipeline writes sidecars BEFORE cosign runs, so a
-        genuinely-attested artifact ships with signed:false in its sidecar.
-        Verification must trust the real bundle on disk, not that stale flag."""
+    def test_package_accepts_real_windows_exe_with_authenticode_evidence(
+        self, tmp_path: Path
+    ) -> None:
         packages = importlib.import_module("civiccast.installer.packages")
-        artifact = tmp_path / "civiccast.rpm"
-        artifact.write_bytes(b"rpm bytes")
-        _write_attestation_bundle(artifact)
-        sidecar = tmp_path / "civiccast.rpm.sidecar.json"
+        artifact = tmp_path / "civiccast-1.0.0-windows-setup.exe"
+        artifact.write_bytes(_signed_pe_bytes())
+        sidecar = tmp_path / "civiccast-1.0.0-windows-setup.exe.sidecar.json"
         sidecar.write_text(
             json.dumps(
                 {
                     "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
                     "attestation": None,
                     "install_manifest": {
-                        "signed": False,
-                        "service": {"manager": "systemd", "name": "civiccast"},
-                        "bootstrap": {"package_kind": "rpm"},
+                        "signed": True,
+                        "service": {"manager": "windows-scm", "name": "civiccast"},
+                        "bootstrap": {"package_kind": "windows-tauri-exe"},
                     },
                 }
             ),
@@ -245,22 +240,24 @@ class TestPackageArtifactValidation:
 
         assert result.status == "ok"
         assert result.reason == "verified"
-        assert result.attestation == "civiccast.rpm.sigstore.json"
+        assert result.attestation == "authenticode"
 
-    def test_package_rejects_bundle_attesting_different_bytes(self, tmp_path: Path) -> None:
+    def test_package_rejects_windows_exe_claiming_signed_without_authenticode_evidence(
+        self, tmp_path: Path
+    ) -> None:
         packages = importlib.import_module("civiccast.installer.packages")
-        artifact = tmp_path / "civiccast.rpm"
-        artifact.write_bytes(b"rpm bytes")
-        _write_attestation_bundle(artifact, subject_sha256="a" * 64)
-        sidecar = tmp_path / "civiccast.rpm.sidecar.json"
+        artifact = tmp_path / "civiccast-1.0.0-windows-setup.exe"
+        artifact.write_bytes(b"unsigned executable bytes")
+        sidecar = tmp_path / "civiccast-1.0.0-windows-setup.exe.sidecar.json"
         sidecar.write_text(
             json.dumps(
                 {
                     "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    "attestation": None,
                     "install_manifest": {
-                        "signed": False,
-                        "service": {"manager": "systemd", "name": "civiccast"},
-                        "bootstrap": {"package_kind": "rpm"},
+                        "signed": True,
+                        "service": {"manager": "windows-scm", "name": "civiccast"},
+                        "bootstrap": {"package_kind": "windows-tauri-exe"},
                     },
                 }
             ),
@@ -270,48 +267,20 @@ class TestPackageArtifactValidation:
         result = packages.verify_package_artifact(artifact, sidecar)
 
         assert result.status == "blocked"
-        assert result.reason == "attestation_mismatch"
-
-    def test_package_rejects_malformed_attestation_bundle(self, tmp_path: Path) -> None:
-        packages = importlib.import_module("civiccast.installer.packages")
-        artifact = tmp_path / "civiccast.rpm"
-        artifact.write_bytes(b"rpm bytes")
-        (tmp_path / "civiccast.rpm.sigstore.json").write_text(
-            json.dumps({"mediaType": "x", "no_envelope": True}), encoding="utf-8"
-        )
-        sidecar = tmp_path / "civiccast.rpm.sidecar.json"
-        sidecar.write_text(
-            json.dumps(
-                {
-                    "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                    "install_manifest": {
-                        "signed": False,
-                        "service": {"manager": "systemd", "name": "civiccast"},
-                        "bootstrap": {"package_kind": "rpm"},
-                    },
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        result = packages.verify_package_artifact(artifact, sidecar)
-
-        assert result.status == "blocked"
-        assert result.reason == "invalid_attestation"
+        assert result.reason == "unsigned_artifact"
 
     def test_package_rejects_invalid_additional_service_metadata(self, tmp_path: Path) -> None:
         packages = importlib.import_module("civiccast.installer.packages")
         artifact = tmp_path / "civiccast.deb"
         artifact.write_bytes(b"package bytes")
-        _write_attestation_bundle(artifact)
         sidecar = tmp_path / "civiccast.deb.sidecar.json"
         sidecar.write_text(
             json.dumps(
                 {
                     "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-                    "attestation": "sigstore://example",
+                    "attestation": None,
                     "install_manifest": {
-                        "signed": True,
+                        "signed": False,
                         "service": {"manager": "systemd", "name": "civiccast"},
                         "additional_services": ["civiccast-egress@.service"],
                         "bootstrap": {"package_kind": "deb"},
@@ -713,19 +682,21 @@ class TestReleaseArtifactBuilderContracts:
         payload = json.loads(sidecar.read_text(encoding="utf-8"))
         result = packages.verify_package_artifact(artifact.path, sidecar)
 
-        # No real cosign attestation bundle exists next to the artifact (it is
-        # only created by a separate `cosign attest-blob` CI step, and the
-        # Windows job runs no such step at all) -- the sidecar must say so
-        # honestly rather than fabricate signed:true / a sigstore:// claim.
+        # The fake "built" bytes carry no embedded Authenticode certificate
+        # table, so the sidecar must say so honestly rather than fabricate
+        # signed:true. This release chain has no cosign/Sigstore step at all
+        # (ADR 0022): the attestation field is always null, not a fallback.
         assert payload["sha256"] == hashlib.sha256(b"real tauri setup bytes").hexdigest()
         assert payload["install_manifest"]["bootstrap"]["package_kind"] == "windows-tauri-exe"
         assert payload["install_manifest"]["signed"] is False
         assert payload["attestation"] is None
-        assert result.status == "blocked"
-        assert result.ready is False
-        assert result.reason == "missing_attestation"
+        # Honest unsigned claim: verification still passes, it just carries
+        # no signing evidence.
+        assert result.status == "ok"
+        assert result.ready is True
+        assert result.attestation is None
 
-    def test_builder_windows_tauri_installer_references_real_sigstore_bundle_when_present(
+    def test_builder_windows_tauri_installer_reflects_real_authenticode_evidence(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         builder = importlib.import_module("scripts.build_release_artifacts")
@@ -744,7 +715,11 @@ class TestReleaseArtifactBuilderContracts:
             / "CivicCast Installer_4.0.0-rc.2_x64-setup.exe"
         )
         built.parent.mkdir(parents=True, exist_ok=True)
-        built.write_bytes(b"real tauri setup bytes")
+        # Real PE bytes with a non-empty Authenticode certificate table --
+        # the actual, on-disk evidence this chain checks (Azure Trusted
+        # Signing signs the exe before the sidecar is (re)built; see issue
+        # #253 / --reuse-installer-exe). No cosign/Sigstore bundle involved.
+        built.write_bytes(_signed_pe_bytes())
         wheelhouse = tmp_path / "wheelhouse"
         wheelhouse.mkdir()
         (wheelhouse / "WHEELHOUSE-MANIFEST.json").write_text(
@@ -761,42 +736,16 @@ class TestReleaseArtifactBuilderContracts:
         monkeypatch.setattr(builder.sys, "platform", "win32")
         monkeypatch.setattr(builder, "ROOT", fake_root)
 
-        # Simulate a real cosign attest-blob bundle already sitting on disk
-        # next to where the artifact will be copied, e.g. a rerun after CI
-        # signing already happened. The bundle's DSSE in-toto subject digest
-        # must name the built artifact's bytes (the builder copies `built`),
-        # so verify_package_artifact's real-bundle check accepts it.
-        target = tmp_path / "civiccast-4.0.0-rc.2-windows-setup.exe"
-        built_digest = hashlib.sha256(built.read_bytes()).hexdigest()
-        statement = {
-            "_type": "https://in-toto.io/Statement/v1",
-            "subject": [{"name": target.name, "digest": {"sha256": built_digest}}],
-            "predicateType": "https://civiccast.example/release-proof",
-            "predicate": {"release": "test"},
-        }
-        (tmp_path / (target.name + ".sigstore.json")).write_text(
-            json.dumps(
-                {
-                    "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
-                    "dsseEnvelope": {
-                        "payload": base64.b64encode(json.dumps(statement).encode()).decode(),
-                        "payloadType": "application/vnd.in-toto+json",
-                        "signatures": [{"sig": "dGVzdC1zaWduYXR1cmU="}],
-                    },
-                }
-            ),
-            encoding="utf-8",
-        )
-
         artifact = builder.build_windows_tauri_installer(tmp_path, "4.0.0-rc.2")
         sidecar = artifact.path.with_name(artifact.path.name + ".sidecar.json")
         payload = json.loads(sidecar.read_text(encoding="utf-8"))
         result = packages.verify_package_artifact(artifact.path, sidecar)
 
         assert payload["install_manifest"]["signed"] is True
-        assert payload["attestation"] == artifact.path.name + ".sigstore.json"
+        assert payload["attestation"] is None  # legacy field; always null now
         assert result.status == "ok"
         assert result.ready is True
+        assert result.attestation == "authenticode"
 
     def test_builder_windows_tauri_installer_aligns_tauri_metadata_for_release_version(
         self, tmp_path: Path, monkeypatch
@@ -1168,7 +1117,7 @@ class TestReleaseArtifactBuilderContracts:
 
     def test_merge_unions_absent_file_on_recorded_sha(self, tmp_path: Path) -> None:
         # A per-job CI bundle need not carry every artifact its manifest lists (the
-        # Windows bundle omits the .sidecar.json / .sigstore.json). The merge trusts
+        # Windows bundle omits the .sidecar.json). The merge trusts
         # the sha the building job recorded rather than failing closed. Regression for
         # the rc9 (wheelhouse) / rc10 (sidecar) layered publish-manifest failures.
         import hashlib as _h

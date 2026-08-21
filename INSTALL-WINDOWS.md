@@ -19,7 +19,8 @@
 
 > **Last published installer:**
 > [`v1.0.0-rc18`](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18),
-> with its matching sidecar, Sigstore bundle, and complete manifest.
+> with its matching sidecar and complete manifest, plus an Authenticode signature
+> (see [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md); this release chain carries no Sigstore bundle).
 > [`v1.0.0-rc17`](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc17)
 > remains published as the rollback target, but it carries the sixteen findings
 > rc18 fixes and is not a recommended install.

@@ -85,6 +85,23 @@ came across and what deliberately did not.
   checking Windows-only code on a platform this product never runs on.
 - Artifact retention is **1 day** everywhere, at both the workflow and
   repository level.
+- **Sigstore/cosign attestation requirement removed (ADR 0022).** Evaluated
+  and denied by the owner: this release chain's only supply-chain provenance
+  is Azure Trusted Signing (Authenticode) for the Windows installer plus
+  ed25519 pack signing for native distribution packs
+  (`civiccast/installer/native_packs.py`). `civiccast.installer.packages
+  .verify_package_artifact` no longer requires a `*.sigstore.json` bundle —
+  nothing in the native chain ever produced one — and instead checks real
+  embedded Authenticode certificate-table evidence for a Windows `.exe`
+  claiming `signed: true`; a `signed: true` claim for any non-Windows package
+  kind is rejected outright, since this product line has no signing
+  mechanism for those. `scripts/build_release_artifacts.py`,
+  `scripts/policy/check_sidecar_attestation_integrity.py`, and
+  `scripts/policy/check_release_artifacts.py` follow the same rule; package
+  sidecars now always carry a null `attestation` field. `CODE_SIGNING_POLICY.md`,
+  `docs/install/windows-release-trust.md`, and
+  `docs/installer/cross-platform-installer.md` describe the Authenticode +
+  ed25519 chain instead of Sigstore.
 
 ### Fixed
 

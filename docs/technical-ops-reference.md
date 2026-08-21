@@ -316,7 +316,7 @@ support ticket.
 | `uv run civiccast installer plan` | Print the first-run setup plan for a deployment profile. | `--profile`, `--recommended-tier`, `--json` |
 | `uv run civiccast installer health-check` | Fail-closed check of publish targets before a first broadcast. | `--profile`, `--json` |
 | `uv run civiccast installer platform-plan` | Show the host requirements the installer checks before it runs. | `--os-family`, `--json` |
-| `uv run civiccast installer verify-package` | Verify package bytes, sidecar hash, signed install manifest, metadata, and attestation. | `--artifact`, `--sidecar`, `--json` |
+| `uv run civiccast installer verify-package` | Verify package bytes, sidecar hash, signed install manifest, and metadata (Authenticode evidence for a Windows `.exe` claiming `signed: true`). | `--artifact`, `--sidecar`, `--json` |
 | `uv run civiccast installer summary` | Print the installer readiness summary used by the GUI. | `--json` |
 | `uv run civiccast installer beta-handoff` | Produce the beta tester checklist covering package, clean install, dependencies, models, NATS, mTLS, and providers. | `--release-manifest`, `--clean-windows-evidence`, `--json` |
 

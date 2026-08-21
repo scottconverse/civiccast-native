@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from pathlib import Path
@@ -31,7 +30,25 @@ def compute_sha256(path: Path) -> str:
 
 
 def verify_package_artifact(artifact: Path, sidecar: Path) -> PackageVerificationResult:
-    """Verify an installer artifact against its sidecar and attestation pointer."""
+    """Verify an installer artifact against its sidecar and real signing evidence.
+
+    The native release chain signs the Windows installer via Azure Trusted
+    Signing (Authenticode) in ``.github/workflows/sign-native-installer.yml``;
+    this repo carries no cosign/Sigstore step anywhere, and no code path
+    produces a ``*.sigstore.json`` bundle. A sidecar's ``install_manifest.signed``
+    flag is therefore never trusted as a bare claim: when it is ``true`` for a
+    Windows PE (``.exe``) artifact, this function requires the artifact bytes
+    to actually carry an embedded Authenticode certificate table (data
+    directory index 4) — the same real, on-disk evidence
+    ``scripts/build_release_artifacts.py`` and
+    ``scripts/policy/check_sidecar_attestation_integrity.py`` check. Full
+    certificate-chain and timestamp validity remain the CI
+    ``Get-AuthenticodeSignature`` fail-closed step's job, not this function's.
+    Non-Windows package kinds (``.deb``, ``.rpm``, ``.pkg``, portable
+    archives, …) have no code-signing mechanism in this product line today,
+    so a ``signed: true`` claim for one of those cannot be independently
+    verified and is rejected rather than trusted blind.
+    """
 
     if not artifact.exists():
         return _blocked(
@@ -41,7 +58,7 @@ def verify_package_artifact(artifact: Path, sidecar: Path) -> PackageVerificatio
     if not sidecar.exists():
         return _blocked(
             "missing_sidecar",
-            f"{sidecar.name} is missing; rebuild the package artifact with its sidecar and attestation.",
+            f"{sidecar.name} is missing; rebuild the package artifact with its sidecar.",
         )
 
     try:
@@ -57,26 +74,6 @@ def verify_package_artifact(artifact: Path, sidecar: Path) -> PackageVerificatio
             f"{artifact.name} SHA-256 does not match its sidecar; rebuild from clean bytes.",
             sha256=actual_sha,
         )
-
-    # Verify the REAL attestation bundle, not the sidecar's self-report. The
-    # release pipeline writes sidecars before cosign runs (their signed/
-    # attestation fields describe the pre-signing moment), and a self-reported
-    # boolean proves nothing. The bundle cosign attest-blob writes next to the
-    # artifact carries a DSSE in-toto payload whose subject digest must equal
-    # the artifact bytes we just hashed — that binding is the check.
-    bundle_path = artifact.with_name(artifact.name + ".sigstore.json")
-    if not bundle_path.exists():
-        return _blocked(
-            "missing_attestation",
-            f"{bundle_path.name} is missing; download the artifact's Sigstore "
-            "attestation bundle from the same release and keep it next to the package.",
-            sha256=actual_sha,
-        )
-    bundle_defect = _attestation_bundle_defect(bundle_path, actual_sha)
-    if bundle_defect is not None:
-        defect_reason, defect_message = bundle_defect
-        return _blocked(defect_reason, defect_message, sha256=actual_sha)
-    attestation = bundle_path.name
 
     install_manifest = payload.get("install_manifest")
     if not isinstance(install_manifest, dict):
@@ -97,6 +94,28 @@ def verify_package_artifact(artifact: Path, sidecar: Path) -> PackageVerificatio
             sha256=actual_sha,
         )
 
+    claims_signed = install_manifest.get("signed") is True
+    attestation: str | None = None
+    if claims_signed:
+        if artifact.suffix.lower() != ".exe":
+            return _blocked(
+                "unsigned_artifact",
+                f"{artifact.name} sidecar claims signed=true, but this product line "
+                "has no code-signing mechanism for non-Windows package kinds; "
+                "rebuild the sidecar with signed=false or provide the artifact's "
+                "real Windows Authenticode-signed .exe.",
+                sha256=actual_sha,
+            )
+        if not _pe_has_authenticode_evidence(artifact):
+            return _blocked(
+                "unsigned_artifact",
+                f"{artifact.name} sidecar claims signed=true but carries no embedded "
+                "Authenticode certificate table; re-sign it via Azure Trusted Signing "
+                "(see CODE_SIGNING_POLICY.md) and rebuild the sidecar from the signed bytes.",
+                sha256=actual_sha,
+            )
+        attestation = "authenticode"
+
     return PackageVerificationResult(
         status="ok",
         ready=True,
@@ -107,81 +126,47 @@ def verify_package_artifact(artifact: Path, sidecar: Path) -> PackageVerificatio
         bootstrap_metadata=bootstrap,
         attestation=attestation,
         next_step=(
-            "Package bytes match the sidecar hash and the Sigstore attestation "
-            "bundle's subject digest; service metadata is valid."
+            "Package bytes match the sidecar hash"
+            + (" and the embedded Authenticode certificate table is present" if attestation else "")
+            + "; service metadata is valid."
         ),
     )
 
 
-def _attestation_bundle_defect(
-    bundle_path: Path, artifact_sha256: str
-) -> tuple[PackageVerificationReason, str] | None:
-    """Check that a Sigstore bundle genuinely describes these artifact bytes.
-
-    cosign attest-blob writes a bundle whose DSSE envelope carries a base64
-    in-toto statement; that statement's subject digest names the exact bytes
-    that were attested. Requiring it to equal the artifact's computed SHA-256
-    binds the attestation to the file on disk. (Full certificate-chain
-    verification still belongs to cosign/sigstore tooling; this check proves
-    the bundle is present, well-formed, signed, and about THIS artifact —
-    which the previous self-reported sidecar boolean never did.)
+def _pe_has_authenticode_evidence(path: Path) -> bool:
+    """True if a PE file carries embedded Authenticode evidence (a non-empty
+    Certificate Table, data directory index 4). Reads the real bytes so the
+    recorded signing state cannot drift from the artifact — never a flag.
+    Full chain/timestamp validity is enforced separately by the CI
+    ``Get-AuthenticodeSignature`` fail-closed step (see
+    ``.github/workflows/sign-native-installer.yml``). Duplicated (rather than
+    imported) from ``scripts/build_release_artifacts.py`` and
+    ``scripts/policy/check_sidecar_attestation_integrity.py`` so this runtime
+    module never depends on the build/policy script tree.
     """
-
     try:
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return (
-            "invalid_attestation",
-            f"{bundle_path.name} is not a readable Sigstore bundle: {exc}.",
-        )
-
-    envelope = bundle.get("dsseEnvelope") if isinstance(bundle, dict) else None
-    if not isinstance(envelope, dict):
-        return (
-            "invalid_attestation",
-            f"{bundle_path.name} has no DSSE envelope; re-download the attestation bundle.",
-        )
-    signatures = envelope.get("signatures")
-    if not isinstance(signatures, list) or not signatures:
-        return (
-            "invalid_attestation",
-            f"{bundle_path.name} carries no signatures; re-download the attestation bundle.",
-        )
-
-    raw_payload = envelope.get("payload")
-    if not isinstance(raw_payload, str):
-        return (
-            "invalid_attestation",
-            f"{bundle_path.name} DSSE envelope has no base64 payload; re-download the bundle.",
-        )
-    try:
-        statement = json.loads(base64.b64decode(raw_payload, validate=True))
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        return (
-            "invalid_attestation",
-            f"{bundle_path.name} DSSE payload does not decode to an in-toto statement: {exc}.",
-        )
-
-    subjects = statement.get("subject") if isinstance(statement, dict) else None
-    digests = {
-        subject["digest"]["sha256"].lower()
-        for subject in subjects or []
-        if isinstance(subject, dict)
-        and isinstance(subject.get("digest"), dict)
-        and isinstance(subject["digest"].get("sha256"), str)
-    }
-    if not digests:
-        return (
-            "invalid_attestation",
-            f"{bundle_path.name} names no SHA-256 subject; re-download the attestation bundle.",
-        )
-    if artifact_sha256.lower() not in digests:
-        return (
-            "attestation_mismatch",
-            f"{bundle_path.name} attests different bytes (subject digest does not "
-            "match this package). Re-download both files from the same release.",
-        )
-    return None
+        data = path.read_bytes()
+    except OSError:
+        return False
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return False
+    e_lfanew = int.from_bytes(data[0x3C:0x40], "little")
+    if len(data) < e_lfanew + 24 or data[e_lfanew : e_lfanew + 4] != b"PE\x00\x00":
+        return False
+    opt = e_lfanew + 24
+    magic = int.from_bytes(data[opt : opt + 2], "little")
+    if magic == 0x10B:  # PE32
+        dd_start = opt + 96
+    elif magic == 0x20B:  # PE32+
+        dd_start = opt + 112
+    else:
+        return False
+    cert_entry = dd_start + 4 * 8  # data directory index 4 = Certificate Table
+    if len(data) < cert_entry + 8:
+        return False
+    cert_offset = int.from_bytes(data[cert_entry : cert_entry + 4], "little")
+    cert_size = int.from_bytes(data[cert_entry + 4 : cert_entry + 8], "little")
+    return cert_offset > 0 and cert_size > 0 and cert_offset + cert_size <= len(data)
 
 
 def _service_from_manifest(install_manifest: dict[str, Any]) -> ServiceMetadata:

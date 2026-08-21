@@ -194,7 +194,8 @@ CAP / IPAWS, never claims "EAS-compliant").
 Begin an installer rehearsal only against the rc18 candidate you were handed and
 its matching proof assets:
 
-1. Obtain the installer, manifest, sidecar, and Sigstore bundle from that exact release.
+1. Obtain the installer, manifest, and sidecar from that exact release, and confirm the
+   installer's Authenticode signature status (see [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md)).
 2. Verify those files as one package; do not use a repository source ZIP.
 3. Read [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
    [Windows Release Trust And Verification](docs/install/windows-release-trust.md).

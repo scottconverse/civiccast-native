@@ -41,19 +41,22 @@ Every install artifact must have:
 2. A `.sidecar.json` file with the same SHA-256.
 3. A signed install manifest.
 4. Service and bootstrap metadata.
-5. The matching Sigstore bundle beside the artifact, with the sidecar naming
-   that exact bundle.
+5. For a Windows `.exe` whose install manifest claims `signed: true`, a
+   genuinely embedded Authenticode certificate table (Azure Trusted Signing;
+   see [CODE_SIGNING_POLICY.md](../../CODE_SIGNING_POLICY.md)). This release
+   chain carries no Sigstore/cosign step, so no artifact is required to carry
+   a `.sigstore.json` bundle.
 
-Missing artifacts, hash mismatches, missing sidecars, unsigned manifests,
-missing bundles, and mismatched attestation references are blocked states.
-Operators should download the artifact, sidecar, and bundle together, or
-rebuild the package and rerun verification rather than bypass the proof.
+Missing artifacts, hash mismatches, missing sidecars, unsigned manifests, and
+a `signed: true` claim with no real Authenticode evidence are blocked states.
+Operators should download the artifact and sidecar together, or rebuild the
+package and rerun verification rather than bypass the proof.
 
 Windows operators should verify the setup `.exe` before running it. The
 operator-facing checklist lives in
 [Windows Release Trust And Verification](../install/windows-release-trust.md)
-and explains the difference between SHA-256 checksums, sidecars, attestations,
-and Authenticode signing.
+and explains the difference between SHA-256 checksums, sidecars, and
+Authenticode signing.
 
 ## Durable Storage Prerequisite
 
