@@ -55,6 +55,42 @@ came across and what deliberately did not.
 
 ### Removed
 
+- **The legacy pre-Gate-A "rung-numbered" release-gate pipeline.** CLAUDE.md
+  already stated "there is no rung ladder and no time-boxed altitude
+  schedule" and that verification is layered by change type, not a fixed
+  cadence — this cleared out the Stage 1-7 (release-plan rungs 3.3-to-4.0)
+  script family that the statement had already superseded. Gate A (sandbox-
+  lab station acceptance, `docs/ops/gate-a.md`) is the live machine-gate
+  replacement; Gate B (24h reboot soak) is separate, tracked on its own.
+  36 files removed, ~7,650 lines:
+  - Runner scripts: `scripts/run_stage1_release_gate.py` (the named Stage 1
+    orchestrator, `STAGE_ID="3.3"`) and its 12 siblings
+    (`run_stage1_lifecycle_proof.py`, `run_stage2_completion_report.py`,
+    `run_stage2_operator_workflow_proof.py`, `run_stage3_completion_report.py`,
+    `run_stage3_control_room_adapter_proof.py`, `run_stage4_completion_report.py`,
+    `run_stage4_virtual_lab_proof.py`, `run_stage5_completion_report.py`,
+    `run_stage5_migration_records_proof.py`, `run_stage6_completion_report.py`,
+    `run_stage7_completion_report.py`, `run_stage7_final_readiness_proof.py`),
+    plus their two shared helpers `scripts/stage_report.py` and
+    `scripts/run_stage_gate.ps1`.
+  - Their 14 dedicated tests (`tests/test_stage1_release_gate.py` through
+    `tests/test_stage7_final_readiness_proof.py`, plus `test_stage_report.py`).
+  - Their 7 dedicated runbooks under `docs/ops/` (`stage-completion-gate.md`,
+    `stage1-installer-lifecycle-verification.md`, `stage2-operator-workflow.md`,
+    `stage4-virtual-media-studio.md`, `stage5-migration-archive-records.md`,
+    `stage6-resilience-compliance.md`, `stage7-final-readiness.md`).
+  - No `.github/workflows/*` ever invoked this family — it was CI-dead,
+    manually run only. `docs/ops/stage3-audio-mixer-device-layer.md` and
+    `docs/ops/stage3-control-room-device-adapters.md` were kept: despite the
+    "Stage 3" filename pattern, they are real operator-facing device
+    reference docs (Allen & Heath SQ MIDI protocol, vMix/OBS/ATEM adapter
+    behavior) that live product code
+    (`civiccast/control_room/lpm_lab_stage45.py`) still points operators to.
+    `docs/spec/3.0/sections/S10-field-certification-and-proof-ladder.md`
+    (the master §5 proof-ladder spec text) was left untouched: it already
+    states its release-gate checklist is "missing" / implementation
+    readiness "TBD" rather than claiming the deleted machinery exists.
+
 - **The WSL2/Ubuntu bootstrap lane, finished.** CLAUDE.md and BRANCHES.md
   already declared the WSL2 lane retired (2026-08-19) and "not present
   here"; this cleared out the leftover code, tests, and documentation that
