@@ -63,16 +63,102 @@ Write-Marker -Name '_STARTED.marker' -Content "Started $RunStart"
 
 # Spawn the watchdog now, as early as possible, so it bounds the ENTIRE run
 # (installer through T5 soak) -- not just the parts of the script written
-# after it. If DONE.json still does not exist $MaxScriptMinutes minutes from
-# now, the watchdog writes WATCHDOG-TIMEOUT.txt and its own DONE.json so
-# Host-Launch-Sandbox-Test.ps1's poll loop can never wait on a zombie
-# in-sandbox script forever (bounded instead by its own -TimeoutMinutes,
-# which this makes moot in the common case).
+# after it. Two independent triggers, both handled by this ONE separate
+# process (still not Start-Job -- see below):
+#   (1) OVERALL bound: if DONE.json still does not exist $MaxScriptMinutes
+#       minutes from now, write WATCHDOG-TIMEOUT.txt + a placeholder
+#       DONE.json so Host-Launch-Sandbox-Test.ps1's poll loop can never
+#       wait on a zombie in-sandbox script forever.
+#   (2) STALENESS bound, added after the 8579e66-run4 evidence: run #4
+#       reached 'station-diag-captured-after-t3t5' at 11:52:11Z and then
+#       never advanced -- 'install-progress-log-copied' (the very next
+#       step, block 6 below) never arrived in 6+ minutes, with no
+#       DONE.json, and $MaxScriptMinutes=100 was far too coarse a bound to
+#       catch that kind of late-stage stall promptly. Once
+#       summary.json.last_completed_step first reaches a step at or after
+#       the runtime verdict (matches 'runtime-check-*', or equals
+#       't3t5-skipped-station-down' or 't5-soak-complete'), this watchdog
+#       polls it every 30s; if it stops changing for 8 minutes, the
+#       watchdog writes STALL-TIMEOUT.txt + a placeholder DONE.json.
+# Deliberately NOT implemented with Start-Job -- service.py's own history
+# (see comment near the Get-WinEvent call further down) documents a real
+# System.OutOfMemoryException hit loading PSWorkflow/PSScheduledJob module
+# type data the moment Start-Job was invoked under this VM's memory
+# pressure, so the watchdog is a genuinely separate powershell.exe process
+# (Start-Process) instead -- it never touches the job-scheduling subsystem.
 try {
     $watchdogScript = @'
 param([string]$OutDir, [int]$Minutes)
-Start-Sleep -Seconds ([Math]::Max(60, $Minutes * 60))
+
 $donePath = Join-Path $OutDir 'DONE.json'
+$summaryPath = Join-Path $OutDir 'summary.json'
+$deadline = (Get-Date).AddSeconds([Math]::Max(60, $Minutes * 60))
+$pollIntervalSeconds = 30
+$stallThresholdSeconds = 8 * 60
+
+$staleTrackingStarted = $false
+$lastSeenStep = $null
+$lastChangeTime = Get-Date
+
+function Test-PostRuntimeVerdictStep {
+    param([string]$Step)
+    if (-not $Step) { return $false }
+    if ($Step -like 'runtime-check-*') { return $true }
+    if ($Step -eq 't3t5-skipped-station-down') { return $true }
+    if ($Step -eq 't5-soak-complete') { return $true }
+    return $false
+}
+
+while ((Get-Date) -lt $deadline) {
+    if (Test-Path $donePath) { break }
+
+    $step = $null
+    if (Test-Path $summaryPath) {
+        try {
+            $raw = Get-Content -Path $summaryPath -Raw -Encoding UTF8 -ErrorAction Stop
+            $obj = $raw | ConvertFrom-Json -ErrorAction Stop
+            $step = $obj.last_completed_step
+        } catch {
+            $step = $null  # mid-write or transiently malformed -- try again next poll
+        }
+    }
+
+    if ($step) {
+        if (-not $staleTrackingStarted) {
+            if (Test-PostRuntimeVerdictStep -Step $step) {
+                $staleTrackingStarted = $true
+                $lastSeenStep = $step
+                $lastChangeTime = Get-Date
+            }
+        } elseif ($step -ne $lastSeenStep) {
+            $lastSeenStep = $step
+            $lastChangeTime = Get-Date
+        } else {
+            $stalledSeconds = ((Get-Date) - $lastChangeTime).TotalSeconds
+            if ($stalledSeconds -ge $stallThresholdSeconds -and -not (Test-Path $donePath)) {
+                $ts = (Get-Date).ToUniversalTime().ToString('o')
+                $stuckSinceIso = $lastChangeTime.ToUniversalTime().ToString('o')
+                "stall_detected_utc=$ts stuck_step=$lastSeenStep stuck_since_utc=$stuckSinceIso stalled_seconds=$([Math]::Round($stalledSeconds, 1)) threshold_seconds=$stallThresholdSeconds" |
+                    Set-Content -Path (Join-Path $OutDir 'STALL-TIMEOUT.txt') -Encoding UTF8
+                if (-not (Test-Path $donePath)) {
+                    $doneObj = [ordered]@{
+                        done_utc             = $ts
+                        last_completed_step  = $lastSeenStep
+                        installer_exit_code  = $null
+                        harness_completed    = $false
+                        watchdog_timeout     = $false
+                        stall_timeout        = $true
+                    }
+                    ($doneObj | ConvertTo-Json -Depth 3) | Set-Content -Path $donePath -Encoding UTF8
+                }
+                break
+            }
+        }
+    }
+
+    Start-Sleep -Seconds $pollIntervalSeconds
+}
+
 if (-not (Test-Path $donePath)) {
     $ts = (Get-Date).ToUniversalTime().ToString('o')
     "watchdog_fired_utc=$ts max_script_minutes=$Minutes reason=DONE.json not present after the bounded deadline -- main script presumed hung or zombied" |
@@ -95,7 +181,7 @@ if (-not (Test-Path $donePath)) {
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchdogPath,
         '-OutDir', $OutDir, '-Minutes', $MaxScriptMinutes
     ) -WindowStyle Hidden | Out-Null
-    Write-Marker -Name '_WATCHDOG_SPAWNED.marker' -Content "MaxScriptMinutes=$MaxScriptMinutes started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+    Write-Marker -Name '_WATCHDOG_SPAWNED.marker' -Content "MaxScriptMinutes=$MaxScriptMinutes stall_threshold_minutes=8 started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
 } catch {
     Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "watchdog spawn failed (non-fatal, continuing without a watchdog): $_"
 }
@@ -1727,11 +1813,23 @@ try {
     # 6. Installer logs: install-progress.log (the nsh's own breadcrumb log,
     #    always at $COMMONPROGRAMDATA\CivicCast\install-progress.log) plus any
     #    NSIS log if one exists.
+    #    HARDENED <gate-a-station-up-wait-and-log-capture> follow-up
+    #    (8579e66-run4 evidence): this was the EXACT spot run #4 stalled --
+    #    'station-diag-captured-after-t3t5' was the last step Save-Summary
+    #    ever recorded, and 'install-progress-log-copied' never arrived.
+    #    Root cause is not fully proven (the staleness watchdog above is the
+    #    real guarantee against a repeat), but this is a cheap, safe
+    #    tightening regardless: the -Tail read now runs against the copy
+    #    that was JUST WRITTEN to $OutDir (a host-mapped, real-disk
+    #    MappedFolder) instead of re-reading $progressLog a second time from
+    #    %ProgramData%, which lives on the Sandbox's own virtualized/
+    #    differencing C: -- one read of the slower source instead of two.
     $progressLog = Join-Path $env:ProgramData 'CivicCast\install-progress.log'
+    $progressLogCopy = Join-Path $OutDir 'install-progress.log'
     if (Test-Path $progressLog) {
         $summary.install_progress_log_found = $true
-        Copy-Item -Path $progressLog -Destination (Join-Path $OutDir 'install-progress.log') -Force
-        $summary.install_progress_log_tail = Get-Content -Path $progressLog -Tail 80 -ErrorAction SilentlyContinue
+        Copy-Item -Path $progressLog -Destination $progressLogCopy -Force
+        $summary.install_progress_log_tail = Get-Content -Path $progressLogCopy -Tail 80 -ErrorAction SilentlyContinue
     }
     Save-Summary -Step 'install-progress-log-copied'
 

@@ -360,6 +360,35 @@ def test_watchdog_timeout_field_true_fails_completion(tmp_path: Path) -> None:
     assert "watchdog_timeout" in result["checks"]["completion"]["detail"]
 
 
+def test_stall_timeout_file_fails_completion(tmp_path: Path) -> None:
+    """A STALL-TIMEOUT.txt present must fail completion even with an
+    otherwise-well-formed harness_completed=true DONE.json -- the
+    staleness watchdog's placeholder DONE.json (fired because
+    last_completed_step stopped advancing for 8 minutes past the runtime
+    verdict) is a bounded escape hatch, never a genuine completion."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "STALL-TIMEOUT.txt").write_text(
+        "stall_detected_utc=2026-08-21T00:00:00Z stuck_step=station-diag-captured-after-t3t5 "
+        "stuck_since_utc=2026-08-20T23:52:00Z stalled_seconds=480 threshold_seconds=480\n",
+        encoding="utf-8",
+    )
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["completion"]["status"] == "FAIL"
+    assert "STALL-TIMEOUT.txt" in result["checks"]["completion"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_stall_timeout_field_true_fails_completion(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    done_path = run_dir / "DONE.json"
+    done = json.loads(done_path.read_text(encoding="utf-8"))
+    done["stall_timeout"] = True
+    done_path.write_text(json.dumps(done), encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["completion"]["status"] == "FAIL"
+    assert "stall_timeout" in result["checks"]["completion"]["detail"]
+
+
 def test_harness_completed_false_fails_completion(tmp_path: Path) -> None:
     run_dir = _synthetic_pass_dir(tmp_path)
     done_path = run_dir / "DONE.json"

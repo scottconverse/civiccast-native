@@ -220,7 +220,9 @@ sandbox-lab/output/*
 sandbox-lab/hoststore/*
 !sandbox-lab/hoststore/.gitkeep
 sandbox-lab/kit-download/*
-!sandbox-lab/kit-download/.gitkeep
+# kit-download has no .gitkeep exception: Run-GateA.ps1 replaces the whole
+# directory with an NTFS junction to the resolved kit on every run, so a
+# tracked placeholder file inside it can never survive a run (see docs/ops/gate-a.md).
 sandbox-lab/kit-staging/*
 !sandbox-lab/kit-staging/.gitkeep
 sandbox-lab/evidence/*

@@ -318,8 +318,8 @@ def check_completion(output_dir: Path) -> CheckResult:
 
     Contract as of the gate-a-station-up-wait-and-log-capture change: gated
     on ``DONE.json.harness_completed is True`` and the ABSENCE of
-    ``WATCHDOG-TIMEOUT.txt`` -- not on a specific ``last_completed_step``
-    string. The previous contract required
+    ``WATCHDOG-TIMEOUT.txt`` / ``STALL-TIMEOUT.txt`` -- not on a specific
+    ``last_completed_step`` string. The previous contract required
     ``last_completed_step == "t5-soak-complete"``, but
     ``In-Sandbox-Report.ps1`` always runs two more numbered steps after T5
     (install-progress-log-copied, event-log-checked) and then its own
@@ -336,11 +336,28 @@ def check_completion(output_dir: Path) -> CheckResult:
     ``DONE.json.watchdog_timeout is True``) is a FAIL here even if a
     DONE.json exists -- the watchdog's placeholder DONE.json is a bounded
     escape hatch for the HOST's poll loop, not a real completion.
+
+    ``STALL-TIMEOUT.txt`` is a second, narrower watchdog trigger (added
+    after 8579e66-run4, which stalled 6+ minutes past
+    'station-diag-captured-after-t3t5' with no forward progress and no
+    DONE.json): the same background watchdog process polls
+    ``summary.json.last_completed_step`` every 30s once the run reaches the
+    runtime verdict, and fires if that step stops changing for 8 minutes --
+    a much tighter bound than the overall ``-MaxScriptMinutes`` deadline.
+    Its presence is a FAIL here for the same reason as
+    ``WATCHDOG-TIMEOUT.txt``: a stall-forced placeholder DONE.json is not a
+    genuine completion.
     """
     if (output_dir / "WATCHDOG-TIMEOUT.txt").is_file():
         return _fail(
             "WATCHDOG-TIMEOUT.txt is present -- the harness hit its bounded script-level "
             "watchdog before completing; this is not a genuine run completion"
+        )
+    if (output_dir / "STALL-TIMEOUT.txt").is_file():
+        return _fail(
+            "STALL-TIMEOUT.txt is present -- the watchdog detected last_completed_step had "
+            "stopped advancing (stalled) before the run completed; this is not a genuine run "
+            "completion"
         )
     done, err = _read_json(output_dir, "DONE.json")
     if err is not None:
@@ -349,6 +366,10 @@ def check_completion(output_dir: Path) -> CheckResult:
     if done.get("watchdog_timeout") is True:
         return _fail(
             "DONE.json.watchdog_timeout=true -- the watchdog fired, not a genuine completion"
+        )
+    if done.get("stall_timeout") is True:
+        return _fail(
+            "DONE.json.stall_timeout=true -- the watchdog detected a stall, not a genuine completion"
         )
     if done.get("harness_completed") is not True:
         return _fail(

@@ -163,7 +163,7 @@ Write-Step "kit-download -> $kitSourceDir (junction)"
 
 $hoststore = Join-Path $Root 'hoststore'
 if (Test-Path $hoststore) {
-    Get-ChildItem -Path $hoststore -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $hoststore -Force | Where-Object { $_.Name -ne '.gitkeep' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 } else {
     New-Item -ItemType Directory -Force -Path $hoststore | Out-Null
 }
