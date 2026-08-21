@@ -2,7 +2,7 @@
 # Copyright (c) The CivicCast Authors
 """Tests for the real seam wiring's PURE pieces only.
 
-HARD RULE: no real PostgreSQL or NATS process is spawned here. Two things are
+HARD RULE: no real PostgreSQL process is spawned here. Two things are
 legitimately testable without one:
 
 * :func:`initdb_argv` -- pure argv construction, never executed.
@@ -25,12 +25,9 @@ from civiccast.native.provision.seams import (
     _restrict_windows_pwfile_acl,
     _windows_pwfile_acl_command,
     alter_role_password_sql,
-    default_detect_nats_store,
     default_detect_postgres_cluster,
     default_ensure_database,
-    default_ensure_nats_store_dir,
     default_run_initdb,
-    default_write_nats_conf,
     default_write_pg_hba_conf,
     default_write_postgres_conf,
     initdb_argv,
@@ -110,8 +107,6 @@ def _context(tmp_path: Path) -> ProvisionContext:
         postgres_config_path=str(tmp_path / "pgdata" / "postgresql.conf"),
         postgres_hba_path=str(tmp_path / "pgdata" / "pg_hba.conf"),
         database_password="hunter2",
-        nats_store_dir=str(tmp_path / "nats" / "store"),
-        nats_config_path=str(tmp_path / "nats" / "nats-server.conf"),
         server_pack_path=str(tmp_path / "server-binaries.ccpack"),
         state_root=str(tmp_path / "state"),
         owner_run_id="run-1",
@@ -165,12 +160,6 @@ def test_default_write_pg_hba_conf_writes_exact_content(tmp_path: Path) -> None:
     )
 
 
-def test_default_write_nats_conf_writes_exact_content(tmp_path: Path) -> None:
-    context = _context(tmp_path)
-    default_write_nats_conf(context)("port: 4222\n")
-    assert Path(context.nats_config_path).read_text(encoding="utf-8") == "port: 4222\n"
-
-
 def test_default_detect_postgres_cluster_returns_none_when_pg_version_absent(
     tmp_path: Path,
 ) -> None:
@@ -185,44 +174,6 @@ def test_default_detect_postgres_cluster_returns_stripped_version(tmp_path: Path
     (Path(context.postgres_data_dir) / "PG_VERSION").write_text("17\n", encoding="utf-8")
     detect = default_detect_postgres_cluster(context)
     assert detect() == "17"
-
-
-def test_default_detect_nats_store_reports_absent(tmp_path: Path) -> None:
-    context = _context(tmp_path)
-    probe = default_detect_nats_store(context)()
-    assert probe.path_exists is False
-    assert probe.is_directory is False
-
-
-def test_default_detect_nats_store_reports_existing_directory(tmp_path: Path) -> None:
-    context = _context(tmp_path)
-    Path(context.nats_store_dir).mkdir(parents=True)
-    probe = default_detect_nats_store(context)()
-    assert probe.path_exists is True
-    assert probe.is_directory is True
-
-
-def test_default_detect_nats_store_reports_file_occupying_path(tmp_path: Path) -> None:
-    context = _context(tmp_path)
-    Path(context.nats_store_dir).parent.mkdir(parents=True)
-    Path(context.nats_store_dir).write_text("not a directory", encoding="utf-8")
-    probe = default_detect_nats_store(context)()
-    assert probe.path_exists is True
-    assert probe.is_directory is False
-
-
-def test_default_ensure_nats_store_dir_creates_directory(tmp_path: Path) -> None:
-    context = _context(tmp_path)
-    default_ensure_nats_store_dir(context)()
-    assert Path(context.nats_store_dir).is_dir()
-
-
-def test_default_ensure_nats_store_dir_is_idempotent(tmp_path: Path) -> None:
-    context = _context(tmp_path)
-    ensure = default_ensure_nats_store_dir(context)
-    ensure()
-    ensure()  # must not raise on a second call
-    assert Path(context.nats_store_dir).is_dir()
 
 
 # --- Windows pwfile ACL restriction (icacls mocked; no real ACL call) ----------

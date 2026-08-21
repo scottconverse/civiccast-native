@@ -1,8 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
 """Typed shapes, pure decision functions, and seam protocols for the native
-PostgreSQL/NATS provisioning engine (spec-installer-lifecycle.md D4 inventory;
-spec-native-beta-recovery.md WP2: "real PostgreSQL, NATS ... provisioning").
+PostgreSQL provisioning engine (spec-installer-lifecycle.md D4 inventory;
+spec-native-beta-recovery.md WP2: "real PostgreSQL ... provisioning").
+
+NATS JetStream was removed from the product entirely (owner decision
+2026-08-20, ADR 0023 "NATS removed -- in-process event bus", which supersedes
+ADR 0001); this module no longer provisions a NATS store directory or config
+file.
 
 Every persisted structure is a pydantic model with ``extra="forbid"`` (house
 pattern -- see :mod:`civiccast.native.upgrade.models`), so a schema-drifted or
@@ -10,13 +15,12 @@ truncated journal fails LOUDLY at parse time rather than resuming from a value
 we cannot trust.
 
 Two things live here that are deliberately kept OUT of the journaled
-orchestrator so they stay unit-testable without any Windows/Postgres/NATS
+orchestrator so they stay unit-testable without any Windows/Postgres
 process:
 
-* **Idempotency decisions** (:func:`evaluate_postgres_cluster`,
-  :func:`evaluate_nats_store`) -- given only what an I/O seam OBSERVED (a
-  ``PG_VERSION`` file's contents, or whether a path exists/is-a-directory),
-  decide whether to initialize, reuse, or fail closed. The orchestrator never
+* **Idempotency decisions** (:func:`evaluate_postgres_cluster`) -- given only
+  what an I/O seam OBSERVED (a ``PG_VERSION`` file's contents), decide
+  whether to initialize, reuse, or fail closed. The orchestrator never
   re-derives this logic; it calls these functions and acts on the outcome.
 * **The DatabaseUrl value** (:func:`build_database_url`,
   :func:`resolve_database_url`) -- the exact string the installer writes to
@@ -26,11 +30,10 @@ process:
 
 The seam protocols (:class:`ProvisionSeams`) are the dependency-injection
 surface, mirroring :mod:`civiccast.native.upgrade.models`'s
-``UpgradeSeams``: the orchestrator never calls Windows, ``initdb``,
-``pg_ctl``, or ``nats-server`` directly, it calls these callables. The
-default (real) bundle is built in :mod:`civiccast.native.provision.seams`;
-tests pass fakes that record calls and exercise the REAL orchestration +
-journal logic.
+``UpgradeSeams``: the orchestrator never calls Windows, ``initdb``, or
+``pg_ctl`` directly, it calls these callables. The default (real) bundle is
+built in :mod:`civiccast.native.provision.seams`; tests pass fakes that
+record calls and exercise the REAL orchestration + journal logic.
 """
 
 from __future__ import annotations
@@ -69,8 +72,6 @@ class ProvisionPhase(StrEnum):
         "postgres_config_written"  # postgresql.conf + pg_hba.conf deltas written
     )
     DATABASE_READY = "database_ready"  # BLOCKER #52: CREATE DATABASE'd OR detected-existing
-    NATS_STORE_READY = "nats_store_ready"  # JetStream store dir created OR detected-existing
-    NATS_CONFIG_WRITTEN = "nats_config_written"  # nats-server config file written
     COMPLETE = "complete"
 
     FAILED = "failed"  # halted; never auto-retried, see orchestrator
@@ -90,9 +91,7 @@ _PHASE_RANK: dict[ProvisionPhase, int] = {
     ProvisionPhase.POSTGRES_CLUSTER_READY: 2,
     ProvisionPhase.POSTGRES_CONFIG_WRITTEN: 3,
     ProvisionPhase.DATABASE_READY: 4,
-    ProvisionPhase.NATS_STORE_READY: 5,
-    ProvisionPhase.NATS_CONFIG_WRITTEN: 6,
-    ProvisionPhase.COMPLETE: 7,
+    ProvisionPhase.COMPLETE: 5,
     # Terminal failure shares no forward rank; sentinel high rank so an
     # accidental "advance past terminal" comparison is caught by validation.
     ProvisionPhase.FAILED: 100,
@@ -165,7 +164,7 @@ DatabaseCreationOutcome = Literal["created", "already_exists"]
 class DatabaseDecision(BaseModel):
     """The outcome of BLOCKER #52's database-creation step.
 
-    Unlike :class:`PostgresClusterDecision`/:class:`NatsStoreDecision`, this
+    Unlike :class:`PostgresClusterDecision`, this
     is not split into a separate pure ``evaluate_*`` function over an
     offline-observable probe: whether ``plan.database_name`` exists can only
     be answered by a LIVE connection to the just-configured PostgreSQL
@@ -183,43 +182,6 @@ class DatabaseDecision(BaseModel):
 
     outcome: DatabaseCreationOutcome
     detail: str
-
-
-NatsStoreOutcome = Literal["create", "reuse_existing", "fail_closed_not_a_directory"]
-
-
-class NatsStoreDecision(BaseModel):
-    """The outcome of evaluating an observed NATS JetStream store path."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    outcome: NatsStoreOutcome
-    detail: str
-
-
-def evaluate_nats_store(*, path_exists: bool, is_directory: bool) -> NatsStoreDecision:
-    """Same D4 idempotency rule, applied to the NATS JetStream store
-    directory: never delete or recreate an existing store (durable messages
-    would be lost), and never write into a path that turns out not to be a
-    directory (fail closed rather than guess)."""
-
-    if not path_exists:
-        return NatsStoreDecision(
-            outcome="create",
-            detail="NATS JetStream store directory does not exist yet",
-        )
-    if not is_directory:
-        return NatsStoreDecision(
-            outcome="fail_closed_not_a_directory",
-            detail=(
-                "a non-directory file already occupies the NATS JetStream store path; "
-                "refusing to overwrite it (fail-closed)"
-            ),
-        )
-    return NatsStoreDecision(
-        outcome="reuse_existing",
-        detail="NATS JetStream store directory already exists; reused without deleting its contents",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -259,32 +221,6 @@ def build_database_url(*, host: str, port: int, database: str, username: str, pa
     quoted_user = quote(username, safe="")
     quoted_password = quote(password, safe="")
     return f"postgresql://{quoted_user}:{quoted_password}@{host}:{port}/{database}"
-
-
-# ---------------------------------------------------------------------------
-# NATS TLS files (production mTLS -- civiccast.platform.broker_config requires
-# tls:// + NATSMTLSFiles in production mode; a provisioned NATS config that
-# will serve production traffic must match, so this is an optional field on
-# ProvisionContext, not a separate concern re-typed elsewhere).
-# ---------------------------------------------------------------------------
-
-
-class NatsTlsFiles(BaseModel):
-    """Certificate paths for the provisioned NATS config's ``tls {}`` block.
-
-    Mirrors :class:`civiccast.platform.broker_config.NATSMTLSFiles`'s three
-    fields exactly (ca/cert/key), as plain path strings rather than
-    ``pathlib.Path`` so this model round-trips through the journal's JSON
-    persistence without a custom encoder. Certificate ISSUANCE (``civiccast
-    cert rotate civiccast-api``) is out of this module's scope -- this only
-    carries the paths the caller resolved.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    ca_file: str
-    cert_file: str
-    key_file: str
 
 
 # ---------------------------------------------------------------------------
@@ -372,12 +308,6 @@ class ProvisionContext(BaseModel):
     postgres_hba_path: str
     database_password: str = Field(min_length=1)
 
-    nats_host: str = "127.0.0.1"
-    nats_port: int = Field(default=4222, gt=0, le=65535)
-    nats_store_dir: str
-    nats_config_path: str
-    nats_tls: NatsTlsFiles | None = None
-
     server_pack_path: str
 
     #: Where the journal + recovery document live. MUST be outside any tree a
@@ -460,16 +390,6 @@ class ProvisionRecovery(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class NatsStoreProbe(BaseModel):
-    """What the ``detect_nats_store`` seam observed, handed to
-    :func:`evaluate_nats_store` unchanged."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    path_exists: bool
-    is_directory: bool
-
-
 class VerifyPack(Protocol):
     def __call__(self) -> None:
         """Verify the server-binaries pack's signature + byte inventory
@@ -502,22 +422,6 @@ class WritePgHbaConf(Protocol):
         """Atomically write ``pg_hba.conf``'s rendered content."""
 
 
-class DetectNatsStore(Protocol):
-    def __call__(self) -> NatsStoreProbe:
-        """Observe the NATS JetStream store path's existence/directory-ness."""
-
-
-class EnsureNatsStoreDir(Protocol):
-    def __call__(self) -> None:
-        """Create the NATS JetStream store directory. Raise on failure."""
-
-
-class WriteNatsConf(Protocol):
-    def __call__(self, content: str) -> None:
-        """Atomically write the ``nats-server`` config file's rendered
-        content."""
-
-
 @dataclass(frozen=True)
 class ProvisionSeams:
     """The bundle of real actions the orchestrator drives.
@@ -533,18 +437,11 @@ class ProvisionSeams:
     write_postgres_conf: Callable[[str], None]
     write_pg_hba_conf: Callable[[str], None]
     ensure_database: Callable[[], DatabaseDecision]
-    detect_nats_store: Callable[[], NatsStoreProbe]
-    ensure_nats_store_dir: Callable[[], None]
-    write_nats_conf: Callable[[str], None]
 
 
 __all__ = [
     "DatabaseCreationOutcome",
     "DatabaseDecision",
-    "NatsStoreDecision",
-    "NatsStoreOutcome",
-    "NatsStoreProbe",
-    "NatsTlsFiles",
     "PostgresClusterDecision",
     "PostgresClusterOutcome",
     "ProvisionContext",
@@ -555,7 +452,6 @@ __all__ = [
     "ProvisionRecovery",
     "ProvisionSeams",
     "build_database_url",
-    "evaluate_nats_store",
     "evaluate_postgres_cluster",
     "resolve_database_url",
 ]

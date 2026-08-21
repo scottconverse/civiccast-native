@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""The journaled PostgreSQL/NATS provisioning sequence.
+"""The journaled PostgreSQL provisioning sequence.
 
 This module is PURE ORCHESTRATION over the injected
 :class:`~civiccast.native.provision.models.ProvisionSeams`, mirroring
 :mod:`civiccast.native.upgrade.orchestrator`'s design: it never touches
-Windows, ``initdb``, ``pg_ctl``, or ``nats-server`` itself -- every real
-action is a seam. That is what lets a fake-seam test exercise the REAL state
-machine (the same code that runs in production), rather than a
-re-implementation of it.
+Windows, ``initdb``, or ``pg_ctl`` itself -- every real action is a seam.
+That is what lets a fake-seam test exercise the REAL state machine (the same
+code that runs in production), rather than a re-implementation of it.
+
+NATS JetStream was removed from the product entirely (owner decision
+2026-08-20, ADR 0023 "NATS removed -- in-process event bus", which supersedes
+ADR 0001); this engine no longer provisions a NATS store directory or config
+file.
 
 Forward sequence:
 
@@ -16,18 +20,16 @@ Forward sequence:
   2. detect/initdb the PostgreSQL data directory    -> POSTGRES_CLUSTER_READY
   3. write postgresql.conf + pg_hba.conf            -> POSTGRES_CONFIG_WRITTEN
   4. detect/create the "civiccast" database         -> DATABASE_READY (BLOCKER #52)
-  5. detect/create the NATS JetStream store dir     -> NATS_STORE_READY
-  6. write the nats-server config                   -> NATS_CONFIG_WRITTEN
-  7. done                                            -> COMPLETE
+  5. done                                            -> COMPLETE
 
 Failure handling (deliberately simpler than the D3 upgrade engine's: a fresh
 provisioning run has no prior installed state to roll back TO -- see
 :class:`~civiccast.native.provision.models.ProvisionPhase`'s docstring):
 
-* ANY step failure -- including a pack-verification refusal, a
-  version-mismatch fail-closed refusal, or an NATS-store-path-is-not-a-
-  directory refusal -- halts the run at ``FAILED``. The journal and an
-  operator recovery document are preserved; nothing is auto-repaired.
+* ANY step failure -- including a pack-verification refusal or a
+  version-mismatch fail-closed refusal -- halts the run at ``FAILED``. The
+  journal and an operator recovery document are preserved; nothing is
+  auto-repaired.
 * A rerun of :func:`run_provision` over a journal already at ``FAILED``
   returns that terminal outcome UNCHANGED -- it never silently retries.
   This is deliberate fail-closed behavior (WS5 task instruction: "fail-loud
@@ -44,10 +46,9 @@ journal for the context and continues from its recorded boundary. Because the
 on-disk phase only advances AFTER its real action succeeds and is persisted,
 a kill at any boundary leaves a journal the resume can drive to a clean
 COMPLETE or a clean FAILED halt. Each forward step is individually idempotent
-(the POSTGRES_CLUSTER_READY, DATABASE_READY, and NATS_STORE_READY steps
-explicitly detect and reuse existing state rather than re-running initdb /
-re-creating an existing database / recreating the store directory), so
-re-running a step whose effect already landed is safe.
+(the POSTGRES_CLUSTER_READY and DATABASE_READY steps explicitly detect and
+reuse existing state rather than re-running initdb / re-creating an existing
+database), so re-running a step whose effect already landed is safe.
 """
 
 from __future__ import annotations
@@ -57,7 +58,6 @@ from pathlib import Path
 
 from civiccast.native.provision import journal as journal_io
 from civiccast.native.provision.conf import (
-    render_nats_conf,
     render_pg_hba_conf,
     render_postgresql_conf,
 )
@@ -69,7 +69,6 @@ from civiccast.native.provision.models import (
     ProvisionPlan,
     ProvisionRecovery,
     ProvisionSeams,
-    evaluate_nats_store,
     evaluate_postgres_cluster,
 )
 
@@ -183,31 +182,6 @@ def _drive_forward(journal: ProvisionJournal, seams: ProvisionSeams) -> Provisio
             attempting = ProvisionPhase.DATABASE_READY
             database_decision = seams.ensure_database()
             journal = _persist(journal, ProvisionPhase.DATABASE_READY, database_decision.detail)
-
-        if journal.phase.rank < ProvisionPhase.NATS_STORE_READY.rank:
-            attempting = ProvisionPhase.NATS_STORE_READY
-            probe = seams.detect_nats_store()
-            nats_store_decision = evaluate_nats_store(
-                path_exists=probe.path_exists, is_directory=probe.is_directory
-            )
-            if nats_store_decision.outcome == "fail_closed_not_a_directory":
-                raise RuntimeError(f"NATS store path refused: {nats_store_decision.detail}")
-            if nats_store_decision.outcome == "create":
-                seams.ensure_nats_store_dir()
-            journal = _persist(journal, ProvisionPhase.NATS_STORE_READY, nats_store_decision.detail)
-
-        if journal.phase.rank < ProvisionPhase.NATS_CONFIG_WRITTEN.rank:
-            attempting = ProvisionPhase.NATS_CONFIG_WRITTEN
-            rendered = render_nats_conf(
-                host=journal.context.nats_host,
-                port=journal.context.nats_port,
-                store_dir=journal.context.nats_store_dir,
-                tls=journal.context.nats_tls,
-            )
-            seams.write_nats_conf(rendered.content)
-            journal = _persist(
-                journal, ProvisionPhase.NATS_CONFIG_WRITTEN, "nats-server config written"
-            )
 
         if journal.phase.rank < ProvisionPhase.COMPLETE.rank:
             attempting = ProvisionPhase.COMPLETE
@@ -376,7 +350,7 @@ def _write_recovery_document(
 
     if next_steps is None:
         next_steps = [
-            "Do NOT assume PostgreSQL or NATS are safely provisioned -- "
+            "Do NOT assume PostgreSQL is safely provisioned -- "
             f"provisioning halted while attempting {attempting.value!r}.",
             f"Read the failure reason recorded in this journal: {journal_file}",
             "If the failure was a server-binaries pack verification refusal, "
