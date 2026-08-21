@@ -29138,7 +29138,8 @@
               "remote-contribution-guest-drop",
               "eas-source-unavailable",
               "scheduled-recording-failure",
-              "scheduled-recording-dropout"
+              "scheduled-recording-dropout",
+              "asrun-outbox-degraded"
             ],
             "title": "Condition"
           },
@@ -29284,7 +29285,8 @@
               "remote-contribution-guest-drop",
               "eas-source-unavailable",
               "scheduled-recording-failure",
-              "scheduled-recording-dropout"
+              "scheduled-recording-dropout",
+              "asrun-outbox-degraded"
             ],
             "title": "Condition"
           },

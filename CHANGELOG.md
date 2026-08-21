@@ -492,6 +492,32 @@ came across and what deliberately did not.
   `completion` check now gates on a dedicated `harness_completed` flag
   instead of a `last_completed_step` string that could never actually
   match on a real completed run.
+- **BUG C2 — the as-run log (the station's legal proof-of-performance
+  record) could silently lose entries on a DB hiccup during playout.**
+  `civiccast/reporting/asrun_recorder.py`'s `StoreAsRunRecorder` wrote
+  every as-run transition straight to the durable `ReportingStore` inside a
+  bare `except Exception: log and continue` — a connection drop, a
+  disk-full write, or a brief network partition during a source transition
+  silently dropped that segment from the franchise-compliance ledger with
+  nobody told, the exact failure §12's full-disk scenario and S23's
+  "franchise operators must prove what aired" claim exist to prevent. Fixed
+  with a durable transactional outbox: every as-run write now journals
+  first to a local, fsync'd SQLite file (independent of the app's main DB
+  connection) before it ever reaches the real store; an opportunistic drain
+  makes the common case behaviorally identical to before, and a store
+  failure leaves the row safely journaled instead of dropped, retried every
+  `ChannelAutomationService` poll tick until the store recovers. A
+  persistent drain failure now raises a visible `asrun-outbox-degraded`
+  condition on the existing alert hub instead of only a log line, and
+  resolves itself once the backlog clears. Exactly-once via a stable
+  per-transition event id plus the store's existing idempotent
+  upsert/guarded-update writes; a startup replay drains anything a prior
+  crash left mid-drain, so nothing is lost across a crash either. New
+  `civiccast/reporting/asrun_outbox.py`; `civiccast/reporting/
+  asrun_recorder.py`, `civiccast/egress/automation.py`,
+  `civiccast/alerting/models.py` (new `asrun-outbox-degraded`
+  `AlertConditionKind`) updated; see `docs/adr/0023-asrun-durable-outbox.md`
+  for the full design and rejected alternatives.
 
 ### Known gaps
 
