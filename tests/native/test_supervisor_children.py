@@ -154,6 +154,49 @@ def test_postgres_child_spec_log_path_adds_l_flag() -> None:
     assert spec.argv[spec.argv.index("-l") + 1] == r"C:\ProgramData\CivicCast\logs\postgres.log"
 
 
+def test_postgres_child_spec_stdio_log_name_unset_without_log_path() -> None:
+    """Backward compatibility: no ``log_path`` means no ``-l`` flag AND no
+    diverted stdio capture -- the pre-fix single-file shape, unchanged."""
+
+    spec = postgres_child_spec(data_dir=r"C:\data\pg")
+    assert spec.stdio_log_name is None
+
+
+def test_postgres_child_spec_stdio_log_name_never_equals_the_l_target(tmp_path) -> None:
+    """Gate A run #4 regression (2026-08-21): every fresh native install
+    failed because pg_ctl's own generic-capture stdio and its ``-l`` target
+    were the SAME file. On Windows, ``pg_ctl start -l <file>`` relaunches
+    through ``cmd /c "... >> <file> 2>&1"`` (PostgreSQL's
+    ``src/bin/pg_ctl/pg_ctl.c``, ``start_postmaster``); a second process
+    reopening a file the supervisor's Python process already has open (and
+    handed to pg_ctl as its own stdout/stderr) hits a Windows
+    ``ERROR_SHARING_VIOLATION`` deterministically, so the postmaster is
+    never spawned -- confirmed by local repro against the real pg_ctl.exe
+    from the failing Gate A kit (same-file: pg_ctl exit 1, identical error
+    text; split-file: pg_ctl exit 0, clean startup).
+
+    The invariant this pins: whenever ``postgres_child_spec`` requests an
+    ``-l`` target, ``stdio_log_name`` (the file
+    ``_file_backed_popen_factory`` uses for pg_ctl's OWN stdio, per
+    ``ChildSpec.stdio_log_name``) must resolve to a DIFFERENT log_root file
+    than the ``-l`` target -- never the same path, regardless of what that
+    path is."""
+
+    log_path = str(tmp_path / "postgres.log")
+    spec = postgres_child_spec(data_dir=r"C:\data\pg", log_path=log_path)
+
+    assert spec.stdio_log_name is not None
+    # The invariant in file-name terms (stdio_log_name feeds
+    # child_log_path(name) = log_root / f"{name}.log"): it must not be
+    # "postgres" -- the name log_path itself was built from.
+    assert spec.stdio_log_name != "postgres"
+    # And in resolved-path terms, for the concrete log_root this spec's
+    # caller actually uses (service.py always derives log_path from
+    # child_log_path("postgres", log_root=...) in the SAME log_root):
+    stdio_resolved_path = str(tmp_path / f"{spec.stdio_log_name}.log")
+    assert stdio_resolved_path != log_path
+
+
 # ---------------------------------------------------------------------------
 # nats: lame-duck graceful stop ('nats-server --signal ldm=<pid>')
 # ---------------------------------------------------------------------------
@@ -184,6 +227,19 @@ def test_nats_child_spec_log_path_adds_l_flag() -> None:
     spec = nats_child_spec(log_path=r"C:\ProgramData\CivicCast\logs\nats.log")
     assert "-l" in spec.argv
     assert spec.argv[spec.argv.index("-l") + 1] == r"C:\ProgramData\CivicCast\logs\nats.log"
+
+
+def test_nats_child_spec_stdio_log_name_stays_unset_with_log_path() -> None:
+    """Scoping check for the Gate A run #4 fix: nats-server does NOT share
+    postgres's Windows sharing-violation defect. nats-server opens its own
+    ``-l`` file directly, in-process (no cmd.exe relaunch the way pg_ctl
+    does), so a same-file same-process repro against the real nats-server.exe
+    did not fail. The fix is therefore scoped to ``postgres_child_spec``
+    only -- ``nats_child_spec`` must keep ``stdio_log_name`` unset (single
+    generic-capture file, same as always) even when ``log_path`` is given."""
+
+    spec = nats_child_spec(log_path=r"C:\ProgramData\CivicCast\logs\nats.log")
+    assert spec.stdio_log_name is None
 
 
 def test_nats_graceful_stop_substitutes_live_pid() -> None:

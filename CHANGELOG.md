@@ -259,6 +259,35 @@ came across and what deliberately did not.
   to tell "nowhere to send it" from "alerting is broken." Fixed to log a
   visible suppressed `AlertEventDelivery` on the no-channel gap (fire and
   resolve paths), per spec §6.2's "never a silent drop" contract.
+- **Every fresh native install was dead on arrival — postgres never started
+  (Gate A run #4, candidate SHA `8579e66`).** Installer exit 0, activation
+  self-test + `station-set.json` written, `CivicCastSupervisor` running as
+  LocalSystem — but nothing ever listened on 127.0.0.1:8000 across 20
+  minutes / 150 health polls. `supervisor.log` showed a `postgres`
+  readiness-budget exhaustion / restart loop; `postgres.log` showed, every
+  attempt: `waiting for server to start....The process cannot access the
+  file because it is being used by another process. / stopped waiting /
+  pg_ctl: could not start server` — no postmaster output ever appeared.
+  Root cause: an earlier diagnosability fix (2026-08-12, TESTER2 b5
+  evidence) had `postgres_child_spec` pass `pg_ctl start -l
+  <child_log_path("postgres")>` while `_file_backed_popen_factory`
+  *independently* opened that SAME `postgres.log` path for `pg_ctl`'s own
+  inherited stdout/stderr. On Windows, `pg_ctl -l` relaunches through
+  `cmd /c "... >> <file> 2>&1"` (`src/bin/pg_ctl/pg_ctl.c`,
+  `start_postmaster`); a third process reopening a file the supervisor's own
+  process already has open hits `ERROR_SHARING_VIOLATION` deterministically,
+  so the postmaster was never spawned — reproduced locally against the real
+  `pg_ctl.exe` from the failing Gate A kit (same-file: exit 1, identical
+  error text; split-file: exit 0, clean startup). `nats_child_spec` does
+  NOT share this defect (`nats-server` opens its own `-l` file directly, no
+  `cmd.exe` relaunch) and is unchanged. Fixed via a new
+  `ChildSpec.stdio_log_name` field: when `postgres_child_spec` is given a
+  `log_path` (its `-l` target), it now points the generic stdio capture at a
+  separate `postgres-launcher.log` instead, so nothing ever opens
+  `postgres.log` twice. `postgres.log` keeps carrying the durable postmaster
+  log at the name operators and tooling already expect.
+  `civiccast/native/supervisor/children.py`,
+  `civiccast/native/supervisor/service.py`.
 
 ### Known gaps
 
