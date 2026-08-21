@@ -433,6 +433,27 @@ came across and what deliberately did not.
   credential store reference) are not yet resolved by the probe — no
   resolver exists anywhere in this codebase yet; stated as a known
   limitation in the module docstring rather than silently glossed over.
+- **Two working backend routes had no operator console button.** Both
+  `civiccast/captions/router.py`'s offline-caption-job retry
+  (`POST /api/staff/captions/offline-jobs/{job_id}/retry`) and
+  `civiccast/egress/router.py`'s GStreamer runtime repair
+  (`POST /api/staff/egress/repair-gstreamer`) worked end to end but were
+  backend-only, flagged in `next-cleanup.md` as waiting on console wiring.
+  Added `OfflineCaptionJobsPanel` (`civiccast/apps/portal-operator/src/
+  screens/OfflineCaptionJobsPanel.tsx`), mounted as a per-asset drawer
+  section in `AssetDetailScreen`, listing offline caption jobs for that
+  recording with a `records_clerk`-gated Retry button (confirm, loading,
+  success, and per-row error states) on failed jobs. Added
+  `GstreamerRepairPanel` to `SystemHealthScreen`'s egress health surface,
+  gated on `setup_admin`/`support_admin`, with a confirm dialog and a
+  result banner naming the remedy (`already-healthy` /
+  `restage-launched` / `installer-missing` / `launch-failed`), the live
+  closure-health state, and the re-stage PID when one launched. Both wire
+  to the real routes via new `civiccast/apps/portal-operator/src/api/
+  client.ts` functions (`listOfflineCaptionJobs`, `retryOfflineCaptionJob`,
+  `repairGstreamerRuntime`); vitest coverage in
+  `OfflineCaptionJobsPanel.test.tsx` and
+  `SystemHealthGstreamerRepair.test.tsx`.
 - **PDF agenda import — operator-upload path was a stub.**
   `AgendaService.import_from_doc` (`civiccast/agenda/service.py`) raised
   `NotImplementedError` for any non-`text/plain` upload, so an operator
