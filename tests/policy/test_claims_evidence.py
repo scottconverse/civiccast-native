@@ -1033,6 +1033,63 @@ def test_ws3r2_004_duplicate_filename_outside_canonical_dir_is_ignored(tmp_path:
     assert found == real_dir / "junit.xml", "must resolve the exact contract path, never the decoy"
 
 
+def test_flat_layout_fallback_resolves_when_no_artifact_name_subdirectory_exists(
+    tmp_path: Path,
+) -> None:
+    """2026-08-24 (nats-boundary removal, PR #23): `actions/download-artifact`
+    (confirmed on v7.0.0) places a `pattern`-matched download directly in
+    `path`, with no `<artifact-name>/` subdirectory, whenever the pattern
+    matches exactly one artifact in the run. `docs/claims/workflow-
+    contract.yaml`'s producers are downloaded by pattern in ci-test.yml, so
+    losing a second `*-meta`/`*-junit` producer (nats-boundary) flipped the
+    real on-disk layout from nested to flat for the sole remaining
+    producer, even though nothing about that producer's own upload step
+    changed. The resolver must accept the flat layout too.
+    """
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "test-meta.json").write_text(json.dumps({"sha": SOURCE_SHA_A}), encoding="utf-8")
+    found = cce.find_producer_artifact(artifacts, "test-meta", "test-meta.json")
+    assert found == artifacts / "test-meta.json"
+
+
+def test_nested_layout_is_preferred_over_a_same_named_flat_file(tmp_path: Path) -> None:
+    """If both layouts happen to be present, the exact contract path
+    (`<artifacts_dir>/<artifact_name>/<file_name>`) wins — the flat
+    fallback is a fallback, not a competing source of truth."""
+    artifacts = tmp_path / "artifacts"
+    nested_dir = artifacts / "test-meta"
+    nested_dir.mkdir(parents=True)
+    (nested_dir / "test-meta.json").write_text(
+        json.dumps({"sha": SOURCE_SHA_A, "job_id": "nested"}), encoding="utf-8"
+    )
+    (artifacts / "test-meta.json").write_text(
+        json.dumps({"sha": SOURCE_SHA_A, "job_id": "flat"}), encoding="utf-8"
+    )
+    found = cce.find_producer_artifact(artifacts, "test-meta", "test-meta.json")
+    assert found == nested_dir / "test-meta.json"
+
+
+def test_flat_layout_end_to_end_through_producer_evidence_violations(tmp_path: Path) -> None:
+    """Same scenario as the PR #23 CI failure, exercised through the real
+    entry point (`producer_evidence_violations`), not just the path
+    resolver directly: a flat-layout meta artifact must NOT be reported
+    missing."""
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "test-meta.json").write_text(
+        json.dumps({"sha": SOURCE_SHA_A, "run_id": "1", "job_id": "test"}), encoding="utf-8"
+    )
+    junit_dir = artifacts / "test-junit"
+    junit_dir.mkdir(parents=True)
+    (junit_dir / "junit.xml").write_text(junit_xml(n_passed_cases("t", 1)), encoding="utf-8")
+    violations, evidence = cce.producer_evidence_violations(
+        _base_contract(), artifacts, {"test": "success"}, SOURCE_SHA_A, expected_run_id="1"
+    )
+    assert violations == [], violations
+    assert "test" in evidence
+
+
 def test_ws3r2_004_wrong_job_id_in_meta_is_a_violation(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     _write_producer_artifacts(

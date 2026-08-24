@@ -1160,21 +1160,45 @@ def parse_junit(path: Path) -> list[JunitCase]:
 
 def find_producer_artifact(artifacts_dir: Path, artifact_name: str, file_name: str) -> Path | None:
     """CC-WS3-004 (Major, round-2 audit): resolves ONLY the contract's exact
-    artifact directory/name — `<artifacts_dir>/<artifact_name>/<file_name>`.
+    artifact directory/name — `<artifacts_dir>/<artifact_name>/<file_name>` —
+    with one narrow, still-exact fallback documented below. There is no
+    repository-wide (or artifacts-dir-wide) fallback: the prior
+    implementation's `artifacts_dir.rglob(file_name)` silently returned
+    WHATEVER matching filename it found first, anywhere under artifacts_dir.
+    That was an ambiguous-duplicate hazard — a decoy or stale file sharing a
+    producer's junit/meta filename but sitting in the WRONG artifact
+    directory could be silently routed to the wrong producer instead of
+    correctly reporting that producer's artifact as missing. Neither
+    candidate path below has that property: both are pinned to this
+    producer's own `artifact_name`/`file_name` pair, so a duplicate filename
+    belonging to a DIFFERENT producer is still never found here.
 
-    The prior implementation fell back to `artifacts_dir.rglob(file_name)`
-    and silently returned WHATEVER matching filename it found first,
-    anywhere under artifacts_dir. That is an ambiguous-duplicate hazard: a
-    decoy or stale file sharing a producer's junit/meta filename but sitting
-    in the WRONG artifact directory could be silently routed to the wrong
-    producer instead of correctly reporting that producer's artifact as
-    missing. There is no repository-wide (or artifacts-dir-wide) fallback
-    anymore — a duplicate filename anywhere other than the exact contract
-    path is simply never found, which surfaces as an honest "missing"
-    violation rather than an ambiguous, unlogged pick.
+    2026-08-24 (nats-boundary removal, PR #23): `actions/download-artifact`
+    (confirmed on v7.0.0) nests a `pattern`-matched download under
+    `<path>/<artifact-name>/` only when the pattern matches TWO OR MORE
+    artifacts in the run; when it matches exactly one, the action places
+    the file(s) directly in `<path>` with no artifact-name subdirectory.
+    docs/claims/workflow-contract.yaml's producers are downloaded by
+    `pattern: "*-meta"` / `pattern: "*-junit"` (ci-test.yml), so the
+    directory layout the checker sees is a function of how many OTHER
+    producers exist in the same run, not just this one's own artifact —
+    removing the `nats-boundary` job dropped the `*-meta` match count from
+    2 (test-meta, nats-boundary-meta) to 1 (test-meta only) and silently
+    flipped the real download layout from nested to flat, even though
+    nothing about the `test` producer's own upload step changed. Rather
+    than depend on that match-count threshold (which changes any time a
+    producer is added or removed), accept either layout: the nested
+    `<artifacts_dir>/<artifact_name>/<file_name>` (multi-match downloads,
+    and single-match downloads under an older/differently-configured
+    action) and the flat `<artifacts_dir>/<file_name>` (single-match
+    downloads on the pinned v7.0.0 behavior). Both are exact, deterministic
+    paths for this producer's own artifact_name/file_name pair.
     """
-    direct = artifacts_dir / artifact_name / file_name
-    return direct if direct.exists() else None
+    nested = artifacts_dir / artifact_name / file_name
+    if nested.exists():
+        return nested
+    flat = artifacts_dir / file_name
+    return flat if flat.exists() else None
 
 
 @dataclass(frozen=True)

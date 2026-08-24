@@ -130,7 +130,7 @@ entries:
         node_id: "tests/dr/test_postgres_backup.py::test_postgres_backup_snapshot_matches_source"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
@@ -208,7 +208,7 @@ entries:
         node_id: "tests/dr/test_postgres_restore.py::test_run_full_drill_postgres_end_to_end"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
@@ -263,7 +263,7 @@ entries:
         node_id: "tests/dr/test_restore_drill.py::test_restore_drill_catches_a_dropped_row"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
@@ -326,7 +326,7 @@ entries:
         node_id: "tests/policy/test_release_truth.py::test_unknown_live_release_is_drift"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
@@ -437,7 +437,7 @@ entries:
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
@@ -566,7 +566,7 @@ entries:
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
