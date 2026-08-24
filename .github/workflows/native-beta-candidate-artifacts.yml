@@ -359,18 +359,13 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -I -B scripts/verify_native_runtime_closure.py --tree $gstreamerClosure
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $appPayloadArgs = @(
-              "scripts/build_native_app_payload_pack.py",
-              "--output", "artifacts/native-beta/packs/native-app-payload.ccpack",
-              "--payload-out", $appPayload,
-              "--build-scratch", $appScratch,
-              "--interpreter-zip", $pythonEmbedZip,
-              "--signing-private-key", $keyPath,
-              "--signing-key-id", $env:PACK_SIGNING_KEY_ID,
-              "--source-sha", $env:SOURCE_SHA,
-              "--gstreamer-closure", $gstreamerClosure,
-              "--report", "artifacts/native-beta/native-app-payload-report.json"
-            )
+            # Splat-tail rather than folding this into the literal argument
+            # list below: tests/policy/test_native_beta_candidate_workflow.py
+            # pins several of the flags immediately below by exact literal
+            # text for BOTH lanes (it has no way to know which lane a given
+            # CI run took), so the hosted-shape invocation must stay
+            # byte-identical on every lane. Only the trailing splat varies.
+            $appPayloadExtraArgs = @()
             if ($env:BUILD_TARGET -eq "self-hosted") {
               # See docs/process/pyav-wheel-reproducibility.md: the pinned
               # toolchain is byte-identical on this lane (same provisioned
@@ -382,9 +377,19 @@ jobs:
               # hard failure on every lane -- only the compiled wheel's
               # byte-exact identity becomes advisory here.
               Write-Host "::warning::self-hosted build target -- the compiled PyAV wheel's byte-exact hash check is advisory on this lane (see docs/process/pyav-wheel-reproducibility.md). Pinned-download verification is unaffected."
-              $appPayloadArgs += "--advisory-pyav-wheel-hash"
+              $appPayloadExtraArgs = @("--advisory-pyav-wheel-hash")
             }
-            python -I -B @appPayloadArgs
+            python -I -B scripts/build_native_app_payload_pack.py `
+              --output artifacts/native-beta/packs/native-app-payload.ccpack `
+              --payload-out $appPayload `
+              --build-scratch $appScratch `
+              --interpreter-zip $pythonEmbedZip `
+              --signing-private-key $keyPath `
+              --signing-key-id $env:PACK_SIGNING_KEY_ID `
+              --source-sha $env:SOURCE_SHA `
+              --gstreamer-closure $gstreamerClosure `
+              --report artifacts/native-beta/native-app-payload-report.json `
+              @appPayloadExtraArgs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -I -B scripts/build_native_server_pack.py `
               --output artifacts/native-beta/packs/native-server-binaries.ccpack `

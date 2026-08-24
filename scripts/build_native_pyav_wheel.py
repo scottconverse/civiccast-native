@@ -242,9 +242,7 @@ def verify_artifact(
             f"SHA-256 {actual_sha256}"
         )
     elif actual_sha256 != expected_sha256.lower():
-        mismatch_detail = (
-            f"{path.name} SHA-256 {actual_sha256} != pinned {expected_sha256.lower()}"
-        )
+        mismatch_detail = f"{path.name} SHA-256 {actual_sha256} != pinned {expected_sha256.lower()}"
     if mismatch_detail is None:
         return
     if advisory:

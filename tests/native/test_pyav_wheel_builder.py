@@ -161,7 +161,9 @@ def test_main_forwards_advisory_wheel_hash_flag_to_build(
     forward it through to build() -- not a reimplemented parser."""
     received: dict[str, object] = {}
 
-    def _fake_build(*, output_dir: Path, cache_dir: Path, scratch: Path, advisory_wheel_hash: bool = False):
+    def _fake_build(
+        *, output_dir: Path, cache_dir: Path, scratch: Path, advisory_wheel_hash: bool = False
+    ):
         received["advisory_wheel_hash"] = advisory_wheel_hash
         wheel = output_dir / "av-18.0.0-cp312-cp312-win_amd64.whl"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -190,7 +192,9 @@ def test_main_defaults_advisory_wheel_hash_to_false(
 ) -> None:
     received: dict[str, object] = {}
 
-    def _fake_build(*, output_dir: Path, cache_dir: Path, scratch: Path, advisory_wheel_hash: bool = False):
+    def _fake_build(
+        *, output_dir: Path, cache_dir: Path, scratch: Path, advisory_wheel_hash: bool = False
+    ):
         received["advisory_wheel_hash"] = advisory_wheel_hash
         wheel = output_dir / "av-18.0.0-cp312-cp312-win_amd64.whl"
         output_dir.mkdir(parents=True, exist_ok=True)
