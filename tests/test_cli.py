@@ -8,6 +8,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
@@ -16,6 +17,9 @@ import civiccast.cli as cli_module
 from civiccast._version import __version__
 from civiccast.auth.store import InMemoryStaffTokenStore
 from civiccast.cli import app
+
+if TYPE_CHECKING:
+    from civiccast.platform.station_box_profile import StationBoxProfile
 
 
 def test_version_flag() -> None:
@@ -61,6 +65,230 @@ def test_doctor_with_explicit_disk_path(tmp_path: object) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["disk"]["path"] == str(tmp_path)
+
+
+def _fixture_station_box_profile(*, cable_ready: bool) -> StationBoxProfile:
+    """A deterministic StationBoxProfile fixture for `doctor --profile` golden tests."""
+
+    from datetime import UTC, datetime
+
+    from civiccast.egress.compliance import TsduckStatus
+    from civiccast.egress.sdi_relay import SdiReadiness
+    from civiccast.installer.models import DeploymentProfile
+    from civiccast.platform.hardware import CPUInfo, DiskInfo, OSContext, RAMInfo
+    from civiccast.platform.hardware import HardwareProbe as _HardwareProbe
+    from civiccast.platform.station_box_profile import (
+        AiDefaultSelection,
+        BackupDestinationRef,
+        CableOsVerdict,
+        ClockReport,
+        DeckLinkEngineRef,
+        EngineReadiness,
+        EngineTierVerdict,
+        FfmpegFeatureReport,
+        NdiSdkRef,
+        NetworkReport,
+        ReleaseIdentityRef,
+        StationBoxProfile,
+        compute_engine_tier_verdict,
+        compute_peg_readiness,
+    )
+
+    hw = _HardwareProbe(
+        cpu=CPUInfo(cores_physical=8, cores_logical=16, brand="Fixture CPU"),
+        ram=RAMInfo(total_gb=32.0, available_gb=16.0),
+        disk=DiskInfo(path="C:\\", total_gb=1000, free_gb=500),
+        gpu=None,
+        os=OSContext(
+            kind="windows", system="Windows", release="11", machine="AMD64", hostname="fixture"
+        ),
+        recommended_tier="tier-0",
+        civiccast_version="test",
+    )
+    if cable_ready:
+        engine = EngineReadiness(
+            gstreamer_present=True,
+            gstreamer_version="1.24.0",
+            required_plugins_present=True,
+            missing_plugins=[],
+            opengl_45=True,
+            hw_encoder="nvenc",
+            decklink=DeckLinkEngineRef(card_present=True, bmd_sdk_present=True, sdk_version="12.0"),
+            ndi_sdk=NdiSdkRef(sdk_present=True, sdk_version="6.0"),
+            native_os=True,
+            next_step="",
+        )
+        tsduck = TsduckStatus(installed=True, path="/usr/bin/tsp", version="3.40", install_hint="")
+        sdi = SdiReadiness(status="ok", ffmpeg_detected=True, muxer_present=True)
+    else:
+        engine = EngineReadiness(
+            gstreamer_present=False,
+            gstreamer_version=None,
+            required_plugins_present=False,
+            missing_plugins=["compositor"],
+            opengl_45=False,
+            hw_encoder="none",
+            decklink=DeckLinkEngineRef(card_present=False, bmd_sdk_present=False, sdk_version=None),
+            ndi_sdk=NdiSdkRef(sdk_present=False, sdk_version=None),
+            native_os=True,
+            next_step="Install GStreamer.",
+        )
+        tsduck = TsduckStatus(
+            installed=False, path=None, version=None, install_hint="install tsduck"
+        )
+        sdi = SdiReadiness(
+            status="ffmpeg_unavailable",
+            ffmpeg_detected=False,
+            muxer_present=False,
+            next_step="no ffmpeg",
+        )
+    qualified_tier: EngineTierVerdict = compute_engine_tier_verdict(engine)
+    clock = ClockReport(
+        timezone="UTC",
+        utc_offset_minutes=0,
+        system_time=datetime.now(UTC),
+        ntp_sync="synced",
+        note="",
+    )
+    cable_os_verdict = (
+        CableOsVerdict(
+            verdict="native-linux-recommended",
+            os_kind="linux",
+            rationale="Native Linux is recommended.",
+        )
+        if cable_ready
+        else CableOsVerdict(
+            verdict="soak-pending",
+            os_kind="windows",
+            rationale="Single-Windows-PC certification is pending — see MASTER §13.1.",
+        )
+    )
+    backup_ref = (
+        BackupDestinationRef(configured=True, reachable=True, destination="nas://backup")
+        if cable_ready
+        else BackupDestinationRef(configured=False, reachable=None, destination=None)
+    )
+    deployment_profile: DeploymentProfile = "peg-cable" if cable_ready else "public-meetings"
+    peg_readiness = compute_peg_readiness(
+        deployment_profile=deployment_profile,
+        engine=engine,
+        qualified_tier=qualified_tier,
+        sdi=sdi,
+        tsduck=tsduck,
+        clock=clock,
+        backup_destination=backup_ref,
+        ram_total_gb=hw.ram.total_gb,
+        cable_os_verdict=cable_os_verdict,
+    )
+    return StationBoxProfile(
+        generated_at=datetime.now(UTC),
+        civiccast_version="test",
+        hardware=hw,
+        system_ram_total_gb=hw.ram.total_gb,
+        engine=engine,
+        ffmpeg=FfmpegFeatureReport(
+            detected=True,
+            version="6.0",
+            supported=True,
+            has_decklink=False,
+            has_ndi=False,
+            has_libx264=True,
+            has_loudnorm=True,
+            byo_sdi_binary=None,
+            next_step="",
+        ),
+        clock=clock,
+        network=NetworkReport(
+            hostname="fixture", primary_interface_up=True, headend_interface_hint=None
+        ),
+        backup_destination=backup_ref,
+        release_identity=ReleaseIdentityRef(
+            version="test", package_verified=None, proof_state=None
+        ),
+        sdi=sdi,
+        tsduck=tsduck,
+        ndi_sdk=engine.ndi_sdk,
+        qualified_engine_tier=qualified_tier,
+        ai_default=AiDefaultSelection(
+            summary_model="gemma4:12b",
+            translate_model="translategemma:4b",
+            caption_model="whisper-large-v3",
+            basis="ram-12b",
+            detected_ram_gb=32.0,
+            rationale="fixture rationale",
+        ),
+        peg_readiness=peg_readiness,
+        cable_os_verdict=cable_os_verdict,
+    )
+
+
+def test_doctor_profile_human_full_cable_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
+    import civiccast.platform.station_box_profile as station_box_profile_module
+
+    monkeypatch.setattr(
+        station_box_profile_module,
+        "probe_station_box_profile",
+        lambda **kwargs: _fixture_station_box_profile(cable_ready=True),
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", "--profile"])
+    assert result.exit_code == 0
+    assert "Playout engine (S15 GStreamer)" in result.stdout
+    assert "PEG readiness: GREEN" in result.stdout
+    assert any(
+        f"qualified engine tier: {tier}" in result.stdout
+        for tier in ("sdi-broadcast", "premium-cg")
+    )
+
+
+def test_doctor_profile_human_no_cable_readiness_is_honest(monkeypatch: pytest.MonkeyPatch) -> None:
+    import civiccast.platform.station_box_profile as station_box_profile_module
+
+    monkeypatch.setattr(
+        station_box_profile_module,
+        "probe_station_box_profile",
+        lambda **kwargs: _fixture_station_box_profile(cable_ready=False),
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", "--profile"])
+    assert result.exit_code == 0
+    assert "GStreamer: NOT FOUND" in result.stdout
+    assert "PEG readiness: RED" in result.stdout
+    assert "Install GStreamer." in result.stdout
+    # Never a fabricated pass for an absent dimension.
+    assert "DeckLink/BMD SDK: not detected" in result.stdout
+
+
+def test_doctor_profile_json_matches_station_box_profile_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import civiccast.platform.station_box_profile as station_box_profile_module
+
+    monkeypatch.setattr(
+        station_box_profile_module,
+        "probe_station_box_profile",
+        lambda **kwargs: _fixture_station_box_profile(cable_ready=True),
+    )
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", "--profile", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == 1
+    # Backward-compat: the plain HardwareProbe shape is embedded verbatim.
+    assert "cpu" in payload["hardware"]
+    assert "ram" in payload["hardware"]
+    assert payload["peg_readiness"]["overall"] == "green"
+
+
+def test_doctor_plain_json_shape_is_unchanged_by_the_profile_flag() -> None:
+    """The default `doctor --json` (no --profile) must stay flat HardwareProbe."""
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert "cpu" in payload
+    assert "hardware" not in payload
 
 
 def test_installer_plan_json() -> None:

@@ -1,5 +1,50 @@
 # S1 — Reference Station Build(s) & the StationBoxProfile Capability Model
 
+> **Status (2026-08-21 audit correction):** The banner below this note
+> previously claimed "Built for v3.0.0-beta1" while the code did not exist —
+> corrected here to state what actually landed on
+> `feat/s1-station-profile-s3-commissioning`, contract-tested (rung 0), not
+> field/hardware-proven:
+>
+> - `civiccast/platform/station_box_profile.py`: the full `StationBoxProfile`
+>   model tree (§3), `select_ai_defaults` (§6.1), `EngineReadiness` +
+>   `EngineTierVerdict` GStreamer-prerequisite detection (§3, §6.5),
+>   `PegReadinessRollup` (§6.2), `CableOsVerdict` (§6.3) — computed, no DB
+>   table, exactly as specified. 40 unit tests
+>   (`tests/platform/test_station_box_profile.py`).
+> - `GET /api/staff/station-box-profile` and `/readiness`, role-gated
+>   (`setup_admin`/`meeting_operator`/`support_admin`) — **note the path is
+>   `/api/staff/...`, not the spec §4 table's literal
+>   `/api/station-box-profile`**: this codebase's staff bearer-token
+>   middleware only authenticates `/api/staff/*`, so the literal spec path
+>   would 401 for every caller. 13 API tests
+>   (`tests/platform/test_station_router_api.py`).
+> - `civiccast doctor --profile` (human + `--json`) extends the existing
+>   `doctor` with the Playout engine / Cable output / Clock / AI default /
+>   PEG readiness sections; plain `doctor --json` stays byte-identical to
+>   the pre-existing `HardwareProbe` shape for back-compat. 7 CLI tests.
+> - A new **Station Profile** operator-console screen
+>   (`StationProfileScreen.tsx`) — the identity half (name/timezone/storage
+>   roots, view+edit, via the new `GET`/`PUT /api/staff/station/profile`)
+>   and the capability half (the `StationBoxProfile` card + PEG readiness
+>   badges + the verbatim §13.1 cable-OS caveat). 11 vitest cases.
+> - Honesty boundaries carried into the code, not just prose:
+>   `EngineReadiness.decklink.card_present` is a `gst-device-monitor-1.0`
+>   heuristic, and `opengl_45` is inferred from NVIDIA GPU presence — both
+>   documented in the module docstring as heuristics, never claimed as a
+>   measured fact. Physical SDI proof (rung 3) is untouched by this slice.
+> - **Not done in this slice**: the `civiccast/installer/station_state.py`
+>   loader migration was scoped to the timezone path (S1's own precedent)
+>   plus new `resolve_station_display_name`/`resolve_station_storage_locations`
+>   loaders; it deliberately does NOT fold in `CIVICCAST_UPLOAD_DIR` /
+>   `CIVICCAST_NAS_ARCHIVE_PATH` (a separate, more deeply cross-cutting
+>   env-driven contract used by the native supervisor's child-process env
+>   inheritance) — see the PR description for the reasoning.
+>
+> The banner immediately below is the section's **original** (pre-2026-08-21)
+> claim and is retained for history; treat the note above as authoritative
+> for what the current codebase actually contains.
+>
 > **Status:** Built for v3.0.0-beta1; field-headend proof remains external.
 > Verified against code on `main @ 69cc676`; the later v3.0.0-beta1 public-beta
 > release-artifact soak passed against `cbd3265c5b69260b634abc92b466786f311e73ef`.
