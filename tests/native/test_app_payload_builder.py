@@ -197,6 +197,38 @@ def test_reviewed_pyav_build_uses_verified_python_toolchain(
     )
 
     assert commands[0][0] == "pinned-python.exe"
+    assert "--advisory-wheel-hash" not in commands[0]
+
+
+def test_build_reviewed_pyav_wheel_forwards_advisory_hash_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The self-hosted build lane passes advisory_wheel_hash=True down to
+    the PyAV subprocess as --advisory-wheel-hash; the hosted default (tested
+    above) must NOT pass it."""
+    builder_script = tmp_path / "build_native_pyav_wheel.py"
+    builder_script.write_text("# test fixture\n", encoding="utf-8")
+    monkeypatch.setattr(builder, "PYAV_BUILDER", builder_script)
+    commands: list[list[str]] = []
+
+    def fake_run(
+        command: list[str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append([str(part) for part in command])
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(builder.subprocess, "run", fake_run)
+
+    builder.build_reviewed_pyav_wheel(
+        tmp_path / "scratch",
+        python_executable="pinned-python.exe",
+        uv_executable="pinned-uv.exe",
+        advisory_wheel_hash=True,
+    )
+
+    assert "--advisory-wheel-hash" in commands[0]
 
 
 def test_exact_reviewed_pyav_wheel_can_be_reused_without_rebuilding(

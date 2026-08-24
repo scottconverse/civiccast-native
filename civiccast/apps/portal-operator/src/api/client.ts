@@ -1,5 +1,16 @@
 import type { AssetMetadataUpdate, AssetRow } from '../types/asset'
 import type {
+  ChannelCommissioningSetup,
+  CommissioningCheckReport,
+  CommissioningProofRun,
+  CommissioningReport,
+  CommissioningState,
+  OutputProofSettings,
+  PegReadinessRollup,
+  StationBoxProfile,
+  StationProfile,
+} from '../types/api.generated'
+import type {
   ActivityPubDeliveriesResponse,
   ActivityPubDeliveryRetriesResponse,
   ActivityPubFollowersResponse,
@@ -711,6 +722,74 @@ export function uploadAssetFile({
 
 export function getBackupStatus(): Promise<BackupStatus> {
   return request<BackupStatus>('/api/staff/installer/backup')
+}
+
+// S1: StationBoxProfile (cable/PEG appliance-readiness report, read-only,
+// computed) and the mutable station identity profile.
+export function getStationBoxProfile(): Promise<StationBoxProfile> {
+  return request<StationBoxProfile>('/api/staff/station-box-profile')
+}
+
+export function getStationBoxProfileReadiness(): Promise<PegReadinessRollup> {
+  return request<PegReadinessRollup>('/api/staff/station-box-profile/readiness')
+}
+
+export function getStationProfile(): Promise<StationProfile> {
+  return request<StationProfile>('/api/staff/station/profile')
+}
+
+// S3 commissioning wizard (screens 8-11).
+export function getCommissioningState(): Promise<CommissioningState> {
+  return request<CommissioningState>('/api/staff/cable/commissioning/state')
+}
+
+export function runCommissioningChecks(payload: {
+  deployment_profile?: 'public-meetings' | 'streaming-only' | 'peg-cable'
+  station_name?: string
+}): Promise<CommissioningCheckReport> {
+  return request<CommissioningCheckReport>('/api/staff/cable/commissioning/checks', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export function saveChannelCommissioningSetup(
+  payload: ChannelCommissioningSetup,
+): Promise<ChannelCommissioningSetup> {
+  return request<ChannelCommissioningSetup>('/api/staff/cable/commissioning/channel-setup', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export function runCommissioningOutputProof(
+  payload: OutputProofSettings,
+): Promise<CommissioningProofRun> {
+  return request<CommissioningProofRun>('/api/staff/cable/commissioning/output-proof', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export function buildCommissioningReport(stationName: string): Promise<CommissioningReport> {
+  const query = stationName ? `?station_name=${encodeURIComponent(stationName)}` : ''
+  return request<CommissioningReport>(`/api/staff/cable/commissioning/report${query}`, {
+    method: 'POST',
+  })
+}
+
+export function updateStationProfile(
+  payload: Partial<
+    Pick<
+      StationProfile,
+      'station_name' | 'station_timezone' | 'public_base_url' | 'default_channel_id' | 'storage_locations'
+    >
+  >,
+): Promise<StationProfile> {
+  return request<StationProfile>('/api/staff/station/profile', {
+    method: 'PUT',
+    body: payload,
+  })
 }
 
 export function configureBackup(

@@ -1,6 +1,40 @@
 # S10 — Field Certification and Proof Ladder
 
+> **Amendment 2026-08-21 (owner-approved):** Field certification for the
+> native-Windows product line is proven by the **machine gates**, not by the
+> rung-runner pipeline this section originally specified:
+>
+> - **Gate A** — the automated clean-Windows-Sandbox station-acceptance gate
+>   (`docs/ops/gate-a.md`, `scripts/gate_a_verdict.py`): install → K1
+>   activation → both UIs render → the clerk loop (upload → publish →
+>   captions) → the GStreamer egress engine verified with TSDuck → a bounded
+>   soak, judged by code, fail-closed, never from prose.
+> - **Gate B** — the real-hardware 24h reboot/kill/restart unattended soak
+>   that Gate A explicitly does not attempt (Windows Sandbox has no
+>   hardware pass-through and cannot own multi-hour timing).
+>
+> The **rung-runner pipeline this section describes below (§3's `ProofRung`
+> enum/`CapabilityProof` model, the `civiccast/proof/` package, the
+> `/api/v1/proof/*` endpoints, the `doctor --proof` CLI surface, and the
+> System Health → Proof Status screen) was never built and is not being
+> built.** The legacy pre-Gate-A rung-numbered release-gate pipeline that
+> did exist was removed in PR #12
+> (`chore: remove the legacy pre-Gate-A rung-numbered release-gate
+> pipeline`, commit `ef27958`). Do not resurrect it.
+>
+> The rest of this section is kept intact below as a historical design
+> record — its vocabulary (contract/lab/machine/sdi/headend/field) is still
+> useful shorthand in prose and in `CAPABILITIES.md`, but no code, API, or
+> UI implements it as a tracked entity. Where this section's "DONE
+> criteria" (§9) call for `civiccast/proof/models.py`, CAPABILITIES
+> generation from that model, or the Proof Status UI screen, treat those as
+> **superseded by Gate A / Gate B** — the machine verdict is the proof
+> surface now, not a hand-maintained rung ladder.
+
 **Status:** Spec section for Scott's review — implementation readiness TBD.
+Superseded in part by the 2026-08-21 amendment above: field certification
+proof now flows through Gate A / Gate B, not the rung-runner machinery
+this section specifies.
 
 **Purpose:** Formalize the master §5 unified 6-rung proof ladder as the single project vocabulary, governing how every capability states its evidence and when claims may be made to the public, app stores, hardware vendors, legal/FCC bodies, managed-service operators, and live devices. Define the hard public claim boundary and per-tier release gates. Specify the certified-integrator program. Ensure proof tracking is transparent to operators via CAPABILITIES surface + UI.
 

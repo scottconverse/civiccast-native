@@ -120,20 +120,51 @@ def _assert_msvc_install_path_binding(job: dict[str, object]) -> None:
     )
 
 
+def _assert_dual_lane_scheduling(job: dict[str, object], workflow: dict[str, object]) -> None:
+    """Both build_target lanes must be genuinely present, not one silently
+    replacing the other. hosted stays the exact original literal (isolated
+    per-workflow concurrency group, windows-latest); self-hosted only kicks
+    in when workflow_dispatch explicitly asks for it, never unconditionally
+    -- a push-triggered release-branch build (no `inputs` at all) must still
+    resolve to the hosted literals.
+    """
+    concurrency = workflow["concurrency"]
+    assert concurrency["cancel-in-progress"] == "false"
+    group = concurrency["group"]
+    assert group.startswith("${{") and group.endswith("}}"), (
+        "concurrency.group must stay a workflow_dispatch-input-gated expression, "
+        "not a bare literal that can only serve one lane"
+    )
+    assert "github.event_name == 'workflow_dispatch'" in group
+    assert "inputs.build_target == 'self-hosted'" in group
+    assert "'sandbox-lab'" in group, "self-hosted lane must share Gate A's own concurrency group"
+    assert "'native-beta-candidate-artifacts'" in group, (
+        "hosted lane's original per-workflow concurrency group must be unchanged"
+    )
+
+    runs_on = job["runs-on"]
+    assert isinstance(runs_on, str) and runs_on.startswith("${{") and runs_on.endswith("}}"), (
+        "runs-on must stay a workflow_dispatch-input-gated expression, not a bare "
+        "literal (string or label list) that can only serve one lane"
+    )
+    assert "github.event_name == 'workflow_dispatch'" in runs_on
+    assert "inputs.build_target == 'self-hosted'" in runs_on
+    assert '["self-hosted","windows","sandbox-lab"]' in runs_on, (
+        "self-hosted lane must target the same box Gate A runs on"
+    )
+    assert "'windows-latest'" in runs_on, "hosted lane's original runner must be unchanged"
+
+
 def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishing() -> None:
     text, workflow = _workflow()
     triggers = workflow.get("on", workflow.get(True))
 
     assert set(triggers) == {"push", "workflow_dispatch"}
     assert triggers["push"]["branches"] == ["release/native-beta-1.0.0-beta.1-rc1"]
-    assert workflow["concurrency"] == {
-        "group": "native-beta-candidate-artifacts",
-        "cancel-in-progress": "false",
-    }
+    job = workflow["jobs"]["build-native-beta"]
+    _assert_dual_lane_scheduling(job, workflow)
     assert workflow["permissions"] == {"contents": "read", "id-token": "write"}
 
-    job = workflow["jobs"]["build-native-beta"]
-    assert job["runs-on"] == "windows-latest"
     # Was "360" -- GitHub's own default, pinned here only because that is what
     # the workflow happened to say. Two successful candidate builds measured
     # 36m (run 32307731262) and 30m (run 32294680736), so 180 is 5x headroom
@@ -396,6 +427,35 @@ def test_native_beta_candidate_workflow_contract_rejects_job_level_runner_contex
 
     with pytest.raises(AssertionError):
         _assert_msvc_install_path_binding(_job_from_text(mutated))
+
+
+def test_native_beta_candidate_workflow_contract_rejects_unconditional_self_hosted_runner() -> None:
+    """Regression guard for the build_target: self-hosted lane (HALO box
+    keeps the assembled kit local for Gate A instead of a ~21 GB round
+    trip): the self-hosted runner labels must never become the ONLY
+    destination -- that would break every push-triggered release-branch
+    build, which carries no `inputs` at all and has no self-hosted box to
+    fall back to.
+    """
+    text = WORKFLOW.read_text(encoding="utf-8")
+    runs_on_expression = (
+        "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == "
+        '\'self-hosted\') && fromJSON(\'["self-hosted","windows","sandbox-lab"]\') '
+        "|| 'windows-latest' }}"
+    )
+    assert runs_on_expression in text, "test's expected literal has drifted from the workflow"
+    mutated = text.replace(
+        f"runs-on: {runs_on_expression}",
+        "runs-on: [self-hosted, windows, sandbox-lab]",
+        1,
+    )
+    assert mutated != text
+
+    mutated_workflow = yaml.load(mutated, Loader=yaml.BaseLoader)
+    with pytest.raises(AssertionError):
+        _assert_dual_lane_scheduling(
+            mutated_workflow["jobs"]["build-native-beta"], mutated_workflow
+        )
 
 
 def test_native_beta_default_pack_source_points_to_its_frozen_release_tag() -> None:

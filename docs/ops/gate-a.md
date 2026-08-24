@@ -294,6 +294,67 @@ Evidence for every run — pass or fail — lands at
 `sandbox-lab/evidence/<source_sha>/<utc-timestamp>/`, a full copy of
 `sandbox-lab/output/` plus `gate-a-verdict.json`.
 
+## Cutting the download further: self-hosted candidate builds
+
+Even at ~1-2 MB/s the download above is one leg of a two-leg transfer
+problem: `native-beta-candidate-artifacts.yml` normally builds on a hosted
+`windows-latest` runner and uploads the same ~21 GB kit (plus an ~18.6 GB
+station bundle and a ~3 GB candidate) before Gate A ever starts pulling it
+back down onto this box — full round trip, ~2.5-3h before the Windows
+Sandbox even launches.
+
+`native-beta-candidate-artifacts.yml` accepts a `build_target` input on
+manual dispatch. `hosted` (the default, and every `push`-triggered build on
+the release branch) is unchanged from the description above. `self-hosted`
+runs the build on THIS SAME `[self-hosted, windows, sandbox-lab]` box Gate A
+runs on. It keeps intermediate mirrors under
+`C:\CivicCastTester\candidates\<sha>\` and writes the FINAL kit in the flat
+layout Gate A expects — `setup.exe`, `packs\`, `station\` directly under the
+directory — straight to `C:\CivicCastTester\kit-staging\<sha>\`, instead of
+only uploading it. By default it also skips the two large uploads (station
+bundle, kit) — the small `native-beta-candidate-<sha>` artifact (~3 GB)
+still uploads unconditionally. Pass `upload_large_artifacts: true` on the
+dispatch to force the two large uploads anyway (e.g. to let a different
+machine run Gate A against that candidate).
+
+`gate-a-station-acceptance.yml` owns the consumer side of this contract in
+its own "Reuse a locally pre-staged kit" step: it checks
+`C:\CivicCastTester\kit-staging\<sha>\` directly (a `station\` subdirectory
+and a `*setup.exe` at the root) and, when present, junctions it into
+`sandbox-lab/kit-staging/<sha>` and skips the ~21 GB download entirely. Any
+candidate that step doesn't find this way — an older run predating this
+contract, a hosted build, or a self-hosted build whose local path isn't
+present on the box handling this particular Gate A run — falls back to the
+`actions/download-artifact@v4` fetch exactly as described above. Producer
+(this workflow) and consumer (that step) are deliberately two separate,
+independently mergeable changes that agree only on the path/layout contract
+above, not on a shared artifact or workflow-to-workflow signal.
+
+Because a self-hosted build and Gate A now share the one physical box, both
+workflows' top-level `concurrency:` block uses the same `sandbox-lab` group
+when a self-hosted build is in play, so the two never execute at once — the
+later one queues (`cancel-in-progress: false`) rather than contending for
+the box's disk, CPU, and the Windows Sandbox feature itself. Only dispatch a
+self-hosted candidate build when Gate A is not currently mid-run; queueing
+behind it is safe but still a wait.
+
+The self-hosted lane also makes the compiled PyAV wheel's byte-exact
+reproducibility check (inside `scripts/build_native_pyav_wheel.py`)
+advisory rather than a hard failure — see
+`docs/process/pyav-wheel-reproducibility.md` for why running the identical
+pinned toolchain on a different physical machine can legitimately produce
+non-byte-identical (but still correct — the runtime probe and license gate
+both still run unconditionally) output. Every pinned *download* in that
+build stays a hard failure on every lane; only the final compiled wheel's
+identity assertion is affected, and only on `self-hosted`.
+
+Local disk under both `C:\CivicCastTester\candidates\` and
+`C:\CivicCastTester\kit-staging\` is pruned to the current sha at the start
+of `build-native-beta` on the self-hosted lane, the same pattern
+`gate-a-station-acceptance.yml` already used for its own
+`sandbox-lab/kit-staging\` — without it, every self-hosted dispatch would
+add another ~20-40 GB across the two roots that never gets reclaimed.
+
 You can also run the judge directly against any evidence directory without
 launching Sandbox at all:
 

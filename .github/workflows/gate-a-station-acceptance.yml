@@ -36,6 +36,18 @@
 # remains supported on the script itself for manual local use, where a
 # slower single-stream `gh run download` is an acceptable trade for not
 # needing a workflow around it.
+#
+# LOCAL-FIRST KIT: native-beta-candidate-artifacts.yml's build_target:
+# self-hosted lane builds on THIS SAME box (self-hosted, windows,
+# sandbox-lab) and writes the finished, flat kit layout (setup.exe +
+# packs\ + station\) straight to C:\CivicCastTester\kit-staging\<sha>\ in
+# addition to (by default, instead of) uploading the ~21 GB artifact. A
+# "Reuse a locally pre-staged kit" step earlier in this job's history
+# checks that exact path and junctions it into sandbox-lab/kit-staging/<sha>
+# when present, skipping the download below entirely; anything that step
+# doesn't find (an older candidate run, a hosted build, or a self-hosted
+# build whose local path isn't on this particular box) falls through to the
+# download unchanged.
 
 name: gate-a-station-acceptance
 
@@ -51,7 +63,14 @@ on:
         type: string
 
 concurrency:
-  group: gate-a
+  # Shared with native-beta-candidate-artifacts.yml's build_target:
+  # self-hosted lane (group: sandbox-lab there too) so a self-hosted candidate
+  # build and a Gate A run never execute on this one physical box at the
+  # same time -- the later one queues (cancel-in-progress: false) instead of
+  # contending for the same hardware/Windows Sandbox feature. This also still
+  # fully serializes Gate A runs against each other, as the old "gate-a" name
+  # did.
+  group: sandbox-lab
   cancel-in-progress: false
 
 permissions:
