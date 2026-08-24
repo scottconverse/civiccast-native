@@ -18,14 +18,61 @@
 # adjective. "Not yet released" is true. "Private" is not.
 name: native-beta-candidate-artifacts
 
+# build_target lets a manual dispatch build ON the self-hosted sandbox-lab box
+# (the same machine gate-a-station-acceptance.yml runs Gate A on) instead of a
+# hosted windows-latest runner. Every release-candidate cycle was dominated by
+# transfer, not work: the hosted lane uploads ~43 GB (kit 21 GB + bundle 18 GB
+# + candidate 3 GB) and Gate A then re-downloads the 21 GB kit at a measured
+# ~1-2 MB/s (~2.5-3h before the sandbox even starts). build_target:
+# self-hosted keeps intermediate mirrors under
+# C:\CivicCastTester\candidates\<sha>\ and writes the FINAL flat kit
+# (setup.exe + packs\ + station\) straight to
+# C:\CivicCastTester\kit-staging\<sha>\ -- the exact path/layout
+# gate-a-station-acceptance.yml's own local-kit-reuse step reads (Test-Path,
+# then an NTFS junction, never a download). The default stays "hosted":
+# push-triggered candidate builds on the release branch are never affected by
+# this input.
 on:
   workflow_dispatch:
+    inputs:
+      build_target:
+        description: >-
+          Where to run this build. "hosted" (default) runs on windows-latest
+          exactly as before this input existed. "self-hosted" runs on this
+          repo's self-hosted sandbox-lab runner, writes the kit/bundle/
+          candidate to a local artifact root on that box, and by default
+          skips the two large (~18 GB / ~21 GB) artifact uploads so Gate A --
+          which runs on the SAME box -- reads the kit from local disk. Only
+          dispatch self-hosted when Gate A is not currently running against
+          another candidate; the shared "sandbox-lab" concurrency group below
+          queues them rather than running them at once, but a shorter wait is
+          still a wait.
+        type: choice
+        options:
+          - hosted
+          - self-hosted
+        default: hosted
+      upload_large_artifacts:
+        description: >-
+          Self-hosted only. Force-upload the full station bundle (~18 GB) and
+          assembled kit (~21 GB) to GitHub Actions artifacts anyway (e.g. to
+          let a different machine run Gate A against this candidate). Ignored
+          when build_target is "hosted" -- hosted builds always upload, since
+          there is no persistent local box for Gate A to read from.
+        type: boolean
+        default: false
   push:
     branches:
       - release/native-beta-1.0.0-beta.1-rc1
 
 concurrency:
-  group: native-beta-candidate-artifacts
+  # Self-hosted dispatches join Gate A's own "sandbox-lab" concurrency group
+  # (see gate-a-station-acceptance.yml) so the build and a Gate A run never
+  # execute on the shared box at the same time -- the later one queues
+  # (cancel-in-progress: false) instead of racing the same hardware. Hosted
+  # dispatches/pushes never touch that box, so they keep the original
+  # same-workflow-only serialization.
+  group: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && 'sandbox-lab' || 'native-beta-candidate-artifacts' }}
   cancel-in-progress: false
 
 permissions:
@@ -35,7 +82,7 @@ permissions:
 jobs:
   build-native-beta:
     name: Build and sign native-beta candidate assets
-    runs-on: windows-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
     timeout-minutes: 180
     env:
       PACK_PUBLIC_KEY_BASE64: ${{ vars.CIVICCAST_PACK_PUBLIC_KEY_BASE64 }}
@@ -44,6 +91,55 @@ jobs:
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@v4
+
+      - name: Resolve build target and local candidate root
+        id: build_target
+        shell: pwsh
+        run: |
+          $buildTarget = "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target) || 'hosted' }}"
+          if ($buildTarget -notin @("hosted", "self-hosted")) { $buildTarget = "hosted" }
+          $uploadLarge = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_large_artifacts) || 'false' }}"
+          $candidateRoot = "C:\CivicCastTester\candidates\${{ github.sha }}"
+          "BUILD_TARGET=$buildTarget" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "UPLOAD_LARGE_ARTIFACTS=$uploadLarge" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CANDIDATE_ROOT=$candidateRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "build_target=$buildTarget upload_large_artifacts=$uploadLarge candidate_root=$candidateRoot"
+
+      - name: Prune stale local candidate builds (self-hosted only, keep this sha)
+        if: env.BUILD_TARGET == 'self-hosted'
+        shell: pwsh
+        run: |
+          # Two local roots on this box, both keyed by <sha>, both pruned here
+          # at the start of the one job every self-hosted dispatch always
+          # runs first:
+          #   - C:\CivicCastTester\candidates\<sha>\ -- intermediate mirrors
+          #     written by this job, build-native-station-bundle, and
+          #     assemble-native-beta-kit (candidate\, station-bundle\).
+          #   - C:\CivicCastTester\kit-staging\<sha>\ -- the FINAL flat kit
+          #     assemble-native-beta-kit writes there, which is the exact
+          #     path/layout gate-a-station-acceptance.yml's "Reuse a locally
+          #     pre-staged kit" step reads via Test-Path + a junction (never a
+          #     copy), never pruned from that side.
+          # Safe to prune stale shas from either root here: this job's own
+          # "sandbox-lab" concurrency group (shared with gate-a-station-
+          # acceptance.yml) guarantees no Gate A run is reading either root
+          # while a self-hosted build is executing. Without this, every
+          # self-hosted dispatch would add another ~20-40 GB across the two
+          # roots that never gets reclaimed -- keep only the sha this run is
+          # building.
+          $currentSha = "${{ github.sha }}"
+          foreach ($root in @("C:\CivicCastTester\candidates", "C:\CivicCastTester\kit-staging")) {
+            if (Test-Path -LiteralPath $root) {
+              Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -ne $currentSha } |
+                ForEach-Object {
+                  Write-Host "Removing stale local candidate: $($_.FullName)"
+                  Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            } else {
+              New-Item -ItemType Directory -Force -Path $root | Out-Null
+            }
+          }
 
       - name: Bind reviewed MSVC install location
         shell: pwsh
@@ -263,16 +359,32 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -I -B scripts/verify_native_runtime_closure.py --tree $gstreamerClosure
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            python -I -B scripts/build_native_app_payload_pack.py `
-              --output artifacts/native-beta/packs/native-app-payload.ccpack `
-              --payload-out $appPayload `
-              --build-scratch $appScratch `
-              --interpreter-zip $pythonEmbedZip `
-              --signing-private-key $keyPath `
-              --signing-key-id $env:PACK_SIGNING_KEY_ID `
-              --source-sha $env:SOURCE_SHA `
-              --gstreamer-closure $gstreamerClosure `
-              --report artifacts/native-beta/native-app-payload-report.json
+            $appPayloadArgs = @(
+              "scripts/build_native_app_payload_pack.py",
+              "--output", "artifacts/native-beta/packs/native-app-payload.ccpack",
+              "--payload-out", $appPayload,
+              "--build-scratch", $appScratch,
+              "--interpreter-zip", $pythonEmbedZip,
+              "--signing-private-key", $keyPath,
+              "--signing-key-id", $env:PACK_SIGNING_KEY_ID,
+              "--source-sha", $env:SOURCE_SHA,
+              "--gstreamer-closure", $gstreamerClosure,
+              "--report", "artifacts/native-beta/native-app-payload-report.json"
+            )
+            if ($env:BUILD_TARGET -eq "self-hosted") {
+              # See docs/process/pyav-wheel-reproducibility.md: the pinned
+              # toolchain is byte-identical on this lane (same provisioned
+              # lock), but MSVC can still embed build-machine-dependent state
+              # into the compiled PyAV wheel, so a different physical machine
+              # than the hosted runner the reference hash was reviewed on can
+              # legitimately fail the wheel's byte-exact check. Every pinned
+              # DOWNLOAD (uv, FFmpeg source, MSYS2 base, PyAV sdist) stays a
+              # hard failure on every lane -- only the compiled wheel's
+              # byte-exact identity becomes advisory here.
+              Write-Host "::warning::self-hosted build target -- the compiled PyAV wheel's byte-exact hash check is advisory on this lane (see docs/process/pyav-wheel-reproducibility.md). Pinned-download verification is unaffected."
+              $appPayloadArgs += "--advisory-pyav-wheel-hash"
+            }
+            python -I -B @appPayloadArgs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             python -I -B scripts/build_native_server_pack.py `
               --output artifacts/native-beta/packs/native-server-binaries.ccpack `
@@ -480,6 +592,16 @@ jobs:
             assets = @($assets | ForEach-Object { [System.IO.Path]::GetRelativePath($artifactRoot, $_.FullName).Replace('\', '/') })
           } | ConvertTo-Json | Set-Content -LiteralPath artifacts/native-beta/candidate-receipt.json -Encoding utf8
 
+      - name: Mirror the candidate build to the local artifact root (self-hosted only)
+        if: env.BUILD_TARGET == 'self-hosted'
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:CANDIDATE_ROOT "candidate"
+          if (Test-Path -LiteralPath $destination) { Remove-Item -Recurse -Force $destination }
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          Copy-Item -Path "artifacts/native-beta/*" -Destination $destination -Recurse -Force
+          Write-Host "Mirrored candidate build outputs to $destination"
+
       - name: Upload the native-beta candidate artifact
         uses: actions/upload-artifact@v4
         timeout-minutes: 45
@@ -517,7 +639,7 @@ jobs:
   # "Free ..." steps below.
   build-native-station-bundle:
     name: Provision and sign the native station bundle (K1)
-    runs-on: windows-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
     timeout-minutes: 180
     env:
       PACK_SIGNING_KEY_ID: ${{ vars.CIVICCAST_PACK_SIGNING_KEY_ID }}
@@ -525,6 +647,22 @@ jobs:
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@v4
+
+      - name: Resolve build target and local candidate root
+        id: build_target
+        shell: pwsh
+        run: |
+          $buildTarget = "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target) || 'hosted' }}"
+          if ($buildTarget -notin @("hosted", "self-hosted")) { $buildTarget = "hosted" }
+          $uploadLarge = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_large_artifacts) || 'false' }}"
+          $candidateRoot = "C:\CivicCastTester\candidates\${{ github.sha }}"
+          "BUILD_TARGET=$buildTarget" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "UPLOAD_LARGE_ARTIFACTS=$uploadLarge" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CANDIDATE_ROOT=$candidateRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if ($buildTarget -eq "self-hosted") {
+            New-Item -ItemType Directory -Force -Path $candidateRoot | Out-Null
+          }
+          Write-Host "build_target=$buildTarget upload_large_artifacts=$uploadLarge candidate_root=$candidateRoot"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
@@ -694,7 +832,24 @@ jobs:
           }
           $lines | Set-Content -LiteralPath (Join-Path $stationDir "SHA256SUMS.txt") -Encoding utf8
 
+      - name: Mirror the station bundle to the local artifact root (self-hosted only)
+        if: env.BUILD_TARGET == 'self-hosted'
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:CANDIDATE_ROOT "station-bundle"
+          if (Test-Path -LiteralPath $destination) { Remove-Item -Recurse -Force $destination }
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          Copy-Item -Path "artifacts/native-station-bundle/*" -Destination $destination -Recurse -Force
+          Write-Host "Mirrored station bundle outputs to $destination"
+
+      # Skipped by default on the self-hosted lane: this bundle is ~18.6 GB
+      # and assemble-native-beta-kit below reads it straight from the local
+      # mirror above when build_target is self-hosted, so uploading it too
+      # would burn the exact transfer time this workflow input exists to cut.
+      # Set upload_large_artifacts: true on the dispatch to force it anyway
+      # (e.g. to hand this candidate to a different machine for Gate A).
       - name: Upload the native station bundle artifact
+        if: env.BUILD_TARGET != 'self-hosted' || env.UPLOAD_LARGE_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         timeout-minutes: 45
         with:
@@ -722,15 +877,36 @@ jobs:
   assemble-native-beta-kit:
     name: Assemble the installable native-beta kit (installer + station bundle)
     needs: [build-native-beta, build-native-station-bundle]
-    runs-on: windows-latest
-    # This job only downloads two artifacts its dependencies already built,
-    # co-locates them, and re-uploads. It has no business running for hours.
-    # Without this it inherited the 360-minute default and, on 2026-08-20, run
-    # 32316394055 sat over an hour inside a hung download-artifact with no
-    # ceiling in sight -- see the per-step timeouts below.
+    # Self-hosted: must be the SAME physical box as the two jobs above (only
+    # one sandbox-lab runner is registered) so the local mirrors they wrote
+    # under C:\CivicCastTester\candidates\<sha>\ are readable here without a
+    # download.
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
+    # This job only combines its dependencies' already-built outputs and
+    # re-uploads. It has no business running for hours. Without this it
+    # inherited the 360-minute default and, on 2026-08-20, run 32316394055
+    # sat over an hour inside a hung download-artifact with no ceiling in
+    # sight -- see the per-step timeouts below.
     timeout-minutes: 45
     steps:
+      - name: Resolve build target and local candidate root
+        id: build_target
+        shell: pwsh
+        run: |
+          $buildTarget = "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target) || 'hosted' }}"
+          if ($buildTarget -notin @("hosted", "self-hosted")) { $buildTarget = "hosted" }
+          $uploadLarge = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_large_artifacts) || 'false' }}"
+          $candidateRoot = "C:\CivicCastTester\candidates\${{ github.sha }}"
+          "BUILD_TARGET=$buildTarget" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "UPLOAD_LARGE_ARTIFACTS=$uploadLarge" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CANDIDATE_ROOT=$candidateRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "build_target=$buildTarget upload_large_artifacts=$uploadLarge candidate_root=$candidateRoot"
+
+      # Hosted only: self-hosted reads build-native-beta's and
+      # build-native-station-bundle's local mirrors directly (see the
+      # "Co-locate" step below), no download needed.
       - name: Download the native-beta candidate (installer + component packs)
+        if: env.BUILD_TARGET != 'self-hosted'
         timeout-minutes: 15
         uses: actions/download-artifact@v4
         with:
@@ -738,6 +914,7 @@ jobs:
           path: candidate
 
       - name: Download the signed native station bundle
+        if: env.BUILD_TARGET != 'self-hosted'
         timeout-minutes: 15
         uses: actions/download-artifact@v4
         with:
@@ -748,27 +925,45 @@ jobs:
         shell: pwsh
         run: |
           # Defensive against actions/upload-artifact's common-ancestor path
-          # stripping: locate each asset by name under its download root rather
-          # than assuming the exact nested layout.
+          # stripping: locate each asset by name under its source root rather
+          # than assuming the exact nested layout. Self-hosted reads the two
+          # local mirrors written under CANDIDATE_ROOT by the jobs this one
+          # needs; hosted reads the two directories just downloaded above.
           $ErrorActionPreference = "Stop"
-          $kit = "kit"
+          # Self-hosted writes the FINAL kit straight to
+          # C:\CivicCastTester\kit-staging\<sha>\ (flat: setup.exe, packs\,
+          # station\ directly under it) rather than under CANDIDATE_ROOT --
+          # that is the exact path/layout gate-a-station-acceptance.yml's own
+          # "Reuse a locally pre-staged kit" step checks (Test-Path ...\station
+          # and a *setup.exe at the root) before junctioning it in and
+          # skipping its download. Keeping this producer-side path in sync
+          # with that consumer-side check is the whole point of this job on
+          # the self-hosted lane; CANDIDATE_ROOT stays the source for the two
+          # intermediate mirrors only.
+          $selfHosted = $env:BUILD_TARGET -eq "self-hosted"
+          $candidateSource = if ($selfHosted) { Join-Path $env:CANDIDATE_ROOT "candidate" } else { "candidate" }
+          $stationBundleSource = if ($selfHosted) { Join-Path $env:CANDIDATE_ROOT "station-bundle" } else { "station-bundle" }
+          $kit = if ($selfHosted) { "C:\CivicCastTester\kit-staging\${{ github.sha }}" } else { "kit" }
+          if (-not (Test-Path -LiteralPath $candidateSource)) { throw "Kit assembly: candidate source directory not found: $candidateSource" }
+          if (-not (Test-Path -LiteralPath $stationBundleSource)) { throw "Kit assembly: station bundle source directory not found: $stationBundleSource" }
+          if (Test-Path -LiteralPath $kit) { Remove-Item -Recurse -Force $kit }
           New-Item -ItemType Directory -Force -Path $kit | Out-Null
 
-          $setup = Get-ChildItem -Path candidate -Recurse -Filter "CivicCast (Native)_*_x64-setup.exe" | Select-Object -First 1
-          if (-not $setup) { throw "Kit assembly: candidate installer setup.exe not found under candidate/." }
+          $setup = Get-ChildItem -Path $candidateSource -Recurse -Filter "CivicCast (Native)_*_x64-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw "Kit assembly: candidate installer setup.exe not found under $candidateSource." }
           Copy-Item -LiteralPath $setup.FullName -Destination (Join-Path $kit $setup.Name)
 
           # Component packs the installer side-loads next to itself ($EXEDIR\packs).
-          $packSource = Get-ChildItem -Path candidate -Recurse -Filter "*.ccpack"
-          if ($packSource.Count -eq 0) { throw "Kit assembly: no component .ccpack files found under candidate/." }
+          $packSource = Get-ChildItem -Path $candidateSource -Recurse -Filter "*.ccpack"
+          if ($packSource.Count -eq 0) { throw "Kit assembly: no component .ccpack files found under $candidateSource." }
           $kitPacks = Join-Path $kit "packs"
           New-Item -ItemType Directory -Force -Path $kitPacks | Out-Null
           foreach ($p in $packSource) { Copy-Item -LiteralPath $p.FullName -Destination (Join-Path $kitPacks $p.Name) }
 
           # The signed station bundle the mandatory K1 hook consumes at
           # $EXEDIR\station\station-index.json. Copy its whole directory verbatim.
-          $index = Get-ChildItem -Path station-bundle -Recurse -Filter "station-index.json" | Select-Object -First 1
-          if (-not $index) { throw "Kit assembly: station-index.json not found under station-bundle/." }
+          $index = Get-ChildItem -Path $stationBundleSource -Recurse -Filter "station-index.json" | Select-Object -First 1
+          if (-not $index) { throw "Kit assembly: station-index.json not found under $stationBundleSource." }
           $bundleDir = $index.Directory.FullName
           $kitStation = Join-Path $kit "station"
           New-Item -ItemType Directory -Force -Path $kitStation | Out-Null
@@ -782,9 +977,17 @@ jobs:
           }
           $stationPacks = @(Get-ChildItem -Path $kitStation -Filter "*.ccpack")
           if ($stationPacks.Count -eq 0) { throw "Kit assembly: the co-located station bundle carries no component packs." }
-          Write-Host "Assembled kit: $($setup.Name) + .\station\station-index.json + $($stationPacks.Count) station pack(s) + $($packSource.Count) installer pack(s)."
+          Write-Host "Assembled kit at ${kit}: $($setup.Name) + .\station\station-index.json + $($stationPacks.Count) station pack(s) + $($packSource.Count) installer pack(s)."
 
+      # Skipped by default on the self-hosted lane: this kit is ~21.9 GB and
+      # already sits at C:\CivicCastTester\kit-staging\<sha>\ on the same box
+      # gate-a-station-acceptance.yml's own local-kit-reuse step reads from --
+      # uploading it too would burn the exact transfer time this workflow
+      # input exists to cut. Set upload_large_artifacts: true on the dispatch
+      # to force it anyway (e.g. to hand this candidate to a different
+      # machine for Gate A).
       - name: Upload the installable native-beta kit
+        if: env.BUILD_TARGET != 'self-hosted' || env.UPLOAD_LARGE_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         timeout-minutes: 45
         with:
