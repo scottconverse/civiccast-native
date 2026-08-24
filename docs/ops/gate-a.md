@@ -65,6 +65,76 @@ fallback path has not proven what a real station actually runs — so Gate A's
 `t4_engine` check treats `PASS_FFMPEG_FALLBACK` as a named FAIL, not a
 degraded pass, and only accepts `T4_RESULT=PASS_PRODUCT_ENGINE`.
 
+## Shared Windows Sandbox: the busy guard
+
+Windows Sandbox is **single-instance per machine** — only one VM can run at a
+time, system-wide, regardless of who launches it. The Gate A runner box is
+**shared**: an independent, unrelated build system (not part of this
+project) also launches Windows Sandbox on the same machine at unpredictable
+times. Gate A's harness must never launch into that other party's sandbox,
+wait on it ambiguously, or kill it — and the other party is symmetrically
+unaware of Gate A. Neither side can coordinate with the other, so the guard
+is entirely observational: check for a running sandbox before launching, and
+never touch a sandbox process this run didn't itself start.
+
+**`Host-Launch-Sandbox-Test.ps1` — pre-launch guard.** Immediately after
+stamping a clean `output\` (step 1) and before rendering/launching the `.wsb`
+(step 2), it checks `Get-Process` for any of `WindowsSandboxClient`,
+`WindowsSandboxRemoteSession`, `WindowsSandboxServer`, `vmmemWindowsSandbox`.
+If any are running:
+
+- It does **not** launch. It polls every 30s, for up to `-SandboxWaitMinutes`
+  (default `90`), logging one line every ~2 minutes to
+  `output\SANDBOX-WAIT.txt` (timestamp + the observed process names/PIDs).
+- If the sandbox frees up within the window, it proceeds to launch normally
+  (with one more log line noting when it became free).
+- If it is **still busy at the deadline**, it writes `output\SANDBOX-BUSY.txt`
+  (same detail line as the final `SANDBOX-WAIT.txt` entry) and exits with
+  code **`3`** — a distinct, harness-specific code, never touching the
+  foreign sandbox.
+
+**`Host-Launch-Sandbox-Test.ps1` — teardown guard.** The script records the
+PIDs of its own sandbox processes right after its own `Start-Process` call
+(the busy guard above already proved none were running immediately before
+that point, and the single-instance property means every sandbox process
+that exists from then on belongs to this run). At teardown it stops **only**
+those recorded PIDs — never a blanket `Stop-Process` by name. If the
+recorded PID list is empty, or none of those PIDs are still alive under a
+sandbox process name, it logs that and leaves everything alive rather than
+guessing (see the "NEVER kill by image name" lesson this guard was written
+to avoid repeating).
+
+**`Run-GateA.ps1`.** Accepts and passes through `-SandboxWaitMinutes`
+(default `90`) to `Host-Launch-Sandbox-Test.ps1`. A launcher exit code of
+`3` is treated as a **harness-busy** outcome, not a station-acceptance
+FAIL: it writes a `gate-a-verdict.json` with `"verdict": "BUSY"` and
+`"reason": "sandbox-busy-other-user"` (empty `checks`, since no evidence was
+ever produced) into the evidence directory alongside whatever
+`SANDBOX-WAIT.txt`/`SANDBOX-BUSY.txt` output exists, and exits **`2`**
+(harness error) — never `1` (product FAIL).
+
+**`scripts/gate_a_verdict.py`.** If `SANDBOX-BUSY.txt` is present in the
+evidence directory being judged, the judge short-circuits to the same
+`"verdict": "BUSY"` document *before* running any of the required checks,
+rather than letting every check fail closed on evidence files that were
+never going to exist (no sandbox ever launched). `main()` returns exit code
+`2` for a `BUSY` verdict, matching the "harness error, not a product
+finding" contract already used for a missing output directory. This applies
+whether the judge is invoked by `Run-GateA.ps1` or run standalone against a
+busy evidence directory.
+
+**`gate-a-station-acceptance.yml`.** The `Fail the job on a non-PASS
+verdict or harness error` step reads `gate-a-verdict.json`'s `verdict`
+field when the run didn't PASS. A `BUSY` verdict gets a distinctly worded,
+clearly-re-runnable failure message (Windows Sandbox was occupied by the
+other party for the whole wait window — not a product regression) instead
+of the generic non-PASS message. There is no auto-retry beyond the
+launcher's own `-SandboxWaitMinutes` window; re-running the workflow is a
+human/on-call action. The job's `concurrency: gate-a` group (unchanged by
+this guard) only ever serializes **our own** Gate A runs against each
+other — the other party's sandbox usage is invisible to GitHub Actions and
+cannot be coordinated through workflow concurrency.
+
 ## Station-up wait, diagnostics capture, and the script-level watchdog
 
 Added after the 8579e66-run3 evidence showed the station's own process
@@ -206,8 +276,19 @@ this writing), then the `-KitDir` leaf directory name if it looks like a sha
 (the `kit-staging\<sha>\` convention), then falls back to `unknown-local`.
 
 Exit codes: `0` = PASS, `1` = FAIL (a real station-acceptance finding —
-see `gate-a-verdict.json`), `2` = harness error (timeout waiting for
-`DONE.json`, no Sandbox VM, bad/incomplete kit layout, missing `gh`/`uv`).
+see `gate-a-verdict.json`), `2` = harness error, including a `BUSY` verdict
+(Windows Sandbox was occupied by the other, independent process on this box
+for the whole `-SandboxWaitMinutes` wait window — see "Shared Windows
+Sandbox: the busy guard" above), timeout waiting for `DONE.json`, no Sandbox
+VM, bad/incomplete kit layout, or missing `gh`/`uv`.
+
+`Host-Launch-Sandbox-Test.ps1` itself uses a fourth code, `3`, distinct from
+its own timeout code `2` (waiting for `DONE.json`): "gave up waiting for
+Windows Sandbox to become free without ever launching it." `Run-GateA.ps1`
+translates that `3` into its own `2` (harness error) with a `BUSY` verdict
+document, so callers only ever need to handle `Run-GateA.ps1`'s three exit
+codes (`0`/`1`/`2`) — the launcher's `3` is an internal detail of that
+translation.
 
 Evidence for every run — pass or fail — lands at
 `sandbox-lab/evidence/<source_sha>/<utc-timestamp>/`, a full copy of

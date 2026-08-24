@@ -512,3 +512,75 @@ def test_every_check_detail_is_a_nonempty_string(tmp_path: Path, check_name: str
     result = gav.judge(run_dir, None, None)
     detail = result["checks"][check_name]["detail"]
     assert isinstance(detail, str) and detail.strip()
+
+
+# --------------------------------------------------------------------------
+# Shared-sandbox guard: SANDBOX-BUSY.txt short-circuits to a BUSY verdict,
+# never a product FAIL. See Host-Launch-Sandbox-Test.ps1's busy-guard and
+# scripts/gate_a_verdict.py's module docstring ("Shared-sandbox guard").
+# --------------------------------------------------------------------------
+
+
+def test_sandbox_busy_txt_alone_yields_busy_verdict(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "SANDBOX-BUSY.txt").write_text(
+        "2026-08-24T12:00:00.0000000Z still busy after 90m wait -- giving up. "
+        "processes=[WindowsSandboxClient] pids=[4242]\n",
+        encoding="utf-8",
+    )
+    result = gav.judge(run_dir, source_sha="deadbeef", run_id="123")
+    assert result["verdict"] == "BUSY"
+    assert result["reason"] == "sandbox-busy-other-user"
+    assert result["checks"] == {}
+    assert "4242" in result["detail"]
+    assert result["source_sha"] == "deadbeef"
+    assert result["run_id"] == "123"
+
+
+def test_sandbox_busy_overrides_even_with_other_evidence_present(tmp_path: Path) -> None:
+    """A fully-complete evidence dir that ALSO carries SANDBOX-BUSY.txt (should
+    never happen from a real harness run, but the judge must still fail
+    closed toward BUSY rather than silently ignoring the marker and grading
+    the other files) still comes out BUSY, not PASS or FAIL."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "SANDBOX-BUSY.txt").write_text("busy\n", encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["verdict"] == "BUSY"
+    assert result["checks"] == {}
+
+
+def test_sandbox_busy_txt_empty_gets_a_placeholder_detail(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "SANDBOX-BUSY.txt").write_text("", encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["verdict"] == "BUSY"
+    assert isinstance(result["detail"], str) and result["detail"].strip()
+
+
+def test_absent_sandbox_busy_txt_does_not_affect_normal_judging(tmp_path: Path) -> None:
+    """Sanity check that the new short-circuit is additive: a normal
+    synthetic-complete run with no SANDBOX-BUSY.txt is unaffected."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    assert not (run_dir / "SANDBOX-BUSY.txt").exists()
+    result = gav.judge(run_dir, None, None)
+    assert result["verdict"] == "PASS"
+    assert "reason" not in result
+
+
+def test_cli_exit_code_2_on_sandbox_busy(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "SANDBOX-BUSY.txt").write_text("busy\n", encoding="utf-8")
+    out_path = tmp_path / "gate-a-verdict.json"
+    proc = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), str(run_dir), "--out", str(out_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2
+    written = json.loads(out_path.read_text(encoding="utf-8"))
+    assert written["verdict"] == "BUSY"
+    assert written["reason"] == "sandbox-busy-other-user"

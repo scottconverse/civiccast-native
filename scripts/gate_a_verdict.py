@@ -49,6 +49,22 @@ the existing Playwright/manual acceptance work; Gate A is a fast, cheap,
 fail-closed floor that runs on every candidate build, not a replacement for
 them.
 
+Shared-sandbox guard: Windows Sandbox is a single-instance-per-machine
+resource shared with an independent, unrelated build system on the Gate A
+runner box (see ``docs/ops/gate-a.md``, "Shared Windows Sandbox"). When
+``sandbox-lab/Host-Launch-Sandbox-Test.ps1`` finds Windows Sandbox already
+occupied and it stays busy for the whole ``-SandboxWaitMinutes`` wait
+window, it writes ``SANDBOX-BUSY.txt`` into the output directory instead of
+ever launching. This module checks for that file FIRST, before any of the
+required checks run: its presence short-circuits the verdict to ``BUSY``
+with an empty ``checks`` dict, never a per-check ``FAIL``. The distinction
+matters because every required check would otherwise fail closed on files
+that were never going to exist (no sandbox ever launched, so no
+summary.json/DONE.json/etc.) -- that would read as a wall of station-
+acceptance FAILs when the true condition is "the harness never got to run
+because the resource was occupied by someone else." ``BUSY`` is a distinct,
+third verdict value alongside ``PASS``/``FAIL`` for exactly this reason.
+
 t4_engine policy note: `PASS_FFMPEG_FALLBACK` is a FAIL for Gate A. The
 ffmpeg synthetic-encoder fallback path in `In-Sandbox-Report.ps1` predates
 S15 (CHANGELOG "Egress default engine flipped to GStreamer"); now that
@@ -85,8 +101,9 @@ Usage:
         [--source-sha SHA] [--run-id ID] [--out PATH]
 
 Exit code: 0 if the verdict is PASS, 1 if FAIL, 2 if the output directory
-itself does not exist (a harness/usage error, not a station-acceptance
-finding).
+itself does not exist, or if the verdict is BUSY (SANDBOX-BUSY.txt present --
+the run never executed because Windows Sandbox was occupied by another
+process) -- neither of those last two is a station-acceptance finding.
 """
 
 from __future__ import annotations
@@ -402,8 +419,57 @@ CHECKS: dict[str, Callable[[Path], CheckResult]] = {
 }
 
 
+def _sandbox_busy_verdict(
+    output_dir: Path, source_sha: str | None, run_id: str | None
+) -> dict[str, Any] | None:
+    """Return a BUSY verdict document if SANDBOX-BUSY.txt is present, else None.
+
+    Windows Sandbox is a shared, single-instance-per-machine resource (see
+    the module docstring's "Shared-sandbox guard" section). SANDBOX-BUSY.txt
+    is written by ``Host-Launch-Sandbox-Test.ps1`` only when it gave up
+    waiting for the sandbox to become free WITHOUT ever launching it -- in
+    that case none of the required checks' evidence files exist, and running
+    them as usual would produce a misleading wall of FAILs. This short-
+    circuits to a distinct ``BUSY`` verdict instead, with an empty
+    ``checks`` dict, never a PASS or FAIL.
+    """
+    busy_path = output_dir / "SANDBOX-BUSY.txt"
+    if not busy_path.is_file():
+        return None
+    detail, err = _read_text(output_dir, "SANDBOX-BUSY.txt")
+    if err is not None:
+        detail = err
+    else:
+        assert detail is not None
+        detail = detail.strip()
+    if not detail:
+        detail = "SANDBOX-BUSY.txt is present (no detail recorded)"
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "source_sha": source_sha,
+        "run_id": run_id,
+        "verdict": "BUSY",
+        "reason": "sandbox-busy-other-user",
+        "detail": detail,
+        "checks": {},
+        "station_up": None,
+        "station_boot_seconds": None,
+        "station_first_healthy_utc": None,
+        "evidence_dir": str(output_dir),
+        "judged_utc": datetime.now(UTC).isoformat(),
+    }
+
+
 def judge(output_dir: Path, source_sha: str | None, run_id: str | None) -> dict[str, Any]:
-    """Run every required check against output_dir and build the verdict document."""
+    """Run every required check against output_dir and build the verdict document.
+
+    SANDBOX-BUSY.txt short-circuits this before any required check runs --
+    see ``_sandbox_busy_verdict``.
+    """
+    busy_verdict = _sandbox_busy_verdict(output_dir, source_sha, run_id)
+    if busy_verdict is not None:
+        return busy_verdict
+
     checks: dict[str, dict[str, str]] = {}
     for name, fn in CHECKS.items():
         try:
@@ -482,6 +548,10 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(result, indent=2, sort_keys=False))
     print(f"\ngate_a_verdict: {result['verdict']} (written to {out_path})", file=sys.stderr)
 
+    if result["verdict"] == "BUSY":
+        # Harness-busy, not a station-acceptance finding -- same exit-code
+        # family as the missing-output-dir usage error above, never 1 (FAIL).
+        return 2
     return 0 if result["verdict"] == "PASS" else 1
 
 
