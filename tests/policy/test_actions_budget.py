@@ -48,8 +48,7 @@ def test_every_documented_budget_exception_carries_a_non_empty_substantive_reaso
         assert workflow_name.endswith(".yml"), workflow_name
         assert reason.strip(), f"{workflow_name} has an empty reason"
         assert len(reason.strip()) > 20, (
-            f"{workflow_name} reason is suspiciously short to be a real, "
-            "substantive justification"
+            f"{workflow_name} reason is suspiciously short to be a real, substantive justification"
         )
 
 
