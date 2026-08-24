@@ -183,7 +183,7 @@ export interface AlertChannelInput {
 export interface AlertEvent {
   event_id: string
   rule_id: string
-  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout'
+  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded'
   severity: 'critical' | 'warning' | 'info'
   state: 'firing' | 'resolved'
   resource_ref: string
@@ -200,7 +200,7 @@ export interface AlertEvent {
 
 export interface AlertRule {
   rule_id: string
-  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout'
+  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded'
   enabled?: boolean
   severity: 'critical' | 'warning' | 'info'
   channel_ids?: Array<string>
@@ -261,6 +261,10 @@ export interface AnalyticsReport {
   podcast_downloads?: Array<AnalyticsDimensionCount>
   retained_fields: Array<string>
   privacy_boundary: string
+  vod_rollups?: Array<ViewershipRollupPoint>
+  live_rollups?: Array<ViewershipRollupPoint>
+  year_over_year?: Array<YearOverYearPoint>
+  ingest_configured?: boolean
 }
 
 export interface AppBuildProfile {
@@ -595,6 +599,20 @@ export interface BetaHandoffSummary {
 
 export interface BoardCreateRequest {
   template_id: string
+}
+
+export interface BoardPdfInclude {
+  totals?: boolean
+  top_content?: boolean
+  yoy?: boolean
+  live_peaks?: boolean
+}
+
+export interface BoardPdfRequest {
+  range_start: string
+  range_end: string
+  include?: BoardPdfInclude
+  station_label?: string
 }
 
 export interface BoardUpdateRequest {
@@ -3611,6 +3629,17 @@ export interface RollbackRequest {
   reason: string
 }
 
+export interface RollupStats {
+  total_viewer_count: number
+  total_time_viewed_seconds: number
+  peak_concurrent?: number | null
+}
+
+export interface RollupsResponse {
+  rollups: Array<ViewershipRollupPoint>
+  stats: RollupStats
+}
+
 export interface RoomDetail {
   room: ContributionRoom
   invites: Array<GuestInvite>
@@ -4717,6 +4746,18 @@ export interface ViewerTokenResponse {
   expires_at?: string | null
 }
 
+export interface ViewershipRollupPoint {
+  stream_type: 'vod' | 'live'
+  bucket_kind: 'day' | 'halfhour' | 'hour'
+  bucket_start: string
+  subject_id: string
+  viewer_count: number
+  time_viewed_seconds: number
+  peak_concurrent?: number | null
+  avg_concurrent?: number | null
+  samples: number
+}
+
 export interface VirtualRouterButton {
   button_id: string
   label: string
@@ -4794,6 +4835,13 @@ export interface WatchFolderConfigResponse {
   last_scan_files_found: number
   created_at: string
   updated_at: string
+}
+
+export interface YearOverYearPoint {
+  metric: 'viewer_count' | 'time_viewed_seconds' | 'peak_concurrent'
+  current_period: number
+  prior_period: number
+  delta_pct?: number | null
 }
 
 export interface ZoneInput {
