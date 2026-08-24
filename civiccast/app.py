@@ -79,6 +79,12 @@ from civiccast.alerting.router import staff_router as alerting_staff_router
 from civiccast.alerting.self_test import default_self_test_deps
 from civiccast.alerting.store import record_alert_condition
 from civiccast.alerting.worker import AlertingMaintenanceSettings, AlertingMaintenanceWorker
+from civiccast.analytics.pg_store import (
+    AnalyticsRollupSettings,
+    AnalyticsRollupWorker,
+    PostgresAnalyticsStore,
+    backfill_json_events,
+)
 from civiccast.analytics.router import staff_router as analytics_staff_router
 from civiccast.analytics.store import AnalyticsStore, default_analytics_state_path
 from civiccast.app_platform.build_router import (
@@ -820,6 +826,22 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             enabled=media_integrity_settings.mode == "inline",
         ),
     ]
+    # S14: fold raw viewership_events into pre-aggregated viewership_rollups
+    # on a short interval (default 5 min, per the spec's §10 recommendation)
+    # so the analytics dashboard reads pre-computed buckets rather than
+    # scanning raw events on every request.
+    analytics_rollup_settings = AnalyticsRollupSettings.from_env()
+    analytics_rollup_worker = AnalyticsRollupWorker(
+        session_factory, settings=analytics_rollup_settings
+    )
+    app.state.background_supervisors.append(
+        ThreadSupervisor(
+            name="civiccast-analytics-rollup-worker",
+            run_forever=analytics_rollup_worker.run_forever,
+            poll_seconds=analytics_rollup_settings.poll_seconds,
+            enabled=analytics_rollup_settings.mode == "inline",
+        )
+    )
     # QA-2 (Critical): reap stale, unreferenced contributor uploads so an
     # anonymous upload no longer sits on disk forever. The worker's first
     # sweep runs immediately when this supervisor starts (see
@@ -2109,7 +2131,19 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # operator's review.
         return PostgresOfflineCaptionJobStore(_session_factory)
 
-    analytics_store = AnalyticsStore(default_analytics_state_path())
+    # S14: durable Postgres-backed analytics store replaces the JSON file
+    # (AnalyticsStore) whenever durable storage is active. One-time,
+    # idempotent backfill of any legacy analytics-events.json rows runs here
+    # (never inside the migration -- see 0076_analytics_viewership's
+    # docstring) and is a fast no-op once viewership_events has any row.
+    analytics_store: object = PostgresAnalyticsStore(_session_factory)
+    try:
+        backfill_json_events(_session_factory, default_analytics_state_path())
+    except Exception:
+        _LOG.exception(
+            "Legacy analytics JSON backfill failed; continuing with the durable "
+            "store (new events are unaffected)."
+        )
 
     app.state.store_bundle = AppStoreBundle(
         asset_store=_resolve_postgres_store,

@@ -566,6 +566,24 @@ def _allowed_public_analytics_origins() -> set[str]:
     return {origin.strip() for origin in raw_origins.split(",") if origin.strip()}
 
 
+def public_analytics_ingest_configured() -> bool:
+    """Whether the deployment collects audience telemetry at all (S14 §5).
+
+    Mirrors ``require_public_analytics_ingest``'s "not configured" branch —
+    no ``CIVICCAST_PUBLIC_ANALYTICS_KEY`` and no allowed origins means every
+    beacon is accepted-and-dropped, so Viewer Count / Time Viewed never
+    populate. The analytics dashboard reads this (via
+    ``AnalyticsReport.ingest_configured``) to show an honest "telemetry is
+    off" empty state instead of a dashboard that looks broken. As-run /
+    proof-of-performance reports (``civiccast/reporting``) are unaffected —
+    they read the program log, not the beacon.
+    """
+
+    return bool(os.environ.get("CIVICCAST_PUBLIC_ANALYTICS_KEY")) or bool(
+        _allowed_public_analytics_origins()
+    )
+
+
 def _client_rate_key(request: Request) -> str:
     if request.client is None:
         return "anonymous-client"

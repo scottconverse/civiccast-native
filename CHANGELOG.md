@@ -15,6 +15,29 @@ came across and what deliberately did not.
 
 ### Added
 
+- **S14 (Analytics / Audience Measurement) — durable viewership store.**
+  Migration `0076_analytics_viewership` (three tables: `viewership_events`,
+  `viewership_rollups`, `analytics_report_snapshots`) promotes the
+  playback-beacon → aggregate-report chain from a single JSON file
+  (`analytics-events.json`) to a durable Postgres-backed store —
+  `PostgresAnalyticsStore` plus a periodic `AnalyticsRollupWorker` that folds
+  raw events into VOD-24h and Live-30-min/hourly rollup buckets. Idempotent
+  one-time backfill migrates any pre-existing JSON events on first durable-
+  storage boot. Net-new role-gated (`support_admin`/`publish_operator`) staff
+  API: `GET /api/staff/analytics/rollups`, `GET .../export.csv`,
+  `POST .../reports/board-pdf` (a one-click board-ready PDF — totals, top
+  content, year-over-year, live-event peaks — via `reportlab`); `GET
+  .../reports/overview` extended with `stream_type`/`metric` params and
+  `vod_rollups`/`live_rollups`/`year_over_year`/`ingest_configured` fields.
+  Operator console: `AnalyticsScreen` gains a four-panel dashboard (toolbar,
+  bar + time-series charts via a new dependency-free SVG `RollupChart`
+  component, stats + expandable rollup table) and an honest "telemetry is
+  off" empty state when public analytics ingest isn't configured. As-run /
+  proof-of-performance reporting (Schedule Report + Shows Report parity) is
+  served by the existing `civiccast/reporting` surface (S18/S23) rather than
+  duplicated. See `docs/spec/3.0/sections/S14-analytics-audience-measurement.md`
+  for the full build-vs-spec status and known gaps (OTT/embedded beacon
+  parity and the master soak run are not yet done).
 - **This repository.** 2,090 files, ~24 MB, copied from the native-Windows
   release line. The old (private, not archived) repository's 286 MB of
   packed history — WSL-era churn plus roughly 640 MB of historical Git-LFS

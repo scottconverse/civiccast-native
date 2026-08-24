@@ -16,6 +16,8 @@ import type {
   AlertRule,
   AlertRuleUpdate,
   AnalyticsReport,
+  BoardPdfRequest,
+  RollupsResponse,
   BackupSetupRequest,
   BackupStatus,
   BulletinCreate,
@@ -1061,6 +1063,44 @@ async function downloadStaffBlob(path: string): Promise<Blob> {
   return res.blob()
 }
 
+/** POST a JSON body and return the response as a Blob (carries the staff bearer token). */
+async function postForBlob(path: string, body: unknown): Promise<Blob> {
+  const token = runtimeStaffToken()
+  const setupNonce = runtimeSetupNonce()
+
+  if (setupNonce && typeof window !== 'undefined') {
+    window.sessionStorage.setItem('civiccast.setupNonce', setupNonce)
+  }
+
+  const res = await fetch(`${runtimeApiBase()}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(setupNonce ? { 'X-CivicCast-Setup-Nonce': setupNonce } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detailString: string | undefined
+    try {
+      const parsed = (await res.json()) as { detail?: unknown }
+      const raw = parsed?.detail
+      detailString = typeof raw === 'string' ? raw : raw ? JSON.stringify(raw) : undefined
+    } catch {
+      // non-JSON body - leave detail undefined
+    }
+    throw new ApiError(
+      `Request failed: ${res.status} ${res.statusText}`,
+      res.status,
+      userFacingApiDetail(detailString),
+      undefined,
+      responseRetryAfterSeconds(res),
+    )
+  }
+  return res.blob()
+}
+
 /** Fetch a build artifact as a Blob (carries the staff bearer token). */
 export async function downloadAppBuild(recordId: string): Promise<Blob> {
   return downloadStaffBlob(`/api/staff/app/builds/${encodeURIComponent(recordId)}/download`)
@@ -1470,9 +1510,47 @@ export function getPlaybackPolicyAuditLog(): Promise<PlaybackPolicyAuditLog> {
   return request<PlaybackPolicyAuditLog>('/api/staff/playback-policy/audit/events')
 }
 
-export function getAnalyticsReport(rangeDays = 30): Promise<AnalyticsReport> {
-  const qs = new URLSearchParams({ range_days: String(rangeDays) })
+export function getAnalyticsReport(
+  rangeDays = 30,
+  streamType: 'vod' | 'live' | 'all' = 'all',
+): Promise<AnalyticsReport> {
+  const qs = new URLSearchParams({ range_days: String(rangeDays), stream_type: streamType })
   return request<AnalyticsReport>(`/api/staff/analytics/reports/overview?${qs.toString()}`)
+}
+
+/** S14 §4/§5 — the dashboard's bar-chart + time-series + stats panels. */
+export function getAnalyticsRollups(params: {
+  streamType: 'vod' | 'live'
+  bucket?: 'day' | 'halfhour' | 'hour'
+  rangeDays?: number
+  topN?: number
+}): Promise<RollupsResponse> {
+  const qs = new URLSearchParams({
+    stream_type: params.streamType,
+    range_days: String(params.rangeDays ?? 30),
+    top_n: String(params.topN ?? 10),
+  })
+  if (params.bucket) qs.set('bucket', params.bucket)
+  return request<RollupsResponse>(`/api/staff/analytics/rollups?${qs.toString()}`)
+}
+
+/** S14 §6.4/§8b — flat rollup CSV download (PEG automation coverage floor). */
+export function downloadAnalyticsRollupsCsv(params: {
+  streamType: 'vod' | 'live'
+  bucket?: 'day' | 'halfhour' | 'hour'
+  rangeDays?: number
+}): Promise<Blob> {
+  const qs = new URLSearchParams({
+    stream_type: params.streamType,
+    range_days: String(params.rangeDays ?? 30),
+  })
+  if (params.bucket) qs.set('bucket', params.bucket)
+  return downloadStaffBlob(`/api/staff/analytics/export.csv?${qs.toString()}`)
+}
+
+/** S14 §8b — the one-click board-ready PDF differentiator. */
+export function generateAnalyticsBoardPdf(body: BoardPdfRequest): Promise<Blob> {
+  return postForBlob('/api/staff/analytics/reports/board-pdf', body)
 }
 
 export function getCgPortalDisplay(
