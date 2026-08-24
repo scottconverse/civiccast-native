@@ -6,6 +6,17 @@ By default this check inspects workflow files changed in the current working
 tree. In pipeline mode (``--run``), it also compares the current HEAD against
 the branch upstream or an explicit base ref so committed workflow changes
 cannot silently bypass the budget gate.
+
+Two of the defaults below (concurrency ``cancel-in-progress: true``, artifact
+``retention-days: 1``) may be overridden per workflow via
+``BUDGET_EXCEPTIONS`` -- an exception ledger, not a loophole, in the same
+spirit as ``check_workflow_runners.py``'s ``SELF_HOSTED_ALLOWLIST``: every
+entry must carry a dated, non-empty reason (see
+``test_every_budget_exception_carries_a_reason`` in
+``tests/policy/test_actions_budget.py``), and the workflow's actual value
+must literally match what the ledger declares -- an exception entry does not
+blanket-exempt a file from the rule, it only permits the exact recorded
+deviation.
 """
 
 from __future__ import annotations
@@ -35,6 +46,42 @@ GLOBAL_COVERAGE_GATES = {"ci-test.yml", "deterministic-detectors.yml"}
 RELEASE_CANDIDATE_WORKFLOWS = {"native-beta-candidate-artifacts.yml"}
 STATIC_CONCURRENCY_GROUPS = {
     "ci-installer-compile.yml": "ci-installer-compile-reusable-${{ github.ref }}"
+}
+
+# Per-workflow exception ledger for the two budget defaults below that a
+# workflow may legitimately need to diverge from: concurrency
+# cancel-in-progress, and artifact retention-days. Keyed by workflow
+# filename -> setting name -> (allowed value, dated reason). Every entry
+# must carry a non-empty reason (enforced by
+# tests/policy/test_actions_budget.py::test_every_budget_exception_carries_a_reason).
+# The value itself is also enforced -- validate_workflow only skips the
+# violation when the file's ACTUAL setting literally matches the ledgered
+# value, so drift between the ledger and the file still fails closed.
+BUDGET_EXCEPTIONS: dict[str, dict[str, tuple[object, str]]] = {
+    "gate-a-station-acceptance.yml": {
+        "cancel_in_progress": (
+            False,
+            "2026-08-24 (owner decision, PR #26 'guard against a shared Windows "
+            "Sandbox owned by another process'): a live Gate A run holds Windows "
+            "Sandbox -- a shared, single-instance-per-machine resource on the "
+            "runner box, also used by an independent build system -- for up to "
+            "~2.5h. Auto-cancelling that run mid-flight on a newer trigger would "
+            "leave the sandbox in an ambiguous state: exactly the kind of "
+            "ambiguous-kill risk PR #26's own busy-guard exists to prevent. See "
+            "docs/ops/gate-a.md, 'Shared Windows Sandbox: the busy guard'.",
+        ),
+        "retention_days": (
+            frozenset({14, 90}),
+            "2026-08-24 (owner decision, PR #26): Gate A evidence (gate-a-verdict.json "
+            "plus the full sandbox output/diagnostics tree) is produced by one "
+            "candidate build at a time, not per-push, and must survive long enough "
+            "for post-hoc forensic review of a FAIL. The blanket retention-days:1 "
+            "rule (cut 2026-08-20) was written for a different workflow's small, "
+            "frequent-artifact storage blowup (990 live artifacts / 542.5 GB from "
+            "one workflow) -- a different cost profile from Gate A's rare, "
+            "diagnostic-heavy runs.",
+        ),
+    },
 }
 
 
@@ -175,6 +222,48 @@ def _is_release_or_tag_workflow(path: Path, text: str) -> bool:
     )
 
 
+def _cancel_in_progress_value(text: str) -> bool | None:
+    match = re.search(r"cancel-in-progress:\s*(true|false)", text)
+    if not match:
+        return None
+    return match.group(1) == "true"
+
+
+def _has_concurrency_block_with_group(text: str) -> bool:
+    return "concurrency:" in text and re.search(r"(?m)^\s*group:\s*\S+", text) is not None
+
+
+def _retention_days_value(block: str) -> int | None:
+    match = re.search(r"retention-days:\s*(\d+)", block)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _ledgered_cancel_in_progress(exceptions: dict[str, tuple[object, str]]) -> bool | None:
+    """The BUDGET_EXCEPTIONS-declared cancel-in-progress value for this workflow, if any."""
+    entry = exceptions.get("cancel_in_progress")
+    if entry is None:
+        return None
+    value = entry[0]
+    assert isinstance(value, bool), (
+        f"BUDGET_EXCEPTIONS cancel_in_progress value must be bool, got {value!r}"
+    )
+    return value
+
+
+def _ledgered_retention_days(exceptions: dict[str, tuple[object, str]]) -> frozenset[int]:
+    """The BUDGET_EXCEPTIONS-declared allowed retention-days values for this workflow."""
+    entry = exceptions.get("retention_days")
+    if entry is None:
+        return frozenset()
+    value = entry[0]
+    assert isinstance(value, frozenset), (
+        f"BUDGET_EXCEPTIONS retention_days value must be a frozenset[int], got {value!r}"
+    )
+    return value
+
+
 def _has_concurrency(path: Path, text: str) -> bool:
     static_group = STATIC_CONCURRENCY_GROUPS.get(path.name)
     return (
@@ -246,6 +335,7 @@ def validate_workflow(path: Path, text: str) -> list[str]:
     violations: list[str] = []
     release_or_tag = _is_release_or_tag_workflow(path, text)
     pr_trigger = _has_pr_trigger(text)
+    exceptions = BUDGET_EXCEPTIONS.get(path.name, {})
 
     if "@daily" in text:
         violations.append("daily cron is forbidden without explicit Scott approval")
@@ -254,7 +344,18 @@ def validate_workflow(path: Path, text: str) -> list[str]:
             violations.append(f"daily cron `{expr}` is forbidden; weekly is the maximum default")
 
     if not release_or_tag and not _has_concurrency(path, text):
-        violations.append("missing required concurrency block with cancel-in-progress: true")
+        ledgered_cancel = _ledgered_cancel_in_progress(exceptions)
+        # An exception entry only excuses the violation when the file's
+        # ACTUAL cancel-in-progress value literally matches what the ledger
+        # declares (and a concurrency/group block still exists at all) --
+        # never a blanket exemption from having a concurrency guard.
+        is_ledgered_deviation = (
+            ledgered_cancel is not None
+            and _has_concurrency_block_with_group(text)
+            and _cancel_in_progress_value(text) is ledgered_cancel
+        )
+        if not is_ledgered_deviation:
+            violations.append("missing required concurrency block with cancel-in-progress: true")
 
     if pr_trigger and _has_push_main(text):
         violations.append(
@@ -294,9 +395,19 @@ def validate_workflow(path: Path, text: str) -> list[str]:
         # 93% of it from one workflow storing ~45 GB per push (about half of
         # that a second copy of its own inputs). At 7 days nothing aged out
         # before the next push landed.
+        #
+        # A workflow may be ledgered in BUDGET_EXCEPTIONS for specific
+        # alternate retention-days values (e.g. Gate A's rare, large,
+        # forensics-relevant evidence) -- only those exact values are
+        # excused, per block; anything else still fails closed.
+        allowed_retention_days = _ledgered_retention_days(exceptions)
         for block in _artifact_blocks(text):
-            if not re.search(r"retention-days:\s*1\b", block):
-                violations.append("upload-artifact step is missing retention-days: 1")
+            if re.search(r"retention-days:\s*1\b", block):
+                continue
+            block_value = _retention_days_value(block)
+            if block_value is not None and block_value in allowed_retention_days:
+                continue
+            violations.append("upload-artifact step is missing retention-days: 1")
 
     return violations
 
