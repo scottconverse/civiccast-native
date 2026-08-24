@@ -586,7 +586,22 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # (tests/native/test_supervisor_children.py, test_supervisor_service.py);
     # none marked `windows_only`, so both lanes move by +5. Re-derived by an
     # actual `--collect-only` run on this tree: on top of wave 2: (1637, 1829) -> (1642, 1834).
-    assert (collect("not windows_only"), collect()) == (1642, 1834)
+    #
+    # perf/self-hosted-candidate-build (2026-08-24): +6 pure, 0 windows_only --
+    # the --advisory-pyav-wheel-hash plumbing for native-beta-candidate-
+    # artifacts.yml's self-hosted build lane gained test coverage in
+    # tests/native/test_pyav_wheel_builder.py (5: verify_artifact's advisory
+    # mode warns instead of raising on a mismatch; is silent on a match;
+    # advisory=False still raises by default; main() forwards
+    # --advisory-wheel-hash through to build(); main() defaults it to False)
+    # and tests/native/test_app_payload_builder.py (1:
+    # build_reviewed_pyav_wheel forwards advisory_wheel_hash=True as
+    # --advisory-wheel-hash to the PyAV subprocess). Plain function calls,
+    # monkeypatched subprocess.run, and captured stdout only -- no OS
+    # dependency, no windows_only marker, so all six collect into both
+    # lanes. Re-derived by an actual `--collect-only` run on this tree, not
+    # by arithmetic: (1642, 1834) -> (1648, 1840).
+    assert (collect("not windows_only"), collect()) == (1648, 1840)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

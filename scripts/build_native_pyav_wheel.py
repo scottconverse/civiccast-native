@@ -209,20 +209,52 @@ def resolve_pinned_uv(
     return str(resolved)
 
 
-def verify_artifact(path: Path, *, expected_bytes: int, expected_sha256: str) -> None:
-    """Fail unless an acquired build input has exactly the pinned identity."""
+def verify_artifact(
+    path: Path,
+    *,
+    expected_bytes: int,
+    expected_sha256: str,
+    advisory: bool = False,
+) -> None:
+    """Fail unless an acquired build input has exactly the pinned identity.
+
+    ``advisory=True`` downgrades a mismatch to a logged warning instead of a
+    hard failure. This exists ONLY for the final compiled PyAV wheel on the
+    self-hosted build lane (see the two ``verify_artifact(candidate, ...)`` /
+    ``verify_artifact(output, ...)`` call sites in ``build()``): the MSVC
+    compiler can embed build-machine-dependent state (absolute scratch
+    paths, PDB paths) into the wheel even when the toolchain identity is
+    byte-identical to hosted, so a different physical machine can produce a
+    non-byte-identical-but-otherwise-correct wheel. Every OTHER call to this
+    function -- every pinned download (uv, the FFmpeg source archive, the
+    MSYS2 base, the PyAV sdist) -- always uses the default ``advisory=False``
+    and stays a hard failure on any lane. Advisory mode never weakens input
+    verification, only the final build's byte-exact reproducibility
+    assertion.
+    """
 
     actual_bytes = path.stat().st_size
     actual_sha256 = sha256_file(path)
+    mismatch_detail: str | None = None
     if actual_bytes != expected_bytes:
-        raise PyAvWheelBuildError(
+        mismatch_detail = (
             f"{path.name} byte length {actual_bytes} != pinned {expected_bytes}; "
             f"SHA-256 {actual_sha256}"
         )
-    if actual_sha256 != expected_sha256.lower():
-        raise PyAvWheelBuildError(
-            f"{path.name} SHA-256 {actual_sha256} != pinned {expected_sha256.lower()}"
+    elif actual_sha256 != expected_sha256.lower():
+        mismatch_detail = f"{path.name} SHA-256 {actual_sha256} != pinned {expected_sha256.lower()}"
+    if mismatch_detail is None:
+        return
+    if advisory:
+        print(
+            "::warning::PyAV wheel byte-exact reproducibility check is ADVISORY on this "
+            f"build lane and did not match the pinned reference: {mismatch_detail}. "
+            "Every pinned DOWNLOAD (uv, FFmpeg source, MSYS2 base, PyAV sdist) was still "
+            "verified strictly; only the compiled wheel's byte-exact identity is advisory "
+            "here. See docs/process/pyav-wheel-reproducibility.md."
         )
+        return
+    raise PyAvWheelBuildError(mismatch_detail)
 
 
 def _download_https(url: str, destination: Path) -> None:
@@ -979,8 +1011,15 @@ def build(
     output_dir: Path,
     cache_dir: Path,
     scratch: Path,
+    advisory_wheel_hash: bool = False,
 ) -> tuple[Path, dict[str, object]]:
-    """Build, legally verify, and runtime-test the pinned native PyAV wheel."""
+    """Build, legally verify, and runtime-test the pinned native PyAV wheel.
+
+    ``advisory_wheel_hash`` -- see ``verify_artifact``'s docstring -- only
+    affects the two FINAL compiled-wheel identity checks below (``candidate``
+    and ``output``); every pinned-download verification in this function
+    stays strict regardless.
+    """
 
     if scratch.exists() and any(scratch.iterdir()):
         raise PyAvWheelBuildError(f"scratch directory must be empty: {scratch}")
@@ -1034,6 +1073,7 @@ def build(
         candidate,
         expected_bytes=EXPECTED_WHEEL_BYTES,
         expected_sha256=EXPECTED_WHEEL_SHA256,
+        advisory=advisory_wheel_hash,
     )
     runtime_report = run_runtime_probe(
         candidate,
@@ -1047,6 +1087,7 @@ def build(
         output,
         expected_bytes=EXPECTED_WHEEL_BYTES,
         expected_sha256=EXPECTED_WHEEL_SHA256,
+        advisory=advisory_wheel_hash,
     )
     return output, runtime_report
 
@@ -1062,6 +1103,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=Path,
         help="empty scratch directory to preserve (default: temporary and removed)",
     )
+    parser.add_argument(
+        "--advisory-wheel-hash",
+        action="store_true",
+        help=(
+            "log a warning instead of failing when the FINAL compiled wheel's byte-exact "
+            "hash does not match the pinned reference (every pinned download still "
+            "verifies strictly). Intended for build lanes running on a different physical "
+            "machine than the one the pinned hash was reviewed on -- see verify_artifact()."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.scratch is not None:
@@ -1069,6 +1120,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=args.output_dir.resolve(),
             cache_dir=args.cache_dir.resolve(),
             scratch=args.scratch.resolve(),
+            advisory_wheel_hash=args.advisory_wheel_hash,
         )
     else:
         with tempfile.TemporaryDirectory(prefix="cc-pyav-build-") as temporary:
@@ -1076,6 +1128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output_dir=args.output_dir.resolve(),
                 cache_dir=args.cache_dir.resolve(),
                 scratch=Path(temporary),
+                advisory_wheel_hash=args.advisory_wheel_hash,
             )
     print(
         json.dumps(
