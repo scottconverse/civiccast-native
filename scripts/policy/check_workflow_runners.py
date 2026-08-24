@@ -38,6 +38,18 @@ HOSTED_EXPRESSION_ALLOWLIST = {
         "ci-installer-compile.yml",
         "${{ inputs.native_beta_windows_only && 'windows-latest' || 'ubuntu-latest' }}",
     ),
+    # native-beta-candidate-artifacts.yml's build_target: self-hosted lane
+    # (see that workflow's header) keeps the assembled kit local for Gate A
+    # instead of uploading ~21 GB just to have gate-a-station-acceptance.yml
+    # (already self-hosted-allowlisted below) download it back on the same
+    # box at ~1-2 MB/s. Same hardware/duration rationale as
+    # gate-a-station-acceptance.yml itself; the expression form (rather than
+    # a plain self-hosted runs-on list) is what lets this same workflow keep
+    # running on windows-latest for its default/push-triggered builds.
+    (
+        "native-beta-candidate-artifacts.yml",
+        "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('[\"self-hosted\",\"windows\",\"sandbox-lab\"]') || 'windows-latest' }}",
+    ),
 }
 
 

@@ -368,6 +368,16 @@ def main() -> int:
         action="store_true",
         help="permit building the payload tree from a dirty source checkout (non-release proof only)",
     )
+    parser.add_argument(
+        "--advisory-pyav-wheel-hash",
+        action="store_true",
+        help=(
+            "forwarded to the payload build: log a warning instead of failing when the "
+            "compiled PyAV wheel's byte-exact hash does not match the pinned reference "
+            "(every pinned download still verifies strictly). Ignored when --payload-root "
+            "is given, since no PyAV build happens in that case."
+        ),
+    )
     parser.add_argument("--signing-private-key", required=True, type=Path)
     parser.add_argument("--signing-key-id", required=True)
     parser.add_argument("--source-sha", required=True)
@@ -425,6 +435,7 @@ def main() -> int:
                     args.msvc_runtime.resolve() if args.msvc_runtime is not None else None
                 ),
                 allow_dirty_source=args.allow_dirty_source,
+                advisory_pyav_wheel_hash=args.advisory_pyav_wheel_hash,
             )
             payload_root = payload_out
 

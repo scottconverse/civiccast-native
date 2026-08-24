@@ -136,6 +136,15 @@ export interface AgendaItemUpdate {
   confidence?: number | null
 }
 
+export interface AiDefaultSelection {
+  summary_model: string
+  translate_model: string
+  caption_model: string
+  basis: 'ram-12b' | 'ram-e4b' | 'forced-cpu'
+  detected_ram_gb: number
+  rationale: string
+}
+
 export interface AiModelAvailability {
   features?: Record<string, FeatureModelAvailability>
 }
@@ -495,6 +504,13 @@ export interface AutoScheduleRuleInput {
   enabled?: boolean
 }
 
+export interface BackupDestinationRef {
+  configured: boolean
+  reachable?: boolean | null
+  destination?: string | null
+  last_probe_at?: string | null
+}
+
 export interface BackupManifest {
   schema_version?: number
   backup_id: string
@@ -628,6 +644,13 @@ export interface CPUInfo {
   cores_physical: number
   cores_logical: number
   brand: string
+}
+
+export interface CableOsVerdict {
+  verdict: 'single-windows-pc-ok' | 'native-linux-recommended' | 'soak-pending'
+  os_kind: 'wsl2' | 'linux' | 'macos' | 'windows' | 'unknown'
+  rationale: string
+  decision_ref?: string
 }
 
 export interface CallSheet {
@@ -904,6 +927,20 @@ export interface ChannelBrandingUpdate {
   logo_url?: string | null
 }
 
+export interface ChannelCommissioningSetup {
+  channel_id: string
+  channel_name: string
+  output_format: '720p30' | '1080i60' | '1080p30' | 'SD480i60'
+  headend_profile_id: string
+  destination: string
+  muxrate_kbps?: number | null
+  sdi_device?: string | null
+  fill_policy?: 'slate' | 'loop' | 'silence'
+  emergency_slate_asset_id?: string | null
+  cea708_passthrough?: boolean
+  watch_folder_path?: string | null
+}
+
 export interface ChannelLogEntry {
   occurrence_id: string
   slot_id: string
@@ -1020,6 +1057,74 @@ export interface ChapterMarker {
   end_seconds?: number | null
   source?: 'operator' | 'ai' | 'imported'
   approved?: boolean
+}
+
+export interface ClockReport {
+  timezone: string
+  utc_offset_minutes: number
+  system_time: string
+  ntp_sync: 'synced' | 'unsynced' | 'unknown'
+  note?: string
+}
+
+export interface CommissioningCheckItem {
+  id: string
+  label: string
+  status: 'pass' | 'fail' | 'warning' | 'skipped'
+  detail?: string
+  next_step?: string
+}
+
+export interface CommissioningCheckReport {
+  generated_at: string
+  station_name?: string
+  checks?: Array<CommissioningCheckItem>
+  ready: boolean
+  blockers?: Array<string>
+  support_bundle_path?: string | null
+}
+
+export interface CommissioningChecksRequest {
+  deployment_profile?: 'public-meetings' | 'streaming-only' | 'peg-cable'
+  station_name?: string
+}
+
+export interface CommissioningProofRun {
+  channel_id: string
+  proof_id: string
+  started_at: string
+  ended_at?: string | null
+  test_pattern: 'bars' | 'live' | 'slate'
+  compliance_probe_result?: ComplianceProbeResult | null
+  sdi_device_status?: SdiReadiness | null
+  cea708_verified?: boolean | null
+  verdict: 'pass' | 'fail' | 'partial' | 'not-run'
+  blockers?: Array<string>
+  detail?: string
+  raw_ts_path?: string | null
+  not_claimed?: Array<string>
+}
+
+export interface CommissioningReport {
+  station_name: string
+  channel_name: string
+  headend_profile_id: string
+  output_format: '720p30' | '1080i60' | '1080p30' | 'SD480i60'
+  sdi_device?: string | null
+  completed_at: string
+  first_run_checks: CommissioningCheckReport
+  channel_setup: ChannelCommissioningSetup
+  proof_run: CommissioningProofRun
+  ready_for_broadcast: boolean
+  next_steps?: Array<string>
+  support_bundle_path?: string | null
+}
+
+export interface CommissioningState {
+  first_run_checks?: CommissioningCheckReport | null
+  channel_setup?: ChannelCommissioningSetup | null
+  proof_run?: CommissioningProofRun | null
+  report?: CommissioningReport | null
 }
 
 export interface CommitRequest {
@@ -1419,6 +1524,12 @@ export interface CustomFieldValueInput {
   value: string
 }
 
+export interface DeckLinkEngineRef {
+  card_present: boolean
+  bmd_sdk_present: boolean
+  sdk_version?: string | null
+}
+
 export interface DeliveryRecord {
   delivery_id: string
   activity_id: string
@@ -1701,6 +1812,33 @@ export interface EmergencyOverlay {
   aria_live?: 'polite' | 'assertive'
 }
 
+export interface EngineBlocker {
+  tier: 'base' | 'sdi-broadcast' | 'premium-cg'
+  reason: string
+  next_step: string
+}
+
+export interface EngineReadiness {
+  gstreamer_present: boolean
+  gstreamer_version?: string | null
+  required_plugins_present: boolean
+  missing_plugins?: Array<string>
+  opengl_45: boolean
+  hw_encoder: 'nvenc' | 'vaapi' | 'qsv' | 'none'
+  decklink: DeckLinkEngineRef
+  ndi_sdk: NdiSdkRef
+  native_os: boolean
+  next_step?: string
+}
+
+export interface EngineTierVerdict {
+  qualifies_for: 'base' | 'sdi-broadcast' | 'premium-cg'
+  base_ok: boolean
+  sdi_broadcast_ok: boolean
+  premium_cg_ok: boolean
+  blockers?: Array<EngineBlocker>
+}
+
 export interface EpgExportConfig {
   config_id: string
   station_id: string
@@ -1840,6 +1978,18 @@ export interface FeedUpdateInput {
   refresh_seconds?: number | null
   enabled?: boolean | null
   tags?: Array<string> | null
+}
+
+export interface FfmpegFeatureReport {
+  detected: boolean
+  version?: string | null
+  supported: boolean
+  has_decklink: boolean
+  has_ndi: boolean
+  has_libx264: boolean
+  has_loudnorm: boolean
+  byo_sdi_binary?: string | null
+  next_step?: string
 }
 
 export interface FireCueInput {
@@ -2400,6 +2550,17 @@ export interface NdiReadinessResponse {
   relays?: Array<unknown>
 }
 
+export interface NdiSdkRef {
+  sdk_present: boolean
+  sdk_version?: string | null
+}
+
+export interface NetworkReport {
+  hostname: string
+  primary_interface_up: boolean
+  headend_interface_hint?: string | null
+}
+
 export interface NotificationDelivery {
   delivery_id: string
   subscription_id: string
@@ -2464,6 +2625,14 @@ export interface OutboxRecord {
   activity_id: string
   activity: Record<string, unknown>
   created_at: string
+}
+
+export interface OutputProofSettings {
+  channel_id: string
+  test_pattern?: 'bars' | 'live' | 'slate'
+  duration_seconds?: number
+  output_directory?: string | null
+  capture_raw_ts?: boolean
 }
 
 export interface OverlayCompositorPlan {
@@ -2546,6 +2715,19 @@ export interface PdfARecordMetadata {
   media_type: string
   byte_size: number
   embedded_metadata_names?: Array<string>
+}
+
+export interface PegReadinessDimension {
+  id: string
+  label: string
+  color: 'green' | 'yellow' | 'red'
+  message: string
+  next_step?: string
+}
+
+export interface PegReadinessRollup {
+  overall: 'green' | 'yellow' | 'red'
+  dimensions?: Array<PegReadinessDimension>
 }
 
 export interface PlanConflict {
@@ -3260,6 +3442,12 @@ export interface RehearsalReport {
   next_step: string
 }
 
+export interface ReleaseIdentityRef {
+  version: string
+  package_verified?: boolean | null
+  proof_state?: string | null
+}
+
 export interface RelinkAssetRequest {
   new_file_path: string
 }
@@ -3639,6 +3827,13 @@ export interface ScheduleItemResponse {
   created_at: string
 }
 
+export interface SdiReadiness {
+  status: 'ok' | 'decklink_muxer_missing' | 'ffmpeg_unavailable'
+  ffmpeg_detected: boolean
+  muxer_present: boolean
+  next_step?: string
+}
+
 export interface SdiReadinessResponse {
   byo_ffmpeg_configured: boolean
   byo_ffmpeg_path?: string | null
@@ -3933,6 +4128,27 @@ export interface StationAuthResponse {
   next_step: string
 }
 
+export interface StationBoxProfile {
+  schema_version?: number
+  generated_at: string
+  civiccast_version: string
+  hardware: HardwareProbe
+  system_ram_total_gb: number
+  engine: EngineReadiness
+  ffmpeg: FfmpegFeatureReport
+  clock: ClockReport
+  network: NetworkReport
+  backup_destination: BackupDestinationRef
+  release_identity: ReleaseIdentityRef
+  sdi: SdiReadiness
+  tsduck: TsduckStatus
+  ndi_sdk: NdiSdkRef
+  qualified_engine_tier: EngineTierVerdict
+  ai_default: AiDefaultSelection
+  peg_readiness: PegReadinessRollup
+  cable_os_verdict: CableOsVerdict
+}
+
 export interface StationChannelProfile {
   channel_id: string
   display_name: string
@@ -3961,6 +4177,14 @@ export interface StationProfile {
   dashboard_ready_state?: 'ready' | 'not_ready'
   recovery_kit_id: string
   recovery_kit_generated_at: string
+}
+
+export interface StationProfileUpdateRequest {
+  station_name?: string | null
+  station_timezone?: string | null
+  public_base_url?: string | null
+  default_channel_id?: string | null
+  storage_locations?: StationStorageLocations | null
 }
 
 export interface StationRecoveryRequest {
