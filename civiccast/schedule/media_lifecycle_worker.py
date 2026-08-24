@@ -185,13 +185,30 @@ class StubTranscodeExecutor:
         )
 
 
-# Coarse format -> ffmpeg args mapping. Real per-format tuning (rate control,
-# GOP, audio profile) is a station-config follow-up; this is enough to
-# produce a genuinely playable proxy/mezzanine file today.
+# Coarse format -> ffmpeg args template. Real per-format tuning (rate
+# control, GOP, audio profile) is a station-config follow-up; this is
+# enough to produce a genuinely playable proxy/mezzanine file today.
+#
+# "{h264_encoder}" is a placeholder, not a literal encoder name: ADR 0007
+# forbids a bare "libx264" (GPL) literal in production code outside
+# civiccast.stream._ffmpeg's own resolver (tests/policy/test_ffmpeg_h264_encoder.py
+# enforces this repo-wide). FfmpegTranscodeExecutor.run resolves the
+# station's actual encoder at call time via resolve_h264_encoder() --
+# hardware first, then h264_mf, then the royalty-free libopenh264, with
+# libx264 reachable only when the probed binary itself carries it.
 _FORMAT_FFMPEG_ARGS: dict[str, list[str]] = {
-    "h264_720p_5mbps": ["-vf", "scale=-2:720", "-c:v", "libx264", "-b:v", "5M", "-c:a", "aac"],
+    "h264_720p_5mbps": [
+        "-vf",
+        "scale=-2:720",
+        "-c:v",
+        "{h264_encoder}",
+        "-b:v",
+        "5M",
+        "-c:a",
+        "aac",
+    ],
     "h265_1080p_8mbps": ["-vf", "scale=-2:1080", "-c:v", "libx265", "-b:v", "8M", "-c:a", "aac"],
-    "h264_mezzanine": ["-c:v", "libx264", "-crf", "12", "-c:a", "aac"],
+    "h264_mezzanine": ["-c:v", "{h264_encoder}", "-crf", "12", "-c:a", "aac"],
 }
 
 
@@ -204,7 +221,12 @@ class FfmpegTranscodeExecutor:
     def run(
         self, *, asset: Asset, output_format: str, output_dir: Path
     ) -> TranscodeExecutionResult:
-        from civiccast.stream._ffmpeg import check_ffmpeg, run_ffmpeg
+        from civiccast.stream._ffmpeg import (
+            H264EncoderUnavailableError,
+            check_ffmpeg,
+            resolve_h264_encoder,
+            run_ffmpeg,
+        )
 
         if not asset.file_path:
             return TranscodeExecutionResult(
@@ -220,11 +242,23 @@ class FfmpegTranscodeExecutor:
                 success=False,
                 error_detail="ffmpeg is not installed; run `civiccast doctor` and retry.",
             )
-        extra_args = _FORMAT_FFMPEG_ARGS.get(output_format)
-        if extra_args is None:
+        template = _FORMAT_FFMPEG_ARGS.get(output_format)
+        if template is None:
             return TranscodeExecutionResult(
                 success=False, error_detail=f"Unknown transcode output_format {output_format!r}."
             )
+        extra_args = template
+        if "{h264_encoder}" in template:
+            # ADR 0007 / tests/policy/test_ffmpeg_h264_encoder.py: no bare
+            # "libx264" literal outside the resolver. Resolve the station's
+            # actual encoder (hardware first, then h264_mf, then the
+            # royalty-free libopenh264; libx264 only when the probed binary
+            # itself carries it) at call time instead.
+            try:
+                h264_encoder = resolve_h264_encoder()
+            except H264EncoderUnavailableError as exc:
+                return TranscodeExecutionResult(success=False, error_detail=str(exc))
+            extra_args = [h264_encoder if arg == "{h264_encoder}" else arg for arg in template]
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{asset.asset_id}.{output_format}.mp4"
         result = run_ffmpeg(["-y", "-i", str(source), *extra_args, str(output_path)])
