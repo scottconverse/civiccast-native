@@ -28,8 +28,6 @@ validation and the bounded test-pattern-to-UDP output proof.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -459,11 +457,15 @@ def _default_test_pattern_runner(
     ``duration_seconds`` (bounded by ``-t`` and a hard subprocess timeout).
     This is the headend/format proof leg described in the module's
     ``_NOT_CLAIMED_BOUNDARY`` -- not a claim of physical SDI output.
+
+    Routed through :func:`civiccast.stream._ffmpeg.run_ffmpeg` (ADR 0007:
+    "All ffmpeg invocations ... go through run_ffmpeg; direct subprocess
+    calls to ffmpeg from other modules are forbidden") rather than a local
+    ``subprocess.run`` -- the wrapper also resolves and validates the
+    ffmpeg binary, so there is no separate ``shutil.which`` check here.
     """
 
-    ffmpeg_path = shutil.which("ffmpeg")
-    if not ffmpeg_path:
-        raise RuntimeError("ffmpeg not found on PATH; cannot drive the output-proof test pattern.")
+    from civiccast.stream._ffmpeg import FfmpegError, run_ffmpeg
 
     if pattern == "slate":
         video_filter = "color=c=0x1a2744:size=1280x720:rate=30"
@@ -474,7 +476,6 @@ def _default_test_pattern_runner(
 
     video_kbps = max(muxrate_kbps - 128, 500)
     args = [
-        ffmpeg_path,
         "-hide_banner",
         "-loglevel",
         "error",
@@ -502,9 +503,13 @@ def _default_test_pattern_runner(
         f"{muxrate_kbps * 1000}",
         destination_uri,
     ]
-    subprocess.run(  # noqa: S603 -- fixed args, no shell
-        args, timeout=duration_seconds + 15, check=True, capture_output=True
-    )
+    result = run_ffmpeg(args, timeout=duration_seconds + 15)
+    if result.returncode != 0:
+        raise FfmpegError(
+            f"ffmpeg test-pattern generation exited {result.returncode}.",
+            result.returncode,
+            result.stderr,
+        )
 
 
 def _extract_muxrate_kbps(sink: EgressSinkSpec) -> int:

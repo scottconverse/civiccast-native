@@ -667,7 +667,12 @@ def probe_ffmpeg_features(
             next_step="ffmpeg detected but a feature probe failed; repair or reinstall it.",
         )
 
-    from civiccast.stream._ffmpeg import _parse_ffmpeg_version, _version_is_supported
+    from civiccast.stream._ffmpeg import (
+        _H264_ENCODER_PRIORITY,
+        _parse_ffmpeg_encoders,
+        _parse_ffmpeg_version,
+        _version_is_supported,
+    )
 
     version = _parse_ffmpeg_version(version_result.stdout + "\n" + version_result.stderr)
     supported = _version_is_supported(version) if version else False
@@ -676,13 +681,24 @@ def probe_ffmpeg_features(
     filters = f"{filters_result.stdout}\n{filters_result.stderr}"
     encoders = f"{encoders_result.stdout}\n{encoders_result.stderr}"
 
+    # has_libx264 is derived from the resolver's own GPL-encoder policy
+    # order (civiccast/stream/_ffmpeg.py: "hardware first, then Media
+    # Foundation, then the royalty-free software encoder, then libx264
+    # strictly last") rather than a fresh string literal here -- the GPL
+    # encoder name is a policy fact the resolver owns
+    # (tests/policy/test_ffmpeg_h264_encoder.py enforces that no *other*
+    # production module names it), and reusing its real encoder parser
+    # keeps this detection in sync with how the resolver itself decides.
+    parsed_encoders = _parse_ffmpeg_encoders(encoders)
+    has_gpl_h264_encoder = _H264_ENCODER_PRIORITY[-1] in parsed_encoders
+
     return FfmpegFeatureReport(
         detected=True,
         version=version,
         supported=supported,
         has_decklink="decklink" in muxers.lower(),
         has_ndi="libndi_newtek" in muxers.lower() or "ndi" in muxers.lower(),
-        has_libx264="libx264" in encoders.lower(),
+        has_libx264=has_gpl_h264_encoder,
         has_loudnorm="loudnorm" in filters.lower(),
         byo_sdi_binary=settings.ffmpeg_path,
         next_step="" if supported else "Upgrade ffmpeg to at least 4.4.",
