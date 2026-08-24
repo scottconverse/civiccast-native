@@ -79,6 +79,16 @@ AlertConditionKind = Literal[
     # reconnect succeeded) — this kind exists so the dashboard doesn't label
     # a recovered dropout as a hard failure.
     "scheduled-recording-dropout",
+    # BUG C2 fix (S23 §6.1 durable outbox): the as-run ledger's local durable
+    # journal (civiccast.reporting.asrun_outbox) failed to drain a batch to
+    # the franchise-compliance DB. The event stays journaled (nothing is
+    # lost — see the outbox module docstring), but a persistent drain
+    # failure needs an operator to know a DB problem is blocking the legal
+    # as-aired record from becoming durable. Unseeded (no migration 0039
+    # default-rule row), matching every condition kind added after that
+    # migration — the operator raises its severity from the "warning"
+    # fallback in Alert Settings if a station wants it to page.
+    "asrun-outbox-degraded",
 ]
 
 AlertChannelKind = Literal["email", "sms", "webhook"]
