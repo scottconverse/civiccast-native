@@ -120,15 +120,46 @@ jobs:
               Where-Object { $_.Name -ne $currentSha } |
               ForEach-Object {
                 Write-Host "Removing stale kit-staging dir: $($_.FullName)"
-                Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                if ($_.LinkType) {
+                  # Junction (e.g. to C:\CivicCastTester\kit-staging): delete the
+                  # link itself, never recurse into the target.
+                  $_.Delete()
+                } else {
+                  Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                }
               }
           } else {
             New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
           }
 
+      - name: Reuse a locally pre-staged kit when this box already has it
+        id: local_kit
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          # Artifact egress to this box measures ~1 GB per 8 minutes, so a 21 GB
+          # kit takes ~3 h through any downloader. When an operator (or the
+          # self-hosted candidate build) has already staged the kit under
+          # C:\CivicCastTester\kit-staging\<sha>\, junction it in and skip the
+          # download entirely. Validation of the kit layout stays in Run-GateA.
+          $sha = "${{ steps.run_id.outputs.source_sha }}"
+          $local = Join-Path "C:\CivicCastTester\kit-staging" $sha
+          $target = Join-Path "sandbox-lab/kit-staging" $sha
+          if ((Test-Path (Join-Path $local "station")) -and (Get-ChildItem $local -Filter "*setup.exe" -ErrorAction SilentlyContinue)) {
+            New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+            if (Test-Path $target) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }
+            New-Item -ItemType Junction -Path $target -Target $local | Out-Null
+            Write-Host "Reusing locally staged kit: $local"
+            "found=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "No locally staged kit at $local -- falling back to artifact download."
+            "found=false" >> $env:GITHUB_OUTPUT
+          }
+
       - name: Download the candidate kit artifact (parallel, chunked)
+        if: steps.local_kit.outputs.found != 'true'
         uses: actions/download-artifact@v4
-        timeout-minutes: 30
+        timeout-minutes: 60
         with:
           name: native-beta-kit-${{ steps.run_id.outputs.source_sha }}
           run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
