@@ -1403,7 +1403,7 @@ def egress_output_test_pattern(
     channel_id: Annotated[
         str, typer.Option("--channel-id", help="Channel to drive the test pattern to.")
     ],
-    pattern: Annotated[str, typer.Option("--pattern", help="bars | tone | slate.")] = "bars",
+    pattern: Annotated[str, typer.Option("--pattern", help="bars | live | slate.")] = "bars",
     duration_seconds: Annotated[
         int, typer.Option("--duration-seconds", help="How long to run the test pattern.")
     ] = 600,
@@ -1418,9 +1418,17 @@ def egress_output_test_pattern(
     """
     from civiccast.egress.store import PostgresEgressStore
     from civiccast.installer.commissioning import (
+        TestPattern,
         _default_test_pattern_runner,
         _extract_muxrate_kbps,
     )
+
+    valid_patterns: tuple[TestPattern, ...] = ("bars", "live", "slate")
+    if pattern not in valid_patterns:
+        raise typer.BadParameter(
+            f"--pattern must be one of {', '.join(valid_patterns)}, got {pattern!r}."
+        )
+    typed_pattern = pattern  # narrowed to TestPattern by the membership check above
 
     store = PostgresEgressStore(_build_cli_session_factory())
     config = store.get_config(channel_id)
@@ -1453,8 +1461,8 @@ def egress_output_test_pattern(
         _default_test_pattern_runner(
             sink.uri,
             duration_seconds,
-            pattern,
-            _extract_muxrate_kbps(sink),  # type: ignore[arg-type]
+            typed_pattern,
+            _extract_muxrate_kbps(sink),
         )
     except Exception as exc:
         typer.echo(f"Test pattern generation failed: {exc}")

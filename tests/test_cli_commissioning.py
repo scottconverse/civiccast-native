@@ -191,3 +191,57 @@ def test_cable_support_bundle_json(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = json.loads(result.stdout)
     assert payload["bundle_id"] == "support-20260101T000000Z-abcd1234"
     assert payload["redacted"] is True
+
+
+def test_egress_output_test_pattern_rejects_an_invalid_pattern() -> None:
+    """Regression test for the mypy fix: --pattern is validated against the
+    TestPattern Literal (bars|live|slate) instead of passed through as a bare
+    str, and an invalid value is a clean BadParameter, not a runtime crash."""
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["egress", "output", "test-pattern", "--channel-id", "government", "--pattern", "bogus"],
+    )
+    assert result.exit_code != 0
+    # BadParameter's rich-rendered error panel goes through typer's own
+    # console, not the click.echo stream CliRunner.stdout captures --
+    # .output mixes both, matching the pattern real terminal users see.
+    assert "must be one of bars, live, slate" in result.output
+
+
+def test_egress_output_test_pattern_accepts_valid_patterns_before_store_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid --pattern passes validation and proceeds to the (here-absent)
+    channel lookup, proving the Literal-narrowed value is accepted, not just
+    that invalid values are rejected."""
+
+    class _EmptyStore:
+        def __init__(self, _factory: object) -> None:
+            pass
+
+        def get_config(self, channel_id: str) -> None:
+            return None
+
+    monkeypatch.setattr("civiccast.egress.store.PostgresEgressStore", _EmptyStore)
+    runner = CliRunner()
+    for pattern in ("bars", "live", "slate"):
+        result = runner.invoke(
+            app,
+            [
+                "egress",
+                "output",
+                "test-pattern",
+                "--channel-id",
+                "government",
+                "--pattern",
+                pattern,
+            ],
+        )
+        # The pattern-validation error never fires; the command proceeds
+        # past it to the (mocked, empty) store lookup, which fails for its
+        # own unrelated reason -- proof the Literal-narrowed value flowed
+        # through, not that the command fully succeeded.
+        assert "must be one of" not in result.output
+        assert "No egress config for channel" in result.output
