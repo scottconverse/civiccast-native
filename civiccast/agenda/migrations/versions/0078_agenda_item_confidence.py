@@ -11,10 +11,19 @@ the operator console can flag low-confidence rows before the operator
 publishes -- it is always ``NULL`` for operator-authored items and exact
 plain-text imports, since there is nothing to be uncertain about there.
 
-Chain HEAD was ``0075_offline_caption_jobs`` (captions module) at the time
-this was written -- confirmed via ``alembic heads`` (single head). This is
-the current continuation of the shared cross-module numbered-slice chain
-the ``0058_meeting_agenda`` migration docstring describes.
+Chain HEAD was ``0075_offline_caption_jobs`` (captions module) when this
+migration was first written as ``0076_agenda_item_confidence`` -- confirmed
+via ``alembic heads`` (single head) at that time. Renumbered to ``0078``
+(down_revision moved to ``0076_analytics_viewership``) after PR #20 merged
+first and independently claimed the ``0076`` slot for the S14 analytics
+module (``civiccast/analytics/migrations/versions/0076_analytics_viewership.py``).
+PR #19 (``feat/s7-media-lifecycle``) has reserved the ``0077`` slot but had
+not merged into ``main`` as of this rename -- ``0077`` is deliberately left
+unused here so this migration does not collide with it too when it lands;
+a future merge/renumber may be needed at that point the same way the
+``0058_meeting_agenda`` docstring describes for the historical ``0056``
+reserved slot. This is the current continuation of the shared cross-module
+numbered-slice chain.
 """
 
 from __future__ import annotations
@@ -22,8 +31,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0076_agenda_item_confidence"
-down_revision = "0075_offline_caption_jobs"
+revision = "0078_agenda_item_confidence"
+down_revision = "0076_analytics_viewership"
 branch_labels = None
 depends_on = None
 

@@ -509,7 +509,7 @@ came across and what deliberately did not.
   (`1.`, `3.a`, `A.`, `IV.`), ALL-CAPS section headings, and standalone
   clock-time markers, and scores each recognized line with a `confidence`
   (new nullable `AgendaItem.confidence` field, migration
-  `0076_agenda_item_confidence`). `confidence` is always `None` for
+  `0078_agenda_item_confidence`). `confidence` is always `None` for
   operator-authored items and exact plain-text imports — only the PDF
   heuristic path produces a score. Because PDF extraction is a guess, not a
   literal transcription, importing PDF items onto an agenda that is

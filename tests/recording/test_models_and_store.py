@@ -833,9 +833,15 @@ class TestMigration0056AndMerge:
         # evidence; 0075_offline_caption_jobs adds the offline caption job
         # queue (keystone K3). 0076_analytics_viewership (S14 — durable
         # viewership_events/viewership_rollups/analytics_report_snapshots)
-        # chains after 0075 and is the current head.
-        assert list(heads) == ["0076_analytics_viewership"], (
-            f"Expected single head 0076_analytics_viewership, got {heads!r}"
+        # chains after 0075. 0078_agenda_item_confidence (product-hole fix:
+        # adds agenda_items.confidence for the PDF-agenda-import heuristic)
+        # is the current head, chained after 0076_analytics_viewership.
+        # Renumbered from its original 0076 after PR #20 merged first and
+        # independently claimed that slot; 0077 is reserved for the still-
+        # unmerged feat/s7-media-lifecycle branch and deliberately left
+        # unused here.
+        assert list(heads) == ["0078_agenda_item_confidence"], (
+            f"Expected single head 0078_agenda_item_confidence, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:
