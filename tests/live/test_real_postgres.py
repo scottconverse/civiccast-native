@@ -386,8 +386,14 @@ class TestSingleAlembicHead:
         # Audience Measurement) — durable viewership_events /
         # viewership_rollups / analytics_report_snapshots tables, chained
         # after ``0075_offline_caption_jobs``.
-        assert heads[0] == "0076_analytics_viewership", (
-            f"Expected head '0076_analytics_viewership'; got {heads[0]!r}."
+        # Updated to ``0078_agenda_item_confidence`` (product-hole fix: adds
+        # agenda_items.confidence for the PDF-agenda-import heuristic),
+        # chained after ``0076_analytics_viewership``. Renumbered from its
+        # original ``0076`` after PR #20 merged first and independently
+        # claimed that slot; ``0077`` is reserved for the still-unmerged
+        # feat/s7-media-lifecycle branch and deliberately left unused here.
+        assert heads[0] == "0078_agenda_item_confidence", (
+            f"Expected head '0078_agenda_item_confidence'; got {heads[0]!r}."
         )
 
 

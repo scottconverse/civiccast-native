@@ -433,6 +433,92 @@ came across and what deliberately did not.
   credential store reference) are not yet resolved by the probe — no
   resolver exists anywhere in this codebase yet; stated as a known
   limitation in the module docstring rather than silently glossed over.
+- **Coturn posture (documented external TURN, PR #9) didn't read correctly
+  end to end.** `civiccast/installer/contribution_install.py`'s honest
+  Windows guidance ("coturn has no native Windows build... point
+  `CIVICCAST_TURN_HOST`/`CIVICCAST_TURN_PORT` at a documented external TURN
+  server") was correct, but two real gaps kept it from actually reaching an
+  operator or doing its job: (1) `civiccast/live/contribution/coprocess.py`'s
+  TURN-reachability probe and its unreachable-alert were both gated on a
+  LOCAL coturn co-process being `"running"` — which can never happen once
+  `CIVICCAST_COTURN_COMMAND` is intentionally left unset, so the probe (and
+  the alert) silently never ran under the exact posture PR #9 declared
+  supported; `diagnostics()` also always reported the station as unhealthy
+  ("one or more co-processes are not running") in that posture, a
+  permanent false negative. (2) `ContributionInstallReport`'s
+  `coturn_action` guidance text had zero frontend consumer — no screen ever
+  fetched `GET /api/staff/installer/remote-contribution`.
+  Fixed: the probe now runs whenever a local coturn is up OR none is
+  configured at all, `VdoDiagnostics` gained `turn_host`/`turn_port` (the
+  effective, currently-configured target) and reports the station healthy
+  once TURN is reachable regardless of whether a local process is
+  supervised, and a new `POST /api/staff/contribution/diagnostics/turn-test`
+  runs an on-demand probe (not the last background poll). The Remote
+  Contribution screen's Diagnostics drawer now shows the configured
+  TURN target, a **Test TURN connectivity** button (confirm-free since it's
+  read-only; loading/success/error states), and a collapsible "How to point
+  this station at coturn" section carrying the install report's platform-
+  aware guidance verbatim. `docs/USER-MANUAL.md`'s env-var reference for
+  `CIVICCAST_TURN_HOST`/`CIVICCAST_TURN_PORT`/`CIVICCAST_COTURN_COMMAND`
+  expanded from a one-line stub to the same guidance.
+- **GPI / serial control-room device kinds mislabeled as hardware support.**
+  `tsr_service/index.mjs`'s `DEVICE_TYPE` map routes `gpi` and `serial`
+  `ProductionDevice` kinds through TSR's generic `TCPSEND` adapter — there
+  is no GPI contact-closure or RS-232/422 serial hardware driver, and none
+  is faked. Labeled honestly everywhere the capability is surfaced:
+  `ProductionDevice.kind`'s field description (feeds the OpenAPI schema and
+  `docs/API-REFERENCE.md`), the operator console's device-kind picker
+  (`ControlRoomSetupScreen`, relabeled "GPI (network relay)" / "Serial
+  (network relay)" with an inline note when either is selected, plus the
+  `gpi_pulse`/`serial_send` cue-action descriptions), `CAPABILITIES.md`,
+  the S18 incumbent-parity spec section's gap-8 status line and detail
+  section, and the `civiccast/control_room/`
+  package/module docstrings. A station needing real hardware fronts it
+  with its own TCP-to-GPI or TCP-to-serial relay box — the existing TCP
+  payload path already reaches it. No behavior change (the TCPSEND routing
+  was already correct); this closes the honesty gap between what the UI/
+  docs implied and what the code does.
+- **Two working backend routes had no operator console button.** Both
+  `civiccast/captions/router.py`'s offline-caption-job retry
+  (`POST /api/staff/captions/offline-jobs/{job_id}/retry`) and
+  `civiccast/egress/router.py`'s GStreamer runtime repair
+  (`POST /api/staff/egress/repair-gstreamer`) worked end to end but were
+  backend-only, flagged in `next-cleanup.md` as waiting on console wiring.
+  Added `OfflineCaptionJobsPanel` (`civiccast/apps/portal-operator/src/
+  screens/OfflineCaptionJobsPanel.tsx`), mounted as a per-asset drawer
+  section in `AssetDetailScreen`, listing offline caption jobs for that
+  recording with a `records_clerk`-gated Retry button (confirm, loading,
+  success, and per-row error states) on failed jobs. Added
+  `GstreamerRepairPanel` to `SystemHealthScreen`'s egress health surface,
+  gated on `setup_admin`/`support_admin`, with a confirm dialog and a
+  result banner naming the remedy (`already-healthy` /
+  `restage-launched` / `installer-missing` / `launch-failed`), the live
+  closure-health state, and the re-stage PID when one launched. Both wire
+  to the real routes via new `civiccast/apps/portal-operator/src/api/
+  client.ts` functions (`listOfflineCaptionJobs`, `retryOfflineCaptionJob`,
+  `repairGstreamerRuntime`); vitest coverage in
+  `OfflineCaptionJobsPanel.test.tsx` and
+  `SystemHealthGstreamerRepair.test.tsx`.
+- **PDF agenda import — operator-upload path was a stub.**
+  `AgendaService.import_from_doc` (`civiccast/agenda/service.py`) raised
+  `NotImplementedError` for any non-`text/plain` upload, so an operator
+  uploading a PDF agenda (the common case — municipal agendas ship as PDF,
+  not plain text) always hit a 415 with no real parsing behind it. Added a
+  heuristic text-layer extractor (`civiccast/agenda/pdf_import.py`, `pypdf`
+  — already a repo dependency) that recognizes numbered/lettered items
+  (`1.`, `3.a`, `A.`, `IV.`), ALL-CAPS section headings, and standalone
+  clock-time markers, and scores each recognized line with a `confidence`
+  (new nullable `AgendaItem.confidence` field, migration
+  `0078_agenda_item_confidence`). `confidence` is always `None` for
+  operator-authored items and exact plain-text imports — only the PDF
+  heuristic path produces a score. Because PDF extraction is a guess, not a
+  literal transcription, importing PDF items onto an agenda that is
+  currently `published` reopens it to `draft` (AI/agenda non-negotiables
+  spec §4.2 — operator approval before publish); a PDF with no recognizable
+  lines now returns 422 instead of either a 415 or a silently empty import.
+  The operator console's agenda screen gained a PDF file-upload control
+  alongside the existing paste-text import, a per-item confidence badge in
+  the items table, and a published-agenda-will-reopen-to-draft notice.
 - **nanoid 3.3.17 → 3.3.18** (GHSA-2v37-7h3g-55p8, high) in both the operator
   console and the public portal.
 - **pypdf 6.14.2 → 6.16.1** (PYSEC-2026-3655, PYSEC-2026-3656) — resource

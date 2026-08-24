@@ -34,6 +34,11 @@ ALLOWED_ACTIONS_BY_KIND: dict[str, frozenset[str]] = {
     "tcp": frozenset({"serial_send", "gpi_pulse", "router_take"}),
     "http": frozenset({"http"}),
     "casparcg": frozenset({"deck_play", "deck_cue", "overlay_push", "overlay_clear"}),
+    # Honest label: 'gpi' and 'serial' are network-relay triggers (TCP) only —
+    # there is no direct GPI contact-closure / serial hardware driver in this
+    # release (tsr_service/index.mjs routes both through TSR's TCPSEND
+    # adapter, same as the 'tcp' kind above). See ProductionDevice.kind's
+    # Field description and CAPABILITIES.md for the full disclosure.
     "gpi": frozenset({"gpi_pulse"}),
     "serial": frozenset({"serial_send"}),
 }

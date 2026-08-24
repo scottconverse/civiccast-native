@@ -79,6 +79,18 @@ async function mockBackend(
       body: JSON.stringify(current),
     })
   })
+  // AssetDetailScreen mounts OfflineCaptionJobsPanel, which fetches this on
+  // load -- mock it so tests that aren't exercising the captions drawer
+  // don't pick up a spurious 502 (unmocked route -> the dev proxy's
+  // unreachable-backend fallback) and its error alert alongside whatever
+  // this test IS asserting on.
+  await page.route('**/api/staff/captions/offline-jobs**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
   await page.route('**/api/staff/assets/council-2026-05-08', async (route) => {
     if (route.request().method() === 'PATCH') {
       const body = route.request().postDataJSON() as Record<string, unknown>

@@ -21,6 +21,7 @@ import {
   listChannelProfiles,
   openUpdateMaintenanceWindow,
   queueEgressCommand,
+  repairGstreamerRuntime,
   runFailedUpdateRollbackRehearsal,
   runDisasterRecoveryDrill,
   runPostUpdateProof,
@@ -38,6 +39,7 @@ import type {
   DiagnosticBundleResponse,
   DrillReport,
   ChannelProfile,
+  GstreamerRepairResponse,
   RehearsalReport,
   RestoreStatus,
   RuntimeSafeToAirStatus,
@@ -668,6 +670,74 @@ export function EgressReadinessPanel({
   )
 }
 
+const GSTREAMER_REMEDY_LABEL: Record<GstreamerRepairResponse['remedy'], string> = {
+  'already-healthy': 'GStreamer runtime is already healthy — nothing to repair.',
+  'restage-launched': 'A signed re-stage of the GStreamer runtime was launched.',
+  'installer-missing': 'Could not repair: the installer payload needed for the re-stage is missing.',
+  'launch-failed': 'Could not repair: the re-stage launch failed.',
+}
+
+export function GstreamerRepairPanel({
+  result,
+  onRun,
+  running,
+  canRun,
+  error,
+}: {
+  result?: GstreamerRepairResponse
+  onRun: () => void
+  running: boolean
+  canRun: boolean
+  error?: unknown
+}) {
+  const resultTone =
+    result && (result.remedy === 'already-healthy' || result.closure_healthy)
+      ? 'var(--cc-ok-soft)'
+      : 'var(--cc-err-soft)'
+  return (
+    <section
+      className="grid gap-2 rounded-md p-4"
+      style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+    >
+      <h2 className="m-0 text-base font-semibold">GStreamer engine repair</h2>
+      <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+        If a corrupt GStreamer closure has degraded a channel onto the FFmpeg fallback engine,
+        this re-verifies it in place and, if it&apos;s still broken, launches a signed re-stage.
+        Never a reinstall.
+      </p>
+      {result && (
+        <div className="grid gap-1 rounded-md p-3 text-xs" style={{ background: resultTone }}>
+          <strong>{GSTREAMER_REMEDY_LABEL[result.remedy]}</strong>
+          <span>{result.detail}</span>
+          <span>
+            Closure health right now: {result.closure_healthy ? 'healthy' : 'still degraded'}
+            {result.pid != null ? ` · re-stage process PID ${result.pid}` : ''}
+          </span>
+        </div>
+      )}
+      {Boolean(error) && (
+        <div role="alert" className="rounded-md p-2 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+          {apiMessage(error, 'GStreamer repair could not run.')}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onRun}
+        disabled={!canRun || running}
+        className="w-fit rounded-md px-3 py-2 text-sm font-semibold"
+        style={{ background: canRun ? 'var(--cc-ink)' : 'var(--cc-surface-3)', color: canRun ? 'var(--cc-ink-inv)' : 'var(--cc-ink-3)' }}
+      >
+        {running ? 'Repairing…' : 'Repair GStreamer runtime & restore full egress'}
+      </button>
+      {!canRun && (
+        <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Repairing the GStreamer runtime requires setup admin or support admin.
+        </p>
+      )}
+    </section>
+  )
+}
+
 export function RestorePanel({
   restore,
   realDrill,
@@ -1253,6 +1323,13 @@ export function SystemHealthScreen() {
       void queryClient.invalidateQueries({ queryKey: ['system-health'] })
     },
   })
+  const gstreamerRepair = useMutation({
+    mutationFn: repairGstreamerRuntime,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['system-health-egress'] })
+      void queryClient.invalidateQueries({ queryKey: ['system-health'] })
+    },
+  })
   const selfTestRun = useMutation({
     mutationFn: () => runSelfTestNow('daily'),
     onSuccess: () => {
@@ -1386,6 +1463,22 @@ export function SystemHealthScreen() {
             pendingCommand={egressCommandMutation.isPending ? (egressCommandMutation.variables ?? null) : null}
             canControl={canRunMeetingRehearsal}
             onCommand={(channelId, action) => egressCommandMutation.mutate({ channelId, action })}
+          />
+
+          <GstreamerRepairPanel
+            result={gstreamerRepair.data}
+            onRun={() => {
+              if (
+                window.confirm(
+                  'Repair the GStreamer runtime? If the closure is still broken this launches a signed re-stage of the native egress engine.',
+                )
+              ) {
+                gstreamerRepair.mutate()
+              }
+            }}
+            running={gstreamerRepair.isPending}
+            canRun={canRunRestoreRehearsal}
+            error={gstreamerRepair.error}
           />
 
           <section className="grid gap-3 lg:grid-cols-3">

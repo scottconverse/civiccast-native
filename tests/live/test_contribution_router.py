@@ -58,6 +58,11 @@ class _FakeBridge:
     def diagnostics(self) -> VdoDiagnostics:
         return VdoDiagnostics(turn_reachable=True, vdo_process_up=True)
 
+    def test_turn_connectivity(self) -> VdoDiagnostics:
+        return VdoDiagnostics(
+            turn_reachable=True, turn_host="turn.example.org", turn_port=3478, vdo_process_up=True
+        )
+
 
 def _build(scopes: tuple[str, ...] | None = _ALL, *, wire: bool = True, bridge=None):
     engine = create_engine(
@@ -171,6 +176,21 @@ def test_diagnostics_requires_support_admin() -> None:
 
 def test_503_when_unwired() -> None:
     assert _client(wire=False).get("/api/staff/contribution/rooms").status_code == 503
+
+
+def test_turn_connectivity_test_requires_support_admin() -> None:
+    assert (
+        _client(scopes=("meeting_operator",))
+        .post("/api/staff/contribution/diagnostics/turn-test")
+        .status_code
+        == 403
+    )
+    r = _client(scopes=("support_admin",)).post("/api/staff/contribution/diagnostics/turn-test")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["turn_reachable"] is True
+    assert body["turn_host"] == "turn.example.org"
+    assert body["turn_port"] == 3478
 
 
 def test_open_room_503_when_tier_not_configured() -> None:

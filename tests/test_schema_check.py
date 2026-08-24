@@ -85,16 +85,21 @@ def test_expected_head_matches_the_single_migration_head() -> None:
     # — the durable offline caption job for published recordings) chains
     # after 0074. 0076_analytics_viewership (S14 — durable
     # viewership_events/viewership_rollups/analytics_report_snapshots,
-    # promoting the analytics-events.json store to Postgres) is the current
-    # head, chained after 0075.
-    assert expected_migration_head() == "0076_analytics_viewership"
+    # promoting the analytics-events.json store to Postgres) chains after
+    # 0075. 0078_agenda_item_confidence (product-hole fix: adds
+    # agenda_items.confidence for the PDF-agenda-import heuristic) is the
+    # current head, chained after 0076_analytics_viewership. Renumbered from
+    # its original 0076 after PR #20 merged first and independently claimed
+    # that slot; 0077 is reserved for the still-unmerged
+    # feat/s7-media-lifecycle branch and deliberately left unused here.
+    assert expected_migration_head() == "0078_agenda_item_confidence"
 
 
 def test_expected_head_does_not_depend_on_current_working_directory(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     expected_migration_head.cache_clear()
     monkeypatch.chdir(tmp_path)
     try:
-        assert expected_migration_head() == "0076_analytics_viewership"
+        assert expected_migration_head() == "0078_agenda_item_confidence"
     finally:
         expected_migration_head.cache_clear()
 
@@ -109,7 +114,7 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
         conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL)")
         conn.execute(
             "INSERT INTO alembic_version (version_num) VALUES (?)",
-            ("0076_analytics_viewership",),
+            ("0078_agenda_item_confidence",),
         )
         conn.commit()
 
@@ -122,8 +127,8 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
 
     assert status == SchemaStatus(
         state="current",
-        db_revision="0076_analytics_viewership",
-        expected_head="0076_analytics_viewership",
+        db_revision="0078_agenda_item_confidence",
+        expected_head="0078_agenda_item_confidence",
     )
 
 

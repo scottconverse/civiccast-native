@@ -4,7 +4,11 @@ A small **localhost** HTTP service that embeds [TSR (timeline-state-resolver)](h
 the MIT-licensed device-control library extracted from the Sofie project, and
 exposes the CivicCast-owned contract that the Python control plane calls. TSR
 drives the station's existing production switchers (OBS / vMix / ATEM /
-HyperDeck / PTZ / OSC / CasparCG, plus GPI/serial via the generic adapters).
+HyperDeck / PTZ / OSC / CasparCG). GPI and serial device kinds are honestly
+labeled network-relay triggers (TCP) — direct GPI/serial hardware is not
+supported in this release; both route through TSR's generic TCPSEND
+adapter, same as the plain `tcp` device kind (see `DEVICE_TYPE` in
+`index.mjs`).
 
 ## Why a separate Node process
 
