@@ -645,6 +645,49 @@ came across and what deliberately did not.
   `docs/spec/3.0/sections/S7-media-lifecycle-and-readiness.md`. No
   operator settings UI exists yet for `transcode_seeding_enabled` or any
   other worker setting — named as real follow-up, not claimed done here.
+- **Asset packaging no longer upscales — the Gate A `/package` timeout.** Gate
+  A's clerk loop uploaded the real 640x360 sample clip (201 Created), called
+  `POST /api/staff/assets/{asset_id}/package`, and got no response at all
+  within its 30 s client budget; the station's own uvicorn access log
+  (`station-diag/final/logs/control_plane.log`) has **no line for the package
+  request** while it does log every later request, so the handler was still
+  running — not deadlocked, not blocking the event loop, just slow. No file on
+  the packaging path changed in the regression window: `git log f31618f..main`
+  touches neither `civiccast/stream/packager.py` nor `_ffmpeg.py`, and
+  `civiccast/schedule/router.py` is byte-identical. What was actually wrong is
+  older than the window and easy to miss — `pack_vod_asset` encoded all four
+  ABR rungs for every source regardless of the source's resolution, so a
+  640x360 clip was **upscaled to 1920x1080 and 1280x720**: pixels invented,
+  4.5 Mbps spent carrying no extra detail, and the full encode cost of a large
+  frame paid twice. Measured on that clip on a fast development box: 18.4 s for
+  the content ladder, of which the two upscaled rungs are 14.6 s (~81%);
+  end-to-end the endpoint took **~19 s steady-state and 23 s on the first call
+  in a process**, against a 30 s client timeout, on hardware considerably
+  faster than the 16 GB sandbox VM. The margin was always thin; it took no
+  code change to cross it. New `civiccast.stream.config.select_ladder` picks
+  the rungs before encoding — never taller than the source, top rung pinned to
+  the source's own resolution, the ladder's top rung still a product cap so a
+  4K source publishes at 1080p and below, and the **full ladder unchanged
+  whenever the source dimensions cannot be read** (the packager never guesses
+  its way into a smaller ladder). `pack_vod_asset` gained
+  `source_width`/`source_height`, and probes the input itself when a caller
+  does not supply them, so all three call sites — the staff package endpoint,
+  first-run sample seeding, and the live finalization worker — get the fix
+  without needing to know about it. Same clip after the change: **3.4 s of
+  content-ladder encode, an 81% reduction**, and the same booted-app
+  upload-then-package measurement that read 22.8 / 19.1 / 18.8 s now reads
+  **4.6 / 4.1 / 3.9 s** — from ~63% of the 30 s budget down to ~14%, so the
+  sandbox VM has room to be several times slower and still answer. The
+  emitted manifest is `360p` (640x360, the source's own resolution) + `240p`
+  + slate, with no upscaled variant. A 1080p or larger source is unaffected
+  in either time or output, which is correct: nothing upscales there. ADR
+  0007 carries the amendment.
+  **Not fixed, stated plainly:** packaging is still a synchronous HTTP request
+  whose latency is proportional to source duration. A 90-minute 1080p meeting
+  still occupies the request — and the operator console's fetch — for as long
+  as the encode takes. Moving it to a job-and-poll contract like the offline
+  caption jobs changes the endpoint's response contract and every caller of
+  it, so it needs its own ADR and an owner decision.
 
 - **Gate A — the stalls were `ConvertTo-Json` walking a cycle in
   `Get-Content`'s note properties.** Root cause for five runs (4, 6, 7 and both

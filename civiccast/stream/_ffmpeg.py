@@ -33,6 +33,7 @@ __all__ = [
     "H264EncoderUnavailableError",
     "check_ffmpeg",
     "probe_ffmpeg_encoders",
+    "probe_video_dimensions",
     "resolve_h264_encoder",
     "run_ffmpeg",
     "start_ffmpeg",
@@ -40,6 +41,7 @@ __all__ = [
 ]
 
 _FFMPEG_EXECUTABLE = "ffmpeg"
+_FFPROBE_EXECUTABLE = "ffprobe"
 #: Policy order: hardware first, then Windows Media Foundation, then the
 #: royalty-free software encoder, then libx264 (GPL) strictly last. libx264 is
 #: reachable ONLY when the probed binary itself carries it -- a station running
@@ -164,6 +166,58 @@ def probe_ffmpeg_encoders(ffmpeg_path: str) -> frozenset[str]:
             completed.stderr,
         )
     return _parse_ffmpeg_encoders(completed.stdout + "\n" + completed.stderr)
+
+
+def probe_video_dimensions(path: Path) -> tuple[int, int] | None:
+    """Return ``(width, height)`` of ``path``'s first video stream, or None.
+
+    Deliberately total: every failure mode — ffprobe absent, non-zero exit,
+    unparseable output, a file with no video stream — answers ``None`` rather
+    than raising, because the only caller
+    (:func:`civiccast.stream.packager.pack_vod_asset`) treats ``None`` as
+    "dimensions unknown" and falls back to the full ABR ladder. A packaging
+    run must never fail because an optimisation could not measure its input.
+    """
+
+    if shutil.which(_FFPROBE_EXECUTABLE) is None:
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [
+                _FFPROBE_EXECUTABLE,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0:s=x",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if completed.returncode != 0:
+        return None
+    parts = completed.stdout.strip().splitlines()[:1]
+    if not parts:
+        return None
+    fields = parts[0].split("x")
+    if len(fields) < 2:
+        return None
+    try:
+        width, height = int(fields[0]), int(fields[1])
+    except ValueError:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
 
 
 EncoderProbe = Callable[[str], Collection[str]]

@@ -5,12 +5,20 @@ uploads segments to the configured CDN.
 
 ## What it does
 
-- Accepts a source video file and produces a 5-variant HLS output tree:
+- Accepts a source video file and produces an HLS output tree of up to five
+  variants — the content rungs the source can actually fill, plus the slate:
   - **1080p** — 4.5 Mbps, H.264 High, AAC 128 kbps
   - **720p** — 2.5 Mbps, H.264 Main, AAC 128 kbps
   - **480p** — 1.0 Mbps, H.264 Main, AAC 96 kbps
   - **240p** — 350 kbps, H.264 Baseline, AAC 64 kbps
   - **Slate** — 200 kbps, always present, player falls back here if all content variants fail
+- **Never upscales.** `select_ladder` (in `config.py`) drops every rung taller
+  than the source and pins the top rung to the source's own resolution, so a
+  640x360 clip publishes `360p` + `240p` + slate rather than spending ~81% of
+  the encode inventing 1080p and 720p pixels. A 1080p (or larger) source still
+  gets the whole four-rung ladder; the ladder's top rung is a product cap, so a
+  4K source publishes at 1080p and below. When the source dimensions cannot be
+  read, the full ladder is used unchanged — the packager never guesses.
 - Writes output to a local directory; CDN upload is a separate adapter step.
 - Applies optional fractional trim windows (`trim_in_seconds`,
   `trim_out_seconds`) before encoding content renditions. Slate generation is

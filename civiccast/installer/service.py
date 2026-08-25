@@ -2754,7 +2754,15 @@ def _seed_first_run_asset(
             "package", "The package path resolved outside CivicCast upload storage."
         )
     try:
-        result = pack_vod_asset(Path(ingested.file_path), staging_dir)
+        result = pack_vod_asset(
+            Path(ingested.file_path),
+            staging_dir,
+            # First-run seeding runs while the operator waits on the setup
+            # screen: reuse the ffprobe ingest just did so the sample is
+            # packaged at its own resolution instead of upscaled.
+            source_width=ingested.width_px,
+            source_height=ingested.height_px,
+        )
         staged_manifest = Path(result.manifest_path).resolve()
         if not staged_manifest.is_relative_to(staging_dir) or not staged_manifest.is_file():
             raise PackagingError("The packager did not produce a usable manifest.")
