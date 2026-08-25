@@ -161,6 +161,15 @@ function Write-Marker {
 }
 
 Write-Marker -Name '_STARTED.marker' -Content "Started $RunStart"
+# The driver's own PID <gate-a-hoststore-wedge>. Four Gate A runs have now
+# ended with "last step written, nothing after, other processes healthy", and
+# that signature is IDENTICAL whether the driver's thread blocked or the
+# driver's PROCESS died (an unhandled OutOfMemoryException in this VM is not
+# hypothetical -- see the Start-Job/PSWorkflow note further down). None of the
+# four post-mortems can tell those apart, which means none of them can pick a
+# fix with confidence. The watchdog checks this PID when it fires and records
+# the answer, so the next occurrence resolves it in one line.
+Write-Marker -Name '_DRIVER-PID.txt' -Content "driver_pid=$PID started_utc=$($RunStart.ToUniversalTime().ToString('o'))"
 Write-Marker -Name '_LOCALOUT.marker' -Content "local_out_dir=$OutDir ship_dir=$ShipDir seed_completed=$($script:SeedResult.completed) seed_error=$($script:SeedResult.error)"
 
 # Quiesce control <gate-a-run7-findings>. Raised around the installer so the
@@ -282,7 +291,13 @@ try {
 # Explicit retraction list: names the harness itself withdraws when a run
 # genuinely completes after a watchdog already fired. Anything not on this
 # list is never deleted from the mapped folder.
-foreach ($name in @('WATCHDOG-TIMEOUT.txt', 'STALL-TIMEOUT.txt')) {
+# _SHIPPER-QUIESCE.marker joins the list <gate-a-hoststore-wedge>: the mirror
+# is additive, so a marker shipped during the quiesce window stayed on the
+# host after the driver removed it locally, and the preserved evidence for
+# the run that prompted this change shows one -- telling a reader the run was
+# still quiesced when it was not. Evidence that misreports harness state is
+# worse than absent evidence.
+foreach ($name in @('WATCHDOG-TIMEOUT.txt', 'STALL-TIMEOUT.txt', '_SHIPPER-QUIESCE.marker')) {
     try {
         $localCopy = Join-Path $LocalDir $name
         $shipCopy = Join-Path $ShipDir $name
@@ -493,7 +508,27 @@ while ((Get-Date) -lt $deadline) {
 # (Start-Process) instead -- it never touches the job-scheduling subsystem.
 try {
     $watchdogScript = @'
-param([string]$OutDir, [int]$Minutes, [int]$StallMinutes = 8)
+param([string]$OutDir, [int]$Minutes, [int]$StallMinutes = 8, [int]$DriverPid = 0)
+
+function Get-DriverLiveness {
+    # "The driver stopped advancing" has two very different causes that leave
+    # an identical trail: its thread blocked, or its process died. This is the
+    # one cheap observation that separates them, and it must be made AT THE
+    # MOMENT the watchdog fires -- afterwards the VM is torn down and the
+    # answer is gone forever. Returns a string, never throws.
+    param([int]$DriverPid)
+    if ($DriverPid -le 0) { return 'driver_pid_unknown' }
+    try {
+        $p = Get-Process -Id $DriverPid -ErrorAction Stop
+        $cpu = $null
+        try { $cpu = [Math]::Round($p.TotalProcessorTime.TotalSeconds, 1) } catch {}
+        $ws = $null
+        try { $ws = [Math]::Round($p.WorkingSet64 / 1MB, 1) } catch {}
+        return "driver_process_alive=true driver_pid=$DriverPid driver_cpu_seconds=$cpu driver_working_set_mb=$ws"
+    } catch {
+        return "driver_process_alive=false driver_pid=$DriverPid (process is gone -- the driver DIED rather than blocked)"
+    }
+}
 
 $donePath = Join-Path $OutDir 'DONE.json'
 $summaryPath = Join-Path $OutDir 'summary.json'
@@ -568,7 +603,8 @@ while ((Get-Date) -lt $deadline) {
             if ($stalledSeconds -ge $stallThresholdSeconds -and -not (Test-Path $donePath)) {
                 $ts = (Get-Date).ToUniversalTime().ToString('o')
                 $stuckSinceIso = $lastChangeTime.ToUniversalTime().ToString('o')
-                "stall_detected_utc=$ts stuck_step=$lastSeenStep stuck_progress=$lastSeenProgress stuck_since_utc=$stuckSinceIso stalled_seconds=$([Math]::Round($stalledSeconds, 1)) threshold_seconds=$stallThresholdSeconds" |
+                $liveness = Get-DriverLiveness -DriverPid $DriverPid
+                "stall_detected_utc=$ts stuck_step=$lastSeenStep stuck_progress=$lastSeenProgress stuck_since_utc=$stuckSinceIso stalled_seconds=$([Math]::Round($stalledSeconds, 1)) threshold_seconds=$stallThresholdSeconds $liveness" |
                     Set-Content -Path (Join-Path $OutDir 'STALL-TIMEOUT.txt') -Encoding UTF8
                 if (-not (Test-Path $donePath)) {
                     $doneObj = [ordered]@{
@@ -578,6 +614,7 @@ while ((Get-Date) -lt $deadline) {
                         harness_completed    = $false
                         watchdog_timeout     = $false
                         stall_timeout        = $true
+                        driver_liveness      = $liveness
                     }
                     ($doneObj | ConvertTo-Json -Depth 3) | Set-Content -Path $donePath -Encoding UTF8
                 }
@@ -591,7 +628,8 @@ while ((Get-Date) -lt $deadline) {
 
 if (-not (Test-Path $donePath)) {
     $ts = (Get-Date).ToUniversalTime().ToString('o')
-    "watchdog_fired_utc=$ts max_script_minutes=$Minutes reason=DONE.json not present after the bounded deadline -- main script presumed hung or zombied" |
+    $liveness = Get-DriverLiveness -DriverPid $DriverPid
+    "watchdog_fired_utc=$ts max_script_minutes=$Minutes reason=DONE.json not present after the bounded deadline -- main script presumed hung or zombied $liveness" |
         Set-Content -Path (Join-Path $OutDir 'WATCHDOG-TIMEOUT.txt') -Encoding UTF8
     if (-not (Test-Path $donePath)) {
         $doneObj = [ordered]@{
@@ -600,6 +638,7 @@ if (-not (Test-Path $donePath)) {
             installer_exit_code  = $null
             harness_completed    = $false
             watchdog_timeout     = $true
+            driver_liveness      = $liveness
         }
         ($doneObj | ConvertTo-Json -Depth 3) | Set-Content -Path $donePath -Encoding UTF8
     }
@@ -609,9 +648,9 @@ if (-not (Test-Path $donePath)) {
     Set-Content -Path $watchdogPath -Value $watchdogScript -Encoding UTF8
     Start-Process -FilePath 'powershell.exe' -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$watchdogPath`"",
-        '-OutDir', "`"$OutDir`"", '-Minutes', $MaxScriptMinutes
+        '-OutDir', "`"$OutDir`"", '-Minutes', $MaxScriptMinutes, '-DriverPid', $PID
     ) -WindowStyle Hidden | Out-Null
-    Write-Marker -Name '_WATCHDOG_SPAWNED.marker' -Content "MaxScriptMinutes=$MaxScriptMinutes stall_threshold_minutes=8 out_dir=$OutDir started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+    Write-Marker -Name '_WATCHDOG_SPAWNED.marker' -Content "MaxScriptMinutes=$MaxScriptMinutes stall_threshold_minutes=8 out_dir=$OutDir driver_pid=$PID started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
 } catch {
     Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "watchdog spawn failed (non-fatal, continuing without a watchdog): $_"
 }
@@ -752,11 +791,143 @@ function Invoke-InstallProgressCapture {
     Save-Summary -Step "install-progress-captured-$Phase"
 }
 
+# --------------------------------------------------------------------------
+# BOUNDED PROBE <gate-a-hoststore-wedge>
+#
+# `Invoke-BoundedProcess` above bounds an external command. This bounds a
+# piece of OUR OWN logic: it ships the script text to a throwaway
+# powershell.exe, hands it arguments and a result path as files (no quoting
+# games), waits with a timeout, and reads the JSON back. On timeout the child
+# is killed and the caller gets $null plus a recorded note.
+#
+# Why this exists rather than just calling the code inline: `C:\CivicCastHostStore`
+# is a read-write mapped folder AND the install target -- 10,683 files and
+# 1,264 directories live there after a successful install, and the installer's
+# own final step spent three minutes merely measuring that tree. Every
+# remaining synchronous read of it from the driver's single thread is an
+# unbounded call against a share the driver does not control, which is the
+# exact shape of failure this harness has hit four times.
+#
+# Rejected alternative, for the record: moving the install target to a LOCAL
+# directory (C:\CivicCastLocalInstall) would remove the dependency outright
+# and was the tidier-sounding option. It is not viable, and the reason is
+# already documented in this file -- the `/D=C:\CivicCastHostStore\install`
+# comment records that staging the packs locally "blew past the Sandbox's
+# virtual disk (os error 112 'not enough space') during station-pack cache",
+# because the install is ~12 GB and activation stages ~40 GB of models on top
+# of a ~40 GB virtual C:. That same comment also records that activation
+# "REFUSES junction/symlink install-roots", so the obvious dodge is closed
+# too. Run-GateA.ps1's fresh-install guarantee (it resets hoststore\ before
+# every run) and gate_a_verdict.py's install/activation checks both read that
+# tree from the host as well. Bounding the accesses is the option that
+# survives all three constraints.
+# --------------------------------------------------------------------------
+function Invoke-BoundedProbe {
+    param(
+        [string]$Name,
+        [string]$ScriptText,
+        [hashtable]$Arguments = @{},
+        [int]$TimeoutSeconds = 90
+    )
+    $stamp = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $scriptPath = Join-Path $env:TEMP "civiccast-probe-$stamp.ps1"
+    $argsPath = Join-Path $env:TEMP "civiccast-probe-$stamp.args.json"
+    $resultPath = Join-Path $env:TEMP "civiccast-probe-$stamp.result.json"
+    try {
+        # The child reads $ProbeArgs (hashtable) and must write its result to
+        # $ResultPath. Both are injected by this preamble, so the caller's
+        # script text stays plain PowerShell.
+        $preamble = @'
+param([string]$ArgsPath, [string]$ResultPath)
+$ProbeArgs = @{}
+try {
+    if (Test-Path $ArgsPath) {
+        $raw = Get-Content -Path $ArgsPath -Raw -Encoding UTF8
+        $obj = $raw | ConvertFrom-Json
+        foreach ($prop in $obj.PSObject.Properties) { $ProbeArgs[$prop.Name] = $prop.Value }
+    }
+} catch {}
+'@
+        Set-Content -Path $scriptPath -Value ($preamble + [Environment]::NewLine + $ScriptText) -Encoding UTF8
+        ($Arguments | ConvertTo-Json -Depth 5) | Set-Content -Path $argsPath -Encoding UTF8
+
+        $run = Invoke-BoundedProcess -FilePath 'powershell.exe' -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$scriptPath`"",
+            '-ArgsPath', "`"$argsPath`"", '-ResultPath', "`"$resultPath`""
+        ) -TimeoutSeconds $TimeoutSeconds
+
+        if (-not $run.completed) {
+            $summary.errors += "bounded probe '$Name' did not complete within ${TimeoutSeconds}s: $($run.error)"
+            return $null
+        }
+        if (-not (Test-Path $resultPath)) {
+            $summary.errors += "bounded probe '$Name' completed (exit $($run.exit_code)) but wrote no result"
+            return $null
+        }
+        return ((Get-Content -Path $resultPath -Raw -Encoding UTF8) | ConvertFrom-Json)
+    } catch {
+        $summary.errors += "bounded probe '$Name' threw: $_"
+        return $null
+    } finally {
+        foreach ($tmp in @($scriptPath, $argsPath, $resultPath)) {
+            try { if (Test-Path $tmp) { Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue } } catch {}
+        }
+    }
+}
+
 # (b) Bounded, targeted marker-file lookup -- replaces the old
 # `Get-ChildItem -Recurse` full-tree scans. Checks only the exact locations
 # the coordinator specified, plus a SHALLOW (one-level, non-recursive)
 # listing of immediate subfolders under <installDir>\app, never a deep walk.
+#
+# <gate-a-hoststore-wedge>: every one of those checks reads
+# C:\CivicCastHostStore, a mapped folder. Targeted and non-recursive is not
+# the same as bounded -- a single Test-Path against a wedged share blocks
+# forever. The probes now run in a disposable child with a hard timeout.
 function Test-KnownPaths {
+    param([string]$InstallDir, [string]$FileName)
+
+    $probe = Invoke-BoundedProbe -Name "known-paths:$FileName" -TimeoutSeconds 90 -Arguments @{
+        InstallDir = $InstallDir
+        FileName   = $FileName
+        ProgramData = $env:ProgramData
+    } -ScriptText @'
+$hits = New-Object System.Collections.Generic.List[string]
+$InstallDir = $ProbeArgs['InstallDir']
+$FileName = $ProbeArgs['FileName']
+try {
+    if ($InstallDir) {
+        $p = Join-Path $InstallDir $FileName
+        if (Test-Path $p) { $hits.Add($p) }
+        $appDir = Join-Path $InstallDir 'app'
+        $p = Join-Path $appDir $FileName
+        if (Test-Path $p) { $hits.Add($p) }
+        if (Test-Path $appDir) {
+            Get-ChildItem -Path $appDir -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object {
+                $candidate = Join-Path $_.FullName $FileName
+                if (Test-Path $candidate) { $hits.Add($candidate) }
+            }
+        }
+    }
+    $pd = Join-Path $ProbeArgs['ProgramData'] 'CivicCast'
+    $p = Join-Path $pd $FileName
+    if (Test-Path $p) { $hits.Add($p) }
+} catch {}
+# Named envelope, NOT a unary-comma array. Windows PowerShell 5.1's
+# ConvertTo-Json turns `(, @(...))` into {"value":[...],"Count":n} -- an
+# object, not a JSON array -- so every caller would silently receive one
+# wrapper instead of its list. Caught by the host-side probe smoke test.
+@{ items = @($hits | Select-Object -Unique) } | ConvertTo-Json -Depth 3 | Set-Content -Path $ResultPath -Encoding UTF8
+'@
+
+    if ($null -eq $probe) { return @() }
+    return @($probe.items)
+}
+
+# Kept for reference and for any caller that genuinely wants the unbounded
+# form. Nothing in this script calls it; Test-KnownPaths above is the bounded
+# replacement.
+function Test-KnownPathsUnbounded {
     param([string]$InstallDir, [string]$FileName)
     $hits = New-Object System.Collections.Generic.List[string]
 
@@ -888,12 +1059,30 @@ function Invoke-StationDiagCapture {
         ((, $eventRows) | ConvertTo-Json -Depth 4) | Set-Content -Path (Join-Path $diagDir 'winevent-app-system.json') -Encoding UTF8
     } catch { "winevent capture failed: $_" | Add-Content -Path $note -Encoding UTF8 }
 
+    # These two reads are against C:\CivicCastHostStore (a mapped folder), and
+    # this capture runs up to three times per run -- including from the
+    # top-level `finally`, where a block would cost the run its DONE.json.
+    # Bounded <gate-a-hoststore-wedge>.
     if ($InstallDir) {
-        foreach ($f in @('activation-self-test.json', 'station-set.json')) {
-            $src = Join-Path $InstallDir $f
-            if (Test-Path $src) {
-                Copy-Item -LiteralPath $src -Destination (Join-Path $diagDir $f) -Force -ErrorAction SilentlyContinue
-            }
+        $copied = Invoke-BoundedProbe -Name "diag-station-markers:$Label" -TimeoutSeconds 60 -Arguments @{
+            InstallDir = $InstallDir
+            DiagDir    = $diagDir
+        } -ScriptText @'
+$done = @()
+try {
+    foreach ($f in @('activation-self-test.json', 'station-set.json')) {
+        $src = Join-Path $ProbeArgs['InstallDir'] $f
+        if (Test-Path $src) {
+            Copy-Item -LiteralPath $src -Destination (Join-Path $ProbeArgs['DiagDir'] $f) -Force -ErrorAction SilentlyContinue
+            $done += $f
+        }
+    }
+} catch {}
+@{ items = @($done) } | ConvertTo-Json -Depth 3 | Set-Content -Path $ResultPath -Encoding UTF8
+'@
+        if ($null -eq $copied) {
+            "station marker copy ($Label) did not complete within its bound -- see summary.errors" |
+                Add-Content -Path $note -Encoding UTF8
         }
     }
 }
@@ -1355,18 +1544,32 @@ try {
         # shipper's destination rides; run7 measured 1.6-4.2x slowdowns on
         # exactly those steps with a 25s tick running underneath. Nothing of
         # value is written locally during the install anyway.
-        Enter-ShipperQuiesce -Reason 'installer-running' -MaxMinutes 90
+        # Covers the installer AND the post-install discovery that follows it
+        # <gate-a-hoststore-wedge>. 120 minutes rather than 90 because the
+        # window is longer now; the marker's own expiry remains the backstop
+        # against a lift that never happens, and the station-up wait lifts it
+        # explicitly long before then on every real run.
+        Enter-ShipperQuiesce -Reason 'installer-and-post-install-discovery' -MaxMinutes 120
         try {
             $proc = Start-Process -FilePath $exe.FullName -ArgumentList '/S /D=C:\CivicCastHostStore\install' -PassThru -Wait -WindowStyle Hidden
             $summary.installer_exit_code = $proc.ExitCode
         } catch {
             $summary.installer_launch_error = "$_"
             $summary.errors += "installer launch/wait failed: $_"
-        } finally {
-            # Un-quiesce on EVERY path out of the install, including a throw.
-            # The marker's own expiry is the second layer, not the first.
-            Exit-ShipperQuiesce
         }
+        # NOTE <gate-a-hoststore-wedge>: the quiesce is deliberately NOT lifted
+        # here any more. It used to be, in a `finally` attached to the install
+        # itself, which put the 25s tick back underneath the post-install
+        # phase -- and that phase is at least as VSMB-heavy as the install:
+        # install-dir discovery, the install-tree listing, Test-KnownPaths, the
+        # station-set.json / activation-self-test.json reads, and the service
+        # checks all read C:\CivicCastHostStore, where 10,683 files now live.
+        # The installer's own last step spent 3 minutes just MEASURING that
+        # tree (see "EstimatedSize corrected" in install-progress.log). The
+        # quiesce is now lifted at the station-up wait instead -- see
+        # Exit-ShipperQuiesce there -- because that wait is HTTP-bound, is the
+        # first phase that genuinely wants prompt evidence shipping, and gives
+        # the run a natural point where nothing is reading the share.
         Write-Marker -Name '_AFTER_INSTALL.marker' -Content (Get-Date).ToString('o')
         # station_boot_seconds (station-up-wait, below) is measured from this
         # timestamp -- capture it as a real DateTime now rather than
@@ -1446,18 +1649,32 @@ try {
     }
 
     if ($installDir) {
-        # Top-level + one-level-deep tree listing (bounded: only immediate
-        # children, and only the first 50 grandchildren per container -- this
-        # was already safe in the previous version and is unchanged).
-        $summary.install_tree_top_levels = Get-ChildItem -Path $installDir -Force -ErrorAction SilentlyContinue |
-            ForEach-Object {
-                $entry = [ordered]@{ name = $_.Name; type = if ($_.PSIsContainer) {'dir'} else {'file'} }
-                if ($_.PSIsContainer) {
-                    $entry.children = (Get-ChildItem -Path $_.FullName -Force -ErrorAction SilentlyContinue |
-                        Select-Object -First 50 -ExpandProperty Name)
-                }
-                $entry
+        # Top-level + one-level-deep tree listing. "Bounded" used to mean
+        # bounded in BREADTH (immediate children, first 50 grandchildren);
+        # <gate-a-hoststore-wedge> makes it bounded in TIME as well, because
+        # $installDir is C:\CivicCastHostStore\install -- a mapped folder
+        # holding 10,683 files across 1,264 directories after a successful
+        # install, and enumerating it is precisely the kind of call that has
+        # no timeout of its own.
+        Save-Summary -Step 'install-tree-listing-begin'
+        $treeProbe = Invoke-BoundedProbe -Name 'install-tree-top-levels' -TimeoutSeconds 120 -Arguments @{
+            InstallDir = $installDir
+        } -ScriptText @'
+$out = @()
+try {
+    $out = @(Get-ChildItem -Path $ProbeArgs['InstallDir'] -Force -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $entry = [ordered]@{ name = $_.Name; type = $(if ($_.PSIsContainer) { 'dir' } else { 'file' }) }
+            if ($_.PSIsContainer) {
+                $entry.children = @(Get-ChildItem -Path $_.FullName -Force -ErrorAction SilentlyContinue |
+                    Select-Object -First 50 -ExpandProperty Name)
             }
+            $entry
+        })
+} catch {}
+@{ items = @($out) } | ConvertTo-Json -Depth 8 | Set-Content -Path $ResultPath -Encoding UTF8
+'@
+        if ($null -ne $treeProbe) { $summary.install_tree_top_levels = @($treeProbe.items) }
         Save-Summary -Step 'install-tree-top-levels'
 
         # 4. TARGETED (non-recursive) lookup for the two activation-related
@@ -1609,6 +1826,14 @@ try {
     #     measured from _AFTER_INSTALL.marker (informational only: Gate A's
     #     judge records it but does not fail on duration -- Gate B owns
     #     timing).
+    # Lift the shipper quiesce here <gate-a-hoststore-wedge>. Everything from
+    # this point on is HTTP-bound (a 6-second poll against 127.0.0.1) rather
+    # than VSMB-bound, so the 25s tick costs nothing -- and this is the first
+    # phase that genuinely wants prompt evidence shipping, because a station
+    # that never comes up is a 20-minute wait the host should be able to watch.
+    Exit-ShipperQuiesce
+    Save-Summary -Step 'shipper-unquiesced-at-station-up-wait'
+
     $rt = Join-Path $OutDir 'RUNTIME-RESULT.txt'
     $stationWaitLog = Join-Path $OutDir 'STATION-UP-WAIT.txt'
     "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $rt -Encoding UTF8

@@ -597,6 +597,41 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Gate A — the remaining synchronous `C:\CivicCastHostStore` reads are now
+  bounded, and the "hung or dead?" question is finally instrumented.** The
+  candidate-#11 run (`831f3df`) is the first Gate A run whose install
+  succeeded end to end (`installer_exit_code: 0`, `d4-activate-station:
+  returned 0` — the run-7 station-bundle failure is resolved, and
+  `d4-activate-station` went 35m09 ✗ → 31m13 ✓ with the shipper quiesced,
+  though against a *different* kit so that is not a controlled comparison).
+  It then stalled, and for the first time the per-statement instrumentation
+  named the step: `stuck_step=install-progress-copied-post-install`,
+  `seq:7`, 509s. That **excludes** the expected culprit rather than
+  confirming it — the hoststore reads (install-dir discovery, `station-set.json`,
+  ARP, service checks) are all separately recorded steps further down and
+  none appeared; what remains is two in-memory assignments and a ~2 KB local
+  JSON write, against a 178-line log whose longest line is 138 characters.
+  Since four runs have now ended with a signature identical whether the
+  driver's thread *blocked* or its process *died*, the driver records its PID
+  (`_DRIVER-PID.txt`) and both watchdog triggers now call `Get-DriverLiveness`
+  as they fire, writing `driver_process_alive=true|false` (plus CPU seconds
+  and working set) into `STALL-TIMEOUT.txt` / `WATCHDOG-TIMEOUT.txt` and the
+  placeholder `DONE.json`. Independently, the three remaining synchronous
+  readers of the mapped install target — `Test-KnownPaths`, the install-tree
+  listing, and `Invoke-StationDiagCapture`'s marker copies — now run through a
+  new `Invoke-BoundedProbe` (a throwaway `powershell.exe` with an arguments
+  file, a result file and a hard timeout), because "targeted and
+  non-recursive" was never the same as "bounded". The quiesce window also
+  stops being lifted when the installer returns; it now runs to the station-up
+  wait, so the 25-second tick no longer resumes underneath 10,683 files of
+  post-install hoststore reads. Moving the install target to a local directory
+  was considered and rejected: this file already records that staging locally
+  hits "os error 112 (not enough space)" on the ~40 GB virtual disk and that
+  activation "REFUSES junction/symlink install-roots", and `Run-GateA.ps1`'s
+  fresh-install guarantee plus `gate_a_verdict.py`'s install/activation checks
+  both read that tree host-side. Also: `_SHIPPER-QUIESCE.marker` joins the
+  shipper's retraction list — the additive mirror was leaving a stale copy on
+  the host that told readers the run was still quiesced when it was not.
 - **Self-hosted native-beta candidate build — the same persisted-cache bug
   as #41, one script over: `civiccast-ffmpeg-pack-cache`.** Candidate run
   32858543561 (main=7bf705a) got further than ever before — the PostgreSQL

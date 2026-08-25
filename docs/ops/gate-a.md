@@ -498,6 +498,131 @@ both `_capture-note.txt` files record *"logs dir not present at
 C:\ProgramData\CivicCast\logs"*, because the install failed before the
 station ever logged anything.
 
+## The hoststore wedge: `C:\CivicCastHostStore` is a mapped folder *and* the install target
+
+The candidate-#11 run (`831f3df`, run id `32871499307`) is the first Gate A run
+where the install **succeeded end to end** — `installer_exit_code: 0`,
+`d4-activate-station: returned 0`. The station-bundle failure from run 7 is
+resolved, and the shipper quiesce measurably helped
+(`d4-activate-station` 35m09 ✗ → 31m13 ✓; `stage-packs` 11m26 → 9m09). Read
+those deltas with care, though: candidate #11 is a **different kit** from the
+one runs 6 and 7 used (different installer SHA, 1,264 dirs vs 968), so this is
+not a controlled comparison of the quiesce alone.
+
+The run then stalled, and for the first time the harness **named the step**.
+
+### What the instrumentation caught
+
+```
+stuck_step=install-progress-copied-post-install  stuck_progress=seq:7
+stuck_since_utc=2026-08-25T17:20:05Z  stalled_seconds=509  threshold_seconds=480
+```
+
+`summary.json` confirms it: `step_seq: 7`,
+`last_completed_step: install-progress-copied-post-install`,
+`install_progress_log_found: true`, `install_progress_log_bytes: 7170`, and
+`install_progress_log_tail: []` — the tail assignment never ran.
+
+That pins the wedge to the three statements after that step:
+
+```powershell
+Save-Summary -Step "install-progress-copied-$Phase"          # seq 7, 17:20:03.379Z ✓
+$summary.install_progress_log_tail = @($lines | Select-Object -Last 80)   # in-memory
+$script:InstallProgressCaptured = $true                                   # in-memory
+Save-Summary -Step "install-progress-captured-$Phase"        # never arrived
+```
+
+**This rules out the obvious suspect rather than confirming it.** The natural
+reading — that the wedge is in the hoststore reads (install-dir discovery,
+`station-set.json` / `activation-self-test.json`, ARP, service checks) — is
+excluded by the instrumentation: every one of those is a separately recorded
+step further down (`post-install-grace-sleep`, `install-dir-located`,
+`install-tree-top-levels`, `service-state-query`), and none appeared.
+
+The data being processed is unremarkable too: the log is 178 lines, longest
+line 138 characters, 3,466 characters across the whole 80-line tail. Two
+in-memory assignments and a ~2 KB local JSON write is not work that takes
+eight and a half minutes.
+
+### What is still unresolved, and the instrument added for it
+
+Four runs have now ended with the same signature: **last step written, nothing
+after, every other process in the VM healthy.** That signature is identical
+whether the driver's *thread blocked* or the driver's *process died* — and an
+unhandled `OutOfMemoryException` in this VM is not hypothetical; this script's
+own `Start-Job`/PSWorkflow comment records one. No post-mortem so far can tell
+those apart, which means none of them can pick a fix with confidence.
+
+So the driver now records its PID (`_DRIVER-PID.txt`), the watchdog is given
+it, and **both** watchdog triggers call `Get-DriverLiveness` at the moment they
+fire, writing the answer into `STALL-TIMEOUT.txt` / `WATCHDOG-TIMEOUT.txt` and
+into the placeholder `DONE.json`:
+
+```
+driver_process_alive=true  driver_pid=6160 driver_cpu_seconds=41.2 driver_working_set_mb=118.4
+driver_process_alive=false driver_pid=6160 (process is gone -- the driver DIED rather than blocked)
+```
+
+The observation is only available while the VM still exists, so it has to be
+made there and then. This is the same shape of fix as `step_seq` was for the
+arming race: the missing instrument, not a guess at the mechanism.
+
+### Bounding the remaining hoststore reads
+
+Independently of the named wedge, the coordinator is right that the
+post-install phase still read a mapped folder synchronously.
+`C:\CivicCastHostStore\install` holds **10,683 files across 1,264
+directories** after a successful install, and the installer's own last step
+spent three minutes merely measuring it (`EstimatedSize corrected` in
+`install-progress.log`). Three readers remained:
+
+| Reader | What it touches | Now |
+|---|---|---|
+| `Test-KnownPaths` | up to 4 probes × 2 marker files | bounded probe, 90 s |
+| install-tree listing | `Get-ChildItem` over the install root | bounded probe, 120 s |
+| `Invoke-StationDiagCapture` marker copies | 2 files, runs up to 3× per run | bounded probe, 60 s |
+
+`Invoke-BoundedProbe` ships a piece of the driver's own logic to a throwaway
+`powershell.exe` with an arguments file and a result file, waits with a hard
+timeout, kills the child if it overruns, and returns `$null` plus a recorded
+error rather than blocking. "Targeted and non-recursive" was never the same as
+"bounded": a single `Test-Path` against a wedged share blocks forever.
+
+The quiesce window also **stops being lifted when the installer returns**. It
+used to be, in a `finally` on the install itself, which put the 25-second tick
+straight back underneath this same hoststore-heavy phase. It is now lifted at
+the station-up wait (`shipper-unquiesced-at-station-up-wait`), which is
+HTTP-bound and is the first phase that genuinely wants prompt shipping.
+
+### Why the install target was NOT moved off the mapped folder
+
+Making the in-sandbox install target a local `C:\CivicCastLocalInstall` would
+remove the dependency outright and is the tidier-sounding option. It is not
+viable, for reasons already recorded in `In-Sandbox-Report.ps1`:
+
+- The `/D=C:\CivicCastHostStore\install` comment documents that staging locally
+  **"blew past the Sandbox's virtual disk (os error 112 'not enough space')
+  during station-pack cache"** — the install is ~12 GB and activation stages
+  ~40 GB of models, against a ~40 GB virtual C:.
+- The same comment records that activation **"REFUSES junction/symlink
+  install-roots"**, closing the obvious dodge of installing locally and linking.
+- `Run-GateA.ps1`'s fresh-install guarantee resets `hoststore\` before every
+  run, and `gate_a_verdict.py`'s `install` and `activation` checks read that
+  tree from the host side. Moving it would mean changing all three plus the
+  evidence contract.
+
+Bounding the accesses is the option that survives all three constraints. The
+mapped install target is therefore a **standing** architectural constraint of
+this harness, not a defect awaiting cleanup.
+
+### One evidence-integrity fix
+
+`_SHIPPER-QUIESCE.marker` joins the shipper's retraction list. The mirror is
+additive, so a marker shipped during the quiesce window survived on the host
+after the driver removed it locally — the preserved evidence for this very run
+contains one, which tells a reader the run was still quiesced when it was not.
+Evidence that misreports harness state is worse than absent evidence.
+
 ## Known harness quirk: the Aug-19 reference run's `completion` check
 
 The PASS fixture used in `tests/gate_a/fixtures/pass-2026-08-19/` is a
