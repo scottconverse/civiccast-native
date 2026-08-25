@@ -710,7 +710,26 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # so all five collect into both lanes. Re-derived by an actual
     # `--collect-only` run on this tree, not by arithmetic: (1614, 1806) ->
     # (1619, 1811).
-    assert (collect("not windows_only"), collect()) == (1619, 1811)
+    #
+    # Same branch, fixup (2026-08-25): +1 pure, 0 windows_only -- PR #31's
+    # CI (not local: CI's tests/native "pure" lane runs on a Linux runner,
+    # this box is Windows) failed test_main_reexports_a_relocated_msvc_path_
+    # to_github_env and test_main_does_not_touch_github_env_when_msvc_
+    # install_is_not_relocated with "the native Windows toolchain must be
+    # provisioned on Windows" -- both called provisioner.main(), which is
+    # correctly, unconditionally Windows-gated (os.name != "nt"), so they
+    # never reached the GITHUB_ENV logic they meant to test at all. Not a
+    # GITHUB_ENV ambient-variable collision (both already isolated it via
+    # monkeypatch.setenv). Fixed at the root: the GITHUB_ENV re-export logic
+    # is now its own function, reexport_relocated_msvc_install() -- pure,
+    # no os.name/os.environ read, GITHUB_ENV passed as an explicit argument
+    # -- and main() is three lines calling it. The two OS-gated tests are
+    # replaced by three tests against the extracted function directly
+    # (relocated writes GITHUB_ENV; not-relocated is a no-op; a None
+    # github_env does not raise), net +1 over the two removed. Re-derived by
+    # an actual `--collect-only` run on this tree, not by arithmetic: (1619,
+    # 1811) -> (1620, 1812).
+    assert (collect("not windows_only"), collect()) == (1620, 1812)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

@@ -775,6 +775,51 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def reexport_relocated_msvc_install(
+    requested: Path,
+    resolved: Path,
+    *,
+    github_env: str | None,
+) -> None:
+    """Tell the caller when `install_msvc()` relocated, and how.
+
+    `install_msvc()` only relocates when `requested` existed, failed
+    verification, AND could not be removed (a locked file from something
+    still holding it open -- see that function's docstring). Every later
+    step in native-beta-candidate-artifacts.yml reads
+    $env:CIVICCAST_MSVC_INSTALLATION_PATH directly (the Tauri vcvars64.bat
+    import, the pack build's env block), so the resolved path is re-exported
+    here rather than left for the caller to notice on its own -- GITHUB_ENV
+    values set mid-job take effect starting with the NEXT step, matching how
+    this exact variable is already bound before this script ever runs (see
+    the workflow's "Bind reviewed MSVC install location"). A no-op, both the
+    stderr note and the GITHUB_ENV write, when `resolved == requested` (the
+    common case: the hosted lane always, and self-hosted whenever nothing
+    was locked).
+
+    Split out of `main()` -- which is unconditionally gated to Windows-only
+    (`os.name != "nt"`), appropriately, since actually provisioning MSVC
+    only makes sense there -- so this glue logic can be exercised by
+    `tests/native`'s platform-independent suite, which CI runs on a Linux
+    runner. Calling this indirectly through `main()` made that suite fail
+    on candidate-review PR #31 with "the native Windows toolchain must be
+    provisioned on Windows" -- a real OS-gate hit, not a GITHUB_ENV
+    collision (both original tests already isolated GITHUB_ENV via
+    monkeypatch.setenv; the ambient value was never the issue).
+    """
+    if resolved == requested:
+        return
+    print(
+        f"MSVC install at {requested} failed verification and "
+        f"could not be removed (still in use by something); installed fresh "
+        f"at {resolved} instead.",
+        file=sys.stderr,
+    )
+    if github_env:
+        with Path(github_env).open("a", encoding="utf-8") as handle:
+            handle.write(f"CIVICCAST_MSVC_INSTALLATION_PATH={resolved}\n")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if os.name != "nt":
@@ -801,29 +846,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             requested_msvc_install,
             offline=args.offline,
         )
-        if resolved_msvc_install != requested_msvc_install:
-            # install_msvc() only relocates when the requested install_root
-            # existed, failed verification, AND could not be removed (a
-            # locked file from something still holding it open -- see that
-            # function's docstring). Every later step in
-            # native-beta-candidate-artifacts.yml reads
-            # $env:CIVICCAST_MSVC_INSTALLATION_PATH directly (the Tauri
-            # vcvars64.bat import, the pack build's env block), so the
-            # resolved path is re-exported here rather than left for the
-            # caller to notice on its own -- GITHUB_ENV values set mid-job
-            # take effect starting with the NEXT step, matching how this
-            # exact variable is already bound before this script ever runs
-            # (see the workflow's "Bind reviewed MSVC install location").
-            print(
-                f"MSVC install at {requested_msvc_install} failed verification and "
-                f"could not be removed (still in use by something); installed fresh "
-                f"at {resolved_msvc_install} instead.",
-                file=sys.stderr,
-            )
-            github_env = os.environ.get("GITHUB_ENV")
-            if github_env:
-                with Path(github_env).open("a", encoding="utf-8") as handle:
-                    handle.write(f"CIVICCAST_MSVC_INSTALLATION_PATH={resolved_msvc_install}\n")
+        reexport_relocated_msvc_install(
+            requested_msvc_install,
+            resolved_msvc_install,
+            github_env=os.environ.get("GITHUB_ENV"),
+        )
     print(json.dumps({"output": str(args.output.resolve()), "verified": verified}))
     return 0
 

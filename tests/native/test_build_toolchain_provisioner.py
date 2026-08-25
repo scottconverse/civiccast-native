@@ -418,74 +418,76 @@ def test_install_msvc_relocates_when_the_invalid_install_cannot_be_removed(
     assert (install_root / "cl.exe").exists()
 
 
-def test_main_reexports_a_relocated_msvc_path_to_github_env(
+def test_reexport_relocated_msvc_install_writes_github_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every later workflow step (the Tauri vcvars64.bat import, the pack
     build's env block) reads $env:CIVICCAST_MSVC_INSTALLATION_PATH as a
-    fixed literal -- when install_msvc() relocates, main() must re-export
-    the ACTUAL path to GITHUB_ENV so those steps pick it up automatically."""
+    fixed literal -- when install_msvc() relocates, the resolved path must
+    be re-exported to GITHUB_ENV so those steps pick it up automatically.
+
+    Calls reexport_relocated_msvc_install() directly rather than going
+    through main() (which PR #31's original version of this test did): the
+    ambient GITHUB_ENV was never the issue -- monkeypatch.setenv already
+    isolated it -- but main() is unconditionally gated to
+    `os.name == "nt"`, appropriately, since actually provisioning MSVC only
+    makes sense on Windows. tests/native's platform-independent ("pure")
+    suite runs on a Linux CI runner, and hit that gate before ever reaching
+    this logic: "the native Windows toolchain must be provisioned on
+    Windows". Testing the extracted function directly is both the fix (no
+    OS dependency left to trip on) and, incidentally, MORE hermetic than
+    monkeypatching GITHUB_ENV as an ambient var: the function takes
+    `github_env` as an explicit argument, so this test never touches
+    process environment at all. monkeypatch.delenv proves that explicitly.
+    """
+    monkeypatch.delenv("GITHUB_ENV", raising=False)
     requested = tmp_path / "civiccast-msvc-build-tools"
     relocated = tmp_path / "civiccast-msvc-build-tools-deadbeef"
     github_env = tmp_path / "github_env.txt"
     github_env.write_text("", encoding="utf-8")
-    monkeypatch.setenv("GITHUB_ENV", str(github_env))
-    monkeypatch.setattr(
-        provisioner, "provision_portable_toolchain", lambda *a, **kw: {"node": {"path": "x"}}
-    )
-    monkeypatch.setattr(
-        provisioner,
-        "install_msvc",
-        lambda *a, **kw: relocated,
+
+    provisioner.reexport_relocated_msvc_install(
+        requested, relocated, github_env=str(github_env)
     )
 
-    exit_code = provisioner.main(
-        [
-            "--cache",
-            str(tmp_path / "cache"),
-            "--output",
-            str(tmp_path / "output"),
-            "--msvc-install",
-            str(requested),
-        ]
-    )
-
-    assert exit_code == 0
     assert f"CIVICCAST_MSVC_INSTALLATION_PATH={relocated}\n" in github_env.read_text(
         encoding="utf-8"
     )
 
 
-def test_main_does_not_touch_github_env_when_msvc_install_is_not_relocated(
+def test_reexport_relocated_msvc_install_is_a_noop_when_not_relocated(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The common case (hosted lane always; self-hosted whenever nothing is
     locked) must not perturb GITHUB_ENV at all -- only an actual relocation
-    is worth a re-export."""
+    is worth a re-export. See test_reexport_relocated_msvc_install_writes_
+    github_env's docstring for why this calls the extracted function
+    directly rather than main()."""
+    monkeypatch.delenv("GITHUB_ENV", raising=False)
     requested = tmp_path / "civiccast-msvc-build-tools"
     github_env = tmp_path / "github_env.txt"
     github_env.write_text("", encoding="utf-8")
-    monkeypatch.setenv("GITHUB_ENV", str(github_env))
-    monkeypatch.setattr(
-        provisioner, "provision_portable_toolchain", lambda *a, **kw: {"node": {"path": "x"}}
-    )
-    monkeypatch.setattr(provisioner, "install_msvc", lambda *a, **kw: requested)
 
-    exit_code = provisioner.main(
-        [
-            "--cache",
-            str(tmp_path / "cache"),
-            "--output",
-            str(tmp_path / "output"),
-            "--msvc-install",
-            str(requested),
-        ]
+    provisioner.reexport_relocated_msvc_install(
+        requested, requested, github_env=str(github_env)
     )
 
-    assert exit_code == 0
     assert github_env.read_text(encoding="utf-8") == ""
+
+
+def test_reexport_relocated_msvc_install_tolerates_no_github_env(tmp_path: Path) -> None:
+    """Outside CI (a developer running the script by hand, or a future
+    caller), GITHUB_ENV is simply not set -- github_env=None must not raise,
+    matching the guard the workflow's own GITHUB_ENV reads never need
+    because GitHub Actions always sets it."""
+    requested = tmp_path / "civiccast-msvc-build-tools"
+    relocated = tmp_path / "civiccast-msvc-build-tools-deadbeef"
+
+    provisioner.reexport_relocated_msvc_install(requested, relocated, github_env=None)
+    # No exception, and nothing to assert on disk -- the point is the call
+    # above did not raise trying to open a None path.
 
 
 def test_msvc_version_probe_rejects_compiler_or_linker_drift() -> None:
