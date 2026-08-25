@@ -19,10 +19,12 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import urllib.parse
 import urllib.request
+import uuid
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
@@ -671,11 +673,66 @@ def install_msvc(
     install_root: Path,
     *,
     offline: bool = False,
-) -> None:
-    """Install and verify the fixed MSVC Build Tools product."""
+) -> Path:
+    """Install and verify the fixed MSVC Build Tools product, reusing an
+    already-verified install in place when ``install_root`` already holds one.
 
-    assert_msvc_path_length(install_root, "--msvc-install")
+    A hosted runner is always fresh, so ``install_root`` never pre-exists
+    there -- this function's hosted-lane behavior is byte-identical to
+    before it gained a reuse path: verification is skipped because there is
+    nothing at ``install_root`` to verify, and install proceeds exactly as
+    it always did. A SELF-HOSTED runner's `_work\\_temp` persists across
+    runs, so `install_root` can already hold a previous run's install --
+    complete (worth reusing: this installer takes real minutes, not
+    hosted-runner-ephemeral seconds), or incomplete/interrupted. Candidate
+    run 32810709045's own follow-up investigation found a concrete case of
+    the latter that a naive "does the dir look non-empty" check would have
+    missed: a from-a-crashed-run tree that LOOKED complete (cl.exe/link.exe
+    both present, ~1.8 GB) but was actually left over from a deletion that
+    itself failed partway through (Windows still held handles open via
+    vctip.exe/mspdbsrv.exe) -- an unknown mix of the old and prior states.
+    Trust is therefore never marker-only: `verify_msvc_installation` -- the
+    same real cl.exe/link.exe launch-and-version check a fresh install
+    already trusts before use -- reruns against ANY pre-existing tree before
+    it is reused, so stale metadata next to corrupted or missing binaries is
+    still caught.
+
+    If the pre-existing tree fails that verification, this function tries to
+    clear it (so this run's install lands at the canonical `install_root`,
+    which every unconditional literal downstream in
+    native-beta-candidate-artifacts.yml assumes). If Windows still has a
+    handle open on any file in it, `shutil.rmtree` raises `OSError` rather
+    than partially succeeding into an even-more-ambiguous state -- caught
+    here, not propagated, and this run installs at a uniquely suffixed
+    SIBLING directory instead of failing the job outright. The old,
+    undeletable directory is deliberately left behind (best-effort cleanup
+    is the caller's job, on a later run once whatever was holding it open
+    has exited) rather than retried in a loop here.
+
+    Returns the install root actually used: `install_root` unchanged in the
+    hosted-lane case, the reuse case, and the normal fresh-install case, or
+    the relocated sibling path in the rare locked-and-uninstallable case.
+    Callers that need the resolved path outside this process (the workflow's
+    later steps all reference `$env:CIVICCAST_MSVC_INSTALLATION_PATH`
+    directly) must propagate it themselves -- see `main()` below, which
+    re-exports it to `$GITHUB_ENV` whenever it differs from what was asked
+    for.
+    """
+
     msvc = lock["artifacts"]["msvc"]
+    target = install_root
+    if install_root.exists():
+        try:
+            verify_msvc_installation(install_root, msvc)
+            return install_root  # already valid -- reuse, no reinstall
+        except ToolchainProvisionError:
+            pass
+        try:
+            shutil.rmtree(install_root)
+        except OSError:
+            target = install_root.with_name(f"{install_root.name}-{uuid.uuid4().hex[:8]}")
+
+    assert_msvc_path_length(target, "--msvc-install")
     bootstrapper = fetch_locked_artifact(
         "msvc",
         msvc,
@@ -695,7 +752,7 @@ def install_msvc(
     # If the install were genuinely broken, that is what catches it, not the
     # exit code.
     completed = subprocess.run(
-        msvc_install_command(bootstrapper, install_root, msvc),
+        msvc_install_command(bootstrapper, target, msvc),
         check=False,
         timeout=2 * 60 * 60,
     )
@@ -703,7 +760,8 @@ def install_msvc(
         raise ToolchainProvisionError(
             f"MSVC Build Tools install failed with exit code {completed.returncode}"
         )
-    verify_msvc_installation(install_root, msvc)
+    verify_msvc_installation(target, msvc)
+    return target
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -736,12 +794,36 @@ def main(argv: Sequence[str] | None = None) -> int:
             offline=args.offline,
         )
     if args.msvc_install is not None:
-        install_msvc(
+        requested_msvc_install = args.msvc_install.resolve()
+        resolved_msvc_install = install_msvc(
             lock,
             args.cache.resolve(),
-            args.msvc_install.resolve(),
+            requested_msvc_install,
             offline=args.offline,
         )
+        if resolved_msvc_install != requested_msvc_install:
+            # install_msvc() only relocates when the requested install_root
+            # existed, failed verification, AND could not be removed (a
+            # locked file from something still holding it open -- see that
+            # function's docstring). Every later step in
+            # native-beta-candidate-artifacts.yml reads
+            # $env:CIVICCAST_MSVC_INSTALLATION_PATH directly (the Tauri
+            # vcvars64.bat import, the pack build's env block), so the
+            # resolved path is re-exported here rather than left for the
+            # caller to notice on its own -- GITHUB_ENV values set mid-job
+            # take effect starting with the NEXT step, matching how this
+            # exact variable is already bound before this script ever runs
+            # (see the workflow's "Bind reviewed MSVC install location").
+            print(
+                f"MSVC install at {requested_msvc_install} failed verification and "
+                f"could not be removed (still in use by something); installed fresh "
+                f"at {resolved_msvc_install} instead.",
+                file=sys.stderr,
+            )
+            github_env = os.environ.get("GITHUB_ENV")
+            if github_env:
+                with Path(github_env).open("a", encoding="utf-8") as handle:
+                    handle.write(f"CIVICCAST_MSVC_INSTALLATION_PATH={resolved_msvc_install}\n")
     print(json.dumps({"output": str(args.output.resolve()), "verified": verified}))
     return 0
 
