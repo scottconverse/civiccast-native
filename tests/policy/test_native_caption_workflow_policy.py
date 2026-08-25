@@ -805,7 +805,33 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # dependency, no windows_only marker, so all four collect into both
     # lanes. Re-derived by an actual `--collect-only` run on this tree, not
     # by arithmetic: (1626, 1818) -> (1630, 1822).
-    assert (collect("not windows_only"), collect()) == (1630, 1822)
+    #
+    # fix/self-hosted-lane-layer10 (2026-08-25): +4 pure, 0 windows_only --
+    # candidate run 32858543561 (self-hosted, main=7bf705a) got past the
+    # PostgreSQL cache fix (#41) and K1, then failed identically at
+    # "build_native_ffmpeg_pack: FFmpeg closure seed bin/ffmpeg.exe is
+    # missing: ...\civiccast-ffmpeg-pack-cache\extracted\ffmpeg\bin\
+    # ffmpeg.exe" -- the same persisted-incomplete-extraction bug as #41,
+    # one script over. Fixed identically:
+    # _extracted_ffmpeg_is_complete() re-verifies a pre-existing extraction
+    # against the same pinned bin/license file set build_ffmpeg_pack()
+    # itself requires (reusing the existing _ffmpeg_sources() validator)
+    # before trusting it; an incomplete tree is cleared and re-extracted.
+    # A static sweep of every remaining script build-native-beta's pack
+    # step calls (ollama, cuda, bootstrap) found each already immune to
+    # this bug class (atomic-replace, per-file re-verify-or-redownload,
+    # and npm's own clean-install respectively) -- no further code changes
+    # needed there. 4 new platform-independent tests land in
+    # tests/native/test_build_native_ffmpeg_pack.py: complete extraction
+    # reused; incomplete extraction (missing ffmpeg.exe, the exact
+    # observed shape) cleared and re-extracted; no-cache-yet path
+    # unaffected; direct unit coverage of the completeness check. Plain
+    # function calls and monkeypatched fetch_locked_artifact/
+    # safe_extract_zip/load_lock only -- no OS dependency, no
+    # windows_only marker, so all four collect into both lanes.
+    # Re-derived by an actual `--collect-only` run on this tree, not by
+    # arithmetic: (1630, 1822) -> (1634, 1826).
+    assert (collect("not windows_only"), collect()) == (1634, 1826)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

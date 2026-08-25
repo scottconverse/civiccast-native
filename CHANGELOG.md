@@ -597,6 +597,47 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Self-hosted native-beta candidate build — the same persisted-cache bug
+  as #41, one script over: `civiccast-ffmpeg-pack-cache`.** Candidate run
+  32858543561 (main=7bf705a) got further than ever before — the PostgreSQL
+  cache fix (#41) held, K1 succeeded — then failed at `build_native_ffmpeg_pack:
+  FFmpeg closure seed bin/ffmpeg.exe is missing:
+  ...\civiccast-ffmpeg-pack-cache\extracted\ffmpeg\bin\ffmpeg.exe`. Same
+  root cause as #41 in a different cache: `acquire_ffmpeg_pack_sources()`'s
+  bare `destination.exists()` check trusted a self-hosted `--cache`'s
+  persisted, interrupted-mid-extraction `extracted/ffmpeg` tree instead of
+  re-extracting it. Fixed the identical way: `_extracted_ffmpeg_is_complete()`
+  re-verifies a pre-existing extraction against the same pinned bin/license
+  file set `build_ffmpeg_pack()` itself requires (reusing the existing
+  `_ffmpeg_sources()` validator) before trusting it; an incomplete tree is
+  cleared and re-extracted.
+
+  Per the pattern of each run peeling one more layer of the same job, did a
+  static sweep of every remaining script `build-native-beta`'s pack-build
+  step calls for the same bug classes (idempotent-cache trust, hosted-only
+  assumptions, live-network fetches, tool availability, hash pins the
+  self-hosted toolchain can't reproduce) rather than waiting for the next
+  run to surface the next layer. Exhaustively grepped every script for both
+  the "trust because it exists" and "refuse because it's non-empty"
+  shapes: `build_native_ollama_pack.py`'s acquire is already immune (always
+  extracts fresh into a temp dir, validates, then atomically replaces the
+  destination — never trusts stale state); `build_native_cuda_pack.py`'s
+  acquire already re-verifies a cached file's hash before ever reusing it,
+  deleting and re-downloading on mismatch; `build_native_bootstrap.py`
+  unconditionally runs `npm ci` (npm's own clean-install operation, not a
+  cache-trust check) and locates NSIS via Tauri's own tool-provisioning
+  cache; every remaining `X.exists() and any(X.iterdir())` refusal
+  (`civiccast-app-payload`, `civiccast-app-payload-scratch`/`pyav-build`,
+  `civiccast-gstreamer-closure`, `build/wp1-native-toolchain`) is either
+  already pre-cleared by the self-hosted-only step #31 added, or lives
+  inside the repo checkout, always fresh via `actions/checkout`, so it can
+  never trigger from self-hosted persistence. No further code changes
+  found necessary in this sweep.
+
+  `tests/native/test_build_native_ffmpeg_pack.py`: +4 tests (complete
+  extraction reused; incomplete extraction — missing `ffmpeg.exe`, the
+  exact observed shape — cleared and re-extracted; no-cache-yet path
+  unaffected; direct unit coverage of the completeness check).
 - **Self-hosted native-beta candidate build — a persisted, interrupted
   PostgreSQL cache extraction, plus a live MSYS2 keyserver dependency.**
   Candidate run 32845198987 failed identically in BOTH attempts (a
