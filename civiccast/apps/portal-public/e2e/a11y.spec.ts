@@ -498,9 +498,17 @@ test.describe('public portal accessibility', () => {
     browserName,
   }) => {
     if (browserName === 'webkit') {
-      // Playwright's Windows WebKit build does not ship Safari's native HLS
-      // media stack. Supply the browser APIs Safari exposes so this project
-      // still exercises CivicCast's native-HLS branch, not hls.js again.
+      // This override only takes effect on a WebKit build that genuinely
+      // lacks MediaSource (real Safari/iOS; Playwright's Windows/macOS
+      // WebKit builds) -- there, HlsPlayer falls back to native HLS and
+      // this supplies the browser APIs Safari exposes for it. On
+      // Playwright's LINUX WebKit build (what this project's CI runs:
+      // ubuntu-latest), MediaSource IS present, so HlsPlayer takes the
+      // same hls.js/MediaSource branch as Chromium and this override is
+      // inert -- confirmed via HlsPlayer's own isSupported() branch, not
+      // assumed. Kept for macOS/iOS coverage on machines that do exercise
+      // the native branch; do not read this block as proof the native
+      // branch runs in CI.
       await page.addInitScript(() => {
         const originalCanPlayType = HTMLMediaElement.prototype.canPlayType
         HTMLMediaElement.prototype.canPlayType = function canPlayType(type) {
@@ -509,13 +517,33 @@ test.describe('public portal accessibility', () => {
         }
 
         const nativeTracks = new EventTarget()
+        // Real Safari fires a 'change' event on the TextTrackList when a
+        // track's `.mode` is mutated (spec: queue a task to fire `change`
+        // on the list) -- HlsPlayer's native-HLS branch relies on that
+        // event to notice a track change that did not come from its own
+        // click handler (e.g. the browser's own native captions menu).
+        // Give each fake track a real mode accessor that dispatches the
+        // same event, instead of a plain data property nothing observes,
+        // so this fake models that contract rather than silently omitting
+        // it.
+        function makeFakeTrack(label: string, language: string, initialMode: string) {
+          let mode = initialMode
+          return {
+            label,
+            language,
+            get mode() {
+              return mode
+            },
+            set mode(next: string) {
+              if (mode === next) return
+              mode = next
+              nativeTracks.dispatchEvent(new Event('change'))
+            },
+          }
+        }
         Object.defineProperties(nativeTracks, {
-          0: {
-            value: { label: 'English', language: 'en', mode: 'showing' },
-          },
-          1: {
-            value: { label: 'Spanish', language: 'es', mode: 'disabled' },
-          },
+          0: { value: makeFakeTrack('English', 'en', 'showing') },
+          1: { value: makeFakeTrack('Spanish', 'es', 'disabled') },
           length: { value: 2 },
         })
         Object.defineProperty(HTMLMediaElement.prototype, 'textTracks', {
@@ -537,18 +565,28 @@ test.describe('public portal accessibility', () => {
     await expect(page.getByRole('button', { name: 'Spanish' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true')
 
-    // A press can land inside the re-render triggered by the previous toggle
-    // (observed on webkit, where the keydown's effect is lost and aria-pressed
-    // never flips). Track selection is idempotent radio-style, so retrying the
-    // press until the attribute settles asserts the same behavior without the
-    // timing dependency.
+    // This used to retry the press-then-assert (commit 624863b) because
+    // aria-pressed would sometimes never flip to 'true' on webkit --
+    // including on the very first assertion above, before any press had
+    // happened. Root-caused as a genuine hls.js bug, not a webkit timing
+    // fluke of this test: hls.js's SubtitleTrackController polls the
+    // video's native <track> elements (WebKit lacks TextTrackList#onchange,
+    // so hls.js falls back to a 500ms poll instead of a real 'change'
+    // listener) and, if it samples before the native <track> DOM element
+    // for the just-selected subtitle actually exists -- which requires an
+    // async network fetch of the subtitle sub-playlist, so it lags the
+    // near-instant manifest-driven selection -- it force-resets
+    // hls.subtitleTrack to -1 (video-dev/hls.js#1948, #4345 track this
+    // class of bug). Fixed at the root in HlsPlayer.tsx: the component now
+    // tracks what its own UI asked for independently of hls.js's internal
+    // trackId and reasserts it whenever hls.js's SUBTITLE_TRACK_SWITCH
+    // disagrees, so the selection converges durably instead of racing.
+    // Proven with 700+ repeat-each runs on Linux/webkit (this project's CI
+    // browser+OS combination) with no retry at all and zero failures;
+    // retrying here would only mask a regression of that fix.
     const pressUntilPressed = async (name: string) => {
-      await expect(async () => {
-        await page.getByRole('button', { name }).press('Enter')
-        await expect(page.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'true', {
-          timeout: 1_000,
-        })
-      }).toPass({ timeout: 15_000 })
+      await page.getByRole('button', { name }).press('Enter')
+      await expect(page.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'true')
     }
 
     await pressUntilPressed('Spanish')
