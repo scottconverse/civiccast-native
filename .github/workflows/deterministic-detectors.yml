@@ -88,7 +88,13 @@ jobs:
           fi
 
       - name: Install project (dev)
-        run: uv sync --all-extras --group dev
+        # --no-extra agenda-js-import: mirrors ci-test.yml's own "Install
+        # project (dev)" step and its comment there -- crawl4ai's package
+        # being importable without Playwright's Chromium binary staged
+        # (this job never runs `playwright install chromium`) is worse than
+        # not installing it at all for civiccast.agenda_import.js_portal's
+        # tests, which are hermetic regardless via monkeypatch/sys.modules.
+        run: uv sync --all-extras --no-extra agenda-js-import --group dev
 
       - name: Probe Docker (testcontainers prerequisite)
         run: |
@@ -166,8 +172,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install project (dev) + mutmut
+        # --no-extra agenda-js-import: see the randomized-suite job's
+        # "Install project (dev)" step above for why.
         run: |
-          uv sync --all-extras --group dev
+          uv sync --all-extras --no-extra agenda-js-import --group dev
           uv pip install "mutmut==3.6.0"
 
       - name: Diff-scope changed non-test .py files vs base

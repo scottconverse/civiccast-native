@@ -6,16 +6,41 @@ Fixtures under ``tests/agenda_import/fixtures/js_portal_*.md`` are
 synthetic, hand-authored markdown shaped like crawl4ai's ``result.markdown``
 output for CivicPlus/Granicus-family portals -- NOT captured from a live
 tenant (see ``civiccast/agenda_import/js_portal.py``'s module docstring for
-why: this pass did not install crawl4ai/Playwright's Chromium binary). No
-test in this module makes a real network call or imports crawl4ai; every
-crawl is monkeypatched at :func:`civiccast.agenda_import.js_portal._crawl_page`,
-the same seam the adapter itself uses, so the extraction heuristics and the
-bounding guards (robots.txt, same-origin, not-installed posture) are each
-exercised independently of whether the optional dependency is present.
+why). No test in this module makes a real network call or imports crawl4ai
+for real (see ``crawl4ai_absent`` below); every crawl is monkeypatched at
+:func:`civiccast.agenda_import.js_portal._crawl_page`, the same seam the
+adapter itself uses, so the extraction heuristics and the bounding guards
+(robots.txt, same-origin, not-installed posture) are each exercised
+independently of whether the optional dependency is present.
+
+**Hermetic-either-way, on purpose.** An earlier version of
+``TestNotInstalledPosture`` below just called the real
+``_load_crawl4ai_classes``/``describe_js_portal_runtime`` and asserted
+"not installed" -- true in THIS author's dev environment, but not a
+property of the code, only of that one environment. CI's "Unit tests" job
+installs every other optional extra via ``--all-extras`` (captions-runtime,
+cloudflare-r2, s3-cdn), and briefly did the same for ``agenda-js-import``
+before ``.github/workflows/ci-test.yml`` was corrected to exclude it --
+crawl4ai was genuinely importable there, so "not installed" was false, and
+a real (but browser-binary-less) crawl attempt inside
+``test_fetch_meetings_surfaces_the_not_installed_error`` triggered a
+Playwright launch failure whose leaked asyncio resources then surfaced as
+unraisable-exception noise on an unrelated, later-running test in this same
+pytest session (``test_router.py::TestRoleGating::test_wrong_scope_is_403``
+-- nothing there touches crawl4ai; it was collateral GC-timing damage).
+``TestNotInstalledPosture`` now forces the absent-package path via
+``sys.modules['crawl4ai'] = None`` (the standard, documented way to make
+the next ``import crawl4ai`` raise ``ImportError`` regardless of whether the
+real package is on disk), so its assertions hold in every environment, not
+just one. ``TestInstalledPostureWhenCrawl4aiIsPresent`` is the mirror: it
+exercises the real, unmocked "installed" branch, but skips cleanly wherever
+crawl4ai is genuinely absent (CI, most local dev setups) rather than
+failing or silently asserting nothing.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import httpx
@@ -46,35 +71,92 @@ def _load_text(name: str) -> str:
     return (_FIXTURES / name).read_text(encoding="utf-8")
 
 
+@pytest.fixture
+def crawl4ai_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force ``from crawl4ai import ...`` to raise ``ImportError`` for the
+    duration of one test, regardless of whether the real package is
+    actually installed in this environment.
+
+    A ``None`` entry in ``sys.modules`` is CPython's own documented signal
+    that a name is known to be unimportable -- the import system checks
+    ``sys.modules`` before ever touching the filesystem, so this is
+    equivalent to genuine absence from crawl4ai's own caller's point of
+    view, not a fragile guess about import internals.
+    """
+    monkeypatch.setitem(sys.modules, "crawl4ai", None)
+
+
 # --- not-installed posture ---------------------------------------------------
 
 
 class TestNotInstalledPosture:
-    """crawl4ai is an optional dependency (pyproject.toml's ``agenda-js-import``
-    extra) and is NOT installed in this test environment by design -- these
-    tests prove the honest "not installed" posture, not a mocked one."""
+    """Hermetic: every test forces the "not installed" path via
+    ``crawl4ai_absent`` rather than relying on the real environment. See
+    the module docstring for why that distinction matters."""
 
-    def test_load_crawl4ai_classes_raises_a_clean_actionable_error(self) -> None:
+    def test_load_crawl4ai_classes_raises_a_clean_actionable_error(
+        self, crawl4ai_absent: None
+    ) -> None:
         with pytest.raises(JsPortalRuntimeUnavailableError, match="agenda-js-import"):
             _load_crawl4ai_classes()
 
     def test_the_error_is_a_dependency_missing_error(self) -> None:
         # base.py's taxonomy: the router maps this specific subclass to 503,
-        # distinct from a generic upstream failure.
+        # distinct from a generic upstream failure. Pure class-hierarchy
+        # check -- no import attempted, so no fixture needed.
         assert issubclass(JsPortalRuntimeUnavailableError, AgendaSourceDependencyMissingError)
 
-    def test_describe_js_portal_runtime_reports_not_installed_without_raising(self) -> None:
+    def test_describe_js_portal_runtime_reports_not_installed_without_raising(
+        self, crawl4ai_absent: None
+    ) -> None:
         status = describe_js_portal_runtime()
         assert status.installed is False
         assert "agenda-js-import" in status.detail
 
-    def test_fetch_meetings_surfaces_the_not_installed_error(self) -> None:
+    def test_fetch_meetings_surfaces_the_not_installed_error(
+        self, crawl4ai_absent: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # fetch_meetings crawls immediately (no lazy short-circuit before the
         # first page fetch), so calling it with crawl4ai absent raises the
-        # same dependency-missing error the router maps to 503.
+        # same dependency-missing error the router maps to 503. robots.txt
+        # is stubbed too (not just crawl4ai) so this test makes zero real
+        # network calls, matching the module docstring's claim exactly --
+        # the fake "fairview.example.gov" host was previously reached for
+        # real (its DNS failure happened to be caught as "permissive" by
+        # _require_robots_allowed's own error handling, but that's an
+        # accident of that function's design, not something this test
+        # should depend on).
+        monkeypatch.setattr(
+            "civiccast.agenda_import.js_portal._require_robots_allowed", lambda *a, **kw: None
+        )
         source = JsPortalSource(portal_url="https://fairview.example.gov/AgendaCenter")
         with pytest.raises(JsPortalRuntimeUnavailableError):
             source.fetch_meetings("fairview")
+
+
+class TestInstalledPostureWhenCrawl4aiIsPresent:
+    """Mirror of :class:`TestNotInstalledPosture` for the genuinely-
+    installed case. Skips cleanly (not a failure, not a silent no-op) when
+    crawl4ai is not actually importable here -- the default in CI (which
+    deliberately excludes the ``agenda-js-import`` extra, see
+    ``.github/workflows/ci-test.yml``) and in most local dev environments.
+    Run this class for real by installing the extra:
+    ``pip install civiccast[agenda-js-import]``.
+    """
+
+    def test_load_crawl4ai_classes_returns_the_real_classes(self) -> None:
+        pytest.importorskip("crawl4ai", reason="agenda-js-import extra not installed here")
+        crawler_cls, browser_config_cls, run_config_cls, cache_mode_cls = _load_crawl4ai_classes()
+        assert crawler_cls.__name__ == "AsyncWebCrawler"
+        assert browser_config_cls.__name__ == "BrowserConfig"
+        assert run_config_cls.__name__ == "CrawlerRunConfig"
+        assert cache_mode_cls.__name__ == "CacheMode"
+
+    def test_describe_js_portal_runtime_reports_installed_without_raising(self) -> None:
+        pytest.importorskip("crawl4ai", reason="agenda-js-import extra not installed here")
+        status = describe_js_portal_runtime()
+        assert status.installed is True
+        assert "not yet confirm the Playwright Chromium binary" in status.detail
 
 
 # --- robots.txt ---------------------------------------------------------------

@@ -10,6 +10,7 @@ via monkeypatching :func:`civiccast.agenda_import.registry.build_source`.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from datetime import date
@@ -557,12 +558,19 @@ class TestDependencyMissingIs503:
 
 
 class TestJsPortalPosture:
-    """GET /agenda-sources/js-portal/posture -- real (unmocked)
-    civiccast.agenda_import.js_portal.describe_js_portal_runtime() call, so
-    this proves the actual "not installed" posture in this test
-    environment (crawl4ai is an optional extra, not a dev dependency)."""
+    """GET /agenda-sources/js-portal/posture -- exercises the real (unmocked)
+    civiccast.agenda_import.js_portal.describe_js_portal_runtime() call
+    through the route, same as production. The "not installed" test forces
+    that outcome via sys.modules (see tests/agenda_import/test_js_portal.py's
+    crawl4ai_absent fixture and module docstring for why relying on the
+    real environment's package state broke CI once before: crawl4ai is an
+    optional extra, and whether it happens to be imported here depends on
+    CI's dependency-sync flags, not on this test's own logic)."""
 
-    def test_reports_not_installed_in_this_test_environment(self) -> None:
+    def test_reports_not_installed_when_crawl4ai_is_absent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "crawl4ai", None)
         app, _store = _build()
         client = TestClient(app)
 
@@ -572,6 +580,20 @@ class TestJsPortalPosture:
         body = resp.json()
         assert body["installed"] is False
         assert "agenda-js-import" in body["detail"]
+
+    def test_reports_installed_when_crawl4ai_is_present(self) -> None:
+        # Mirror of the above for the genuinely-installed case -- skips
+        # cleanly rather than asserting anything when crawl4ai is not
+        # actually importable in this environment (CI's default: see
+        # .github/workflows/ci-test.yml's --no-extra agenda-js-import).
+        pytest.importorskip("crawl4ai", reason="agenda-js-import extra not installed here")
+        app, _store = _build()
+        client = TestClient(app)
+
+        resp = client.get("/api/staff/agenda-sources/js-portal/posture")
+
+        assert resp.status_code == 200
+        assert resp.json()["installed"] is True
 
     def test_reachable_even_when_agenda_import_is_disabled(self) -> None:
         # Deliberately NOT gated by _require_enabled (router.py) -- an
