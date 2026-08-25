@@ -30,6 +30,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Index,
@@ -523,6 +524,16 @@ class Asset(Base):
         server_default=RETENTION_DEFAULT,
     )
     retention_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # S7 media lifecycle (CLAUDE.md §4.6 archival non-negotiable): a legal
+    # hold blocks retention expiry outright. civiccast.schedule.retention_worker
+    # skips any asset with legal_hold=True when flagging expired assets for
+    # records-clerk disposition review -- a held asset is never queued for
+    # disposition while the hold is active, regardless of retention_until.
+    legal_hold: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    legal_hold_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # QA-008 (audit-team v0.3.0): optimistic concurrency on PATCH.
     # Without this column, two operators editing the same asset's

@@ -387,6 +387,40 @@ export interface AssetQuery {
   order_desc?: boolean
 }
 
+export interface AssetReadinessResponse {
+  asset_id: string
+  readiness_state: 'not_ready' | 'pending_transcode' | 'transcoding' | 'ready' | 'missing_file' | 'rejected'
+  readiness_reason: string | null
+  loudness_status: 'ok' | 'failed' | 'not_checked' | null
+  measured_lufs: number | null
+  in_flight_transcode_jobs?: Array<InFlightTranscodeJob>
+  archive_complete: boolean
+  archive_portal_verified: boolean
+  archive_ia_verified: boolean
+  archive_nas_verified: boolean
+  legal_hold: boolean
+  updated_at: string
+}
+
+export interface AssetRetentionPolicyInput {
+  name: string
+  match_meeting_body?: string | null
+  retention_policy: string
+  priority?: number
+  enabled?: boolean
+}
+
+export interface AssetRetentionPolicyResponse {
+  policy_id: string
+  name: string
+  match_meeting_body: string | null
+  retention_policy: string
+  priority: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface AssetViewPoint {
   content_id: string
   day: string
@@ -596,6 +630,10 @@ export interface Body_compile_trafficking_for_date_api_staff_underwriting_compil
   for_date: string
   candidates: Array<CandidateBreakSlot>
   local_tz_offset_minutes?: number
+}
+
+export interface Body_replace_asset_source_api_staff_assets__asset_id__replace_source_put {
+  file: string
 }
 
 export interface Body_upload_asset_api_staff_assets_upload_post {
@@ -2225,6 +2263,13 @@ export interface ImportPlan {
   skipped?: Array<PlanSkip>
 }
 
+export interface InFlightTranscodeJob {
+  job_id: string
+  output_format: string
+  progress_percent: number
+  estimated_remaining_secs?: number | null
+}
+
 export interface InstallerStep {
   id: string
   title: string
@@ -2247,6 +2292,20 @@ export interface InviteJoinView {
   view_url?: string | null
   session_id?: string | null
   terms_version?: string | null
+}
+
+export interface LegalHoldInput {
+  legal_hold: boolean
+  reason?: string | null
+}
+
+export interface LifecycleAuditEntryResponse {
+  entry_id: string
+  asset_id: string | null
+  action: string
+  detail: string
+  dry_run: boolean
+  created_at: string
 }
 
 export interface LiveConcurrentPoint {
@@ -2479,6 +2538,16 @@ export interface MigrationRollbackRequest {
 export interface MintInviteInput {
   guest_display_name: string
   role: 'council_member' | 'presenter' | 'public_comment'
+}
+
+export interface MissingMediaAlertRow {
+  schedule_id: string
+  asset_id: string
+  asset_title: string
+  channel_id: string
+  scheduled_start: string
+  asset_state: string
+  reason: string
 }
 
 export interface ModelBundleItem {
@@ -3295,6 +3364,23 @@ export interface R2ConciergeResponse {
 export interface RAMInfo {
   total_gb: number
   available_gb: number
+}
+
+export interface ReadinessDashboardResponse {
+  total_assets: number
+  ready_count: number
+  transcoding_count: number
+  missing_count: number
+  rejected_count: number
+  by_asset: Array<ReadinessDashboardRow>
+}
+
+export interface ReadinessDashboardRow {
+  asset_id: string
+  title: string
+  readiness_state: 'not_ready' | 'pending_transcode' | 'transcoding' | 'ready' | 'missing_file' | 'rejected'
+  readiness_reason: string | null
+  in_flight_jobs_count: number
 }
 
 export interface RecordExportApiRequest {
@@ -4210,6 +4296,19 @@ export interface StationStorageLocations {
   backups: string
 }
 
+export interface StorageBudgetResponse {
+  total_bytes_used: number
+  budget_bytes: number | null
+  percent_used: number | null
+  by_retention_policy: Array<StorageBudgetTierRow>
+}
+
+export interface StorageBudgetTierRow {
+  retention_policy: string
+  asset_count: number
+  bytes_used: number
+}
+
 export interface StorageSetupRequest {
   storage_dir?: string | null
 }
@@ -4715,6 +4814,27 @@ export interface VolunteerRole {
   active?: boolean
   created_at?: string
   updated_at?: string
+}
+
+export interface WatchFolderConfigInput {
+  monitor_path: string
+  import_naming_pattern?: string | null
+  enabled?: boolean
+  settle_window_seconds?: number
+  retention_policy_default?: string | null
+}
+
+export interface WatchFolderConfigResponse {
+  config_id: string
+  monitor_path: string
+  import_naming_pattern: string | null
+  enabled: boolean
+  settle_window_seconds: number
+  retention_policy_default: string | null
+  last_scanned_at: string | null
+  last_scan_files_found: number
+  created_at: string
+  updated_at: string
 }
 
 export interface YearOverYearPoint {

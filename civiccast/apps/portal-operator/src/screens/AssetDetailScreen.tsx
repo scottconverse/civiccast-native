@@ -17,6 +17,7 @@ import type { StaffIdentityResponse } from '../types/api.generated'
 import { RadioCardGroup } from '../components/RadioCardGroup'
 import { AssetCustomFieldsEditor } from './AssetCustomFieldsEditor'
 import { OfflineCaptionJobsPanel } from './OfflineCaptionJobsPanel'
+import { MediaLifecyclePanel } from './MediaLifecyclePanel'
 import { hasRole } from './contribution-format'
 
 // Spec §4: meeting_operator / records_clerk / setup_admin may set custom-field values.
@@ -736,6 +737,8 @@ function DetailEditor({ asset, onClose, onEditTrim }: DetailEditorProps) {
                   : 'Trim editor opens once ingest is validated.'}
             </span>
           </div>
+
+          <MediaLifecyclePanel assetId={asset.asset_id} />
         </aside>
       </div>
 

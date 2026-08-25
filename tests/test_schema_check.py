@@ -87,19 +87,23 @@ def test_expected_head_matches_the_single_migration_head() -> None:
     # viewership_events/viewership_rollups/analytics_report_snapshots,
     # promoting the analytics-events.json store to Postgres) chains after
     # 0075. 0078_agenda_item_confidence (product-hole fix: adds
-    # agenda_items.confidence for the PDF-agenda-import heuristic) is the
-    # current head, chained after 0076_analytics_viewership. Renumbered from
-    # its original 0076 after PR #20 merged first and independently claimed
-    # that slot; 0077 is reserved for the still-unmerged
-    # feat/s7-media-lifecycle branch and deliberately left unused here.
-    assert expected_migration_head() == "0078_agenda_item_confidence"
+    # agenda_items.confidence for the PDF-agenda-import heuristic) chains
+    # after 0076_analytics_viewership. Renumbered from its original 0076
+    # after PR #20 merged first and independently claimed that slot; 0077
+    # is reserved for feat/s7-media-lifecycle. 0079_media_lifecycle (S7
+    # media lifecycle & readiness: the five net-new S7 tables +
+    # asset_archive_proofs + media_lifecycle_audit_log, plus
+    # assets.legal_hold/legal_hold_reason) is rechained after
+    # 0078_agenda_item_confidence (rather than the original 0076) so it
+    # lands after the already-merged 0078, and is the current head.
+    assert expected_migration_head() == "0079_media_lifecycle"
 
 
 def test_expected_head_does_not_depend_on_current_working_directory(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     expected_migration_head.cache_clear()
     monkeypatch.chdir(tmp_path)
     try:
-        assert expected_migration_head() == "0078_agenda_item_confidence"
+        assert expected_migration_head() == "0079_media_lifecycle"
     finally:
         expected_migration_head.cache_clear()
 
@@ -114,7 +118,7 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
         conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL)")
         conn.execute(
             "INSERT INTO alembic_version (version_num) VALUES (?)",
-            ("0078_agenda_item_confidence",),
+            ("0079_media_lifecycle",),
         )
         conn.commit()
 
@@ -127,8 +131,8 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
 
     assert status == SchemaStatus(
         state="current",
-        db_revision="0078_agenda_item_confidence",
-        expected_head="0078_agenda_item_confidence",
+        db_revision="0079_media_lifecycle",
+        expected_head="0079_media_lifecycle",
     )
 
 

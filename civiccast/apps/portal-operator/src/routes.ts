@@ -39,6 +39,8 @@ export const ROUTE_PATHS: Record<RouteId, string> = {
   agendas: '/agendas',
   paywall: '/paywall',
   recording: '/recording',
+  missingmedia: '/missing-media',
+  medialifecycle: '/media-lifecycle',
 }
 
 export const ROUTE_ALIASES: Record<string, string> = {

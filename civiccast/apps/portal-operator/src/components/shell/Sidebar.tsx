@@ -48,6 +48,8 @@ export type RouteId =
   | 'agendas'
   | 'paywall'
   | 'recording'
+  | 'missingmedia'
+  | 'medialifecycle'
 
 interface NavItem {
   id: RouteId
@@ -124,6 +126,16 @@ const NAV_SECTIONS: NavSection[] = [
     summary: 'Assets, captions, summaries, agendas, and signed records',
     items: [
       { id: 'assets', label: 'Assets' },
+      {
+        id: 'missingmedia',
+        label: 'Missing Media',
+        requiredRoles: ['meeting_operator', 'publish_operator', 'support_admin'],
+      },
+      {
+        id: 'medialifecycle',
+        label: 'Media Lifecycle Settings',
+        requiredRoles: ['setup_admin', 'publish_operator', 'records_clerk'],
+      },
       { id: 'contribute', label: 'Contributors' },
       { id: 'review', label: 'Review queue' },
       { id: 'summary', label: 'Summary review' },

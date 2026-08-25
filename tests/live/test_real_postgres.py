@@ -390,10 +390,15 @@ class TestSingleAlembicHead:
         # agenda_items.confidence for the PDF-agenda-import heuristic),
         # chained after ``0076_analytics_viewership``. Renumbered from its
         # original ``0076`` after PR #20 merged first and independently
-        # claimed that slot; ``0077`` is reserved for the still-unmerged
-        # feat/s7-media-lifecycle branch and deliberately left unused here.
-        assert heads[0] == "0078_agenda_item_confidence", (
-            f"Expected head '0078_agenda_item_confidence'; got {heads[0]!r}."
+        # claimed that slot; ``0077`` is reserved for feat/s7-media-lifecycle.
+        # Updated to ``0079_media_lifecycle`` (S7 media lifecycle &
+        # readiness: the five net-new S7 tables + asset_archive_proofs +
+        # media_lifecycle_audit_log, plus assets.legal_hold/legal_hold_reason),
+        # rechained after ``0078_agenda_item_confidence`` (rather than the
+        # original 0076) so it lands after the already-merged 0078, and is
+        # the current head.
+        assert heads[0] == "0079_media_lifecycle", (
+            f"Expected head '0079_media_lifecycle'; got {heads[0]!r}."
         )
 
 

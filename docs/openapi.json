@@ -305,6 +305,948 @@
         }
       }
     },
+    "/api/staff/assets/readiness-dashboard": {
+      "get": {
+        "tags": [
+          "media-lifecycle"
+        ],
+        "summary": "Operator readiness dashboard across every asset",
+        "operationId": "get_readiness_dashboard_api_staff_assets_readiness_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessDashboardResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable storage is not ready. Open Setup and choose Prepare storage, or set DATABASE_URL for a technical deployment."
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/assets/{asset_id}/readiness": {
+      "get": {
+        "tags": [
+          "media-lifecycle"
+        ],
+        "summary": "One asset's readiness badge state",
+        "operationId": "get_asset_readiness_api_staff_assets__asset_id__readiness_get",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetReadinessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Asset not found"
+          },
+          "503": {
+            "description": "Durable storage is not ready. Open Setup and choose Prepare storage, or set DATABASE_URL for a technical deployment."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/assets/{asset_id}/legal-hold": {
+      "put": {
+        "tags": [
+          "media-lifecycle"
+        ],
+        "summary": "Set or clear a legal hold (blocks retention expiry per CLAUDE.md \u00a74.6)",
+        "operationId": "set_legal_hold_api_staff_assets__asset_id__legal_hold_put",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegalHoldInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetReadinessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Asset not found"
+          },
+          "503": {
+            "description": "Durable storage is not ready. Open Setup and choose Prepare storage, or set DATABASE_URL for a technical deployment."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/assets/{asset_id}/replace-source": {
+      "put": {
+        "tags": [
+          "media-lifecycle"
+        ],
+        "summary": "Swap out an asset's backing file; the old file is archived, not deleted",
+        "description": "Corrupt or wrong source file? Replace it -- old file is archived, not deleted.\n\nUnlike ``POST /api/staff/assets/{asset_id}/relink`` (which requires the\nreplacement to match the original's duration/codec within a tolerance --\n\"same recording, re-encoded\"), this endpoint accepts ANY validated file:\nthe spec's own scenario is \"recording is corrupt, need a different file\nentirely.\" A fresh ffprobe validation still runs; only the tolerance\ncheck is skipped.",
+        "operationId": "replace_asset_source_api_staff_assets__asset_id__replace_source_put",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_replace_asset_source_api_staff_assets__asset_id__replace_source_put"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetReadinessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Asset not found"
+          },
+          "422": {
+            "description": "Unsupported file format"
+          },
+          "503": {
+            "description": "Durable storage is not ready. Open Setup and choose Prepare storage, or set DATABASE_URL for a technical deployment."
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/watch-folder-configs": {
+      "get": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "List configured auto-ingest watch folders",
+        "operationId": "list_watch_folder_configs_api_staff_media_lifecycle_watch_folder_configs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WatchFolderConfigResponse"
+                  },
+                  "type": "array",
+                  "title": "Response List Watch Folder Configs Api Staff Media Lifecycle Watch Folder Configs Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Add a watch folder (local disk, USB, or NAS/SMB path)",
+        "operationId": "create_watch_folder_config_api_staff_media_lifecycle_watch_folder_configs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchFolderConfigInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchFolderConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/watch-folder-configs/{config_id}": {
+      "put": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Update a watch folder config",
+        "operationId": "update_watch_folder_config_api_staff_media_lifecycle_watch_folder_configs__config_id__put",
+        "parameters": [
+          {
+            "name": "config_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Config Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchFolderConfigInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchFolderConfigResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Watch folder config not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Remove a watch folder config",
+        "operationId": "delete_watch_folder_config_api_staff_media_lifecycle_watch_folder_configs__config_id__delete",
+        "parameters": [
+          {
+            "name": "config_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Config Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Watch folder config not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/retention-policies": {
+      "get": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "List retention automation rules",
+        "operationId": "list_retention_policies_api_staff_media_lifecycle_retention_policies_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssetRetentionPolicyResponse"
+                  },
+                  "type": "array",
+                  "title": "Response List Retention Policies Api Staff Media Lifecycle Retention Policies Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Add a retention automation rule",
+        "operationId": "create_retention_policy_api_staff_media_lifecycle_retention_policies_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetRetentionPolicyInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetRetentionPolicyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/retention-policies/{policy_id}": {
+      "put": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Update a retention automation rule",
+        "operationId": "update_retention_policy_api_staff_media_lifecycle_retention_policies__policy_id__put",
+        "parameters": [
+          {
+            "name": "policy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Policy Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetRetentionPolicyInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetRetentionPolicyResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Retention policy not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Remove a retention automation rule",
+        "operationId": "delete_retention_policy_api_staff_media_lifecycle_retention_policies__policy_id__delete",
+        "parameters": [
+          {
+            "name": "policy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Policy Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Retention policy not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/retention-policies/apply": {
+      "post": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Apply enabled retention rules to every asset now",
+        "operationId": "apply_retention_policies_api_staff_media_lifecycle_retention_policies_apply_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "type": "object",
+                  "title": "Response Apply Retention Policies Api Staff Media Lifecycle Retention Policies Apply Post"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/storage-budget": {
+      "get": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Storage used vs the configured budget, by retention tier",
+        "operationId": "get_storage_budget_api_staff_media_lifecycle_storage_budget_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageBudgetResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/missing-media": {
+      "get": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Scheduled items whose backing asset is not ready within the horizon",
+        "operationId": "list_missing_media_api_staff_media_lifecycle_missing_media_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MissingMediaAlertRow"
+                  },
+                  "type": "array",
+                  "title": "Response List Missing Media Api Staff Media Lifecycle Missing Media Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/audit-log": {
+      "get": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Media lifecycle worker audit trail (dry-run entries included)",
+        "operationId": "list_audit_log_api_staff_media_lifecycle_audit_log_get",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LifecycleAuditEntryResponse"
+                  },
+                  "title": "Response List Audit Log Api Staff Media Lifecycle Audit Log Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/assets": {
       "get": {
         "tags": [
@@ -31637,6 +32579,215 @@
         "title": "AssetQuery",
         "description": "A declarative filter over asset metadata, stored inside a SavedSearch.\n\nCore fields map to a real column on :class:`civiccast.schedule.models.Asset` so the\nslice-2 executor can translate them to SQLAlchemy without a schema change.\n``custom_fields`` (S22 / S19) carry predicates over user-defined metadata, resolved by\nthe executor against ``custom_field_values``. ``extra=\"forbid\"`` keeps a stored query\nfrom silently carrying keys the executor will ignore. An empty query (all defaults, no\nfilters and no custom-field predicates) matches every asset, ordered newest-published\nfirst."
       },
+      "AssetReadinessResponse": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "readiness_state": {
+            "type": "string",
+            "enum": [
+              "not_ready",
+              "pending_transcode",
+              "transcoding",
+              "ready",
+              "missing_file",
+              "rejected"
+            ],
+            "title": "Readiness State"
+          },
+          "readiness_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readiness Reason"
+          },
+          "loudness_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "failed",
+                  "not_checked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loudness Status"
+          },
+          "measured_lufs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured Lufs"
+          },
+          "in_flight_transcode_jobs": {
+            "items": {
+              "$ref": "#/components/schemas/InFlightTranscodeJob"
+            },
+            "type": "array",
+            "title": "In Flight Transcode Jobs"
+          },
+          "archive_complete": {
+            "type": "boolean",
+            "title": "Archive Complete"
+          },
+          "archive_portal_verified": {
+            "type": "boolean",
+            "title": "Archive Portal Verified"
+          },
+          "archive_ia_verified": {
+            "type": "boolean",
+            "title": "Archive Ia Verified"
+          },
+          "archive_nas_verified": {
+            "type": "boolean",
+            "title": "Archive Nas Verified"
+          },
+          "legal_hold": {
+            "type": "boolean",
+            "title": "Legal Hold"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "asset_id",
+          "readiness_state",
+          "readiness_reason",
+          "loudness_status",
+          "measured_lufs",
+          "archive_complete",
+          "archive_portal_verified",
+          "archive_ia_verified",
+          "archive_nas_verified",
+          "legal_hold",
+          "updated_at"
+        ],
+        "title": "AssetReadinessResponse"
+      },
+      "AssetRetentionPolicyInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "match_meeting_body": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Meeting Body"
+          },
+          "retention_policy": {
+            "type": "string",
+            "title": "Retention Policy"
+          },
+          "priority": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "default": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "retention_policy"
+        ],
+        "title": "AssetRetentionPolicyInput"
+      },
+      "AssetRetentionPolicyResponse": {
+        "properties": {
+          "policy_id": {
+            "type": "string",
+            "title": "Policy Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "match_meeting_body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Meeting Body"
+          },
+          "retention_policy": {
+            "type": "string",
+            "title": "Retention Policy"
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "policy_id",
+          "name",
+          "match_meeting_body",
+          "retention_policy",
+          "priority",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AssetRetentionPolicyResponse"
+      },
       "AssetViewPoint": {
         "properties": {
           "content_id": {
@@ -32908,6 +34059,21 @@
           "candidates"
         ],
         "title": "Body_compile_trafficking_for_date_api_staff_underwriting_compile_post"
+      },
+      "Body_replace_asset_source_api_staff_assets__asset_id__replace_source_put": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "Replacement video file."
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_replace_asset_source_api_staff_assets__asset_id__replace_source_put"
       },
       "Body_upload_asset_api_staff_assets_upload_post": {
         "properties": {
@@ -43269,6 +44435,41 @@
         "title": "ImportPlan",
         "description": "The typed diff a dry-run produces.\n\nApply is a SEPARATE explicit call that takes this exact plan back\n(``POST /api/staff/migrate/apply``) \u2014 nothing is written by dry-run\nitself, and there is no server-side plan cache to expire or leak: the\nplan is self-contained and the caller round-trips it. Re-running\n``apply`` with the same plan twice is not idempotent by itself (calling\nit twice creates two batches); ``rollback`` is how a mistaken apply is\nundone."
       },
+      "InFlightTranscodeJob": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "output_format": {
+            "type": "string",
+            "title": "Output Format"
+          },
+          "progress_percent": {
+            "type": "integer",
+            "title": "Progress Percent"
+          },
+          "estimated_remaining_secs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Remaining Secs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "output_format",
+          "progress_percent"
+        ],
+        "title": "InFlightTranscodeJob"
+      },
       "InstallerStep": {
         "properties": {
           "id": {
@@ -43409,6 +44610,79 @@
         ],
         "title": "InviteJoinView",
         "description": "Result of resolving a public invite token.\n\nEither the join is ready (``needs_terms`` false, ``view_url`` + ``session_id``\npopulated, the token now consumed) or the guest must accept terms first\n(``needs_terms`` true, token NOT consumed, ``terms_version`` to present)."
+      },
+      "LegalHoldInput": {
+        "properties": {
+          "legal_hold": {
+            "type": "boolean",
+            "title": "Legal Hold"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "legal_hold"
+        ],
+        "title": "LegalHoldInput"
+      },
+      "LifecycleAuditEntryResponse": {
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "title": "Entry Id"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "entry_id",
+          "asset_id",
+          "action",
+          "detail",
+          "dry_run",
+          "created_at"
+        ],
+        "title": "LifecycleAuditEntryResponse"
       },
       "LiveConcurrentPoint": {
         "properties": {
@@ -45019,6 +46293,52 @@
           "role"
         ],
         "title": "MintInviteInput"
+      },
+      "MissingMediaAlertRow": {
+        "properties": {
+          "schedule_id": {
+            "type": "string",
+            "title": "Schedule Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "asset_title": {
+            "type": "string",
+            "title": "Asset Title"
+          },
+          "channel_id": {
+            "type": "string",
+            "title": "Channel Id"
+          },
+          "scheduled_start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled Start"
+          },
+          "asset_state": {
+            "type": "string",
+            "title": "Asset State"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schedule_id",
+          "asset_id",
+          "asset_title",
+          "channel_id",
+          "scheduled_start",
+          "asset_state",
+          "reason"
+        ],
+        "title": "MissingMediaAlertRow",
+        "description": "One scheduled item whose backing asset is not ready within the horizon."
       },
       "ModelBundleItem": {
         "properties": {
@@ -50169,6 +51489,97 @@
         ],
         "title": "RAMInfo",
         "description": "System memory summary in gigabytes."
+      },
+      "ReadinessDashboardResponse": {
+        "properties": {
+          "total_assets": {
+            "type": "integer",
+            "title": "Total Assets"
+          },
+          "ready_count": {
+            "type": "integer",
+            "title": "Ready Count"
+          },
+          "transcoding_count": {
+            "type": "integer",
+            "title": "Transcoding Count"
+          },
+          "missing_count": {
+            "type": "integer",
+            "title": "Missing Count"
+          },
+          "rejected_count": {
+            "type": "integer",
+            "title": "Rejected Count"
+          },
+          "by_asset": {
+            "items": {
+              "$ref": "#/components/schemas/ReadinessDashboardRow"
+            },
+            "type": "array",
+            "title": "By Asset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "total_assets",
+          "ready_count",
+          "transcoding_count",
+          "missing_count",
+          "rejected_count",
+          "by_asset"
+        ],
+        "title": "ReadinessDashboardResponse"
+      },
+      "ReadinessDashboardRow": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "readiness_state": {
+            "type": "string",
+            "enum": [
+              "not_ready",
+              "pending_transcode",
+              "transcoding",
+              "ready",
+              "missing_file",
+              "rejected"
+            ],
+            "title": "Readiness State"
+          },
+          "readiness_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readiness Reason"
+          },
+          "in_flight_jobs_count": {
+            "type": "integer",
+            "title": "In Flight Jobs Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "asset_id",
+          "title",
+          "readiness_state",
+          "readiness_reason",
+          "in_flight_jobs_count"
+        ],
+        "title": "ReadinessDashboardRow"
       },
       "RecordExportApiRequest": {
         "properties": {
@@ -56245,6 +57656,76 @@
         "title": "StationStorageLocations",
         "description": "Local station storage paths created or proposed during first-run setup."
       },
+      "StorageBudgetResponse": {
+        "properties": {
+          "total_bytes_used": {
+            "type": "integer",
+            "title": "Total Bytes Used"
+          },
+          "budget_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Bytes"
+          },
+          "percent_used": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Used"
+          },
+          "by_retention_policy": {
+            "items": {
+              "$ref": "#/components/schemas/StorageBudgetTierRow"
+            },
+            "type": "array",
+            "title": "By Retention Policy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "total_bytes_used",
+          "budget_bytes",
+          "percent_used",
+          "by_retention_policy"
+        ],
+        "title": "StorageBudgetResponse"
+      },
+      "StorageBudgetTierRow": {
+        "properties": {
+          "retention_policy": {
+            "type": "string",
+            "title": "Retention Policy"
+          },
+          "asset_count": {
+            "type": "integer",
+            "title": "Asset Count"
+          },
+          "bytes_used": {
+            "type": "integer",
+            "title": "Bytes Used"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "retention_policy",
+          "asset_count",
+          "bytes_used"
+        ],
+        "title": "StorageBudgetTierRow"
+      },
       "StorageSetupRequest": {
         "properties": {
           "storage_dir": {
@@ -59617,6 +61098,140 @@
         ],
         "title": "VolunteerRole",
         "description": "One volunteer roster entry: a person with a named station role."
+      },
+      "WatchFolderConfigInput": {
+        "properties": {
+          "monitor_path": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Monitor Path"
+          },
+          "import_naming_pattern": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Import Naming Pattern"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "settle_window_seconds": {
+            "type": "integer",
+            "maximum": 3600.0,
+            "minimum": 1.0,
+            "title": "Settle Window Seconds",
+            "default": 10
+          },
+          "retention_policy_default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Policy Default"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "monitor_path"
+        ],
+        "title": "WatchFolderConfigInput"
+      },
+      "WatchFolderConfigResponse": {
+        "properties": {
+          "config_id": {
+            "type": "string",
+            "title": "Config Id"
+          },
+          "monitor_path": {
+            "type": "string",
+            "title": "Monitor Path"
+          },
+          "import_naming_pattern": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Import Naming Pattern"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "settle_window_seconds": {
+            "type": "integer",
+            "title": "Settle Window Seconds"
+          },
+          "retention_policy_default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Policy Default"
+          },
+          "last_scanned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Scanned At"
+          },
+          "last_scan_files_found": {
+            "type": "integer",
+            "title": "Last Scan Files Found"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "config_id",
+          "monitor_path",
+          "import_naming_pattern",
+          "enabled",
+          "settle_window_seconds",
+          "retention_policy_default",
+          "last_scanned_at",
+          "last_scan_files_found",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "WatchFolderConfigResponse"
       },
       "YearOverYearPoint": {
         "properties": {
