@@ -189,7 +189,14 @@ jobs:
         id: gate_a
         shell: pwsh
         run: |
-          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -SoakMinutes 20 -TimeoutMinutes 150
+          # -TimeoutMinutes MUST stay above In-Sandbox-Report.ps1's own
+          # -MaxScriptMinutes (150) so the in-sandbox watchdog is always the
+          # first bound to fire and this host-side poll is the last resort.
+          # An explicit value here overrides the script default, so it is a
+          # fourth copy of that one setting -- tests/gate_a/
+          # test_gate_a_harness_contract.py asserts this literal against the
+          # script defaults and fails the build if they drift apart.
+          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -SoakMinutes 20 -TimeoutMinutes 170
           $exitCode = $LASTEXITCODE
           "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           # Locate the evidence dir this run just wrote so the upload step
@@ -255,6 +262,18 @@ jobs:
 
           if ($verdict -eq 'BUSY') {
             Write-Error "Gate A did not run: Windows Sandbox was busy (owned by another process on this shared runner, e.g. a rival build system) for the entire wait window, and the harness backed off cleanly without touching it. This is NOT a product failure -- re-run this workflow once the sandbox is free. See the uploaded gate-a-verdict / evidence artifacts (SANDBOX-WAIT.txt / SANDBOX-BUSY.txt)."
+            exit 1
+          }
+
+          # The second non-verdict, from the same family as BUSY above: the
+          # run DID launch and then lost its evidence channel -- the mapped
+          # output folder stopped changing while the VM was still alive, so
+          # Host-Launch-Sandbox-Test.ps1 wrote HOST-QUIET-SHARE.txt and the
+          # judge returned HARNESS_ERROR. The job still fails so nobody reads
+          # a red-free run as a PASS, but the message must not assert a
+          # product finding that was never made.
+          if ($verdict -eq 'HARNESS_ERROR') {
+            Write-Error "Gate A produced no station-acceptance verdict: the sandbox's mapped output folder went quiet while the VM was alive, so the run's evidence never reached the host. This is NOT a candidate failure -- re-run this workflow. See gate-a-verdict.json's harness_error field and HOST-QUIET-SHARE.txt in the uploaded evidence artifact."
             exit 1
           }
 

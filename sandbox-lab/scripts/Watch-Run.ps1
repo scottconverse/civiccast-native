@@ -31,7 +31,7 @@ while ((Get-Date) -lt $deadline) {
     if ($vm -eq 0 -and (Test-Path $summ)) {
         Start-Sleep -Seconds 15
         $vm2 = (Get-Process vmmemWindowsSandbox -ErrorAction SilentlyContinue | Measure-Object).Count
-        if ($vm2 -eq 0) { "VM_GONE $now (before T5_RESULT) — possible collapse`n$t35tail" | Set-Content -Path $status -Encoding UTF8; break }
+        if ($vm2 -eq 0) { "VM_GONE $now (before T5_RESULT) -- possible collapse`n$t35tail" | Set-Content -Path $status -Encoding UTF8; break }
     }
     Start-Sleep -Seconds 600
 }

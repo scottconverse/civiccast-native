@@ -3,9 +3,14 @@
 # Drives a silent install of the published CivicCast Native beta.1 installer,
 # then collects a clean-box baseline: exit code, install tree, station-set.json,
 # activation-self-test.json, CivicCastSupervisor service state, installer logs,
-# and Event Log errors during the run window. Writes JSON + a done-marker to
-# the host-visible C:\CivicCastOutput so the host launcher knows when to stop
-# polling and can read the results back.
+# and Event Log errors during the run window.
+#
+# Evidence path (changed by <gate-a-mapped-folder-stalls>, see the long note
+# above the shipper below): every write lands in the LOCAL C:\CivicCastLocalOut
+# and a separate shipper process mirrors that directory into the host-visible
+# mapped folder C:\CivicCastOutput every few seconds, DONE.json last. The host
+# launcher still polls C:\CivicCastOutput\DONE.json exactly as before -- the
+# contract with the host is unchanged, only which process writes it is.
 #
 # HARDENED 2026-08-17 after a run that got all the way through a clean
 # postinstall (verified via install-progress.log) but then hung for 6+
@@ -32,7 +37,7 @@
 #       for real completion again.
 
 # HARDENED <gate-a-station-up-wait-and-log-capture>: bounded script-level
-# watchdog. -MaxScriptMinutes defaults to 100 (LogonCommand invokes this
+# watchdog. -MaxScriptMinutes defaults to 150 (LogonCommand invokes this
 # script with no arguments, so the default always applies in production;
 # it exists as a parameter purely so a developer/dry-run can shorten it).
 # Deliberately NOT implemented with Start-Job -- service.py's own history
@@ -41,17 +46,108 @@
 # type data the moment Start-Job was invoked under this VM's memory
 # pressure, so the watchdog is a genuinely separate powershell.exe process
 # (Start-Process) instead -- it never touches the job-scheduling subsystem.
+#
+# HARDENED <gate-a-mapped-folder-stalls>: the main script no longer writes
+# ANYTHING to the Windows Sandbox mapped folder. Three independent Gate A
+# runs stalled forever on a synchronous write to C:\CivicCastOutput -- the
+# host-mapped (VSMB) share -- each at a different statement, each with the
+# VM alive and every other process still healthy:
+#
+#   run3 (8579e66) stalled BETWEEN two consecutive ~30-byte Add-Content
+#     appends to the same already-created mapped file (T3T5-RESULT.txt has
+#     4 of its 9 expected lines; the 5th append never returned).
+#   run4 (8579e66) and run6 (f31618f) both stalled in the 4-statement
+#     window between Save-Summary 'station-diag-captured-after-t3t5' and
+#     Save-Summary 'install-progress-log-copied' -- a Copy-Item onto an
+#     existing mapped file plus a bounded read.
+#   run6 is the decisive one: 42 minutes into the stall, the SEPARATE
+#     watchdog powershell.exe successfully created two brand-new files in
+#     the very same mapped folder. The share was NOT dead. What was dead
+#     was this process's own in-flight I/O against it.
+#
+# So the failure mode is not "sustained I/O kills the share" (a 30-byte
+# append wedged run3) and not "the share dies" (run6 disproves it). It is:
+# a synchronous, uncancellable, timeout-less file operation issued by THIS
+# process against a share this process does not control can wedge that
+# thread permanently -- and this script runs the entire gate on one thread.
+#
+# The architectural answer is to take the share off the critical path
+# entirely:
+#   * $OutDir is now a LOCAL directory the VM fully owns. Every existing
+#     $OutDir reference in this file -- the transcript, summary.json, every
+#     T*-RESULT file, every station-diag capture, every redirected child
+#     stdout/stderr, DONE.json -- writes there and can no longer wedge.
+#   * $ShipDir is the mapped folder. A separate, disposable shipper
+#     process mirrors $OutDir into it on a fixed tick; each tick is its own
+#     short-lived child process, so a wedged tick costs one tick, never the
+#     run (exactly the property run6's watchdog demonstrated).
+#   * The watchdog reads and writes $OutDir too, so it can no longer be
+#     blocked by the same surface it exists to bound.
+#   * Host-Launch-Sandbox-Test.ps1 owns the last line of defence: if the
+#     mapped folder goes quiet while the VM is alive, it declares a harness
+#     error with its own marker rather than waiting out the full timeout.
 param(
-    [int]$MaxScriptMinutes = 100
+    [int]$MaxScriptMinutes = 150,
+    [int]$ShipIntervalSeconds = 25
 )
 
 $ErrorActionPreference = 'Continue'
-$OutDir = 'C:\CivicCastOutput'
+
+# The host-mapped (VSMB) folder. NOTHING on this script's own execution
+# path may touch it -- only the shipper child processes below.
+$ShipDir = 'C:\CivicCastOutput'
+# The local evidence directory every step of this run actually writes to.
+$OutDir = 'C:\CivicCastLocalOut'
 $PayloadDir = 'C:\CivicCastPayload'
 $LocalInstallStage = 'C:\CivicCastInstall'
 $RunStart = Get-Date
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+# $ShipDir is deliberately NOT created here. Windows Sandbox creates the
+# MappedFolder mount before the LogonCommand runs, and if it somehow did not
+# exist, robocopy creates its own destination -- so there is no reason to
+# spend an unbounded share call on the main thread to find that out.
+
+# Bounded external-process runner. Used for every operation that has to
+# touch $ShipDir from this script (there are exactly two: the one-time
+# inbound seed below, and the final flush in the `finally` block). The
+# child is killed and reported rather than waited on forever, so even
+# these two can never reproduce the stall this change exists to fix.
+function Invoke-BoundedProcess {
+    param(
+        [string]$FilePath,
+        [string[]]$ArgumentList,
+        [int]$TimeoutSeconds = 60
+    )
+    $result = [ordered]@{ started = $false; completed = $false; exit_code = $null; error = $null }
+    try {
+        $p = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -WindowStyle Hidden -ErrorAction Stop
+        $result.started = $true
+        try {
+            Wait-Process -Id $p.Id -Timeout $TimeoutSeconds -ErrorAction Stop
+            $result.completed = $true
+            try { $result.exit_code = $p.ExitCode } catch {}
+        } catch {
+            $result.error = "timed out after ${TimeoutSeconds}s -- killing pid $($p.Id)"
+            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    } catch {
+        $result.error = "$_"
+    }
+    return $result
+}
+
+# Seed the LOCAL dir from the mapped folder ONCE, at entry, while the share
+# is known-good (the LogonCommand itself was just read across it). This is
+# how host-provided inputs -- SOAK_MINUTES.txt (written by
+# Host-Launch-Sandbox-Test.ps1) and the optional SKIP_MODE.txt -- reach the
+# reads further down, which now all resolve against $OutDir. Bounded: on
+# timeout the run continues with this script's own defaults rather than
+# hanging at statement one.
+$script:SeedResult = Invoke-BoundedProcess -FilePath 'robocopy.exe' -ArgumentList @(
+    $ShipDir, $OutDir, '/E', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/NP'
+) -TimeoutSeconds 60
+
 Start-Transcript -Path (Join-Path $OutDir 'sandbox-transcript.log') -Force | Out-Null
 
 function Write-Marker {
@@ -60,6 +156,181 @@ function Write-Marker {
 }
 
 Write-Marker -Name '_STARTED.marker' -Content "Started $RunStart"
+Write-Marker -Name '_LOCALOUT.marker' -Content "local_out_dir=$OutDir ship_dir=$ShipDir seed_completed=$($script:SeedResult.completed) seed_error=$($script:SeedResult.error)"
+
+# --------------------------------------------------------------------------
+# The SHIPPER: the only thing in this run that writes to the mapped folder.
+#
+# A supervisor process spawns ONE short-lived tick child every
+# $ShipIntervalSeconds. Each tick is a fresh powershell.exe with fresh
+# handles -- the exact shape that provably kept working in run6 while the
+# main script's own I/O was wedged -- so a tick that hangs on the share
+# costs that tick and nothing else.
+#
+# Guard: the supervisor SKIPS a tick while the previous child is still
+# running, but only up to 3 intervals. Past that the child is presumed
+# wedged on the share, force-killed, and replaced -- a strict
+# skip-forever guard would let one wedged tick stop shipping for the rest
+# of the run, which is the failure this whole change exists to remove.
+#
+# Each tick writes _SHIPPER-HEARTBEAT.txt locally BEFORE mirroring, so a
+# healthy tick always advances a timestamp on the host side even when the
+# run is inside a quiet stretch (the T5 soak only advances a step every
+# 5 minutes). Host-Launch-Sandbox-Test.ps1's quiet-share detector reads
+# exactly that liveness.
+#
+# The mirror is ADDITIVE (robocopy /E, never /MIR): the host owns files in
+# that folder too (.gitkeep, _HOST_LAUNCHED.marker, SOAK_MINUTES.txt, and
+# the launcher's own HOST-QUIET-SHARE.txt), and a purge would delete them.
+# The one retraction the harness genuinely needs -- a watchdog timeout file
+# that a genuine completion later supersedes -- is handled by an explicit,
+# named retraction list instead.
+# --------------------------------------------------------------------------
+$script:ShipTickPath = Join-Path $env:TEMP 'civiccast-gate-a-ship-tick.ps1'
+try {
+    $shipTickScript = @'
+param([string]$LocalDir, [string]$ShipDir)
+
+# Liveness first: this file is what tells the host the guest is still
+# shipping even when no evidence file changed this tick.
+try {
+    "shipper_tick_utc=$((Get-Date).ToUniversalTime().ToString('o')) local_dir=$LocalDir" |
+        Set-Content -Path (Join-Path $LocalDir '_SHIPPER-HEARTBEAT.txt') -Encoding UTF8
+} catch {}
+
+# Additive mirror, DONE.json deliberately EXCLUDED. /R:0 /W:0 -- never
+# retry, never wait; a failed tick is retried by the NEXT tick's fresh
+# process, not by this one.
+#
+# The exclusion preserves the harness's oldest contract across the new
+# channel: DONE.json is the LAST thing to appear, so its presence on the
+# host means everything else already arrived. Host-Launch-Sandbox-Test.ps1
+# polls for it every 10s and tears the VM down the moment it sees it -- and
+# robocopy does not copy in write order, so without this it could hand the
+# host a DONE.json mid-tick, before the evidence files that sort after it.
+# That is the same shape as the documented Watch-Run.ps1 race that cost the
+# Aug-19 reference run its own DONE.json, just moved one layer down.
+& robocopy.exe $LocalDir $ShipDir /E /XF DONE.json /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
+
+# Explicit retraction list: names the harness itself withdraws when a run
+# genuinely completes after a watchdog already fired. Anything not on this
+# list is never deleted from the mapped folder.
+foreach ($name in @('WATCHDOG-TIMEOUT.txt', 'STALL-TIMEOUT.txt')) {
+    try {
+        $localCopy = Join-Path $LocalDir $name
+        $shipCopy = Join-Path $ShipDir $name
+        if ((-not (Test-Path $localCopy)) -and (Test-Path $shipCopy)) {
+            Remove-Item -Path $shipCopy -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
+
+# DONE.json goes across LAST, on its own, after every other file in this
+# tick has landed -- see the /XF note above.
+try {
+    $localDone = Join-Path $LocalDir 'DONE.json'
+    if (Test-Path $localDone) {
+        Copy-Item -LiteralPath $localDone -Destination (Join-Path $ShipDir 'DONE.json') -Force -ErrorAction SilentlyContinue
+    }
+} catch {}
+
+# Local receipt, written LAST: proof to the supervisor that a full tick --
+# robocopy included -- returned. The supervisor uses this instead of probing
+# the share itself, which would reintroduce the very unbounded call this
+# whole design removes. A tick that wedged on the share never gets here, so
+# its receipt timestamp never advances.
+try {
+    "shipper_tick_completed_utc=$((Get-Date).ToUniversalTime().ToString('o'))" |
+        Set-Content -Path (Join-Path $LocalDir '_SHIPPER-LASTOK.txt') -Encoding UTF8
+} catch {}
+'@
+    Set-Content -Path $script:ShipTickPath -Value $shipTickScript -Encoding UTF8
+
+    $shipperScript = @'
+param([string]$LocalDir, [string]$ShipDir, [string]$TickScript, [int]$IntervalSeconds, [int]$MaxMinutes)
+
+$donePath = Join-Path $LocalDir 'DONE.json'
+# Written LOCALLY by each tick child once its robocopy has returned. The
+# supervisor reads only local paths -- it never touches $ShipDir itself.
+$receiptPath = Join-Path $LocalDir '_SHIPPER-LASTOK.txt'
+# Outlive the watchdog: the shipper must still be running to carry the
+# watchdog's own placeholder DONE.json out to the host.
+$deadline = (Get-Date).AddSeconds([Math]::Max(120, ($MaxMinutes + 10) * 60))
+$child = $null
+$childStart = $null
+$ticksSinceDone = 0
+
+function Start-Tick {
+    param([string]$LocalDir, [string]$ShipDir, [string]$TickScript)
+    return (Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$TickScript`"",
+        '-LocalDir', "`"$LocalDir`"", '-ShipDir', "`"$ShipDir`""
+    ) -PassThru -WindowStyle Hidden)
+}
+
+while ((Get-Date) -lt $deadline) {
+    $skip = $false
+    if ($child -ne $null) {
+        $running = $false
+        try { $running = -not $child.HasExited } catch { $running = $false }
+        if ($running) {
+            $ageSeconds = ((Get-Date) - $childStart).TotalSeconds
+            if ($ageSeconds -ge ($IntervalSeconds * 3)) {
+                # Presumed wedged on the share. Kill it and replace it --
+                # a fresh process gets fresh handles.
+                try { Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue } catch {}
+                $child = $null
+            } else {
+                $skip = $true
+            }
+        }
+    }
+
+    if (-not $skip) {
+        try {
+            $child = Start-Tick -LocalDir $LocalDir -ShipDir $ShipDir -TickScript $TickScript
+            $childStart = Get-Date
+        } catch {
+            $child = $null
+        }
+    }
+
+    # Stop once a tick has demonstrably COMPLETED after DONE.json appeared --
+    # i.e. a robocopy that necessarily included it returned. This is read
+    # from the tick's own local receipt, never by probing $ShipDir: a
+    # Test-Path against the share from THIS process is exactly the kind of
+    # unbounded call the supervisor exists to avoid making.
+    #
+    # The iteration cap is the backstop for a share that stays wedged: keep
+    # spawning fresh ticks for a while, then stop and let
+    # Host-Launch-Sandbox-Test.ps1's quiet-share detector be the thing that
+    # declares the harness error.
+    if (Test-Path $donePath) {
+        $ticksSinceDone++
+        $delivered = $false
+        try {
+            if (Test-Path $receiptPath) {
+                $delivered = (Get-Item $receiptPath).LastWriteTimeUtc -gt (Get-Item $donePath).LastWriteTimeUtc
+            }
+        } catch { $delivered = $false }
+        if ($delivered -or $ticksSinceDone -ge 8) { break }
+    }
+
+    Start-Sleep -Seconds $IntervalSeconds
+}
+'@
+    $shipperPath = Join-Path $env:TEMP 'civiccast-gate-a-shipper.ps1'
+    Set-Content -Path $shipperPath -Value $shipperScript -Encoding UTF8
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$shipperPath`"",
+        '-LocalDir', "`"$OutDir`"", '-ShipDir', "`"$ShipDir`"",
+        '-TickScript', "`"$($script:ShipTickPath)`"",
+        '-IntervalSeconds', $ShipIntervalSeconds, '-MaxMinutes', $MaxScriptMinutes
+    ) -WindowStyle Hidden | Out-Null
+    Write-Marker -Name '_SHIPPER_SPAWNED.marker' -Content "ship_dir=$ShipDir interval_seconds=$ShipIntervalSeconds started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+} catch {
+    Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "shipper spawn failed (FATAL to evidence delivery, but the run continues so the local evidence still exists in the VM): $_"
+}
 
 # Spawn the watchdog now, as early as possible, so it bounds the ENTIRE run
 # (installer through T5 soak) -- not just the parts of the script written
@@ -73,13 +344,40 @@ Write-Marker -Name '_STARTED.marker' -Content "Started $RunStart"
 #       reached 'station-diag-captured-after-t3t5' at 11:52:11Z and then
 #       never advanced -- 'install-progress-log-copied' (the very next
 #       step, block 6 below) never arrived in 6+ minutes, with no
-#       DONE.json, and $MaxScriptMinutes=100 was far too coarse a bound to
-#       catch that kind of late-stage stall promptly. Once
-#       summary.json.last_completed_step first reaches a step at or after
-#       the runtime verdict (matches 'runtime-check-*', or equals
-#       't3t5-skipped-station-down' or 't5-soak-complete'), this watchdog
-#       polls it every 30s; if it stops changing for 8 minutes, the
-#       watchdog writes STALL-TIMEOUT.txt + a placeholder DONE.json.
+#       DONE.json, and a coarse whole-script deadline was far too blunt a
+#       bound to catch that kind of late-stage stall promptly.
+#
+# ARMING FIX <gate-a-mapped-folder-stalls>. The first version of trigger
+# (2) armed by string-matching the CURRENT value of
+# summary.json.last_completed_step against three names ('runtime-check-*',
+# 't3t5-skipped-station-down', 't5-soak-complete') while polling every 30s.
+# On run6 that never armed, so only the coarse overall bound fired -- 47
+# minutes late. The reason is a race that was guaranteed to lose, not bad
+# luck: every one of those three names is a MOMENTARY value. Run6's
+# 'runtime-check-*' steps occupied summary.json from 22:29:57 to 22:29:58
+# (~1s -- RUNTIME-RESULT.txt records all three surfaces answering on poll
+# #1), and 't5-soak-complete' was written at ~22:54:46 and superseded by
+# 'station-diag-captured-after-t3t5' at 22:54:48 (~2s). Sampling a ~3s
+# total window with a 30s poll misses it roughly 9 times in 10.
+#
+# Two structural fixes, both applied below:
+#   * ARM ON A STICKY FILE, not a transient value. The main script writes
+#     _VERDICT-STAGE.marker once, at the station-up verdict, and never
+#     removes it. Test-Path cannot be raced by a coarse poller. The step-
+#     name predicate is kept as a redundant second arming path (and
+#     widened to every post-verdict step name), never as the only one.
+#   * STALL ON A MONOTONIC COUNTER, not name equality. summary.json now
+#     carries step_seq, incremented on every Save-Summary. Two different
+#     steps can share a name; step_seq cannot repeat, so "progress
+#     stopped" is now an unambiguous observation rather than an inference
+#     from string equality.
+#
+# Both this watchdog's reads (summary.json) and its writes (STALL-TIMEOUT
+# .txt, WATCHDOG-TIMEOUT.txt, DONE.json) are against the LOCAL $OutDir. In
+# run6 this watchdog wrote successfully to the mapped folder while the main
+# script was wedged on it, which is lucky, not designed: had its own
+# summary.json read wedged instead, nothing at all would have fired.
+#
 # Deliberately NOT implemented with Start-Job -- service.py's own history
 # (see comment near the Get-WinEvent call further down) documents a real
 # System.OutOfMemoryException hit loading PSWorkflow/PSScheduledJob module
@@ -88,24 +386,37 @@ Write-Marker -Name '_STARTED.marker' -Content "Started $RunStart"
 # (Start-Process) instead -- it never touches the job-scheduling subsystem.
 try {
     $watchdogScript = @'
-param([string]$OutDir, [int]$Minutes)
+param([string]$OutDir, [int]$Minutes, [int]$StallMinutes = 8)
 
 $donePath = Join-Path $OutDir 'DONE.json'
 $summaryPath = Join-Path $OutDir 'summary.json'
+$verdictStageMarker = Join-Path $OutDir '_VERDICT-STAGE.marker'
 $deadline = (Get-Date).AddSeconds([Math]::Max(60, $Minutes * 60))
 $pollIntervalSeconds = 30
-$stallThresholdSeconds = 8 * 60
+$stallThresholdSeconds = [Math]::Max(60, $StallMinutes * 60)
 
 $staleTrackingStarted = $false
+$lastSeenProgress = $null
 $lastSeenStep = $null
 $lastChangeTime = Get-Date
 
+# Redundant, widened second arming path. The sticky marker is the primary
+# one; this exists so a marker that somehow failed to write still cannot
+# leave the staleness bound disarmed for the whole run.
 function Test-PostRuntimeVerdictStep {
     param([string]$Step)
     if (-not $Step) { return $false }
     if ($Step -like 'runtime-check-*') { return $true }
-    if ($Step -eq 't3t5-skipped-station-down') { return $true }
-    if ($Step -eq 't5-soak-complete') { return $true }
+    if ($Step -like 't2-*') { return $true }
+    if ($Step -like 't3*') { return $true }
+    if ($Step -like 't4-*') { return $true }
+    if ($Step -like 't5-*') { return $true }
+    if ($Step -like 'station-diag-captured-*') { return $true }
+    if ($Step -eq 'station-up-wait') { return $true }
+    if ($Step -eq 'runtime-ui-captured') { return $true }
+    if ($Step -eq 'install-progress-log-copied') { return $true }
+    if ($Step -eq 'event-log-checked') { return $true }
+    if ($Step -eq 'finally-block') { return $true }
     return $false
 }
 
@@ -113,24 +424,34 @@ while ((Get-Date) -lt $deadline) {
     if (Test-Path $donePath) { break }
 
     $step = $null
+    $seq = $null
     if (Test-Path $summaryPath) {
         try {
             $raw = Get-Content -Path $summaryPath -Raw -Encoding UTF8 -ErrorAction Stop
             $obj = $raw | ConvertFrom-Json -ErrorAction Stop
             $step = $obj.last_completed_step
+            $seq = $obj.step_seq
         } catch {
             $step = $null  # mid-write or transiently malformed -- try again next poll
+            $seq = $null
         }
     }
 
-    if ($step) {
+    # Progress identity: step_seq when present (monotonic, cannot repeat),
+    # the step name only as a fallback for an older summary shape.
+    $progress = $null
+    if ($seq -ne $null) { $progress = "seq:$seq" } elseif ($step) { $progress = "step:$step" }
+
+    if ($progress) {
         if (-not $staleTrackingStarted) {
-            if (Test-PostRuntimeVerdictStep -Step $step) {
+            if ((Test-Path $verdictStageMarker) -or (Test-PostRuntimeVerdictStep -Step $step)) {
                 $staleTrackingStarted = $true
+                $lastSeenProgress = $progress
                 $lastSeenStep = $step
                 $lastChangeTime = Get-Date
             }
-        } elseif ($step -ne $lastSeenStep) {
+        } elseif ($progress -ne $lastSeenProgress) {
+            $lastSeenProgress = $progress
             $lastSeenStep = $step
             $lastChangeTime = Get-Date
         } else {
@@ -138,7 +459,7 @@ while ((Get-Date) -lt $deadline) {
             if ($stalledSeconds -ge $stallThresholdSeconds -and -not (Test-Path $donePath)) {
                 $ts = (Get-Date).ToUniversalTime().ToString('o')
                 $stuckSinceIso = $lastChangeTime.ToUniversalTime().ToString('o')
-                "stall_detected_utc=$ts stuck_step=$lastSeenStep stuck_since_utc=$stuckSinceIso stalled_seconds=$([Math]::Round($stalledSeconds, 1)) threshold_seconds=$stallThresholdSeconds" |
+                "stall_detected_utc=$ts stuck_step=$lastSeenStep stuck_progress=$lastSeenProgress stuck_since_utc=$stuckSinceIso stalled_seconds=$([Math]::Round($stalledSeconds, 1)) threshold_seconds=$stallThresholdSeconds" |
                     Set-Content -Path (Join-Path $OutDir 'STALL-TIMEOUT.txt') -Encoding UTF8
                 if (-not (Test-Path $donePath)) {
                     $doneObj = [ordered]@{
@@ -178,10 +499,10 @@ if (-not (Test-Path $donePath)) {
     $watchdogPath = Join-Path $env:TEMP 'civiccast-gate-a-watchdog.ps1'
     Set-Content -Path $watchdogPath -Value $watchdogScript -Encoding UTF8
     Start-Process -FilePath 'powershell.exe' -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $watchdogPath,
-        '-OutDir', $OutDir, '-Minutes', $MaxScriptMinutes
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$watchdogPath`"",
+        '-OutDir', "`"$OutDir`"", '-Minutes', $MaxScriptMinutes
     ) -WindowStyle Hidden | Out-Null
-    Write-Marker -Name '_WATCHDOG_SPAWNED.marker' -Content "MaxScriptMinutes=$MaxScriptMinutes stall_threshold_minutes=8 started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+    Write-Marker -Name '_WATCHDOG_SPAWNED.marker' -Content "MaxScriptMinutes=$MaxScriptMinutes stall_threshold_minutes=8 out_dir=$OutDir started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
 } catch {
     Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "watchdog spawn failed (non-fatal, continuing without a watchdog): $_"
 }
@@ -212,15 +533,28 @@ $summary = [ordered]@{
     event_log_errors           = @()
     errors                     = @()
     last_completed_step        = 'init'
+    # step_seq / step_utc <gate-a-mapped-folder-stalls>: a MONOTONIC progress
+    # identity for the staleness watchdog. last_completed_step alone is a
+    # name, and names can legitimately repeat; step_seq cannot, so "the run
+    # stopped progressing" becomes an observation instead of an inference
+    # from string equality. step_utc records when that step landed so a
+    # post-mortem can measure the stall without cross-referencing file
+    # mtimes.
+    step_seq                   = 0
+    step_utc                   = $null
     run_end_utc                = $null
 }
 
 # (a) Incremental writer: called after EVERY step below so a hang later in
 # the script can never swallow earlier results. Cheap (summary is small
-# JSON, never the multi-GB install tree itself).
+# JSON, never the multi-GB install tree itself). Writes to the LOCAL
+# $OutDir -- the shipper carries it to the host, so a wedged share can no
+# longer stop the run's own bookkeeping.
 function Save-Summary {
     param([string]$Step)
     $summary.last_completed_step = $Step
+    $summary.step_seq = [int]$summary.step_seq + 1
+    $summary.step_utc = (Get-Date).ToUniversalTime().ToString('o')
     try {
         $summaryPath = Join-Path $OutDir 'summary.json'
         ($summary | ConvertTo-Json -Depth 8) | Set-Content -Path $summaryPath -Encoding UTF8
@@ -1120,6 +1454,17 @@ try {
         Add-Content -Path $stationWaitLog -Encoding UTF8
     Save-Summary -Step 'station-up-wait'
 
+    # ARM the staleness watchdog <gate-a-mapped-folder-stalls>. Everything
+    # from here to DONE.json is bounded work -- the only long waits left are
+    # the T5 soak's own 300s beats, each of which advances step_seq -- so
+    # from this point on, 8 minutes with no step_seq change means the run is
+    # stuck, not busy. The marker is a FILE and is never removed precisely
+    # because the previous arming test read a momentary in-file value and a
+    # 30s poller could not reliably see it (run6 armed on nothing at all and
+    # the staleness bound never fired). Written AFTER the station-up verdict
+    # so it covers both the station-up and station-down paths.
+    Write-Marker -Name '_VERDICT-STAGE.marker' -Content "armed_utc=$((Get-Date).ToUniversalTime().ToString('o')) station_up=$($summary.station_up) step_seq=$($summary.step_seq)"
+
     # ---- operator_console / resident_portal: ONLY after health=200, short 60s bound each ----
     foreach ($name in @('operator_console', 'resident_portal')) {
         $url = $endpoints[$name]
@@ -1824,13 +2169,14 @@ try {
     #    (8579e66-run4 evidence): this was the EXACT spot run #4 stalled --
     #    'station-diag-captured-after-t3t5' was the last step Save-Summary
     #    ever recorded, and 'install-progress-log-copied' never arrived.
-    #    Root cause is not fully proven (the staleness watchdog above is the
-    #    real guarantee against a repeat), but this is a cheap, safe
-    #    tightening regardless: the -Tail read now runs against the copy
-    #    that was JUST WRITTEN to $OutDir (a host-mapped, real-disk
-    #    MappedFolder) instead of re-reading $progressLog a second time from
-    #    %ProgramData%, which lives on the Sandbox's own virtualized/
-    #    differencing C: -- one read of the slower source instead of two.
+    #    That follow-up redirected the -Tail read at the just-written copy
+    #    in $OutDir instead of re-reading %ProgramData% a second time; run6
+    #    (f31618f) then stalled at the identical statement window anyway,
+    #    which retired the "one slow source read" theory. What the two runs
+    #    actually shared was the Copy-Item ONTO AN EXISTING FILE in the
+    #    mapped folder. Under <gate-a-mapped-folder-stalls> $OutDir is a
+    #    local directory, so both the copy and the -Tail read now happen on
+    #    storage this VM owns and neither can wedge on the share.
     $progressLog = Join-Path $env:ProgramData 'CivicCast\install-progress.log'
     $progressLogCopy = Join-Path $OutDir 'install-progress.log'
     if (Test-Path $progressLog) {
@@ -1918,15 +2264,39 @@ try {
         station_first_healthy_utc = $summary.station_first_healthy_utc
         station_boot_seconds   = $summary.station_boot_seconds
     }
-    ($doneObj | ConvertTo-Json -Depth 3) | Set-Content -Path (Join-Path $OutDir 'DONE.json') -Encoding UTF8
     # The main script reached its real end -- remove the watchdog's own
     # WATCHDOG-TIMEOUT.txt if the watchdog raced a slow-but-successful
-    # finish (extremely unlikely given the 100-minute default vs this
+    # finish (extremely unlikely given the 150-minute default vs this
     # script's own bounded steps, but the file's mere presence is what
     # gate_a_verdict.py's completion check fails closed on, so a stale one
-    # from a genuinely-completed run must not linger).
+    # from a genuinely-completed run must not linger). Done BEFORE DONE.json
+    # so the same ship tick that carries DONE.json out also carries the
+    # retraction; the shipper's retraction list removes any copy that
+    # already reached the host.
     try {
         $wd = Join-Path $OutDir 'WATCHDOG-TIMEOUT.txt'
         if (Test-Path $wd) { Remove-Item -Path $wd -Force -ErrorAction SilentlyContinue }
     } catch {}
+
+    ($doneObj | ConvertTo-Json -Depth 3) | Set-Content -Path (Join-Path $OutDir 'DONE.json') -Encoding UTF8
+
+    # FINAL FLUSH <gate-a-mapped-folder-stalls>. DONE.json is written
+    # locally, last, exactly as before -- but the host polls for it on the
+    # MAPPED side, so one tick has to carry it across before this script
+    # exits. Run it here rather than waiting up to a full interval for the
+    # shipper's own next tick, and run it BOUNDED: if this last mapped
+    # write is the one that wedges, the child is killed and the shipper
+    # (still running, still spawning fresh children) gets further chances.
+    # Nothing below this depends on it.
+    try {
+        $flush = Invoke-BoundedProcess -FilePath 'powershell.exe' -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$($script:ShipTickPath)`"",
+            '-LocalDir', "`"$OutDir`"", '-ShipDir', "`"$ShipDir`""
+        ) -TimeoutSeconds 120
+        if (-not $flush.completed) {
+            Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "final ship flush did not complete: $($flush.error)"
+        }
+    } catch {
+        try { Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "final ship flush threw: $_" } catch {}
+    }
 }

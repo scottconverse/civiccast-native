@@ -470,6 +470,82 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Gate A — the harness stalled forever on the Windows Sandbox mapped
+  folder, and its own staleness watchdog could not catch it.** Three runs
+  hung late with the VM alive and the driver writing nothing further: run3
+  (`8579e66`) between two consecutive ~30-byte `Add-Content` appends to
+  `T3T5-RESULT.txt`; run4 (`8579e66`) and run6 (`f31618f`) both in the
+  four-statement window between `Save-Summary 'station-diag-captured-after-t3t5'`
+  and `Save-Summary 'install-progress-log-copied'`. Run6 had *passed every
+  product check* — `T3_LOOP=PASS`, `CAPTIONS=PASS`, `T4_RESULT=PASS_PRODUCT_ENGINE`,
+  `T5_RESULT=PASS beats=4 unhealthy=0` — and was then failed closed 47
+  minutes later by the coarse whole-script watchdog. Run6 also disproves the
+  obvious theory: 42 minutes into that stall the *separate* watchdog process
+  created two brand-new files in the same mapped folder, so the share was
+  alive; what was wedged was the driver's own in-flight synchronous I/O
+  against it, on the single thread carrying the entire run.
+  `sandbox-lab/scripts/In-Sandbox-Report.ps1` now writes everything to a
+  local `C:\CivicCastLocalOut` and a separate shipper process mirrors it into
+  `C:\CivicCastOutput` every ~25s, one disposable child process per tick
+  (plus a heartbeat file), additive `robocopy /E` with an explicit retraction
+  list rather than `/MIR`. DONE.json is written locally last, excluded from
+  the bulk mirror and copied across on its own afterwards, then flushed
+  through a bounded final tick — so the harness's oldest contract survives
+  the new channel: DONE.json appearing on the host still means everything
+  else already arrived (robocopy does not copy in write order, and the host
+  tears the VM down within 10s of seeing that file). The two remaining places the driver itself touches
+  the share — a one-time inbound seed for host-provided
+  `SOAK_MINUTES.txt`/`SKIP_MODE.txt`, and that final flush — go through a new
+  bounded `Invoke-BoundedProcess` that kills the child instead of waiting
+  forever.
+- **Gate A staleness watchdog never armed on the run it was written for.**
+  It armed by string-matching the *current* value of
+  `summary.json.last_completed_step` against three names while polling every
+  30s. Every one of those names is momentary: run6's `runtime-check-*` steps
+  occupied `summary.json` for ~1 second and `t5-soak-complete` for ~2, so a
+  30s poller missed the whole ~3s window and the staleness bound stayed
+  disarmed for the entire run. Arming is now a sticky file the driver writes
+  once at the station-up verdict (`_VERDICT-STAGE.marker`) — `Test-Path`
+  cannot be raced — with the (widened) step-name predicate kept only as a
+  redundant second path. Stall detection now keys on a new monotonic
+  `summary.json.step_seq` instead of step-name equality, and the watchdog
+  reads and writes the local directory so it can no longer be blocked by the
+  surface it exists to bound.
+- **Gate A timeout budgets were mutually inconsistent.**
+  `In-Sandbox-Report.ps1 -MaxScriptMinutes` 100 → 150 (run6 proved a healthy
+  full run needs more headroom), and with it `-TimeoutMinutes` 30 → 170
+  (`Host-Launch-Sandbox-Test.ps1`), 120 → 170 (`Run-GateA.ps1`) and 150 → 170
+  (the explicit override in `gate-a-station-acceptance.yml`, which is the one
+  that actually governs every CI run — fixing only the script defaults would
+  have looked correct and changed nothing). The in-sandbox watchdog is now
+  always the first bound to fire, rather than the host giving up before the
+  watchdog it depends on. `tests/gate_a/test_gate_a_harness_contract.py` is a
+  new static contract suite that reads all four literals and fails the build
+  if that ordering drifts again, alongside checks that the driver never
+  writes to the mapped folder on its own thread, that the staleness watchdog
+  arms on the sticky marker, and that the quiet-share filename agrees between
+  PowerShell and the Python judge.
+- **A broken Gate A evidence channel was reported as a product FAIL.**
+  `Host-Launch-Sandbox-Test.ps1` gains a quiet-share detector: no change
+  anywhere under `output\` for `-QuietShareMinutes` (default 15) while *its
+  own* sandbox VM is alive (by the PIDs the shared-sandbox busy guard already
+  records) means the guest-to-host channel is wedged, so it writes
+  `HOST-QUIET-SHARE.txt` and exits 4 instead of burning the rest of the
+  timeout. Exit 4, not 3: 3 already means "gave up waiting for a busy sandbox
+  and never launched", and "never started" is a different condition from
+  "started and went dark". `scripts/gate_a_verdict.py` reports such a run as
+  `HARNESS_ERROR` (exit 2), never `FAIL` — the second non-verdict alongside
+  the existing `BUSY`, and unlike `BUSY` it keeps the full per-check
+  breakdown as forensics rather than short-circuiting, since a partially
+  shipped run really does carry results. A run whose evidence never reached
+  the host supports no conclusion about the candidate.
+- **`sandbox-lab/scripts/Watch-Run.ps1` could not be parsed by Windows
+  PowerShell 5.1 at all.** A single U+2014 em dash in a double-quoted string
+  decodes under 5.1's default ANSI codepage as `â€"`, whose embedded quote
+  terminates the string early (5 cascading parse errors). Replaced with
+  `--`. Pre-existing since the file was added in `bb00170`; found by the PS
+  5.1 AST parse sweep run for the mapped-folder fix above.
+
 - **B2 — a real station could never take a live meeting on air.**
   `civiccast/app.py`'s `_resolve_preflight_evaluator` built the go-on-air
   `PreflightEvaluator` with no `source_probe` at all
