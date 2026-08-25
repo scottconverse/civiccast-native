@@ -21,6 +21,20 @@ stalls"):
 4. **The host's quiet-share marker filename matches the judge's registry.**
    The PowerShell side writes it; the Python judge keys ``HARNESS_ERROR``
    off it. One string, two languages.
+
+Gate A run 7 added three more (see ``docs/ops/gate-a.md``, "Run 7: what the
+shipper cost the installer"):
+
+5. **The shipper quiesces while the installer runs.** Every mapped folder in
+   the VM shares one VSMB transport. A 25s shipper tick underneath a 21 GB
+   install measured 1.6-4.2x slowdowns on exactly the installer steps that
+   cross it, and the run's activation step failed.
+6. **The quiesce interval stays well under the host's quiet-share bound**, or
+   a healthy throttled run would be declared a dead channel.
+7. **The finalization path is instrumented per statement.** Three separate
+   runs stalled in the same handful of unlabelled statements, and none of the
+   three post-mortems can name which one, because there was no step between
+   them.
 """
 
 from __future__ import annotations
@@ -318,3 +332,164 @@ def test_run_gate_a_reports_judge_exit_2_as_a_harness_error_not_a_fail() -> None
     assert "elseif ($judgeExit -eq 2)" in text
     assert "HARNESS ERROR" in text
     assert "NOT a station-acceptance FAIL" in text
+
+
+# --------------------------------------------------------------------------
+# 5-7. Run 7: the shipper must get out of the installer's way, and the
+#      finalization path must name its own statements
+# --------------------------------------------------------------------------
+
+
+def test_shipper_quiesces_around_the_installer() -> None:
+    """The driver must raise the quiesce marker before the installer and drop
+    it on every path out, including a throw."""
+    text = _read(_DRIVER)
+    assert "function Enter-ShipperQuiesce" in text
+    assert "function Exit-ShipperQuiesce" in text
+    assert "Enter-ShipperQuiesce -Reason 'installer-running'" in text, (
+        "the installer is the phase that measurably suffers; quiesce must wrap it"
+    )
+    # The un-quiesce has to be in a finally, not merely on the success path.
+    install_block = text[text.index("Enter-ShipperQuiesce -Reason 'installer-running'") :][:1600]
+    assert "} finally {" in install_block and "Exit-ShipperQuiesce" in install_block, (
+        "Exit-ShipperQuiesce must run on every path out of the install, including an exception"
+    )
+
+
+def test_quiesce_marker_carries_a_self_healing_expiry() -> None:
+    """A marker the driver never gets to remove must stop mattering by itself.
+
+    The failure mode of a lost removal has to be "shipping speeds back up",
+    never "shipping stays throttled and the host declares a dead channel".
+    """
+    text = _read(_DRIVER)
+    assert "quiesce_until_utc=" in text
+    assert "function Get-EffectiveInterval" in text, (
+        "the shipper supervisor must decide its interval from the marker, expiry included"
+    )
+    fn = text[text.index("function Get-EffectiveInterval") :][:1400]
+    assert "quiesce_until_utc=(\\S+)" in fn
+    assert "return $Fast" in fn, (
+        "every failure path in the interval decision must fall back to fast"
+    )
+
+
+def test_quiesce_interval_stays_inside_the_host_quiet_share_bound() -> None:
+    driver = _driver_executable_text()
+    quiesce_seconds = _int_setting(
+        driver,
+        r"\[int\]\$ShipQuiesceIntervalSeconds\s*=\s*(\d+)",
+        "In-Sandbox-Report.ps1 -ShipQuiesceIntervalSeconds default",
+    )
+    ship_seconds = _int_setting(
+        driver,
+        r"\[int\]\$ShipIntervalSeconds\s*=\s*(\d+)",
+        "In-Sandbox-Report.ps1 -ShipIntervalSeconds default",
+    )
+    quiet_minutes = _int_setting(
+        _read(_HOST_LAUNCHER),
+        r"\[int\]\$QuietShareMinutes\s*=\s*(\d+)",
+        "Host-Launch-Sandbox-Test.ps1 -QuietShareMinutes default",
+    )
+    assert quiesce_seconds > ship_seconds, "the quiesce interval must actually be slower"
+    # Two full quiesced ticks must still fit inside the quiet-share bound, so
+    # one missed tick cannot trip the host's dead-channel detector.
+    assert quiesce_seconds * 2 < quiet_minutes * 60, (
+        f"a quiesced heartbeat every {quiesce_seconds}s must leave room inside the host's "
+        f"{quiet_minutes}-minute quiet-share bound even if one tick is missed"
+    )
+
+
+def test_install_progress_capture_is_relocated_out_of_the_finalization_path() -> None:
+    text = _read(_DRIVER)
+    assert "function Invoke-InstallProgressCapture" in text
+    # Primary call site: right after the installer, before the grace sleep.
+    assert "Invoke-InstallProgressCapture -Phase 'post-install'" in text
+    # Secondary, guarded call site in the finalization block.
+    assert "Invoke-InstallProgressCapture -Phase 'finalization'" in text
+    post_install = text.index("Invoke-InstallProgressCapture -Phase 'post-install'")
+    finalization = text.index("Invoke-InstallProgressCapture -Phase 'finalization'")
+    assert post_install < finalization, "the post-install capture must come first"
+    assert "$script:InstallProgressCaptured" in text, (
+        "the finalization call must be able to no-op when the post-install capture succeeded"
+    )
+    # The old shape -- copy the file, then immediately read the copy back with
+    # -Tail on the Sandbox's differencing disk -- is what three runs died
+    # near. It must not come back.
+    assert "-Tail 80" not in text, (
+        "the read-after-write tail on the just-copied file is retired; read the source once "
+        "and slice the tail in memory"
+    )
+
+
+def test_finalization_statements_each_record_their_own_step() -> None:
+    """Runs 4, 6 and 7 all stalled between two Save-Summary calls with three
+    or four bare statements between them, so no post-mortem can name the
+    operation. Every one of those statements now has a step."""
+    text = _read(_DRIVER)
+    for step in (
+        "install-progress-probe-begin-",
+        "install-progress-probed-",
+        "install-progress-sized-",
+        "install-progress-read-",
+        "install-progress-copied-",
+        "install-progress-captured-",
+        "transcript-flushed-pre-finalization",
+        "event-log-query-begin",
+        "final-diag-begin",
+        "final-diag-captured",
+    ):
+        assert step in text, f"missing finalization instrumentation step: {step}"
+
+
+def test_watchdog_arming_predicate_recognises_the_new_step_names() -> None:
+    """The sticky marker is the primary arming path, but the redundant
+    step-name predicate must not silently stop covering the finalization
+    steps just because they were renamed."""
+    text = _read(_DRIVER)
+    predicate = text[text.index("function Test-PostRuntimeVerdictStep") :][:1600]
+    for pattern in (
+        "'install-progress*'",
+        "'transcript-flushed*'",
+        "'event-log-*'",
+        "'final-diag-*'",
+    ):
+        assert pattern in predicate, f"arming predicate no longer covers {pattern}"
+
+
+def test_transcript_is_flushed_at_checkpoints() -> None:
+    """PS 5.1 buffers transcripts in user space and only flushes on
+    Stop-Transcript. Any run that ends via the watchdog never reaches it, so
+    run7 shipped a 686-byte header-only transcript. Checkpoint flushes are
+    the fix."""
+    text = _read(_DRIVER)
+    assert "function Sync-Transcript" in text
+    assert "Start-Transcript -Path (Join-Path $OutDir 'sandbox-transcript.log') -Append" in text
+    for checkpoint in ("post-install", "station-up-verdict", "pre-finalization"):
+        assert f"Sync-Transcript -Checkpoint '{checkpoint}'" in text, (
+            f"missing transcript flush checkpoint: {checkpoint}"
+        )
+
+
+def test_mapped_folders_are_resolved_to_physical_paths_before_the_wsb_is_written() -> None:
+    text = _read(_HOST_LAUNCHER)
+    assert "function Resolve-PhysicalPath" in text
+    assert "<HostFolder>$physical</HostFolder>" in text, (
+        "the rendered .wsb must carry the physical directory, not a junction chain"
+    )
+    # A MatchEvaluator scriptblock is not something a PS 5.1-only script
+    # should rely on; the substitution is an explicit loop.
+    assert "$mappedRx.Replace(" not in text
+    assert "$mappedRx.Matches($rendered)" in text
+
+
+def test_run_gate_a_junctions_kit_download_at_the_physical_kit() -> None:
+    text = _read(_RUN_GATE_A)
+    assert "New-Item -ItemType Junction -Path $kitDownload -Target $kitPhysicalDir" in text, (
+        "kit-download must point at the physical kit, not at another junction"
+    )
+    assert "$kitPhysicalDir = $kitSourceDir" in text
+    assert "Station bundle inventory:" in text, (
+        "run7's installer failed on 'station-index.json AND ITS PACKS'; the pre-launch log has "
+        "to record what was actually in the bundle directory, not just that the index existed"
+    )

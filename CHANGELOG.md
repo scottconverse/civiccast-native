@@ -503,6 +503,71 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Gate A run 7 — the evidence shipper was starving the installer of the
+  shared VSMB transport.** Every mapped folder in the sandbox VM
+  (`C:\CivicCastPayload`, `C:\CivicCastHostStore`, `C:\CivicCastOutput`)
+  rides one Windows Sandbox VSMB transport. Run 7, the first run on the
+  shipper architecture below, failed at `d4-activate-station` with *"a signed
+  station bundle (station-index.json and its packs) was not found"* — on the
+  same staged kit that run 6 had activated cleanly. Comparing the installer's
+  own `install-progress.log` across four runs, the two steps that never cross
+  VSMB are flat to the second (`vc-redist` 4m04/4m04/4m04 → 4m05;
+  `d4-provision` 25s/25s/28s → 28s) while every step that does is 1.6–4.2×
+  slower in run 7 alone: `stage-packs` 6m39/6m47/7m21 → 11m26,
+  `d2-verify-server-binaries` 6s/5s/5s → 21s, `d2-verify-app-payload`
+  1m09/1m14/1m19 → 3m16, `d4-activate-station` 14m13/14m37/15m44 (all
+  succeeding) → 35m09 and exit 67. The only new thing running underneath run
+  7 was the shipper's 25-second `robocopy` tick. `In-Sandbox-Report.ps1` now
+  quiesces the shipper to `-ShipQuiesceIntervalSeconds` (default 300) for the
+  duration of the install via `_SHIPPER-QUIESCE.marker`, raised before the
+  installer and cleared in a `finally`; the marker carries its own
+  `quiesce_until_utc` expiry so a removal that never happens degrades to
+  "shipping speeds back up", never to "shipping stopped". 300s stays far
+  inside the host's 15-minute quiet-share bound, which
+  `tests/gate_a/test_gate_a_harness_contract.py` now asserts. The mechanism
+  behind the slowdown is not proven — the correlation, the clean controls,
+  and the absence of any other self-hosted job on the box in that window are.
+- **Gate A — the kit reached the sandbox through a two-hop junction chain.**
+  `Resolve-Path` does not follow reparse points, so `Run-GateA.ps1` pointed
+  `kit-download` at `sandbox-lab/kit-staging/<sha>` — itself already a
+  junction to `C:\CivicCastTester\kit-staging\<sha>` after the workflow's
+  reuse step — and the `.wsb` handed that two-hop chain to VSMB.
+  `Host-Launch-Sandbox-Test.ps1` now resolves every `<HostFolder>` through
+  reparse points to the physical directory before rendering, and
+  `Run-GateA.ps1` junctions `kit-download` at the physical kit. Explicitly
+  **not** the cause of run 7's failure: run 6 passed with the byte-identical
+  chain, and `git clean -ffdx` recursing through such a junction was measured
+  on this host and does not touch the target's contents. This is hardening.
+  `Run-GateA.ps1` additionally logs the station bundle's file count and total
+  bytes before launch — run 7's installer failed on "station-index.json *and
+  its packs*" and the harness had only ever asserted the index file existed.
+- **Gate A — the finalization path is instrumented per statement, and the
+  installer breadcrumb capture moved out of it.** Runs 4, 6 and 7 all stopped
+  advancing in the same three or four unlabelled statements after
+  `station-diag-captured-after-t3t5`, and because the two surrounding
+  `Save-Summary` calls were the only instrumentation, no post-mortem can name
+  the operation. Run 7 narrows it (the complete 6844-byte copy reached the
+  host, so `Copy-Item`'s handle closed) but does not close it: on this host,
+  against run 7's own file, the remaining `Get-Content -Tail 80` measures
+  8 ms. So the capture now runs immediately after the installer returns
+  instead — a single forward read of the source into memory (16 MB cap), a
+  write from memory, and the tail sliced in memory, replacing the old
+  copy-then-re-read-with-`-Tail` shape — with the finalization call kept only
+  as a guarded second attempt. Every statement in the path records its own
+  step. Note that 8 minutes is the staleness watchdog's floor: run 7 proves
+  "≥8 min", where run 6 proved "≥47 min", and they may not be the same
+  failure.
+- **Gate A — a run that ends via the watchdog lost its entire transcript.**
+  Run 7 shipped a 686-byte `sandbox-transcript.log` — header only — despite
+  150 failed station-up polls that each log a terminating error. Reproduced
+  on this host: a Windows PowerShell 5.1 child that logged 100+ caught
+  terminating errors still had a 689-byte header-only transcript on disk, and
+  it was still 689 bytes after being killed without reaching
+  `Stop-Transcript`. The transcript writer buffers in user space, and every
+  watchdog-terminated Gate A run therefore loses the body. `Sync-Transcript`
+  (`Stop-Transcript` + `Start-Transcript -Append`) now runs after the
+  install, at the station-up verdict, and immediately before the finalization
+  path.
 - **Gate A — the harness stalled forever on the Windows Sandbox mapped
   folder, and its own staleness watchdog could not catch it.** Three runs
   hung late with the VM alive and the driver writing nothing further: run3
