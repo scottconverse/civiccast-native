@@ -612,6 +612,84 @@ def test_native_beta_candidate_workflow_installs_the_vc_runtime_before_the_pack_
         )
 
 
+def _assert_self_hosted_dotnet_sdk_provisioning(job: dict[str, object]) -> None:
+    """Regression guard for candidate run 32838619949.
+
+    azure/artifact-signing-action installs its `sign` CLI (net8.0-targeted,
+    per nuget.org/packages/sign) via `dotnet tool install`, which needs the
+    .NET SDK, not just the runtime. A hosted windows-latest runner ships the
+    SDK preinstalled; self-hosted had only the runtime on PATH (`dotnet
+    --list-sdks` empty), so the sign step died with "No .NET SDKs were
+    found." A self-hosted-only provisioning step installs a pinned SDK via
+    dotnet-install.ps1 before the signing step runs.
+    """
+    step_names = [step["name"] for step in job["steps"]]
+    steps = {step["name"]: step for step in job["steps"]}
+    provision_name = "Provision a pinned .NET SDK for the signing action (self-hosted only)"
+    smoke_name = "Smoke the installed GStreamer closure through the product worker"
+    sign_name = "Sign the native bootstrap (Azure Artifact Signing)"
+
+    assert provision_name in step_names
+    assert step_names.index(smoke_name) < step_names.index(provision_name)
+    assert step_names.index(provision_name) < step_names.index(sign_name)
+
+    provision = steps[provision_name]
+    assert provision.get("if") == "env.BUILD_TARGET == 'self-hosted'", (
+        "hosted runners ship the .NET SDK preinstalled -- this step must never run there"
+    )
+    assert provision["shell"] == "pwsh"
+    joined = "\n".join(_powershell_lines(provision["run"]))
+
+    # Pinned by an exact version, never "latest"/"LTS" (which would drift
+    # silently between runs and defeat the whole point of a reviewed pin).
+    assert '$dotnetSdkVersion = "8.0.424"' in joined
+    assert "-Version $dotnetSdkVersion" in joined
+    assert "-Channel" not in joined
+    assert '"latest"' not in joined
+    assert '"LTS"' not in joined
+
+    # Fetched over TLS from a Microsoft-controlled domain.
+    assert "https://dot.net/v1/dotnet-install.ps1" in joined
+
+    # Self-hosted-lane scratch convention: RUNNER_TEMP, same root every
+    # other self-hosted-only tool in this job provisions into.
+    assert '$dotnetSdkDir = Join-Path $env:RUNNER_TEMP "civiccast-dotnet-sdk"' in joined
+
+    # Idempotent validate-or-reuse: a pre-existing tree is trusted only if
+    # `dotnet --list-sdks` actually reports the pinned version (not a
+    # marker file alone), matching this workflow's established posture for
+    # persistent self-hosted scratch (see "Ensure a clean self-hosted
+    # scratch tree before the pack build" / civiccast-msvc-build-tools).
+    assert "--list-sdks" in joined
+    assert "[regex]::Escape($dotnetSdkVersion)" in joined
+    assert "Remove-Item -LiteralPath $dotnetSdkDir -Recurse -Force" in joined
+
+    # The signing action's `dotnet tool install` must resolve this SDK:
+    # DOTNET_ROOT plus PATH, exported so the LATER "Sign the native
+    # bootstrap" step (a separate process) sees it.
+    assert '"DOTNET_ROOT=$dotnetSdkDir" | Out-File -FilePath $env:GITHUB_ENV' in joined
+    assert "$dotnetSdkDir | Out-File -FilePath $env:GITHUB_PATH" in joined
+
+
+def test_native_beta_candidate_workflow_provisions_a_pinned_dotnet_sdk_for_signing() -> None:
+    _, workflow = _workflow()
+    _assert_self_hosted_dotnet_sdk_provisioning(workflow["jobs"]["build-native-beta"])
+
+
+def test_native_beta_candidate_workflow_contract_rejects_an_unpinned_dotnet_sdk_version() -> None:
+    """A regression that swaps the exact -Version pin for a floating
+    -Channel LTS/latest must fail this pin, not silently ship the drift."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace(
+        '$dotnetSdkVersion = "8.0.424"',
+        '$dotnetSdkVersion = "latest"',
+        1,
+    )
+    assert mutated != text
+    with pytest.raises(AssertionError):
+        _assert_self_hosted_dotnet_sdk_provisioning(_job_from_text(mutated))
+
+
 def _assert_build_native_beta_python_provisioning_needs_no_elevation(
     job: dict[str, object],
 ) -> None:
