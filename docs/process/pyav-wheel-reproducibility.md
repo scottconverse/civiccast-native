@@ -50,10 +50,27 @@ instead of raising `PyAvWheelBuildError`. Every other `verify_artifact()`
 call in the file — all four pinned downloads — has no `advisory` argument
 and stays a hard failure on every lane, self-hosted included.
 
+Letting the *build* step accept a wheel with different bytes only matters if
+the *install* step that consumes that wheel can also accept it.
+`scripts/build_native_app_payload.py`'s `install_pinned_dependencies()`
+normally runs one `uv pip install --require-hashes -r requirements-native-app.txt`
+against the full lock, which pins `av==18.0.0`'s hash to the hosted-reviewed
+reference — the same hash `verify_artifact()` just logged a warning about
+instead of enforcing. `install_pinned_dependencies()` therefore takes the
+same `advisory_pyav_wheel_hash` flag `build()` receives (and
+`build_native_app_payload_pack.py` forwards it): when set, `av` installs from
+the wheelhouse by its verified-unique filename with no hash check of its own
+(the source-level hash checks — uv, FFmpeg source, MSYS2 base, PyAV sdist —
+already ran strictly, and the wheel is this same build's own freshly-compiled
+output), while every OTHER dependency still installs `--require-hashes`
+against the unmodified reviewed lock via a second, filtered invocation. When
+unset, install behavior is unchanged: the single unified `--require-hashes`
+install of the full lock.
+
 The hosted lane (`build_target: hosted`, the default, and every
 `push`-triggered candidate build on the release branch) never passes this
-flag: hosted builds keep the byte-exact assertion as a hard failure, exactly
-as before this change.
+flag: hosted builds keep the byte-exact assertion as a hard failure at both
+the build and the install step, exactly as before this change.
 
 ## What this does and does not prove
 

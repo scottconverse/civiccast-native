@@ -641,11 +641,32 @@ def extract_verified_interpreter(zip_path: Path, out: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _requirements_lock_without_av(lock_text: str) -> str:
+    """Return ``lock_text`` with the ``av==...`` requirement entry removed.
+
+    Shared by the download step (which fetches every OTHER pinned wheel from
+    the original hash lock, av retained separately) and, on the self-hosted
+    lane, the install step (which must not re-enforce the hosted-reference
+    hash against a self-hosted-compiled wheel that legitimately has different
+    bytes -- see docs/process/pyav-wheel-reproducibility.md).
+    """
+    filtered = re.sub(
+        r"(?ms)^av==.*?(?=^[A-Za-z0-9][A-Za-z0-9._-]*==|\Z)",
+        "",
+        lock_text,
+        count=1,
+    )
+    if filtered == lock_text:
+        _fail("the app requirements lock has no av requirement to replace")
+    return filtered
+
+
 def install_pinned_dependencies(
     site_packages: Path,
     *,
     wheelhouse: Path,
     uv_executable: str,
+    advisory_pyav_wheel_hash: bool = False,
 ) -> None:
     """`uv pip install --require-hashes --no-deps` the pinned app requirements
     into ``site_packages`` for cp312/windows.
@@ -654,10 +675,29 @@ def install_pinned_dependencies(
     verified against its hash -- the same D1 posture the closure uses. Cross-
     compiled for cp312/windows so the tree is correct regardless of the build
     host's own interpreter.
+
+    ``advisory_pyav_wheel_hash`` must be set whenever the ``av`` wheel in
+    ``wheelhouse`` may legitimately NOT match `requirements-native-app.txt`'s
+    hash-pinned ``av==18.0.0`` entry -- i.e. whenever
+    ``build_reviewed_pyav_wheel`` compiled it on this lane with
+    ``--advisory-wheel-hash`` rather than reusing the byte-exact reviewed
+    artifact. Passing the SAME advisory posture that gated the build's own
+    byte-exact check through to install is required: a wheel the build step
+    already accepted with only a warning must not then hard-fail here against
+    the identical reference hash. When set, ``av`` installs from the
+    wheelhouse by its verified-unique filename with no hash check of its own
+    (its provenance is already hash-verified upstream -- the pinned uv, FFmpeg
+    source, MSYS2 base, and PyAV sdist downloads stay a hard failure on every
+    lane, per ``build_native_pyav_wheel.py``), while every OTHER dependency
+    still installs `--require-hashes` against the unmodified reviewed lock.
+    When unset (the hosted lane's default), behavior is byte-identical to
+    before this parameter existed: a single `--require-hashes` install of the
+    full lock, including av.
     """
     if not APP_REQUIREMENTS_FILE.is_file():
         _fail(f"{APP_REQUIREMENTS_FILE} does not exist")
-    if "--hash=" not in APP_REQUIREMENTS_FILE.read_text(encoding="utf-8"):
+    lock_text = APP_REQUIREMENTS_FILE.read_text(encoding="utf-8")
+    if "--hash=" not in lock_text:
         _fail(f"{APP_REQUIREMENTS_FILE} has no --hash lines (refusing an unauthenticated lock)")
     actual_lock_hash = _sha256_file(APP_REQUIREMENTS_FILE)
     if actual_lock_hash != APP_REQUIREMENTS_SHA256:
@@ -671,12 +711,67 @@ def install_pinned_dependencies(
             "the reviewed PyAV wheelhouse must contain exactly one "
             f"av-18.0.0 wheel; found {len(pyav_wheels)} in {wheelhouse}"
         )
+
+    if not advisory_pyav_wheel_hash:
+        subprocess.run(
+            [
+                uv_executable,
+                "pip",
+                "install",
+                "--require-hashes",
+                "--no-deps",
+                "--no-index",
+                "--python-version",
+                "3.12",
+                "--python-platform",
+                "windows",
+                "--find-links",
+                str(wheelhouse),
+                "--target",
+                str(site_packages),
+                "-r",
+                str(APP_REQUIREMENTS_FILE),
+            ],
+            check=True,
+        )
+        return
+
+    filtered_lock = wheelhouse / ".requirements-without-reviewed-pyav-install.txt"
+    filtered_lock.write_text(_requirements_lock_without_av(lock_text), encoding="utf-8")
+    try:
+        subprocess.run(
+            [
+                uv_executable,
+                "pip",
+                "install",
+                "--require-hashes",
+                "--no-deps",
+                "--no-index",
+                "--python-version",
+                "3.12",
+                "--python-platform",
+                "windows",
+                "--find-links",
+                str(wheelhouse),
+                "--target",
+                str(site_packages),
+                "-r",
+                str(filtered_lock),
+            ],
+            check=True,
+        )
+    finally:
+        filtered_lock.unlink(missing_ok=True)
+
+    # av installs by exact path, not by name+hash: its bytes are this same
+    # build's own freshly-compiled output (uniqueness already verified above),
+    # so there is nothing a hash check would add that the wheelhouse glob and
+    # the upstream pinned-download verification haven't already covered.
     subprocess.run(
         [
             uv_executable,
             "pip",
             "install",
-            "--require-hashes",
             "--no-deps",
             "--no-index",
             "--python-version",
@@ -687,8 +782,7 @@ def install_pinned_dependencies(
             str(wheelhouse),
             "--target",
             str(site_packages),
-            "-r",
-            str(APP_REQUIREMENTS_FILE),
+            str(pyav_wheels[0]),
         ],
         check=True,
     )
@@ -716,14 +810,7 @@ def download_pinned_dependency_wheels(
     # --find-links. Retain the reviewed PyAV wheel explicitly, and download the
     # rest from the original hash lock with only that one requirement removed.
     lock_text = APP_REQUIREMENTS_FILE.read_text(encoding="utf-8")
-    filtered = re.sub(
-        r"(?ms)^av==.*?(?=^[A-Za-z0-9][A-Za-z0-9._-]*==|\Z)",
-        "",
-        lock_text,
-        count=1,
-    )
-    if filtered == lock_text:
-        _fail("the app requirements lock has no av requirement to replace")
+    filtered = _requirements_lock_without_av(lock_text)
     filtered_lock = destination / ".requirements-without-reviewed-pyav.txt"
     filtered_lock.write_text(filtered, encoding="utf-8")
     try:
@@ -1827,6 +1914,7 @@ def build(
         site_packages,
         wheelhouse=retained_wheelhouse,
         uv_executable=toolchain.uv,
+        advisory_pyav_wheel_hash=advisory_pyav_wheel_hash,
     )
 
     print("[3/6] Building + installing the civiccast wheel ...")

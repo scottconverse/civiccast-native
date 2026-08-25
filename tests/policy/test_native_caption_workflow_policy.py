@@ -633,7 +633,32 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # removed nats-only tests while mainline PRs added S14/S1/S3/holes tests;
     # re-derived on the MERGED tree by an actual --collect-only run:
     # -> (1610, 1802).
-    assert (collect("not windows_only"), collect()) == (1610, 1802)
+    #
+    # fix/self-hosted-lane-av-wheel (2026-08-24): +4 pure, 0 windows_only --
+    # candidate run 32806127399 failed self-hosted with "Failed to download
+    # `av==18.0.0` / Hash mismatch": --advisory-pyav-wheel-hash was wired
+    # into build_native_pyav_wheel.py's own byte-exact check on the compiled
+    # wheel, but build_native_app_payload.py's install_pinned_dependencies()
+    # still ran one unconditional `uv pip install --require-hashes -r
+    # requirements-native-app.txt`, re-enforcing the same hosted-reviewed
+    # hash the build step had just accepted a self-hosted wheel against with
+    # only a warning. install_pinned_dependencies() now takes the same
+    # advisory_pyav_wheel_hash flag build() receives and splits the install
+    # in two when set: av by verified-unique filename with no hash check of
+    # its own, everything else still --require-hashes against the unmodified
+    # lock. 4 new platform-independent tests land in
+    # tests/native/test_app_payload_builder.py: the advisory split-install
+    # path (av installs separately, unhashed; the rest still hash-checked via
+    # a filtered, then-deleted, lock copy), the unset-flag path staying the
+    # single unified hosted-lane invocation byte-for-byte, and two direct
+    # unit tests for the shared _requirements_lock_without_av() helper (the
+    # av-filtering regex extracted out of download_pinned_dependency_wheels()
+    # so both call sites share one implementation). Plain function calls and
+    # monkeypatched subprocess.run only -- no OS dependency, no
+    # windows_only marker, so all four collect into both lanes. Re-derived by
+    # an actual `--collect-only` run on this tree, not by arithmetic: (1610,
+    # 1802) -> (1614, 1806).
+    assert (collect("not windows_only"), collect()) == (1614, 1806)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
