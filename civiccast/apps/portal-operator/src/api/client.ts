@@ -161,6 +161,7 @@ import type {
   CompileReport,
 } from '../types/api.generated'
 import type {
+  AgendaImportExternalRequest,
   AgendaItem,
   AgendaItemInput,
   AgendaItemUpdate,
@@ -183,7 +184,9 @@ import type {
   EpgExportConfigInput,
   EpgExportConfigUpdate,
   EpgGenerateResult,
+  ExternalMeetingSummary,
   HoursByCategoryReport,
+  JsPortalPostureResponse,
   MeetingAgenda,
   MeetingAgendaInput,
   MeetingAgendaUpdate,
@@ -3125,6 +3128,75 @@ export async function importAgendaFromDoc(
     )
   }
   return (await res.json()) as AgendaItem[]
+}
+
+// --- Agenda Bridge (vendor/js-portal import, civiccast/agenda_import/) -----
+//
+// Distinct from the S25 CRUD/sync/doc-import surface above:
+// civiccast/agenda_import/router.py is a separate module (Legistar/PrimeGov/
+// CivicClerk/js_portal adapters) that writes into the SAME agenda/items
+// store via civiccast.agenda_import.mapper.import_external_agenda, but has
+// its own discovery + import routes. `CIVICCAST_AGENDA_SOURCE=off` (the
+// station default) makes both routes 404 with a message naming the env var
+// — the screen surfaces that verbatim rather than guessing at a nicer one.
+
+export type AgendaExternalSource = AgendaImportExternalRequest['source']
+
+export const AGENDA_EXTERNAL_SOURCES: AgendaExternalSource[] = [
+  'legistar',
+  'primegov',
+  'civicclerk',
+  'js_portal',
+]
+
+const AGENDA_SOURCES = '/api/staff/agenda-sources'
+
+/**
+ * GET /api/staff/agenda-sources/{source}/{client_code}/meetings — discovery
+ * dropdown. `portalUrl`/`portalVendorHint` are js_portal-only (the router
+ * 422s if they're supplied for any other source, or omitted for js_portal).
+ */
+export function listExternalAgendaMeetings(
+  source: AgendaExternalSource,
+  clientCode: string,
+  params: { since?: string | null; portalUrl?: string | null; portalVendorHint?: string | null } = {},
+): Promise<ExternalMeetingSummary[]> {
+  const qs = new URLSearchParams()
+  if (params.since) qs.set('since', params.since)
+  if (params.portalUrl) qs.set('portal_url', params.portalUrl)
+  if (params.portalVendorHint) qs.set('portal_vendor_hint', params.portalVendorHint)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return request<ExternalMeetingSummary[]>(
+    `${AGENDA_SOURCES}/${encodeURIComponent(source)}/${encodeURIComponent(clientCode)}/meetings${suffix}`,
+  )
+}
+
+/**
+ * POST /api/staff/agenda/{agenda_id}/import-external — import one already-
+ * discovered meeting's agenda. Always lands as a draft (§4.2 non-negotiable
+ * — the server never auto-publishes); js_portal items additionally carry a
+ * `confidence` score the caller should surface the same way the PDF-import
+ * path does.
+ */
+export function importExternalAgenda(
+  agendaId: string,
+  payload: AgendaImportExternalRequest,
+): Promise<AgendaItem[]> {
+  return request<AgendaItem[]>(
+    `/api/staff/agenda/${encodeURIComponent(agendaId)}/import-external`,
+    { method: 'POST', body: payload },
+  )
+}
+
+/**
+ * GET /api/staff/agenda-sources/js-portal/posture — whether the optional
+ * crawl4ai/Playwright runtime (the `agenda-js-import` extra) is installed on
+ * this station. Reachable regardless of the currently-selected
+ * CIVICCAST_AGENDA_SOURCE, so the screen can show an honest "not installed"
+ * state before the operator even picks js_portal as the source.
+ */
+export function getJsPortalPosture(): Promise<JsPortalPostureResponse> {
+  return request<JsPortalPostureResponse>(`${AGENDA_SOURCES}/js-portal/posture`)
 }
 
 // --- S26 Subscription paywall (operator config UI, slice 4) ----------------
