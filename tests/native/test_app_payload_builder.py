@@ -1887,9 +1887,7 @@ def _finish_av_manifest(
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     entries = [builder.AppFileEntry(**item) for item in manifest["files"]]
     (tree / "SHA256SUMS").write_text(builder.render_sha256sums(entries), encoding="utf-8")
-    (tree / "LICENSE-BOM.md").write_text(
-        builder.render_app_license_bom(entries), encoding="utf-8"
-    )
+    (tree / "LICENSE-BOM.md").write_text(builder.render_app_license_bom(entries), encoding="utf-8")
 
 
 def test_advisory_pyav_wheel_hash_authorizes_a_build_provenance_matching_av_wheel(
@@ -1932,7 +1930,9 @@ def test_pyav_wheel_hash_mismatch_still_fails_without_the_advisory_flag(
         tree, wheel, av_source, provenance, include_provenance=True, fake_lock_hash=fake_lock_hash
     )
 
-    result = verifier.check_app_payload_verification(tree)  # advisory_pyav_wheel_hash defaults False
+    result = verifier.check_app_payload_verification(
+        tree
+    )  # advisory_pyav_wheel_hash defaults False
 
     assert result.status == "FAIL"
     assert "not an authorized retained dependency wheel" in result.detail
@@ -2070,9 +2070,7 @@ def test_advisory_pyav_wheel_hash_does_not_relax_other_distributions(
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     entries = [builder.AppFileEntry(**item) for item in manifest["files"]]
     (tree / "SHA256SUMS").write_text(builder.render_sha256sums(entries), encoding="utf-8")
-    (tree / "LICENSE-BOM.md").write_text(
-        builder.render_app_license_bom(entries), encoding="utf-8"
-    )
+    (tree / "LICENSE-BOM.md").write_text(builder.render_app_license_bom(entries), encoding="utf-8")
 
     result = verifier.check_app_payload_verification(tree, advisory_pyav_wheel_hash=True)
 

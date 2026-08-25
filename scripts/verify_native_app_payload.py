@@ -540,8 +540,7 @@ def _pyav_build_provenance_problems(wheel_path: Path, *, version: str) -> list[s
                 ]
     except (OSError, zipfile.BadZipFile) as exc:
         return [
-            "PROVENANCE: self-hosted-built av wheel is unreadable: "
-            f"{type(exc).__name__}: {exc}"
+            f"PROVENANCE: self-hosted-built av wheel is unreadable: {type(exc).__name__}: {exc}"
         ]
     try:
         provenance = json.loads(raw.decode("utf-8"))
@@ -602,9 +601,7 @@ def _retained_dependency_wheel_provenance(
         version = str(parsed_version)
         identity = reviewed.get(distribution)
         wheel_hash = _sha256_file(wheel_path)
-        authorized = (
-            identity is not None and version == identity[0] and wheel_hash in identity[1]
-        )
+        authorized = identity is not None and version == identity[0] and wheel_hash in identity[1]
         version_pin_ok = identity is not None and version == identity[0]
         if (
             not authorized
