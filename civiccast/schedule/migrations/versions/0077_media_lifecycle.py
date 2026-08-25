@@ -3,7 +3,7 @@
 """S7 media lifecycle & readiness -- the five net-new S7 tables + archival gate.
 
 Revision ID: 0077_media_lifecycle
-Revises: 0076_analytics_viewership
+Revises: 0078_agenda_item_confidence
 Create Date: 2026-08-21
 
 ``docs/spec/3.0/sections/S7-media-lifecycle-and-readiness.md`` §3 calls for
@@ -13,7 +13,11 @@ by the time this landed (revision numbers are repo-global, per the
 `0075_offline_caption_jobs` note) -- this is that migration, parented on
 the current single head instead. Renumbered `0076` -> `0077` (and
 re-chained onto `0076_analytics_viewership`) when S14's migration reached
-`main` first and claimed `0076_media_lifecycle`'s original slot.
+`main` first and claimed `0076_media_lifecycle`'s original slot. Re-chained
+a second time onto `0078_agenda_item_confidence` (PR #21) when that
+migration also merged to `main` ahead of this branch and independently
+claimed the `0077` numeric slot's chain position; the `0077_media_lifecycle`
+name is kept, only `down_revision` moved.
 
 Creates, in one revision:
 
@@ -41,7 +45,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0077_media_lifecycle"
-down_revision: str | None = "0076_analytics_viewership"
+down_revision: str | None = "0078_agenda_item_confidence"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 

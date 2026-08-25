@@ -346,9 +346,10 @@ rows:
     # ReplaceMediaWorkflow. None of those existed on disk (no model class,
     # no migration past 0075) despite this status: built. Real S7 build
     # (feat/s7-media-lifecycle) lands migration 0077_media_lifecycle
-    # (renumbered from the branch's original 0076 slot, re-chained onto
-    # 0076_analytics_viewership, when S14 reached main first and claimed
-    # 0076), the five tables + asset_archive_proofs + media_lifecycle_audit_log,
+    # (renumbered from the branch's original 0076 slot when S14 reached
+    # main first and claimed 0076; re-chained a second time onto
+    # 0078_agenda_item_confidence when that migration also merged to main
+    # ahead of this branch), the five tables + asset_archive_proofs + media_lifecycle_audit_log,
     # the readiness/transcode/missing-media/archival-gate worker, the
     # staff API surface, and the operator console screens listed below.
     # It also closes a previously-unflagged gap in CLAUDE.md's §4.6
