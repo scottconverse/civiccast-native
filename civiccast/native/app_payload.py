@@ -235,8 +235,16 @@ APP_BUILD_TOOLCHAIN: Final[dict[str, dict[str, str]]] = {
 #: build pass" without reading the lock diff first -- the whole point is
 #: that a silent dependency substitution in the shipped payload cannot slip
 #: through.
+#: Re-pinned again 2026-08-25 (fix/self-hosted-lane-av-provenance):
+#: `git diff` on `requirements-native-app.txt` checked before changing this
+#: -- exactly one byte range changed, `av`'s own `--hash=sha256:...` value
+#: (445e6a94... -> 0f9427a4...), matching `build_native_pyav_wheel.py`'s
+#: `EXPECTED_WHEEL_SHA256`/`BYTES` re-pin in the same commit (that wheel's
+#: own embedded `FFMPEG-PROVENANCE.json` now also records the PyAV sdist's
+#: identity, which deterministically changes the reviewed wheel's bytes).
+#: Nothing else in the lock changed.
 APP_REQUIREMENTS_SHA256: Final[str] = (
-    "d423b31daeacc5576125432d631465699dfeb40c332f18bb6bf0d96ffed9cf7a"
+    "5538f0e6b35a10a7e4bcff969397cf731d49fcc0a4366842f8a611fcd2817e9c"
 )
 #: Exact third-party license files the builder places outside site-packages.
 #: payload path -> (distribution, version, license, sha256).

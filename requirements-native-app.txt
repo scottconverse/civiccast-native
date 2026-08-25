@@ -29,7 +29,7 @@ asn1crypto==1.5.1 \
 # by scripts/build_native_pyav_wheel.py is authorized; PyPI's Windows wheels are
 # intentionally not hash-authorized here.
 av==18.0.0 \
-    --hash=sha256:445e6a94724b6e83639c3ff4f35135cf3ae7e13a4954957d54cedf91f2e98622
+    --hash=sha256:0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce
     # via faster-whisper
 boto3==1.43.56 \
     --hash=sha256:57c90df9fb026f2e6ae22530861198130203733c5c9ec4e5cca3a4037f5a8db4 \

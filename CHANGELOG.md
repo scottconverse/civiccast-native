@@ -560,6 +560,35 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **PyAV reproducibility gate — the reviewed wheel hash was stale after
+  extending its embedded build-provenance record.** PR #39 (the
+  self-hosted av-provenance fix) added `pyav_sdist_url`/`sha256`/`bytes`
+  to the wheel's embedded `FFMPEG-PROVENANCE.json`, which deterministically
+  changes the compiled wheel's bytes — but `build_native_pyav_wheel.py`'s
+  `EXPECTED_WHEEL_SHA256`/`BYTES` still pinned the PRE-change reference, so
+  the hosted-lane "Two independent Windows workspaces" reproducibility
+  gate (run 32831619693) failed on its very first build: `av-18.0.0-
+  cp311-abi3-win_amd64.whl byte length 4347090 != pinned 4346940`. Not new
+  non-determinism — the embedding mechanism (`SOURCE_DATE_EPOCH`, the
+  fixed zip timestamp, `sort_keys=True` on the JSON) is unchanged and
+  already handled the original FFmpeg-only provenance fields
+  deterministically; the 3 new fields are static compile-time constants
+  with no environment/timestamp dependency. Re-pinned `EXPECTED_WHEEL_
+  SHA256`/`BYTES` to the real value the gate's own workspace-a build
+  reported (`0f9427a4...` / 4,347,090 bytes); cascaded to
+  `requirements-native-app.txt`'s `av==18.0.0` hash pin (the same reviewed
+  wheel identity, enforced separately at install time) and, since that
+  changes the lock file's own bytes, to `APP_REQUIREMENTS_SHA256` in
+  `civiccast/native/app_payload.py` (`git diff` checked before re-pinning,
+  per that constant's own standing rule: exactly one byte range changed,
+  nothing else in the lock). Two test literals
+  (`tests/native/test_pyav_wheel_builder.py`,
+  `tests/native/test_app_payload.py`) updated to match. Not independently
+  re-verified by a local double-build (this box has no pinned MSVC Build
+  Tools install; provisioning one plus two full FFmpeg/PyAV compiles was
+  not feasible in reasonable time) — verified by full test suite instead,
+  and by letting CI's own two-independent-workspace comparison confirm on
+  the next push.
 - **S12 OTT build matrix — Samsung Tizen was the one dishonest cell:
   `tizen package` never actually ran; the job passed via a static
   `config.xml`-validation fallback instead of a real `.wgt` build.** Root

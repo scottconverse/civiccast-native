@@ -241,7 +241,7 @@ def test_native_lock_authorizes_only_the_reviewed_lgpl_pyav_wheel() -> None:
     )
     assert av_block is not None
     hashes = re.findall(r"--hash=sha256:([0-9a-f]{64})", av_block.group("body"))
-    assert hashes == ["445e6a94724b6e83639c3ff4f35135cf3ae7e13a4954957d54cedf91f2e98622"]
+    assert hashes == ["0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce"]
 
 
 def test_native_app_lock_matches_its_reviewed_identity() -> None:
