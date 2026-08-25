@@ -586,6 +586,43 @@ came across and what deliberately did not.
   full diagnosis. `civiccast-tizen-wgt` verified as a real signed widget
   (contains `author-signature.xml`/`signature1.xml`) on CI run
   32819441306.
+- **Self-hosted native-beta candidate build — the advisory PyAV posture
+  stopped one layer too early: the independent post-build provenance
+  sweep still rejected the self-hosted-built `av` wheel outright.**
+  Candidate run 32822175257 got through the PyAV build and `uv install`
+  steps (#30's advisory posture) and still failed "Build and verify
+  signed component packs": `"WHEELS/av-18.0.0-cp311-abi3-win_amd64.whl is
+  not an authorized retained dependency wheel"` plus every one of `av`'s
+  installed files reported `"is named by no wheel RECORD"`.
+  `scripts/build_native_app_payload_pack.py`'s `build_app_payload_pack()`
+  runs `scripts/verify_native_app_payload.py`'s independent, deny-by-
+  default `check_app_payload_verification()` on the fully assembled tree
+  AFTER the build — a separate code path from `install_pinned_
+  dependencies()`, with no advisory posture of its own, so it re-rejected
+  the same wheel on its own byte hash regardless of how the earlier steps
+  had authorized it. `_retained_dependency_wheel_provenance()` now
+  authorizes a byte-hash-mismatched `av` wheel by BUILD PROVENANCE instead
+  (name/version pin against the reviewed lock stays a hard failure,
+  unaffected): it re-asserts the two upstream inputs the wheel was
+  compiled FROM — the PyAV sdist and the FFmpeg source archive, both
+  always hash-verified hard-fail on every lane — by reading them back out
+  of the wheel's own embedded `FFMPEG-PROVENANCE.json` (`ffmpeg_
+  provenance()` in `build_native_pyav_wheel.py` now also records the PyAV
+  sdist's hash/bytes, alongside the FFmpeg source archive's it already
+  recorded) and re-checking against the same pinned constants — never
+  trusted unchecked. Once authorized this way, the existing per-member
+  ownership walk needs no further change: it already anchors every
+  installed byte to the IN-RUN wheel's own bytes/RECORD, which resolves
+  the RECORD-mismatch symptom for free — the RECORD was never wrong, it
+  was simply never reached because the wheel was never authorized.
+  `check_app_payload_verification()`/`build_app_payload_pack()` take the
+  same `advisory_pyav_wheel_hash` flag threaded from the CLI; every OTHER
+  retained wheel, and `av` itself on the hosted lane (flag unset, always),
+  is unaffected. `tests/native/test_app_payload_builder.py`: +6 tests
+  (authorizes a provenance-matching wheel; hosted lane still fails the
+  same wheel; a wrong version pin still fails even advisory; a TAMPERED
+  provenance claim still fails; a MISSING provenance file still fails; the
+  flag does not relax any other distribution).
 - **Self-hosted native-beta candidate build — `_work\_temp` scratch dirs
   from a failed run blocked the next run, starting with `civiccast-build-
   venv`.** Candidate run 32810709045 failed "Bootstrap the reviewed Python

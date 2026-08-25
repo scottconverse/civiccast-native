@@ -225,6 +225,7 @@ def build_app_payload_pack(
     source_sha: str,
     gstreamer_closure: Path | None = None,
     compatible_core: str | None = None,
+    advisory_pyav_wheel_hash: bool = False,
 ) -> dict[str, object]:
     """Independently re-verify the built payload tree, then package it as
     the signed ``native-app-payload`` pack.
@@ -238,7 +239,16 @@ def build_app_payload_pack(
     (each machine signs with its own local development key). Equal
     ``payload_tree_sha256`` across machines is the actual reproducible-build
     proof; equal ``payload_bytes``/``file_count`` alone is not (same size
-    and count can hide a rename or a same-size content swap)."""
+    and count can hide a rename or a same-size content swap).
+
+    ``advisory_pyav_wheel_hash`` -- the same flag ``build()`` receives when
+    ``payload_root`` was just built by this same CLI invocation -- must be
+    forwarded here too: this independent re-verification is the layer that
+    actually gated candidate run 32822175257 (self-hosted). Passing it only
+    to the build step is not enough -- this deny-by-default provenance sweep
+    runs AFTER the build, from the assembled tree on disk, and would
+    otherwise re-reject the self-hosted-built ``av`` wheel on its own byte
+    hash regardless of how it was authorized to build."""
 
     source_sha = require_source_sha(source_sha)
     payload_root = _require_real_directory(payload_root, label="app payload tree")
@@ -254,6 +264,7 @@ def build_app_payload_pack(
         require_caption_pack=True,
         require_console_launchers=True,
         require_dependency_wheels=True,
+        advisory_pyav_wheel_hash=advisory_pyav_wheel_hash,
     )
     if verification.status != "PASS":
         raise AppPayloadPackBuildError(
@@ -448,6 +459,7 @@ def main() -> int:
             source_sha=args.source_sha,
             gstreamer_closure=args.gstreamer_closure.resolve(),
             compatible_core=args.compatible_core,
+            advisory_pyav_wheel_hash=args.advisory_pyav_wheel_hash,
         )
     except AppPayloadPackBuildError as exc:
         print(f"build_native_app_payload_pack: {exc}", file=sys.stderr)

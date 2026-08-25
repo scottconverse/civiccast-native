@@ -72,13 +72,57 @@ The hosted lane (`build_target: hosted`, the default, and every
 flag: hosted builds keep the byte-exact assertion as a hard failure at both
 the build and the install step, exactly as before this change.
 
+## The independent post-build provenance sweep needs the SAME flag, separately
+
+Getting the self-hosted-built `av` wheel through the *build* and *install*
+steps above is not the end of the chain. `scripts/build_native_app_payload_pack.py`'s
+`build_app_payload_pack()` runs `scripts/verify_native_app_payload.py`'s
+`check_app_payload_verification()` — an INDEPENDENT deny-by-default re-check
+of the fully assembled payload tree, from scratch, after the build finishes.
+It re-derives file ownership from the retained `WHEELS/*.whl` files by the
+SAME reviewed byte-hash pin `install_pinned_dependencies()` uses — a
+completely separate code path that previously had no advisory posture of its
+own. Candidate run 32822175257 got through the build and install steps
+(#30's fix) and still failed here: `"WHEELS/av-18.0.0-cp311-abi3-win_amd64.whl
+is not an authorized retained dependency wheel"` plus every one of `av`'s
+installed files reported `"is named by no wheel RECORD"` (the wheel was never
+authorized, so none of its members were ever added to the ownership map this
+sweep builds).
+
+`check_app_payload_verification()` (and `build_app_payload_pack()`, which
+calls it) now also takes `advisory_pyav_wheel_hash`, forwarded from the same
+CLI flag. `_retained_dependency_wheel_provenance()` in
+`verify_native_app_payload.py`: on a byte-hash miss for `av` specifically
+(its name/version pin against the reviewed lock is UNAFFECTED and still a
+hard failure), it authorizes the wheel by **build provenance** instead of by
+wheel byte hash — re-asserting the two upstream inputs the wheel was
+compiled FROM, which (unlike the compiled output) are always hash-verified,
+hard-fail, on every lane. Those two identities are read back out of the
+wheel's own embedded `<dist-info>/FFMPEG-PROVENANCE.json` (`ffmpeg_provenance()`
+in `build_native_pyav_wheel.py` now records `pyav_sdist_sha256`/`bytes`
+alongside the FFmpeg source archive's, which it already recorded) and
+re-checked against the SAME `PYAV_SDIST_SHA256`/`BYTES` and
+`FFMPEG_SOURCE_SHA256`/`BYTES` constants — never trusted unchecked. Once
+authorized this way, the existing per-member ownership walk needs no further
+change: it already anchors every installed byte to the IN-RUN wheel's own
+bytes and members (never the reviewed reference's), which is what resolves
+the RECORD mismatch — a self-hosted `av` wheel's RECORD was never wrong, it
+was simply never reached because the wheel was never authorized in the first
+place.
+
+Every OTHER retained wheel, and `av` itself when `advisory_pyav_wheel_hash`
+is unset (the hosted lane, always), is unaffected: still hash-pinned exactly
+as before this layer gained the fallback.
+
 ## What this does and does not prove
 
 A self-hosted candidate build whose PyAV wheel hash triggered the advisory
 warning is **not** proof the wheel is wrong — the runtime probe
 (`run_runtime_probe`) still executes the compiled wheel and decodes real
-audio frames as part of the same build, and the license/provenance gate in
-`build_native_app_payload.py` still runs unconditionally. It **is** a signal
-that this specific candidate's PyAV wheel bytes were not independently
-reproduced against the hosted-reviewed reference, which is worth carrying
-into release-candidate review notes for that run.
+audio frames as part of the same build, and the license/provenance gate
+(`verify_native_app_payload.py`'s deny-by-default sweep, described above)
+still runs unconditionally and still authorizes `av` only by re-verifying
+real upstream build-input hashes, never by skipping the check. It **is** a
+signal that this specific candidate's PyAV wheel bytes were not
+independently reproduced against the hosted-reviewed reference, which is
+worth carrying into release-candidate review notes for that run.

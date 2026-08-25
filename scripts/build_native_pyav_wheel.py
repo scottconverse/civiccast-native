@@ -154,7 +154,23 @@ _DOWNLOAD_HOSTS: Final[frozenset[str]] = frozenset(
 
 
 def ffmpeg_provenance() -> dict[str, object]:
-    """Machine-readable notice shipped inside the repaired PyAV wheel."""
+    """Machine-readable notice shipped inside the repaired PyAV wheel.
+
+    Doubles as the wheel's own build-provenance record: alongside the
+    FFmpeg component notice, it names the two pinned, hash-verified
+    upstream inputs this wheel was compiled FROM -- the PyAV sdist and the
+    FFmpeg source archive. Both are acquired via `acquire_verified_artifact`
+    with the default `advisory=False`, so they are a hard failure on every
+    build lane, self-hosted included (see `verify_artifact`'s docstring) --
+    unlike the FINAL COMPILED wheel's own bytes, which can legitimately
+    differ by build machine (docs/process/pyav-wheel-reproducibility.md).
+    `scripts/verify_native_app_payload.py`'s provenance sweep reads these
+    two fields back out of THIS wheel and re-asserts them against the same
+    PYAV_SDIST_SHA256/BYTES and FFMPEG_SOURCE_SHA256/BYTES constants to
+    authorize a self-hosted-built `av` wheel by build provenance instead of
+    by wheel byte hash -- see that module's `_retained_dependency_wheel_
+    provenance` and docs/process/pyav-wheel-reproducibility.md.
+    """
 
     return {
         "schema_version": 1,
@@ -172,6 +188,9 @@ def ffmpeg_provenance() -> dict[str, object]:
             "They may be replaced with interface-compatible modified builds; "
             "keep the filenames expected by the repaired extension modules."
         ),
+        "pyav_sdist_url": PYAV_SDIST_URL,
+        "pyav_sdist_sha256": PYAV_SDIST_SHA256,
+        "pyav_sdist_bytes": PYAV_SDIST_BYTES,
     }
 
 
