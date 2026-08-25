@@ -2,20 +2,25 @@
 
 **Status:** Built starter native app source for all 8 targets (Roku, iOS, tvOS, Android TV, Fire TV,
 Android mobile, Samsung Tizen, LG webOS) and machine-CI-built on hosted runners — confirmed GREEN
-end-to-end on `.github/workflows/ci-ott-apps.yml` as of 2026-08-21 (PR #17, run 32504918253; every
-job independently re-verified). Per-platform build status: **Roku** — real BrightScript static check
+end-to-end on `.github/workflows/ci-ott-apps.yml`, all 8 platforms producing a real build artifact,
+as of 2026-08-25 (fix/ott-tizen-real-package, run 32819441306; every job independently re-verified).
+Per-platform build status: **Roku** — real BrightScript static check
 (`bsc`) + zip package. **CI-green.** **Android** (`tv`/`firetv`/mobile product flavors, one Gradle
 module) — real `gradle assemble{Tv,Firetv}Debug` / `assembleDebug` builds. **CI-green.** **Apple**
 (iOS + tvOS) — real `xcodebuild build-for-testing` (unsigned, `generic/platform=... Simulator`
 destination) on `macos-latest`. **CI-green.** **LG webOS** — real `ares-package` build
 (`@webosose/ares-cli`, no device/EULA needed; `--no-minify` works around the bundled minifier
 choking on ES module syntax). **CI-green.** **Samsung Tizen** — the headless Tizen Studio CLI
-install, certificate generation, security-profile add, and `cli-config` all genuinely succeed in
-CI; the final `tizen package` step itself still fails for a reason not yet root-caused (see
-`tizen/README.md` and the workflow's cli.log dump). The job passes via the documented honest
-fallback: static `config.xml` contract validation (`tizen/validate_config.py`). **CI-green via the
-fallback path, not yet a real `.wgt` build** — this is the one platform where "green" means
-"validated," not "compiled," and that distinction is intentional, not hidden. App-store publication
+install, certificate generation, security-profile add, `cli-config`, and (as of this fix) `tizen
+package` itself all genuinely succeed in CI, producing a real signed `.wgt`
+(`civiccast-tizen-wgt` artifact). Root cause of the earlier packaging failure: Tizen Studio CLI
+2.5.25's `security-profiles add` writes a nonexistent sidecar `.pwd` file *path* into `profiles.xml`'s
+password attribute instead of the real plaintext password, which the packager then reads literally
+and rejects as an invalid password — `tizen/fix_signing_profile.py` patches it to the real plaintext
+passwords right before packaging (see `tizen/README.md` for the full diagnosis). **CI-green with a
+real `.wgt` build**, matching every other platform in this matrix; the static `config.xml`
+validation (`tizen/validate_config.py`) remains as the fallback path for the (currently theoretical)
+case where the headless Tizen Studio install itself fails on a given run. App-store publication
 remains external (owner decision 2026-06-14: code-verify only, no store submission in V1).
 **Scope:** Roku, Apple TV, Fire TV, Android TV, Android mobile, iOS/iPadOS, and Web/PWA shells  
 **Functional target:** incumbent PEG workflow "branded streaming app workflow" / templated streaming app workflow (basic apps free with the incumbent cloud service; up to 3 channels)
