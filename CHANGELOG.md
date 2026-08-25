@@ -560,6 +560,32 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **S12 OTT build matrix — Samsung Tizen was the one dishonest cell:
+  `tizen package` never actually ran; the job passed via a static
+  `config.xml`-validation fallback instead of a real `.wgt` build.** Root
+  cause, found via a base64-encoded `profiles.xml` dump on a diagnostic CI
+  run (needed because GitHub's log masking hides the plaintext otherwise):
+  Tizen Studio CLI 2.5.25's `tizen security-profiles add` writes
+  `password="<path>.pwd"` into `profiles.xml` for both the author profile
+  and the auto-attached default distributor profile — a path to a sidecar
+  `.pwd` file that is never created, instead of the real plaintext
+  password. `tizen package`'s signer then reads that path string literally
+  as the PKCS#12 password and fails with `CertificationException: Invaild
+  password` — not a certificate, cli-config, or DISPLAY-less quirk;
+  install, certificate generation, security-profile registration, and
+  cli-config all already worked. Two other projects hit the identical
+  stack trace running `tizen package` headlessly
+  (jellyfin/jellyfin-tizen#66, fgl27/smarttv-twitch#41); the new
+  `civiccast/apps/ott-native/tizen/fix_signing_profile.py` applies the
+  same fix those issues converged on — patch the bogus `.pwd` paths to the
+  real plaintext passwords right before packaging — and stages just the
+  four real runtime files into a clean temp directory first so the
+  resulting `.wgt` doesn't ship this repo's dev/CI-only files. All 8
+  `ci-ott-apps.yml` platforms now produce a real build artifact; see
+  `docs/spec/3.0/sections/S12-ott-apps.md` and `tizen/README.md` for the
+  full diagnosis. `civiccast-tizen-wgt` verified as a real signed widget
+  (contains `author-signature.xml`/`signature1.xml`) on CI run
+  32819441306.
 - **Self-hosted native-beta candidate build — `_work\_temp` scratch dirs
   from a failed run blocked the next run, starting with `civiccast-build-
   venv`.** Candidate run 32810709045 failed "Bootstrap the reviewed Python
