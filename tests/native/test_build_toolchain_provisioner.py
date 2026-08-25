@@ -447,9 +447,7 @@ def test_reexport_relocated_msvc_install_writes_github_env(
     github_env = tmp_path / "github_env.txt"
     github_env.write_text("", encoding="utf-8")
 
-    provisioner.reexport_relocated_msvc_install(
-        requested, relocated, github_env=str(github_env)
-    )
+    provisioner.reexport_relocated_msvc_install(requested, relocated, github_env=str(github_env))
 
     assert f"CIVICCAST_MSVC_INSTALLATION_PATH={relocated}\n" in github_env.read_text(
         encoding="utf-8"
@@ -470,9 +468,7 @@ def test_reexport_relocated_msvc_install_is_a_noop_when_not_relocated(
     github_env = tmp_path / "github_env.txt"
     github_env.write_text("", encoding="utf-8")
 
-    provisioner.reexport_relocated_msvc_install(
-        requested, requested, github_env=str(github_env)
-    )
+    provisioner.reexport_relocated_msvc_install(requested, requested, github_env=str(github_env))
 
     assert github_env.read_text(encoding="utf-8") == ""
 
