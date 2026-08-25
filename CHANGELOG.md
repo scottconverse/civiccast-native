@@ -503,6 +503,59 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Self-hosted native-beta candidate build — `_work\_temp` scratch dirs
+  from a failed run blocked the next run, starting with `civiccast-build-
+  venv`.** Candidate run 32810709045 failed "Bootstrap the reviewed Python
+  build environment": `uv sync` refused `civiccast-build-venv` as "not a
+  valid Python environment (no Python executable was found)" because the
+  PREVIOUS self-hosted run (32806127399, a different bug, fixed separately)
+  died mid-`uv sync` and left a half-created venv at that exact path — a
+  hosted runner's `RUNNER_TEMP` is always fresh, so this class of bug never
+  surfaces there. Inventoried every `RUNNER_TEMP`-scoped scratch dir across
+  both build jobs against the workflow and the scripts it calls and found
+  the same shape twice more, both latent: `build_native_app_payload.py`'s
+  `build()`, `build_native_pyav_wheel.py`'s `build()`, and
+  `build_native_runtime_closure.py`'s `build()` all refuse to write into a
+  non-empty output directory. The "Bootstrap the reviewed Python build
+  environment" step now clears an invalid `civiccast-build-venv` (missing
+  `Scripts\python.exe`) before `uv sync` runs, relocating to a uniquely
+  suffixed sibling path if it cannot be removed (still in use by
+  something) rather than failing the job; a complete, valid venv is left
+  untouched and reused. A new self-hosted-only step, "Ensure a clean
+  self-hosted scratch tree before the pack build", clears
+  `civiccast-app-payload`, `civiccast-app-payload-scratch`, and
+  `civiccast-gstreamer-closure` before every self-hosted pack build (hard
+  failure with a clear diagnostic if a leftover genuinely cannot be
+  removed — none of these are known to be held open by a long-running
+  process the way MSVC's own toolchain is) and best-effort clears
+  `civiccast-gstreamer-stage` (non-fatal; its own `build()` does not
+  require an empty directory). `civiccast-msvc-build-tools` gets a
+  different fix, since a real MSVC Build Tools install is expensive to
+  redo (~1.8 GB, real minutes): `provision_native_build_toolchain.py`'s
+  `install_msvc()` now re-verifies a pre-existing install with the same
+  real `cl.exe`/`link.exe` launch-and-version check a fresh install already
+  trusted before reuse, and reinstalls only when that fails. A live
+  follow-up on this exact candidate found that the runner's own attempt to
+  clear an invalid MSVC tree by hand left an undeletable, unknown-
+  completeness 1.8 GB leftover (`vctip.exe`/`mspdbsrv.exe` still holding
+  files open) — `install_msvc()` now falls back to a uniquely suffixed
+  sibling directory rather than failing the job when an invalid tree
+  cannot be removed, and `main()` re-exports the actual resolved path to
+  `GITHUB_ENV` so every later step that reads
+  `$env:CIVICCAST_MSVC_INSTALLATION_PATH` as a fixed literal (the Tauri
+  build's `vcvars64.bat` import, the pack build's own env block) picks it
+  up automatically. Checked (not assumed) that the toolchain/pack-build
+  download caches and the Ollama-model/captions-floor caches were already
+  safe: every one downloads to a `.partial` file, hash-verifies it, and
+  only then atomically renames it into place, so a killed download can
+  never leave a cache entry a later run would wrongly trust — no change
+  needed there. `tests/native/test_build_toolchain_provisioner.py`: +5
+  tests for `install_msvc()`'s reuse/replace/relocate paths and `main()`'s
+  `GITHUB_ENV` re-export. `actionlint` and the full policy suite pass;
+  hosted-lane behavior is unchanged in every case (a hosted runner's
+  `RUNNER_TEMP` never pre-exists, so every new reuse/relocate branch is
+  unreachable there and each fix falls straight through to its pre-fix
+  behavior).
 - **Self-hosted native-beta candidate build — the advisory PyAV wheel hash
   never reached the install step, so run 32806127399 failed
   `uv pip install --require-hashes` with "Failed to download `av==18.0.0` /

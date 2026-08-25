@@ -261,7 +261,35 @@ jobs:
           $toolchain = (Resolve-Path "build/wp1-native-toolchain").Path
           $toolchainPython = Join-Path $toolchain "python\python.exe"
           $toolchainUv = Join-Path $toolchain "uv\uv.exe"
-          $buildVenv = Join-Path $env:RUNNER_TEMP "civiccast-build-venv"
+          $buildVenvBase = Join-Path $env:RUNNER_TEMP "civiccast-build-venv"
+          # Self-hosted only in PRACTICE: a hosted runner is always fresh, so
+          # $buildVenvBase never pre-exists there and this whole block is a
+          # no-op (falls straight through to $buildVenv = $buildVenvBase,
+          # unchanged from before this block existed). Self-hosted's
+          # _work\_temp persists across runs, and candidate run 32810709045
+          # died right here -- "not a valid Python environment (no Python
+          # executable was found)" -- because the PREVIOUS self-hosted run
+          # (32806127399, a different bug, fixed separately) died mid-`uv
+          # sync` and left a half-created venv at this exact path; uv
+          # refuses to reuse it rather than repairing it. A venv is cheap to
+          # rebuild (seconds), so any pre-existing tree that is not a
+          # complete, working venv is simply cleared -- best-effort, since a
+          # process could still hold a handle open; if clearing fails, this
+          # run uses a uniquely suffixed sibling path instead of failing.
+          $buildVenv = $buildVenvBase
+          if (Test-Path -LiteralPath $buildVenvBase) {
+            $venvPythonProbe = Join-Path $buildVenvBase "Scripts\python.exe"
+            if (-not (Test-Path -LiteralPath $venvPythonProbe)) {
+              Write-Host "Stale/incomplete build-venv scratch at $buildVenvBase (missing Scripts\python.exe -- left over from a previous run); clearing it."
+              Remove-Item -LiteralPath $buildVenvBase -Recurse -Force -ErrorAction SilentlyContinue
+              if (Test-Path -LiteralPath $buildVenvBase) {
+                $buildVenv = "$buildVenvBase-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
+                Write-Host "::warning::Could not remove the stale build-venv scratch at $buildVenvBase (still in use by something); building a fresh venv at $buildVenv instead."
+              } else {
+                Write-Host "Removed the stale build-venv scratch; will build fresh at $buildVenv."
+              }
+            }
+          }
           $env:UV_PYTHON = $toolchainPython
           $env:UV_PYTHON_DOWNLOADS = "never"
           $env:UV_PROJECT_ENVIRONMENT = $buildVenv
@@ -367,6 +395,53 @@ jobs:
             3010  { "VC++ runtime installed; a restart is pending (not required for this job)." }
             1638  { "A same-or-newer VC++ runtime is already present." }
             default { throw "VC++ runtime install failed with exit code $code" }
+          }
+
+      # Self-hosted only. build_native_app_payload.py's build(), build_native_
+      # pyav_wheel.py's build(), and build_native_runtime_closure.py's build()
+      # all refuse to write into a non-empty output directory ("refusing to
+      # build into a non-empty output directory" / "... PyAV wheelhouse is
+      # not empty" / same phrasing) -- a deliberate guard against two builds
+      # silently sharing one tree. On a hosted runner that guard never fires:
+      # $env:RUNNER_TEMP is always fresh. On self-hosted it persists across
+      # runs (same root cause class as civiccast-build-venv above, one level
+      # over: candidate run 32806127399 died mid `civiccast-app-payload`
+      # population, and the NEXT self-hosted run to reach the pack build
+      # would have hit this guard on the leftover tree instead of building).
+      # None of these four are worth PRESERVING across runs the way the MSVC
+      # install above is (no multi-gigabyte download or hours-long installer
+      # behind any of them -- rebuilding from scratch costs the pack-build
+      # step itself, not this one), so the fix here is simpler than the MSVC
+      # relocate-on-lock path: always start clean, and if a leftover
+      # genuinely cannot be removed (no long-running process is expected to
+      # hold a handle into a Python-managed build-output tree the way MSVC's
+      # own vctip.exe/mspdbsrv.exe do), fail loudly and specifically instead
+      # of letting the pack build fail deep inside with an opaque guard
+      # message that names none of this history.
+      - name: Ensure a clean self-hosted scratch tree before the pack build
+        if: env.BUILD_TARGET == 'self-hosted'
+        shell: pwsh
+        run: |
+          foreach ($dir in @(
+            (Join-Path $env:RUNNER_TEMP "civiccast-app-payload"),
+            (Join-Path $env:RUNNER_TEMP "civiccast-app-payload-scratch"),
+            (Join-Path $env:RUNNER_TEMP "civiccast-gstreamer-closure")
+          )) {
+            if (Test-Path -LiteralPath $dir) {
+              Write-Host "Clearing leftover self-hosted scratch from a previous run: $dir"
+              Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+              if (Test-Path -LiteralPath $dir) {
+                throw "Could not clear leftover self-hosted scratch at $dir (still in use by something). Remove it manually (or wait for whatever holds it open to exit) and re-dispatch."
+              }
+            }
+          }
+          # Non-fatal: build_native_runtime_closure.py's --stage does not
+          # require an empty directory (only --out does, cleared above), so a
+          # leftover here is a staleness/reproducibility concern, not a
+          # blocking one -- clear it best-effort and move on either way.
+          $gstreamerStage = Join-Path $env:RUNNER_TEMP "civiccast-gstreamer-stage"
+          if (Test-Path -LiteralPath $gstreamerStage) {
+            Remove-Item -LiteralPath $gstreamerStage -Recurse -Force -ErrorAction SilentlyContinue
           }
 
       - name: Assert clean source tree before pack build
