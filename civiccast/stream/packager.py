@@ -25,12 +25,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from civiccast.stream._ffmpeg import FfmpegError, FfmpegNotFoundError, run_ffmpeg
+from civiccast.stream._ffmpeg import (
+    FfmpegError,
+    FfmpegNotFoundError,
+    probe_video_dimensions,
+    run_ffmpeg,
+)
 from civiccast.stream.config import (
     ABR_LADDER,
     HLS_SEGMENT_DURATION,
     SLATE_RENDITION,
     RenditionConfig,
+    select_ladder,
 )
 from civiccast.stream.manifest import ManifestRendition, write_multivariant_manifest
 from civiccast.stream.slate import generate_slate
@@ -62,8 +68,11 @@ class RenditionOutput:
 class VodPackageResult:
     """Result of a successful ``pack_vod_asset`` call.
 
-    ``renditions`` contains all five entries (4 content + slate), ordered
-    highest-to-lowest bandwidth.  The slate is always last.
+    ``renditions`` holds the content renditions selected for this source
+    (see :func:`civiccast.stream.config.select_ladder` — a source smaller
+    than the ladder's top rung gets fewer than four, because CivicCast never
+    upscales) followed by the slate, ordered highest-to-lowest bandwidth.
+    The slate is always last.
     """
 
     manifest_path: Path
@@ -120,15 +129,21 @@ def pack_vod_asset(
     *,
     trim_in_seconds: float | None = None,
     trim_out_seconds: float | None = None,
+    source_width: int | None = None,
+    source_height: int | None = None,
     progress_callback: Callable[[str, str], None] | None = None,
 ) -> VodPackageResult:
-    """Encode ``input_path`` to a 5-variant HLS package in ``output_dir``.
+    """Encode ``input_path`` to an HLS package (content ladder + slate).
 
     Steps:
     1. Validate the input file is readable.
     2. Generate the slate (always first — independent of input validity).
-    3. Encode all four content renditions.
-    4. Write the multivariant manifest.
+    3. Select the content ladder for this source — CivicCast never upscales,
+       so a source shorter than the ladder's top rung produces fewer than
+       four content renditions (see
+       :func:`civiccast.stream.config.select_ladder`).
+    4. Encode the selected content renditions.
+    5. Write the multivariant manifest.
 
     Args:
         input_path: Path to the source video file.
@@ -136,6 +151,13 @@ def pack_vod_asset(
                     Created if it does not exist.
         trim_in_seconds: Optional fractional start time, in seconds.
         trim_out_seconds: Optional fractional end time, in seconds.
+        source_width: Source pixel width, when the caller already probed it
+                      (the asset row carries ``width_px``/``height_px`` from
+                      ingest). Saves a redundant ffprobe. When either
+                      dimension is omitted the packager probes the input
+                      itself, and falls back to the full ladder if the probe
+                      cannot answer.
+        source_height: Source pixel height — see ``source_width``.
         progress_callback: Called with (rendition_name, ffmpeg_stderr_line)
                            during encoding. Sprint 0.2: called after each
                            rendition completes, not in real time.
@@ -167,9 +189,20 @@ def pack_vod_asset(
     slate_playlist = generate_slate(output_dir)
     slate_output = RenditionOutput(config=SLATE_RENDITION, playlist_path=slate_playlist)
 
+    # Pick the ladder before encoding: renditions taller than the source cost
+    # a full large-frame encode and add no detail, so they are dropped and the
+    # top rung is pinned to the source's own resolution instead.
+    if source_width is None or source_height is None:
+        probed = probe_video_dimensions(input_path)
+        if probed is not None:
+            source_width, source_height = probed
+    ladder = select_ladder(
+        source_width=source_width, source_height=source_height, ladder=ABR_LADDER
+    )
+
     # Encode content renditions.
     content_outputs: list[RenditionOutput] = []
-    for rendition_config in ABR_LADDER:
+    for rendition_config in ladder:
         playlist_path = _encode_rendition(
             input_path,
             output_dir,
@@ -182,7 +215,7 @@ def pack_vod_asset(
             RenditionOutput(config=rendition_config, playlist_path=playlist_path)
         )
 
-    # All five renditions — content first (highest→lowest), slate last.
+    # Content renditions first (highest→lowest), slate last.
     all_renditions = [*content_outputs, slate_output]
 
     # Build manifest with relative playlist URIs (CDN-agnostic).

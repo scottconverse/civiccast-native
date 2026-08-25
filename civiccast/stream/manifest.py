@@ -3,8 +3,11 @@
 """HLS multivariant manifest assembly.
 
 Builds RFC 8216-compliant HLS multivariant playlists from ``RenditionConfig``
-descriptors. All five entries (4 content + slate) are always present per
-ADR 0007.
+descriptors. The slate entry is always present per ADR 0007; the content
+entries are whichever rungs the packager selected for the source, which is
+the full four-rung ladder for a 1080p-or-larger source and fewer for a
+smaller one (CivicCast never upscales — see
+:func:`civiccast.stream.config.select_ladder`).
 
 Slate failover (Sprint 0.3 cleanup batch G — ADR 0007 v0.3 amendment):
 
