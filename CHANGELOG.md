@@ -597,6 +597,33 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Self-hosted native-beta candidate build — "Sign the native bootstrap
+  (Azure Artifact Signing)" needs the .NET SDK, not just the runtime.**
+  Candidate run 32838619949 got one step from a complete build, then died:
+  `Exception: Failed to install package: sign 0.9.1-beta.26227.3`.
+  `azure/artifact-signing-action` installs its `sign` CLI (net8.0-targeted,
+  per nuget.org/packages/sign, needing the .NET 8 SDK or later) via `dotnet
+  tool install`. A hosted `windows-latest` runner ships the SDK
+  preinstalled; this box had `dotnet` on PATH but RUNTIME-only (`dotnet
+  --list-sdks` empty, only `Microsoft.NETCore.App 8.0.30`), so the tool
+  install failed with "No .NET SDKs were found." A new self-hosted-only
+  step, "Provision a pinned .NET SDK for the signing action," installs a
+  pinned 8.0.424 SDK (LTS, 8.0.4xx band) via Microsoft's own
+  `dotnet-install.ps1` — a non-admin, caller-owned install into this
+  lane's own `RUNNER_TEMP` scratch root, pinned by exact `-Version` (never
+  `latest`/`LTS`) — then exports `DOTNET_ROOT` and prepends the SDK
+  directory to `GITHUB_PATH` so the signing step resolves it. Idempotent
+  the same way every other self-hosted scratch dir in this job is: a
+  pre-existing tree is trusted only when `dotnet --list-sdks` actually
+  reports the pinned version (not a marker file alone), and an invalid one
+  is cleared and reinstalled. Verified locally, outside any runner tree
+  (`C:\CivicCastTester\dotnet-sdk-test`, deleted after): the exact command
+  the signing action runs internally, `dotnet tool install sign --version
+  0.9.1-beta.26227.3`, succeeds against this pinned SDK. Hosted lane
+  untouched (the step is self-hosted-only). `tests/policy/
+  test_native_beta_candidate_workflow.py`: +2 tests (the provisioning
+  step's shape/ordering/pin, and a regression guard that a floating
+  `latest`/`LTS` version would fail the pin).
 - **PyAV reproducibility gate — the reviewed wheel hash was stale after
   extending its embedded build-provenance record.** PR #39 (the
   self-hosted av-provenance fix) added `pyav_sdist_url`/`sha256`/`bytes`
