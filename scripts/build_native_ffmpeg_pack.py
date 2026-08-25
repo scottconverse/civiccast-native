@@ -311,6 +311,26 @@ def load_ed25519_private_key(path: Path) -> Ed25519PrivateKey:
 # ---------------------------------------------------------------------------
 
 
+def _extracted_ffmpeg_is_complete(destination: Path) -> bool:
+    """Re-verify a pre-existing extraction against the same pinned bin/
+    license file set ``build_ffmpeg_pack()`` itself requires, rather than
+    trusting bare directory existence.
+
+    A self-hosted runner's ``--cache`` persists across runs (a hosted
+    runner is always fresh); a previous run's extraction into
+    ``cache/extracted/ffmpeg`` interrupted partway through (a crash, a
+    cancelled run, a disk hiccup) leaves a directory that EXISTS but is
+    missing files -- candidate run 32858543561 failed with "FFmpeg closure
+    seed bin/ffmpeg.exe is missing" from exactly this path, the same
+    idempotent-scratch bug class fixed for civiccast-server-pack-cache
+    (#41) applied here to a different cache."""
+    try:
+        _ffmpeg_sources(destination)
+    except FfmpegPackBuildError:
+        return False
+    return True
+
+
 def acquire_ffmpeg_pack_sources(cache: Path, *, lock_path: Path = LOCK_PATH) -> Path:
     """Download + verify + extract ONLY the ``ffmpeg`` artifact from the
     reviewed runtime-dependency lock (never the postgres/tsduck/node/
@@ -319,6 +339,10 @@ def acquire_ffmpeg_pack_sources(cache: Path, *, lock_path: Path = LOCK_PATH) -> 
     ``cache`` is caller-controlled and MUST live outside the repository --
     callers pass a scratch/temp directory, never a path under the checked-out
     tree.
+
+    A pre-existing ``cache/extracted/ffmpeg`` is trusted only if it is
+    actually COMPLETE (see ``_extracted_ffmpeg_is_complete``), not merely
+    present -- see that function's docstring for why.
     """
 
     lock = load_lock(lock_path)
@@ -347,6 +371,8 @@ def acquire_ffmpeg_pack_sources(cache: Path, *, lock_path: Path = LOCK_PATH) -> 
 
     archive = fetch_locked_artifact("ffmpeg", artifact, cache / "archives", offline=False)
     destination = cache / "extracted" / "ffmpeg"
+    if destination.exists() and not _extracted_ffmpeg_is_complete(destination):
+        shutil.rmtree(destination, ignore_errors=True)
     if not destination.exists():
         safe_extract_zip(
             archive,

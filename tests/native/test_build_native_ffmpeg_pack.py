@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -291,6 +292,146 @@ def test_acquire_refuses_an_expected_executables_drift(
     )
     with pytest.raises(builder.FfmpegPackBuildError, match="expected_executables"):
         builder.acquire_ffmpeg_pack_sources(tmp_path / "cache")
+
+
+# ---------------------------------------------------------------------------
+# Idempotent self-hosted cache: a persistent --cache must never trust a
+# stale/incomplete extraction just because the directory exists.
+# ---------------------------------------------------------------------------
+#
+# Candidate run 32858543561 (self-hosted) failed with "FFmpeg closure seed
+# bin/ffmpeg.exe is missing" from civiccast-ffmpeg-pack-cache\extracted\
+# ffmpeg\bin\ffmpeg.exe -- the same idempotent-scratch bug class already
+# fixed for civiccast-server-pack-cache (#41), one script over. A
+# self-hosted runner's --cache persists across runs (a hosted runner is
+# always fresh); a previous run's extraction there had been interrupted,
+# leaving a directory that EXISTED but was missing files --
+# acquire_ffmpeg_pack_sources()'s bare `destination.exists()` check trusted
+# it anyway and never re-extracted.
+
+
+def _fake_ffmpeg_lock(_path: Path) -> dict:
+    return {
+        "artifacts": {
+            "ffmpeg": {
+                "version": builder.FFMPEG_VERSION,
+                "spdx_license": builder.FFMPEG_SPDX_LICENSE,
+                "expected_executables": sorted(
+                    f"bin/{name}" for name in builder.FFMPEG_EXECUTABLES
+                ),
+                "strip_prefix": "ffmpeg",
+            }
+        }
+    }
+
+
+def test_acquire_reuses_a_complete_pre_existing_ffmpeg_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing extraction that genuinely has every pinned file must
+    be reused as-is -- no wasted re-extraction on a valid self-hosted
+    cache hit."""
+    good_root, pins = _make_fixture_root(tmp_path / "fixture")
+    _patch_minimal_pins(monkeypatch, pins)
+    monkeypatch.setattr(builder, "load_lock", _fake_ffmpeg_lock)
+    monkeypatch.setattr(
+        builder, "fetch_locked_artifact", lambda *a, **kw: tmp_path / "unused-archive.zip"
+    )
+    extract_calls: list[Path] = []
+    monkeypatch.setattr(
+        builder,
+        "safe_extract_zip",
+        lambda *a, **kw: extract_calls.append("called"),
+    )
+
+    cache = tmp_path / "cache"
+    destination = cache / "extracted" / "ffmpeg"
+    destination.parent.mkdir(parents=True)
+    shutil.copytree(good_root, destination)
+
+    result = builder.acquire_ffmpeg_pack_sources(cache)
+
+    assert extract_calls == [], "a complete pre-existing extraction must not be re-extracted"
+    assert result == destination
+
+
+def test_acquire_re_extracts_an_incomplete_pre_existing_ffmpeg_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact candidate-run-32858543561 shape: a previous run's
+    interrupted extraction left `cache/extracted/ffmpeg` EXISTING but
+    missing bin/ffmpeg.exe. acquire_ffmpeg_pack_sources() must detect the
+    incompleteness, clear it, and re-extract."""
+    good_root, pins = _make_fixture_root(tmp_path / "fixture")
+    _patch_minimal_pins(monkeypatch, pins)
+    monkeypatch.setattr(builder, "load_lock", _fake_ffmpeg_lock)
+    monkeypatch.setattr(
+        builder, "fetch_locked_artifact", lambda *a, **kw: tmp_path / "unused-archive.zip"
+    )
+
+    extract_calls: list[Path] = []
+
+    def _tracking_extract(_archive: Path, destination: Path, **_kw: object) -> None:
+        extract_calls.append(destination)
+        shutil.copytree(good_root, destination, dirs_exist_ok=True)
+
+    monkeypatch.setattr(builder, "safe_extract_zip", _tracking_extract)
+
+    cache = tmp_path / "cache"
+    stale = cache / "extracted" / "ffmpeg"
+    (stale / "bin").mkdir(parents=True)
+    for filename in pins:
+        if filename == "ffmpeg.exe":
+            continue
+        (stale / "bin" / filename).write_bytes(b"stale")
+    assert not (stale / "bin" / "ffmpeg.exe").exists()
+
+    result = builder.acquire_ffmpeg_pack_sources(cache)
+
+    assert stale in extract_calls, "the incomplete tree must be re-extracted"
+    assert (stale / "bin" / "ffmpeg.exe").is_file(), (
+        "re-extraction must actually land the previously-missing file"
+    )
+    # The re-extracted tree now genuinely validates.
+    builder._ffmpeg_sources(result)
+
+
+def test_acquire_extracts_ffmpeg_fresh_when_nothing_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No pre-existing destination at all: the ordinary, unaffected
+    fresh-extraction path, unchanged by this fix."""
+    _good_root, pins = _make_fixture_root(tmp_path / "fixture")
+    _patch_minimal_pins(monkeypatch, pins)
+    monkeypatch.setattr(builder, "load_lock", _fake_ffmpeg_lock)
+    monkeypatch.setattr(
+        builder, "fetch_locked_artifact", lambda *a, **kw: tmp_path / "unused-archive.zip"
+    )
+    extract_calls: list[Path] = []
+    monkeypatch.setattr(
+        builder,
+        "safe_extract_zip",
+        lambda archive, destination, **kw: extract_calls.append(destination),
+    )
+
+    cache = tmp_path / "cache"
+    result = builder.acquire_ffmpeg_pack_sources(cache)
+
+    assert extract_calls == [cache / "extracted" / "ffmpeg"]
+    assert result == cache / "extracted" / "ffmpeg"
+
+
+def test_extracted_ffmpeg_is_complete_detects_a_missing_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Direct unit coverage of the completeness check itself."""
+    root, pins = _make_fixture_root(tmp_path)
+    _patch_minimal_pins(monkeypatch, pins)
+
+    assert builder._extracted_ffmpeg_is_complete(root) is True
+
+    (root / "bin" / "ffmpeg.exe").unlink()
+    assert builder._extracted_ffmpeg_is_complete(root) is False
 
 
 def test_closure_drift_guard_reports_both_directions(
