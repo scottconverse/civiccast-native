@@ -281,7 +281,16 @@ jobs:
           # paths to the real plaintext passwords.
           python3 tizen/fix_signing_profile.py
 
-          tizen package -t wgt -s CivicCastCI -o tizen/out -- tizen || {
+          # Package only the real W3C-widget runtime files. `tizen package`
+          # zips its whole source directory verbatim -- pointing it at
+          # tizen/ directly would ship this repo's dev/CI-only files
+          # (README.md, validate_config.py, fix_signing_profile.py) inside
+          # the .wgt alongside the app itself.
+          rm -rf /tmp/tizen-package-src
+          mkdir -p /tmp/tizen-package-src
+          cp tizen/config.xml tizen/index.html tizen/icon.png tizen/civiccast-player.js /tmp/tizen-package-src/
+
+          tizen package -t wgt -s CivicCastCI -o tizen/out -- /tmp/tizen-package-src || {
             echo "tizen package failed; searching for cli.log:"
             find "$HOME" -iname "cli.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
             exit 1
