@@ -147,10 +147,63 @@ jobs:
           $msvcInstall = Join-Path $env:RUNNER_TEMP "civiccast-msvc-build-tools"
           "CIVICCAST_MSVC_INSTALLATION_PATH=$msvcInstall" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Set up Python
+      - name: Set up Python (hosted)
+        if: env.BUILD_TARGET != 'self-hosted'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # Self-hosted only. Candidate run 32802054925 died right here: on the
+      # hosted lane actions/setup-python's tool cache already has 3.12 warm,
+      # but HALO-gate-a's cache is empty, so the action fell through to
+      # downloading the actions/python-versions installer and running its
+      # SYSTEM-scope install path -- which writes
+      # HKEY_LOCAL_MACHINE\...\Uninstall and threw PermissionDenied, because
+      # HALO-gate-a runs this job as an unelevated interactive user.
+      # setup-python is simply not hermetic on a non-admin self-hosted
+      # runner with a cold cache; it never was, the hosted lane just always
+      # hid it behind a warm image cache.
+      #
+      # `uv python install` is the fix, not a home-rolled tool-cache
+      # pre-seed: it downloads a python-build-standalone CPython build and
+      # extracts it entirely under a caller-owned directory -- verified
+      # locally (uv 0.12.3, Windows): no registry writes, no admin prompt,
+      # a working python.exe. That is the exact zero-elevation shape this
+      # job already trusts for its own reviewed toolchain's node/uv/python
+      # artifacts (scripts/provision_native_build_toolchain.py::
+      # _PORTABLE_ARTIFACTS -- plain zip/tar extracts, no installer either).
+      # The alternative considered -- replicate actions/python-versions'
+      # release zip + its setup.ps1 into $env:RUNNER_TOOL_CACHE by hand --
+      # was rejected: that script's own install path is exactly what wrote
+      # HKLM above, so reusing it means auditing it (and re-auditing it on
+      # every python-versions release bump) to prove which branches it
+      # takes are safe. uv python install has no such branch to misjudge.
+      #
+      # This bootstrap interpreter is used ONLY to run
+      # provision_native_build_toolchain.py below -- every later pack-build
+      # step already runs on the REVIEWED toolchain interpreter via the
+      # "Bootstrap the reviewed Python build environment" step further
+      # down, so this swap cannot affect what interpreter identity the pack
+      # build verifies.
+      - name: Install uv (self-hosted Python bootstrap)
+        if: env.BUILD_TARGET == 'self-hosted'
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python (self-hosted, zero-elevation via uv)
+        if: env.BUILD_TARGET == 'self-hosted'
+        shell: pwsh
+        run: |
+          $env:UV_PYTHON_INSTALL_DIR = Join-Path $env:RUNNER_TEMP "civiccast-uv-python"
+          uv python install 3.12
+          if ($LASTEXITCODE -ne 0) { throw "uv could not provision a self-hosted-lane Python 3.12 bootstrap interpreter." }
+          $pythonExe = (uv python find 3.12).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($pythonExe)) { throw "uv could not resolve the provisioned Python 3.12 bootstrap interpreter." }
+          $pythonDir = Split-Path -Parent $pythonExe
+          $pythonDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "Provisioned self-hosted bootstrap Python 3.12 at $pythonExe"
 
       - name: Provision the reviewed native build toolchain
         shell: pwsh
@@ -675,10 +728,33 @@ jobs:
           version: "latest"
           enable-cache: true
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.12 (hosted)
+        if: env.BUILD_TARGET != 'self-hosted'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # Self-hosted only -- same zero-elevation swap and rationale as
+      # build-native-beta's "Set up Python (self-hosted, zero-elevation via
+      # uv)" step (see its comment for why setup-python cannot run
+      # unelevated here, and why uv python install is the fix rather than a
+      # hand-rolled tool-cache pre-seed). This job never invokes a bare
+      # `python`, only `uv run`/`uv sync`, so the provisioned interpreter is
+      # wired in via UV_PYTHON rather than GITHUB_PATH: `uv` (installed by
+      # the step above, on every lane) resolves it directly, and every later
+      # `uv sync`/`uv run` step in this job picks it up with no further
+      # changes.
+      - name: Set up Python 3.12 (self-hosted, zero-elevation via uv)
+        if: env.BUILD_TARGET == 'self-hosted'
+        shell: pwsh
+        run: |
+          $uvPythonInstallDir = Join-Path $env:RUNNER_TEMP "civiccast-station-uv-python"
+          $env:UV_PYTHON_INSTALL_DIR = $uvPythonInstallDir
+          uv python install 3.12
+          if ($LASTEXITCODE -ne 0) { throw "uv could not provision a self-hosted-lane Python 3.12 interpreter." }
+          "UV_PYTHON_INSTALL_DIR=$uvPythonInstallDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "UV_PYTHON=3.12" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Provisioned self-hosted Python 3.12 via uv for uv sync/uv run."
 
       - name: Install project (captions-runtime extra)
         run: uv sync --frozen --extra captions-runtime

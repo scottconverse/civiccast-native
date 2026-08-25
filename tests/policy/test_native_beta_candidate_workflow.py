@@ -610,3 +610,195 @@ def test_native_beta_candidate_workflow_installs_the_vc_runtime_before_the_pack_
             f"exit code {code} must be treated as success, matching the installer's "
             "own hard-won handling in nsis-hooks-bootstrap.nsh"
         )
+
+
+def _assert_build_native_beta_python_provisioning_needs_no_elevation(
+    job: dict[str, object],
+) -> None:
+    """Regression guard for candidate run 32802054925.
+
+    Both jobs died at their `actions/setup-python@v5` step on the self-hosted
+    HALO-gate-a runner: the tool cache was empty, so the action fell through
+    to actions/python-versions' SYSTEM-scope install path, which writes
+    HKEY_LOCAL_MACHINE\\...\\Uninstall and threw PermissionDenied -- HALO-gate-a
+    runs this job as an unelevated interactive user. The hosted lane never
+    surfaced this because windows-latest images ship 3.12 warm in the tool
+    cache.
+
+    build-native-beta only ever needs a bootstrap interpreter to run
+    scripts/provision_native_build_toolchain.py (every later pack-build step
+    already runs on the REVIEWED toolchain interpreter via the build-venv --
+    see test_native_beta_candidate_workflow_seeds_pack_build_python_from_reviewed_toolchain),
+    so the self-hosted lane swaps that one bootstrap for a `uv python install`
+    provision, entirely under a caller-owned directory (verified locally:
+    no registry writes, no admin prompt) -- put on GITHUB_PATH exactly like
+    every other tool this job provisions.
+    """
+
+    step_names = [step["name"] for step in job["steps"]]
+    steps = {step["name"]: step for step in job["steps"]}
+
+    hosted_name = "Set up Python (hosted)"
+    install_uv_name = "Install uv (self-hosted Python bootstrap)"
+    self_hosted_name = "Set up Python (self-hosted, zero-elevation via uv)"
+    provision_name = "Provision the reviewed native build toolchain"
+
+    assert hosted_name in step_names
+    assert install_uv_name in step_names
+    assert self_hosted_name in step_names
+
+    # All three provisioning steps happen before the toolchain step consumes
+    # `python`, and in the order the self-hosted lane needs (uv itself before
+    # asking it to install a Python).
+    assert step_names.index(hosted_name) < step_names.index(provision_name)
+    assert step_names.index(install_uv_name) < step_names.index(self_hosted_name)
+    assert step_names.index(self_hosted_name) < step_names.index(provision_name)
+
+    hosted = steps[hosted_name]
+    assert hosted.get("if") == "env.BUILD_TARGET != 'self-hosted'", (
+        "hosted lane must stay conditional and unchanged -- it is the exact "
+        "original actions/setup-python step"
+    )
+    assert hosted["uses"] == "actions/setup-python@v5"
+    assert hosted["with"]["python-version"] == "3.12"
+
+    install_uv = steps[install_uv_name]
+    assert install_uv.get("if") == "env.BUILD_TARGET == 'self-hosted'"
+    assert install_uv["uses"] == "astral-sh/setup-uv@v8.1.0"
+    assert install_uv["with"]["enable-cache"] == "true"
+
+    self_hosted = steps[self_hosted_name]
+    assert self_hosted.get("if") == "env.BUILD_TARGET == 'self-hosted'"
+    assert self_hosted["shell"] == "pwsh"
+    self_hosted_lines = _powershell_lines(self_hosted["run"])
+    joined = "\n".join(self_hosted_lines)
+    assert "uv python install 3.12" in joined
+    assert "(uv python find 3.12).Trim()" in joined
+    # The provisioned interpreter must reach GITHUB_PATH -- the immediately
+    # following "Provision the reviewed native build toolchain" step invokes
+    # a BARE `python`, not `uv run python`, so PATH is the only handoff.
+    assert "Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append" in joined
+    # Refuse to silently swallow a failed provision or an unresolved
+    # interpreter -- both must throw, not fall through to a stray PATH python.
+    assert (
+        'throw "uv could not provision a self-hosted-lane Python 3.12 bootstrap interpreter."'
+        in joined
+    )
+    assert (
+        'throw "uv could not resolve the provisioned Python 3.12 bootstrap interpreter."' in joined
+    )
+
+
+def test_native_beta_candidate_workflow_self_hosted_python_needs_no_elevation() -> None:
+    _, workflow = _workflow()
+    _assert_build_native_beta_python_provisioning_needs_no_elevation(
+        workflow["jobs"]["build-native-beta"]
+    )
+
+
+def test_native_beta_candidate_workflow_contract_rejects_elevated_self_hosted_python() -> None:
+    """A regression that puts actions/setup-python back unconditionally on
+    the self-hosted lane (or drops the uv-based bootstrap entirely) must fail
+    this pin, not silently ship the HKLM-writing defect run 32802054925 hit.
+    """
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace(
+        "      - name: Set up Python (hosted)\n"
+        "        if: env.BUILD_TARGET != 'self-hosted'\n"
+        "        uses: actions/setup-python@v5\n"
+        '        with:\n          python-version: "3.12"\n',
+        "      - name: Set up Python (hosted)\n"
+        "        uses: actions/setup-python@v5\n"
+        '        with:\n          python-version: "3.12"\n',
+        1,
+    )
+    assert mutated != text
+    mutated_job = _job_from_text(mutated)
+    with pytest.raises(AssertionError):
+        _assert_build_native_beta_python_provisioning_needs_no_elevation(mutated_job)
+
+
+def _assert_build_native_station_bundle_python_provisioning_needs_no_elevation(
+    job: dict[str, object],
+) -> None:
+    """Same regression guard as build-native-beta's, for the second job that
+    died on the same candidate run (32802054925) at the same step shape.
+
+    This job never invokes a bare `python` -- only `uv run` / `uv sync` -- so
+    the self-hosted lane wires the uv-provisioned interpreter in via
+    UV_PYTHON / UV_PYTHON_INSTALL_DIR (persisted through GITHUB_ENV) rather
+    than GITHUB_PATH, and every later `uv sync`/`uv run` step picks it up
+    with no further changes.
+    """
+
+    step_names = [step["name"] for step in job["steps"]]
+    steps = {step["name"]: step for step in job["steps"]}
+
+    install_uv_name = "Install uv"
+    hosted_name = "Set up Python 3.12 (hosted)"
+    self_hosted_name = "Set up Python 3.12 (self-hosted, zero-elevation via uv)"
+    install_project_name = "Install project (captions-runtime extra)"
+
+    assert install_uv_name in step_names
+    assert hosted_name in step_names
+    assert self_hosted_name in step_names
+
+    assert step_names.index(install_uv_name) < step_names.index(hosted_name)
+    assert step_names.index(install_uv_name) < step_names.index(self_hosted_name)
+    assert step_names.index(hosted_name) < step_names.index(install_project_name)
+    assert step_names.index(self_hosted_name) < step_names.index(install_project_name)
+
+    install_uv = steps[install_uv_name]
+    assert "if" not in install_uv, "uv install must run unconditionally on every lane"
+    assert install_uv["uses"] == "astral-sh/setup-uv@v8.1.0"
+
+    hosted = steps[hosted_name]
+    assert hosted.get("if") == "env.BUILD_TARGET != 'self-hosted'"
+    assert hosted["uses"] == "actions/setup-python@v5"
+    assert hosted["with"]["python-version"] == "3.12"
+
+    self_hosted = steps[self_hosted_name]
+    assert self_hosted.get("if") == "env.BUILD_TARGET == 'self-hosted'"
+    assert self_hosted["shell"] == "pwsh"
+    joined = "\n".join(_powershell_lines(self_hosted["run"]))
+    assert "uv python install 3.12" in joined
+    assert 'throw "uv could not provision a self-hosted-lane Python 3.12 interpreter."' in joined
+    assert (
+        '"UV_PYTHON_INSTALL_DIR=$uvPythonInstallDir" | Out-File -FilePath $env:GITHUB_ENV' in joined
+    )
+    assert '"UV_PYTHON=3.12" | Out-File -FilePath $env:GITHUB_ENV' in joined
+
+    install_project = steps[install_project_name]
+    assert "if" not in install_project, "uv sync must run unconditionally on every lane"
+    assert install_project["run"] == "uv sync --frozen --extra captions-runtime", (
+        "the invocation itself must stay byte-identical across lanes -- lane "
+        "selection lives entirely in the UV_PYTHON env var set above, not in "
+        "this command"
+    )
+
+
+def test_native_beta_candidate_workflow_station_bundle_python_needs_no_elevation() -> None:
+    _, workflow = _workflow()
+    _assert_build_native_station_bundle_python_provisioning_needs_no_elevation(
+        workflow["jobs"]["build-native-station-bundle"]
+    )
+
+
+def test_native_beta_candidate_workflow_contract_rejects_elevated_station_bundle_python() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace(
+        "      - name: Set up Python 3.12 (hosted)\n"
+        "        if: env.BUILD_TARGET != 'self-hosted'\n"
+        "        uses: actions/setup-python@v5\n"
+        '        with:\n          python-version: "3.12"\n',
+        "      - name: Set up Python 3.12 (hosted)\n"
+        "        uses: actions/setup-python@v5\n"
+        '        with:\n          python-version: "3.12"\n',
+        1,
+    )
+    assert mutated != text
+    mutated_workflow = yaml.load(mutated, Loader=yaml.BaseLoader)
+    with pytest.raises(AssertionError):
+        _assert_build_native_station_bundle_python_provisioning_needs_no_elevation(
+            mutated_workflow["jobs"]["build-native-station-bundle"]
+        )
