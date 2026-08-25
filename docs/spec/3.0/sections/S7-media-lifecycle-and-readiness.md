@@ -285,9 +285,25 @@ ingest, S2/S11 select the per-sink target at egress.
 
 ### Open decisions for Scott
 
-1. **Transcode format defaults:** h264_720p_5mbps (proxy), h265_1080p_8mbps (archive), h264_mezzanine (SDI)?
-   - Alternative: h264-only for simplicity
+1. **Transcode format defaults — RESOLVED (2026-08-24, ADR 0007 amendment)
+   as the named alternative: h264-only.** The originally-shipped three-format
+   default (h264_720p_5mbps + h265_1080p_8mbps + h264_mezzanine) was found,
+   via a resource-posture regression audit, to violate this repo's no-GPL
+   posture (`h265_1080p_8mbps`'s ffmpeg args carried a bare `libx265` (GPL)
+   literal with no encoder-selection seam at all — unlike H.264, no
+   GPL-free HEVC encoder resolution path exists anywhere in this tree) and
+   to seed every format unconditionally, dispatched synchronously at
+   normal process priority under ffmpeg's flat 6-hour timeout — a large
+   amount of unsupervised, full-priority ffmpeg work with no station-level
+   off switch. `DEFAULT_TRANSCODE_FORMATS` is now `("h264_720p_5mbps",)`
+   only; `h264_mezzanine` remains available opt-in via
+   `CIVICCAST_TRANSCODE_FORMATS`. See ADR 0007's "S7 ingest-time transcode
+   defaults and resource posture" amendment for the full rationale,
+   including the new `transcode_seeding_enabled` off switch and the
+   per-minute-of-source timeout budget replacing the flat 6h ceiling.
    - Q: How many transcodes per asset acceptable for 100-asset station?
+     Still open at the "how many" granularity beyond this default; not
+     reopened by this resolution.
 
 2. **Watch-folder detection:** inode+mtime cache in sqlite (survive restart, no false re-ingests)?
    - Alternative: simple mtime polling (simpler, risk of occasional double-ingest)

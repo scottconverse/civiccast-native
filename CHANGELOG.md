@@ -597,6 +597,55 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **S7 media lifecycle worker — GPL encoder literal removed from the default
+  transcode seed list, resource posture made conservative.** A regression
+  audit of `civiccast/schedule/media_lifecycle_worker.py` found its default
+  transcode format catalog seeded, for every validated asset by default, an
+  `h265_1080p_8mbps` target whose ffmpeg args carried a bare `libx265`
+  (GPL) literal — never resolved through any encoder-selection seam, unlike
+  H.264's `resolve_h264_encoder()`. This repo's no-GPL posture (ADR 0007's
+  compliance section) forbids exactly this. `tests/policy/test_ffmpeg_h264_encoder.py`'s
+  repo-wide sweep missed it because it only ever checked for the literal
+  string `"libx264"`, not because of directory scope (it already walked the
+  whole `civiccast/` tree) — widened to a `_FORBIDDEN_GPL_ENCODER_LITERALS`
+  set (`{"libx264", "libx265"}`) and proved with a planted-literal test
+  (`test_detector_flags_a_planted_libx265_literal`) shaped exactly like the
+  real defect. Independently, the same worker dispatched every seeded
+  format synchronously in its own thread at normal process priority under
+  ffmpeg's flat 6-hour default timeout — a large amount of unsupervised,
+  full-priority ffmpeg work sharing the box with operator requests, with no
+  station-level off switch (the same class of "unfiltered ladder wastes
+  time on rungs the source can't fill" problem PR #45 found and fixed in
+  the VOD packager, here for background proxy generation instead of a
+  synchronous HTTP path). Resolved S7 spec Open decision #1 ("Transcode
+  format defaults... h265_1080p_8mbps (archive)... h264-only for
+  simplicity?") as the named h264-only alternative:
+  `DEFAULT_TRANSCODE_FORMATS` is now a single resolution-aware
+  `h264_720p_5mbps` rendition that never upscales past the source's own
+  probed `height_px` (mirrors PR #45's never-upscale posture, implemented
+  locally); `h264_mezzanine` stays available opt-in via
+  `CIVICCAST_TRANSCODE_FORMATS`, not seeded by default; a new
+  `MediaLifecycleWorkerSettings.transcode_seeding_enabled` switch (default
+  `True`, so first-run ingest still produces a proxy) lets a station turn
+  ingest-time transcoding off entirely; `transcode_concurrency` is an
+  explicit, validated field fixed at `1`, matching what the dispatch loop
+  already does, rather than an unstated implementation detail; and
+  `civiccast.stream._ffmpeg.run_ffmpeg` gained an opt-in `lower_priority`
+  parameter (Windows `BELOW_NORMAL_PRIORITY_CLASS`, default `False` so
+  live egress and the VOD packager's synchronous request path are
+  unaffected) that the worker's dispatched jobs now use together with a
+  per-minute-of-source timeout budget (10 min floor, 10x-realtime, 2h
+  ceiling) replacing the flat 6h default. See ADR 0007's "S7 ingest-time
+  transcode defaults and resource posture" amendment for the full
+  rationale. Files: `civiccast/schedule/media_lifecycle_models.py`,
+  `civiccast/schedule/media_lifecycle_worker.py`,
+  `civiccast/stream/_ffmpeg.py`, `tests/policy/test_ffmpeg_h264_encoder.py`,
+  `tests/schedule/test_media_lifecycle_worker.py`, `tests/stream/test_ffmpeg.py`,
+  `docs/adr/0007-hls-packager-design.md`,
+  `docs/spec/3.0/sections/S7-media-lifecycle-and-readiness.md`. No
+  operator settings UI exists yet for `transcode_seeding_enabled` or any
+  other worker setting — named as real follow-up, not claimed done here.
+
 - **Gate A — the stalls were `ConvertTo-Json` walking a cycle in
   `Get-Content`'s note properties.** Root cause for five runs (4, 6, 7 and both
   candidate-#11 runs), found by the liveness instrument on its very first

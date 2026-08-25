@@ -48,6 +48,27 @@ misleading. :meth:`MediaLifecycleWorker.list_missing_media` runs that join
 on demand; the worker's periodic pass still records a
 ``missing_media_flagged`` audit-log entry per pass so the count is visible
 in the audit trail without a second source of truth.
+
+**Transcode defaults and resource posture (ADR 0007 amendment, 2026-08-24
+S7 audit):** step 2 above previously seeded a fixed three-format ladder
+including an HEVC target with a bare ``libx265`` (GPL) literal -- a license
+violation, since this repo never links a GPL encoder into the product -- and
+dispatched every job in step 3 synchronously at normal process priority
+under ffmpeg's flat 6-hour default timeout, all unconditionally on by
+default. That combination is a large amount of unsupervised, full-priority
+ffmpeg work sharing the box with operator requests, with no way for an
+operator to turn it down. Fixed here: the HEVC target is removed (no
+GPL-free HEVC encoder exists anywhere in this tree to resolve it to,
+unlike H.264's real ``resolve_h264_encoder()`` path), the seeded default is
+now a single resolution-aware web rendition that never upscales past the
+source's own probed height (mirrors PR #45's ``select_ladder`` fix to the
+VOD packager), transcode seeding itself has a station-level off switch
+(``transcode_seeding_enabled``), and each dispatched job runs at
+BELOW_NORMAL process priority under a per-minute-of-source timeout budget
+instead of the flat 6h ceiling. See ``_FORMAT_FFMPEG_ARGS``,
+``MediaLifecycleWorkerSettings``, and ``_transcode_timeout_seconds`` below,
+and ``DEFAULT_TRANSCODE_FORMATS``' docstring in ``media_lifecycle_models``
+for the full rationale.
 """
 
 from __future__ import annotations
@@ -196,10 +217,26 @@ class StubTranscodeExecutor:
 # station's actual encoder at call time via resolve_h264_encoder() --
 # hardware first, then h264_mf, then the royalty-free libopenh264, with
 # libx264 reachable only when the probed binary itself carries it.
+#
+# "{scale_filter}" is likewise resolved at call time, never baked in as a
+# fixed "scale=-2:<height>" -- FfmpegTranscodeExecutor.run caps the target
+# height at the SOURCE asset's own height_px (never upscales), the same
+# posture PR #45 gave the VOD packager's ABR ladder
+# (civiccast.stream.config.select_ladder) after a 640x360 source encoding
+# needlessly-upscaled 1080p/720p rungs blew a packaging request's client
+# timeout. _FORMAT_TARGET_HEIGHT below names each format's own cap.
+#
+# There was a third entry here, "h265_1080p_8mbps", seeded by default and
+# carrying a bare "libx265" (GPL) literal -- a license violation this ADR
+# 0007 amendment removes; see DEFAULT_TRANSCODE_FORMATS' docstring in
+# civiccast.schedule.media_lifecycle_models for the full rationale (no
+# sanctioned GPL-free HEVC encoder exists anywhere in this tree, so the
+# target is removed rather than shipped broken-by-default or silently
+# GPL-linked).
 _FORMAT_FFMPEG_ARGS: dict[str, list[str]] = {
     "h264_720p_5mbps": [
         "-vf",
-        "scale=-2:720",
+        "{scale_filter}",
         "-c:v",
         "{h264_encoder}",
         "-b:v",
@@ -207,9 +244,43 @@ _FORMAT_FFMPEG_ARGS: dict[str, list[str]] = {
         "-c:a",
         "aac",
     ],
-    "h265_1080p_8mbps": ["-vf", "scale=-2:1080", "-c:v", "libx265", "-b:v", "8M", "-c:a", "aac"],
     "h264_mezzanine": ["-c:v", "{h264_encoder}", "-crf", "12", "-c:a", "aac"],
 }
+
+#: Target rendition height per format, for the never-upscale cap above.
+#: Formats absent here (``h264_mezzanine``) carry no ``-vf scale`` at all --
+#: mezzanine is deliberately full-source-resolution.
+_FORMAT_TARGET_HEIGHT: dict[str, int] = {"h264_720p_5mbps": 720}
+
+# Resource posture (ADR 0007 amendment, S7 audit): the worker previously
+# dispatched every pending transcode synchronously in its own thread with
+# ffmpeg's full 6-hour default timeout and normal process priority -- a lot
+# of unsupervised, full-priority ffmpeg work competing with whatever else is
+# serving operator requests on the same box. Bound per job to a budget
+# proportional to the SOURCE's own duration instead of one flat ceiling:
+# generous enough that a real-time-or-slower software encode on modest
+# hardware still finishes comfortably, floored so a short clip's ffmpeg
+# startup/flush overhead is never mistaken for a hang, and capped well below
+# the previous flat 6h so a truly stuck process is caught much sooner.
+_TRANSCODE_TIMEOUT_FLOOR_SECONDS = 600.0  # 10 min: absorbs startup/flush on short clips
+_TRANSCODE_TIMEOUT_PER_SOURCE_SECOND = 10.0  # budget: 10x realtime
+_TRANSCODE_TIMEOUT_CEILING_SECONDS = (
+    2.0 * 3600
+)  # 2h absolute ceiling (down from ffmpeg's 6h default)
+
+
+def _transcode_timeout_seconds(duration_seconds: int | None) -> float:
+    """Per-job ffmpeg timeout: a per-minute-of-source budget, floored and capped.
+
+    ``duration_seconds`` unknown (asset row has no probed duration) falls
+    back to the ceiling -- the same "don't guess a smaller budget than the
+    source might need" posture as the never-upscale cap above, just applied
+    to time instead of pixels.
+    """
+    if not duration_seconds or duration_seconds <= 0:
+        return _TRANSCODE_TIMEOUT_CEILING_SECONDS
+    budget = duration_seconds * _TRANSCODE_TIMEOUT_PER_SOURCE_SECOND
+    return min(_TRANSCODE_TIMEOUT_CEILING_SECONDS, max(_TRANSCODE_TIMEOUT_FLOOR_SECONDS, budget))
 
 
 class FfmpegTranscodeExecutor:
@@ -247,8 +318,22 @@ class FfmpegTranscodeExecutor:
             return TranscodeExecutionResult(
                 success=False, error_detail=f"Unknown transcode output_format {output_format!r}."
             )
-        extra_args = template
-        if "{h264_encoder}" in template:
+        extra_args = list(template)
+        if "{scale_filter}" in extra_args:
+            # Never upscale: cap the rung's target height at the source's
+            # own height_px when ffprobe measured one at ingest (mirrors
+            # civiccast.stream.config.select_ladder's posture from PR #45).
+            # Unknown height_px (probe never ran / failed) falls back to the
+            # rung's own cap unchanged -- the previous, safe default.
+            target_height = _FORMAT_TARGET_HEIGHT[output_format]
+            effective_height = target_height
+            if asset.height_px and asset.height_px > 0:
+                effective_height = min(target_height, asset.height_px)
+                effective_height -= effective_height % 2  # yuv420p needs even dims
+                effective_height = max(2, effective_height)
+            scale_filter = f"scale=-2:{effective_height}"
+            extra_args = [scale_filter if arg == "{scale_filter}" else arg for arg in extra_args]
+        if "{h264_encoder}" in extra_args:
             # ADR 0007 / tests/policy/test_ffmpeg_h264_encoder.py: no bare
             # "libx264" literal outside the resolver. Resolve the station's
             # actual encoder (hardware first, then h264_mf, then the
@@ -258,10 +343,19 @@ class FfmpegTranscodeExecutor:
                 h264_encoder = resolve_h264_encoder()
             except H264EncoderUnavailableError as exc:
                 return TranscodeExecutionResult(success=False, error_detail=str(exc))
-            extra_args = [h264_encoder if arg == "{h264_encoder}" else arg for arg in template]
+            extra_args = [h264_encoder if arg == "{h264_encoder}" else arg for arg in extra_args]
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{asset.asset_id}.{output_format}.mp4"
-        result = run_ffmpeg(["-y", "-i", str(source), *extra_args, str(output_path)])
+        # Resource posture (ADR 0007 amendment): this is unattended
+        # background work sharing the box with operator requests, so it
+        # runs BELOW_NORMAL priority (Windows; harmless no-op elsewhere) and
+        # under a per-minute-of-source timeout budget instead of ffmpeg's
+        # flat 6-hour default -- see _transcode_timeout_seconds.
+        result = run_ffmpeg(
+            ["-y", "-i", str(source), *extra_args, str(output_path)],
+            timeout=_transcode_timeout_seconds(asset.duration_seconds),
+            lower_priority=True,
+        )
         if result.returncode != 0 or not output_path.is_file():
             return TranscodeExecutionResult(
                 success=False,
@@ -276,17 +370,54 @@ class FfmpegTranscodeExecutor:
 
 @dataclass(frozen=True)
 class MediaLifecycleWorkerSettings:
-    """Deployment configuration for the media lifecycle worker."""
+    """Deployment configuration for the media lifecycle worker.
+
+    Resource posture (ADR 0007 amendment, S7 audit): earlier defaults seeded
+    every configured transcode format for every validated asset unconditionally,
+    with no way for an operator to say "not on this station" -- a station-in-
+    a-box product has exactly one place to surface that choice, this
+    env-gated settings surface (the same mechanism ``retention_worker`` and
+    ``media_integrity_worker`` already use as their own per-station config
+    surface). ``transcode_seeding_enabled`` is that switch: default ``True``
+    so out-of-box ingest still produces a playable proxy (S7 spec §6/DONE
+    criterion 3 -- "Upload valid asset -> validated -> TranscodeJob created"
+    -- is a first-run expectation, not something to silently drop), but an
+    operator who wants zero unattended background ffmpeg on their box can
+    turn it off with ``CIVICCAST_MEDIA_LIFECYCLE_TRANSCODE_SEEDING_ENABLED=0``.
+    Honest copy for that switch belongs on the operator settings screen;
+    no such screen exists yet for this worker (there is no UI surface at
+    all today, seeding or otherwise) -- flagged as a real follow-up, not
+    claimed as done here.
+    """
 
     mode: str = MEDIA_LIFECYCLE_WORKER_MODE_INLINE
     poll_seconds: float = 300.0
     dry_run: bool = False
     transcode_formats: tuple[str, ...] = DEFAULT_TRANSCODE_FORMATS
+    # OFF switch for the whole transcode-on-ingest feature (see docstring
+    # above); ON by default so first-run behaviour still produces a proxy.
+    transcode_seeding_enabled: bool = True
     missing_media_horizon_days: int = 7
     transcode_output_root: str | None = None
     # Batch cap per pass, so one scan can't monopolize the box's ffmpeg
     # capacity indefinitely; the next poll picks up whatever's left.
     max_transcode_dispatch_per_pass: int = 4
+    # Config-surfaced per ADR 0007's amendment, but there is only one
+    # implemented value: _dispatch_pending_transcodes already runs jobs one
+    # at a time in a single loop, never in parallel (no thread pool, no
+    # asyncio.gather). This field makes that fact visible and station-
+    # configurable in principle rather than an unstated implementation
+    # detail; raising on anything else keeps the field honest instead of a
+    # setting nothing reads.
+    transcode_concurrency: int = 1
+
+    def __post_init__(self) -> None:
+        if self.transcode_concurrency != 1:
+            raise ValueError(
+                "transcode_concurrency must be 1 -- the dispatch loop runs "
+                "jobs strictly one at a time; parallel dispatch is not "
+                f"implemented (got {self.transcode_concurrency!r})."
+            )
 
     @classmethod
     def from_env(cls) -> MediaLifecycleWorkerSettings:
@@ -317,6 +448,12 @@ class MediaLifecycleWorkerSettings:
             tuple(f.strip() for f in formats_raw.split(",") if f.strip())
             or defaults.transcode_formats
         )
+        seeding_raw = os.environ.get("CIVICCAST_MEDIA_LIFECYCLE_TRANSCODE_SEEDING_ENABLED")
+        seeding_enabled = (
+            defaults.transcode_seeding_enabled
+            if seeding_raw is None
+            else seeding_raw.strip().lower() in ("1", "true", "yes", "on")
+        )
         horizon_raw = os.environ.get("CIVICCAST_MISSING_MEDIA_HORIZON_DAYS", "").strip()
         horizon = defaults.missing_media_horizon_days
         if horizon_raw:
@@ -331,6 +468,7 @@ class MediaLifecycleWorkerSettings:
             poll_seconds=poll,
             dry_run=dry_run,
             transcode_formats=formats,
+            transcode_seeding_enabled=seeding_enabled,
             missing_media_horizon_days=horizon,
             transcode_output_root=os.environ.get("CIVICCAST_TRANSCODE_OUTPUT_ROOT") or None,
         )
@@ -507,7 +645,18 @@ class MediaLifecycleWorker:
             existing_any = session.execute(
                 select(TranscodeJob.job_id).where(TranscodeJob.asset_id == asset.asset_id).limit(1)
             ).first()
-            if existing_any is None and asset.file_path and not dry_run:
+            # transcode_seeding_enabled (ADR 0007 amendment): the station's
+            # own off switch for ingest-time transcode. Disabled means "no
+            # proxy will ever be generated by this worker" -- the asset
+            # still reaches READINESS_READY below (no in-flight jobs, none
+            # will be seeded), same honest outcome as the no-file_path case
+            # a few lines up: nothing to wait on is not the same as failed.
+            can_seed = (
+                existing_any is None
+                and asset.file_path
+                and self._settings.transcode_seeding_enabled
+            )
+            if can_seed and not dry_run:
                 for fmt in self._settings.transcode_formats:
                     session.add(TranscodeJob(asset_id=asset.asset_id, output_format=fmt))
                     seeded += 1
@@ -522,7 +671,7 @@ class MediaLifecycleWorker:
                     .scalars()
                     .all()
                 )
-            elif existing_any is None and asset.file_path and dry_run:
+            elif can_seed and dry_run:
                 seeded = len(self._settings.transcode_formats)
 
             if in_flight or (existing_any is None and seeded):
