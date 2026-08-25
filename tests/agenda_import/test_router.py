@@ -28,6 +28,7 @@ from civiccast.agenda.store import AgendaItemOrderConflictError, AgendaStore
 from civiccast.agenda_import import router as agenda_import_router
 from civiccast.agenda_import.base import (
     AgendaSourceAuthRequiredError,
+    AgendaSourceDependencyMissingError,
     AgendaSourceNotAvailableError,
     AgendaSourceUpstreamError,
 )
@@ -101,7 +102,9 @@ def _build(
     )
     if source is not None:
 
-        def _fake_build_source(name, *, timeout_seconds, token):
+        def _fake_build_source(
+            name, *, timeout_seconds, token, portal_url=None, portal_vendor_hint=None
+        ):
             return source
 
         app.dependency_overrides[get_agenda_store] = lambda: store
@@ -401,3 +404,195 @@ class TestClientCodeSsrfGuard:
 
         resp = client.get("/api/staff/agenda-sources/primegov/longmont/meetings")
         assert resp.status_code == 200
+
+
+class TestJsPortalFieldValidation:
+    """Agenda Bridge Phase 4: portal_url/portal_vendor_hint are js_portal-
+    only additions to the shared request/route shapes -- required exactly
+    when source is 'js_portal', forbidden otherwise (router.py's
+    _validate_js_portal_fields / _resolve_js_portal_query_config)."""
+
+    def test_import_requires_portal_url_for_js_portal(self) -> None:
+        app, store = _build(source=_StubSource(meetings=[]))
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={"source": "js_portal", "client_code": "fairview", "event_id": "abc"},
+        )
+        assert resp.status_code == 422
+        # A pydantic model_validator error's detail is a list of error dicts
+        # (FastAPI's default 422 shape), not a plain string -- assert on the
+        # raw body text rather than indexing a "detail" key as a string.
+        assert "portal_url" in resp.text
+
+    def test_import_rejects_portal_url_for_a_non_js_portal_source(self) -> None:
+        app, store = _build(source=_StubSource(meetings=[]))
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={
+                "source": "legistar",
+                "client_code": "seattle",
+                "event_id": "1",
+                "portal_url": "https://fairview.example.gov/AgendaCenter",
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_import_rejects_a_hostile_portal_url(self) -> None:
+        app, store = _build(source=_StubSource(meetings=[]))
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={
+                "source": "js_portal",
+                "client_code": "fairview",
+                "event_id": "abc",
+                "portal_url": "https://169.254.169.254/AgendaCenter",
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_import_accepts_a_valid_js_portal_config(self) -> None:
+        agenda = ExternalAgenda(
+            external_id="abc",
+            title="City Council",
+            items=[ExternalAgendaItem(order=1, title="Call to Order", confidence=0.85)],
+        )
+        app, store = _build(source=_StubSource(agenda=agenda))
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={
+                "source": "js_portal",
+                "client_code": "fairview",
+                "event_id": "abc",
+                "portal_url": "https://fairview.example.gov/AgendaCenter",
+                "portal_vendor_hint": "civicplus",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()[0]["confidence"] == 0.85
+
+    def test_discover_requires_portal_url_for_js_portal(self) -> None:
+        app, _store = _build(source=_StubSource(meetings=[]))
+        client = TestClient(app)
+
+        resp = client.get("/api/staff/agenda-sources/js_portal/fairview/meetings")
+        assert resp.status_code == 422
+        assert "portal_url" in resp.json()["detail"]
+
+    def test_discover_rejects_portal_url_for_a_non_js_portal_source(self) -> None:
+        app, _store = _build(source=_StubSource(meetings=[]))
+        client = TestClient(app)
+
+        resp = client.get(
+            "/api/staff/agenda-sources/primegov/longmont/meetings",
+            params={"portal_url": "https://fairview.example.gov/AgendaCenter"},
+        )
+        assert resp.status_code == 422
+
+    def test_discover_accepts_a_valid_js_portal_config(self) -> None:
+        summary = ExternalMeetingSummary(external_id="abc", title="City Council")
+        app, _store = _build(source=_StubSource(meetings=[summary]))
+        client = TestClient(app)
+
+        resp = client.get(
+            "/api/staff/agenda-sources/js_portal/fairview/meetings",
+            params={"portal_url": "https://fairview.example.gov/AgendaCenter"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == [
+            {"external_id": "abc", "title": "City Council", "meeting_datetime": None}
+        ]
+
+
+class TestDependencyMissingIs503:
+    """base.py's taxonomy: AgendaSourceDependencyMissingError (raised by
+    js_portal when crawl4ai/Playwright aren't installed) is distinct from a
+    generic upstream failure -- the router maps it to 503, not 502."""
+
+    def test_import_maps_dependency_missing_to_503(self) -> None:
+        app, store = _build(
+            source=_StubSource(
+                error=AgendaSourceDependencyMissingError(
+                    "crawl4ai is not installed. Install civiccast[agenda-js-import]."
+                )
+            )
+        )
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={
+                "source": "js_portal",
+                "client_code": "fairview",
+                "event_id": "abc",
+                "portal_url": "https://fairview.example.gov/AgendaCenter",
+            },
+        )
+        assert resp.status_code == 503
+        assert "agenda-js-import" in resp.json()["detail"]
+
+    def test_discover_maps_dependency_missing_to_503(self) -> None:
+        app, _store = _build(
+            source=_StubSource(error=AgendaSourceDependencyMissingError("not installed"))
+        )
+        client = TestClient(app)
+
+        resp = client.get(
+            "/api/staff/agenda-sources/js_portal/fairview/meetings",
+            params={"portal_url": "https://fairview.example.gov/AgendaCenter"},
+        )
+        assert resp.status_code == 503
+
+
+class TestJsPortalPosture:
+    """GET /agenda-sources/js-portal/posture -- real (unmocked)
+    civiccast.agenda_import.js_portal.describe_js_portal_runtime() call, so
+    this proves the actual "not installed" posture in this test
+    environment (crawl4ai is an optional extra, not a dev dependency)."""
+
+    def test_reports_not_installed_in_this_test_environment(self) -> None:
+        app, _store = _build()
+        client = TestClient(app)
+
+        resp = client.get("/api/staff/agenda-sources/js-portal/posture")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["installed"] is False
+        assert "agenda-js-import" in body["detail"]
+
+    def test_reachable_even_when_agenda_import_is_disabled(self) -> None:
+        # Deliberately NOT gated by _require_enabled (router.py) -- an
+        # operator deciding whether to switch CIVICCAST_AGENDA_SOURCE to
+        # js_portal wants to know if it will work BEFORE making that switch.
+        app, _store = _build(settings=AgendaImportSettings(source="off"))
+        client = TestClient(app)
+
+        resp = client.get("/api/staff/agenda-sources/js-portal/posture")
+        assert resp.status_code == 200
+
+    def test_no_identity_is_401(self) -> None:
+        app, _store = _build(scopes=None)
+        client = TestClient(app)
+
+        resp = client.get("/api/staff/agenda-sources/js-portal/posture")
+        assert resp.status_code == 401
+
+    def test_wrong_scope_is_403(self) -> None:
+        app, _store = _build(scopes=("support_admin",))
+        client = TestClient(app)
+
+        resp = client.get("/api/staff/agenda-sources/js-portal/posture")
+        assert resp.status_code == 403

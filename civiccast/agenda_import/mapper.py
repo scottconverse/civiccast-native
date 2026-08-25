@@ -17,6 +17,18 @@ validated through the existing :func:`civiccast.agenda.models.
 validate_source_doc_url` allowlist (plan §10) BEFORE any write happens --
 one hostile link anywhere in the payload rejects the whole import rather
 than leaving a partially-written agenda.
+
+**Draft-only guarantee (AI/agenda non-negotiables Spec §4.2).** A new
+agenda already starts as a draft, so the only case that matters is
+importing into an agenda that is ALREADY published: written items land, and
+if the agenda was published, it is reopened to draft (mirrors
+:meth:`civiccast.agenda.service.AgendaService.import_from_doc`'s identical
+reopen behavior, added here Agenda Bridge Phase 4 alongside the
+``js_portal`` adapter, whose heuristic output is the first vendor-import
+content that is genuinely uncertain -- see ``js_portal.py``). This function
+never sets ``status`` to ``"published"`` under any circumstance -- the only
+status transition it can ever perform is published -> draft, never the
+reverse; only the operator's own explicit publish action does that.
 """
 
 from __future__ import annotations
@@ -66,6 +78,12 @@ def import_external_agenda(
             number=ext_item.number,
             title=_clip(ext_item.title, _TITLE_MAX) or ext_item.title,
             doc_anchor=doc_anchor,
+            # None for Legistar/PrimeGov/CivicClerk (structural parses, never
+            # uncertain -- see ExternalAgendaItem.confidence's docstring);
+            # js_portal's heuristic text classification is the first source to
+            # set this on the vendor-import path. Passed straight through --
+            # this module does no scoring of its own.
+            confidence=ext_item.confidence,
         )
         written.append(store.upsert_item(item))
 
@@ -73,6 +91,22 @@ def import_external_agenda(
     # hasn't already set one -- an import must never clobber an operator edit.
     if agenda.source_doc_url is None and agenda_doc_url:
         store.upsert_agenda(agenda.model_copy(update={"source_doc_url": agenda_doc_url}))
+
+    # AI/agenda non-negotiables Spec §4.2 -- "operator approves before
+    # publish... auto-publish is not an available operator setting." A new
+    # agenda already starts as a draft (MeetingAgendaInput), so this branch
+    # only matters for the case §4.2 actually targets: importing external
+    # content INTO an agenda that is already public. Mirrors
+    # civiccast.agenda.service.AgendaService.import_from_doc's exact reopen
+    # behavior for the same reason -- newly-written items from a
+    # third-party vendor (or, for js_portal, a heuristic best-effort guess
+    # with a per-item confidence score) have not been operator-reviewed yet,
+    # so a published agenda must not silently gain unreviewed public content.
+    # Scoped to "something was actually written" -- a no-op re-import (every
+    # order already taken, `written == []`) must not flip a published
+    # agenda back to draft for zero new content.
+    if written and agenda.status == "published":
+        store.set_status(agenda_id, "draft")
 
     return written
 

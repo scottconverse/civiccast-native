@@ -12,9 +12,12 @@ disabled and needs no credentials.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 from dataclasses import dataclass
+from typing import Literal
+from urllib.parse import urlsplit
 
 from civiccast.agenda_import.models import AGENDA_SOURCE_NAMES
 
@@ -42,6 +45,73 @@ def validate_client_code(value: str) -> str:
             "or underscore (a bare vendor tenant siteid/subdomain)."
         )
     return value
+
+
+#: js_portal's per-request config (plan-equivalent: Agenda Bridge Phase 4).
+#: Unlike the other three vendors' ``client_code`` (a bare tenant token
+#: spliced into a fixed host template), a JS-hydrated portal has no fixed
+#: per-vendor host -- the operator supplies the portal's own URL, and
+#: ``vendor_hint`` only tunes which listing-page default path / extraction
+#: heuristic is tried first (see ``js_portal.py``). ``"generic"`` applies no
+#: vendor-specific tuning at all.
+JsPortalVendorHint = Literal["civicplus", "granicus", "legistar_js", "primegov_js", "generic"]
+JS_PORTAL_VENDOR_HINTS: tuple[str, ...] = (
+    "civicplus",
+    "granicus",
+    "legistar_js",
+    "primegov_js",
+    "generic",
+)
+
+_PORTAL_URL_MAX = 500
+
+#: Hosts a portal URL must never resolve/name literally -- defense in depth
+#: against SSRF via an operator-typed (staff-trusted, but still validated at
+#: the API boundary per repo convention -- see ``validate_client_code``
+#: above) URL reaching CivicCast's own metadata endpoint or loopback
+#: services. DNS rebinding (a hostname that resolves to one of these at
+#: request time) is a real residual risk this string-level check does not
+#: close -- ``js_portal.py``'s own httpx/crawl4ai calls are the second,
+#: request-time layer that would need a resolved-IP check to close that gap
+#: fully; not implemented in this pass, disclosed rather than assumed away.
+_BLOCKED_LITERAL_HOSTS = frozenset({"localhost", "169.254.169.254", "metadata.google.internal"})
+
+
+def validate_portal_url(value: str) -> str:
+    """Return ``value`` if it is a safe, absolute http(s) portal URL, else raise.
+
+    Applied at the staff-facing trust boundary (the agenda-import router),
+    same as :func:`validate_client_code` -- js_portal's ``portal_url`` is the
+    URL crawl4ai/Playwright will actually navigate to, so the same "fail
+    loud with a 422 before any outbound request" posture applies.
+    """
+    trimmed = value.strip()
+    if not trimmed:
+        raise ValueError("portal_url must not be empty.")
+    if len(trimmed) > _PORTAL_URL_MAX:
+        raise ValueError(f"portal_url must be at most {_PORTAL_URL_MAX} characters.")
+    parts = urlsplit(trimmed)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(
+            f"portal_url must be an absolute URL with scheme http or https (got {value!r})."
+        )
+    if not parts.hostname:
+        raise ValueError(f"portal_url must include a host (got {value!r}).")
+    if parts.username or parts.password:
+        raise ValueError("portal_url must not carry userinfo (a user:pass@ prefix).")
+    host = parts.hostname.lower()
+    if host in _BLOCKED_LITERAL_HOSTS:
+        raise ValueError(f"portal_url must not target {host!r} (blocked local/metadata host).")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        pass  # a normal DNS hostname, not a literal IP -- nothing more to check here
+    else:
+        if not ip.is_global:
+            raise ValueError(
+                f"portal_url must not target a private/loopback/link-local IP literal (got {host!r})."
+            )
+    return trimmed
 
 
 _ENV_SOURCE = "CIVICCAST_AGENDA_SOURCE"
@@ -98,4 +168,10 @@ class AgendaImportSettings:
         )
 
 
-__all__ = ["AgendaImportSettings"]
+__all__ = [
+    "JS_PORTAL_VENDOR_HINTS",
+    "AgendaImportSettings",
+    "JsPortalVendorHint",
+    "validate_client_code",
+    "validate_portal_url",
+]

@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import type {
   AgendaItem,
+  ExternalMeetingSummary,
   MeetingAgenda,
   StaffIdentityResponse,
 } from '../types/api.generated'
@@ -13,6 +14,7 @@ import type {
 afterEach(cleanup)
 
 vi.mock('../api/client', () => ({
+  AGENDA_EXTERNAL_SOURCES: ['legistar', 'primegov', 'civicclerk', 'js_portal'],
   ApiError: class ApiError extends Error {
     status: number
     detail?: string
@@ -33,6 +35,9 @@ vi.mock('../api/client', () => ({
   deleteAgendaItem: vi.fn(),
   syncAgendaFromChapters: vi.fn(),
   importAgendaFromDoc: vi.fn(),
+  getJsPortalPosture: vi.fn(),
+  listExternalAgendaMeetings: vi.fn(),
+  importExternalAgenda: vi.fn(),
 }))
 
 import {
@@ -41,9 +46,12 @@ import {
   createMeetingAgenda,
   deleteAgendaItem,
   deleteMeetingAgenda,
+  getJsPortalPosture,
   getStaffIdentity,
   importAgendaFromDoc,
+  importExternalAgenda,
   listAgendaItems,
+  listExternalAgendaMeetings,
   listMeetingAgendas,
   patchAgendaItem,
   patchMeetingAgenda,
@@ -76,6 +84,17 @@ function item(overrides: Partial<AgendaItem> = {}): AgendaItem {
     video_timecode_s: 0,
     doc_anchor: null,
     notes: null,
+    ...overrides,
+  }
+}
+
+function externalMeeting(
+  overrides: Partial<ExternalMeetingSummary> = {},
+): ExternalMeetingSummary {
+  return {
+    external_id: 'ext-1',
+    title: 'City Council',
+    meeting_datetime: null,
     ...overrides,
   }
 }
@@ -119,6 +138,14 @@ beforeEach(() => {
   vi.mocked(importAgendaFromDoc).mockResolvedValue([
     item({ item_id: 'item-i-01', order: 0 }),
     item({ item_id: 'item-i-02', order: 1 }),
+  ])
+  vi.mocked(getJsPortalPosture).mockResolvedValue({
+    installed: false,
+    detail: 'crawl4ai is not installed. Install civiccast[agenda-js-import].',
+  })
+  vi.mocked(listExternalAgendaMeetings).mockResolvedValue([externalMeeting()])
+  vi.mocked(importExternalAgenda).mockResolvedValue([
+    item({ item_id: 'item-ext-01', order: 0, confidence: 0.85 }),
   ])
 })
 
@@ -374,6 +401,236 @@ describe('AgendasScreen import from doc', () => {
     fireEvent.click(await findByRole('button', { name: /import agenda items from uploaded pdf/i }))
     expect(
       await findByText(/No recognizable agenda items were found\./i),
+    ).toBeTruthy()
+  })
+})
+
+describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
+  it('defaults to legistar and shows a tenant/site code field, no portal fields', async () => {
+    const { findByLabelText, queryByLabelText } = renderScreen()
+    const select = (await findByLabelText('External agenda source')) as HTMLSelectElement
+    expect(select.value).toBe('legistar')
+    expect(await findByLabelText('Tenant / site code')).toBeTruthy()
+    expect(queryByLabelText('Portal URL')).toBeNull()
+    expect(queryByLabelText('Vendor hint')).toBeNull()
+  })
+
+  it('selecting js_portal reveals the portal fields and checks runtime posture', async () => {
+    const { findByLabelText } = renderScreen()
+    const select = (await findByLabelText('External agenda source')) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'js_portal' } })
+
+    expect(await findByLabelText('Portal URL')).toBeTruthy()
+    expect(await findByLabelText('Vendor hint')).toBeTruthy()
+    await waitFor(() => expect(vi.mocked(getJsPortalPosture)).toHaveBeenCalled())
+  })
+
+  it('shows an honest not-installed state when the runtime posture reports installed:false', async () => {
+    vi.mocked(getJsPortalPosture).mockResolvedValue({
+      installed: false,
+      detail: 'crawl4ai is not installed. Install civiccast[agenda-js-import].',
+    })
+    const { findByLabelText, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('External agenda source'), {
+      target: { value: 'js_portal' },
+    })
+
+    expect(
+      await findByText(/JS-portal runtime: not installed.*agenda-js-import/i),
+    ).toBeTruthy()
+  })
+
+  it('shows the installed state once the posture query resolves installed:true', async () => {
+    vi.mocked(getJsPortalPosture).mockResolvedValue({ installed: true, detail: 'ok' })
+    const { findByLabelText, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('External agenda source'), {
+      target: { value: 'js_portal' },
+    })
+
+    expect(await findByText('JS-portal runtime: installed.')).toBeTruthy()
+  })
+
+  it('shows a loading state for the posture check before it resolves', async () => {
+    let resolvePosture: (v: { installed: boolean; detail: string }) => void = () => {}
+    vi.mocked(getJsPortalPosture).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePosture = resolve
+      }),
+    )
+    const { findByLabelText, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('External agenda source'), {
+      target: { value: 'js_portal' },
+    })
+
+    expect(await findByText(/Checking whether the JS-portal runtime is installed/i)).toBeTruthy()
+    resolvePosture({ installed: true, detail: 'ok' })
+    expect(await findByText('JS-portal runtime: installed.')).toBeTruthy()
+  })
+
+  it('finds meetings and lets the operator pick one', async () => {
+    vi.mocked(listExternalAgendaMeetings).mockResolvedValue([
+      externalMeeting({ external_id: 'ext-1', title: 'City Council' }),
+      externalMeeting({ external_id: 'ext-2', title: 'Planning Commission' }),
+    ])
+    const { findByLabelText, findByRole } = renderScreen()
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'seattle' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+
+    await waitFor(() =>
+      expect(vi.mocked(listExternalAgendaMeetings)).toHaveBeenCalledWith('legistar', 'seattle', {
+        since: null,
+        portalUrl: null,
+        portalVendorHint: null,
+      }),
+    )
+    const meetingSelect = (await findByLabelText('Meeting to import')) as HTMLSelectElement
+    expect(meetingSelect.options.length).toBe(2)
+  })
+
+  it('shows the empty-results state when discovery finds nothing', async () => {
+    vi.mocked(listExternalAgendaMeetings).mockResolvedValue([])
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'seattle' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+
+    expect(await findByText('No meetings found for those filters.')).toBeTruthy()
+  })
+
+  it('surfaces a warn banner when discovery fails', async () => {
+    vi.mocked(listExternalAgendaMeetings).mockRejectedValue(
+      new ApiError('Request failed: 502', 502, 'PrimeGov request timed out.'),
+    )
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'seattle' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+
+    expect(await findByText('PrimeGov request timed out.')).toBeTruthy()
+  })
+
+  it('surfaces a distinct message when discovery 503s despite a healthy posture check', async () => {
+    // Edge case, not a contradiction: describe_js_portal_runtime() only
+    // proves crawl4ai is importable, not that the Playwright Chromium
+    // binary is staged (js_portal.py's own docstring) -- a station can look
+    // "installed" and still 503 at request time. Posture reports installed
+    // so the Find Meetings button is enabled, and the server-side call
+    // itself is what fails here.
+    vi.mocked(getJsPortalPosture).mockResolvedValue({ installed: true, detail: 'ok' })
+    vi.mocked(listExternalAgendaMeetings).mockRejectedValue(
+      new ApiError('Request failed: 503', 503, 'crawl4ai is not installed.'),
+    )
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('External agenda source'), {
+      target: { value: 'js_portal' },
+    })
+    fireEvent.change(await findByLabelText('Portal URL'), {
+      target: { value: 'https://fairview.example.gov/AgendaCenter' },
+    })
+    fireEvent.change(await findByLabelText('Display label'), {
+      target: { value: 'fairview' },
+    })
+    await findByText('JS-portal runtime: installed.')
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+
+    expect(await findByText('crawl4ai is not installed.')).toBeTruthy()
+  })
+
+  it('disables Find Meetings for js_portal when the posture check reports not installed', async () => {
+    vi.mocked(getJsPortalPosture).mockResolvedValue({
+      installed: false,
+      detail: 'crawl4ai is not installed. Install civiccast[agenda-js-import].',
+    })
+    const { findByLabelText, findByRole } = renderScreen()
+    fireEvent.change(await findByLabelText('External agenda source'), {
+      target: { value: 'js_portal' },
+    })
+    fireEvent.change(await findByLabelText('Portal URL'), {
+      target: { value: 'https://fairview.example.gov/AgendaCenter' },
+    })
+    fireEvent.change(await findByLabelText('Display label'), {
+      target: { value: 'fairview' },
+    })
+
+    const findButton = (await findByRole('button', {
+      name: /find meetings/i,
+    })) as HTMLButtonElement
+    await waitFor(() => expect(findButton.disabled).toBe(true))
+    expect(vi.mocked(listExternalAgendaMeetings)).not.toHaveBeenCalled()
+  })
+
+  it('imports the selected meeting and shows a success banner', async () => {
+    vi.mocked(importExternalAgenda).mockResolvedValue([
+      item({ item_id: 'item-ext-01', order: 0, confidence: 0.95 }),
+    ])
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'seattle' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+    await findByLabelText('Meeting to import')
+    fireEvent.click(await findByRole('button', { name: /import the selected meeting/i }))
+
+    await waitFor(() =>
+      expect(vi.mocked(importExternalAgenda)).toHaveBeenCalledWith('council-2026-01', {
+        source: 'legistar',
+        client_code: 'seattle',
+        event_id: 'ext-1',
+        portal_url: null,
+        portal_vendor_hint: null,
+      }),
+    )
+    expect(await findByText('Imported 1 item.')).toBeTruthy()
+  })
+
+  it('flags low-confidence imported items for review', async () => {
+    vi.mocked(importExternalAgenda).mockResolvedValue([
+      item({ item_id: 'item-ext-01', order: 0, confidence: 0.4 }),
+    ])
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'seattle' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+    await findByLabelText('Meeting to import')
+    fireEvent.click(await findByRole('button', { name: /import the selected meeting/i }))
+
+    expect(
+      await findByText(/lower confidence score.*review them before publishing/i),
+    ).toBeTruthy()
+  })
+
+  it('surfaces a distinct message when import 503s (optional runtime not installed)', async () => {
+    vi.mocked(importExternalAgenda).mockRejectedValue(
+      new ApiError('Request failed: 503', 503, 'crawl4ai is not installed.'),
+    )
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'seattle' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+    await findByLabelText('Meeting to import')
+    fireEvent.click(await findByRole('button', { name: /import the selected meeting/i }))
+
+    expect(await findByText('crawl4ai is not installed.')).toBeTruthy()
+  })
+
+  it('warns that importing into a published agenda will move it back to draft', async () => {
+    vi.mocked(listMeetingAgendas).mockResolvedValue([agenda({ status: 'published' })])
+    vi.mocked(listAgendaItems).mockResolvedValue([item()])
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'seattle' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+    await findByLabelText('Meeting to import')
+
+    expect(
+      await findByText(/This agenda is published\. Importing will move it back to draft/i),
     ).toBeTruthy()
   })
 })

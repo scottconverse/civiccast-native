@@ -712,6 +712,64 @@ edit, or reject it. The staff review API preserves the original machine cue
 text separately from approved or edited reviewer text so the UI keeps a clear
 audit trail.
 
+## Run agenda import (vendor bridge + js_portal)
+
+`civiccast/agenda_import/` is a separate module from the docparse-based
+agenda editor above (`civiccast/agenda/`): it bridges a municipality's
+existing agenda system into a draft agenda instead of the operator typing
+or uploading one by hand. Four vendor adapters ship: `legistar`, `primegov`,
+and `civicclerk` talk to each vendor's documented, anonymous, plain-HTTP
+JSON/HTML endpoint (no browser needed); `js_portal` is the fallback for a
+portal that renders its content client-side with JavaScript and has no such
+endpoint (CivicPlus AgendaCenter, Granicus, or a JS-hydrated Legistar public
+page). Set `CIVICCAST_AGENDA_SOURCE` to one of `legistar` / `primegov` /
+`civicclerk` / `js_portal` to enable the corresponding routes (the default,
+`off`, makes them 404 with a message naming the env var). Every import lands
+as a draft — an import into an already-published agenda reopens it to draft
+for operator review before it can go public again (AI/agenda non-negotiables
+§4.2); this is never configurable to auto-publish.
+
+`js_portal` additionally needs the portal's own URL and an optional vendor
+hint per import (there is no single fixed host the way the other three
+vendors have one). It uses [crawl4ai](https://github.com/unclecode/crawl4ai)
+(Apache-2.0) with a headless Playwright Chromium browser to render the page,
+then applies a best-effort text heuristic (numbered items, markdown
+headings, confidence-scored like the PDF-import heuristic above) to extract
+meetings and agenda items. The crawl is bounded: same-origin only (it will
+not follow a link off the configured portal), robots.txt is fetched and
+respected before any navigation, no login/auth flow is ever attempted, and
+at most two pages are fetched per call (the listing page, then one meeting's
+detail page).
+
+crawl4ai + Playwright Chromium is a heavy optional dependency (Playwright's
+browser binary alone is roughly 300 MB) and is **not** installed by the
+native Windows installer by default. A station that wants `js_portal`
+installs it explicitly:
+
+```bash
+pip install "civiccast[agenda-js-import]"
+playwright install chromium
+```
+
+Until both steps are done, `GET /api/staff/agenda-sources/js-portal/posture`
+reports an honest `{"installed": false, ...}` — the operator console's
+external-import section polls this and disables `js_portal` discovery with
+a visible "not installed" state rather than letting the operator hit a
+confusing failure. That posture check only confirms the `crawl4ai` package
+itself imports; if the Playwright browser binary is still missing, a crawl
+attempt fails with a distinct, actionable upstream error instead (run
+`playwright install chromium`).
+
+`js_portal`'s extraction heuristic is fixture-tested (synthetic
+CivicPlus/Granicus-shaped markdown, since crawl4ai's own weight keeps it out
+of the default CI dependency set) but was also live-smoke-tested against a
+real CivicPlus tenant during development: the crawl itself succeeds, but
+that tenant's real meeting rows only render after an interactive
+category-selection step this v1 does not perform, so today's extraction is
+an honest empty/low-yield result on that shape of tenant rather than a
+useful one. See `civiccast/agenda_import/js_portal.py`'s module docstring
+for the full live-verification ledger and the disclosed follow-up work.
+
 ## Approve summaries and export signed records
 
 The v0.6 workflow turns committed transcript cues into an operator-approved

@@ -95,9 +95,11 @@ export interface AffidavitAiring {
 }
 
 export interface AgendaImportExternalRequest {
-  source: 'legistar' | 'primegov' | 'civicclerk'
+  source: 'legistar' | 'primegov' | 'civicclerk' | 'js_portal'
   client_code: string
   event_id: string
+  portal_url?: string | null
+  portal_vendor_hint?: string | null
 }
 
 export interface AgendaItem {
@@ -2292,6 +2294,11 @@ export interface InviteJoinView {
   view_url?: string | null
   session_id?: string | null
   terms_version?: string | null
+}
+
+export interface JsPortalPostureResponse {
+  installed: boolean
+  detail: string
 }
 
 export interface LegalHoldInput {

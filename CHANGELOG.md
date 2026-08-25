@@ -15,6 +15,63 @@ came across and what deliberately did not.
 
 ### Added
 
+- **S27 (Agenda Import Bridge) Phase 4 — `js_portal` source for JS-hydrated
+  agenda portals.** `civiccast/agenda_import/` already bridged Legistar,
+  PrimeGov, and CivicClerk (each with a documented, anonymous, plain-HTTP
+  endpoint — re-verified this pass, unchanged) into a draft S25
+  `MeetingAgenda`; this phase adds a fourth adapter,
+  `civiccast/agenda_import/js_portal.py`'s `JsPortalSource`, for the vendor
+  family that has no such endpoint — CivicPlus AgendaCenter, Granicus, and
+  JS-hydrated Legistar public pages — using
+  [crawl4ai](https://github.com/unclecode/crawl4ai) (Apache-2.0) with a
+  headless Playwright Chromium browser plus a confidence-scored text
+  heuristic (reuses `AgendaItem.confidence` from the PR #21 PDF-import
+  path; net-new `ExternalAgendaItem.confidence` threads it through the
+  shared mapper). Bounded and sandboxed: same-origin only, robots.txt
+  fetched and respected before any navigation, at most two pages per call,
+  a wall-clock timeout, and no auth flow of any kind. Config is per-import
+  (`portal_url` + `portal_vendor_hint`, validated via new
+  `civiccast.agenda_import.config.validate_portal_url`) rather than a new
+  migration — none was needed.
+  crawl4ai + Playwright ship as the new, optional `civiccast[agenda-js-import]`
+  extra, pinned to `crawl4ai>=0.9.2,<0.10` — **not** the first floor this
+  extra was drafted against (`0.7.4`): that version pins `lxml~=5.3`, which
+  collided with `pikepdf`/`sacrebleu`'s own `lxml` floor and forced uv's
+  universal resolver to downgrade the whole project's `lxml` to 5.4.0,
+  reintroducing PYSEC-2026-87 (fixed in 6.1.0) into `uv.lock` — caught via
+  `pip-audit` against the resulting lock during this pass, before it ever
+  reached a commit. `crawl4ai>=0.9.2` relaxed its own constraint to
+  `lxml<7,>=5.3`; re-locked and re-verified clean (`lxml` stays at 6.1.2,
+  `pip-audit` reports no known vulnerabilities). Not bundled by the native
+  Windows installer by default
+  (excluded from `requirements-native-app.txt`'s `uv pip compile` extras,
+  mirroring `captions-runtime`'s existing pattern); absent, the adapter
+  lazy-imports and raises a new `AgendaSourceDependencyMissingError` →
+  HTTP 503, and a new, always-reachable `GET
+  /api/staff/agenda-sources/js-portal/posture` route reports the honest
+  install posture without raising. Also closes a real gap found while
+  implementing this: an import into an **already-published** agenda now
+  reopens it to draft (mirrors `AgendaService.import_from_doc`'s existing
+  PDF-import behavior) — applied to all four vendors, not just
+  `js_portal`, since AI/agenda non-negotiables §4.2 ("operator approves
+  before publish") is equally about a Legistar/PrimeGov/CivicClerk fetch,
+  not only heuristic content. Operator console: `AgendasScreen.tsx` gains
+  an "External agenda import" section (source picker, discover-then-import
+  flow, `js_portal`'s not-installed/loading/installed posture states) —
+  the vendor-bridge API had no console consumer at all before this phase.
+  62 new backend tests (`tests/agenda_import/test_js_portal.py`
+  plus router/mapper additions) against synthetic CivicPlus/Granicus-shaped
+  fixtures (no live-site CI dependency) and 14 new frontend tests; ruff/
+  mypy --strict/tsc/eslint clean. Live-smoke-tested by hand against a real
+  CivicPlus tenant (`friscotexas.gov/AgendaCenter`) — the crawl pipeline
+  itself works end to end, but that tenant's real meeting rows only render
+  after an interactive category-selection step this v1 does not perform,
+  so today's extraction is an honest low-yield miss on that shape of
+  tenant, not a silent wrong answer — see `js_portal.py`'s module
+  docstring for the full live-verification ledger. See
+  `docs/spec/3.0/sections/S27-agenda-import-bridge.md` (net-new — no
+  spec section existed for this module before this phase) for the full
+  design and status.
 - **S14 (Analytics / Audience Measurement) — durable viewership store.**
   Migration `0076_analytics_viewership` (three tables: `viewership_events`,
   `viewership_rollups`, `analytics_report_snapshots`) promotes the
