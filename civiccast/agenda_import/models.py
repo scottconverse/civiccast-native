@@ -22,11 +22,16 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-#: The three vendors this sprint targets. All three have working adapters as
-#: of Phase 3 -- ``"legistar"`` (Phase 1), ``"primegov"`` (Phase 2),
-#: ``"civicclerk"`` (Phase 3, pure reuse of Phase 2's docparse.py).
-AgendaSourceName = Literal["legistar", "primegov", "civicclerk"]
-AGENDA_SOURCE_NAMES: tuple[str, ...] = ("legistar", "primegov", "civicclerk")
+#: Vendor sources with a working adapter -- ``"legistar"`` (Phase 1),
+#: ``"primegov"`` (Phase 2), ``"civicclerk"`` (Phase 3, pure reuse of Phase
+#: 2's docparse.py), and ``"js_portal"`` (Agenda Bridge Phase 4 -- a
+#: crawl4ai/Playwright-backed adapter for JS-hydrated portals with no
+#: documented anonymous JSON/iCal endpoint of their own; see
+#: ``civiccast/agenda_import/js_portal.py``'s module docstring for the
+#: PrimeGov-endpoint evaluation that scoped this adapter to the
+#: no-plain-HTTP-path case rather than every vendor).
+AgendaSourceName = Literal["legistar", "primegov", "civicclerk", "js_portal"]
+AGENDA_SOURCE_NAMES: tuple[str, ...] = ("legistar", "primegov", "civicclerk", "js_portal")
 
 
 class ExternalAgendaItem(BaseModel):
@@ -40,6 +45,16 @@ class ExternalAgendaItem(BaseModel):
     # Untrusted: no scheme allowlist here. video_timecode_s is intentionally
     # absent — the operator aligns timecodes after import (plan §5).
     doc_url: Annotated[str | None, Field(default=None, max_length=2000)] = None
+    # None for every source whose extraction is a verified structural parse
+    # (Legistar's OData fields, PrimeGov/CivicClerk's docparse.py regex over a
+    # known vendor shape) -- there is nothing to be uncertain about there, so
+    # they never set this (regression-tested). Set by js_portal's heuristic
+    # text classification (civiccast/agenda_import/js_portal.py), the same
+    # 0.0-1.0 confidence convention civiccast/agenda/pdf_import.py already
+    # established for the operator-upload PDF path (AI/agenda non-negotiables
+    # Spec §4.2) -- reused here rather than re-invented, and carried straight
+    # through by the mapper onto AgendaItem.confidence.
+    confidence: Annotated[float | None, Field(default=None, ge=0.0, le=1.0)] = None
 
 
 class ExternalAgenda(BaseModel):

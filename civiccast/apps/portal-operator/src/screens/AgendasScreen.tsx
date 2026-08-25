@@ -34,23 +34,30 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthRequiredState } from '../components/AuthRequiredState'
 
 import {
+  AGENDA_EXTERNAL_SOURCES,
   ApiError,
   createAgendaItem,
   createMeetingAgenda,
   deleteAgendaItem,
   deleteMeetingAgenda,
+  getJsPortalPosture,
   getStaffIdentity,
   importAgendaFromDoc,
+  importExternalAgenda,
   listAgendaItems,
+  listExternalAgendaMeetings,
   listMeetingAgendas,
   patchAgendaItem,
   patchMeetingAgenda,
   syncAgendaFromChapters,
+  type AgendaExternalSource,
 } from '../api/client'
 import type {
+  AgendaImportExternalRequest,
   AgendaItem,
   AgendaItemInput,
   AgendaItemUpdate,
+  ExternalMeetingSummary,
   MeetingAgenda,
   MeetingAgendaInput,
   StaffIdentityResponse,
@@ -62,6 +69,23 @@ import { hasRole } from './contribution-format'
 // publish, sync, and import.
 const AUTHOR_ROLES = ['records_clerk', 'meeting_operator']
 const DEFAULT_STATION_ID = 'civiccast-station'
+
+// civiccast/agenda_import/ (Agenda Bridge) vendor labels + js_portal vendor
+// hints — human copy for the External import section below.
+const EXTERNAL_SOURCE_LABELS: Record<AgendaExternalSource, string> = {
+  legistar: 'Legistar',
+  primegov: 'PrimeGov',
+  civicclerk: 'CivicClerk',
+  js_portal: 'JS-rendered portal (CivicPlus, Granicus, other)',
+}
+
+const JS_PORTAL_VENDOR_HINTS = [
+  { value: 'generic', label: 'Generic / unknown' },
+  { value: 'civicplus', label: 'CivicPlus (AgendaCenter)' },
+  { value: 'granicus', label: 'Granicus' },
+  { value: 'legistar_js', label: 'Legistar (JS-rendered public page)' },
+  { value: 'primegov_js', label: 'PrimeGov (JS-rendered public page)' },
+]
 
 /**
  * Build the public-portal "watch this meeting" URL for a given asset id, so
@@ -747,6 +771,298 @@ function ItemsTable({
   )
 }
 
+// --- External agenda import (civiccast/agenda_import/, Agenda Bridge) ------
+//
+// Distinct from the plain-text/PDF "Import from doc" block above: this talks
+// to civiccast/agenda_import/router.py's discovery + import-external routes
+// (Legistar/PrimeGov/CivicClerk/js_portal adapters), a separate module that
+// writes into the same items store. Two-step flow: "Find meetings" lists
+// upcoming/recent meetings from the vendor, then the operator picks one and
+// imports it. js_portal additionally needs a portal URL + vendor hint (no
+// fixed per-vendor host the way the other three have) and may be "not
+// installed" on this station (optional crawl4ai/Playwright extra) — the
+// posture check runs as soon as js_portal is selected so the operator finds
+// out before clicking Import, not after a wasted round trip.
+
+function ExternalImportSection({
+  agendaId,
+  agendaStatus,
+  onImported,
+}: {
+  agendaId: string
+  agendaStatus: 'draft' | 'published'
+  onImported: () => void
+}) {
+  const idSource = useId()
+  const idClientCode = useId()
+  const idPortalUrl = useId()
+  const idVendorHint = useId()
+  const idSince = useId()
+  const idMeeting = useId()
+
+  const [source, setSource] = useState<AgendaExternalSource>('legistar')
+  const [clientCode, setClientCode] = useState('')
+  const [portalUrl, setPortalUrl] = useState('')
+  const [vendorHint, setVendorHint] = useState('generic')
+  const [since, setSince] = useState('')
+  const [meetings, setMeetings] = useState<ExternalMeetingSummary[] | null>(null)
+  const [selectedEventId, setSelectedEventId] = useState('')
+
+  const isJsPortal = source === 'js_portal'
+
+  const postureQuery = useQuery({
+    queryKey: ['js-portal-posture'],
+    queryFn: getJsPortalPosture,
+    enabled: isJsPortal,
+    staleTime: 60_000,
+  })
+  const jsPortalBlocked = isJsPortal && postureQuery.data?.installed === false
+
+  const discoverMut = useMutation({
+    mutationFn: () =>
+      listExternalAgendaMeetings(source, clientCode.trim(), {
+        since: since.trim() === '' ? null : since.trim(),
+        portalUrl: isJsPortal ? portalUrl.trim() : null,
+        portalVendorHint: isJsPortal ? vendorHint : null,
+      }),
+    onSuccess: (found) => {
+      setMeetings(found)
+      setSelectedEventId(found[0]?.external_id ?? '')
+    },
+  })
+
+  const importMut = useMutation({
+    mutationFn: () => {
+      const payload: AgendaImportExternalRequest = {
+        source,
+        client_code: clientCode.trim(),
+        event_id: selectedEventId,
+        portal_url: isJsPortal ? portalUrl.trim() : null,
+        portal_vendor_hint: isJsPortal ? vendorHint : null,
+      }
+      return importExternalAgenda(agendaId, payload)
+    },
+    onSuccess: () => {
+      onImported()
+      setMeetings(null)
+      setSelectedEventId('')
+    },
+  })
+
+  const importIs503 =
+    importMut.isError && importMut.error instanceof ApiError && importMut.error.status === 503
+  const discoverIs503 =
+    discoverMut.isError && discoverMut.error instanceof ApiError && discoverMut.error.status === 503
+
+  const canDiscover =
+    clientCode.trim().length > 0 &&
+    (!isJsPortal || (portalUrl.trim().length > 0 && !jsPortalBlocked)) &&
+    !discoverMut.isPending
+
+  const importedNeedsReview =
+    importMut.isSuccess && (importMut.data ?? []).some((it) => (it.confidence ?? 1) < 0.9)
+
+  return (
+    <div className="space-y-2 border-t pt-3" style={{ borderColor: 'var(--cc-line)' }}>
+      <span className="text-xs font-semibold">
+        Import from an external agenda system
+      </span>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label htmlFor={idSource} className="grid gap-1 text-xs">
+          <span style={{ color: 'var(--cc-ink-3)' }}>Source</span>
+          <select
+            id={idSource}
+            aria-label="External agenda source"
+            value={source}
+            onChange={(e) => {
+              setSource(e.target.value as AgendaExternalSource)
+              setMeetings(null)
+              setSelectedEventId('')
+            }}
+            className="rounded-md px-2 py-1.5"
+            style={INPUT_STYLE}
+          >
+            {AGENDA_EXTERNAL_SOURCES.map((value) => (
+              <option key={value} value={value}>
+                {EXTERNAL_SOURCE_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label htmlFor={idClientCode} className="grid gap-1 text-xs">
+          <span style={{ color: 'var(--cc-ink-3)' }}>
+            {isJsPortal ? 'Display label (for your own records)' : 'Tenant / site code'}
+          </span>
+          <input
+            id={idClientCode}
+            aria-label={isJsPortal ? 'Display label' : 'Tenant / site code'}
+            type="text"
+            value={clientCode}
+            placeholder={isJsPortal ? 'fairview-agendacenter' : 'longmont'}
+            onChange={(e) => setClientCode(e.target.value)}
+            className="rounded-md px-2 py-1.5"
+            style={INPUT_STYLE}
+          />
+        </label>
+      </div>
+
+      {isJsPortal && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label htmlFor={idPortalUrl} className="grid gap-1 text-xs">
+            <span style={{ color: 'var(--cc-ink-3)' }}>Portal URL</span>
+            <input
+              id={idPortalUrl}
+              aria-label="Portal URL"
+              type="url"
+              pattern="https?://.*"
+              value={portalUrl}
+              placeholder="https://fairview.example.gov/AgendaCenter"
+              onChange={(e) => setPortalUrl(e.target.value)}
+              className="rounded-md px-2 py-1.5"
+              style={INPUT_STYLE}
+            />
+          </label>
+          <label htmlFor={idVendorHint} className="grid gap-1 text-xs">
+            <span style={{ color: 'var(--cc-ink-3)' }}>Vendor hint</span>
+            <select
+              id={idVendorHint}
+              aria-label="Vendor hint"
+              value={vendorHint}
+              onChange={(e) => setVendorHint(e.target.value)}
+              className="rounded-md px-2 py-1.5"
+              style={INPUT_STYLE}
+            >
+              {JS_PORTAL_VENDOR_HINTS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
+      {isJsPortal && (
+        <p
+          role={postureQuery.data?.installed === false ? 'alert' : 'status'}
+          className="text-xs"
+          style={{ color: postureQuery.data?.installed === false ? 'var(--cc-warn)' : 'var(--cc-ink-3)' }}
+        >
+          {postureQuery.isLoading
+            ? 'Checking whether the JS-portal runtime is installed on this station…'
+            : postureQuery.isError
+              ? apiMessage(postureQuery.error, 'Could not check the JS-portal runtime status.')
+              : postureQuery.data?.installed
+                ? 'JS-portal runtime: installed.'
+                : `JS-portal runtime: not installed. ${postureQuery.data?.detail ?? ''}`}
+        </p>
+      )}
+
+      <label htmlFor={idSince} className="grid gap-1 text-xs sm:max-w-[220px]">
+        <span style={{ color: 'var(--cc-ink-3)' }}>Only meetings on/after (optional)</span>
+        <input
+          id={idSince}
+          aria-label="Only meetings on or after this date"
+          type="date"
+          value={since}
+          onChange={(e) => setSince(e.target.value)}
+          className="rounded-md px-2 py-1.5"
+          style={INPUT_STYLE}
+        />
+      </label>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          aria-label="Find meetings from this external agenda source"
+          disabled={!canDiscover}
+          onClick={() => discoverMut.mutate()}
+          className="rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+          style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
+        >
+          {discoverMut.isPending ? 'Finding meetings…' : 'Find meetings'}
+        </button>
+      </div>
+
+      {discoverMut.isError && (
+        <Banner tone="warn">
+          {discoverIs503
+            ? apiMessage(
+                discoverMut.error,
+                "This source's optional runtime is not installed on this station.",
+              )
+            : apiMessage(discoverMut.error, 'Could not list meetings from that source.')}
+        </Banner>
+      )}
+
+      {meetings != null && meetings.length === 0 && (
+        <Banner tone="info">No meetings found for those filters.</Banner>
+      )}
+
+      {meetings != null && meetings.length > 0 && (
+        <>
+          <label htmlFor={idMeeting} className="grid gap-1 text-xs">
+            <span style={{ color: 'var(--cc-ink-3)' }}>Meeting</span>
+            <select
+              id={idMeeting}
+              aria-label="Meeting to import"
+              value={selectedEventId}
+              onChange={(e) => setSelectedEventId(e.target.value)}
+              className="rounded-md px-2 py-1.5"
+              style={INPUT_STYLE}
+            >
+              {meetings.map((m) => (
+                <option key={m.external_id} value={m.external_id}>
+                  {m.title}
+                  {m.meeting_datetime ? ` — ${new Date(m.meeting_datetime).toLocaleDateString()}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              aria-label="Import the selected meeting's agenda"
+              disabled={importMut.isPending || selectedEventId === ''}
+              onClick={() => importMut.mutate()}
+              className="rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
+            >
+              {importMut.isPending ? 'Importing…' : 'Import selected meeting'}
+            </button>
+            {agendaStatus === 'published' && (
+              <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+                This agenda is published. Importing will move it back to draft until you review
+                and republish.
+              </span>
+            )}
+          </div>
+        </>
+      )}
+
+      {importMut.isSuccess && (
+        <Banner tone={importedNeedsReview ? 'warn' : 'ok'}>
+          Imported {importMut.data?.length ?? 0} item
+          {(importMut.data?.length ?? 0) === 1 ? '' : 's'}.
+          {importedNeedsReview
+            ? ' Some items carry a lower confidence score (see the Confidence column below) — review them before publishing.'
+            : ''}
+        </Banner>
+      )}
+      {importMut.isError && (
+        <Banner tone="warn">
+          {importIs503
+            ? apiMessage(
+                importMut.error,
+                "This source's optional runtime is not installed on this station.",
+              )
+            : apiMessage(importMut.error, 'Could not import that meeting.')}
+        </Banner>
+      )}
+    </div>
+  )
+}
+
 // --- Screen -----------------------------------------------------------------
 
 export function AgendasScreen() {
@@ -1283,6 +1599,19 @@ function SelectedAgendaSection({
             </Banner>
           )}
         </div>
+
+        <ExternalImportSection
+          agendaId={agendaId}
+          agendaStatus={agenda.status ?? 'draft'}
+          onImported={() => {
+            invalidateItems()
+            // Mirrors the PDF-import path above: an external import can
+            // reopen a published agenda to draft (AI/agenda non-negotiables
+            // Spec Sec4.2 — civiccast/agenda_import/mapper.py), so the
+            // agenda-level status badge has to refresh too, not just items.
+            invalidateAgendas()
+          }}
+        />
       </section>
     </>
   )

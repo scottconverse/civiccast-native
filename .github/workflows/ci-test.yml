@@ -92,7 +92,20 @@ jobs:
           ffprobe -version | head -n 1
 
       - name: Install project (dev)
-        run: uv sync --all-extras --group dev
+        # --no-extra agenda-js-import: every other optional-dependency group
+        # (captions-runtime, cloudflare-r2, s3-cdn) is pure-Python or only
+        # needs its package installed to be exercised; agenda-js-import
+        # (crawl4ai + Playwright) additionally needs `playwright install
+        # chromium` -- a separate ~300 MB browser-binary download this job
+        # does not perform. Installing the crawl4ai PACKAGE without staging
+        # that binary is worse than not installing it at all: it makes
+        # civiccast.agenda_import.js_portal's "not installed" posture
+        # genuinely false in CI while a real crawl still cannot launch a
+        # browser, which is exactly the gap that broke this job (see
+        # tests/agenda_import/test_js_portal.py -- those tests are hermetic
+        # via monkeypatch/sys.modules regardless of what's installed here,
+        # so excluding the extra is a CI-cost decision, not a coverage gap).
+        run: uv sync --all-extras --no-extra agenda-js-import --group dev
 
       - name: Probe Docker (testcontainers prerequisite)
         # Fail loud at this step rather than letting testcontainers fall

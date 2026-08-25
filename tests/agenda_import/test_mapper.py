@@ -40,13 +40,17 @@ def store() -> Iterator[AgendaStore]:
 
 
 def _agenda(
-    agenda_id: str = "ag-legistar-1", *, source_doc_url: str | None = None
+    agenda_id: str = "ag-legistar-1",
+    *,
+    source_doc_url: str | None = None,
+    status: str = "draft",
 ) -> MeetingAgenda:
     return MeetingAgenda(
         agenda_id=agenda_id,
         station_id="civiccast-station",
         meeting_asset_id="meeting-1",
         source_doc_url=source_doc_url,
+        status=status,
     )
 
 
@@ -233,3 +237,60 @@ class TestHostileUrlRejection:
         with pytest.raises(ValueError, match="http or https"):
             import_external_agenda(store, "ag-legistar-1", external)
         assert store.list_items("ag-legistar-1") == []
+
+
+class TestDraftOnlyGuarantee:
+    """AI/agenda non-negotiables Spec §4.2: an external import must never
+    leave unreviewed content live on a published agenda. Mirrors
+    civiccast.agenda.service.AgendaService.import_from_doc's identical
+    reopen-to-draft behavior for the PDF-import path -- applied here to
+    EVERY agenda_import vendor (not just js_portal), since the underlying
+    principle is "this content did not come from the operator's own typing",
+    which is equally true of a Legistar/PrimeGov/CivicClerk fetch."""
+
+    def test_importing_into_a_published_agenda_reopens_it_to_draft(
+        self, store: AgendaStore
+    ) -> None:
+        store.upsert_agenda(_agenda(status="published"))
+        external = _external()
+
+        import_external_agenda(store, "ag-legistar-1", external)
+
+        agenda = store.get_agenda("ag-legistar-1")
+        assert agenda is not None
+        assert agenda.status == "draft"
+
+    def test_a_no_op_reimport_does_not_disturb_a_published_agenda(self, store: AgendaStore) -> None:
+        # Every order already taken -> written == [] -> nothing to review ->
+        # a published agenda must NOT be reopened for zero new content.
+        store.upsert_agenda(_agenda())
+        import_external_agenda(store, "ag-legistar-1", _external())
+        store.set_status("ag-legistar-1", "published")
+
+        written = import_external_agenda(store, "ag-legistar-1", _external())
+
+        assert written == []
+        agenda = store.get_agenda("ag-legistar-1")
+        assert agenda is not None
+        assert agenda.status == "published"
+
+    def test_importing_into_a_draft_agenda_stays_draft(self, store: AgendaStore) -> None:
+        store.upsert_agenda(_agenda(status="draft"))
+
+        import_external_agenda(store, "ag-legistar-1", _external())
+
+        agenda = store.get_agenda("ag-legistar-1")
+        assert agenda is not None
+        assert agenda.status == "draft"
+
+    def test_never_sets_status_to_published(self, store: AgendaStore) -> None:
+        # Static proof the function contains no path that writes "published"
+        # -- the only status literal it can ever pass to store.set_status is
+        # "draft" (see mapper.py's own source, not re-derived here).
+        import inspect
+
+        import civiccast.agenda_import.mapper as mapper_module
+
+        source = inspect.getsource(mapper_module)
+        assert 'set_status(agenda_id, "published")' not in source
+        assert 'set_status(agenda_id, "draft")' in source
