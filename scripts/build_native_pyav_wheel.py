@@ -782,6 +782,61 @@ def build_minimal_ffmpeg(
     for package in package_paths:
         shutil.copy2(package, package_cache / package.name)
     bash = msys_root / "usr" / "bin" / "bash.exe"
+
+    # Pre-populate the pacman keyring OURSELVES, offline, via a NON-login
+    # bash invocation (`-c`, not `-lc`) -- before the first LOGIN shell
+    # below would otherwise trigger MSYS2's own bootstrap of it. `/etc/
+    # profile` (sourced only by login shells) unconditionally sources every
+    # `/etc/post-install/*.post` hook on EVERY login-shell start;
+    # `07-pacman-key.post`'s `maybe_init_keyring` guards its whole body
+    # (`pacman-key --init`, `--populate msys2`, and -- the actual culprit --
+    # `--refresh-keys`) behind `[ ! -d /etc/pacman.d/gnupg ]`. Creating that
+    # directory first, via `--init`/`--populate` alone, makes the LATER
+    # login shell's own copy of the hook see the work already done and skip
+    # straight past `--refresh-keys` -- nothing inside MSYS2's own shipped
+    # script needs patching.
+    #
+    # `--init` and `--populate msys2` are both OFFLINE: they build the
+    # trust database from the msys2 keyring package
+    # (`usr/share/pacman/keyrings/msys2.gpg`) already inside the pinned,
+    # hash-verified base archive extracted above -- never a live keyserver.
+    # `--refresh-keys` is the ONLY network-dependent step (wrapped `|| true`
+    # in MSYS2's own hook, so it is never itself fatal) and is what
+    # candidate run 32845198987 actually hit, in BOTH attempts: repeated
+    # "==> ERROR: Could not update key: <id>" against an unreachable
+    # keyserver from the self-hosted runner, ~18 minutes of wall-clock time
+    # burned per build before falling through to the already-locally-
+    # trusted keys anyway (the run did not ultimately fail here -- the
+    # bootstrap script tolerates the refresh failing -- but the same call
+    # has no such tolerance for TIMING OUT indefinitely on a worse day, and
+    # 18 minutes is dead weight on every self-hosted build regardless).
+    # `build_minimal_ffmpeg` is NOT self-hosted-only code -- it runs
+    # identically on the hosted lane, which merely gets luckier keyserver
+    # reachability from hosted egress; this fix removes the network
+    # round-trip structurally, for both lanes, not just self-hosted's flaky
+    # case of it.
+    #
+    # Verified locally, outside any runner tree
+    # (C:\CivicCastTester\msys2-keyring-test, deleted after) against this
+    # exact pinned MSYS2 base: pre-populating this way completes in ~7s
+    # wholly offline (zero "refreshing key from hkps://..." lines), and the
+    # subsequent LOGIN-shell `pacman -U` below (unchanged) still performs
+    # real PGP signature verification ("checking keyring... checking
+    # package integrity...") against the pinned nasm package and installs
+    # it successfully -- the keyring this produces is exactly as
+    # trustworthy as MSYS2's own default bootstrap, just without the
+    # keyserver round-trip.
+    runner(
+        [
+            str(bash),
+            "-c",
+            'export PATH="/usr/bin:$PATH"; '
+            'export GNUPGHOME="$(pacman-conf.exe gpgdir)"; '
+            "pacman-key --init && pacman-key --populate msys2 && gpgconf --kill all",
+        ],
+        check=True,
+    )
+
     local_packages = " ".join(
         shlex.quote(f"/tmp/civiccast-build-packages/{path.name}") for path in package_paths
     )

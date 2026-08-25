@@ -597,6 +597,48 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Self-hosted native-beta candidate build — a persisted, interrupted
+  PostgreSQL cache extraction, plus a live MSYS2 keyserver dependency.**
+  Candidate run 32845198987 failed identically in BOTH attempts (a
+  keyring-related retry did not change the outcome) at "Build and verify
+  signed component packs": `pinned PostgreSQL initdb.exe is missing:
+  ...\civiccast-server-pack-cache\extracted\postgres\bin\initdb.exe`.
+  Root cause: `acquire_server_pack_sources()`'s bare `destination.exists()`
+  check trusted a self-hosted `--cache`'s persisted `extracted/postgres`
+  tree — left incomplete by an earlier interrupted run — without
+  re-verifying it, the same idempotent-scratch bug class as
+  `civiccast-build-venv`/`civiccast-msvc-build-tools` (#31), applied here
+  to a different cache. Fixed by re-checking a pre-existing extraction
+  against the same pinned bin/lib/share file set `build_server_pack()`
+  itself requires (`_extracted_tree_is_complete`, reusing the existing
+  `_postgres_sources`/`_tsduck_sources` validators — no duplicated
+  validation logic) before trusting it; an incomplete tree is cleared and
+  re-extracted from the already hash-verified archive.
+
+  Separately investigated per the task: attempt 1's MSYS2 pacman-key
+  keyserver refresh errors (`==> ERROR: Could not update key: <id>`, ~18
+  minutes wasted, non-fatal that run since MSYS2's own hook tolerates the
+  failure). `build_minimal_ffmpeg()` now pre-populates the pacman keyring
+  itself, offline, via a non-login `bash -c` invocation (`pacman-key
+  --init` + `--populate msys2`, both sourced from the pinned, hash-
+  verified MSYS2 base archive already on disk — never a keyserver) before
+  the first login-shell `pacman -U`; MSYS2's own `07-pacman-key.post` hook
+  then sees its trust directory already populated and skips the network
+  `--refresh-keys` step entirely, with no patch to MSYS2's own shipped
+  script. This code has no self-hosted/hosted branch, so the fix applies
+  to both lanes — hosted merely had better keyserver luck, not immunity.
+  Verified locally, outside any runner tree
+  (`C:\CivicCastTester\msys2-keyring-test`, deleted after), against the
+  real pinned MSYS2 base: pre-populating completes in ~7s wholly offline
+  (vs. the observed ~18 minutes), and a subsequent real `pacman -U`
+  against the pinned `nasm` package still passes genuine PGP signature
+  verification and installs successfully.
+
+  `tests/native/test_build_native_server_pack.py`: +4 tests (a complete
+  pre-existing extraction is reused; an incomplete one — missing
+  `initdb.exe`, the exact observed shape — is cleared and re-extracted;
+  the no-cache-yet path is unaffected; direct unit coverage of the
+  completeness check for both artifact kinds).
 - **Self-hosted native-beta candidate build — "Sign the native bootstrap
   (Azure Artifact Signing)" needs the .NET SDK, not just the runtime.**
   Candidate run 32838619949 got one step from a complete build, then died:
