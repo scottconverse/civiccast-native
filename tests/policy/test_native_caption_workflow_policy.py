@@ -658,7 +658,78 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # windows_only marker, so all four collect into both lanes. Re-derived by
     # an actual `--collect-only` run on this tree, not by arithmetic: (1610,
     # 1802) -> (1614, 1806).
-    assert (collect("not windows_only"), collect()) == (1614, 1806)
+    #
+    # fix/self-hosted-lane-idempotent-scratch (2026-08-25): +5 pure, 0
+    # windows_only -- candidate run 32810709045 failed self-hosted at
+    # "Bootstrap the reviewed Python build environment": `uv sync` refused
+    # `civiccast-build-venv` as "not a valid Python environment (no Python
+    # executable was found)" because the PREVIOUS failed self-hosted run
+    # (32806127399) died mid-`uv sync` and left a half-created venv there --
+    # self-hosted's `_work\_temp` persists across runs (a hosted runner is
+    # always fresh), so every self-hosted-lane scratch dir under it needs to
+    # be idempotent, not just this one. Inventoried every RUNNER_TEMP-scoped
+    # scratch dir across both build jobs against the workflow + the scripts
+    # it calls and found the same shape twice more: build_native_app_payload
+    # .py's build(), build_native_pyav_wheel.py's build(), and
+    # build_native_runtime_closure.py's build() all refuse a non-empty
+    # output directory, which a hosted runner's always-fresh RUNNER_TEMP
+    # never triggers but a self-hosted rerun after a mid-build failure
+    # would. civiccast-msvc-build-tools is the one persistence WORTH
+    # keeping (a real MSVC Build Tools install, not cheap to redo) --
+    # install_msvc() now verifies (real cl.exe/link.exe launch-and-version
+    # check, the same one a fresh install already trusts) and reuses a
+    # valid existing tree instead of always reinstalling, clears an invalid
+    # one, and -- a case a live follow-up on this exact candidate surfaced,
+    # where the runner's own attempt to clear an invalid MSVC tree itself
+    # left an undeletable, unknown-completeness leftover behind
+    # (vctip.exe/mspdbsrv.exe still holding files open) -- falls back to a
+    # uniquely suffixed sibling directory rather than failing the job when
+    # the invalid tree cannot be removed, with main() re-exporting the
+    # actual resolved path to GITHUB_ENV so every later step that reads
+    # $env:CIVICCAST_MSVC_INSTALLATION_PATH picks it up automatically. The
+    # cheap-to-rebuild scratch dirs (civiccast-app-payload, civiccast-
+    # app-payload-scratch, civiccast-gstreamer-closure) get the simpler fix:
+    # a new self-hosted-only step always clears them first, hard-failing
+    # with a clear diagnostic in the (believed novel, unlike MSVC) case
+    # where something still holds one open. Ollama/captions-floor caches
+    # (build-native-station-bundle) and the toolchain/pack-build download
+    # caches were checked and are already safe as-is: every one of them
+    # downloads to a `.partial` file, hash-verifies it, and only THEN
+    # atomically renames it into place (confirmed by reading
+    # fetch_locked_artifact() and provision_native_ollama_models.py's
+    # _verify_file() call sites) -- a killed download can never leave a
+    # cache entry a later run would wrongly trust. 5 new
+    # platform-independent tests land in
+    # tests/native/test_build_toolchain_provisioner.py: install_msvc()
+    # reuses an already-verified install without reinstalling, replaces an
+    # invalid one at the same canonical path, relocates to a sibling path
+    # when the invalid one cannot be removed, and main() re-exports the
+    # relocated path to GITHUB_ENV (or leaves GITHUB_ENV untouched when
+    # nothing relocated). Plain function calls and monkeypatched subprocess
+    # .run/shutil.rmtree only -- no OS dependency, no windows_only marker,
+    # so all five collect into both lanes. Re-derived by an actual
+    # `--collect-only` run on this tree, not by arithmetic: (1614, 1806) ->
+    # (1619, 1811).
+    #
+    # Same branch, fixup (2026-08-25): +1 pure, 0 windows_only -- PR #31's
+    # CI (not local: CI's tests/native "pure" lane runs on a Linux runner,
+    # this box is Windows) failed test_main_reexports_a_relocated_msvc_path_
+    # to_github_env and test_main_does_not_touch_github_env_when_msvc_
+    # install_is_not_relocated with "the native Windows toolchain must be
+    # provisioned on Windows" -- both called provisioner.main(), which is
+    # correctly, unconditionally Windows-gated (os.name != "nt"), so they
+    # never reached the GITHUB_ENV logic they meant to test at all. Not a
+    # GITHUB_ENV ambient-variable collision (both already isolated it via
+    # monkeypatch.setenv). Fixed at the root: the GITHUB_ENV re-export logic
+    # is now its own function, reexport_relocated_msvc_install() -- pure,
+    # no os.name/os.environ read, GITHUB_ENV passed as an explicit argument
+    # -- and main() is three lines calling it. The two OS-gated tests are
+    # replaced by three tests against the extracted function directly
+    # (relocated writes GITHUB_ENV; not-relocated is a no-op; a None
+    # github_env does not raise), net +1 over the two removed. Re-derived by
+    # an actual `--collect-only` run on this tree, not by arithmetic: (1619,
+    # 1811) -> (1620, 1812).
+    assert (collect("not windows_only"), collect()) == (1620, 1812)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

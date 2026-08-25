@@ -302,6 +302,190 @@ def test_msvc_install_refuses_a_long_path_before_downloading_anything(
     assert not cache.exists()
 
 
+def test_install_msvc_reuses_an_already_verified_install_without_reinstalling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Self-hosted `_work\\_temp` persists across runs (candidate run
+    32810709045's own follow-up): a previous run's install can still be good.
+    Reinstalling MSVC Build Tools takes real minutes -- verify-and-skip must
+    not pay that cost when the existing tree is already trustworthy."""
+    lock = provisioner.load_lock()
+    install_root = tmp_path / "civiccast-msvc-build-tools"
+    install_root.mkdir()
+    (install_root / "marker").write_text("looks complete", encoding="utf-8")
+
+    monkeypatch.setattr(provisioner, "verify_msvc_installation", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        provisioner,
+        "fetch_locked_artifact",
+        lambda *a, **kw: pytest.fail("a verified-valid install must not be reinstalled"),
+    )
+
+    result = provisioner.install_msvc(lock, tmp_path / "cache", install_root)
+
+    assert result == install_root
+    assert (install_root / "marker").read_text(encoding="utf-8") == "looks complete"
+
+
+def test_install_msvc_replaces_an_invalid_existing_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale/incomplete tree from an interrupted previous self-hosted run
+    fails verification -- it must be cleared and reinstalled at the SAME
+    canonical path, since every later workflow step reads
+    $env:CIVICCAST_MSVC_INSTALLATION_PATH as a fixed literal."""
+    # A real pytest tmp_path (deep under AppData\Local\Temp\pytest-of-...)
+    # already exceeds Microsoft's real 80-character installation-path limit
+    # on its own -- unrelated to what this test is about (already covered by
+    # test_msvc_paths_longer_than_microsofts_documented_limit_are_refused).
+    monkeypatch.setattr(provisioner, "_MSVC_PATH_LIMIT", 4096)
+    lock = provisioner.load_lock()
+    install_root = tmp_path / "civiccast-msvc-build-tools"
+    install_root.mkdir()
+    (install_root / "half-built").write_text("stale", encoding="utf-8")
+
+    verify_calls: list[Path] = []
+
+    def fake_verify(path: Path, *_a: object, **_kw: object) -> None:
+        verify_calls.append(path)
+        if len(verify_calls) == 1:
+            raise provisioner.ToolchainProvisionError("stale install, missing vcvarsall.bat")
+        # second call: the "freshly installed" tree passes.
+
+    monkeypatch.setattr(provisioner, "verify_msvc_installation", fake_verify)
+    monkeypatch.setattr(
+        provisioner, "fetch_locked_artifact", lambda *a, **kw: tmp_path / "bootstrapper.exe"
+    )
+    monkeypatch.setattr(
+        provisioner.subprocess,
+        "run",
+        lambda *a, **kw: subprocess.CompletedProcess(a[0] if a else [], 0),
+    )
+
+    result = provisioner.install_msvc(lock, tmp_path / "cache", install_root)
+
+    assert result == install_root
+    assert not (install_root / "half-built").exists(), "the stale tree must have been cleared"
+    assert len(verify_calls) == 2
+
+
+def test_install_msvc_relocates_when_the_invalid_install_cannot_be_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Candidate run 32810709045's follow-up: the MSVC scratch was left
+    undeletable (Access denied) after a prior run's cleanup died partway
+    through with vctip.exe/mspdbsrv.exe still holding files open. Reuse must
+    fall back to a sibling directory rather than failing the whole job."""
+    # See the identical note in test_install_msvc_replaces_an_invalid_
+    # existing_install: a real pytest tmp_path already exceeds the real
+    # 80-character limit on its own, unrelated to what this test covers.
+    monkeypatch.setattr(provisioner, "_MSVC_PATH_LIMIT", 4096)
+    lock = provisioner.load_lock()
+    install_root = tmp_path / "civiccast-msvc-build-tools"
+    install_root.mkdir()
+    (install_root / "cl.exe").write_bytes(b"unknown-completeness leftover")
+
+    def fake_verify(path: Path, *_a: object, **_kw: object) -> None:
+        if path == install_root:
+            raise provisioner.ToolchainProvisionError("stale install, missing vcvarsall.bat")
+        # any other (relocated) path passes -- simulates a good fresh install.
+
+    def locked_rmtree(path: object, *a: object, **kw: object) -> None:
+        raise OSError("Access is denied (simulated: vctip.exe/mspdbsrv.exe still open)")
+
+    monkeypatch.setattr(provisioner, "verify_msvc_installation", fake_verify)
+    monkeypatch.setattr(provisioner.shutil, "rmtree", locked_rmtree)
+    monkeypatch.setattr(
+        provisioner, "fetch_locked_artifact", lambda *a, **kw: tmp_path / "bootstrapper.exe"
+    )
+    monkeypatch.setattr(
+        provisioner.subprocess,
+        "run",
+        lambda *a, **kw: subprocess.CompletedProcess(a[0] if a else [], 0),
+    )
+
+    result = provisioner.install_msvc(lock, tmp_path / "cache", install_root)
+
+    assert result != install_root
+    assert result.parent == install_root.parent
+    assert result.name.startswith(install_root.name + "-")
+    # The old, undeletable tree is left behind untouched -- best-effort
+    # cleanup is a later run's job, not this one's, per install_msvc's
+    # docstring.
+    assert (install_root / "cl.exe").exists()
+
+
+def test_reexport_relocated_msvc_install_writes_github_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every later workflow step (the Tauri vcvars64.bat import, the pack
+    build's env block) reads $env:CIVICCAST_MSVC_INSTALLATION_PATH as a
+    fixed literal -- when install_msvc() relocates, the resolved path must
+    be re-exported to GITHUB_ENV so those steps pick it up automatically.
+
+    Calls reexport_relocated_msvc_install() directly rather than going
+    through main() (which PR #31's original version of this test did): the
+    ambient GITHUB_ENV was never the issue -- monkeypatch.setenv already
+    isolated it -- but main() is unconditionally gated to
+    `os.name == "nt"`, appropriately, since actually provisioning MSVC only
+    makes sense on Windows. tests/native's platform-independent ("pure")
+    suite runs on a Linux CI runner, and hit that gate before ever reaching
+    this logic: "the native Windows toolchain must be provisioned on
+    Windows". Testing the extracted function directly is both the fix (no
+    OS dependency left to trip on) and, incidentally, MORE hermetic than
+    monkeypatching GITHUB_ENV as an ambient var: the function takes
+    `github_env` as an explicit argument, so this test never touches
+    process environment at all. monkeypatch.delenv proves that explicitly.
+    """
+    monkeypatch.delenv("GITHUB_ENV", raising=False)
+    requested = tmp_path / "civiccast-msvc-build-tools"
+    relocated = tmp_path / "civiccast-msvc-build-tools-deadbeef"
+    github_env = tmp_path / "github_env.txt"
+    github_env.write_text("", encoding="utf-8")
+
+    provisioner.reexport_relocated_msvc_install(requested, relocated, github_env=str(github_env))
+
+    assert f"CIVICCAST_MSVC_INSTALLATION_PATH={relocated}\n" in github_env.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_reexport_relocated_msvc_install_is_a_noop_when_not_relocated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The common case (hosted lane always; self-hosted whenever nothing is
+    locked) must not perturb GITHUB_ENV at all -- only an actual relocation
+    is worth a re-export. See test_reexport_relocated_msvc_install_writes_
+    github_env's docstring for why this calls the extracted function
+    directly rather than main()."""
+    monkeypatch.delenv("GITHUB_ENV", raising=False)
+    requested = tmp_path / "civiccast-msvc-build-tools"
+    github_env = tmp_path / "github_env.txt"
+    github_env.write_text("", encoding="utf-8")
+
+    provisioner.reexport_relocated_msvc_install(requested, requested, github_env=str(github_env))
+
+    assert github_env.read_text(encoding="utf-8") == ""
+
+
+def test_reexport_relocated_msvc_install_tolerates_no_github_env(tmp_path: Path) -> None:
+    """Outside CI (a developer running the script by hand, or a future
+    caller), GITHUB_ENV is simply not set -- github_env=None must not raise,
+    matching the guard the workflow's own GITHUB_ENV reads never need
+    because GitHub Actions always sets it."""
+    requested = tmp_path / "civiccast-msvc-build-tools"
+    relocated = tmp_path / "civiccast-msvc-build-tools-deadbeef"
+
+    provisioner.reexport_relocated_msvc_install(requested, relocated, github_env=None)
+    # No exception, and nothing to assert on disk -- the point is the call
+    # above did not raise trying to open a None path.
+
+
 def test_msvc_version_probe_rejects_compiler_or_linker_drift() -> None:
     msvc = provisioner.load_lock()["artifacts"]["msvc"]
     provisioner.assert_msvc_version_output(
