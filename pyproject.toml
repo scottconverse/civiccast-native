@@ -376,8 +376,10 @@ ignore_missing_imports = true
 # supervisor adds win32job (Job Object containment, D3), win32pipe/win32file
 # (the D7 control pipe + D2 worker pipes), and win32process (child process
 # groups / CTRL_BREAK). These modules are only ever imported lazily, inside
-# os.name == "nt"-guarded code paths in civiccast/native/.
-module = ["win32event", "win32event.*", "win32security", "win32security.*", "win32api", "win32api.*", "win32job", "win32job.*", "win32pipe", "win32pipe.*", "win32file", "win32file.*", "win32process", "win32process.*", "pywintypes"]
+# os.name == "nt"-guarded code paths in civiccast/native/. win32con added for
+# civiccast/installer/cea708_verification.py's pipe-SDDL identity lookup
+# (TOKEN_QUERY), imported the same lazy os.name == "nt" way.
+module = ["win32event", "win32event.*", "win32security", "win32security.*", "win32api", "win32api.*", "win32job", "win32job.*", "win32pipe", "win32pipe.*", "win32file", "win32file.*", "win32process", "win32process.*", "win32con", "win32con.*", "pywintypes"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

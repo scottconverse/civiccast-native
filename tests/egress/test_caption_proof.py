@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from civiccast.captions.models import CaptionCue
 from civiccast.egress.caption_proof import (
@@ -18,6 +21,15 @@ from civiccast.egress.caption_proof import (
 )
 from civiccast.egress.models import EgressCaptionProofSample
 from civiccast.egress.store import InMemoryEgressStore
+
+_FIXTURES_DIR = Path(__file__).parent / "fixtures"
+_REAL_CAPTION_FIXTURE = _FIXTURES_DIR / "cea708_test_caption.mpegts"
+_NO_CAPTION_FIXTURE = _FIXTURES_DIR / "cea708_no_captions.mpegts"
+_FIXTURE_CAPTION_TEXT = "CIVICCAST CEA708 TEST."
+
+requires_ffmpeg = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="real-fixture decode-back needs ffmpeg on PATH"
+)
 
 
 def _result(returncode: int = 0, stdout: str = "", stderr: str = "") -> Any:
@@ -149,6 +161,66 @@ def test_caption_status_provider_not_verified_for_fail() -> None:
     _append(store, sampled_at=now, status="FAIL", caption_status="not-verified")
     provider = build_caption_status_provider(store, freshness_seconds=120, clock=lambda: now)
     assert provider("gov") == "not-verified"
+
+
+@requires_ffmpeg
+def test_decode_embedded_captions_against_a_real_cea708_fixture() -> None:
+    """Decoder-output-parser test against a REAL recorded fixture (not a mocked
+    runner): ``tests/egress/fixtures/cea708_test_caption.mpegts`` is a genuine,
+    tiny (~18 KB) MPEG-TS file with real ATSC A/53 CEA-608-in-708 SEI data hand-built
+    and verified against this exact production code path (see
+    ``civiccast/installer/cea708_verification.py``'s module docstring for how it was
+    built). This exercises the true ``ffmpeg`` binary via the default ``run_ffmpeg``
+    runner -- no mock -- proving the parser against real decoder output, including
+    the ASS ``{\\an7}`` position-tag stripping ``_clean_caption_text`` needs (a real
+    gap this fixture caught: ffmpeg's eia_608/cc_dec -> srt output always wraps
+    decoded text in an ASS override block that a hand-written SRT fixture never
+    would)."""
+    cues = decode_embedded_captions(_REAL_CAPTION_FIXTURE, source_id="fixture-test")
+    assert [c.text for c in cues] == [_FIXTURE_CAPTION_TEXT]
+    assert cues[0].start_seconds == pytest.approx(0.0, abs=0.05)
+    assert cues[0].end_seconds == pytest.approx(1.6, abs=0.2)
+
+
+@requires_ffmpeg
+def test_decode_embedded_captions_empty_for_real_stream_without_captions() -> None:
+    """Same real video, no embedded captions -- the parser must report zero cues,
+    not fabricate one, when nothing was actually embedded."""
+    assert decode_embedded_captions(_NO_CAPTION_FIXTURE, source_id="fixture-test") == []
+
+
+@requires_ffmpeg
+def test_sample_decode_back_passes_against_the_real_fixture() -> None:
+    """Full real round trip: real ffmpeg decode + real comparison, PASS."""
+    expected = [_cue(1, 0.0, 1.6, _FIXTURE_CAPTION_TEXT)]
+    sample = sample_caption_decode_back(
+        channel_id="fixture-channel",
+        emitted_stream_path=_REAL_CAPTION_FIXTURE,
+        expected_cues=expected,
+        mode="cea-708",
+        clock=lambda: datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+    )
+    assert sample.status == "PASS"
+    assert sample.caption_status == "on"
+    assert sample.matched_cue_count == 1
+    assert sample.blocker is None
+
+
+@requires_ffmpeg
+def test_sample_decode_back_fails_against_the_real_no_caption_fixture() -> None:
+    """Full real round trip against the stream with no embedded captions: FAIL,
+    fail-closed, never a fabricated PASS."""
+    expected = [_cue(1, 0.0, 1.6, _FIXTURE_CAPTION_TEXT)]
+    sample = sample_caption_decode_back(
+        channel_id="fixture-channel",
+        emitted_stream_path=_NO_CAPTION_FIXTURE,
+        expected_cues=expected,
+        mode="cea-708",
+        clock=lambda: datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+    )
+    assert sample.status == "FAIL"
+    assert sample.caption_status == "not-verified"
+    assert sample.decoded_cue_count == 0
 
 
 def test_caption_lane_report_capability_summary() -> None:

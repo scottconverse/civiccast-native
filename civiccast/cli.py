@@ -1748,6 +1748,88 @@ def egress_caption_decode_proof(
     raise typer.Exit(0 if proof.status == "PASS" else 1)
 
 
+@egress_app.command("verify-captions")
+def egress_verify_captions(
+    duration_seconds: Annotated[
+        int,
+        typer.Option(
+            "--duration-seconds",
+            help="Bounded window to run the embed+decode-back proof for.",
+        ),
+    ] = 8,
+    muxrate_kbps: Annotated[
+        int,
+        typer.Option("--muxrate-kbps", help="Test-pattern mux rate in kbps."),
+    ] = 2000,
+    work_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--work-dir",
+            help="Working directory for the embed run (defaults to the egress work dir).",
+        ),
+    ] = None,
+    caption_text: Annotated[
+        str | None,
+        typer.Option("--caption-text", help="Override the deterministic test caption text."),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Standalone CEA-708 embed-through-decode-back proof (S11 -> S3).
+
+    Embeds a deterministic test caption through the product's real GStreamer
+    caption-embed leg into a bounded self-contained test pattern, then decodes the
+    emitted stream back with the engine-agnostic ffmpeg decode-back and reports
+    whether the caption survived. This is the same check
+    ``civiccast cable commission``'s Screen 10 output proof runs automatically when
+    CEA-708 passthrough is requested (``cea708_verified`` in its report) -- run it
+    standalone to check the box's CEA-708 lane (GStreamer engine + plugins + ffmpeg
+    decode) without going through the full commissioning flow.
+
+    Fail-closed: reports a real True/False result, or exits non-zero with the
+    honest reason (e.g. the GStreamer engine/plugins are not present) -- never a
+    fabricated pass.
+    """
+
+    from civiccast.egress.router import get_egress_work_dir
+    from civiccast.installer.cea708_verification import (
+        TEST_CAPTION_TEXT,
+        verify_cea708_decode_back,
+    )
+
+    resolved_work_dir = (work_dir or get_egress_work_dir()).expanduser().resolve()
+    result = verify_cea708_decode_back(
+        duration_seconds=duration_seconds,
+        muxrate_kbps=muxrate_kbps,
+        work_dir=resolved_work_dir,
+        text=caption_text or TEST_CAPTION_TEXT,
+    )
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "verified": result.verified,
+                    "detail": result.detail,
+                    "expected_text": result.expected_text,
+                    "decoded_text": result.decoded_text,
+                    "blocker": result.blocker,
+                    "proof_boundary": result.proof_boundary,
+                },
+                indent=2,
+            )
+        )
+        raise typer.Exit(0 if result.verified else 1)
+    typer.echo(f"CEA-708 decode-back: {'PASS' if result.verified else 'FAIL'}")
+    typer.echo(f"Detail: {result.detail}")
+    typer.echo(f"Expected text: {result.expected_text!r}")
+    typer.echo(f"Decoded text: {result.decoded_text!r}")
+    if result.blocker:
+        typer.echo(f"Blocker: {result.blocker}")
+    raise typer.Exit(0 if result.verified else 1)
+
+
 def _build_takeover_service() -> TakeoverService:
     """Build a live-takeover service for a CLI-owned session (binds the DB).
 

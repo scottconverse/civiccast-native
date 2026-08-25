@@ -23,6 +23,9 @@
 *.m3u8 binary
 *.woff binary
 *.woff2 binary
+# CEA-708 decode-back test fixtures (tiny, committed, real MPEG-TS transport-stream
+# capture) use .mpegts specifically to avoid the .ts=TypeScript text convention above.
+*.mpegts binary
 
 # Tester-handoff installer binaries are NO LONGER committed to the repo (they
 # previously rode Git LFS and cost ~640 MB of clone bandwidth/storage). Proof

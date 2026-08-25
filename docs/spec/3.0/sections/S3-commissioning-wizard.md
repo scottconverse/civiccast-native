@@ -1,5 +1,61 @@
 # S3 — Commissioning Wizard: Extend the Installer with Headend/SDI/Output Proof
 
+> **Status (2026-08-25 CEA-708 decode-back wiring):** The 2026-08-21 correction
+> below states that a requested CEA-708 passthrough check was always reported as
+> `cea708_verified: null` because no decode-back check was wired in. That gap is
+> now closed on `feat/cea708-decode-back`:
+>
+> - `civiccast/installer/cea708_verification.py` (new): a real, fail-closed
+>   embed-through-decode-back check. Writes a deterministic one-cue WebVTT test
+>   caption, embeds it through the product's real GStreamer sidecar caption-embed
+>   leg (`egress/gst/graph.py`'s `caption_embed_leg_from_sidecar`, run via
+>   `egress/gst/worker.py` as a subprocess over the same D2 named-pipe control
+>   seam `scripts/prove_native_live_caption_transport.py`'s code already
+>   assembles this way for the live appsrc leg), then
+>   decodes the emitted stream back with the existing engine-agnostic
+>   `civiccast.egress.caption_proof.decode_embedded_captions` (the same function
+>   the S11a ON_AIR proof loop uses) and compares. Reports a real
+>   `verified: bool` + detail; never reports `True` without an actual matching
+>   decode, and never reports anything but `None` (not attempted) when the
+>   verifier itself could not run.
+> - `run_output_proof` (`civiccast/installer/commissioning.py`) now calls this
+>   (injectable via the new `caption_verifier` parameter, matching the existing
+>   `test_pattern_runner`/`compliance_prober` DI seams) AFTER the main test-
+>   pattern/TSDuck window when `cea708_expected` is set, and sets
+>   `cea708_verified` to the real `True`/`False` result. It stays `None` only
+>   when the verifier itself raised (engine/plugins unavailable, subprocess
+>   error) — an honest "could not attempt", not a fabricated claim either way.
+> - Standalone CLI: `civiccast egress verify-captions` runs the same check
+>   without going through commissioning, for checking a box's CEA-708 lane
+>   (GStreamer engine + plugins + ffmpeg decode) on its own.
+> - A real, latent bug this work found and fixed: `_clean_caption_text`
+>   (`civiccast/egress/caption_embed.py`) had never been exercised against real
+>   ffmpeg-decoded closed-caption output before (only hand-written SRT text in
+>   unit tests) — ffmpeg's `eia_608`/`cc_dec` decoder wraps decoded text in an ASS
+>   position override (`{\an7}`) that the old cleaner never stripped, so every
+>   real decode-back text comparison would have mismatched even when captions
+>   embedded and decoded correctly. Fixed and covered by a regression test.
+> - Tests: `tests/installer/test_cea708_verification.py` (new — the decode leg
+>   proven against a real, committed MPEG-TS fixture with genuine embedded
+>   CEA-608-in-708 SEI data; the embed leg's compare-and-report logic covered
+>   with an injected fake `embed_runner`; the real GStreamer worker round trip
+>   covered by an `@pytest.mark.integration` test that skips without the bundled
+>   `gi` bindings this dev/CI sandbox does not carry), plus new/updated cases in
+>   `tests/installer/test_commissioning.py`, `tests/egress/test_caption_proof.py`,
+>   and `tests/egress/test_caption_embed.py`.
+> - **Still honestly unverifiable in this dev/CI sandbox**: the real GStreamer
+>   embed subprocess round trip (no `gi`/GStreamer runtime here) — not executed
+>   or independently proven from this change. It reuses code review of
+>   `scripts/prove_native_live_caption_transport.py`, which assembles the same
+>   worker/pipe machinery for the live appsrc leg, but that script's own
+>   end-to-end execution is not evidenced anywhere in this repo either (only its
+>   component pieces are unit-tested in
+>   `tests/native/test_live_caption_transport_proof.py`) — treat this as
+>   real, reviewed code following an established pattern, not as a proven
+>   round trip. A native Windows box with the packaged runtime, or the
+>   WSL/system-GStreamer dev tier, is required to actually run and prove
+>   `run_gst_caption_embed_test_pattern`.
+>
 > **Status (2026-08-21 audit correction):** The banner below this note
 > previously claimed "Built for v3.0.0-beta1" while the code did not exist —
 > corrected here to state what actually landed on
@@ -36,6 +92,9 @@
 >   proof; a requested CEA-708 passthrough check is always reported as
 >   unverified (`cea708_verified: null`) with a blocker, never faked
 >   true/false, since no decode-back check is wired in yet.
+>   **(Superseded 2026-08-25 — see the banner above: a real decode-back
+>   check is now wired in and `cea708_verified` carries a real
+>   `True`/`False`, `None` only when the verifier itself could not run.)**
 > - **Not done in this slice**: the output-proof HTTP endpoint blocks
 >   synchronously for the full `duration_seconds` (up to 30 min) rather than
 >   running as a background job with progress polling — functionally
@@ -43,7 +102,7 @@
 >   blocking posture) but not the smoothest console UX for a long proof
 >   run; a future slice could move it to a job/poll pattern. CEA-708
 >   decode-back verification itself (S11) is not implemented — only its
->   honest non-claim.
+>   honest non-claim. **(Superseded 2026-08-25 — see the banner above.)**
 >
 > The banner immediately below is the section's **original**
 > (pre-2026-08-21) claim, retained for history.

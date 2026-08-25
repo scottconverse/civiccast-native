@@ -12,6 +12,7 @@ import pytest
 from civiccast.egress.compliance import ComplianceCheck, ComplianceProbeResult, TsduckStatus
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.sdi_relay import SdiReadiness
+from civiccast.installer.cea708_verification import Cea708VerificationResult
 from civiccast.installer.commissioning import (
     ChannelCommissioningSetup,
     ChannelSetupValidationError,
@@ -395,16 +396,85 @@ class TestOutputProof:
         assert run.verdict == "fail"
         assert any("continuity errors" in b for b in run.blockers)
 
-    def test_cea708_requested_is_never_claimed_true_without_a_real_check(self) -> None:
+    def test_cea708_verified_true_when_the_real_check_passes(self) -> None:
+        calls: list[tuple[int, int]] = []
+
+        def fake_verifier(duration_seconds: int, muxrate_kbps: int) -> Cea708VerificationResult:
+            calls.append((duration_seconds, muxrate_kbps))
+            return Cea708VerificationResult(
+                verified=True,
+                detail="CEA-708 decode-back PASSED: matched 1 caption.",
+                expected_text="CIVICCAST CEA-708 COMMISSIONING TEST",
+                decoded_text="CIVICCAST CEA-708 COMMISSIONING TEST",
+                blocker=None,
+            )
+
         run = run_output_proof(
             OutputProofSettings(channel_id="government", duration_seconds=5),
             config=_egress_config(),
             test_pattern_runner=lambda *a: None,
             compliance_prober=lambda *a: _passing_probe_result(),
+            caption_verifier=fake_verifier,
+            cea708_expected=True,
+        )
+        assert run.cea708_verified is True
+        assert not any("CEA-708" in b for b in run.blockers)
+        assert run.verdict == "pass"
+        assert calls == [(5, 4000)]
+
+    def test_cea708_verified_false_when_the_real_check_fails(self) -> None:
+        def fake_verifier(duration_seconds: int, muxrate_kbps: int) -> Cea708VerificationResult:
+            return Cea708VerificationResult(
+                verified=False,
+                detail="CEA-708 decode-back FAILED: decoded 0 captions.",
+                expected_text="CIVICCAST CEA-708 COMMISSIONING TEST",
+                decoded_text="",
+                blocker="CEA708_DECODE_BACK_MISMATCH",
+            )
+
+        run = run_output_proof(
+            OutputProofSettings(channel_id="government", duration_seconds=5),
+            config=_egress_config(),
+            test_pattern_runner=lambda *a: None,
+            compliance_prober=lambda *a: _passing_probe_result(),
+            caption_verifier=fake_verifier,
+            cea708_expected=True,
+        )
+        assert run.cea708_verified is False
+        assert any("CEA-708 decode-back" in b for b in run.blockers)
+        assert run.verdict == "partial"
+
+    def test_cea708_verifier_crash_is_captured_not_claimed(self) -> None:
+        def crashing_verifier(duration_seconds: int, muxrate_kbps: int) -> Cea708VerificationResult:
+            raise RuntimeError("GStreamer engine unavailable")
+
+        run = run_output_proof(
+            OutputProofSettings(channel_id="government", duration_seconds=5),
+            config=_egress_config(),
+            test_pattern_runner=lambda *a: None,
+            compliance_prober=lambda *a: _passing_probe_result(),
+            caption_verifier=crashing_verifier,
             cea708_expected=True,
         )
         assert run.cea708_verified is None
-        assert any("CEA-708" in b for b in run.blockers)
+        assert any("CEA-708" in b and "GStreamer engine unavailable" in b for b in run.blockers)
+
+    def test_cea708_not_requested_never_calls_the_verifier(self) -> None:
+        def fail_if_called(duration_seconds: int, muxrate_kbps: int) -> Cea708VerificationResult:
+            raise AssertionError(
+                "caption_verifier must not be called when cea708_expected is False"
+            )
+
+        run = run_output_proof(
+            OutputProofSettings(channel_id="government", duration_seconds=5),
+            config=_egress_config(),
+            test_pattern_runner=lambda *a: None,
+            compliance_prober=lambda *a: _passing_probe_result(),
+            caption_verifier=fail_if_called,
+            cea708_expected=False,
+        )
+        assert run.cea708_verified is None
+        assert not any("CEA-708" in b for b in run.blockers)
 
     def test_not_claimed_boundary_is_always_present(self) -> None:
         run = run_output_proof(

@@ -137,3 +137,18 @@ Second cue.
     assert cues[0].text == "Motion carries."
     assert cues[1].start_seconds == 3.0
     assert cues[1].end_seconds == 4.5
+
+
+def test_parse_caption_cues_strips_ass_position_tags_from_real_ffmpeg_srt() -> None:
+    """ffmpeg's eia_608/cc_dec CEA-608/708 decoder always wraps decoded SRT text in
+    an ASS override block (``{\\an7}``) plus a ``<font>`` tag for on-screen position
+    -- discovered building the CEA-708 decode-back fixture (2026-08-25): the
+    pre-existing decode-back proof had never actually been run against real
+    ffmpeg-decoded closed-caption output, only hand-written SRT text in tests, so
+    this residual tag would have made every real decode-back comparison mismatch
+    even when captions embedded and decoded correctly."""
+    cues = parse_caption_cues_from_timed_text(
+        '1\n00:00:00,000 --> 00:00:01,600\n<font face="Monospace">{\\an7}CIVICCAST CEA708 TEST.</font>\n',
+        source_id="ffmpeg-subcc",
+    )
+    assert [cue.text for cue in cues] == ["CIVICCAST CEA708 TEST."]
