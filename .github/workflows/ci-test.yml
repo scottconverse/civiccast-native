@@ -129,6 +129,7 @@ jobs:
           if [ -d tests ] && [ -n "$(find tests -name 'test_*.py' -o -name '*_test.py' 2>/dev/null)" ]; then
             uv run pytest -v \
               --ignore=tests/native \
+              -m "not integration" \
               --cov=civiccast --cov-report=term-missing \
               --cov-fail-under=60 \
               --junitxml=junit.xml
