@@ -623,6 +623,99 @@ after the driver removed it locally — the preserved evidence for this very run
 contains one, which tells a reader the run was still quiesced when it was not.
 Evidence that misreports harness state is worse than absent evidence.
 
+## The cause of the stalls: `ConvertTo-Json` walking a `Get-Content` cycle
+
+This is the answer to five runs' worth of stalls — 4, 6, 7, and both
+candidate-#11 runs. The liveness instrument added one change earlier is what
+produced it, on the very next run:
+
+```
+driver_process_alive=true driver_pid=6636 driver_cpu_seconds=449.5 driver_working_set_mb=8318.2
+```
+
+Alive, CPU-hot, **8.3 GB resident in a 16 GB VM**. Not blocked I/O — a
+serializer explosion. That single line eliminated every I/O hypothesis at once.
+
+### The mechanism
+
+`Get-Content` does not emit plain strings. Every line is a `PSObject` carrying
+six note properties: `PSPath`, `PSParentPath`, `PSChildName`, `PSDrive`,
+`PSProvider`, `ReadCount`. `PSProvider` is a `ProviderInfo`; its `.Drives` is a
+collection of `PSDriveInfo`; each `PSDriveInfo` has a `.Provider`
+back-reference to that same `ProviderInfo`. **That is a cycle.**
+`ConvertTo-Json` serializes note properties, so `-Depth N` walks that cycle
+`N` levels deep and expands combinatorially.
+
+Measured on this host — **one** `Get-Content` line inside a hashtable:
+
+| `-Depth` | JSON produced | Time |
+|---|---|---|
+| 3 | 1,889 chars | 0.8 ms |
+| 4 | 32,936 chars | 107 ms |
+| 5 | 447,193 chars | 105 ms |
+| 6 | 3,852,872 chars | 620 ms |
+| 7 | **98,197,802 chars** | 11.2 s |
+| 8 | never completed | killed at 180 s, having reached 4 GB / 178 s CPU |
+
+The driver serialized **eighty** such lines at `-Depth 8`. 8.3 GB and 449.5 s
+of CPU is precisely what that costs. The same 80 lines as plain strings at the
+same depth 8: **5,314 chars in 30 ms**.
+
+### Why it always looked like an I/O stall
+
+`install_progress_log_tail` was assigned from `Get-Content` output, and the
+*next* statement was a `Save-Summary`. So the run always died at the first
+serialization after that assignment — which is why runs 4, 6 and 7 all stalled
+just past `station-diag-captured-after-t3t5` (where the capture used to live),
+and why both #11 runs stalled at `install-progress-copied-post-install` after
+the capture was relocated. **The stall followed the code.** Relocating it moved
+the explosion earlier in the run rather than removing it.
+
+(Run 3, which stalled at `t2-render-assert` in a run of `Add-Content` calls, is
+*not* explained by this and is not claimed to be.)
+
+### The fix — two independent defences
+
+Either alone would have prevented this; neither alone prevents the next one.
+
+1. **Sanitize at the boundary.** `ConvertTo-PlainForSummary` rebuilds the
+   summary out of plain types before serialization. It recurses only into
+   arrays and dictionaries, caps its own depth, and renders anything else via
+   `ToString()` rather than walking its object graph — which is exactly what
+   `ConvertTo-Json` does not do. A cyclic `ProviderInfo` now serializes to 59
+   characters instead of expanding forever.
+2. **Serialize at the depth the data needs (6), not 8.** The deepest real
+   member is `install_tree_top_levels`: summary → array → entry → `children` →
+   string = 5. Depth is a blast-radius multiplier for this whole bug class.
+
+Plus a `[string[]]` cast at the source, which strips the decoration before it
+can reach `$summary` at all.
+
+> **A PS 5.1 trap found while fixing this.** The sanitizer first used
+> `System.Collections.Generic.List[object]` and `return @($out)`. In Windows
+> PowerShell 5.1 that combination throws *"Argument types do not match"*,
+> which silently degraded **every array member of the summary** into one
+> space-joined string. It uses `ArrayList` and `return , ($out.ToArray())`
+> now — the leading comma also keeps a single-element array an array, which
+> matters because the judge counts those fields. Caught by the host-side
+> sanitizer test, not by reading the code.
+
+### Forensics for the next unknown
+
+When the watchdog fires **and the driver is still alive**, it now also
+collects:
+
+- a **CPU delta over a fixed interval**, with a verdict. One cumulative CPU
+  number cannot separate "spinning right now" from "burned CPU earlier and is
+  now blocked"; two samples can. Verified against a real spinning process
+  (`driver_busy_percent=100.8 driver_verdict=SPINNING`) and a real sleeping one
+  (`driver_busy_percent=0 driver_verdict=NOT-SPINNING`).
+- a **bounded MiniDump** via `rundll32 comsvcs.dll` — skipped when the working
+  set exceeds `DumpMaxWorkingSetMb` (a full dump of the 8.3 GB process this was
+  written for would be 8.3 GB), time-bounded at 120 s, and written to
+  `$env:TEMP` and **never** to the shipped evidence directory. Only its path
+  and size are recorded, so it must be read inside the VM before teardown.
+
 ## Known harness quirk: the Aug-19 reference run's `completion` check
 
 The PASS fixture used in `tests/gate_a/fixtures/pass-2026-08-19/` is a
