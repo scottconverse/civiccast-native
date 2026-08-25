@@ -345,7 +345,7 @@ rows:
     # TranscodeJob, AssetReadiness, WatchFolderConfig, AssetRetentionPolicy,
     # ReplaceMediaWorkflow. None of those existed on disk (no model class,
     # no migration past 0075) despite this status: built. Real S7 build
-    # (feat/s7-media-lifecycle) lands migration 0077_media_lifecycle
+    # (feat/s7-media-lifecycle) lands migration 0079_media_lifecycle
     # (renumbered from the branch's original 0076 slot when S14 reached
     # main first and claimed 0076; re-chained a second time onto
     # 0078_agenda_item_confidence when that migration also merged to main
@@ -357,7 +357,7 @@ rows:
     # archive-complete) and adds asset-level legal holds that block
     # retention expiry.
     evidence:
-      migrations: [0077_media_lifecycle]
+      migrations: [0079_media_lifecycle]
       modules:
         - civiccast/live/finalization.py
         - civiccast/schedule/router.py

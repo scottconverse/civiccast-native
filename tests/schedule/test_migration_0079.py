@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 
 _PARENT_REVISION = "0078_agenda_item_confidence"
-_REVISION = "0077_media_lifecycle"
+_REVISION = "0079_media_lifecycle"
 
 _NEW_TABLES = (
     "media_ingest_jobs",

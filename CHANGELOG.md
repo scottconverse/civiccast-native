@@ -89,7 +89,7 @@ came across and what deliberately did not.
   (`MediaIngestJob`, `TranscodeJob`, `AssetReadiness`, `WatchFolderConfig`,
   `AssetRetentionPolicy`) plus `AssetArchiveProof` and an append-only
   `media_lifecycle_audit_log` land in one migration
-  (`0077_media_lifecycle`, chained after PR #21's `0078_agenda_item_confidence`
+  (`0079_media_lifecycle`, chained after PR #21's `0078_agenda_item_confidence`
   — renumbered from an original chain onto S14's `0076_analytics_viewership`
   when `0078` merged to `main` ahead of this branch),
   backed by `civiccast/schedule/
