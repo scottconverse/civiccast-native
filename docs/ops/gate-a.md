@@ -329,6 +329,8 @@ different conditions. `scripts/gate_a_verdict.py` turns that marker into
 | Same again, **explicit override** | `.github/workflows/gate-a-station-acceptance.yml` | 170 |
 | Host quiet-share bound | `Host-Launch-Sandbox-Test.ps1 -QuietShareMinutes` | 15 |
 | In-sandbox staleness bound | watchdog `-StallMinutes` | 8 |
+| Shipper tick | `In-Sandbox-Report.ps1 -ShipIntervalSeconds` | 25 |
+| Shipper tick while the installer runs | `In-Sandbox-Report.ps1 -ShipQuiesceIntervalSeconds` | 300 |
 
 The poll deadline is **one setting written in three places**, and the CI
 workflow's explicit argument is the one that actually governs every gate run
@@ -358,6 +360,143 @@ problem. What has changed is the blast radius: a wedge there is now bounded
 by the staleness watchdog (8 minutes) and the host quiet-share detector (15
 minutes) instead of running silently to the whole-script deadline, and it
 reports as a stall or a harness error rather than as 47 minutes of nothing.
+
+## Run 7: what the shipper cost the installer
+
+Run 7 (`5ac447c`, the first Gate A run on the shipper architecture above)
+failed at `d4-activate-station` with *"a signed station bundle
+(station-index.json and its packs) was not found at
+`C:\CivicCastPayload\station`"* — after the same step had succeeded on the
+same staged kit in run 6.
+
+### The measurement
+
+Every mapped folder in the VM — `C:\CivicCastPayload` (the ~21 GB kit the
+installer reads), `C:\CivicCastHostStore` (the ~12 GB it writes), and
+`C:\CivicCastOutput` (the shipper's destination) — rides **one** Windows
+Sandbox VSMB transport. Comparing the installer's own `install-progress.log`
+across four runs, three of them pre-shipper:
+
+| Installer step | run3 | run4 | run6 | run7 (shipper) |
+|---|---|---|---|---|
+| `vc-redist` (CPU/local-disk bound) | 4m04 | 4m04 | 4m04 | **4m05** |
+| `d4-provision` (local) | 25s | 25s | 28s | **28s** |
+| `stage-packs` (reads Payload) | 6m39 | 6m47 | 7m21 | **11m26** |
+| `d2-verify-server-binaries` | 6s | 5s | 5s | **21s** |
+| `d2-verify-app-payload` | 1m09 | 1m14 | 1m19 | **3m16** |
+| `d4-activate-station` | 14m13 ✓ | 14m37 ✓ | 15m44 ✓ | **35m09 ✗ (67)** |
+
+The two steps that do not cross VSMB are flat to the second across all four
+runs. Every step that does is 1.6–4.2× slower in run 7 alone. The one thing
+running underneath run 7 that was not running underneath the other three is
+the shipper: a `robocopy` of the whole in-VM evidence tree into
+`C:\CivicCastOutput` every 25 seconds, for the entire 85-minute run.
+
+Confounds checked and excluded: the only self-hosted job on the box in that
+window was Gate A itself (the overlapping `ci-test`, `ci-a11y`,
+`deterministic-detectors` and `native-app-reproducibility` runs are all
+`ubuntu-latest` / `windows-latest`), and the run's own workflow log confirms
+the kit resolution was byte-identical to run 6's.
+
+**Stated honestly:** the correlation is strong and the controls are clean,
+but the mechanism — why ~40 small files of metadata traffic every 25 s
+should cost a bulk read stream on the same transport that much — is *not*
+proven here. What is proven is that the slowdown is real, is confined to
+VSMB-crossing work, and appeared with the shipper.
+
+### The fix: quiesce
+
+`In-Sandbox-Report.ps1` writes `_SHIPPER-QUIESCE.marker` before launching the
+installer and removes it in a `finally` afterwards. While that marker is
+live the shipper ticks every `-ShipQuiesceIntervalSeconds` (default 300)
+instead of 25. The marker carries its own `quiesce_until_utc` expiry, so a
+removal the driver never gets to perform degrades to *"shipping speeds back
+up"*, never to *"shipping silently stopped"*. 300 s stays far inside the
+host's 15-minute quiet-share bound — two full quiesced ticks fit with room
+to spare, which
+`tests/gate_a/test_gate_a_harness_contract.py` asserts — and the install
+phase produces almost no evidence to ship anyway.
+
+### What was NOT the cause
+
+The kit reaches the VM through two chained junctions
+(`kit-download` → `kit-staging/<sha>` → `C:\CivicCastTester\kit-staging\<sha>`),
+which is an obvious suspect and is **not** the answer: run 6 passed with the
+byte-identical two-hop chain, and both runs' workflow logs show the same
+`Reusing locally staged kit` and `kit-download -> …kit-staging\<sha>
+(junction)` lines. `git clean -ffdx` recursing through that junction and
+deleting the shared kit is likewise refuted — measured on this host, `git
+clean` removes the link and leaves every file behind the junction intact.
+
+Both `Host-Launch-Sandbox-Test.ps1` (every `<HostFolder>` in the rendered
+`.wsb`) and `Run-GateA.ps1` (the `kit-download` junction target) now resolve
+through reparse points to the physical directory regardless. That is
+hardening — one fewer hop for VSMB to traverse, and a `.wsb` that says what
+is actually being shared — not a fix for a proven defect. `Run-GateA.ps1`
+also now logs the station bundle's **file count and total bytes** before
+launching, because run 7's installer failed on *"station-index.json and its
+packs"* and the harness had only ever asserted that the index file existed.
+
+### The third finding: the finalization path, again
+
+Run 7 also stalled at `station-diag-captured-after-t3t5` — the same window as
+runs 4 and 6 — for the full 8-minute staleness bound. The watchdog fixed in
+the previous change caught it cleanly this time (`STALL-TIMEOUT.txt`,
+`stuck_progress=seq:15`, a clean fail-closed `DONE.json`), which is the
+first time that window has been bounded rather than silent.
+
+The blocking statement is still **not identified**, and it is worth being
+precise about why. Run 7 narrows it: the complete 6844-byte
+`install-progress.log` reached the host, so the `Copy-Item`'s handle closed
+and that statement completed. That leaves the `-Tail` read of the just-copied
+file and the `Save-Summary` after it — and measured on this host against run
+7's own file, `Get-Content -Tail 80` takes **8 ms**, and `Save-Summary` had
+already succeeded fifteen times. Also note that 8 minutes is the watchdog's
+*floor*: run 7 proves "≥8 min", where run 6 proved "≥47 min". They may not be
+the same failure.
+
+So rather than guess, this change does the two things that hold either way:
+
+- **Relocate.** The installer-breadcrumb capture now runs immediately after
+  the installer returns, out of the finalization path entirely. The
+  finalization call site remains only as a guarded second attempt that
+  no-ops when the first succeeded. The copy-then-re-read-with-`-Tail` shape
+  is gone: the source is read once, forward, into memory (with a 16 MB cap),
+  written out from memory, and the tail sliced in memory.
+- **Instrument.** Every statement in that path now records its own step
+  (`install-progress-probe-begin-*`, `-probed-*`, `-sized-*`, `-read-*`,
+  `-copied-*`, `-captured-*`, plus `event-log-query-begin`,
+  `final-diag-begin`, `final-diag-captured`). Three post-mortems in a row
+  have been unable to name the operation because there was no step between
+  the statements. The next one will name it.
+
+### Transcript recovery
+
+Run 7's `sandbox-transcript.log` reached the host as 686 bytes — the
+transcript header and nothing else — despite 150 failed station-up polls that
+should have logged a terminating error each.
+
+Reproduced on this host: a Windows PowerShell 5.1 child that logged 100+
+caught terminating errors still had a **689-byte header-only** transcript on
+disk, and it was *still* 689 bytes after the process was killed without
+reaching `Stop-Transcript`. The transcript writer buffers in user space. Any
+Gate A run that ends via the watchdog — which force-completes while the main
+script is still running, after which the host tears the VM down — therefore
+loses its entire transcript body.
+
+`Sync-Transcript` (`Stop-Transcript` + `Start-Transcript -Append`) now runs at
+three checkpoints: after the install, at the station-up verdict, and
+immediately before the finalization path. That forces the buffer out without
+paying a flush on every write.
+
+**For the record on the rest of that report:** run 7's evidence was *not*
+otherwise missing. The uploaded artifact carries 41 files including
+`summary.json` (6475 bytes), both `station-diag/after-station-up-wait/` and
+`station-diag/after-t3t5/` trees, and every `T*-RESULT` file. The absent
+`station-diag/*/logs/` subtrees are correct behaviour, not a shipper gap —
+both `_capture-note.txt` files record *"logs dir not present at
+C:\ProgramData\CivicCast\logs"*, because the install failed before the
+station ever logged anything.
 
 ## Known harness quirk: the Aug-19 reference run's `completion` check
 

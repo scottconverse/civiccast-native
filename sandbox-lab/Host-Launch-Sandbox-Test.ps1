@@ -113,15 +113,78 @@ if (-not (Test-Path $TemplatePath)) {
     exit 1
 }
 
+function Resolve-PhysicalPath {
+    <#
+      Walk a path through any reparse points (NTFS junctions / directory
+      symlinks) to the real directory behind it, and return that.
+
+      Why <gate-a-run7-findings>: Gate A's kit reaches the VM through TWO
+      chained junctions --
+        sandbox-lab\kit-download  ->  sandbox-lab\kit-staging\<sha>  ->  C:\CivicCastTester\kit-staging\<sha>
+      -- because Run-GateA.ps1 points kit-download at whatever -KitDir
+      resolved to, and the workflow's "reuse a locally pre-staged kit" step
+      had already made THAT a junction. `Resolve-Path` does not follow
+      reparse points, so the .wsb ends up asking Windows Sandbox to share a
+      junction whose target is itself a junction.
+
+      To be clear about what this is and is not: this is NOT the proven
+      cause of run7's missing station bundle. Run6 passed with the byte-
+      identical two-hop chain (its own workflow log shows the same "Reusing
+      locally staged kit" and the same "kit-download -> ...kit-staging\<sha>
+      (junction)" lines), so the chain cannot by itself explain run7. It is
+      hardening: handing VSMB the physical directory removes a reparse hop
+      it has no reason to be asked to traverse, and it makes the .wsb say
+      what is actually being shared.
+    #>
+    param([string]$Path, [int]$MaxHops = 8)
+    $current = $Path
+    for ($hop = 0; $hop -lt $MaxHops; $hop++) {
+        $item = $null
+        try { $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop } catch { break }
+        if (-not $item.LinkType) { break }
+        $target = @($item.Target) | Select-Object -First 1
+        if (-not $target) { break }
+        if (-not [System.IO.Path]::IsPathRooted($target)) {
+            $target = Join-Path (Split-Path -Parent $current) $target
+        }
+        $current = $target
+    }
+    try { return (Get-Item -LiteralPath $current -Force -ErrorAction Stop).FullName } catch { return $current }
+}
+
 # 0. Render the .wsb from the template. Windows Sandbox's MappedFolder
 #    HostFolder elements must be absolute host paths -- they cannot be
 #    relative to the .wsb file's own location -- so this file is regenerated
 #    on every launch against the resolved $Root rather than checked in as a
 #    static file with a stale developer-machine path baked in.
+#
+#    Every HostFolder is additionally resolved through any reparse points to
+#    the PHYSICAL directory before it is written into the .wsb -- see
+#    Resolve-PhysicalPath above for what that fixes and, just as important,
+#    what it does not.
 $templateContent = Get-Content -Path $TemplatePath -Raw
 $rendered = $templateContent.Replace('{{ROOT}}', $Root)
+# Explicit match loop rather than a MatchEvaluator scriptblock: Windows
+# PowerShell 5.1's scriptblock-to-delegate conversion is not something this
+# harness should depend on, and the substitution is trivial to do by hand.
+$mappedRx = [regex]'(?s)<HostFolder>\s*(.*?)\s*</HostFolder>'
+$resolutionNotes = New-Object System.Collections.Generic.List[string]
+$declaredPaths = @($mappedRx.Matches($rendered) | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+foreach ($declared in $declaredPaths) {
+    $physical = Resolve-PhysicalPath -Path $declared
+    if ($physical -ne $declared) {
+        $resolutionNotes.Add("$declared  ->  $physical")
+        $rendered = $rendered.Replace("<HostFolder>$declared</HostFolder>", "<HostFolder>$physical</HostFolder>")
+    }
+}
 Set-Content -Path $WsbPath -Value $rendered -Encoding UTF8
 Write-Host "Rendered $WsbPath from template (Root=$Root)"
+if ($resolutionNotes.Count -gt 0) {
+    Write-Host "Resolved $($resolutionNotes.Count) MappedFolder path(s) through reparse points before mapping:"
+    foreach ($note in $resolutionNotes) { Write-Host "  $note" }
+} else {
+    Write-Host "No MappedFolder HostFolder path needed reparse-point resolution."
+}
 
 # 1. Stamp a clean output dir so a stale DONE.marker from a previous run can
 #    never be mistaken for this run's completion.

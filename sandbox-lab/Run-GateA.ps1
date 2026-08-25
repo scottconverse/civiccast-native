@@ -223,11 +223,50 @@ if (-not $stationIndex) {
 }
 Write-Step "Kit validated: installer=$($installerExe.Name), station bundle=$($stationIndex.Directory.FullName)"
 
+# Count what is actually in the station bundle directory, not just that a
+# station-index.json exists somewhere under the kit <gate-a-run7-findings>.
+# Run7's installer failed with "a signed station bundle (station-index.json
+# and ITS PACKS) was not found", and this script's only pre-launch assertion
+# was the index file's existence -- so the log it left behind cannot answer
+# whether the packs beside it were present. It can now.
+$stationDir = $stationIndex.Directory.FullName
+$stationFiles = @(Get-ChildItem -Path $stationDir -File -ErrorAction SilentlyContinue)
+$stationBytes = ($stationFiles | Measure-Object -Property Length -Sum).Sum
+if (-not $stationBytes) { $stationBytes = 0 }
+Write-Step ("Station bundle inventory: {0} file(s), {1:N1} GB, at {2}" -f $stationFiles.Count, ($stationBytes / 1GB), $stationDir)
+Write-Step ("Station bundle names: " + (($stationFiles | Select-Object -First 12 | ForEach-Object { $_.Name }) -join ', '))
+
 # --------------------------------------------------------------------------
 # 3. Point kit-download\ at the resolved kit via a directory junction --
 #    never a copy. Reset it first so a stale junction from a prior run can
 #    never silently point at the wrong kit.
+#
+#    <gate-a-run7-findings>: point it at the PHYSICAL directory, not at
+#    whatever -KitDir happened to be. `Resolve-Path` above does not follow
+#    reparse points, and the workflow's "reuse a locally pre-staged kit" step
+#    makes sandbox-lab/kit-staging/<sha> a junction to
+#    C:\CivicCastTester\kit-staging\<sha> -- so without this, kit-download is
+#    a junction whose target is another junction, and that two-hop chain is
+#    what gets handed to Windows Sandbox's VSMB. This is hardening, not the
+#    proven cause of run7's missing station bundle: run6 passed with the
+#    byte-identical two-hop chain. See docs/ops/gate-a.md.
 # --------------------------------------------------------------------------
+
+$kitPhysicalDir = $kitSourceDir
+$hops = 0
+while ($hops -lt 8) {
+    $probe = $null
+    try { $probe = Get-Item -LiteralPath $kitPhysicalDir -Force -ErrorAction Stop } catch { break }
+    if (-not $probe.LinkType) { break }
+    $next = @($probe.Target) | Select-Object -First 1
+    if (-not $next) { break }
+    if (-not [System.IO.Path]::IsPathRooted($next)) { $next = Join-Path (Split-Path -Parent $kitPhysicalDir) $next }
+    $kitPhysicalDir = $next
+    $hops++
+}
+if ($kitPhysicalDir -ne $kitSourceDir) {
+    Write-Step "Kit path resolved through $hops reparse point(s): $kitSourceDir -> $kitPhysicalDir"
+}
 
 $kitDownload = Join-Path $Root 'kit-download'
 if (Test-Path $kitDownload) {
@@ -239,8 +278,8 @@ if (Test-Path $kitDownload) {
         Remove-Item -Path $kitDownload -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
-New-Item -ItemType Junction -Path $kitDownload -Target $kitSourceDir | Out-Null
-Write-Step "kit-download -> $kitSourceDir (junction)"
+New-Item -ItemType Junction -Path $kitDownload -Target $kitPhysicalDir | Out-Null
+Write-Step "kit-download -> $kitPhysicalDir (junction, physical target)"
 
 # --------------------------------------------------------------------------
 # 4. Reset hoststore\ -- every gate run is a fresh install.

@@ -88,7 +88,12 @@
 #     error with its own marker rather than waiting out the full timeout.
 param(
     [int]$MaxScriptMinutes = 150,
-    [int]$ShipIntervalSeconds = 25
+    [int]$ShipIntervalSeconds = 25,
+    # Shipper tick interval WHILE the installer is moving tens of GB across
+    # the other mapped folders -- see the QUIESCE note above the shipper.
+    # Must stay well under Host-Launch-Sandbox-Test.ps1's -QuietShareMinutes
+    # (15) or a healthy quiesced run would look like a dead channel.
+    [int]$ShipQuiesceIntervalSeconds = 300
 )
 
 $ErrorActionPreference = 'Continue'
@@ -158,6 +163,44 @@ function Write-Marker {
 Write-Marker -Name '_STARTED.marker' -Content "Started $RunStart"
 Write-Marker -Name '_LOCALOUT.marker' -Content "local_out_dir=$OutDir ship_dir=$ShipDir seed_completed=$($script:SeedResult.completed) seed_error=$($script:SeedResult.error)"
 
+# Quiesce control <gate-a-run7-findings>. Raised around the installer so the
+# shipper stops competing with it for the shared VSMB transport; see the
+# QUIESCE note above the shipper for the measured cost of not doing this.
+# Both helpers are LOCAL-only writes and neither can throw past its boundary
+# -- failing to quiesce must never be able to fail a run.
+function Enter-ShipperQuiesce {
+    param([string]$Reason, [int]$MaxMinutes = 90)
+    try {
+        $until = (Get-Date).ToUniversalTime().AddMinutes([Math]::Max(1, $MaxMinutes)).ToString('o')
+        Write-Marker -Name '_SHIPPER-QUIESCE.marker' -Content "quiesce_until_utc=$until reason=$Reason raised_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+    } catch {}
+}
+function Exit-ShipperQuiesce {
+    try {
+        $p = Join-Path $OutDir '_SHIPPER-QUIESCE.marker'
+        if (Test-Path $p) { Remove-Item -Path $p -Force -ErrorAction SilentlyContinue }
+    } catch {}
+}
+
+# Transcript flushing <gate-a-run7-findings>. Windows PowerShell 5.1's
+# transcript writer buffers in user space and does NOT flush as it goes:
+# measured on this host, a child that logged 100+ caught terminating errors
+# still had a 689-byte header-only transcript on disk, and it was STILL
+# 689 bytes after the process was killed without reaching Stop-Transcript.
+# That is exactly run7's 686-byte transcript. Every Gate A run that ends via
+# the watchdog (which force-completes while the main script is still
+# running, after which the host tears the VM down) therefore loses its
+# entire transcript body. Stop/Start -Append at a few checkpoints forces the
+# buffer out without the cost of flushing on every write.
+function Sync-Transcript {
+    param([string]$Checkpoint)
+    try {
+        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+        Start-Transcript -Path (Join-Path $OutDir 'sandbox-transcript.log') -Append -ErrorAction SilentlyContinue | Out-Null
+        Add-Content -Path (Join-Path $OutDir 'sandbox-transcript.log') -Value "# transcript flushed at checkpoint: $Checkpoint $((Get-Date).ToUniversalTime().ToString('o'))" -ErrorAction SilentlyContinue
+    } catch {}
+}
+
 # --------------------------------------------------------------------------
 # The SHIPPER: the only thing in this run that writes to the mapped folder.
 #
@@ -178,6 +221,30 @@ Write-Marker -Name '_LOCALOUT.marker' -Content "local_out_dir=$OutDir ship_dir=$
 # run is inside a quiet stretch (the T5 soak only advances a step every
 # 5 minutes). Host-Launch-Sandbox-Test.ps1's quiet-share detector reads
 # exactly that liveness.
+#
+# QUIESCE <gate-a-run7-findings>. Every mapped folder in this VM --
+# C:\CivicCastPayload (the ~21 GB kit the installer reads),
+# C:\CivicCastHostStore (the install target it writes), and
+# C:\CivicCastOutput (this shipper's destination) -- rides the same Windows
+# Sandbox VSMB transport. Run7 measured what a 25-second tick costs the
+# other two while the installer is moving tens of GB across them. Against
+# three pre-shipper runs whose CPU/local-disk-bound steps are flat to the
+# second (vc-redist 4m04/4m04/4m04 -> 4m05; d4-provision 25s/25s/28s ->
+# 28s), every VSMB-crossing installer step in run7 slowed down:
+#
+#   stage-packs                6m39 / 6m47 / 7m21  ->  11m26   (1.6x)
+#   d2-verify-server-binaries     6s /    5s /  5s  ->     21s   (4.2x)
+#   d2-verify-app-payload      1m09 / 1m14 / 1m19  ->   3m16   (2.5x)
+#   d4-activate-station       14m13 /14m37 /15m44  ->  35m09   (2.2x, then FAILED)
+#
+# So while the installer runs, the shipper drops to $QuiesceIntervalSeconds
+# (default 300). The driver writes _SHIPPER-QUIESCE.marker before launching
+# the installer and removes it after. The marker carries its own expiry so a
+# lost removal degrades to "back to the fast tick", never to "shipping
+# silently stopped for the rest of the run". 300s still sits far inside
+# Host-Launch-Sandbox-Test.ps1's 15-minute quiet-share bound, so liveness is
+# preserved throughout -- and the install phase produces almost no evidence
+# to ship anyway (markers and INSTALL-RESULT.txt, nothing more).
 #
 # The mirror is ADDITIVE (robocopy /E, never /MIR): the host owns files in
 # that folder too (.gitkeep, _HOST_LAUNCHED.marker, SOAK_MINUTES.txt, and
@@ -247,9 +314,27 @@ try {
     Set-Content -Path $script:ShipTickPath -Value $shipTickScript -Encoding UTF8
 
     $shipperScript = @'
-param([string]$LocalDir, [string]$ShipDir, [string]$TickScript, [int]$IntervalSeconds, [int]$MaxMinutes)
+param([string]$LocalDir, [string]$ShipDir, [string]$TickScript, [int]$IntervalSeconds, [int]$MaxMinutes, [int]$QuiesceIntervalSeconds = 300)
 
 $donePath = Join-Path $LocalDir 'DONE.json'
+$quiescePath = Join-Path $LocalDir '_SHIPPER-QUIESCE.marker'
+
+function Get-EffectiveInterval {
+    param([string]$QuiescePath, [int]$Fast, [int]$Slow)
+    # Quiesce ONLY while the marker exists AND its own stated expiry is still
+    # in the future. A marker the driver failed to remove (crash, wedge, kill)
+    # therefore stops mattering on its own -- the failure mode is "shipping
+    # speeds back up", never "shipping stays throttled for the rest of the run".
+    try {
+        if (-not (Test-Path $QuiescePath)) { return $Fast }
+        $raw = Get-Content -Path $QuiescePath -Raw -Encoding UTF8 -ErrorAction Stop
+        $m = [regex]::Match($raw, 'quiesce_until_utc=(\S+)')
+        if (-not $m.Success) { return $Fast }
+        $until = [datetime]::Parse($m.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+        if ((Get-Date).ToUniversalTime() -lt $until.ToUniversalTime()) { return $Slow }
+    } catch {}
+    return $Fast
+}
 # Written LOCALLY by each tick child once its robocopy has returned. The
 # supervisor reads only local paths -- it never touches $ShipDir itself.
 $receiptPath = Join-Path $LocalDir '_SHIPPER-LASTOK.txt'
@@ -269,12 +354,19 @@ function Start-Tick {
 }
 
 while ((Get-Date) -lt $deadline) {
+    # Re-read every loop: the driver raises and clears the quiesce marker
+    # while this supervisor is running.
+    $effectiveInterval = Get-EffectiveInterval -QuiescePath $quiescePath -Fast $IntervalSeconds -Slow $QuiesceIntervalSeconds
+
     $skip = $false
     if ($child -ne $null) {
         $running = $false
         try { $running = -not $child.HasExited } catch { $running = $false }
         if ($running) {
             $ageSeconds = ((Get-Date) - $childStart).TotalSeconds
+            # Stale-child bound stays keyed to the FAST interval even while
+            # quiesced: a wedged tick must be replaced on the same schedule
+            # regardless of how often new ticks are being started.
             if ($ageSeconds -ge ($IntervalSeconds * 3)) {
                 # Presumed wedged on the share. Kill it and replace it --
                 # a fresh process gets fresh handles.
@@ -316,7 +408,21 @@ while ((Get-Date) -lt $deadline) {
         if ($delivered -or $ticksSinceDone -ge 8) { break }
     }
 
+    # Sleep the FAST interval regardless, but only start a tick once the
+    # effective interval has elapsed. Polling the quiesce marker on the fast
+    # cadence is what lets the driver un-quiesce promptly the moment the
+    # installer returns, instead of the shipper staying slow for up to
+    # another full 5 minutes.
     Start-Sleep -Seconds $IntervalSeconds
+    if ($effectiveInterval -gt $IntervalSeconds) {
+        $waited = $IntervalSeconds
+        while ($waited -lt $effectiveInterval) {
+            if ((Get-EffectiveInterval -QuiescePath $quiescePath -Fast $IntervalSeconds -Slow $QuiesceIntervalSeconds) -le $IntervalSeconds) { break }
+            if (Test-Path $donePath) { break }
+            Start-Sleep -Seconds $IntervalSeconds
+            $waited += $IntervalSeconds
+        }
+    }
 }
 '@
     $shipperPath = Join-Path $env:TEMP 'civiccast-gate-a-shipper.ps1'
@@ -325,9 +431,10 @@ while ((Get-Date) -lt $deadline) {
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$shipperPath`"",
         '-LocalDir', "`"$OutDir`"", '-ShipDir', "`"$ShipDir`"",
         '-TickScript', "`"$($script:ShipTickPath)`"",
-        '-IntervalSeconds', $ShipIntervalSeconds, '-MaxMinutes', $MaxScriptMinutes
+        '-IntervalSeconds', $ShipIntervalSeconds, '-MaxMinutes', $MaxScriptMinutes,
+        '-QuiesceIntervalSeconds', $ShipQuiesceIntervalSeconds
     ) -WindowStyle Hidden | Out-Null
-    Write-Marker -Name '_SHIPPER_SPAWNED.marker' -Content "ship_dir=$ShipDir interval_seconds=$ShipIntervalSeconds started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+    Write-Marker -Name '_SHIPPER_SPAWNED.marker' -Content "ship_dir=$ShipDir interval_seconds=$ShipIntervalSeconds quiesce_interval_seconds=$ShipQuiesceIntervalSeconds started_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
 } catch {
     Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "shipper spawn failed (FATAL to evidence delivery, but the run continues so the local evidence still exists in the VM): $_"
 }
@@ -414,8 +521,10 @@ function Test-PostRuntimeVerdictStep {
     if ($Step -like 'station-diag-captured-*') { return $true }
     if ($Step -eq 'station-up-wait') { return $true }
     if ($Step -eq 'runtime-ui-captured') { return $true }
-    if ($Step -eq 'install-progress-log-copied') { return $true }
-    if ($Step -eq 'event-log-checked') { return $true }
+    if ($Step -like 'install-progress*') { return $true }
+    if ($Step -like 'transcript-flushed*') { return $true }
+    if ($Step -like 'event-log-*') { return $true }
+    if ($Step -like 'final-diag-*') { return $true }
     if ($Step -eq 'finally-block') { return $true }
     return $false
 }
@@ -528,6 +637,7 @@ $summary = [ordered]@{
     service_sc_qc_raw         = $null
     service_start_attempt     = $null
     install_progress_log_found = $false
+    install_progress_log_bytes = $null
     install_progress_log_tail  = @()
     installer_nsis_log_found   = $false
     event_log_errors           = @()
@@ -562,6 +672,84 @@ function Save-Summary {
         # Writing the summary itself must never throw and abort the run.
         try { Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "step=$Step : $_" } catch {}
     }
+}
+
+# Installer-breadcrumb capture <gate-a-run7-findings>.
+#
+# This used to be four bare statements in the finalization block, between
+# Save-Summary 'station-diag-captured-after-t3t5' and Save-Summary
+# 'install-progress-log-copied'. Runs 4, 6 and 7 all stopped advancing
+# inside exactly that window, and because the two Save-Summary calls were
+# the only instrumentation, all three post-mortems can localise the stall to
+# a WINDOW and none of them can name the statement. Run7 narrows it further
+# but still not to one op: the complete 6844-byte copy reached the host, so
+# the Copy-Item's handle closed, which leaves the tail read and the step
+# write -- and on this host, against run7's own file, both measure in single
+# -digit milliseconds.
+#
+# Two changes, both of which stand regardless of which op it turns out to be:
+#   (1) RELOCATE: the primary call site is now right after the installer
+#       returns, out of the finalization path entirely.
+#   (2) INSTRUMENT: every statement gets its own step, so the next
+#       occurrence names the operation instead of a window. That is the
+#       instrument the three previous post-mortems did not have.
+#
+# Also: ONE forward read replaces the old copy-then-re-read-with-Tail. The
+# old shape wrote the file and immediately read it back on the Sandbox's
+# virtualized/differencing C:, which this file's own 2026-08-17 note already
+# flags as a place where ordinary operations can take minutes. Reading the
+# source once into memory, writing it out, and slicing the tail in memory
+# removes the read-after-write entirely.
+$script:InstallProgressCaptured = $false
+function Invoke-InstallProgressCapture {
+    param([string]$Phase)
+    if ($script:InstallProgressCaptured) {
+        Save-Summary -Step "install-progress-already-captured-$Phase"
+        return
+    }
+    $progressLog = Join-Path $env:ProgramData 'CivicCast\install-progress.log'
+    $progressLogCopy = Join-Path $OutDir 'install-progress.log'
+
+    Save-Summary -Step "install-progress-probe-begin-$Phase"
+    $present = $false
+    try { $present = Test-Path $progressLog } catch { $summary.errors += "install-progress probe failed ($Phase): $_" }
+    Save-Summary -Step "install-progress-probed-$Phase"
+    if (-not $present) { return }
+
+    $summary.install_progress_log_found = $true
+
+    # Size guard: this log is ~7 KB in every run observed so far, but a
+    # runaway installer must not turn a diagnostic read into an unbounded
+    # one. Above the cap, record the fact and skip rather than read.
+    $sizeBytes = -1
+    try { $sizeBytes = (Get-Item -LiteralPath $progressLog -Force).Length } catch {}
+    $summary.install_progress_log_bytes = $sizeBytes
+    Save-Summary -Step "install-progress-sized-$Phase"
+    if ($sizeBytes -gt 16MB) {
+        $summary.errors += "install-progress.log is $sizeBytes bytes (> 16MB cap) -- not read into summary ($Phase)"
+        return
+    }
+
+    $lines = @()
+    try {
+        $lines = @(Get-Content -LiteralPath $progressLog -ErrorAction Stop)
+    } catch {
+        $summary.errors += "install-progress read failed ($Phase): $_"
+        Save-Summary -Step "install-progress-read-failed-$Phase"
+        return
+    }
+    Save-Summary -Step "install-progress-read-$Phase"
+
+    try {
+        Set-Content -Path $progressLogCopy -Value $lines -Encoding UTF8
+    } catch {
+        $summary.errors += "install-progress copy failed ($Phase): $_"
+    }
+    Save-Summary -Step "install-progress-copied-$Phase"
+
+    $summary.install_progress_log_tail = @($lines | Select-Object -Last 80)
+    $script:InstallProgressCaptured = $true
+    Save-Summary -Step "install-progress-captured-$Phase"
 }
 
 # (b) Bounded, targeted marker-file lookup -- replaces the old
@@ -1161,12 +1349,23 @@ try {
         # and unquoted (NSIS quirk); the path has no spaces so this is clean.
         $summary.silent_flag_used = '/S /D=C:\CivicCastHostStore\install'
         Write-Marker -Name '_BEFORE_INSTALL.marker' -Content (Get-Date).ToString('o')
+        # QUIESCE the shipper for the duration of the install. The installer
+        # reads ~21 GB from C:\CivicCastPayload and writes ~12 GB to
+        # C:\CivicCastHostStore, both over the same VSMB transport the
+        # shipper's destination rides; run7 measured 1.6-4.2x slowdowns on
+        # exactly those steps with a 25s tick running underneath. Nothing of
+        # value is written locally during the install anyway.
+        Enter-ShipperQuiesce -Reason 'installer-running' -MaxMinutes 90
         try {
             $proc = Start-Process -FilePath $exe.FullName -ArgumentList '/S /D=C:\CivicCastHostStore\install' -PassThru -Wait -WindowStyle Hidden
             $summary.installer_exit_code = $proc.ExitCode
         } catch {
             $summary.installer_launch_error = "$_"
             $summary.errors += "installer launch/wait failed: $_"
+        } finally {
+            # Un-quiesce on EVERY path out of the install, including a throw.
+            # The marker's own expiry is the second layer, not the first.
+            Exit-ShipperQuiesce
         }
         Write-Marker -Name '_AFTER_INSTALL.marker' -Content (Get-Date).ToString('o')
         # station_boot_seconds (station-up-wait, below) is measured from this
@@ -1174,6 +1373,20 @@ try {
         # re-parsing the marker file back off disk later.
         $script:AfterInstallTime = Get-Date
         Save-Summary -Step 'installer-ran'
+
+        # CAPTURE THE INSTALLER BREADCRUMB HERE <gate-a-run7-findings>, not in
+        # the finalization block at the end of the run. Runs 4, 6 and 7 all
+        # went dark in the few statements after
+        # 'station-diag-captured-after-t3t5', which is where this capture used
+        # to live; run7 got as far as writing the copy (the complete 6844-byte
+        # file reached the host, so its handle closed) and never recorded the
+        # step after it. Doing the capture now -- while the file is freshly
+        # written, the run is not in its finalization path, and the shipper is
+        # still quiesced -- removes it from that window entirely. The
+        # finalization block keeps a guarded second attempt for the case where
+        # the installer wrote the log after this point.
+        Invoke-InstallProgressCapture -Phase 'post-install'
+        Sync-Transcript -Checkpoint 'post-install'
 
         # Give any late-writing child processes (service self-registration, log
         # flush) a short, BOUNDED grace window before we start reading state.
@@ -1464,6 +1677,13 @@ try {
     # the staleness bound never fired). Written AFTER the station-up verdict
     # so it covers both the station-up and station-down paths.
     Write-Marker -Name '_VERDICT-STAGE.marker' -Content "armed_utc=$((Get-Date).ToUniversalTime().ToString('o')) station_up=$($summary.station_up) step_seq=$($summary.step_seq)"
+
+    # Flush the transcript here <gate-a-run7-findings>: the 20-minute
+    # station-up wait is the single biggest producer of transcript content on
+    # a failing run (one caught terminating error per 6s poll), and a run that
+    # ends via the watchdog never reaches Stop-Transcript to flush it. run7
+    # lost all 150 polls' worth this way.
+    Sync-Transcript -Checkpoint 'station-up-verdict'
 
     # ---- operator_console / resident_portal: ONLY after health=200, short 60s bound each ----
     foreach ($name in @('operator_console', 'resident_portal')) {
@@ -2161,29 +2381,24 @@ try {
         "station diag capture (after-t3t5) failed: $_" | Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Encoding UTF8
     }
     Save-Summary -Step 'station-diag-captured-after-t3t5'
+    # Last flush before the finalization path -- the exact path all three
+    # observed stalls died in. Whatever the run recorded up to here survives
+    # even if nothing below this line ever completes.
+    Sync-Transcript -Checkpoint 'pre-finalization'
+    Save-Summary -Step 'transcript-flushed-pre-finalization'
 
     # 6. Installer logs: install-progress.log (the nsh's own breadcrumb log,
-    #    always at $COMMONPROGRAMDATA\CivicCast\install-progress.log) plus any
-    #    NSIS log if one exists.
-    #    HARDENED <gate-a-station-up-wait-and-log-capture> follow-up
-    #    (8579e66-run4 evidence): this was the EXACT spot run #4 stalled --
-    #    'station-diag-captured-after-t3t5' was the last step Save-Summary
-    #    ever recorded, and 'install-progress-log-copied' never arrived.
-    #    That follow-up redirected the -Tail read at the just-written copy
-    #    in $OutDir instead of re-reading %ProgramData% a second time; run6
-    #    (f31618f) then stalled at the identical statement window anyway,
-    #    which retired the "one slow source read" theory. What the two runs
-    #    actually shared was the Copy-Item ONTO AN EXISTING FILE in the
-    #    mapped folder. Under <gate-a-mapped-folder-stalls> $OutDir is a
-    #    local directory, so both the copy and the -Tail read now happen on
-    #    storage this VM owns and neither can wedge on the share.
-    $progressLog = Join-Path $env:ProgramData 'CivicCast\install-progress.log'
-    $progressLogCopy = Join-Path $OutDir 'install-progress.log'
-    if (Test-Path $progressLog) {
-        $summary.install_progress_log_found = $true
-        Copy-Item -Path $progressLog -Destination $progressLogCopy -Force
-        $summary.install_progress_log_tail = Get-Content -Path $progressLogCopy -Tail 80 -ErrorAction SilentlyContinue
-    }
+    #    always at $COMMONPROGRAMDATA\CivicCast\install-progress.log).
+    #    RELOCATED <gate-a-run7-findings>: the primary capture now happens
+    #    right after the installer returns (see Invoke-InstallProgressCapture
+    #    and its call site up there). Runs 4, 6 and 7 all went dark in the
+    #    handful of statements that used to live HERE, and the harness had no
+    #    step between them to say which one. This call is now only a guarded
+    #    second attempt -- it no-ops immediately if the post-install capture
+    #    already succeeded, which on a healthy run it always has -- and every
+    #    statement inside it records its own step, so a repeat names the
+    #    operation instead of a window.
+    Invoke-InstallProgressCapture -Phase 'finalization'
     Save-Summary -Step 'install-progress-log-copied'
 
     # 7. Windows Event Log errors/criticals during the run window (Application
@@ -2196,6 +2411,7 @@ try {
     #    real memory cost this VM does not reliably have to spare on top of
     #    the already-running PostgreSQL/NATS/pythonservice.exe stack. A direct
     #    call costs nothing extra and -MaxEvents keeps it from running long.
+    Save-Summary -Step 'event-log-query-begin'
     try {
         $events = Get-WinEvent -FilterHashtable @{
             LogName   = 'Application', 'System'
@@ -2224,11 +2440,15 @@ try {
     # regardless of pass/fail/exception. This is the one capture guaranteed
     # to run even if something above this `finally` threw before reaching
     # either of the two earlier capture points.
+    # Instrumented <gate-a-run7-findings>: a stall inside the final capture
+    # used to be indistinguishable from a stall in the statements before it.
+    try { Save-Summary -Step 'final-diag-begin' } catch {}
     try {
         Invoke-StationDiagCapture -OutDir $OutDir -InstallDir $installDir -Label 'final' -RunStart $RunStart
     } catch {
         try { "station diag capture (final) failed: $_" | Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Encoding UTF8 } catch {}
     }
+    try { Save-Summary -Step 'final-diag-captured' } catch {}
 
     $summary.run_end_utc = (Get-Date).ToUniversalTime().ToString('o')
     $summary.harness_completed = $true
