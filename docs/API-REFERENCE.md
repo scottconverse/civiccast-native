@@ -9170,6 +9170,9 @@ rule (S13 §5.1).
 - `enabled` (optional): `boolean`
 - `import_naming_pattern` (optional): `string | null`
 - `monitor_path` (required): `string`
+- `poll_interval_seconds` (optional): `number`
+- `processed_file_mode` (optional): `string`
+- `processed_subfolder_name` (optional): `string`
 - `retention_policy_default` (optional): `string | null`
 - `settle_window_seconds` (optional): `number`
 
@@ -9177,11 +9180,19 @@ rule (S13 §5.1).
 
 - `config_id` (required): `string`
 - `created_at` (required): `string`
+- `degraded_reason` (required): `string | null`
+- `degraded_since` (required): `string | null`
 - `enabled` (required): `boolean`
+- `health_status` (required): `string`
 - `import_naming_pattern` (required): `string | null`
+- `last_ingest_at` (required): `string | null`
+- `last_poll_at` (required): `string | null`
 - `last_scan_files_found` (required): `number`
 - `last_scanned_at` (required): `string | null`
 - `monitor_path` (required): `string`
+- `poll_interval_seconds` (required): `number`
+- `processed_file_mode` (required): `string`
+- `processed_subfolder_name` (required): `string`
 - `retention_policy_default` (required): `string | null`
 - `settle_window_seconds` (required): `number`
 - `updated_at` (required): `string`

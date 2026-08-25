@@ -356,8 +356,31 @@ rows:
     # archival non-negotiable (portal+IA+NAS verification before
     # archive-complete) and adds asset-level legal holds that block
     # retention expiry.
+    #
+    # Correction 2026-08-25: PR #19 (feat/s7-media-lifecycle) built the
+    # WatchFolderConfig data model + CRUD API + settings UI listed below but
+    # explicitly deferred the poll daemon itself -- spec §6 DONE criterion 9
+    # ("watch-folder hands-off; operator sees ingests") was NOT met by
+    # anything on disk despite the evidence list already including
+    # media_lifecycle_worker.py (that worker does readiness/transcode/
+    # archival-gate scanning, not watch-folder polling). feat/s7-watch-folder-
+    # daemon (migration 0080_watch_folder_daemon) is the daemon itself:
+    # WatchFolderWorker polls each enabled config's monitor_path (local/USB/
+    # NAS/SMB), detects new/changed files via the D13 settle-window check,
+    # ingests through the SAME upload/replace-source pipeline as an operator
+    # action (never a parallel pipeline), records provenance
+    # (MediaIngestJob.source_kind='watch_folder'), applies the operator's
+    # processed-file disposition, surfaces unreachable paths as a visible
+    # degraded state, and never deletes a source file (ADR 0024). This is
+    # Rung 1 evidence (unit + wiring tests, real-filesystem tmp-dir e2e
+    # coverage with real ffmpeg-generated video content, real alembic
+    # upgrade/downgrade) -- NOT a 24h unattended soak, NOT a real-NAS/SMB
+    # field test, and the spec paragraph's "asynchronous retry/backoff" and
+    # "CRC" wording are approximated (poll-paced retry, size verification
+    # rather than a full source-side hash) -- see the spec file's own build
+    # note at §6 item 2 and ADR 0024 for the exact gap.
     evidence:
-      migrations: [0079_media_lifecycle]
+      migrations: [0079_media_lifecycle, 0080_watch_folder_daemon]
       modules:
         - civiccast/live/finalization.py
         - civiccast/schedule/router.py
@@ -365,6 +388,7 @@ rows:
         - civiccast/schedule/media_lifecycle_worker.py
         - civiccast/schedule/media_lifecycle_store.py
         - civiccast/schedule/media_lifecycle_router.py
+        - civiccast/schedule/watch_folder_worker.py
         - civiccast/apps/portal-operator/src/screens/MediaLifecyclePanel.tsx
         - civiccast/apps/portal-operator/src/screens/MissingMediaScreen.tsx
         - civiccast/apps/portal-operator/src/screens/MediaLifecycleSettingsScreen.tsx

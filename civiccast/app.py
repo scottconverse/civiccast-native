@@ -357,6 +357,10 @@ from civiccast.schedule.store import (
     PostgresScheduleStore,
     ScheduleItemNotFoundError,
 )
+from civiccast.schedule.watch_folder_worker import (
+    WatchFolderWorker,
+    WatchFolderWorkerSettings,
+)
 from civiccast.stream.cdn import CDNAdapter
 from civiccast.stream.cdn.factory import CdnSettings, build_cdn_adapter
 from civiccast.stream.media_router import live_router as media_live_public_router
@@ -821,6 +825,16 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         session_factory, settings=media_lifecycle_settings
     )
     app.state.media_lifecycle_worker = media_lifecycle_worker
+    # S7 watch-folder poll daemon: PR #19 built the config CRUD/UI only and
+    # explicitly deferred this. Polls each enabled WatchFolderConfig's path
+    # (local/USB/NAS/SMB) on its own poll_interval_seconds, and ingests via
+    # the SAME upload/replace-source pipeline as an operator action -- never
+    # a parallel pipeline. See civiccast.schedule.watch_folder_worker's
+    # module docstring for the settle-window, degraded-state, and
+    # processed-file-disposition design (ADR 0024).
+    watch_folder_settings = WatchFolderWorkerSettings.from_env()
+    watch_folder_worker = WatchFolderWorker(session_factory, settings=watch_folder_settings)
+    app.state.watch_folder_worker = watch_folder_worker
     # Issue #111: failed subscriber webhook deliveries are re-driven from the
     # durable queue with backoff; the client is the config-selected provider
     # (mock by default), so the worker only ever sees real traffic when the
@@ -862,6 +876,12 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             run_forever=media_lifecycle_worker.run_forever,
             poll_seconds=media_lifecycle_settings.poll_seconds,
             enabled=media_lifecycle_settings.mode == "inline",
+        ),
+        ThreadSupervisor(
+            name="civiccast-watch-folder-worker",
+            run_forever=watch_folder_worker.run_forever,
+            poll_seconds=watch_folder_settings.poll_seconds,
+            enabled=watch_folder_settings.mode == "inline",
         ),
     ]
     # S14: fold raw viewership_events into pre-aggregated viewership_rollups

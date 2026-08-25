@@ -380,12 +380,22 @@ class MediaLifecycleStore:
         content_hash: str | None,
         thumbnail_path: str | None,
         archived_old_path: str | None,
-    ) -> None:
+        source_kind: str = "http_upload",
+    ) -> str:
         """Persist a replace-source outcome: point the asset at the new file.
 
-        The caller (the router) has already moved the old file aside and
-        validated the new one via ffprobe -- this method is DB-only, same
+        The caller (the router, or the watch-folder daemon's reprocess-on-
+        change path) has already validated the new file via ffprobe and
+        placed it at ``new_file_path`` -- this method is DB-only, same
         division of labor as ``upload_asset``/``PostgresAssetStore.ingest_upload``.
+
+        ``source_kind`` defaults to ``"http_upload"`` (the original,
+        operator-initiated replace-source flow); the watch-folder daemon
+        passes ``"watch_folder"`` so the resulting :class:`MediaIngestJob`'s
+        provenance reflects where the replacement file actually came from
+        (:data:`INGEST_SOURCE_WATCH_FOLDER`).
+
+        Returns the new :class:`MediaIngestJob`'s ``job_id``.
         """
 
         with self._session_factory() as session:
@@ -408,17 +418,16 @@ class MediaLifecycleStore:
             asset.state = "validated"
             asset.version += 1
 
-            session.add(
-                MediaIngestJob(
-                    asset_id=asset_id,
-                    source_kind="http_upload",
-                    source_path=new_file_path,
-                    status=JOB_STATUS_COMPLETED,
-                    progress_percent=100,
-                    started_at=datetime.now(UTC),
-                    completed_at=datetime.now(UTC),
-                )
+            job = MediaIngestJob(
+                asset_id=asset_id,
+                source_kind=source_kind,
+                source_path=new_file_path,
+                status=JOB_STATUS_COMPLETED,
+                progress_percent=100,
+                started_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
             )
+            session.add(job)
             # Drop stale transcode jobs + readiness so the next lifecycle
             # worker pass re-seeds transcodes and recomputes the badge for
             # the NEW file, not the one that was just archived.
@@ -436,7 +445,10 @@ class MediaLifecycleStore:
                     dry_run=False,
                 )
             )
+            session.flush()
+            job_id = job.job_id
             session.commit()
+            return job_id
 
     # -- Audit log -----------------------------------------------------------
 

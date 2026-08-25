@@ -170,6 +170,19 @@ Response: {
      upload_dir asynchronously with retry on transient SMB errors, verifies CRC/size, queues ingest
      (same path as upload workflow)
    - On ingest completion: asset appears in operator console
+   - **Build note (2026-08-25):** implemented at
+     `civiccast/schedule/watch_folder_worker.py` (`WatchFolderWorker`), migration
+     `0080_watch_folder_daemon`. This paragraph's "asynchronous with retry/backoff" wording and
+     its "CRC" wording are approximated, not implemented verbatim: the daemon's copy retry is
+     poll-interval-paced (a failed copy leaves the file's ledger row FAILED; since the source is
+     unchanged the very next poll re-attempts it) rather than sub-second exponential backoff
+     within a single pass, and post-copy verification checks size (cheap, catches the realistic
+     truncated-SMB-copy failure mode) rather than a full CRC/hash of the SMB-side source, which
+     would double read I/O over the network for every file. Processed-file disposition
+     (move-to-subfolder vs. leave-with-ledger), the per-config degraded/unreachable-path state,
+     and the delete-safety posture (never deletes the source file, either mode) were open
+     decisions this spec paragraph didn't resolve — see
+     `docs/adr/0024-watch-folder-daemon-processed-file-and-degraded-state.md`.
 
 ### Transcode on ingest
 
