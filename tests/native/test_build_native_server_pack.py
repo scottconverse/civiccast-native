@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -332,6 +333,166 @@ def test_acquire_refuses_a_lock_version_drift(
     monkeypatch.setattr(builder, "load_lock", _fake_load_lock)
     with pytest.raises(builder.ServerPackBuildError, match="drifted"):
         builder.acquire_server_pack_sources(tmp_path / "cache")
+
+
+# ---------------------------------------------------------------------------
+# Idempotent self-hosted cache: a persistent --cache must never trust a
+# stale/incomplete extraction just because the directory exists.
+# ---------------------------------------------------------------------------
+#
+# Candidate run 32845198987 (self-hosted) failed identically in BOTH
+# attempts with "pinned PostgreSQL initdb.exe is missing" from
+# civiccast-server-pack-cache\extracted\postgres\bin\initdb.exe. A
+# self-hosted runner's --cache persists across runs (a hosted runner is
+# always fresh); a previous run's extraction there had been interrupted,
+# leaving a directory that EXISTED but was missing files --
+# acquire_server_pack_sources()'s bare `destination.exists()` check trusted
+# it anyway and never re-extracted.
+
+
+def _fake_lock(_path: Path) -> dict:
+    return {
+        "artifacts": {
+            "postgres": {"version": builder.POSTGRES_VERSION, "strip_prefix": "pgsql"},
+            "tsduck": {"version": builder.TSDUCK_VERSION, "strip_prefix": "tsduck"},
+        }
+    }
+
+
+def test_acquire_reuses_a_complete_pre_existing_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing extraction that genuinely has every pinned file must
+    be reused as-is -- no wasted re-extraction on a valid self-hosted
+    cache hit."""
+    _postgres_root, _tsduck_root, pins = _make_fixture_roots(tmp_path / "fixture")
+    _patch_minimal_pins(monkeypatch, pins)
+    monkeypatch.setattr(builder, "load_lock", _fake_lock)
+    monkeypatch.setattr(
+        builder, "fetch_locked_artifact", lambda *a, **kw: tmp_path / "unused-archive.zip"
+    )
+    extract_calls: list[str] = []
+    monkeypatch.setattr(
+        builder,
+        "safe_extract_zip",
+        lambda *a, **kw: extract_calls.append("called"),
+    )
+
+    cache = tmp_path / "cache"
+    # Pre-populate a COMPLETE extraction directly at the destination
+    # acquire_server_pack_sources() would use -- the fixture roots already
+    # built above ARE a complete, pin-matching tree. Copied (not
+    # symlinked): Windows symlinks need elevated privileges the test
+    # sandbox may not have.
+    complete_postgres, complete_tsduck, _complete_pins = _make_fixture_roots(tmp_path / "cache2")
+    (cache / "extracted").mkdir(parents=True)
+    shutil.copytree(complete_postgres, cache / "extracted" / "postgres")
+    shutil.copytree(complete_tsduck, cache / "extracted" / "tsduck")
+
+    result = builder.acquire_server_pack_sources(cache)
+
+    assert extract_calls == [], "a complete pre-existing extraction must not be re-extracted"
+    assert result["postgres"] == cache / "extracted" / "postgres"
+    assert result["tsduck"] == cache / "extracted" / "tsduck"
+
+
+def test_acquire_re_extracts_an_incomplete_pre_existing_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact candidate-run-32845198987 shape: a previous run's
+    interrupted extraction left `cache/extracted/postgres` EXISTING but
+    missing initdb.exe. acquire_server_pack_sources() must detect the
+    incompleteness, clear it, and re-extract -- not silently hand back a
+    broken tree that only fails much later, deep inside the live bootstrap
+    proof."""
+    # A REAL valid tree (same helper the round-trip tests use) stands in
+    # for "what a genuine, successful extraction would produce" -- no
+    # hand-duplicated byte-pattern guessing that could silently drift from
+    # `_make_fixture_roots`'s own convention.
+    good_postgres, good_tsduck, pins = _make_fixture_roots(tmp_path / "fixture")
+    _patch_minimal_pins(monkeypatch, pins)
+    monkeypatch.setattr(builder, "load_lock", _fake_lock)
+    monkeypatch.setattr(
+        builder, "fetch_locked_artifact", lambda *a, **kw: tmp_path / "unused-archive.zip"
+    )
+
+    good_source_by_name = {"postgres": good_postgres, "tsduck": good_tsduck}
+    extract_calls: list[Path] = []
+
+    def _tracking_extract(_archive: Path, destination: Path, **_kw: object) -> None:
+        extract_calls.append(destination)
+        name = destination.name
+        shutil.copytree(good_source_by_name[name], destination, dirs_exist_ok=True)
+
+    monkeypatch.setattr(builder, "safe_extract_zip", _tracking_extract)
+
+    cache = tmp_path / "cache"
+    stale_postgres = cache / "extracted" / "postgres"
+    stale_postgres.mkdir(parents=True)
+    # Every pinned bin file EXCEPT initdb.exe -- exactly the observed
+    # shape: a directory that exists and looks populated, but is missing
+    # the one file the live bootstrap proof needed.
+    for filename in pins["bin"]:
+        if filename == "initdb.exe":
+            continue
+        (stale_postgres / "bin" / filename).parent.mkdir(parents=True, exist_ok=True)
+        (stale_postgres / "bin" / filename).write_bytes(b"stale")
+    assert not (stale_postgres / "bin" / "initdb.exe").exists()
+
+    result = builder.acquire_server_pack_sources(cache)
+
+    assert stale_postgres in extract_calls, "the incomplete tree must be re-extracted"
+    assert (stale_postgres / "bin" / "initdb.exe").is_file(), (
+        "re-extraction must actually land the previously-missing file"
+    )
+    # The re-extracted tree now genuinely validates.
+    builder._postgres_sources(result["postgres"])
+
+
+def test_acquire_extracts_fresh_when_nothing_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No pre-existing destination at all: the ordinary, unaffected
+    fresh-extraction path, unchanged by this fix."""
+    _postgres_root, _tsduck_root, pins = _make_fixture_roots(tmp_path / "fixture")
+    _patch_minimal_pins(monkeypatch, pins)
+    monkeypatch.setattr(builder, "load_lock", _fake_lock)
+    monkeypatch.setattr(
+        builder, "fetch_locked_artifact", lambda *a, **kw: tmp_path / "unused-archive.zip"
+    )
+    extract_calls: list[Path] = []
+    monkeypatch.setattr(
+        builder,
+        "safe_extract_zip",
+        lambda archive, destination, **kw: extract_calls.append(destination),
+    )
+
+    cache = tmp_path / "cache"
+    result = builder.acquire_server_pack_sources(cache)
+
+    assert extract_calls == [
+        cache / "extracted" / "postgres",
+        cache / "extracted" / "tsduck",
+    ]
+    assert result["postgres"] == cache / "extracted" / "postgres"
+
+
+def test_extracted_tree_is_complete_dispatches_per_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Direct unit coverage of the completeness check itself: a real valid
+    tree passes, a missing-file tree fails, for both artifact kinds."""
+    postgres_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
+    _patch_minimal_pins(monkeypatch, pins)
+
+    assert builder._extracted_tree_is_complete("postgres", postgres_root) is True
+    assert builder._extracted_tree_is_complete("tsduck", tsduck_root) is True
+
+    (postgres_root / "bin" / "initdb.exe").unlink()
+    assert builder._extracted_tree_is_complete("postgres", postgres_root) is False
+
+    (tsduck_root / "bin" / "tsp.exe").unlink()
+    assert builder._extracted_tree_is_complete("tsduck", tsduck_root) is False
 
 
 def test_development_signing_key_requires_explicit_nonrelease_switch() -> None:

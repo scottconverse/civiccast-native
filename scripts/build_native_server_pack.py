@@ -577,6 +577,19 @@ def acquire_server_pack_sources(cache: Path, *, lock_path: Path = LOCK_PATH) -> 
     ``cache`` is caller-controlled and MUST live outside the repository
     (this task's hard rule) -- callers pass a scratch/temp directory, never
     a path under the checked-out tree.
+
+    A pre-existing ``cache/extracted/<name>`` is trusted only if it is
+    actually COMPLETE -- re-verified against the same pinned bin/lib/share
+    file set ``build_server_pack()`` itself requires (see
+    ``_extracted_tree_is_complete``), not merely present. Candidate run
+    32845198987 failed identically in both attempts with "pinned PostgreSQL
+    initdb.exe is missing" from a persistent self-hosted `--cache` whose
+    extraction had been interrupted by a prior run; a bare `destination.
+    exists()` check trusted the incomplete tree and never re-extracted it.
+    An invalid tree is cleared and re-extracted from the ALREADY hash-
+    verified archive (``fetch_locked_artifact``'s own `.partial`-then-
+    verify-then-rename download is unaffected by any of this -- the
+    archive on disk was never the problem, only the derived extraction).
     """
 
     lock = load_lock(lock_path)
@@ -592,6 +605,8 @@ def acquire_server_pack_sources(cache: Path, *, lock_path: Path = LOCK_PATH) -> 
             )
         archive = fetch_locked_artifact(name, artifact, cache / "archives", offline=False)
         destination = cache / "extracted" / name
+        if destination.exists() and not _extracted_tree_is_complete(name, destination):
+            shutil.rmtree(destination, ignore_errors=True)
         if not destination.exists():
             safe_extract_zip(
                 archive,
@@ -681,6 +696,33 @@ def _tsduck_sources(tsduck_root: Path) -> dict[str, Path]:
         )
         sources[f"licenses/tsduck/{filename}"] = path
     return sources
+
+
+_ACQUIRE_VALIDATORS: Final[dict[str, Callable[[Path], dict[str, Path]]]] = {
+    "postgres": _postgres_sources,
+    "tsduck": _tsduck_sources,
+}
+
+
+def _extracted_tree_is_complete(name: str, destination: Path) -> bool:
+    """Re-verify a pre-existing extraction against the SAME pinned bin/lib/
+    share file set `build_server_pack()` itself requires, rather than
+    trusting bare directory existence.
+
+    A self-hosted runner's `--cache` persists across runs (a hosted runner
+    is always fresh); a previous run's extraction into `cache/extracted/
+    <name>` interrupted partway through (a crash, a cancelled run, a disk
+    hiccup) leaves a directory that EXISTS but is missing files --
+    candidate run 32845198987 failed identically in BOTH attempts with
+    "pinned PostgreSQL initdb.exe is missing" from exactly this path,
+    surfaced only much later, deep inside the live PostgreSQL bootstrap
+    proof, rather than here where the incompleteness actually originates.
+    """
+    try:
+        _ACQUIRE_VALIDATORS[name](destination)
+    except ServerPackBuildError:
+        return False
+    return True
 
 
 def _require_zero_gpl_and_full_license_provenance(sources: dict[str, Path]) -> None:
