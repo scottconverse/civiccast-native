@@ -29,8 +29,13 @@
 #   7. Copy output\ to evidence\<source_sha>\<utc-timestamp>\ regardless of
 #      verdict -- a FAIL needs its evidence preserved at least as much as a
 #      PASS does.
-#   8. Print the verdict and exit 0 (PASS), 1 (FAIL), or 2 (harness error --
-#      timeout, no VM, missing prerequisite, bad kit layout).
+#   8. Print the verdict and exit 0 (PASS), 1 (FAIL), or 2 (not a
+#      station-acceptance finding at all -- BUSY because Windows Sandbox
+#      stayed occupied by another process and this run never launched, a
+#      quiet/wedged mapped output folder mid-run, a plain timeout, no VM, a
+#      missing prerequisite, or a bad kit layout). None of those is ever
+#      reported as a FAIL: a run whose evidence never reached the host
+#      supports no conclusion about the product at all.
 #
 # Requires on PATH: gh (GitHub CLI, only for -RunId), uv (for the Python
 # judge). Must run on a Windows host with the Windows Sandbox feature
@@ -58,15 +63,33 @@ param(
 
     [string]$Root = $PSScriptRoot,
     [int]$SoakMinutes = 20,
-    [int]$TimeoutMinutes = 120,
+    # Passed straight through to Host-Launch-Sandbox-Test.ps1. It must stay
+    # ABOVE In-Sandbox-Report.ps1's -MaxScriptMinutes (150) so the
+    # in-sandbox watchdog always fires first and the host's own bound is the
+    # last resort. Raised 120 -> 170 with that default under
+    # <gate-a-mapped-folder-stalls>: at 120 the host would have given up
+    # BEFORE the watchdog it depends on, turning every long run into an
+    # unexplained host timeout. Three numbers, one setting -- 150 (in
+    # sandbox) < 170 (host poll), and the host's -QuietShareMinutes ends a
+    # dead channel long before either.
+    [int]$TimeoutMinutes = 170,
     [string]$Repo = 'scottconverse/civiccast-native',
 
     # Passed straight through to Host-Launch-Sandbox-Test.ps1: minutes to
     # wait for Windows Sandbox to become free before giving up. Windows
     # Sandbox is a single-instance-per-machine resource shared with an
     # independent, unrelated build system on this box -- see that script's
-    # header and docs/ops/gate-a.md for the shared-sandbox guard.
-    [int]$SandboxWaitMinutes = 90
+    # header and docs/ops/gate-a.md for the shared-sandbox guard. This is a
+    # wait BEFORE the run starts and is deliberately not part of the
+    # 150/170 budget ordering above, which governs a run already underway.
+    [int]$SandboxWaitMinutes = 90,
+
+    # Passed straight through to Host-Launch-Sandbox-Test.ps1: minutes of no
+    # change anywhere under output\, with our own VM still alive, before the
+    # run is declared a harness error rather than waited out to
+    # -TimeoutMinutes. See that script's quiet-share detector and
+    # docs/ops/gate-a.md, "Mapped-folder stalls".
+    [int]$QuietShareMinutes = 15
 )
 
 $ErrorActionPreference = 'Stop'
@@ -241,8 +264,8 @@ if (-not (Test-Path $launcherPath)) {
     Exit-HarnessError "Host-Launch-Sandbox-Test.ps1 not found at $launcherPath"
 }
 
-Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes)..."
-& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes
+Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes)..."
+& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes
 $launcherExit = $LASTEXITCODE
 Write-Step "Host launcher exited with code $launcherExit"
 
@@ -322,10 +345,17 @@ if ($launcherExit -eq 3) {
 }
 
 if ($launcherExit -ne 0) {
-    # 1 = timed out waiting for DONE.json, no clean VM close. Still worth
-    # judging whatever partial evidence exists (it will fail-closed on the
-    # missing files), but the run itself is a harness error, not a
-    # station-acceptance FAIL -- exit 2 regardless of what the judge says.
+    # Launcher exit codes: 1 = no VM after launch; 2 = timed out waiting for
+    # DONE.json; 3 = sandbox stayed busy, handled above; 4 = the mapped
+    # output folder went quiet while our own VM was alive (see
+    # Host-Launch-Sandbox-Test.ps1's quiet-share detector, which also drops
+    # HOST-QUIET-SHARE.txt into output\ so the judge can name the cause).
+    # Every one of them is a harness error, not a station-acceptance FAIL --
+    # exit 2 regardless of what the judge says about the partial evidence.
+    # Still worth judging that evidence for forensics.
+    if ($launcherExit -eq 4) {
+        Write-Warning "[Run-GateA] The sandbox's mapped output folder went quiet while the VM was alive -- broken evidence channel, no product conclusion available. See HOST-QUIET-SHARE.txt in the evidence directory."
+    }
     if ($hasEvidence) {
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
         if ($uvCmd) {
@@ -373,6 +403,17 @@ if ($judgeExit -eq 0) {
     Write-Host "[Run-GateA] PASS" -ForegroundColor Green
 } elseif ($judgeExit -eq 1) {
     Write-Host "[Run-GateA] FAIL" -ForegroundColor Red
+} elseif ($judgeExit -eq 2) {
+    # One of the judge's two non-verdicts: HARNESS_ERROR (HOST-QUIET-SHARE.txt
+    # -- the evidence channel broke mid-run) or BUSY (SANDBOX-BUSY.txt -- the
+    # run never started; normally already handled by the launcherExit -eq 3
+    # branch above, so reaching it here means the marker was found on
+    # otherwise-clean evidence). Either way NO product conclusion can be
+    # drawn. Deliberately not printed as FAIL: calling a broken harness a
+    # station-acceptance failure is precisely the authored-truth failure
+    # mode Gate A exists to eliminate, in the opposite direction.
+    Write-Warning "[Run-GateA] HARNESS ERROR -- see gate-a-verdict.json's harness_error field; this is NOT a station-acceptance FAIL"
+    exit 2
 } else {
     Write-Warning "[Run-GateA] Judge exited with unexpected code $judgeExit (treated as harness error)"
     exit 2

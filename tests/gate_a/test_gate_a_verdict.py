@@ -174,6 +174,90 @@ def test_verdict_document_shape(tmp_path: Path) -> None:
     assert result["evidence_dir"] == str(run_dir)
     assert isinstance(result["judged_utc"], str) and result["judged_utc"]
     assert set(result["checks"].keys()) == set(REQUIRED_CHECKS)
+    assert result["harness_error"] is None
+
+
+# --------------------------------------------------------------------------
+# Harness errors are a third verdict, never a product FAIL
+#
+# Added with the <gate-a-mapped-folder-stalls> fix. When
+# Host-Launch-Sandbox-Test.ps1 sees the Windows Sandbox mapped output folder
+# stop changing while the VM is alive, the guest-to-host evidence channel is
+# broken and the run says nothing about the candidate. The judge must report
+# that as HARNESS_ERROR (exit 2), never as a station-acceptance FAIL -- the
+# whole point of Gate A is that a verdict means what it says.
+# --------------------------------------------------------------------------
+
+
+def test_harness_error_markers_registry_names_the_quiet_share_file() -> None:
+    assert "HOST-QUIET-SHARE.txt" in gav.HARNESS_ERROR_MARKERS
+    assert gav.HARNESS_ERROR_MARKERS["HOST-QUIET-SHARE.txt"].strip()
+
+
+def test_detect_harness_error_returns_none_on_clean_evidence(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    assert gav.detect_harness_error(run_dir) is None
+
+
+def test_quiet_share_marker_makes_the_verdict_harness_error_not_fail(tmp_path: Path) -> None:
+    """The decisive assertion: an otherwise all-PASS run carrying the marker
+    is HARNESS_ERROR, and specifically NOT "FAIL"."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "HOST-QUIET-SHARE.txt").write_text(
+        "host_quiet_share_utc=2026-08-25T00:00:00Z quiet_minutes=15.2 threshold_minutes=15 "
+        "last_output_write_utc=2026-08-24T23:44:48Z vm_alive=True\n",
+        encoding="utf-8",
+    )
+    result = gav.judge(run_dir, None, None)
+    assert result["verdict"] == "HARNESS_ERROR"
+    assert result["verdict"] != "FAIL"
+    assert "HOST-QUIET-SHARE.txt" in result["harness_error"]
+
+
+def test_quiet_share_marker_wins_over_a_genuine_product_failure(tmp_path: Path) -> None:
+    """Even with a real product-check failure in the same directory, a broken
+    evidence channel means no product conclusion is available -- a partially
+    shipped run's T4 line may be absent or truncated for channel reasons, not
+    candidate reasons."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    t35 = run_dir / "T3T5-RESULT.txt"
+    t35.write_text(
+        t35.read_text(encoding="utf-8-sig").replace(
+            "T4_RESULT=PASS_PRODUCT_ENGINE", "T4_RESULT=NO_ARTIFACT"
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "HOST-QUIET-SHARE.txt").write_text("quiet\n", encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["t4_engine"]["status"] == "FAIL"
+    assert result["verdict"] == "HARNESS_ERROR"
+
+
+def test_quiet_share_marker_names_itself_in_the_completion_check(tmp_path: Path) -> None:
+    """The completion check must blame the channel, not report the misleading
+    downstream symptom (a missing DONE.json it could never have received)."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "DONE.json").unlink()
+    (run_dir / "HOST-QUIET-SHARE.txt").write_text("quiet\n", encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["completion"]["status"] == "FAIL"
+    assert "HOST-QUIET-SHARE.txt" in result["checks"]["completion"]["detail"]
+
+
+def test_quiet_share_cli_exit_code_is_2_not_1(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "HOST-QUIET-SHARE.txt").write_text("quiet\n", encoding="utf-8")
+    out_path = tmp_path / "gate-a-verdict.json"
+    proc = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), str(run_dir), "--out", str(out_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2
+    written = json.loads(out_path.read_text(encoding="utf-8"))
+    assert written["verdict"] == "HARNESS_ERROR"
+    assert "harness error" in proc.stderr
 
 
 # --------------------------------------------------------------------------

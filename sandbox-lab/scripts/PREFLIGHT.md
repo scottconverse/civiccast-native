@@ -195,3 +195,90 @@ defensive fallback or bounded failure path, noted below):
   ARP/Program-Files scan, run first-admin via the HKLM nonce. Nothing in this path
   changed this session except the two items explicitly requested as staying in
   (captions evidence capture, T4 port fix), which apply identically in both modes.
+
+---
+
+# PREFLIGHT ADDENDUM — mapped-folder stall fix (2026-08-24)
+
+Second static, no-launch verification pass, for the
+`<gate-a-mapped-folder-stalls>` change (local `$OutDir` + shipper process,
+staleness-watchdog arming fix, `step_seq`, host quiet-share fallback, budget
+`100 -> 150` / `120 -> 170`). No Windows Sandbox was launched to produce this
+addendum. The section above remains the 2026-08-19 record and is not restated.
+
+## (a) Parse result — the file AND its three embedded sub-scripts
+
+`In-Sandbox-Report.ps1` embeds the watchdog, the shipper supervisor, and the
+shipper tick as single-quoted here-strings. An outer parse says nothing about
+them: to the outer parser they are opaque string literals. All four were
+parsed separately with
+`[System.Management.Automation.Language.Parser]::ParseInput` under **Windows
+PowerShell 5.1** (`5.1.26100.x`), alongside every other `.ps1` under
+`sandbox-lab/`:
+
+```
+PARSE OK  : sandbox-lab\Host-Launch-Sandbox-Test.ps1
+PARSE OK  : sandbox-lab\Run-GateA.ps1
+PARSE OK  : sandbox-lab\runner\Install-GateARunner.ps1
+PARSE OK  : sandbox-lab\scripts\In-Sandbox-Report.ps1
+PARSE OK  : sandbox-lab\scripts\Watch-Run.ps1
+PARSE OK  : sandbox-lab\soak-4h\scripts\heartbeat.ps1
+PARSE OK  : sandbox-lab\soak-4h\scripts\start-encoders.ps1
+PARSE OK  : sandbox-lab\soak-4h\scripts\verify-egress.ps1
+PARSE OK  : In-Sandbox-Report.ps1 embedded here-string #1  (shipper tick)
+PARSE OK  : In-Sandbox-Report.ps1 embedded here-string #2  (shipper supervisor)
+PARSE OK  : In-Sandbox-Report.ps1 embedded here-string #3  (watchdog)
+ALL CLEAN (PS 5.1 AST parse + PS7-ism scan)
+```
+
+`Watch-Run.ps1` did NOT parse before this pass, and had not since it was
+added: a single U+2014 em dash in a double-quoted string decodes under 5.1's
+default ANSI codepage as `a<euro>"`, whose embedded double quote terminates
+the string early -- five cascading errors from one character. Replaced with
+`--`. Nothing else in that file changed; it remains the legacy interactive
+monitor Gate A never invokes.
+
+PS7-ism scan over the same set (`??`, `?.`, `&&`, `||`,
+`ForEach-Object -Parallel`, `ConvertFrom-Json -AsHashtable`, `Get-Error`,
+`Test-Json`, `Join-String`): zero hits.
+
+## (b) Runtime demonstration of the two new mechanisms
+
+Not a parse check and not a sandbox run: the three sub-scripts were extracted
+from the here-strings and exercised against ordinary local directories on the
+host, which is sufficient because neither mechanism depends on Windows
+Sandbox to be exercised -- only to be stressed.
+
+Shipper (interval 3s, two temp dirs standing in for local/mapped):
+
+- evidence file and a nested `station-diag\after-t3t5\` subtree both mirrored;
+- `_SHIPPER-HEARTBEAT.txt` present and its timestamp advancing tick over tick
+  (00:00:12 -> 00:00:18) with no other file changing -- this is exactly the
+  liveness the host's quiet-share detector reads during the T5 soak;
+- a host-owned `.gitkeep` placed only on the destination side survived, which
+  is the property `/MIR` would have destroyed;
+- `WATCHDOG-TIMEOUT.txt` removed on the source side was retracted from the
+  destination on the next tick (the explicit retraction list);
+- `DONE.json` reached the destination and the supervisor then exited on its
+  own rather than being killed.
+
+Watchdog arming, replaying run6's actual observed state (`summary.json` stuck
+at `station-diag-captured-after-t3t5`, `step_seq` frozen):
+
+- OLD predicate on that step name: **False** -- it never armed, which is why
+  only the coarse whole-script bound fired, 47 minutes late;
+- NEW watchdog (`-StallMinutes 1` for the demonstration): `STALL-TIMEOUT.txt`
+  written at 60.0s stalled, `stuck_progress=seq:41`, plus a placeholder
+  `DONE.json` carrying `stall_timeout: true` and `harness_completed: false`
+  -- the shape `scripts/gate_a_verdict.py` fails closed on;
+- no false positive: with the step NAME held constant at `t5-beat-1` and only
+  `step_seq` advancing every 20s for 100s, no `STALL-TIMEOUT.txt` was
+  written. The old name-equality test would have called that a stall.
+
+## (c) What this addendum does not cover
+
+The quiet-share detector in `Host-Launch-Sandbox-Test.ps1` was verified by
+parse and by static contract test (`tests/gate_a/test_gate_a_harness_contract.py`),
+not by execution -- running it launches Windows Sandbox, which this pass
+deliberately does not do. No end-to-end Gate A run has been performed against
+this change; the next real candidate run is its first execution.

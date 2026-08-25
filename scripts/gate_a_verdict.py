@@ -96,14 +96,29 @@ file to force a PASS on the historical fixture -- doing that would be
 exactly the "authored truth" failure mode Gate A exists to eliminate. See
 `docs/ops/gate-a.md` for the full writeup.
 
+Mapped-folder stall guard: ``HARNESS_ERROR`` is the second non-verdict,
+alongside ``BUSY`` above. ``BUSY`` means the run never started; this one
+means it started and then lost its evidence channel.
+``HOST-QUIET-SHARE.txt``, written by
+``sandbox-lab/Host-Launch-Sandbox-Test.ps1`` when the Windows Sandbox mapped
+output folder stops changing while the VM is still alive, produces
+``verdict: "HARNESS_ERROR"`` and exit code 2. Unlike ``BUSY`` this does NOT
+short-circuit the checks: a partially shipped run's real check results are
+useful forensics and are still computed and recorded. They just do not
+decide the verdict -- a run whose evidence never reached the host supports
+no conclusion about the candidate, and calling that a station-acceptance
+FAIL would be the same authored-truth failure this module exists to
+prevent, pointed the other way.
+
 Usage:
     python scripts/gate_a_verdict.py <output_dir> \
         [--source-sha SHA] [--run-id ID] [--out PATH]
 
-Exit code: 0 if the verdict is PASS, 1 if FAIL, 2 if the output directory
-itself does not exist, or if the verdict is BUSY (SANDBOX-BUSY.txt present --
-the run never executed because Windows Sandbox was occupied by another
-process) -- neither of those last two is a station-acceptance finding.
+Exit code: 0 if the verdict is PASS, 1 if FAIL, 2 for anything that is not a
+station-acceptance finding at all -- the output directory not existing, a
+``BUSY`` verdict (SANDBOX-BUSY.txt: the run never executed because Windows
+Sandbox was occupied by another process), or a ``HARNESS_ERROR`` verdict
+(see ``HARNESS_ERROR_MARKERS``).
 """
 
 from __future__ import annotations
@@ -119,6 +134,21 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
+
+#: Markers that mean "the harness broke", not "the product failed". Each maps
+#: a filename dropped into the evidence directory to the explanation that
+#: goes into the verdict document. A run carrying any of these is reported as
+#: ``HARNESS_ERROR`` (exit 2) and never as ``FAIL`` -- the checks below may be
+#: missing evidence purely because the evidence never arrived, so their
+#: results describe the channel, not the candidate.
+HARNESS_ERROR_MARKERS: dict[str, str] = {
+    "HOST-QUIET-SHARE.txt": (
+        "HOST-QUIET-SHARE.txt is present -- Host-Launch-Sandbox-Test.ps1 observed the Windows "
+        "Sandbox mapped output folder stop changing while the VM was still alive, so the "
+        "guest-to-host evidence channel (or the guest itself) was wedged. No station-acceptance "
+        "conclusion can be drawn from this run"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -330,6 +360,20 @@ def check_t5_soak(output_dir: Path) -> CheckResult:
     return _pass(f"T5_RESULT=PASS beats={beats} unhealthy=0")
 
 
+def detect_harness_error(output_dir: Path) -> str | None:
+    """Return the harness-error detail if the evidence carries a marker, else None.
+
+    Checked before the verdict is decided (and inside ``check_completion``, so
+    the per-check breakdown names the real cause rather than a misleading
+    "DONE.json not found"). Markers are ordered by ``HARNESS_ERROR_MARKERS``
+    insertion order; the first present wins.
+    """
+    for name, detail in HARNESS_ERROR_MARKERS.items():
+        if (output_dir / name).is_file():
+            return detail
+    return None
+
+
 def check_completion(output_dir: Path) -> CheckResult:
     """The harness reached its own authoritative completion signal.
 
@@ -364,7 +408,16 @@ def check_completion(output_dir: Path) -> CheckResult:
     Its presence is a FAIL here for the same reason as
     ``WATCHDOG-TIMEOUT.txt``: a stall-forced placeholder DONE.json is not a
     genuine completion.
+
+    A harness-error marker (see ``HARNESS_ERROR_MARKERS``) is reported here
+    first, so the per-check breakdown names the real cause -- "the evidence
+    channel broke" -- instead of the misleading downstream symptom "DONE.json
+    not found". The overall verdict for such a run is ``HARNESS_ERROR``, not
+    ``FAIL``; see ``judge``.
     """
+    harness_error = detect_harness_error(output_dir)
+    if harness_error is not None:
+        return _fail(harness_error)
     if (output_dir / "WATCHDOG-TIMEOUT.txt").is_file():
         return _fail(
             "WATCHDOG-TIMEOUT.txt is present -- the harness hit its bounded script-level "
@@ -478,7 +531,17 @@ def judge(output_dir: Path, source_sha: str | None, run_id: str | None) -> dict[
             result = _fail(f"unhandled exception while evaluating this check: {exc!r}")
         checks[name] = {"status": result.status, "detail": result.detail}
 
-    verdict = "PASS" if all(c["status"] == "PASS" for c in checks.values()) else "FAIL"
+    # A harness error outranks the checks entirely. The checks are still run
+    # and still reported -- on a partially-shipped run they are real
+    # forensics -- but a broken evidence channel cannot be converted into a
+    # statement about the candidate in either direction.
+    harness_error = detect_harness_error(output_dir)
+    if harness_error is not None:
+        verdict = "HARNESS_ERROR"
+    elif all(c["status"] == "PASS" for c in checks.values()):
+        verdict = "PASS"
+    else:
+        verdict = "FAIL"
 
     # station_up / station_boot_seconds / station_first_healthy_utc are
     # INFORMATIONAL ONLY -- recorded for the human report, never gating.
@@ -501,6 +564,7 @@ def judge(output_dir: Path, source_sha: str | None, run_id: str | None) -> dict[
         "source_sha": source_sha,
         "run_id": run_id,
         "verdict": verdict,
+        "harness_error": harness_error,
         "checks": checks,
         "station_up": station_up,
         "station_boot_seconds": station_boot_seconds,
@@ -548,11 +612,19 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(result, indent=2, sort_keys=False))
     print(f"\ngate_a_verdict: {result['verdict']} (written to {out_path})", file=sys.stderr)
 
+    if result["verdict"] == "PASS":
+        return 0
     if result["verdict"] == "BUSY":
         # Harness-busy, not a station-acceptance finding -- same exit-code
         # family as the missing-output-dir usage error above, never 1 (FAIL).
         return 2
-    return 0 if result["verdict"] == "PASS" else 1
+    if result["verdict"] == "HARNESS_ERROR":
+        # Same family again: the gate could not observe the candidate. BUSY
+        # means it never started; this means it started and lost its
+        # evidence channel partway through.
+        print(f"gate_a_verdict: harness error -- {result['harness_error']}", file=sys.stderr)
+        return 2
+    return 1
 
 
 if __name__ == "__main__":

@@ -28,7 +28,23 @@ builds before this repository absorbed it. See "Provenance" below.
 | `captions` | The offline caption pipeline produced real cues from a real speech clip (not a synthetic sine tone) | `T3-LOOP.txt`, `T3-caption-artifact.json` |
 | `t4_engine` | The product egress engine (GStreamer) started and passed TSDuck transport-stream verification — `PASS_FFMPEG_FALLBACK` is a FAIL, see below | `T3T5-RESULT.txt` |
 | `t5_soak` | The bounded soak stayed healthy for its whole window (`unhealthy=0`) | `T3T5-RESULT.txt` |
-| `completion` | The harness itself reached its own authoritative completion signal (`DONE.json.harness_completed == true`, no `WATCHDOG-TIMEOUT.txt`/`STALL-TIMEOUT.txt`) | `DONE.json`, `summary.json` |
+| `completion` | The harness itself reached its own authoritative completion signal (`DONE.json.harness_completed == true`, no `WATCHDOG-TIMEOUT.txt`/`STALL-TIMEOUT.txt`/`HOST-QUIET-SHARE.txt`) | `DONE.json`, `summary.json` |
+
+**Two verdicts, and two non-verdicts.** `gate-a-verdict.json` carries `PASS`
+or `FAIL` when the gate actually observed the candidate, and one of two other
+values when it did not:
+
+| Value | Meaning | Marker | Checks in the document |
+|---|---|---|---|
+| `PASS` / `FAIL` | A real station-acceptance finding | — | All computed, and they decide the verdict |
+| `BUSY` | The run never started — Windows Sandbox was occupied by another process on this shared box (see "Shared Windows Sandbox: the busy guard") | `SANDBOX-BUSY.txt` | Empty: no evidence was ever produced |
+| `HARNESS_ERROR` | The run started, then lost its evidence channel (see "Mapped-folder stalls") | `HOST-QUIET-SHARE.txt` | All computed and recorded as forensics, but they do not decide the verdict |
+
+Neither non-verdict is reported as a FAIL. Calling a broken harness a product
+failure is the same authored-truth mistake Gate A exists to eliminate,
+pointed the other way. Exit codes: `0` PASS, `1` FAIL, `2` for `BUSY`,
+`HARNESS_ERROR`, or a missing output directory — all of which mean "no
+observation", never "bad candidate".
 
 Each row cites the 3.0 MASTER spec's station-acceptance gate
 (`docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md` §12, "Station
@@ -194,12 +210,154 @@ torn down):
 
   Either `WATCHDOG-TIMEOUT.txt` or `STALL-TIMEOUT.txt` is a named FAIL in
   the `completion` check regardless of what else in `DONE.json` looks
-  complete. Block 6's install-progress.log `-Tail` read was also changed to
-  read the just-copied destination file (on the host-mapped, real-disk
-  `output/`) instead of re-reading the source a second time from
-  `%ProgramData%` (the Sandbox's own virtualized C:) — a cheap tightening
-  at the exact spot `run4` stalled, though the staleness watchdog above is
-  the real guarantee, not this alone.
+  complete.
+
+  > **Superseded in part.** The staleness bound's *arming* rule described
+  > above (match `last_completed_step` against three names) is what failed
+  > on run6 and has been replaced — see "Mapped-folder stalls" below for the
+  > arming fix, the `step_seq` change, and the new budget numbers
+  > (`-MaxScriptMinutes` is 150, not 100). The two triggers and their two
+  > marker files are otherwise unchanged.
+
+## Mapped-folder stalls, the shipper, and the quiet-share fallback
+
+Three Gate A runs hung late, each at a different statement, each with the
+sandbox VM alive and `In-Sandbox-Report.ps1` writing nothing further:
+
+| Run | Last `summary.json` step | What actually hung |
+|---|---|---|
+| run3 `8579e66` | `t2-render-assert` | The 5th of a run of consecutive ~30-byte `Add-Content` appends to `T3T5-RESULT.txt` — the file has 4 of its 9 expected lines |
+| run4 `8579e66` | `station-diag-captured-after-t3t5` | The four-statement window to `install-progress-log-copied`, which includes a `Copy-Item` onto an existing mapped file |
+| run6 `f31618f` | `station-diag-captured-after-t3t5` | Same window. Every product check had already **passed** (`T3_LOOP=PASS`, `CAPTIONS=PASS`, `T4_RESULT=PASS_PRODUCT_ENGINE`, `T5_RESULT=PASS beats=4 unhealthy=0`) before the run was failed closed 47 minutes later |
+
+**What the failure mode is not.** "Sustained/large I/O exhausts the share"
+does not survive run3, where a 30-byte append to an already-created file
+wedged. "The share dies" does not survive run6: 42 minutes into that stall
+the *separate* watchdog `powershell.exe` created `WATCHDOG-TIMEOUT.txt` and
+`DONE.json` in the very same mapped folder, and both reached the host. The
+share was fine.
+
+**What it is.** A synchronous, uncancellable, timeout-less file operation
+issued against a VSMB/9P share the guest does not control can wedge the
+*issuing thread* permanently, while the share keeps serving other file
+objects and other processes normally. `In-Sandbox-Report.ps1` ran the entire
+gate on one thread and wrote every artifact straight to the share, so any
+single wedged I/O ended the run silently. Whether the wedge is a stuck file
+object or a stuck IRP on that connection cannot be distinguished from
+post-mortem timestamps, and it does not matter: both have the same fix.
+
+The fix takes the share off the critical path:
+
+- **Local evidence directory.** `$OutDir` inside the sandbox is now
+  `C:\CivicCastLocalOut`, on storage the VM owns. The transcript, every
+  `T*-RESULT` file, every `station-diag` capture, every redirected child
+  stdout/stderr, `summary.json`, and `DONE.json` all land there.
+- **A shipper process.** A supervisor spawns one short-lived tick child every
+  ~25s; each tick writes `_SHIPPER-HEARTBEAT.txt` locally and then
+  `robocopy /E` mirrors the local directory into `C:\CivicCastOutput`. A tick
+  that wedges on the share costs that tick — the supervisor skips while a
+  child is still running, and force-replaces one older than three intervals,
+  because a fresh process gets fresh handles (exactly the property run6's
+  watchdog demonstrated). The mirror is **additive, never `/MIR`**: the host
+  owns files in that folder too (`.gitkeep`, `_HOST_LAUNCHED.marker`,
+  `SOAK_MINUTES.txt`, `HOST-QUIET-SHARE.txt`) and a purge would delete them.
+  The one retraction the harness genuinely needs — a `WATCHDOG-TIMEOUT.txt`
+  that a genuine completion later supersedes — is an explicit named list.
+  `DONE.json` is excluded from the bulk mirror (`/XF`) and copied on its own
+  after it returns, so the harness's oldest contract survives the new
+  channel: DONE.json appearing on the host still means everything else
+  already arrived. robocopy does not copy in write order, and the host tears
+  the VM down within 10s of seeing that file.
+- **Two bounded exceptions.** The driver itself touches the share exactly
+  twice: a one-time inbound seed at entry (so host-provided
+  `SOAK_MINUTES.txt` / `SKIP_MODE.txt` reach the reads further down) and a
+  final flush after `DONE.json`. Both go through `Invoke-BoundedProcess`,
+  which kills the child on timeout instead of waiting on it.
+- **The watchdog moved too.** It now polls `summary.json` from, and writes
+  its markers to, the local directory. In run6 it happened to write across
+  the share successfully; had its *read* wedged instead, nothing at all would
+  have fired.
+
+### Why the staleness watchdog missed run6
+
+It armed by matching the *current* value of `summary.json.last_completed_step`
+against `runtime-check-*`, `t3t5-skipped-station-down`, or `t5-soak-complete`,
+polling every 30 seconds. Every one of those is a momentary value. Run6's
+`runtime-check-*` steps occupied `summary.json` from 22:29:57 to 22:29:58
+(all three surfaces answered on poll #1 — see `RUNTIME-RESULT.txt`), and
+`t5-soak-complete` was written at ~22:54:46 and superseded by
+`station-diag-captured-after-t3t5` at 22:54:48. Roughly a 3-second target
+sampled at 30-second intervals: the watchdog never armed, the run wedged at
+22:54:48, and only the coarse 100-minute bound fired, at 23:36:50.
+
+Two structural changes, both in `In-Sandbox-Report.ps1`:
+
+- **Arm on a sticky file, not a transient value.** The driver writes
+  `_VERDICT-STAGE.marker` once, at the station-up verdict (covering both the
+  station-up and station-down paths), and never removes it. `Test-Path`
+  cannot be raced by a coarse poller. The step-name predicate is kept —
+  widened to every post-verdict step — as a redundant second arming path,
+  never as the only one.
+- **Stall on a monotonic counter, not name equality.** `summary.json` now
+  carries `step_seq` (incremented on every `Save-Summary`) and `step_utc`.
+  Step names can legitimately repeat; `step_seq` cannot, so "progress
+  stopped" is an observation rather than an inference from string equality.
+
+### The host's quiet-share fallback
+
+On a healthy run the shipper heartbeat means *something* under `output\`
+changes at least every ~25 seconds, right through the T5 soak's otherwise
+silent 5-minute beats. `Host-Launch-Sandbox-Test.ps1` now watches for that:
+no change anywhere under `output\` for `-QuietShareMinutes` (default 15)
+while **our own** VM is still alive (checked by the PIDs the launcher
+recorded right after its own launch, per the shared-sandbox ownership rule
+above) means the guest-to-host channel — or the guest itself — is wedged and
+no further waiting can produce evidence. It writes `HOST-QUIET-SHARE.txt` (on
+the host's own disk, the one write in this system the wedged share cannot
+affect) and exits **4** — distinct from the plain timeout's `2` and from the
+busy guard's `3`, because "never started" and "started and went dark" are
+different conditions. `scripts/gate_a_verdict.py` turns that marker into
+`verdict: "HARNESS_ERROR"`.
+
+### Budget ordering
+
+| Bound | Where | Value |
+|---|---|---|
+| In-sandbox script watchdog | `In-Sandbox-Report.ps1 -MaxScriptMinutes` | 150 |
+| Host poll deadline | `Host-Launch-Sandbox-Test.ps1 -TimeoutMinutes` | 170 |
+| Same, passed through | `Run-GateA.ps1 -TimeoutMinutes` | 170 |
+| Same again, **explicit override** | `.github/workflows/gate-a-station-acceptance.yml` | 170 |
+| Host quiet-share bound | `Host-Launch-Sandbox-Test.ps1 -QuietShareMinutes` | 15 |
+| In-sandbox staleness bound | watchdog `-StallMinutes` | 8 |
+
+The poll deadline is **one setting written in three places**, and the CI
+workflow's explicit argument is the one that actually governs every gate run
+— a script default fixed on its own would have looked correct and changed
+nothing. The watchdog must fire before that deadline or every long run
+degrades into an unexplained host timeout with no watchdog evidence, which is
+exactly what a 150-minute watchdog under the previous 120/150-minute host
+deadlines would have produced.
+`tests/gate_a/test_gate_a_harness_contract.py` reads all four literals and
+fails the build if the ordering drifts.
+
+`-SandboxWaitMinutes` (90) is deliberately **not** part of this ordering: it
+bounds a wait *before* the run starts, not a run already underway.
+
+### Residual risk this change does NOT remove
+
+`C:\CivicCastHostStore` is also a read-write mapped folder, and it is the
+**install target** — the product installs into `C:\CivicCastHostStore\install`
+and the station runs from there, by design, so the install tree stays visible
+to the host. The driver still reads that share synchronously on its own
+thread (`Test-KnownPaths`, the `station-set.json` /
+`activation-self-test.json` copies in `Invoke-StationDiagCapture`, the
+install-tree listing). None of the three observed stalls were on that share,
+and moving the install target would destroy the install evidence Gate A
+exists to collect — so this is a named, accepted residual, not a solved
+problem. What has changed is the blast radius: a wedge there is now bounded
+by the staleness watchdog (8 minutes) and the host quiet-share detector (15
+minutes) instead of running silently to the whole-script deadline, and it
+reports as a stall or a harness error rather than as 47 minutes of nothing.
 
 ## Known harness quirk: the Aug-19 reference run's `completion` check
 
@@ -276,19 +434,26 @@ this writing), then the `-KitDir` leaf directory name if it looks like a sha
 (the `kit-staging\<sha>\` convention), then falls back to `unknown-local`.
 
 Exit codes: `0` = PASS, `1` = FAIL (a real station-acceptance finding —
-see `gate-a-verdict.json`), `2` = harness error, including a `BUSY` verdict
-(Windows Sandbox was occupied by the other, independent process on this box
-for the whole `-SandboxWaitMinutes` wait window — see "Shared Windows
-Sandbox: the busy guard" above), timeout waiting for `DONE.json`, no Sandbox
-VM, bad/incomplete kit layout, or missing `gh`/`uv`.
+see `gate-a-verdict.json`), `2` = anything that is not a station-acceptance
+finding at all: a `BUSY` verdict (Windows Sandbox was occupied by the other,
+independent process on this box for the whole `-SandboxWaitMinutes` wait
+window — see "Shared Windows Sandbox: the busy guard" above), a
+`HARNESS_ERROR` verdict (the mapped output folder went quiet while the VM
+was alive — see "Mapped-folder stalls" below), a timeout waiting for
+`DONE.json`, no Sandbox VM, a bad/incomplete kit layout, or missing
+`gh`/`uv`. None of those is ever a statement about the candidate.
 
-`Host-Launch-Sandbox-Test.ps1` itself uses a fourth code, `3`, distinct from
-its own timeout code `2` (waiting for `DONE.json`): "gave up waiting for
-Windows Sandbox to become free without ever launching it." `Run-GateA.ps1`
-translates that `3` into its own `2` (harness error) with a `BUSY` verdict
-document, so callers only ever need to handle `Run-GateA.ps1`'s three exit
-codes (`0`/`1`/`2`) — the launcher's `3` is an internal detail of that
-translation.
+`Host-Launch-Sandbox-Test.ps1` itself uses finer codes, all of which
+`Run-GateA.ps1` collapses into its own `2` after recording which one
+happened in the evidence directory — so callers only ever need to handle
+`Run-GateA.ps1`'s three exit codes (`0`/`1`/`2`):
+
+| Launcher exit | Meaning |
+|---|---|
+| `1` | No Windows Sandbox VM process a few seconds after launch |
+| `2` | Timed out waiting for `DONE.json` |
+| `3` | Gave up waiting for Windows Sandbox to become free; never launched (`SANDBOX-BUSY.txt`) |
+| `4` | Launched, then the mapped output folder went quiet while the VM was alive (`HOST-QUIET-SHARE.txt`) |
 
 Evidence for every run — pass or fail — lands at
 `sandbox-lab/evidence/<source_sha>/<utc-timestamp>/`, a full copy of
@@ -371,6 +536,8 @@ sandbox-lab/
 ├── Run-GateA.ps1                       # Host: kit resolution + orchestration + judging + evidence
 ├── scripts/
 │   ├── In-Sandbox-Report.ps1           # Runs INSIDE the Sandbox VM (LogonCommand) — the driver
+│   #  (writes to the VM-local C:\CivicCastLocalOut; a shipper child process
+│   #   mirrors that into the mapped C:\CivicCastOutput, i.e. output\ below)
 │   ├── Watch-Run.ps1                   # Legacy interactive monitor — NOT used by Run-GateA.ps1
 │   ├── PREFLIGHT.md                    # Static parse/semantics verification record
 │   └── lpm-sample-short.mp4            # Real speech clip for a meaningful captions proof
@@ -433,9 +600,10 @@ Gate A's harness scripts were imported from a standalone proof harness at
 `C:\Users\scott\Desktop\Code\sandbox-lab\` (outside this repository, not a
 git repo) that was manually proven against real candidate builds before this
 import. `In-Sandbox-Report.ps1` needed no host-path changes — every path it
-touches is a fixed Sandbox-internal mapped-folder drive letter
+touches is a fixed Sandbox-internal path, either a mapped-folder mount
 (`C:\CivicCastPayload`, `C:\CivicCastOutput`, `C:\CivicCastScripts`,
-`C:\CivicCastHostStore`, `C:\CivicCastSoak`), never a host path — so it was
+`C:\CivicCastHostStore`, `C:\CivicCastSoak`) or, since the mapped-folder-stall
+fix, the VM-local `C:\CivicCastLocalOut` — never a host path — so it was
 imported byte-for-byte. Only `Host-Launch-Sandbox-Test.ps1` needed
 parameterization (it previously hardcoded an absolute host `$Root`), and the
 `.wsb` became a template rendered per-run instead of a static file, because

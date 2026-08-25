@@ -40,9 +40,29 @@
 # clear rather than launching on top of them. At teardown it only stops the
 # process PIDs it recorded as ITS OWN right after its own Start-Process call
 # -- never a blanket stop-by-name, which could kill the other party's run.
+#
+# HARDENED <gate-a-mapped-folder-stalls>: quiet-share fallback. In-sandbox
+# writes now go to a local dir that a separate shipper process mirrors into
+# this mapped folder every ~25s, heartbeat file included -- so on a healthy
+# run SOMETHING under output\ changes at least every half minute, right
+# through the T5 soak's otherwise-silent 5-minute beats. If nothing changes
+# for -QuietShareMinutes while the VM is still alive, the guest-to-host
+# channel is broken (or the guest is wholly wedged) and no amount of further
+# waiting will produce evidence. This script now says so with its own marker
+# and a distinct exit code instead of burning the remaining hours of
+# -TimeoutMinutes on a run that can never report.
+#
+# The two guards are complementary and both live in the poll section below:
+# SANDBOX-BUSY.txt means this run never launched (someone else held the
+# resource); HOST-QUIET-SHARE.txt means it launched and then stopped being
+# able to report. Neither is a station-acceptance finding.
 param(
     [string]$Root = $PSScriptRoot,
-    [int]$TimeoutMinutes = 30,
+    # Must stay ABOVE In-Sandbox-Report.ps1's own -MaxScriptMinutes (150) so
+    # the in-sandbox watchdog is always the first bound to fire and the host
+    # remains the last resort, not the first. These two numbers are one
+    # setting in two places -- change them together.
+    [int]$TimeoutMinutes = 170,
     # Minutes for In-Sandbox-Report.ps1's T5 soak loop (it defaults to 20 when
     # SOAK_MINUTES.txt is absent). Written into output\SOAK_MINUTES.txt AFTER
     # this script's own output-dir wipe (step 1) so a caller (Run-GateA.ps1)
@@ -54,7 +74,13 @@ param(
     # an independent, unrelated build system on this box -- if it is already
     # occupied when this script starts, it polls rather than launching on
     # top of the other run. See "Guard: wait for a free sandbox" below.
-    [int]$SandboxWaitMinutes = 90
+    [int]$SandboxWaitMinutes = 90,
+    # No change anywhere under output\ for this long, with the VM still
+    # alive, is declared a harness error. The shipper's heartbeat tick is
+    # ~25s, so this is ~36x the expected quiet interval -- generous enough
+    # that a slow host or a stalled tick cannot trip it, tight enough to end
+    # a dead run in minutes instead of hours.
+    [int]$QuietShareMinutes = 15
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +90,10 @@ $TemplatePath = Join-Path $Root 'CivicCastSandboxTest.wsb.template'
 $WsbPath = Join-Path $Root 'CivicCastSandboxTest.wsb'
 $DoneMarker = Join-Path $OutDir 'DONE.json'
 $SummaryPath = Join-Path $OutDir 'summary.json'
+# Read by scripts/gate_a_verdict.py, which reports a run carrying this file
+# as HARNESS_ERROR -- never as a station-acceptance FAIL. A broken evidence
+# channel says nothing about the product.
+$QuietShareMarker = Join-Path $OutDir 'HOST-QUIET-SHARE.txt'
 
 # Process names that indicate a Windows Sandbox VM is running (either ours or
 # someone else's -- there is only ever one system-wide). Used both by the
@@ -179,14 +209,82 @@ Write-Host "Recorded this run's own sandbox process PID(s) for teardown: $(if ($
 #    interactive debugging only), this loop does not declare done on an
 #    intermediate result line; it waits for DONE.json itself, up to the
 #    timeout.
+function Get-NewestOutputActivityUtc {
+    # Newest write anywhere under output\, or $null if the folder is empty.
+    # The in-sandbox shipper touches _SHIPPER-HEARTBEAT.txt on every tick,
+    # so on a live run this advances continuously even between evidence
+    # files. Best-effort: a transient enumeration failure while the guest
+    # is mid-write must not be mistaken for a quiet share, so it returns
+    # $null and the caller simply keeps the previous reading.
+    try {
+        $newest = Get-ChildItem -Path $OutDir -Recurse -File -Force -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        if ($newest) { return $newest.LastWriteTimeUtc }
+    } catch {}
+    return $null
+}
+
 $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 $found = $false
+$quietShare = $false
+# Seeded from the launch stamp this script just wrote, so the quiet-share
+# clock starts at a real, known-good write rather than at $null.
+$lastActivityUtc = $launchStamp.ToUniversalTime()
+$lastActivitySeenAt = Get-Date
+$quietDetail = $null
+
 while ((Get-Date) -lt $deadline) {
     if (Test-Path $DoneMarker) {
         $found = $true
         break
     }
+
+    $activity = Get-NewestOutputActivityUtc
+    if ($activity -ne $null -and $activity -gt $lastActivityUtc) {
+        $lastActivityUtc = $activity
+        $lastActivitySeenAt = Get-Date
+    }
+
+    $quietMinutes = ((Get-Date) - $lastActivitySeenAt).TotalMinutes
+    if ($quietMinutes -ge $QuietShareMinutes) {
+        # Liveness of OUR OWN VM, by the PIDs recorded right after our own
+        # launch -- consistent with this script's shared-resource discipline
+        # (never reason about, or act on, a sandbox process we did not
+        # start). Falls back to the name check only if no PID was captured.
+        if ($launchedPids.Count -gt 0) {
+            $vm = @(Get-Process -Id $launchedPids -ErrorAction SilentlyContinue)
+        } else {
+            $vm = @(Get-Process -Name $SandboxProcessNames -ErrorAction SilentlyContinue)
+        }
+        $vmAliveNow = ($vm.Count -gt 0)
+        $quietDetail = "quiet_minutes=$([Math]::Round($quietMinutes, 1)) threshold_minutes=$QuietShareMinutes last_output_write_utc=$($lastActivityUtc.ToString('o')) vm_alive=$vmAliveNow"
+        $quietShare = $true
+        break
+    }
+
     Start-Sleep -Seconds 10
+}
+
+if ($quietShare) {
+    # Distinguish a broken evidence channel from a product failure. This
+    # marker is what makes gate_a_verdict.py report HARNESS_ERROR instead of
+    # FAIL, and it is written on the HOST's own real disk -- the one write
+    # in this whole system that cannot be affected by the wedged share.
+    $markerBody = @(
+        "host_quiet_share_utc=$((Get-Date).ToUniversalTime().ToString('o'))",
+        $quietDetail,
+        "reason=nothing under output\ changed for at least $QuietShareMinutes minutes while the sandbox VM was alive -- the in-sandbox shipper's ~25s heartbeat never arrived, so the guest-to-host mapped-folder channel (or the guest itself) is wedged",
+        "verdict_class=harness-error (NOT a station-acceptance FAIL -- no product conclusion can be drawn from a run whose evidence never reached the host)"
+    ) -join [Environment]::NewLine
+    Set-Content -Path $QuietShareMarker -Value $markerBody -Encoding UTF8
+    Write-Warning "Mapped output folder went quiet: $quietDetail"
+    Write-Warning "Declared a HARNESS ERROR (not a station-acceptance FAIL) and wrote $QuietShareMarker."
+    Write-Warning "Leaving the sandbox window open for manual inspection -- the guest's own local evidence dir (C:\CivicCastLocalOut inside the VM) may still be intact."
+    # Exit 4, NOT 3: 3 already means "gave up waiting for a busy sandbox and
+    # never launched" (see the busy guard above). Two different harness
+    # conditions must not share an exit code -- one means the run never
+    # started, the other that it started and lost its evidence channel.
+    exit 4
 }
 
 if (-not $found) {
