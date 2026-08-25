@@ -62,6 +62,11 @@ _WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "gate-a-station-acceptance.ym
 #: the driver's own executable text is inspected.
 _HERE_STRING = re.compile(r"@'\r?\n.*?\r?\n'@", re.DOTALL)
 
+#: The installer LAUNCH, not the ``silent_flag_used`` assignment that carries
+#: the same literal a few lines earlier. Anchoring on the bare flag string
+#: silently matched the assignment and inverted an ordering assertion.
+_INSTALLER_LAUNCH = "Start-Process -FilePath $exe.FullName"
+
 
 def _load_judge() -> ModuleType:
     spec = importlib.util.spec_from_file_location("gate_a_verdict_contract", _JUDGE)
@@ -78,6 +83,18 @@ def _read(path: Path) -> str:
 
 def _driver_executable_text() -> str:
     return _HERE_STRING.sub("\n<<here-string elided>>\n", _read(_DRIVER))
+
+
+def _code_only(text: str) -> str:
+    """Drop whole-line ``#`` comments.
+
+    Every design note in this harness necessarily quotes the construct it
+    forbids ("never use /MIR", "never use a unary-comma array", "the quiesce
+    is no longer lifted here"), so a naive substring assertion matches the
+    warning instead of the violation. Three tests in this file have been
+    written wrong that way; strip comments first.
+    """
+    return "\n".join(ln for ln in text.splitlines() if not ln.strip().startswith("#"))
 
 
 def _int_setting(text: str, pattern: str, label: str) -> int:
@@ -341,19 +358,25 @@ def test_run_gate_a_reports_judge_exit_2_as_a_harness_error_not_a_fail() -> None
 
 
 def test_shipper_quiesces_around_the_installer() -> None:
-    """The driver must raise the quiesce marker before the installer and drop
-    it on every path out, including a throw."""
+    """The driver must raise the quiesce marker before the installer.
+
+    SUPERSEDED IN PART by <gate-a-hoststore-wedge>: this test used to also
+    require ``Exit-ShipperQuiesce`` inside a ``finally`` attached to the
+    install itself. That contract was wrong -- lifting there put the 25s tick
+    back underneath the post-install hoststore reads. The lift point moved to
+    the station-up wait and is asserted by
+    ``test_quiesce_spans_the_post_install_discovery_not_just_the_installer``.
+    What survives here is the half that is still true: the quiesce is raised
+    before the installer, and the marker's expiry is what covers a lift that
+    never happens.
+    """
     text = _read(_DRIVER)
     assert "function Enter-ShipperQuiesce" in text
     assert "function Exit-ShipperQuiesce" in text
-    assert "Enter-ShipperQuiesce -Reason 'installer-running'" in text, (
-        "the installer is the phase that measurably suffers; quiesce must wrap it"
-    )
-    # The un-quiesce has to be in a finally, not merely on the success path.
-    install_block = text[text.index("Enter-ShipperQuiesce -Reason 'installer-running'") :][:1600]
-    assert "} finally {" in install_block and "Exit-ShipperQuiesce" in install_block, (
-        "Exit-ShipperQuiesce must run on every path out of the install, including an exception"
-    )
+    code = _code_only(text)
+    enter = code.index("Enter-ShipperQuiesce -Reason")
+    installer = code.index(_INSTALLER_LAUNCH)
+    assert enter < installer, "the quiesce must be raised before the installer is launched"
 
 
 def test_quiesce_marker_carries_a_self_healing_expiry() -> None:
@@ -493,3 +516,115 @@ def test_run_gate_a_junctions_kit_download_at_the_physical_kit() -> None:
         "run7's installer failed on 'station-index.json AND ITS PACKS'; the pre-launch log has "
         "to record what was actually in the bundle directory, not just that the index existed"
     )
+
+
+# --------------------------------------------------------------------------
+# 8-10. The hoststore wedge: C:\CivicCastHostStore is a mapped folder AND the
+#       install target, and the driver still read it synchronously
+# --------------------------------------------------------------------------
+
+
+def test_quiesce_spans_the_post_install_discovery_not_just_the_installer() -> None:
+    """The quiesce used to be lifted in a `finally` on the install itself,
+    which put the 25s tick back underneath the post-install phase -- and that
+    phase reads C:\\CivicCastHostStore (10,683 files) for install-dir
+    discovery, the tree listing, Test-KnownPaths and the service checks. It is
+    now lifted at the station-up wait, which is HTTP-bound.
+    """
+    text = _read(_DRIVER)
+    assert "Enter-ShipperQuiesce -Reason 'installer-and-post-install-discovery'" in text
+    assert "Save-Summary -Step 'shipper-unquiesced-at-station-up-wait'" in text, (
+        "the lift point must be instrumented, so evidence shows when shipping resumed"
+    )
+    enter = text.index("Enter-ShipperQuiesce -Reason 'installer-and-post-install-discovery'")
+    lift = text.index("Save-Summary -Step 'shipper-unquiesced-at-station-up-wait'")
+    assert enter < lift, "the quiesce must be raised before it is lifted"
+    # The old install-scoped lift must be gone: no Exit-ShipperQuiesce may sit
+    # between the installer's Start-Process and _AFTER_INSTALL.marker.
+    code = _code_only(text)
+    install_window = code[code.index(_INSTALLER_LAUNCH) :]
+    install_window = install_window[: install_window.index("_AFTER_INSTALL.marker")]
+    assert "Exit-ShipperQuiesce" not in install_window, (
+        "lifting the quiesce when the installer returns re-exposes the post-install phase"
+    )
+
+
+def test_bounded_probe_exists_and_times_out_rather_than_waiting() -> None:
+    text = _read(_DRIVER)
+    assert "function Invoke-BoundedProbe" in text
+    fn = text[text.index("function Invoke-BoundedProbe") :][:2600]
+    assert "Invoke-BoundedProcess" in fn, "the probe must run in a child with a hard timeout"
+    assert "if (-not $run.completed)" in fn and "return $null" in fn, (
+        "a probe that times out must return null and record it, never block the caller"
+    )
+
+
+@pytest.mark.parametrize(
+    "probe_name",
+    ["known-paths:$FileName", "install-tree-top-levels", "diag-station-markers:$Label"],
+)
+def test_every_hoststore_read_goes_through_a_bounded_probe(probe_name: str) -> None:
+    """The three remaining synchronous readers of C:\\CivicCastHostStore."""
+    text = _read(_DRIVER)
+    assert f'-Name "{probe_name}"' in text or f"-Name '{probe_name}'" in text, (
+        f"hoststore read '{probe_name}' is not routed through Invoke-BoundedProbe"
+    )
+
+
+def test_probe_results_use_a_named_envelope_not_a_unary_comma_array() -> None:
+    """Windows PowerShell 5.1's ConvertTo-Json turns ``(, @(...))`` into
+    ``{"value":[...],"Count":n}`` -- an object, not a JSON array -- so every
+    probe caller would receive one wrapper instead of its list. Found by the
+    host-side probe smoke test, not by reading the code.
+    """
+    text = _read(_DRIVER)
+    probe_bodies = re.findall(r"-ScriptText @'\r?\n(.*?)\r?\n'@", text, re.DOTALL)
+    assert probe_bodies, "no bounded-probe script bodies found"
+    for body in probe_bodies:
+        code = _code_only(body)
+        assert "(, " not in code, (
+            "probe results must use @{ items = @(...) }, never a unary-comma array"
+        )
+        assert "@{ items = @(" in code and "$ResultPath" in code, (
+            "every probe must write a named-envelope result to $ResultPath"
+        )
+
+
+def test_watchdog_records_whether_the_driver_process_is_still_alive() -> None:
+    """Four runs have ended with 'last step written, nothing after, other
+    processes healthy' -- a signature identical whether the driver's thread
+    blocked or its process died. This is the observation that separates them,
+    and it can only be made while the VM still exists."""
+    text = _read(_DRIVER)
+    assert "_DRIVER-PID.txt" in text, "the driver must record its own PID for the watchdog"
+    assert "function Get-DriverLiveness" in text
+    assert "driver_process_alive=true" in text and "driver_process_alive=false" in text
+    assert "'-DriverPid', $PID" in text, "the watchdog must be told which PID to watch"
+    # Both watchdog triggers must carry it, not just one.
+    assert text.count("Get-DriverLiveness -DriverPid $DriverPid") >= 2, (
+        "both the staleness trigger and the overall-deadline trigger must record liveness"
+    )
+    assert "driver_liveness      = $liveness" in text, (
+        "the placeholder DONE.json must carry it too, so the judge's evidence has it"
+    )
+
+
+def test_stale_quiesce_marker_is_retracted_from_the_host() -> None:
+    """The mirror is additive, so a marker shipped during the quiesce window
+    outlived the driver's local removal and told a reader the run was still
+    quiesced when it was not."""
+    text = _read(_DRIVER)
+    retraction = text[text.index("foreach ($name in @('WATCHDOG-TIMEOUT.txt'") :][:400]
+    assert "'_SHIPPER-QUIESCE.marker'" in retraction
+
+
+def test_local_install_target_alternative_is_documented_as_rejected() -> None:
+    """The tidier-sounding fix -- move the install target off the mapped
+    folder -- is not viable, and the reason must stay written down where the
+    next person will look before re-proposing it."""
+    text = _read(_DRIVER)
+    assert "C:\\CivicCastLocalInstall" in text, (
+        "name the rejected alternative explicitly so it is searchable"
+    )
+    assert "os error 112" in text, "cite the recorded reason it fails (virtual disk exhaustion)"
+    assert "REFUSES junction/symlink install-roots" in text, "cite the second closed dodge"
