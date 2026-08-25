@@ -622,6 +622,121 @@ def test_dependency_install_uses_the_reviewed_pyav_wheelhouse(
     assert "--require-hashes" in command
     assert "--no-deps" in command
     assert "--no-index" in command
+    assert command[command.index("-r") + 1] == str(builder.APP_REQUIREMENTS_FILE)
+    assert len(calls) == 1
+
+
+def test_dependency_install_splits_av_out_of_the_hash_check_when_advisory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On the self-hosted lane the compiled `av` wheel legitimately does not
+    match `requirements-native-app.txt`'s hosted-reviewed hash pin (see
+    docs/process/pyav-wheel-reproducibility.md) -- the SAME advisory posture
+    that let the build step accept it with only a warning must let install
+    accept it too, without weakening the hash check for anything else."""
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    pyav_wheel = wheelhouse / "av-18.0.0-cp311-abi3-win_amd64.whl"
+    pyav_wheel.write_bytes(b"self-hosted-built, different bytes than the reviewed reference")
+    site_packages = tmp_path / "site-packages"
+    calls: list[list[str]] = []
+    filtered_lock_contents_at_call_time: list[str] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if "-r" in command:
+            # Snapshot now: the real code deletes this scratch file in a
+            # `finally` right after this subprocess.run() call returns.
+            filtered_lock_contents_at_call_time.append(
+                Path(command[command.index("-r") + 1]).read_text(encoding="utf-8")
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(builder.subprocess, "run", run)
+    builder.install_pinned_dependencies(
+        site_packages,
+        wheelhouse=wheelhouse,
+        uv_executable="uv",
+        advisory_pyav_wheel_hash=True,
+    )
+
+    assert len(calls) == 2
+
+    rest_command = calls[0]
+    assert "--require-hashes" in rest_command
+    assert "--no-deps" in rest_command
+    assert "--no-index" in rest_command
+    assert rest_command[rest_command.index("--find-links") + 1] == str(wheelhouse)
+    filtered_lock_path = Path(rest_command[rest_command.index("-r") + 1])
+    assert filtered_lock_path.parent == wheelhouse
+    assert len(filtered_lock_contents_at_call_time) == 1
+    assert "av==" not in filtered_lock_contents_at_call_time[0]
+    assert "boto3==" in filtered_lock_contents_at_call_time[0]
+    # The filtered lock is written, used, and cleaned up during the call --
+    # by the time control returns here it must not linger in the wheelhouse.
+    assert not filtered_lock_path.exists()
+
+    av_command = calls[1]
+    assert "--require-hashes" not in av_command
+    assert "--no-deps" in av_command
+    assert "--no-index" in av_command
+    assert av_command[-1] == str(pyav_wheel)
+
+    # The wheelhouse must contain nothing but the one av wheel afterward --
+    # no leftover filtered-lock scratch file from either install call.
+    assert [p.name for p in wheelhouse.iterdir()] == [pyav_wheel.name]
+
+
+def test_dependency_install_advisory_flag_defaults_to_the_hosted_unified_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Calling without `advisory_pyav_wheel_hash` (every existing caller
+    before this parameter was added, and the hosted lane's own call) must
+    still take the single unified `--require-hashes` path -- byte-identical
+    to before the advisory split existed."""
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    (wheelhouse / "av-18.0.0-cp311-abi3-win_amd64.whl").write_bytes(b"reviewed")
+    site_packages = tmp_path / "site-packages"
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(builder.subprocess, "run", run)
+    builder.install_pinned_dependencies(
+        site_packages,
+        wheelhouse=wheelhouse,
+        uv_executable="uv",
+    )
+
+    assert len(calls) == 1
+    assert "--require-hashes" in calls[0]
+    assert calls[0][calls[0].index("-r") + 1] == str(builder.APP_REQUIREMENTS_FILE)
+
+
+def test_requirements_lock_without_av_removes_only_the_av_entry() -> None:
+    lock_text = (
+        "av==18.0.0 \\\n"
+        "    --hash=sha256:aaaa\n"
+        "    # via faster-whisper\n"
+        "boto3==1.43.56 \\\n"
+        "    --hash=sha256:bbbb\n"
+    )
+
+    filtered = builder._requirements_lock_without_av(lock_text)
+
+    assert "av==" not in filtered
+    assert "boto3==1.43.56" in filtered
+    assert "--hash=sha256:bbbb" in filtered
+
+
+def test_requirements_lock_without_av_refuses_a_lock_missing_av() -> None:
+    with pytest.raises(SystemExit):
+        builder._requirements_lock_without_av("boto3==1.43.56 \\\n    --hash=sha256:bbbb\n")
 
 
 def test_dependency_wheel_download_is_hash_locked_and_binary_only(

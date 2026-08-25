@@ -503,6 +503,30 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Self-hosted native-beta candidate build — the advisory PyAV wheel hash
+  never reached the install step, so run 32806127399 failed
+  `uv pip install --require-hashes` with "Failed to download `av==18.0.0` /
+  Hash mismatch" right after the advisory build had already accepted that
+  same wheel with only a `::warning::`.** `--advisory-pyav-wheel-hash`
+  (`docs/process/pyav-wheel-reproducibility.md`) was wired into
+  `build_native_pyav_wheel.py`'s own `verify_artifact()` check on the
+  compiled wheel, but `build_native_app_payload.py`'s
+  `install_pinned_dependencies()` still ran a single unconditional
+  `uv pip install --require-hashes -r requirements-native-app.txt`, which
+  re-enforces that exact same hosted-reviewed hash for `av==18.0.0` —
+  self-hosted physically cannot produce byte-identical MSVC output (see the
+  doc), so the install always failed on that lane regardless of a clean
+  build. Not an index/resolver miss: `--no-index --find-links` correctly
+  found the locally built wheel; it failed the hash check against the
+  requirements lock. `install_pinned_dependencies()` now takes the same
+  `advisory_pyav_wheel_hash` flag `build()` receives: when set, `av`
+  installs from the wheelhouse by its verified-unique filename with no hash
+  check of its own (a second, unconditional `--require-hashes` install still
+  covers every OTHER pinned dependency against the unmodified lock); when
+  unset (the hosted lane, unchanged), a single `--require-hashes` install of
+  the full lock runs exactly as before. `tests/native/test_app_payload_builder.py`
+  covers both the unchanged hosted-lane invocation and the new advisory
+  split-install path.
 - **Gate A run 7 — the evidence shipper was starving the installer of the
   shared VSMB transport.** Every mapped folder in the sandbox VM
   (`C:\CivicCastPayload`, `C:\CivicCastHostStore`, `C:\CivicCastOutput`)
