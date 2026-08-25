@@ -597,6 +597,44 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Gate A — the stalls were `ConvertTo-Json` walking a cycle in
+  `Get-Content`'s note properties.** Root cause for five runs (4, 6, 7 and both
+  candidate-#11 runs), found by the liveness instrument on its very first
+  outing: `driver_process_alive=true driver_cpu_seconds=449.5
+  driver_working_set_mb=8318.2` — alive, CPU-hot, 8.3 GB resident in a 16 GB
+  VM, so not blocked I/O at all. `Get-Content` emits `PSObject`-wrapped
+  strings carrying `PSPath`/`PSParentPath`/`PSChildName`/`PSDrive`/`PSProvider`/
+  `ReadCount`; `PSProvider` is a `ProviderInfo` whose `.Drives` collection
+  holds `PSDriveInfo` objects that each point back at it — a cycle.
+  `ConvertTo-Json` serializes note properties, so `-Depth N` walks that cycle
+  `N` deep. Measured here, **one** such line: 1,889 chars at depth 3;
+  3,852,872 at depth 6; **98,197,802 at depth 7 (11.2 s)**; at depth 8 it never
+  finished (killed at 180 s having reached 4 GB and 178 s of CPU). The driver
+  serialized **eighty** of them at depth 8 via `install_progress_log_tail`.
+  The same 80 lines as plain strings at depth 8: 5,314 chars in 30 ms. This
+  also explains why the stall always looked positional — the assignment was
+  always followed immediately by a `Save-Summary`, so relocating the capture in
+  the previous change moved the explosion earlier in the run rather than
+  removing it. (Run 3's `t2-render-assert` stall is *not* explained by this and
+  is not claimed to be.) Fixed with two independent defences plus a source-site
+  cast: `ConvertTo-PlainForSummary` rebuilds the summary from plain types
+  before serialization — recursing only into arrays and dictionaries, capping
+  its own depth, and rendering anything else via `ToString()` rather than
+  walking its graph (a cyclic `ProviderInfo` now serializes to 59 characters) —
+  and the serialization depth drops from 8 to 6, which is one more than the
+  deepest real member needs. While fixing it, a second PS 5.1 trap: the
+  sanitizer's first form used `System.Collections.Generic.List[object]` with
+  `return @($out)`, which throws *"Argument types do not match"* in Windows
+  PowerShell 5.1 and silently degraded **every array member of the summary**
+  into one space-joined string; it uses `ArrayList` and
+  `return , ($out.ToArray())` now, the leading comma also keeping
+  single-element arrays as arrays for the judge's counted fields. Finally, when
+  the watchdog fires and the driver is still alive it now also records a CPU
+  delta with a verdict (verified against a real spinning process at
+  `driver_busy_percent=100.8` and a real sleeping one at `0`) and, guarded by a
+  working-set cap and a 120 s timeout, a MiniDump written to `$env:TEMP` —
+  never to the shipped evidence directory, since a full dump of the process
+  this was written for would be 8.3 GB.
 - **Gate A — the remaining synchronous `C:\CivicCastHostStore` reads are now
   bounded, and the "hung or dead?" question is finally instrumented.** The
   candidate-#11 run (`831f3df`) is the first Gate A run whose install

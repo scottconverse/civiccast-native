@@ -628,3 +628,104 @@ def test_local_install_target_alternative_is_documented_as_rejected() -> None:
     )
     assert "os error 112" in text, "cite the recorded reason it fails (virtual disk exhaustion)"
     assert "REFUSES junction/symlink install-roots" in text, "cite the second closed dodge"
+
+
+# --------------------------------------------------------------------------
+# 11-13. The summary-JSON explosion
+#
+# Five runs (4, 6, 7, and both candidate-#11 runs) stopped at the first
+# Save-Summary after install_progress_log_tail was assigned. The liveness
+# instrument answered it: driver alive, CPU-hot, 8.3 GB resident. Get-Content
+# emits strings decorated with PSProvider/PSDrive note properties whose object
+# graph contains a cycle, and ConvertTo-Json -Depth 8 walks it. Measured: ONE
+# such line costs 98 MB of JSON at depth 7 and never finishes at depth 8.
+# --------------------------------------------------------------------------
+
+
+def test_get_content_results_are_cast_to_plain_strings_at_the_source() -> None:
+    text = _read(_DRIVER)
+    assert "$lines = [string[]]@(Get-Content -LiteralPath $progressLog" in text, (
+        "the install-progress read must strip PSObject decoration at the source"
+    )
+    assert "$summary.install_progress_log_tail = [string[]]@(" in text, (
+        "the summary member must be a plain string array"
+    )
+
+
+def test_summary_is_sanitized_before_serialization() -> None:
+    text = _read(_DRIVER)
+    assert "function ConvertTo-PlainForSummary" in text
+    save = text[text.index("function Save-Summary") :][:900]
+    assert "ConvertTo-PlainForSummary -Value $summary" in save, (
+        "Save-Summary must sanitize before it serializes -- the source-site cast alone "
+        "protects only the one member we already know about"
+    )
+
+
+def test_summary_json_depth_is_bounded() -> None:
+    """Depth is a blast-radius multiplier for this bug class, not a
+    formatting preference. The deepest real member is install_tree_top_levels
+    (summary -> array -> entry -> children -> string = 5)."""
+    text = _read(_DRIVER)
+    depth = _int_setting(
+        text, r"\$script:SummaryJsonDepth\s*=\s*(\d+)", "Save-Summary ConvertTo-Json depth"
+    )
+    assert 5 <= depth <= 6, f"summary serialization depth {depth} is outside the justified range"
+    code = _code_only(text)
+    assert "$summary | ConvertTo-Json -Depth 8" not in code, (
+        "the unsanitized depth-8 serialization of $summary is what exploded; it must not return"
+    )
+    assert "ConvertTo-Json -Depth $script:SummaryJsonDepth" in code
+
+
+def test_sanitizer_avoids_the_ps51_generic_list_trap() -> None:
+    """`@($list)` over a System.Collections.Generic.List[object] throws
+    "Argument types do not match" in Windows PowerShell 5.1, which silently
+    degraded every array member of the summary into one space-joined string.
+    Caught by the host-side sanitizer test, not by reading the code."""
+    text = _read(_DRIVER)
+    fn = text[text.index("function ConvertTo-PlainForSummary") :]
+    fn = fn[: fn.index("\nfunction ")]
+    code = _code_only(fn)
+    assert "System.Collections.ArrayList" in code
+    assert "System.Collections.Generic.List[object]" not in code, (
+        "the generic List is the shape that throws under @() in PS 5.1"
+    )
+    assert "return , ($out.ToArray())" in code, (
+        "the leading comma keeps a single-element array an ARRAY in summary.json -- the judge "
+        "counts those fields"
+    )
+    # It must render unknown objects rather than walking them; that single
+    # line is what makes a cyclic graph impossible to expand.
+    assert "return [string]$Value" in code
+
+
+def test_watchdog_forensics_run_only_when_the_driver_is_alive() -> None:
+    text = _read(_DRIVER)
+    assert "function Get-DriverForensics" in text
+    # Both triggers, and both gated on liveness.
+    assert text.count("Get-DriverForensics -DriverPid $DriverPid") == 2, (
+        "both the staleness trigger and the overall-deadline trigger must collect forensics"
+    )
+    assert text.count("if ($liveness -like '*driver_process_alive=true*')") == 2, (
+        "a dead driver has nothing to sample or dump -- do not pay for it"
+    )
+
+
+def test_forensics_distinguish_spinning_from_blocked_and_bound_the_dump() -> None:
+    """One cumulative CPU number cannot tell 'spinning now' from 'burned CPU
+    earlier and now blocked'. Two samples can, and that is the bit that picks
+    where to look next."""
+    text = _read(_DRIVER)
+    fn = text[text.index("function Get-DriverForensics") :][:3600]
+    assert "driver_cpu_delta_seconds" in fn and "driver_busy_percent" in fn
+    assert "SPINNING (compute-bound right now)" in fn
+    assert "NOT-SPINNING (idle or blocked right now)" in fn
+    # The dump must be bounded by size AND time, and must never land in the
+    # shipped evidence directory -- a full dump of the 8.3 GB process this was
+    # written for would be 8.3 GB.
+    assert "DumpMaxWorkingSetMb" in fn
+    assert "Join-Path $env:TEMP" in fn, "the dump must go to TEMP, never to the shipped $OutDir"
+    assert "$OutDir" not in fn, "Get-DriverForensics must not write into the evidence directory"
+    assert "Wait-Process -Id $dp.Id -Timeout 120" in fn, "the dump itself must be time-bounded"
+    assert "comsvcs.dll,MiniDump" in fn

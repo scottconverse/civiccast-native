@@ -510,6 +510,67 @@ try {
     $watchdogScript = @'
 param([string]$OutDir, [int]$Minutes, [int]$StallMinutes = 8, [int]$DriverPid = 0)
 
+function Get-DriverForensics {
+    <#
+      Called ONLY when the driver is still alive at the moment the watchdog
+      fires <gate-a-summary-json-explosion>. "Alive and CPU-hot" is the answer
+      the previous change's liveness line gave, and it was enough to find the
+      ConvertTo-Json explosion -- but only because the suspect list was short.
+      This narrows the next one without a debugger, using nothing that
+      Windows PowerShell 5.1 lacks:
+
+        1. A CPU DELTA over a fixed interval. One cumulative CPU number cannot
+           distinguish "spinning right now" from "burned CPU earlier and is
+           now blocked". Two samples can, and that is the single most useful
+           bit for choosing where to look.
+        2. A bounded MiniDump via rundll32 comsvcs.dll, written to $env:TEMP
+           and NEVER to the shipped evidence directory -- a full dump of the
+           8.3 GB process this was written for would be 8.3 GB. Only the path
+           and size are recorded. Guarded by a working-set cap so it is
+           skipped exactly when it would be ruinous, and by its own timeout.
+
+      Returns a single line. Never throws.
+    #>
+    param([int]$DriverPid, [int]$SampleSeconds = 5, [int]$DumpMaxWorkingSetMb = 1536)
+    $parts = New-Object System.Collections.Generic.List[string]
+    try {
+        $p1 = Get-Process -Id $DriverPid -ErrorAction Stop
+        $cpu1 = $p1.TotalProcessorTime.TotalSeconds
+        Start-Sleep -Seconds $SampleSeconds
+        $p2 = Get-Process -Id $DriverPid -ErrorAction Stop
+        $cpu2 = $p2.TotalProcessorTime.TotalSeconds
+        $delta = [Math]::Round($cpu2 - $cpu1, 2)
+        $busy = [Math]::Round(100.0 * ($cpu2 - $cpu1) / [Math]::Max(1, $SampleSeconds), 1)
+        $wsMb = [Math]::Round($p2.WorkingSet64 / 1MB, 1)
+        $parts.Add("driver_cpu_delta_seconds=$delta over_${SampleSeconds}s driver_busy_percent=$busy")
+        $parts.Add("driver_verdict=$(if ($busy -ge 50) { 'SPINNING (compute-bound right now)' } else { 'NOT-SPINNING (idle or blocked right now)' })")
+
+        if ($wsMb -gt $DumpMaxWorkingSetMb) {
+            $parts.Add("driver_dump=skipped (working set ${wsMb}MB exceeds ${DumpMaxWorkingSetMb}MB cap -- a full dump would not fit)")
+        } else {
+            $dumpPath = Join-Path $env:TEMP ("civiccast-driver-$DriverPid-" + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + '.dmp')
+            $dp = Start-Process -FilePath 'rundll32.exe' `
+                -ArgumentList @('C:\Windows\System32\comsvcs.dll,MiniDump', "$DriverPid", "`"$dumpPath`"", 'full') `
+                -PassThru -WindowStyle Hidden -ErrorAction Stop
+            try {
+                Wait-Process -Id $dp.Id -Timeout 120 -ErrorAction Stop
+                if (Test-Path $dumpPath) {
+                    $dumpMb = [Math]::Round((Get-Item $dumpPath).Length / 1MB, 1)
+                    $parts.Add("driver_dump=$dumpPath (${dumpMb}MB, NOT shipped -- read it inside the VM before teardown)")
+                } else {
+                    $parts.Add('driver_dump=failed (rundll32 completed but wrote no file -- likely a privilege refusal)')
+                }
+            } catch {
+                try { Stop-Process -Id $dp.Id -Force -ErrorAction SilentlyContinue } catch {}
+                $parts.Add('driver_dump=timed-out after 120s')
+            }
+        }
+    } catch {
+        $parts.Add("driver_forensics_failed=$($_.Exception.Message)")
+    }
+    return ($parts -join ' ')
+}
+
 function Get-DriverLiveness {
     # "The driver stopped advancing" has two very different causes that leave
     # an identical trail: its thread blocked, or its process died. This is the
@@ -604,6 +665,11 @@ while ((Get-Date) -lt $deadline) {
                 $ts = (Get-Date).ToUniversalTime().ToString('o')
                 $stuckSinceIso = $lastChangeTime.ToUniversalTime().ToString('o')
                 $liveness = Get-DriverLiveness -DriverPid $DriverPid
+                # Only pay for forensics when the driver is ALIVE -- a dead
+                # driver has nothing left to sample or dump.
+                if ($liveness -like '*driver_process_alive=true*') {
+                    $liveness = $liveness + ' ' + (Get-DriverForensics -DriverPid $DriverPid)
+                }
                 "stall_detected_utc=$ts stuck_step=$lastSeenStep stuck_progress=$lastSeenProgress stuck_since_utc=$stuckSinceIso stalled_seconds=$([Math]::Round($stalledSeconds, 1)) threshold_seconds=$stallThresholdSeconds $liveness" |
                     Set-Content -Path (Join-Path $OutDir 'STALL-TIMEOUT.txt') -Encoding UTF8
                 if (-not (Test-Path $donePath)) {
@@ -629,6 +695,9 @@ while ((Get-Date) -lt $deadline) {
 if (-not (Test-Path $donePath)) {
     $ts = (Get-Date).ToUniversalTime().ToString('o')
     $liveness = Get-DriverLiveness -DriverPid $DriverPid
+    if ($liveness -like '*driver_process_alive=true*') {
+        $liveness = $liveness + ' ' + (Get-DriverForensics -DriverPid $DriverPid)
+    }
     "watchdog_fired_utc=$ts max_script_minutes=$Minutes reason=DONE.json not present after the bounded deadline -- main script presumed hung or zombied $liveness" |
         Set-Content -Path (Join-Path $OutDir 'WATCHDOG-TIMEOUT.txt') -Encoding UTF8
     if (-not (Test-Path $donePath)) {
@@ -694,6 +763,112 @@ $summary = [ordered]@{
     run_end_utc                = $null
 }
 
+# --------------------------------------------------------------------------
+# SUMMARY SERIALIZATION SAFETY <gate-a-summary-json-explosion>
+#
+# THE BUG THIS EXISTS FOR. Five Gate A runs (4, 6, 7, and both candidate-#11
+# runs) stopped advancing at the first Save-Summary after
+# install_progress_log_tail was assigned. The liveness instrument added in the
+# previous change finally answered what was happening:
+#
+#   driver_process_alive=true driver_cpu_seconds=449.5 driver_working_set_mb=8318.2
+#
+# Alive, CPU-hot, 8.3 GB resident in a 16 GB VM. Not blocked I/O -- a
+# serializer explosion.
+#
+# Get-Content does not emit plain strings. It emits strings DECORATED with
+# NoteProperties: PSPath, PSParentPath, PSChildName, PSDrive, PSProvider,
+# ReadCount. PSProvider is a ProviderInfo whose .Drives is a collection of
+# PSDriveInfo, and each PSDriveInfo has a .Provider back-reference to that same
+# ProviderInfo -- a cycle. ConvertTo-Json walks NoteProperties, so -Depth N
+# walks that cycle N levels deep and expands combinatorially.
+#
+# Measured on this host, ONE Get-Content line inside a hashtable:
+#
+#   -Depth 3 ->      1,889 json chars
+#   -Depth 4 ->     32,936
+#   -Depth 5 ->    447,193
+#   -Depth 6 ->  3,852,872
+#   -Depth 7 -> 98,197,802  (11.2 seconds)
+#   -Depth 8 -> never completed; killed at 180s having reached 4 GB / 178s CPU
+#
+# The driver serialized EIGHTY such lines at -Depth 8. 8.3 GB and 449.5s of
+# CPU is exactly what that costs.
+#
+# The same 80 lines as PLAIN strings at the same -Depth 8: 5,314 chars, 30 ms.
+#
+# Two independent defences, because either alone would have been enough to
+# prevent this and neither alone is enough to prevent the next one:
+#   (1) Sanitize at the boundary -- ConvertTo-PlainForSummary below strips
+#       PSObject decoration off everything before it is serialized, so a
+#       decorated value can no longer reach ConvertTo-Json at all.
+#   (2) Serialize at the depth the data actually needs (6), not 8. The
+#       deepest real member is install_tree_top_levels: summary -> array ->
+#       entry -> children -> string = 5. Depth is a blast-radius multiplier
+#       for exactly this class of bug.
+# --------------------------------------------------------------------------
+
+#: What Save-Summary serializes at. See the note above -- this is a bound on
+#: blast radius, not just a formatting preference.
+$script:SummaryJsonDepth = 6
+
+function ConvertTo-PlainForSummary {
+    <#
+      Return a value built only from plain types (string / number / bool /
+      null / array / hashtable), with every PSObject adapted-member wrapper
+      discarded. Terminates by construction: it recurses only into arrays and
+      dictionaries, caps its own depth, and renders anything else via
+      ToString() rather than walking its object graph -- which is precisely
+      what ConvertTo-Json does NOT do, and why this exists.
+    #>
+    param($Value, [int]$Depth = 0)
+    if ($null -eq $Value) { return $null }
+    if ($Depth -ge 12) { return [string]$Value }
+
+    # Unwrap PSObject first: a Get-Content line is a PSObject whose BaseObject
+    # is a plain System.String. Taking the BaseObject drops PSProvider/PSDrive
+    # and the cycle with them.
+    if ($Value -is [System.Management.Automation.PSObject]) {
+        $Value = $Value.BaseObject
+        if ($null -eq $Value) { return $null }
+    }
+
+    if ($Value -is [string]) { return [string]$Value }
+    if ($Value -is [bool] -or $Value -is [int] -or $Value -is [long] -or
+        $Value -is [double] -or $Value -is [decimal]) { return $Value }
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime().ToString('o') }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        $out = [ordered]@{}
+        foreach ($key in @($Value.Keys)) {
+            $out[[string]$key] = ConvertTo-PlainForSummary -Value $Value[$key] -Depth ($Depth + 1)
+        }
+        return $out
+    }
+
+    if ($Value -is [System.Collections.IEnumerable]) {
+        # ArrayList, not List[object]: in Windows PowerShell 5.1 `@($list)`
+        # over a System.Collections.Generic.List[object] throws "Argument
+        # types do not match", which silently degraded every array member of
+        # the summary into one space-joined string. Caught by the host-side
+        # sanitizer test, not by reading the code.
+        #
+        # The leading comma on the return is also load-bearing: without it
+        # PowerShell unrolls the array, and a single-element list would reach
+        # ConvertTo-Json as a scalar -- changing summary.json's shape for
+        # exactly the fields the judge counts.
+        $out = New-Object System.Collections.ArrayList
+        foreach ($item in $Value) {
+            [void]$out.Add((ConvertTo-PlainForSummary -Value $item -Depth ($Depth + 1)))
+        }
+        return , ($out.ToArray())
+    }
+
+    # Anything else (ProviderInfo, PSDriveInfo, Process, ...) is rendered, not
+    # walked. This single line is what makes the explosion impossible.
+    return [string]$Value
+}
+
 # (a) Incremental writer: called after EVERY step below so a hang later in
 # the script can never swallow earlier results. Cheap (summary is small
 # JSON, never the multi-GB install tree itself). Writes to the LOCAL
@@ -706,7 +881,8 @@ function Save-Summary {
     $summary.step_utc = (Get-Date).ToUniversalTime().ToString('o')
     try {
         $summaryPath = Join-Path $OutDir 'summary.json'
-        ($summary | ConvertTo-Json -Depth 8) | Set-Content -Path $summaryPath -Encoding UTF8
+        $plain = ConvertTo-PlainForSummary -Value $summary
+        ($plain | ConvertTo-Json -Depth $script:SummaryJsonDepth) | Set-Content -Path $summaryPath -Encoding UTF8
     } catch {
         # Writing the summary itself must never throw and abort the run.
         try { Add-Content -Path (Join-Path $OutDir 'summary-write-errors.log') -Value "step=$Step : $_" } catch {}
@@ -769,9 +945,15 @@ function Invoke-InstallProgressCapture {
         return
     }
 
-    $lines = @()
+    # [string[]] is load-bearing, not tidiness <gate-a-summary-json-explosion>.
+    # Get-Content emits PSObject-wrapped strings carrying PSProvider/PSDrive
+    # note properties whose object graph contains a cycle; casting to a plain
+    # string array drops the wrapper at the source. Without it, these lines end
+    # up in $summary and ConvertTo-Json spends 8 GB and 450s of CPU expanding
+    # that cycle. See the note above Save-Summary for the measurements.
+    $lines = [string[]]@()
     try {
-        $lines = @(Get-Content -LiteralPath $progressLog -ErrorAction Stop)
+        $lines = [string[]]@(Get-Content -LiteralPath $progressLog -ErrorAction Stop)
     } catch {
         $summary.errors += "install-progress read failed ($Phase): $_"
         Save-Summary -Step "install-progress-read-failed-$Phase"
@@ -786,7 +968,7 @@ function Invoke-InstallProgressCapture {
     }
     Save-Summary -Step "install-progress-copied-$Phase"
 
-    $summary.install_progress_log_tail = @($lines | Select-Object -Last 80)
+    $summary.install_progress_log_tail = [string[]]@($lines | Select-Object -Last 80)
     $script:InstallProgressCaptured = $true
     Save-Summary -Step "install-progress-captured-$Phase"
 }
