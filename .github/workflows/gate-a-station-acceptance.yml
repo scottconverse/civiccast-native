@@ -227,8 +227,38 @@ jobs:
         shell: pwsh
         run: |
           $code = "${{ steps.gate_a.outputs.exit_code }}"
-          if ($code -ne '0') {
-            Write-Error "Gate A did not PASS (Run-GateA.ps1 exit code: $code). See the uploaded gate-a-verdict / evidence artifacts."
+          if ($code -eq '0') {
+            Write-Host "Gate A PASS."
+            exit 0
+          }
+
+          # Windows Sandbox is a shared, single-instance-per-machine resource
+          # on this runner -- an independent, unrelated build system also
+          # launches it here. When Run-GateA.ps1 exits 2 with a BUSY verdict
+          # (sandbox occupied by another process for the whole
+          # -SandboxWaitMinutes wait window, harness never launched), that is
+          # not a station-acceptance FAIL -- surface it as a distinctly
+          # labeled, re-runnable failure rather than the generic message, and
+          # do not auto-retry here: the launcher already spent its own wait
+          # window, and this job's `concurrency: gate-a` group only ever
+          # serializes OUR OWN Gate A runs, never the other party's, which is
+          # invisible to GitHub.
+          $verdict = $null
+          $evidenceDir = "${{ steps.gate_a.outputs.evidence_dir }}"
+          if ($evidenceDir -and (Test-Path (Join-Path $evidenceDir 'gate-a-verdict.json'))) {
+            try {
+              $verdict = (Get-Content -Path (Join-Path $evidenceDir 'gate-a-verdict.json') -Raw | ConvertFrom-Json).verdict
+            } catch {
+              Write-Warning "Could not parse gate-a-verdict.json to determine verdict: $_"
+            }
+          }
+
+          if ($verdict -eq 'BUSY') {
+            Write-Error "Gate A did not run: Windows Sandbox was busy (owned by another process on this shared runner, e.g. a rival build system) for the entire wait window, and the harness backed off cleanly without touching it. This is NOT a product failure -- re-run this workflow once the sandbox is free. See the uploaded gate-a-verdict / evidence artifacts (SANDBOX-WAIT.txt / SANDBOX-BUSY.txt)."
             exit 1
           }
-          Write-Host "Gate A PASS."
+
+          $verdictLabel = '<unknown>'
+          if ($verdict) { $verdictLabel = $verdict }
+          Write-Error "Gate A did not PASS (Run-GateA.ps1 exit code: $code, verdict: $verdictLabel). See the uploaded gate-a-verdict / evidence artifacts."
+          exit 1

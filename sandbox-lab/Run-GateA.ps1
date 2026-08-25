@@ -59,7 +59,14 @@ param(
     [string]$Root = $PSScriptRoot,
     [int]$SoakMinutes = 20,
     [int]$TimeoutMinutes = 120,
-    [string]$Repo = 'scottconverse/civiccast-native'
+    [string]$Repo = 'scottconverse/civiccast-native',
+
+    # Passed straight through to Host-Launch-Sandbox-Test.ps1: minutes to
+    # wait for Windows Sandbox to become free before giving up. Windows
+    # Sandbox is a single-instance-per-machine resource shared with an
+    # independent, unrelated build system on this box -- see that script's
+    # header and docs/ops/gate-a.md for the shared-sandbox guard.
+    [int]$SandboxWaitMinutes = 90
 )
 
 $ErrorActionPreference = 'Stop'
@@ -234,8 +241,8 @@ if (-not (Test-Path $launcherPath)) {
     Exit-HarnessError "Host-Launch-Sandbox-Test.ps1 not found at $launcherPath"
 }
 
-Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes)..."
-& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes
+Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes)..."
+& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes
 $launcherExit = $LASTEXITCODE
 Write-Step "Host launcher exited with code $launcherExit"
 
@@ -256,6 +263,62 @@ if ($hasEvidence) {
     Write-Step "Evidence copied to $evidenceDir"
 } else {
     Write-Warning "output\ is empty or missing -- nothing to copy to evidence\, nothing to judge."
+}
+
+# --------------------------------------------------------------------------
+# 6a. Host-launcher exit 3 = Windows Sandbox stayed busy (owned by another,
+#     independent process on this shared box) for the entire
+#     -SandboxWaitMinutes wait window, and the launcher backed off without
+#     ever touching it. This is a harness-busy outcome, not a station-
+#     acceptance FAIL -- write a BUSY verdict document (same shape family as
+#     gate-a-verdict.json, so CI can find and read it the same way) and exit
+#     2 (harness error), never 1 (product FAIL).
+# --------------------------------------------------------------------------
+
+if ($launcherExit -eq 3) {
+    Write-Warning "[Run-GateA] Windows Sandbox stayed busy for the entire ${SandboxWaitMinutes}m wait window (owned by another process on this shared box, e.g. a rival build system) -- this is a harness-busy outcome, not a station-acceptance FAIL."
+
+    # Mirror scripts/gate_a_verdict.py's own SANDBOX-BUSY.txt short-circuit
+    # shape (including the "detail" field) so a BUSY verdict document looks
+    # the same regardless of which of the two writers produced it.
+    $busyDetail = "Host-Launch-Sandbox-Test.ps1 exited 3 (Windows Sandbox still busy after waiting ${SandboxWaitMinutes}m)"
+    $busyDetailPath = Join-Path $outputDir 'SANDBOX-BUSY.txt'
+    if (Test-Path $busyDetailPath) {
+        $fileDetail = (Get-Content -Path $busyDetailPath -Raw).Trim()
+        if ($fileDetail) { $busyDetail = $fileDetail }
+    }
+
+    $busyVerdict = [ordered]@{
+        schema_version = 1
+        source_sha     = $sourceSha
+        run_id         = $resolvedRunId
+        verdict        = "BUSY"
+        reason         = "sandbox-busy-other-user"
+        detail         = $busyDetail
+        checks         = @{}
+        station_up     = $null
+        station_boot_seconds = $null
+        station_first_healthy_utc = $null
+        evidence_dir   = $(if ($hasEvidence) { $evidenceDir } else { $null })
+        judged_utc     = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    if ($hasEvidence) {
+        $busyVerdictDir = $evidenceDir
+    } else {
+        $busyVerdictDir = $outputDir
+    }
+    if (-not (Test-Path $busyVerdictDir)) {
+        New-Item -ItemType Directory -Force -Path $busyVerdictDir | Out-Null
+    }
+    $busyVerdictPath = Join-Path $busyVerdictDir 'gate-a-verdict.json'
+    ($busyVerdict | ConvertTo-Json -Depth 8) | Set-Content -Path $busyVerdictPath -Encoding UTF8
+
+    Write-Host ""
+    Write-Host "=== GATE A VERDICT ===" -ForegroundColor Cyan
+    Get-Content -Path $busyVerdictPath -Raw | Write-Host
+    Write-Host "Evidence: $busyVerdictDir"
+    Write-Host "[Run-GateA] BUSY -- Windows Sandbox occupied by another process; harness did not run" -ForegroundColor Yellow
+    exit 2
 }
 
 if ($launcherExit -ne 0) {
