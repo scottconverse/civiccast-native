@@ -15,6 +15,43 @@ came across and what deliberately did not.
 
 ### Added
 
+- **S3/S11 — CEA-708 commissioning decode-back verification.** Closes the gap
+  PR #22 left honest but open: the S3 commissioning wizard's Screen 10 output
+  proof previously always reported `cea708_verified: null` with a blocker when
+  CEA-708 passthrough was requested, because no decode-back check existed. New
+  module `civiccast/installer/cea708_verification.py` writes a deterministic
+  test caption, embeds it through the product's real GStreamer sidecar
+  caption-embed leg (`egress/gst/graph.py caption_embed_leg_from_sidecar`, run
+  via `egress/gst/worker.py` over the same D2 control seam
+  `scripts/prove_native_live_caption_transport.py`'s code already assembles
+  this way for the live appsrc leg), then decodes the emitted stream back
+  with the existing engine-agnostic
+  `civiccast.egress.caption_proof.decode_embedded_captions` and compares.
+  `run_output_proof` (`civiccast/installer/commissioning.py`) now calls this
+  after the main test-pattern/TSDuck window (injectable via a new
+  `caption_verifier` parameter) and reports a real `True`/`False`
+  `cea708_verified` with detail — it stays `None` only when the check itself
+  could not run. Standalone: `civiccast egress verify-captions` runs the same
+  check outside commissioning. Along the way, found and fixed a real latent bug
+  in `civiccast/egress/caption_embed.py`'s `_clean_caption_text`: it had never
+  been exercised against real ffmpeg-decoded closed-caption output before
+  (only hand-written SRT text in tests), so the ASS position tag
+  (`{\an7}`) ffmpeg's `eia_608`/`cc_dec` decoder always wraps real decoded text
+  in would have made every genuine decode-back text comparison mismatch, even
+  when captions embedded and decoded correctly — fixed and covered by a
+  regression test. New test fixtures
+  `tests/egress/fixtures/cea708_{test_caption,no_captions}.mpegts` are real,
+  tiny (~18 KB) MPEG-TS captures with genuine hand-built ATSC A/53
+  CEA-608-in-708 SEI data, verified against the actual production decode path
+  while building this; `tests/installer/test_cea708_verification.py`,
+  `tests/installer/test_commissioning.py`, `tests/egress/test_caption_proof.py`,
+  and `tests/egress/test_caption_embed.py` gained new/updated coverage. **What
+  remains honestly unverified in this dev/CI sandbox**: the real GStreamer
+  embed-subprocess round trip (no `gi`/GStreamer runtime here) — covered by an
+  `@pytest.mark.integration` test that skips without the bundled bindings; a
+  native Windows box with the packaged runtime (or the WSL/system-GStreamer dev
+  tier) is required to exercise it for real. See
+  `docs/spec/3.0/sections/S3-commissioning-wizard.md`'s 2026-08-25 banner.
 - **S14 (Analytics / Audience Measurement) — durable viewership store.**
   Migration `0076_analytics_viewership` (three tables: `viewership_events`,
   `viewership_rollups`, `analytics_report_snapshots`) promotes the

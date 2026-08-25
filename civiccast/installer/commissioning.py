@@ -40,6 +40,7 @@ from civiccast.egress.compliance import ComplianceProbeResult
 from civiccast.egress.headend import HeadendProfile, get_headend_profile
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.sdi_relay import SdiReadiness
+from civiccast.installer.cea708_verification import Cea708VerificationResult
 from civiccast.installer.models import DeploymentProfile
 from civiccast.platform.station_box_profile import StationBoxProfile, probe_station_box_profile
 
@@ -447,6 +448,7 @@ def validate_channel_commissioning_setup(
 
 TestPatternRunner = Callable[[str, int, TestPattern, int], None]
 ComplianceProber = Callable[[EgressConfig, int], ComplianceProbeResult]
+CaptionVerifier = Callable[[int, int], Cea708VerificationResult]
 
 
 def _default_test_pattern_runner(
@@ -536,26 +538,50 @@ def _default_compliance_prober(config: EgressConfig, seconds: int) -> Compliance
     return run_compliance_probe(config, seconds=seconds, work_dir=get_egress_work_dir())
 
 
+def _default_caption_verifier(duration_seconds: int, muxrate_kbps: int) -> Cea708VerificationResult:
+    """The real CEA-708 embed-through-decode-back check (S11), bounded to a short
+    window regardless of the overall proof's ``duration_seconds`` -- it only needs
+    to embed and decode one deterministic test caption, not run for the full
+    output-proof window."""
+    from civiccast.egress.router import get_egress_work_dir
+    from civiccast.installer.cea708_verification import (
+        DEFAULT_EMBED_DURATION_SECONDS,
+        verify_cea708_decode_back,
+    )
+
+    bounded_duration = max(1, min(duration_seconds, DEFAULT_EMBED_DURATION_SECONDS))
+    return verify_cea708_decode_back(
+        duration_seconds=bounded_duration,
+        muxrate_kbps=muxrate_kbps,
+        work_dir=get_egress_work_dir(),
+    )
+
+
 def run_output_proof(
     settings: OutputProofSettings,
     *,
     config: EgressConfig,
     test_pattern_runner: TestPatternRunner | None = None,
     compliance_prober: ComplianceProber | None = None,
+    caption_verifier: CaptionVerifier | None = None,
     box_profile: StationBoxProfile | None = None,
     cea708_expected: bool = False,
     proof_id: str | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> CommissioningProofRun:
-    """Run the Screen 10 output proof (S3 §6): test pattern + concurrent TSDuck probe.
+    """Run the Screen 10 output proof (S3 §6): test pattern + concurrent TSDuck probe,
+    then (when ``cea708_expected``) a real CEA-708 embed-through-decode-back check.
 
     Drives the bounded test-pattern generator and the TSDuck compliance
     probe concurrently (mirrors a real headend acceptance run), for the
-    same bounded window. Fail-closed: any exception from either leg is
+    same bounded window. Fail-closed: any exception from any leg is
     captured as a blocker rather than silently producing a fabricated
-    "pass". CEA-708 verification (S11/D12) is honestly reported as
-    ``None`` (not verified) unless a genuine decode-back check is wired in
-    -- this module never claims a passthrough proof it did not perform.
+    "pass". When CEA-708 passthrough was requested (S11/D12), this now runs
+    :func:`civiccast.installer.cea708_verification.verify_cea708_decode_back`
+    (real embed through the product's GStreamer caption leg, then decode-back)
+    AFTER the main test-pattern/compliance window, and reports the actual
+    True/False result -- ``cea708_verified`` stays ``None`` only when the
+    verifier itself could not run (e.g. it raised), never a fabricated claim.
     """
 
     clock = now or (lambda: datetime.now(UTC))
@@ -602,13 +628,19 @@ def run_output_proof(
 
     cea708_verified: bool | None = None
     if cea708_expected:
-        # Honest boundary: no decode-back check is wired into this proof
-        # yet, so we never claim True/False here -- report unverified.
-        cea708_verified = None
-        blockers.append(
-            "CEA-708 passthrough was requested but decode-back verification "
-            "is not implemented in this proof run; not claimed either way."
-        )
+        verifier = caption_verifier or _default_caption_verifier
+        try:
+            caption_result = verifier(settings.duration_seconds, muxrate_kbps)
+        except Exception as exc:
+            # The verifier itself blew up (not a clean PASS/FAIL) -- this is the
+            # one case that still reports None: we could not even attempt a real
+            # check, so we never claim True or False either way.
+            caption_result = None
+            blockers.append(f"CEA-708 decode-back verification could not run: {exc}")
+        if caption_result is not None:
+            cea708_verified = caption_result.verified
+            if not caption_result.verified:
+                blockers.append(f"CEA-708 decode-back: {caption_result.detail}")
 
     verdict: ProofVerdict
     if sink is None or compliance_result is None:
