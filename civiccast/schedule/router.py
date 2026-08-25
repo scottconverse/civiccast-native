@@ -452,6 +452,11 @@ async def package_staff_asset(
             staging_dir,
             trim_in_seconds=asset.trim_in_seconds,
             trim_out_seconds=asset.trim_out_seconds,
+            # Ingest already probed the source; handing the dimensions over
+            # lets the packager skip a redundant ffprobe and, more
+            # importantly, drop the ladder rungs that would upscale.
+            source_width=asset.width_px,
+            source_height=asset.height_px,
         )
         staged_manifest = Path(result.manifest_path).resolve()
         if not staged_manifest.is_relative_to(staging_dir) or not staged_manifest.is_file():

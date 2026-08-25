@@ -190,6 +190,55 @@ without modifying any existing constants in `civiccast.stream.config`.
 arrives in v0.4 (portal-polish rung), this BANDWIDTH inflation can be
 removed. Tracked in `next-cleanup.md`.
 
+## ABR ladder selection: never upscale (v0.3 amendment)
+
+The four-rung ladder above describes the ladder's *shape*, and the original
+implementation encoded all four rungs for every source regardless of the
+source's own resolution. That silently upscales: a 640x360 upload was
+encoded to 1920x1080 and 1280x720, which invents pixels, spends 4.5 Mbps
+carrying no additional detail, and costs the full encode time of a large
+frame.
+
+Measured on the Gate A sample clip (640x360, 67 s), the two upscaled rungs
+were 14.6 s of an 18.4 s content-ladder encode — roughly 81% of the wall
+time — which is what pushed `POST /api/staff/assets/{asset_id}/package`
+past its callers' timeouts (the operator console and the station-acceptance
+harness both call it synchronously).
+
+**This amendment:** `civiccast.stream.config.select_ladder` chooses the
+rungs before encoding.
+
+- A source at or above the ladder's top rung gets the ladder unchanged. The
+  top rung stays a deliberate product cap — a 4K source still publishes at
+  1080p and below.
+- A source whose height matches a rung gets that rung and everything below.
+- A source between rungs (or below every rung) gets the rungs strictly below
+  it, plus one rung at the source's own resolution — inheriting bitrate,
+  profile and codec string from the shortest rung it outgrew — so the top
+  tier is neither upscaled nor needlessly downscaled.
+- When the source dimensions cannot be read, the full ladder is used. The
+  packager never guesses its way into a smaller ladder.
+
+The slate is not part of the content ladder and is unaffected: it is still
+always generated first and always present in the manifest. What changes is
+that "5 entries" in the *Slate fallback shape* section above is now an upper
+bound rather than a fixed count.
+
+**Trade-off:** residents watching a sub-1080p recording now see fewer ABR
+choices. That is the honest outcome — the discarded choices only ever
+carried upscaled copies of the same pixels — but it does mean a client on a
+degrading connection has fewer intermediate rungs to step down through
+before reaching the bottom of the ladder.
+
+**Known limitation, not addressed here:** packaging remains a synchronous
+HTTP request whose latency is proportional to source duration. This
+amendment removes the wasted work; it does not bound the wait. A 90-minute
+1080p meeting is unaffected by ladder selection (nothing upscales) and still
+occupies the request for as long as the encode takes. Moving packaging to a
+job-and-poll contract like the offline caption jobs is the real fix and
+needs its own ADR and an owner decision, because it changes the endpoint's
+response contract and every caller of it.
+
 ## References
 
 - CivicCastUnifiedSpec-v2.md §5.1 Backend stack

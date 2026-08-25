@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from civiccast.stream._ffmpeg import FfmpegNotFoundError
+from civiccast.stream.config import ABR_LADDER, RenditionConfig
 from civiccast.stream.packager import (
     PackagingError,
     SlateOnlyResult,
@@ -218,6 +219,114 @@ class TestPackVodAssetUnit:
         assert len(calls) == 4
         assert all(c["trim_in_seconds"] == 0.333 for c in calls)
         assert all(c["trim_out_seconds"] == 1.5 for c in calls)
+
+
+class TestPackVodAssetLadderSelection:
+    """``pack_vod_asset`` must not encode renditions taller than the source.
+
+    Regression: Gate A's clerk loop packaged a 640x360 clip through the full
+    four-rung ladder. The two upscaled rungs (1080p, 720p) were ~81% of the
+    wall time, and the request outran its callers' timeouts. See
+    ``tests/stream/test_ladder_selection.py`` for the selection rules; these
+    tests pin that the packager actually applies them, including that it
+    probes the source when the caller does not supply the dimensions.
+    """
+
+    @staticmethod
+    def _encoded_configs(
+        tmp_path: Path, input_file: Path, **kwargs: object
+    ) -> list[RenditionConfig]:
+        seen: list[RenditionConfig] = []
+
+        def fake_generate_slate(output_dir: Path) -> Path:
+            return _make_stub_slate(output_dir)
+
+        def fake_encode(
+            input_path: Path, output_dir: Path, config: object, **_kwargs: object
+        ) -> Path:
+            assert isinstance(config, RenditionConfig)
+            seen.append(config)
+            return _make_stub_rendition_playlist(output_dir, config.name)
+
+        with (
+            patch("civiccast.stream.packager.generate_slate", side_effect=fake_generate_slate),
+            patch("civiccast.stream.packager._encode_rendition", side_effect=fake_encode),
+        ):
+            pack_vod_asset(input_file, tmp_path / "output", **kwargs)  # type: ignore[arg-type]
+        return seen
+
+    def test_supplied_dimensions_drop_the_upscaled_rungs(self, tmp_path: Path) -> None:
+        input_file = tmp_path / "video.mp4"
+        input_file.write_bytes(b"\x00" * 32)
+        configs = self._encoded_configs(tmp_path, input_file, source_width=640, source_height=360)
+        assert [c.name for c in configs] == ["360p", "240p"]
+        assert all(c.height <= 360 for c in configs)
+
+    def test_supplied_dimensions_are_not_re_probed(self, tmp_path: Path) -> None:
+        """The router hands over ingest's measurement; a second ffprobe on a
+        multi-gigabyte meeting recording is pure waste."""
+        input_file = tmp_path / "video.mp4"
+        input_file.write_bytes(b"\x00" * 32)
+        with patch("civiccast.stream.packager.probe_video_dimensions") as probe:
+            self._encoded_configs(tmp_path, input_file, source_width=640, source_height=360)
+        probe.assert_not_called()
+
+    def test_missing_dimensions_are_probed_from_the_input(self, tmp_path: Path) -> None:
+        """Callers that never probed (the live finalization worker passes only
+        trim) still get the filtered ladder."""
+        input_file = tmp_path / "video.mp4"
+        input_file.write_bytes(b"\x00" * 32)
+        with patch(
+            "civiccast.stream.packager.probe_video_dimensions", return_value=(640, 360)
+        ) as probe:
+            configs = self._encoded_configs(tmp_path, input_file)
+        probe.assert_called_once_with(input_file)
+        assert [c.name for c in configs] == ["360p", "240p"]
+
+    def test_unreadable_probe_falls_back_to_the_full_ladder(self, tmp_path: Path) -> None:
+        """A packaging run must never fail or silently shrink because the
+        optimisation could not measure its input."""
+        input_file = tmp_path / "video.mp4"
+        input_file.write_bytes(b"\x00" * 32)
+        with patch("civiccast.stream.packager.probe_video_dimensions", return_value=None):
+            configs = self._encoded_configs(tmp_path, input_file)
+        assert [c.name for c in configs] == [c.name for c in ABR_LADDER]
+
+    def test_full_hd_source_still_gets_the_whole_ladder(self, tmp_path: Path) -> None:
+        input_file = tmp_path / "video.mp4"
+        input_file.write_bytes(b"\x00" * 32)
+        configs = self._encoded_configs(tmp_path, input_file, source_width=1920, source_height=1080)
+        assert [c.name for c in configs] == [c.name for c in ABR_LADDER]
+
+    def test_manifest_lists_exactly_the_selected_renditions_plus_slate(
+        self, tmp_path: Path
+    ) -> None:
+        input_file = tmp_path / "video.mp4"
+        input_file.write_bytes(b"\x00" * 32)
+
+        def fake_generate_slate(output_dir: Path) -> Path:
+            return _make_stub_slate(output_dir)
+
+        def fake_encode(
+            input_path: Path, output_dir: Path, config: object, **_kwargs: object
+        ) -> Path:
+            assert isinstance(config, RenditionConfig)
+            return _make_stub_rendition_playlist(output_dir, config.name)
+
+        with (
+            patch("civiccast.stream.packager.generate_slate", side_effect=fake_generate_slate),
+            patch("civiccast.stream.packager._encode_rendition", side_effect=fake_encode),
+        ):
+            result = pack_vod_asset(
+                input_file, tmp_path / "output", source_width=640, source_height=360
+            )
+
+        assert [r.config.name for r in result.renditions] == ["360p", "240p", "slate"]
+        assert result.slate.config.name == "slate"
+        manifest_text = result.manifest_path.read_text(encoding="utf-8")
+        assert manifest_text.count("#EXT-X-STREAM-INF:") == 3
+        assert "360p/playlist.m3u8" in manifest_text
+        assert "1080p/playlist.m3u8" not in manifest_text
 
 
 class TestEncodeRenditionUnit:

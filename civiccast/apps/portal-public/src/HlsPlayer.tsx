@@ -42,8 +42,11 @@ function selectNativeTextTrack(nativeTracks: TextTrackList, trackId: number) {
  *
  * Native HLS (Safari, iOS) bypasses hls.js and uses the <video> element directly.
  * Other browsers dynamically import hls.js on mount for adaptive bitrate
- * switching across the 5-variant ladder (4 content renditions + slate
- * fallback). The dynamic import keeps the initial bundle small — first
+ * switching across whatever ladder the manifest advertises — up to four
+ * content renditions plus the slate fallback, and fewer when the source was
+ * smaller than the top rungs (the packager never upscales). The player reads
+ * the variant list from the manifest and makes no assumption about its
+ * length. The dynamic import keeps the initial bundle small — first
  * paint of the portal page does not pay the hls.js download cost.
  */
 export function HlsPlayer({

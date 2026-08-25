@@ -10,7 +10,7 @@ here is frozen at import time.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -125,6 +125,72 @@ SLATE_RENDITION = RenditionConfig(
     # See ADR 0007 §"Slate failover mechanism (v0.2 amendment)".
     advertised_bandwidth_bps_override=50_000_000,
 )
+
+# ---------------------------------------------------------------------------
+# Ladder selection — never upscale
+# ---------------------------------------------------------------------------
+
+
+def select_ladder(
+    *,
+    source_width: int | None,
+    source_height: int | None,
+    ladder: tuple[RenditionConfig, ...] = ABR_LADDER,
+) -> tuple[RenditionConfig, ...]:
+    """Return the subset of ``ladder`` worth encoding for this source.
+
+    A rendition taller than the source invents pixels: it costs the full
+    encode of a large frame, produces a bigger file, and carries no detail
+    the source did not already have. Packaging a 640x360 clip through the
+    unfiltered ladder spends roughly 80% of its wall time on the upscaled
+    1080p and 720p rungs alone (measured on the Gate-A sample clip: 18.4s
+    unfiltered vs 3.4s filtered), which is what pushed
+    ``POST /api/staff/assets/{id}/package`` past its callers' timeouts.
+
+    The rules, in order:
+
+    * **Dimensions unknown** (either is ``None`` or non-positive) — return
+      ``ladder`` unchanged. Never guess; the previous behaviour is the safe
+      default when ffprobe could not read the source.
+    * **Source at or above the ladder's top rung** — return ``ladder``
+      unchanged. Nothing upscales, and the ladder's top rung is a deliberate
+      product cap: a 4K source still publishes at 1080p and below.
+    * **Source height matches a rung exactly** — return the rungs at or below
+      it. The top tier already carries the source's full detail.
+    * **Source falls between rungs** (or below every rung) — return the rungs
+      strictly below it, plus one rung at the source's own resolution so the
+      top tier is neither upscaled nor needlessly downscaled. That rung
+      inherits its bitrate, profile and codec string from the shortest rung
+      the source outgrew, and is named for its own height (``"360p"`` for a
+      640x360 source).
+
+    Returned renditions keep ``ladder``'s highest-to-lowest ordering. The
+    slate is not part of the ladder and is unaffected.
+    """
+    if not ladder:
+        return ladder
+    if not source_width or not source_height or source_width <= 0 or source_height <= 0:
+        return ladder
+
+    # H.264 with yuv420p chroma subsampling requires even dimensions.
+    native_width = max(2, source_width - (source_width % 2))
+    native_height = max(2, source_height - (source_height % 2))
+
+    oversized = [rendition for rendition in ladder if rendition.height > native_height]
+    if not oversized:
+        return ladder
+
+    kept = tuple(rendition for rendition in ladder if rendition.height <= native_height)
+    if kept and max(rendition.height for rendition in kept) == native_height:
+        return kept
+
+    template = min(oversized, key=lambda rendition: rendition.height)
+    name = f"{native_height}p"
+    if any(rendition.name == name for rendition in kept):
+        name = "source"
+    native = replace(template, name=name, width=native_width, height=native_height)
+    return (native, *kept)
+
 
 # ---------------------------------------------------------------------------
 # HLS packaging constants
