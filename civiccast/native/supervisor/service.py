@@ -26,8 +26,8 @@ state machine:
   order and issues each child its OWN graceful action first
   (``children.graceful_stop_action`` via the runner): the control-plane child
   (stopped first) gets ``CTRL_BREAK`` so its uvicorn lifespan runs the daemon's
-  ``stop_all_channels`` drain (RAT-004), while postgres/nats get their
-  command-based stop (pg_ctl fast stop / nats lame-duck ``--signal ldm``). Each
+  ``stop_all_channels`` drain (RAT-004), while postgres gets its
+  command-based stop (pg_ctl fast stop). Each
   child then has a 15s deadline (``config.graceful_stop_deadline_seconds``) to
   exit before ``TerminateProcess`` (D5). The Job Object kill-on-close remains the
   final backstop.
@@ -141,9 +141,6 @@ from civiccast.native.win_probes import (
     read_interlock,
     read_selector,
 )
-from civiccast.platform.nats_broker import (
-    supervisor_probe_publish_ack as _jetstream_publish_ack,
-)
 
 if TYPE_CHECKING:
     from civiccast.alerting.models import AlertConditionKind
@@ -175,7 +172,7 @@ _PROCESS_ACCESS_FOR_POSTMASTER = 0x0001 | 0x0100 | 0x0400
 _STILL_ACTIVE = 259
 
 SERVICE_DESCRIPTION = (
-    "Supervises the CivicCast native Windows runtime: postgres, NATS, and the "
+    "Supervises the CivicCast native Windows runtime: postgres and the "
     "control-plane daemon, contained in a Job Object and gated by the WSL/native "
     "runtime interlock."
 )
@@ -328,7 +325,7 @@ def _file_backed_popen_factory(
 
     FILE-BACKED, never a pipe: ``child_log_path`` was defined but had no
     caller (G3), so under the SCM every child's stdout/stderr -- including
-    nats-server's OWN banner, which run 17's diagnosis needed and did not
+    postgres's OWN banner, which run 17's diagnosis needed and did not
     have -- went to inherited-but-unobserved handles and was lost. A pipe
     was deliberately NOT used here: this repo has already lost real runs to
     pipe inheritance (an unread pipe fills its OS buffer and can stall the
@@ -361,8 +358,8 @@ def _file_backed_popen_factory(
     ``captions/runtime``): the constant does not exist off Windows, where the
     concept does not apply.
 
-    Applies to EVERY child, not just the control plane. postgres.exe,
-    nats-server.exe and ollama.exe are console-subsystem executables too; the
+    Applies to EVERY child, not just the control plane. postgres.exe
+    and ollama.exe are console-subsystem executables too; the
     re-walk only caught the control plane because that is the one whose window
     the operator was left looking at.
 
@@ -460,27 +457,25 @@ def _default_open_process(pid: int) -> _OpenedProcess:
 
 _STOP_COMMAND_OUTPUT_TAIL_CHARS = 2000
 """Cap on the stop-command output logged in G4(b)'s WARNING -- long enough to
-carry a real diagnostic (e.g. nats's own "Access is denied"), bounded so a
+carry a real diagnostic, bounded so a
 runaway/chatty command can never flood the log."""
 
 STOP_COMMAND_TIMEOUT_SECONDS = 10.0
 """Hard deadline for one child's graceful stop COMMAND
-(:func:`_default_stop_command_runner`: ``pg_ctl stop -m fast``, nats's
-``--signal ldm=<pid>``). Named, not inlined, because it is also a term in the
+(:func:`_default_stop_command_runner`: ``pg_ctl stop -m fast``). Named, not
+inlined, because it is also a term in the
 stop watchdog's derivation (:data:`SVC_STOP_WATCHDOG_SECONDS`) -- a derivation
 that restates its inputs as literals is a derivation that drifts."""
 
 
 def _default_stop_command_runner(argv: list[str]) -> None:
     """Run a child's command-based graceful stop (``argv`` kind): postgres's
-    ``pg_ctl stop -m fast``, nats's ``--signal ldm=<pid>`` lame-duck. Bounded so
+    ``pg_ctl stop -m fast``. Bounded so
     a hung stop command never blocks the D5 deadline loop that follows it.
 
     G4(b): the returncode is CAPTURED and CHECKED. Before that, the subprocess
     result was discarded entirely (``check=False`` and the return value never
-    read), so a stop command that FAILED (nats's ``--signal`` locally returns a
-    nonzero exit with "Access is denied" -- reproduced against the real
-    pack-cache ``nats-server.exe`` binary) looked IDENTICAL, in every log, to
+    read), so a stop command that FAILED looked IDENTICAL, in every log, to
     one that actually worked. This does not change control flow: the existing D5
     deadline-then-``TerminateProcess`` fallback in ``_stop_child`` runs exactly
     as before regardless of this command's outcome (a WARNING here is diagnostic
@@ -491,7 +486,7 @@ def _default_stop_command_runner(argv: list[str]) -> None:
     pipes, ``subprocess.run``'s Windows timeout path does ``kill()`` and then an
     UNTIMED ``communicate()``, which blocks until every inherited write-end of
     those pipes is closed -- a grandchild holding one (``pg_ctl`` spawns the
-    postmaster; nats's ``--signal`` re-execs) turns the documented 10s bound
+    postmaster) turns the documented 10s bound
     into an unbounded wait, on the stop chain, inside the stop watchdog's
     budget. ``run_captured_argv`` gives the child real temp FILES (no pipe
     handles exist at all, so nothing can be waited on), bounds it with
@@ -539,7 +534,7 @@ class Win32ChildProcessRunner:
     with the per-child graceful-stop dispatch the D5/RAT-004 stop chain drives.
     The per-child branching (the control-plane child gets its own process group
     per ``spec.new_process_group``; graceful stop is ``CTRL_BREAK`` for the
-    control plane and a bounded stop COMMAND for postgres/nats, resolved by
+    control plane and a bounded stop COMMAND for postgres, resolved by
     ``children.graceful_stop_action``) is pure over injectable seams, so the
     LOGIC is CI-testable on Linux; the default seams bind to the real
     ``subprocess``/``os.kill`` calls on Windows."""
@@ -609,8 +604,8 @@ class Win32ChildProcessRunner:
     def graceful_stop(self, handle: ChildHandle) -> GracefulStopKind:
         """Issue the child's OWN graceful-stop action (``children.graceful_stop_action``):
         ``CTRL_BREAK`` to the process group for the control plane (RAT-004
-        drain-all), or the bounded stop command for postgres/nats (pg_ctl fast
-        stop / nats lame-duck). Returns the action kind performed; the D5 deadline
+        drain-all), or the bounded stop command for postgres (pg_ctl fast
+        stop). Returns the action kind performed; the D5 deadline
         + ``TerminateProcess`` force-fallback is the caller's (the stop chain's)."""
 
         proc_handle = cast(_ProcHandle, handle)
@@ -757,7 +752,7 @@ class ChildStopResult(BaseModel):
     """The result of stopping one child in the graceful stop chain.
     ``graceful_kind`` is the per-child graceful action issued first
     (``ctrl_break_event`` for the control plane -- the RAT-004 drain; ``argv``
-    for the postgres/nats command-based stop), or ``None`` when the graceful
+    for postgres's command-based stop), or ``None`` when the graceful
     action itself FAILED (audit A5: e.g. the stop command raised) and the child
     went straight to ``TerminateProcess``. ``outcome`` is ``exited`` if the
     child left within the D5 deadline, or ``terminated`` if it overran (or its
@@ -815,17 +810,16 @@ _DB_CONNECT_TIMEOUT_SECONDS = 10
 """psycopg connect timeout for the supervisor's own DB engine (task #51: psycopg
 v3 without one can hang for MINUTES on Windows). Also the LONGEST single
 readiness-probe attempt in the product, so it is the F1 in-flight term below:
-the other three probes are bounded at 2.0s each
-(:data:`_NATS_CONNECT_TIMEOUT_SECONDS`, :data:`_HEALTH_HTTP_TIMEOUT_SECONDS`,
-:data:`_OLLAMA_VERSION_TIMEOUT_SECONDS`)."""
+the other two probes are bounded at 2.0s each
+(:data:`_HEALTH_HTTP_TIMEOUT_SECONDS`, :data:`_OLLAMA_VERSION_TIMEOUT_SECONDS`)."""
 
 SVC_STOP_IN_FLIGHT_ITERATION_SECONDS = float(_DB_CONNECT_TIMEOUT_SECONDS) + 1.0
 """F1: the bound on the supervisor work already IN FLIGHT when ``SvcStop`` lands.
 
 Before the F1 abort seam this term was UNBOUNDED in practice: nothing inside
 ``Supervisor.start()``/``tick()`` read the stop event, so a single iteration
-could chain four readiness budgets (postgres 60 + nats 30 + control_plane 30 +
-ollama 60 = 180s) before the stop chain could even begin -- longer, on its own,
+could chain three readiness budgets (postgres 60 + control_plane 30 +
+ollama 60 = 150s) before the stop chain could even begin -- longer, on its own,
 than this whole watchdog. With ``should_abort`` checked between children and
 inside ``poll_until_ready``, the worst case collapses to whichever of these the
 stop request lands just after:
@@ -850,26 +844,30 @@ to catch only UNBOUNDED ones. That worst case, from this file's own numbers:
   * the F1 in-flight term -- the supervisor iteration already running when the
     stop lands, now abortable: :data:`SVC_STOP_IN_FLIGHT_ITERATION_SECONDS` =
     11s (one 10s probe attempt + one 1.0s poll sleep).
-  * ``graceful_stop_all`` stops up to FOUR children (``control_plane``,
-    ``ollama``, ``nats``, ``postgres``). Each one costs at most the graceful
+  * ``graceful_stop_all`` stops up to THREE children (``control_plane``,
+    ``ollama``, ``postgres``). Each one costs at most the graceful
     stop command's own deadline (:data:`STOP_COMMAND_TIMEOUT_SECONDS` = 10s)
     plus the D5 deadline poll --
     ``SupervisorConfig.graceful_stop_deadline_seconds`` = 15.0 with 1.0s
-    ``_sleep`` granularity, so <=16s. 4 x 26s = 104s.
+    ``_sleep`` granularity, so <=16s. 3 x 26s = 78s.
   * ``_ControlPipe.close()``: ``PipeServer.close()`` <=5s
     (``pipe_server.ACCEPT_SHUTDOWN_TIMEOUT_SECONDS``) + ``CommandQueue.stop()``
     join 5s + accept-thread join 5s = 15s.
 
-  11 + 104 + 15 = 130s bounded worst case -> 150s, ~20s of headroom without
-  being open-ended. (The pre-F1 comment said 119s because it silently assumed
-  the in-flight term was zero; the term was in fact the biggest one in the
-  system, at up to ~180s, which is how run 17's watchdog could fire MID-CHAIN
-  and take the postgres cluster down uncleanly.)
+  11 + 78 + 15 = 104s bounded worst case -> 150s, ~46s of headroom without
+  being open-ended. (NATS JetStream was removed from the product -- owner
+  decision 2026-08-20, ADR 0023 -- dropping one child from this chain; the
+  constant is kept at 150s rather than retuned down, so the extra headroom is
+  a deliberate safety margin, not a derivation gap. The original pre-F1
+  comment said 119s because it silently assumed the in-flight term was zero;
+  the term was in fact the biggest one in the system, at up to ~180s, which is
+  how run 17's watchdog could fire MID-CHAIN and take the postgres cluster
+  down uncleanly.)
 
 This is deliberately LONGER than the ~30s a first reading suggests: run 17's
-own evidence shows a single child (``nats``) consuming the full 15s deadline on
-a real station, so a 30s budget would fire during an ordinary four-child stop
--- exactly the "must not fire during normal operation" rule this constant
+own evidence shows a single child consuming the full 15s deadline on a real
+station, so a 30s budget would fire during an ordinary multi-child stop --
+exactly the "must not fire during normal operation" rule this constant
 exists to respect. Override with :data:`SVC_STOP_WATCHDOG_ENV_VAR` (<=0
 disables the watchdog entirely)."""
 
@@ -1214,11 +1212,13 @@ class SupervisorService:
 
     def graceful_stop_all(self) -> list[ChildStopResult]:
         """The D5 + RAT-004 graceful stop chain. Children are stopped in reverse
-        startup order (``control_plane`` -> ``nats`` -> ``postgres``). Each child
+        startup order (``control_plane`` -> ``postgres``, with the optional
+        ``ollama`` child inserted right after the control plane -- see below).
+        Each child
         is issued its OWN graceful-stop action first (``children.graceful_stop_action``
         via the runner): the control-plane child (first) gets a ``CTRL_BREAK`` so
-        its uvicorn lifespan drains all channels (RAT-004), while postgres/nats get
-        their command-based stop (pg_ctl fast stop / nats lame-duck). Every child
+        its uvicorn lifespan drains all channels (RAT-004), while postgres gets
+        its command-based stop (pg_ctl fast stop). Every child
         that overruns its 15s deadline is then force-stopped with
         ``TerminateProcess`` (D5). The Job Object kill-on-close (via
         ``supervisor.graceful_stop``) is the final backstop."""
@@ -1497,7 +1497,6 @@ def build_production_service(
     guard: GuardLike,
     alert_outbox: AlertOutbox,
     postgres_probe: Callable[[], bool],
-    nats_probe: Callable[[], bool],
     health_probe: Callable[[], ControlPlaneHealthProbe],
     ollama_probe: Callable[[], bool] | None = None,
     config: SupervisorConfig | None = None,
@@ -1516,10 +1515,8 @@ def build_production_service(
     derived from ``layout`` (default: ``resolve_install_layout`` over
     ``sys.executable`` + ``%PROGRAMDATA%``). Under LocalSystem (CWD System32,
     stock PATH -- the installer writes no PATH changes) the previous bare
-    ``pg_ctl``/``nats-server``/``python`` and relative ``pgdata`` made every
-    child spawn FileNotFoundError or a System32-relative cluster path. The nats
-    child is launched with the PROVISIONED config (JetStream store) -- it was
-    previously spawned with no ``-c`` at all."""
+    ``pg_ctl``/``python`` and relative ``pgdata`` made every child spawn
+    FileNotFoundError or a System32-relative cluster path."""
 
     cfg = config or SupervisorConfig()
     # F1: ONE stop Event, shared by the run loop (which waits on it) and the
@@ -1575,7 +1572,6 @@ def build_production_service(
         runner=runner,
         alert_outbox=alert_outbox,
         postgres_probe=postgres_probe,
-        nats_probe=nats_probe,
         health_probe=health_probe,
         clock=time.monotonic,
         sleep=time.sleep,
@@ -1602,11 +1598,11 @@ def build_production_service(
         postgres_data_dir=postgres_data_dir,
         pg_ctl_path=str(layout.pg_ctl_path),
         # Adjacent diagnosability fix (2026-08-12, TESTER2 b5 evidence):
-        # postgres.log/nats.log were observed at 0 bytes for a 5+ hour run.
-        # Pointing pg_ctl/nats-server at their OWN ``-l`` log file makes each
+        # postgres.log was observed at 0 bytes for a 5+ hour run.
+        # Pointing pg_ctl at its OWN ``-l`` log file makes it
         # own its file directly, rather than depending solely on the
         # inherited-stdio capture -- see children.py's
-        # postgres_child_spec/nats_child_spec. This path is STILL
+        # postgres_child_spec. This path is STILL
         # ``child_log_path("postgres", ...)`` (the name operators and
         # tooling expect); the fix for the sharing violation this
         # originally caused on Windows (Gate A run #4, 2026-08-21) lives in
@@ -1614,9 +1610,6 @@ def build_production_service(
         # capture to a different file, not in changing this path -- see
         # that function's docstring and ``ChildSpec.stdio_log_name``.
         postgres_log_path=str(child_log_path("postgres", log_root=layout.log_root)),
-        nats_server_path=str(layout.nats_server_path),
-        nats_config_path=str(layout.nats_config_path),
-        nats_log_path=str(child_log_path("nats", log_root=layout.log_root)),
         python_path=str(layout.python_path),
         # CC-WS5-003 review-fix: preserve the egress-work-dir security wiring.
         # The layout kwargs must ADD to, not REPLACE, the existing
@@ -1782,7 +1775,6 @@ class ProductionDependencies:
     guard: GuardLike
     alert_outbox: AlertOutbox
     postgres_probe: Callable[[], bool]
-    nats_probe: Callable[[], bool]
     health_probe: Callable[[], ControlPlaneHealthProbe]
     program_data_root: str | None = None
     control_plane_env: dict[str, str] = field(default_factory=dict)
@@ -1809,23 +1801,13 @@ _SUPERVISOR_ALERT_KIND: AlertConditionKind = "service-down"
 
 # Provider ENV keys + their production defaults (read at call time in the host
 # process, never at import). DATABASE_URL is the ONLY required one.
-_ENV_NATS_HOST = "CIVICCAST_NATS_HOST"
-_ENV_NATS_PORT = "CIVICCAST_NATS_PORT"
 _ENV_CONTROL_PLANE_URL = "CIVICCAST_CONTROL_PLANE_URL"
-_DEFAULT_NATS_HOST = "127.0.0.1"
-_DEFAULT_NATS_PORT = 4222
 _DEFAULT_CONTROL_PLANE_URL = "http://127.0.0.1:8000"
-_NATS_CONNECT_TIMEOUT_SECONDS = 2.0
 _HEALTH_HTTP_TIMEOUT_SECONDS = 2.0
 # The control-plane /health body fields ControlPlaneHealthProbe accepts beyond
 # the always-present status_code (children.ControlPlaneHealthProbe; extra fields
 # are forbidden by the model, so only these are copied through).
 _HEALTH_BODY_FIELDS = ("mode", "workers_started", "mutating_disabled", "mode_contract")
-
-# Audit A6 / D6: the NATS readiness round-trip lives in
-# ``civiccast.platform.nats_broker`` (the repo's single sanctioned import
-# surface for the nats provider -- policy v12 broker import boundary); it is
-# imported at the top of this module and aliased as ``_jetstream_publish_ack``.
 
 
 class _AlertingOutbox:
@@ -1885,7 +1867,7 @@ def default_dependency_provider() -> ProductionDependencies:
     other probe only fires when the guard evaluates), so no ``winreg``/pywin32/
     ``wsl.exe`` call happens at build time. Only ``DATABASE_URL`` is a hard-fail:
     a real supervisor needs its DB to bind the alerting ``Session``. The live
-    SCM/LocalSystem/Session-0 run plus real DB/NATS/control-plane I/O stay
+    SCM/LocalSystem/Session-0 run plus real DB/control-plane I/O stay
     owner-VM/cleanroom bound (``evidence/PENDING.md``)."""
 
     database_url = os.environ.get("DATABASE_URL", "").strip()
@@ -1934,9 +1916,6 @@ def default_dependency_provider() -> ProductionDependencies:
     # Alerting outbox bound to the live Session factory + this station's host id.
     outbox = _AlertingOutbox(session_factory, socket.gethostname())
 
-    nats_host = os.environ.get(_ENV_NATS_HOST, _DEFAULT_NATS_HOST)
-    nats_port = _read_int_env(_ENV_NATS_PORT, _DEFAULT_NATS_PORT)
-    nats_url = f"nats://{nats_host}:{nats_port}"
     control_plane_url = os.environ.get(_ENV_CONTROL_PLANE_URL, _DEFAULT_CONTROL_PLANE_URL)
 
     def postgres_probe() -> bool:
@@ -1953,17 +1932,6 @@ def default_dependency_provider() -> ProductionDependencies:
         with engine.connect() as conn:
             conn.exec_driver_sql("SELECT 1")
         return True
-
-    def nats_probe() -> bool:
-        """D6 NATS readiness: the authenticated JetStream publish+ack round-trip
-        (audit A6 -- "TCP accept is explicitly NOT readiness"; the old probe was
-        a bare socket connect). G2: deliberately does NOT catch here -- see
-        ``postgres_probe`` above; ``check_nats_ready`` already fails closed one
-        layer up and needs the raw exception text for its ``ReadinessResult``
-        detail (e.g. a `lame_duck` / auth failure that this repo has lost to a
-        swallowed generic ``False`` before)."""
-
-        return _jetstream_publish_ack(nats_url, _NATS_CONNECT_TIMEOUT_SECONDS)
 
     def health_probe() -> ControlPlaneHealthProbe:
         """``GET <control-plane>/health`` via stdlib ``urllib`` (no new dep),
@@ -2067,7 +2035,6 @@ def default_dependency_provider() -> ProductionDependencies:
         guard=guard,
         alert_outbox=outbox,
         postgres_probe=postgres_probe,
-        nats_probe=nats_probe,
         health_probe=health_probe,
         program_data_root=program_data_root,
         control_plane_env=control_plane_env,
@@ -2107,7 +2074,6 @@ def build_production_service_factory(
             guard=deps.guard,
             alert_outbox=deps.alert_outbox,
             postgres_probe=deps.postgres_probe,
-            nats_probe=deps.nats_probe,
             health_probe=deps.health_probe,
             ollama_probe=deps.ollama_probe,
             program_data_root=deps.program_data_root,

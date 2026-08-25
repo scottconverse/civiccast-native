@@ -2,11 +2,15 @@
 # Copyright (c) The CivicCast Authors
 """Pure decision-logic and model tests for the provisioning engine.
 
-Pure -- no Windows, no Postgres, no NATS, no subprocess. These pin the
+Pure -- no Windows, no Postgres, no subprocess. These pin the
 idempotency decisions (D4: "detect existing cluster and DO NOT re-init;
 version-check existing cluster") and the DatabaseUrl construction the
 installer writes to
 ``HKLM\\SOFTWARE\\CivicCast\\Native\\DatabaseUrl``.
+
+Formerly also covered NATS store provisioning. NATS JetStream was removed
+from the product (owner decision 2026-08-20; see ADR 0023, which supersedes
+ADR 0001); ``NatsTlsFiles`` and ``evaluate_nats_store`` are gone.
 """
 
 from __future__ import annotations
@@ -15,12 +19,10 @@ import pytest
 from pydantic import ValidationError
 
 from civiccast.native.provision.models import (
-    NatsTlsFiles,
     ProvisionContext,
     ProvisionPhase,
     ProvisionPlan,
     build_database_url,
-    evaluate_nats_store,
     evaluate_postgres_cluster,
     resolve_database_url,
 )
@@ -35,8 +37,6 @@ def test_forward_phase_ranks_are_strictly_increasing() -> None:
         ProvisionPhase.POSTGRES_CLUSTER_READY,
         ProvisionPhase.POSTGRES_CONFIG_WRITTEN,
         ProvisionPhase.DATABASE_READY,
-        ProvisionPhase.NATS_STORE_READY,
-        ProvisionPhase.NATS_CONFIG_WRITTEN,
         ProvisionPhase.COMPLETE,
     ]
     ranks = [p.rank for p in forward]
@@ -48,7 +48,7 @@ def test_terminal_phases_flagged() -> None:
     assert ProvisionPhase.COMPLETE.is_terminal
     assert ProvisionPhase.FAILED.is_terminal
     assert not ProvisionPhase.INIT.is_terminal
-    assert not ProvisionPhase.NATS_CONFIG_WRITTEN.is_terminal
+    assert not ProvisionPhase.DATABASE_READY.is_terminal
 
 
 # --- build_database_url -----------------------------------------------------
@@ -164,8 +164,6 @@ def _context(tmp_path, **overrides: object) -> ProvisionContext:
         "postgres_config_path": str(tmp_path / "pgdata" / "postgresql.conf"),
         "postgres_hba_path": str(tmp_path / "pgdata" / "pg_hba.conf"),
         "database_password": "hunter2",
-        "nats_store_dir": str(tmp_path / "nats" / "store"),
-        "nats_config_path": str(tmp_path / "nats" / "nats-server.conf"),
         "server_pack_path": str(tmp_path / "server-binaries.ccpack"),
         "state_root": str(tmp_path / "state"),
         "owner_run_id": "run-1",
@@ -213,22 +211,11 @@ def test_provision_context_extra_field_is_rejected(tmp_path) -> None:
             postgres_config_path=str(tmp_path / "pgdata" / "postgresql.conf"),
             postgres_hba_path=str(tmp_path / "pgdata" / "pg_hba.conf"),
             database_password="hunter2",
-            nats_store_dir=str(tmp_path / "nats" / "store"),
-            nats_config_path=str(tmp_path / "nats" / "nats-server.conf"),
             server_pack_path=str(tmp_path / "server-binaries.ccpack"),
             state_root=str(tmp_path / "state"),
             owner_run_id="run-1",
             unexpected_field="boom",
         )
-
-
-# --- NatsTlsFiles ------------------------------------------------------------
-
-
-def test_nats_tls_files_round_trips_through_json() -> None:
-    tls = NatsTlsFiles(ca_file="ca.pem", cert_file="cert.pem", key_file="key.pem")
-    restored = NatsTlsFiles.model_validate_json(tls.model_dump_json())
-    assert restored == tls
 
 
 # --- evaluate_postgres_cluster ----------------------------------------------
@@ -259,21 +246,3 @@ def test_evaluate_postgres_cluster_version_mismatch_fails_closed() -> None:
 def test_evaluate_postgres_cluster_rejects_empty_expected_version() -> None:
     with pytest.raises(ValueError, match="expected_major_version"):
         evaluate_postgres_cluster(observed_version=None, expected_major_version="")
-
-
-# --- evaluate_nats_store ------------------------------------------------------
-
-
-def test_evaluate_nats_store_create_when_absent() -> None:
-    decision = evaluate_nats_store(path_exists=False, is_directory=False)
-    assert decision.outcome == "create"
-
-
-def test_evaluate_nats_store_reuse_when_present_and_matches() -> None:
-    decision = evaluate_nats_store(path_exists=True, is_directory=True)
-    assert decision.outcome == "reuse_existing"
-
-
-def test_evaluate_nats_store_fails_closed_when_path_is_a_file() -> None:
-    decision = evaluate_nats_store(path_exists=True, is_directory=False)
-    assert decision.outcome == "fail_closed_not_a_directory"

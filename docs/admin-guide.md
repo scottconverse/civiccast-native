@@ -220,5 +220,5 @@ or raw bearer tokens.
 ## Technical Reference
 
 Use [Technical Operations Reference](technical-ops-reference.md) for exact
-commands, CLI JSON evidence, certificate rotation, NATS, mTLS, ActivityPub,
+commands, CLI JSON evidence, certificate rotation, mTLS, ActivityPub,
 model bundles, cable/NDI checks, release proof, and recovery details.

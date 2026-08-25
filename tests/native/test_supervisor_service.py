@@ -134,7 +134,6 @@ class FakeClock:
 def _handles() -> dict[str, FakeHandle]:
     return {
         "postgres": FakeHandle(pid=101, kind="argv"),
-        "nats": FakeHandle(pid=102, kind="argv"),
         "control_plane": FakeHandle(pid=103, kind="ctrl_break_event"),
     }
 
@@ -206,7 +205,7 @@ def test_stop_chain_drains_control_plane_first_with_its_ctrl_break_action() -> N
     is CTRL_BREAK (ctrl_break_event), so its uvicorn lifespan runs
     stop_all_channels before any infra child is touched."""
 
-    runner = FakeRunner(alive={101: False, 102: False, 103: False})
+    runner = FakeRunner(alive={101: False, 103: False})
     service, supervisor = make_service(handles=_handles(), runner=runner)
 
     results = service.graceful_stop_all()
@@ -225,11 +224,10 @@ def test_stop_chain_terminates_a_child_that_overruns_its_deadline() -> None:
     with TerminateProcess; one that exits in time is not."""
 
     handles = {
-        "postgres": FakeHandle(pid=201, kind="argv"),  # exits promptly
-        "nats": FakeHandle(pid=202, kind="argv"),  # hangs -> terminated
+        "postgres": FakeHandle(pid=201, kind="argv"),  # hangs -> terminated
         "control_plane": FakeHandle(pid=203, kind="ctrl_break_event"),  # drains + exits
     }
-    runner = FakeRunner(alive={201: False, 202: True, 203: False})
+    runner = FakeRunner(alive={201: True, 203: False})
     service, _ = make_service(handles=handles, runner=runner)
 
     results = service.graceful_stop_all()
@@ -237,12 +235,10 @@ def test_stop_chain_terminates_a_child_that_overruns_its_deadline() -> None:
     by_name = {r.name: r for r in results}
     assert by_name["control_plane"].outcome == "exited"
     assert by_name["control_plane"].graceful_kind == "ctrl_break_event"
-    assert by_name["postgres"].outcome == "exited"
-    assert by_name["nats"].outcome == "terminated"
-    # The hung nats child was actually TerminateProcess'd.
-    assert ("terminate", 202) in runner.events
-    # Neither the prompt-exit control plane nor postgres was terminated.
-    assert ("terminate", 201) not in runner.events
+    assert by_name["postgres"].outcome == "terminated"
+    # The hung postgres child was actually TerminateProcess'd.
+    assert ("terminate", 201) in runner.events
+    # The prompt-draining control plane was not terminated.
     assert ("terminate", 203) not in runner.events
 
 
@@ -277,25 +273,24 @@ def test_stop_chain_skips_children_without_a_live_handle() -> None:
 
 
 def test_stop_chain_stops_children_in_reverse_startup_order() -> None:
-    """Children are stopped control_plane -> nats -> postgres (reverse of the D6
+    """Children are stopped control_plane -> postgres (reverse of the D6
     startup order), so dependents stop before the infrastructure they use."""
 
     handles = {
         "postgres": FakeHandle(pid=501, kind="argv"),
-        "nats": FakeHandle(pid=502, kind="argv"),
         "control_plane": FakeHandle(pid=503, kind="ctrl_break_event"),
     }
-    # All hang so every child is terminated, giving a clean order signal.
-    runner = FakeRunner(alive={501: True, 502: True, 503: True})
+    # Both hang so every child is terminated, giving a clean order signal.
+    runner = FakeRunner(alive={501: True, 503: True})
     service, _ = make_service(handles=handles, runner=runner)
 
     results = service.graceful_stop_all()
 
-    assert [r.name for r in results] == ["control_plane", "nats", "postgres"]
+    assert [r.name for r in results] == ["control_plane", "postgres"]
     graceful_order = [pid for kind, pid in runner.events if kind == "graceful"]
-    assert graceful_order == [503, 502, 501]
+    assert graceful_order == [503, 501]
     terminated_order = [pid for kind, pid in runner.events if kind == "terminate"]
-    assert terminated_order == [503, 502, 501]
+    assert terminated_order == [503, 501]
 
 
 # ---------------------------------------------------------------------------
@@ -476,12 +471,18 @@ def _pg_spec() -> ChildSpec:
     )
 
 
-def _nats_spec() -> ChildSpec:
+def _pid_templated_spec() -> ChildSpec:
+    """A synthetic argv-kind spec carrying a ``{pid}`` token in its stop
+    command. No current production child's template uses one, but the
+    runner's generic pid-substitution mechanism (documented on
+    ``ChildSpec.graceful_stop_argv_template``) still needs coverage
+    independent of any specific child, so this proves it directly."""
+
     return _spec(
-        "nats",
+        "postgres",
         new_process_group=False,
         kind="argv",
-        argv_template=["nats", "--signal", "ldm={pid}"],
+        argv_template=["stop-signal", "ldm={pid}"],
     )
 
 
@@ -517,10 +518,9 @@ def test_runner_gives_only_the_control_plane_its_own_process_group() -> None:
     runner = Win32ChildProcessRunner(popen_factory=fake_factory, ctrl_break_sender=lambda _p: None)
 
     runner.spawn(_pg_spec())
-    runner.spawn(_nats_spec())
     runner.spawn(_cp_spec())
 
-    assert seen == [("postgres", False), ("nats", False), ("control_plane", True)]
+    assert seen == [("postgres", False), ("control_plane", True)]
 
 
 def test_runner_graceful_stop_ctrl_breaks_the_control_plane() -> None:
@@ -564,8 +564,9 @@ def test_runner_ctrl_break_is_tolerant_of_an_already_gone_process() -> None:
 
 
 def test_runner_graceful_stop_runs_the_argv_command_for_infra_children() -> None:
-    """postgres/nats get a command-based graceful stop (pg_ctl fast stop / nats
-    lame-duck), with nats's ``{pid}`` token substituted for the live pid."""
+    """postgres gets a command-based graceful stop (pg_ctl fast stop). The
+    runner's argv-template mechanism also substitutes a ``{pid}`` token for
+    the live child pid, for any argv-kind child whose template carries one."""
 
     ctrl_break_pids: list[int] = []
     stop_commands: list[list[str]] = []
@@ -576,14 +577,14 @@ def test_runner_graceful_stop_runs_the_argv_command_for_infra_children() -> None
     )
 
     pg_kind = runner.graceful_stop(runner.spawn(_pg_spec()))
-    nats_kind = runner.graceful_stop(runner.spawn(_nats_spec()))
+    pid_kind = runner.graceful_stop(runner.spawn(_pid_templated_spec()))
 
     assert pg_kind == "argv"
-    assert nats_kind == "argv"
+    assert pid_kind == "argv"
     assert ctrl_break_pids == []  # infra children are NOT ctrl-broken
     assert stop_commands[0] == ["pg_ctl", "stop", "-m", "fast"]
-    # nats's {pid} token is substituted with the live child pid (909).
-    assert stop_commands[1] == ["nats", "--signal", "ldm=909"]
+    # the {pid} token is substituted with the live child pid (909).
+    assert stop_commands[1] == ["stop-signal", "ldm=909"]
 
 
 def test_runner_is_alive_reflects_poll_and_terminate() -> None:
@@ -799,7 +800,6 @@ def test_build_production_service_returns_a_wired_service() -> None:
         guard=_Guard(),  # type: ignore[arg-type]
         alert_outbox=_Outbox(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: pytest.fail("probe should not run at wiring time"),  # type: ignore[arg-type,return-value]
     )
 
@@ -829,7 +829,6 @@ def test_build_production_service_wires_program_data_root_for_egress_workdir() -
         guard=_Guard(),  # type: ignore[arg-type]
         alert_outbox=_Outbox(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: pytest.fail("probe should not run at wiring time"),  # type: ignore[arg-type,return-value]
         program_data_root=sentinel,
     )
@@ -837,14 +836,14 @@ def test_build_production_service_wires_program_data_root_for_egress_workdir() -
     assert service._supervisor._program_data_root == sentinel
 
 
-def test_build_production_service_wires_postgres_and_nats_log_paths() -> None:
+def test_build_production_service_wires_postgres_log_path() -> None:
     """Diagnosability regression (2026-08-12, TESTER2 b5 evidence):
-    postgres.log/nats.log were observed at 0 bytes for a 5+ hour run.
-    ``build_production_service`` must thread each child's OWN log path
-    (the SAME path ``child_log_path`` already names) into the Supervisor so
-    ``postgres_child_spec``/``nats_child_spec`` can add their ``-l`` flag.
-    Fails on the pre-fix base: neither kwarg existed on ``Supervisor`` at
-    all, so this always reproduced as ``None``."""
+    postgres.log/nats.log were observed at 0 bytes for a 5+ hour run (nats
+    has since been cut entirely, ADR 0023). ``build_production_service`` must
+    thread postgres's OWN log path (the SAME path ``child_log_path`` already
+    names) into the Supervisor so ``postgres_child_spec`` can add its ``-l``
+    flag. Fails on the pre-fix base: the kwarg did not exist on
+    ``Supervisor`` at all, so this always reproduced as ``None``."""
 
     class _Guard:
         pass
@@ -859,14 +858,12 @@ def test_build_production_service_wires_postgres_and_nats_log_paths() -> None:
         guard=_Guard(),  # type: ignore[arg-type]
         alert_outbox=_Outbox(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: pytest.fail("probe should not run at wiring time"),  # type: ignore[arg-type,return-value]
         program_data_root=sentinel,
     )
 
     expected_root = Path(sentinel) / "CivicCast" / "logs"
     assert service._supervisor._postgres_log_path == str(expected_root / "postgres.log")
-    assert service._supervisor._nats_log_path == str(expected_root / "nats.log")
 
 
 def test_f1_build_production_service_shares_one_stop_event_with_the_supervisor() -> None:
@@ -896,7 +893,6 @@ def test_f1_build_production_service_shares_one_stop_event_with_the_supervisor()
         guard=_Guard(),  # type: ignore[arg-type]
         alert_outbox=_Outbox(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: pytest.fail("probe should not run at wiring time"),  # type: ignore[arg-type,return-value]
     )
 
@@ -939,7 +935,6 @@ def test_build_production_service_wires_admin_verbs_to_the_control_pipe() -> Non
         guard=_Guard(),  # type: ignore[arg-type]
         alert_outbox=_Outbox(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: pytest.fail("probe should not run at wiring time"),  # type: ignore[arg-type,return-value]
     )
 
@@ -1050,7 +1045,6 @@ def test_build_production_service_factory_assembles_deps_and_calls_build() -> No
             guard=_Guard(),  # type: ignore[arg-type]
             alert_outbox=_Outbox(),  # type: ignore[arg-type]
             postgres_probe=lambda: True,
-            nats_probe=lambda: True,
             health_probe=lambda: pytest.fail("probe must not run at wiring time"),  # type: ignore[arg-type,return-value]
             program_data_root=r"Z:\pd",
         )
@@ -1070,7 +1064,7 @@ def test_default_dependency_provider_builds_real_deps_without_raising(
     raising NotImplementedError, so the module-level SvcDoRun can build a real
     SupervisorService on the default path. Driving the ACTUAL provider far enough
     to prove CONSTRUCTION succeeds is the CI-bound proof; the probes/guard are NOT
-    invoked here (they touch Win32/network) -- the live SCM/DB/NATS/control-plane
+    invoked here (they touch Win32/network) -- the live SCM/DB/control-plane
     run stays owner-VM bound."""
 
     monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
@@ -1089,7 +1083,6 @@ def test_default_dependency_provider_builds_real_deps_without_raising(
     assert hasattr(deps.guard, "status")
     assert callable(deps.alert_outbox.fire)
     assert callable(deps.postgres_probe)
-    assert callable(deps.nats_probe)
     assert callable(deps.health_probe)
     # Audit A1 convention fix: program_data_root is the ProgramData ROOT (the
     # value children.default_egress_work_dir appends \CivicCast\data\egress to
@@ -1232,34 +1225,6 @@ def test_g2_postgres_probe_wrapper_preserves_exception_detail(
     assert "SELECT 1 check raised" in result.detail
     assert "failed to resolve host" in result.detail
     assert "did not succeed" not in result.detail  # the old swallowed-generic detail
-
-
-def test_g2_nats_probe_wrapper_preserves_exception_detail(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """G2 twin of the postgres test above, for ``nats_probe``. Points at a
-    closed loopback port so the real ``nats`` client's connect fails fast
-    (bounded by ``_NATS_CONNECT_TIMEOUT_SECONDS``); asserts the wrapper
-    propagates rather than swallows, so ``check_nats_ready`` reaches its
-    RAISED branch (real exception detail) instead of the generic
-    round-trip-did-not-complete detail a swallowed ``False`` produces."""
-
-    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
-    monkeypatch.setenv("CIVICCAST_NATS_HOST", "127.0.0.1")
-    monkeypatch.setenv("CIVICCAST_NATS_PORT", "18211")  # nothing listens here
-
-    from civiccast.native.supervisor.children import check_nats_ready
-    from civiccast.native.supervisor.service import default_dependency_provider
-
-    deps = default_dependency_provider()
-
-    with pytest.raises(Exception):  # noqa: B017 -- the real nats client's own exception type
-        deps.nats_probe()
-
-    result = check_nats_ready(deps.nats_probe)
-    assert result.outcome == "not_ready"
-    assert "JetStream publish+ack raised" in result.detail
-    assert "did not complete" not in result.detail  # the old swallowed-generic detail
 
 
 def test_default_provider_drives_factory_to_a_real_supervisor_service(
@@ -1692,7 +1657,7 @@ def test_stop_watchdog_timeout_exceeds_the_bounded_worst_case_of_the_stop_chain(
     from the SAME numbers the production code uses rather than restated:
 
       the F1 in-flight supervisor iteration (one readiness probe attempt + one
-      poll-interval sleep) + 4 children x (10s bounded stop command + 15s D5
+      poll-interval sleep) + 3 children x (10s bounded stop command + 15s D5
       deadline + 1s poll granularity) + the control-pipe teardown (5s pipe
       close + 5s command-queue join + 5s accept-thread join).
 
@@ -1704,7 +1669,9 @@ def test_stop_watchdog_timeout_exceeds_the_bounded_worst_case_of_the_stop_chain(
     the system was the one the derivation left out, which is how the watchdog
     could fire MID-CHAIN and hard-kill the postgres cluster. With the
     ``should_abort`` seam that term collapses to one probe attempt plus one
-    poll sleep, and is now carried explicitly."""
+    poll sleep, and is now carried explicitly. (NATS was cut entirely under
+    ADR 0023, dropping the child count from 4 to 3 and removing the NATS
+    connect-timeout probe term.)"""
 
     import civiccast.native.supervisor.service as service_module
 
@@ -1714,18 +1681,17 @@ def test_stop_watchdog_timeout_exceeds_the_bounded_worst_case_of_the_stop_chain(
         + SupervisorConfig().graceful_stop_deadline_seconds
         + 1
     )
-    children = 4  # control_plane, ollama, nats, postgres
+    children = 3  # control_plane, ollama, postgres
     control_pipe_teardown_seconds = 5 + 5 + 5
     bounded_worst_case = (
         in_flight_seconds + children * per_child_seconds + control_pipe_teardown_seconds
     )
 
     # The in-flight term is the LONGEST single readiness probe attempt (the DB
-    # connect timeout dominates the three 2.0s HTTP/NATS probes) plus one
+    # connect timeout dominates the two 2.0s HTTP probes) plus one
     # non-interruptible poll-interval sleep.
     probe_attempt_timeouts = (
         service_module._DB_CONNECT_TIMEOUT_SECONDS,
-        service_module._NATS_CONNECT_TIMEOUT_SECONDS,
         service_module._HEALTH_HTTP_TIMEOUT_SECONDS,
         service_module._OLLAMA_VERSION_TIMEOUT_SECONDS,
     )
@@ -1733,10 +1699,10 @@ def test_stop_watchdog_timeout_exceeds_the_bounded_worst_case_of_the_stop_chain(
         "the in-flight term must be derived from the LONGEST probe attempt"
     )
     assert in_flight_seconds == pytest.approx(11.0)
-    assert bounded_worst_case == pytest.approx(130.0)
+    assert bounded_worst_case == pytest.approx(104.0)
     assert bounded_worst_case < SVC_STOP_WATCHDOG_SECONDS, (
         f"a {SVC_STOP_WATCHDOG_SECONDS}s watchdog would fire during an ordinary "
-        f"four-child stop whose bounded worst case is {bounded_worst_case}s"
+        f"three-child stop whose bounded worst case is {bounded_worst_case}s"
     )
 
 
@@ -1892,10 +1858,10 @@ def test_file_backed_popen_factory_defaults_to_name_without_stdio_log_name(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Backward compatibility: every child that never sets ``stdio_log_name``
-    (nats, control_plane, and postgres itself when no ``-l`` target is in
+    (control_plane, and postgres itself when no ``-l`` target is in
     play) keeps resolving its capture file from ``spec.name``, unchanged."""
 
-    for spec in (_pg_spec(), _nats_spec(), _cp_spec()):
+    for spec in (_pg_spec(), _cp_spec()):
         assert spec.stdio_log_name is None
         call = _captured_popen_call(monkeypatch, spec, new_process_group=False, log_root=tmp_path)
         resolved = getattr(call["stdout"], "name", None)
@@ -1914,7 +1880,6 @@ def test_f13_no_supervisor_child_is_given_a_console_window(
 
     for spec, new_process_group in (
         (_pg_spec(), False),
-        (_nats_spec(), False),
         (_cp_spec(), True),
     ):
         call = _captured_popen_call(
@@ -1950,7 +1915,7 @@ def test_f13_suppressing_the_window_does_not_disturb_the_process_group_or_log_ca
         monkeypatch, _cp_spec(), new_process_group=True, log_root=tmp_path
     )
     infra = _captured_popen_call(
-        monkeypatch, _nats_spec(), new_process_group=False, log_root=tmp_path
+        monkeypatch, _pg_spec(), new_process_group=False, log_root=tmp_path
     )
 
     assert control_plane["creationflags"] == create_no_window | new_group, (

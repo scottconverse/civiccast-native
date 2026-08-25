@@ -28,15 +28,12 @@
 #                 staff-auth, live-HLS playability) are enforced separately
 #                 by ci-test.yml's own existing per-suite steps, unchanged
 #                 by this contract.
-#   nats-boundary  tests/platform/test_nats_broker_real.py has exactly one
-#                 real-boundary test function; floor = 1.
 schema_version: 1
 
 trusted_workflow: .github/workflows/ci-test.yml
 
 workflow_job_inventory:
   - test
-  - nats-boundary
   - windows-native   # WS4 real-Windows probe job (merged from program branch); NOT a claims producer - the verifier's needs: is unchanged
   - claims-verifier
 
@@ -48,12 +45,5 @@ expected_producers:
     meta_file: test-meta.json
     requires_checkout_attestation: true
     junit_collection_floor: 5000  # basis: run 29569282094 collected 5673 (5643 passed + 30 skipped); 5000 leaves variance headroom while making an empty/gutted producer impossible
-  nats-boundary:
-    junit_artifact: nats-boundary-junit
-    junit_file: nats-boundary-junit.xml
-    meta_artifact: nats-boundary-meta
-    meta_file: nats-boundary-meta.json
-    requires_checkout_attestation: true
-    junit_collection_floor: 1
 
 verifier_job: claims-verifier

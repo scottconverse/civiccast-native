@@ -5,13 +5,13 @@
 Grounded in INSTALLER truth, not in what the supervisor code happened to do:
 
 * pg_ctl.exe lives at ``<INSTDIR>\\packs\\native-server-binaries\\payload\\bin\\
-  pg_ctl.exe`` and nats-server.exe beside it (scripts/build_native_server_pack.py
-  payload manifest; provision/__main__.py resolves ``initdb_path`` under the same
+  pg_ctl.exe`` (scripts/build_native_server_pack.py payload manifest;
+  provision/__main__.py resolves ``initdb_path`` under the same
   ``payload\\bin`` convention).
-* The postgres cluster is ``%PROGRAMDATA%\\CivicCast\\data\\pgdata`` and the
-  provisioned NATS config (JetStream store at ``...\\data\\nats-store``) is
-  ``%PROGRAMDATA%\\CivicCast\\config\\nats-server.conf``
-  (provision/__main__.py:resolve_provision_paths).
+* The postgres cluster is ``%PROGRAMDATA%\\CivicCast\\data\\pgdata``
+  (provision/__main__.py:resolve_provision_paths). NATS was cut entirely
+  (ADR 0023, superseding ADR 0001) -- there is no NATS config, binary, or
+  child anywhere in this product.
 * The service host is ``<INSTDIR>\\runtime\\pythonservice.exe`` running as
   LocalSystem with CWD System32 and a stock PATH -- the installer writes NO PATH
   changes, so every bare/relative child path is a FileNotFoundError or resolves
@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 import os
-import signal
 import subprocess
 import sys
 from collections.abc import Callable
@@ -202,7 +201,6 @@ def make_core_supervisor(
         runner=runner,
         alert_outbox=FakeOutbox(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: ControlPlaneHealthProbe(status_code=200, mode="normal"),
         clock=clock.now,
         sleep=clock.sleep,
@@ -230,14 +228,10 @@ def _make_install_tree(tmp_path: Path) -> tuple[Path, Path]:
     bin_dir = install_root / "packs" / "native-server-binaries" / "payload" / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "pg_ctl.exe").write_bytes(b"")
-    (bin_dir / "nats-server.exe").write_bytes(b"")
 
     pd_root = tmp_path / "ProgramData"
     (pd_root / "CivicCast" / "data" / "pgdata").mkdir(parents=True)
     (pd_root / "CivicCast" / "config").mkdir(parents=True)
-    (pd_root / "CivicCast" / "config" / "nats-server.conf").write_text(
-        'port: 4222\njetstream {\n  store_dir: "..."\n}\n', encoding="utf-8"
-    )
     (pd_root / "CivicCast" / "logs").mkdir(parents=True)
     return install_root, pd_root
 
@@ -264,7 +258,6 @@ def _build_service(layout=None, program_data_root: str | None = None):
         guard=_WiringGuard(),  # type: ignore[arg-type]
         alert_outbox=_WiringOutbox(),
         postgres_probe=lambda: True,
-        nats_probe=lambda: True,
         health_probe=lambda: pytest.fail("probe must not run at wiring time"),  # type: ignore[arg-type,return-value]
         **kwargs,  # type: ignore[arg-type]
     )
@@ -292,9 +285,7 @@ def test_resolve_install_layout_matches_installer_ground_truth(tmp_path: Path) -
     bin_dir = install_root / "packs" / "native-server-binaries" / "payload" / "bin"
     assert layout.server_bin_dir == bin_dir
     assert layout.pg_ctl_path == bin_dir / "pg_ctl.exe"
-    assert layout.nats_server_path == bin_dir / "nats-server.exe"
     assert layout.postgres_data_dir == pd_root / "CivicCast" / "data" / "pgdata"
-    assert layout.nats_config_path == pd_root / "CivicCast" / "config" / "nats-server.conf"
     assert layout.log_root == pd_root / "CivicCast" / "logs"
     # ffmpeg/ffprobe: native_activation.rs's validate_staged_runtime_layout
     # pins dependencies/ffmpeg/bin/ffmpeg.exe as a required staged file.
@@ -302,16 +293,14 @@ def test_resolve_install_layout_matches_installer_ground_truth(tmp_path: Path) -
     assert layout.ffmpeg_bin_dir == ffmpeg_bin_dir
     assert layout.ffmpeg_exe_path == ffmpeg_bin_dir / "ffmpeg.exe"
     assert layout.ffprobe_exe_path == ffmpeg_bin_dir / "ffprobe.exe"
-    # Operator media: beside data\egress and data\nats-store, plain mkdir,
-    # inherited DACL (not the PROTECTED SDDL credential-state-root posture).
+    # Operator media: beside data\egress, plain mkdir, inherited DACL (not
+    # the PROTECTED SDDL credential-state-root posture).
     assert layout.upload_dir == pd_root / "CivicCast" / "data" / "uploads"
     for p in (
         layout.install_root,
         layout.python_path,
         layout.pg_ctl_path,
-        layout.nats_server_path,
         layout.postgres_data_dir,
-        layout.nats_config_path,
         layout.log_root,
         layout.ffmpeg_bin_dir,
         layout.ffmpeg_exe_path,
@@ -343,8 +332,8 @@ def test_build_production_service_emits_absolute_existing_layout_specs(
     """A1 BLOCKER: the PRODUCTION builder must emit ONLY absolute installed-layout
     paths for every child spec, the stop-command specs, and the postmaster pid
     reader -- under LocalSystem (CWD System32, stock PATH) the HEAD wiring's bare
-    ``pg_ctl``/``nats-server``/``python`` and relative ``pgdata`` are
-    FileNotFoundError / System32-relative."""
+    ``pg_ctl``/``python`` and relative ``pgdata`` are FileNotFoundError /
+    System32-relative."""
 
     from civiccast.native.supervisor.install_layout import resolve_install_layout
 
@@ -359,13 +348,6 @@ def test_build_production_service_emits_absolute_existing_layout_specs(
     pg = sup._spec_for("postgres")
     assert pg.argv[0] == str(layout.pg_ctl_path)
     assert pg.argv[pg.argv.index("-D") + 1] == str(layout.postgres_data_dir)
-
-    nats = sup._spec_for("nats")
-    assert nats.argv[0] == str(layout.nats_server_path)
-    # The provisioned config (JetStream store) MUST be passed to the nats child;
-    # HEAD spawned it with nats_config_path=None (no -c at all).
-    assert "-c" in nats.argv
-    assert nats.argv[nats.argv.index("-c") + 1] == str(layout.nats_config_path)
 
     cp = sup._spec_for("control_plane")
     assert cp.argv[0] == str(layout.python_path)
@@ -397,8 +379,6 @@ def test_build_production_service_resolves_layout_from_sys_executable(
     bin_dir = install_root / "packs" / "native-server-binaries" / "payload" / "bin"
     assert pg.argv[0] == str(bin_dir / "pg_ctl.exe")
     assert pg.argv[pg.argv.index("-D") + 1] == str(pd_root / "CivicCast" / "data" / "pgdata")
-    nats = sup._spec_for("nats")
-    assert nats.argv[0] == str(bin_dir / "nats-server.exe")
     cp = sup._spec_for("control_plane")
     assert cp.argv[0] == str(install_root / "runtime" / "python.exe")
 
@@ -856,7 +836,7 @@ def test_alerting_outbox_session_factory_failure_never_propagates(
 @dataclass
 class RaisingStopRunner:
     """Service-layer runner whose graceful_stop raises for chosen pids -- the
-    LocalSystem reality at HEAD: a bare 'pg_ctl'/'nats-server' stop command is
+    LocalSystem reality at HEAD: a bare 'pg_ctl' stop command is
     FileNotFoundError, or a hung one is TimeoutExpired."""
 
     raise_for: dict[int, BaseException] = field(default_factory=dict)
@@ -894,7 +874,6 @@ def _make_stop_chain_service(runner) -> tuple[object, FakeServiceSupervisor]:
 
     handles = {
         "postgres": FakeHandle(pid=101, kind="argv"),
-        "nats": FakeHandle(pid=102, kind="argv"),
         "control_plane": FakeHandle(pid=103, kind="ctrl_break_event"),
     }
     supervisor = FakeServiceSupervisor(child_handles=handles)
@@ -915,21 +894,20 @@ def test_stop_chain_survives_file_not_found_and_stops_every_child() -> None:
     graceful_stop_all inside run()'s finally, skipping the remaining children."""
 
     runner = RaisingStopRunner(
-        raise_for={102: FileNotFoundError("nats-server not found on stock PATH")},
-        alive={101: False, 102: True, 103: False},
+        raise_for={101: FileNotFoundError("pg_ctl not found on stock PATH")},
+        alive={101: True, 103: False},
     )
     service, supervisor = _make_stop_chain_service(runner)
 
     results = service.graceful_stop_all()  # must NOT raise
 
     by_name = {r.name: r for r in results}
-    assert set(by_name) == {"postgres", "nats", "control_plane"}
+    assert set(by_name) == {"postgres", "control_plane"}
     # The failing child fell through to terminate...
-    assert ("terminate", 102) in runner.events
-    assert by_name["nats"].outcome == "terminated"
-    # ...the OTHERS still got their graceful actions...
+    assert ("terminate", 101) in runner.events
+    assert by_name["postgres"].outcome == "terminated"
+    # ...the other still got its graceful action...
     assert ("graceful", 103) in runner.events
-    assert ("graceful", 101) in runner.events
     # ...and the state transition + Job Object backstop still ran.
     assert supervisor.graceful_stop_calls == 1
 
@@ -940,7 +918,7 @@ def test_stop_chain_survives_timeout_expired_from_a_stop_command() -> None:
 
     runner = RaisingStopRunner(
         raise_for={101: subprocess.TimeoutExpired(cmd=["pg_ctl", "stop"], timeout=10)},
-        alive={101: True, 102: False, 103: False},
+        alive={101: True, 103: False},
     )
     service, supervisor = _make_stop_chain_service(runner)
 
@@ -950,202 +928,6 @@ def test_stop_chain_survives_timeout_expired_from_a_stop_command() -> None:
     assert by_name["postgres"].outcome == "terminated"
     assert ("terminate", 101) in runner.events
     assert supervisor.graceful_stop_calls == 1
-
-
-# ---------------------------------------------------------------------------
-# A6 -- NATS readiness is the JetStream publish+ack round-trip, not TCP accept
-# ---------------------------------------------------------------------------
-
-
-def test_provider_nats_probe_is_the_jetstream_publish_ack_roundtrip(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A6: D6 says 'TCP accept is explicitly NOT readiness'. The provider's
-    nats_probe must perform the JetStream publish+ack round-trip -- at HEAD it
-    was a bare socket connect."""
-
-    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
-
-    import civiccast.native.supervisor.service as service_module
-
-    calls: list[tuple[str, float]] = []
-
-    def fake_roundtrip(url: str, timeout_seconds: float) -> bool:
-        calls.append((url, timeout_seconds))
-        return True
-
-    monkeypatch.setattr(service_module, "_jetstream_publish_ack", fake_roundtrip)
-
-    deps = service_module.default_dependency_provider()
-
-    assert deps.nats_probe() is True
-    assert len(calls) == 1
-    assert calls[0][0] == "nats://127.0.0.1:4222"
-
-
-def test_provider_nats_probe_propagates_the_roundtrip_exception(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """G2 contract update: ``nats_probe`` itself must NOT catch and swallow a
-    raised exception into a bare ``False`` -- that redundant catch is exactly
-    what destroyed the exception TEXT before it ever reached
-    ``check_nats_ready``'s ``ReadinessResult.detail`` (see
-    ``test_supervisor_service.py``'s ``test_g2_nats_probe_wrapper_preserves_
-    exception_detail``). The fail-closed BOUNDARY moved one layer up to
-    ``check_nats_ready`` (children.py), which still fails closed on any
-    exception -- proven separately, not here (this probe is a raw seam, not
-    the readiness gate)."""
-
-    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
-
-    import civiccast.native.supervisor.service as service_module
-
-    def raising_roundtrip(url: str, timeout_seconds: float) -> bool:
-        raise ConnectionError("nats down")
-
-    monkeypatch.setattr(service_module, "_jetstream_publish_ack", raising_roundtrip)
-
-    deps = service_module.default_dependency_provider()
-
-    with pytest.raises(ConnectionError, match="nats down"):
-        deps.nats_probe()
-
-
-def test_jetstream_publish_ack_publishes_to_probe_stream_and_reads_the_ack(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The concrete round-trip: connect -> jetstream -> ensure probe stream ->
-    publish -> ack.seq. Proven against a fake nats-py provider module."""
-
-    import types
-
-    published: list[tuple[str, bytes]] = []
-    streams: list[str] = []
-    closed: list[bool] = []
-
-    class _Ack:
-        seq = 7
-
-    class _Js:
-        async def add_stream(self, name: str, subjects: list[str]) -> None:
-            streams.append(name)
-
-        async def publish(self, subject: str, payload: bytes, timeout=None) -> _Ack:
-            published.append((subject, payload))
-            return _Ack()
-
-    class _Client:
-        def jetstream(self, timeout=None) -> _Js:
-            return _Js()
-
-        async def close(self) -> None:
-            closed.append(True)
-
-    async def _connect(url: str, **kwargs) -> _Client:
-        assert url.startswith("nats://")
-        return _Client()
-
-    monkeypatch.setitem(sys.modules, "nats", types.SimpleNamespace(connect=_connect))
-
-    from civiccast.native.supervisor.service import _jetstream_publish_ack
-
-    ok = _jetstream_publish_ack("nats://127.0.0.1:4222", 2.0)
-
-    assert ok is True
-    assert len(published) == 1
-    assert streams, "the probe stream must be ensured before the publish"
-    assert closed == [True], "the connection must be closed even on success"
-
-
-def test_jetstream_publish_ack_without_a_seq_is_not_ready(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An ack with no sequence is NOT a completed publish+ack round-trip."""
-
-    import types
-
-    class _Js:
-        async def add_stream(self, name: str, subjects: list[str]) -> None:
-            pass
-
-        async def publish(self, subject: str, payload: bytes, timeout=None) -> object:
-            return object()  # no .seq
-
-    class _Client:
-        def jetstream(self, timeout=None) -> _Js:
-            return _Js()
-
-        async def close(self) -> None:
-            pass
-
-    async def _connect(url: str, **kwargs) -> _Client:
-        return _Client()
-
-    monkeypatch.setitem(sys.modules, "nats", types.SimpleNamespace(connect=_connect))
-
-    from civiccast.native.supervisor.service import _jetstream_publish_ack
-
-    assert _jetstream_publish_ack("nats://127.0.0.1:4222", 2.0) is False
-
-
-def test_jetstream_publish_ack_survives_pythonservice_set_wakeup_fd_rejection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Service-host regression proven live in a Windows Sandbox service run
-    (supervisor.log): inside pythonservice.exe's supervision thread,
-    ``threading.current_thread() is threading.main_thread()`` passes even
-    though the OS does not treat that thread as the process's true main
-    thread. The OLD implementation called ``asyncio.run(...)``, which builds
-    the default ``ProactorEventLoop`` on Windows; ``BaseProactorEventLoop.
-    __init__`` (asyncio/proactor_events.py) calls ``signal.set_wakeup_fd(...)``
-    whenever that (fooled) Python-level thread-identity check is True. The
-    C-level check inside ``set_wakeup_fd`` itself is stricter and raises
-    ``ValueError: set_wakeup_fd only works in main thread of the main
-    interpreter`` -- so every readiness probe attempt raised, the fail-closed
-    gate returned not_ready forever, and NATS never went ready.
-
-    This reproduces WITHOUT pythonservice.exe: pytest's own test thread
-    genuinely IS ``threading.main_thread()`` (the guard is satisfied
-    honestly, not fooled), so the OLD ``asyncio.run(...)`` path exercises the
-    exact same ``BaseProactorEventLoop.__init__`` line and calls the patched,
-    raising ``set_wakeup_fd`` -- proving the defect at HEAD without a service
-    host. The fix constructs a ``SelectorEventLoop`` directly, which never
-    touches ``signal`` machinery, so the patched raise is never reached and
-    the round-trip succeeds.
-    """
-
-    import types
-
-    def _raise_set_wakeup_fd(*_args: object, **_kwargs: object) -> int:
-        raise ValueError("set_wakeup_fd only works in main thread of the main interpreter")
-
-    monkeypatch.setattr(signal, "set_wakeup_fd", _raise_set_wakeup_fd)
-
-    class _Ack:
-        seq = 9
-
-    class _Js:
-        async def add_stream(self, name: str, subjects: list[str]) -> None:
-            pass
-
-        async def publish(self, subject: str, payload: bytes, timeout=None) -> _Ack:
-            return _Ack()
-
-    class _Client:
-        def jetstream(self, timeout=None) -> _Js:
-            return _Js()
-
-        async def close(self) -> None:
-            pass
-
-    async def _connect(url: str, **kwargs: object) -> _Client:
-        return _Client()
-
-    monkeypatch.setitem(sys.modules, "nats", types.SimpleNamespace(connect=_connect))
-
-    from civiccast.native.supervisor.service import _jetstream_publish_ack
-
-    assert _jetstream_publish_ack("nats://127.0.0.1:4222", 2.0) is True
 
 
 # ---------------------------------------------------------------------------

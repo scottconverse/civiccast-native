@@ -130,15 +130,15 @@ entries:
         node_id: "tests/dr/test_postgres_backup.py::test_postgres_backup_snapshot_matches_source"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -208,15 +208,15 @@ entries:
         node_id: "tests/dr/test_postgres_restore.py::test_run_full_drill_postgres_end_to_end"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -263,15 +263,15 @@ entries:
         node_id: "tests/dr/test_restore_drill.py::test_restore_drill_catches_a_dropped_row"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -326,15 +326,15 @@ entries:
         node_id: "tests/policy/test_release_truth.py::test_unknown_live_release_is_drift"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -437,15 +437,15 @@ entries:
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -566,15 +566,15 @@ entries:
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
-          blob: b226da733b3318d049d210dffc5a83b0f5394e25
+          blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 219abf4adfa625601027f822db8c6572812179cd
+        blob: c1a9dd84aa30783dde30ad48f768b9faad7b114f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: f360c5277a80917bdad57d230870f6032bc0a5fa
+        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f

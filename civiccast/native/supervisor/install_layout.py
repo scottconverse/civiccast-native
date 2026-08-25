@@ -13,13 +13,14 @@ Verified installer ground truth (do not trust comments elsewhere; these are
 the producing modules):
 
 * ``civiccast/native/provision/__main__.py`` (``resolve_provision_paths``):
-  the postgres cluster is ``<PROGRAMDATA>\\CivicCast\\data\\pgdata``; the NATS
-  config (JetStream store at ``...\\data\\nats-store``) is written to
-  ``<PROGRAMDATA>\\CivicCast\\config\\nats-server.conf``; the server-binaries
-  pack extracts under ``<INSTDIR>\\packs\\native-server-binaries\\`` with its
-  executables at ``payload\\bin\\`` (``initdb_path`` default).
+  the postgres cluster is ``<PROGRAMDATA>\\CivicCast\\data\\pgdata``; the
+  server-binaries pack extracts under
+  ``<INSTDIR>\\packs\\native-server-binaries\\`` with its executables at
+  ``payload\\bin\\`` (``initdb_path`` default). NATS JetStream was removed
+  from the product (owner decision 2026-08-20, ADR 0023); this layout no
+  longer carries a NATS config or server path.
 * ``scripts/build_native_server_pack.py``: the pack payload carries
-  ``bin/pg_ctl.exe`` and ``bin/nats-server.exe`` (payload manifest + pins).
+  ``bin/pg_ctl.exe`` (payload manifest + pins).
 * The embedded Python lives at ``<INSTDIR>\\runtime\\python.exe``; the service
   host executable is ``<INSTDIR>\\runtime\\pythonservice.exe`` (same dir), so
   ``sys.executable``'s grandparent IS the install root
@@ -188,11 +189,9 @@ class InstallLayout:
     python_path: Path  # <install_root>\runtime\python.exe (child interpreter)
     server_bin_dir: Path  # <install_root>\packs\native-server-binaries\payload\bin
     pg_ctl_path: Path  # <server_bin_dir>\pg_ctl.exe
-    nats_server_path: Path  # <server_bin_dir>\nats-server.exe
     program_data_root: Path  # e.g. C:\ProgramData
     civiccast_data_root: Path  # <program_data_root>\CivicCast
     postgres_data_dir: Path  # <civiccast_data_root>\data\pgdata
-    nats_config_path: Path  # <civiccast_data_root>\config\nats-server.conf
     log_root: Path  # <civiccast_data_root>\logs
     # Local-AI runtime (task #57 D2) -- see the module docstring's ground
     # truth. Pure path arithmetic like every other field: existence is the
@@ -220,8 +219,8 @@ class InstallLayout:
     ffmpeg_exe_path: Path  # <ffmpeg_bin_dir>\ffmpeg.exe
     ffprobe_exe_path: Path  # <ffmpeg_bin_dir>\ffprobe.exe
     # Operator media (recordings/uploads) -- NOT credential-bearing, so it
-    # gets a plain directory beside ``data\egress`` and ``data\nats-store``
-    # (both inherit their DACL with no bespoke ACL) rather than the PROTECTED
+    # gets a plain directory beside ``data\egress`` (which inherits its DACL
+    # with no bespoke ACL) rather than the PROTECTED
     # SDDL treatment reserved for the credential-bearing state roots
     # (provision/journal.py, native/pgdata_acl.py).
     upload_dir: Path  # <civiccast_data_root>\data\uploads
@@ -262,11 +261,9 @@ def resolve_install_layout(
         python_path=install_root / "runtime" / "python.exe",
         server_bin_dir=server_bin_dir,
         pg_ctl_path=server_bin_dir / "pg_ctl.exe",
-        nats_server_path=server_bin_dir / "nats-server.exe",
         program_data_root=pd_root,
         civiccast_data_root=civiccast_root,
         postgres_data_dir=civiccast_root / "data" / "pgdata",
-        nats_config_path=civiccast_root / "config" / "nats-server.conf",
         log_root=civiccast_root / "logs",
         ollama_exe_path=install_root / "dependencies" / "ollama" / "ollama.exe",
         ollama_models_dir=install_root / "models" / "ollama",

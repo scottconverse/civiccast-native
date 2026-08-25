@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
 """Build the signed native ``native-server-binaries`` component pack
-(PostgreSQL 17 + NATS + a TSDuck subset) that
+(PostgreSQL 17 + a TSDuck subset) that
 ``civiccast.native.provision.pack.verify_server_binaries_pack`` verifies and
 ``civiccast.native.provision.__main__.resolve_provision_paths`` expects to
 find, extracted, at ``<install_root>\\packs\\native-server-binaries\\
@@ -22,13 +22,13 @@ a signed ZIP64 pack via ``build_native_pack``, and a development-signing-key
 guard. Two things caption packs do NOT need that this pack does:
 
 * **Acquisition.** Caption models are pulled by a separate, already-landed
-  flow. PostgreSQL/NATS/TSDuck are not -- ``--acquire`` (this script) reuses
+  flow. PostgreSQL/TSDuck are not -- ``--acquire`` (this script) reuses
   ``scripts.provision_native_runtime_dependencies``'s ALREADY-REVIEWED lock
   (``native-windows-runtime-dependencies.lock.json``, schema_version 2,
-  pinned PostgreSQL 17.10-2 / NATS 2.14.3 / TSDuck 3.44-4676 URLs +
+  pinned PostgreSQL 17.10-2 / TSDuck 3.44-4676 URLs +
   SHA-256) and its ``fetch_locked_artifact``/``safe_extract_zip`` primitives
   verbatim -- never re-typing a URL or a hash this repo already reviewed.
-  Only the 3 artifacts this pack needs are fetched (never the ffmpeg/node/
+  Only the 2 artifacts this pack needs are fetched (never the ffmpeg/node/
   ollama artifacts the SAME lock also pins for the unrelated "Core" pack --
   see ``build_native_distribution.py``, a different pack with a different
   component identity, "core", not "native-server-binaries").
@@ -83,13 +83,12 @@ _REPARSE_POINT: Final[int] = 0x400
 
 #: Upstream component versions this builder was reviewed against -- SAME
 #: pins as ``native-windows-runtime-dependencies.lock.json``'s ``postgres``/
-#: ``nats``/``tsduck`` entries (``--acquire`` fetches exactly those). Not
+#: ``tsduck`` entries (``--acquire`` fetches exactly those). Not
 #: re-declared as a second source of truth: ``acquire_server_pack_sources``
 #: asserts the loaded lock's ``version`` fields equal these before fetching,
 #: so a lock file edited out from under this builder fails loud instead of
 #: silently shipping an unreviewed version.
 POSTGRES_VERSION: Final[str] = "17.10-2"
-NATS_VERSION: Final[str] = "2.14.3"
 TSDUCK_VERSION: Final[str] = "3.44-4676"
 
 
@@ -385,15 +384,6 @@ POSTGRES_SHARE_EXTENSION_FILES: Final[tuple[str, ...]] = (
     "btree_gist--1.1--1.2.sql",
 )
 
-#: NATS is a single, fully static Go binary -- confirmed by a real PE
-#: import-table walk (zero bundled-DLL imports, only OS-provided ones).
-NATS_BIN_PINS: Final[dict[str, tuple[int, str]]] = {
-    "nats-server.exe": (
-        18_540_032,
-        "1ebce8b607d28d671bfa7dd4e9f02e76de0da58dab9baedc90265020683d99fc",
-    ),
-}
-
 #: ``tsp.exe`` + the exact plugin closure ``civiccast/egress/ts_relay.py``
 #: (``continuity``, ``pcradjust``), ``civiccast/egress/compliance.py``
 #: (``until``, ``analyze``), and ``civiccast/alerting/self_test.py``
@@ -452,7 +442,6 @@ POSTGRES_LICENSE_FILES: Final[tuple[str, ...]] = (
     "server_license.txt",
     "commandlinetools_3rd_party_licenses.txt",
 )
-NATS_LICENSE_FILES: Final[tuple[str, ...]] = ("LICENSE",)
 TSDUCK_LICENSE_FILES: Final[tuple[str, ...]] = ("LICENSE.txt", "OTHERS.txt")
 
 #: PostgreSQL's bundled IANA time zone database directories, plus
@@ -573,16 +562,15 @@ def load_ed25519_private_key(path: Path) -> Ed25519PrivateKey:
 # Acquisition (--acquire): reuse the reviewed lock + primitives verbatim.
 # ---------------------------------------------------------------------------
 
-_ACQUIRE_ARTIFACTS: Final[tuple[str, ...]] = ("postgres", "nats", "tsduck")
+_ACQUIRE_ARTIFACTS: Final[tuple[str, ...]] = ("postgres", "tsduck")
 _ACQUIRE_EXPECTED_VERSIONS: Final[dict[str, str]] = {
     "postgres": POSTGRES_VERSION,
-    "nats": NATS_VERSION,
     "tsduck": TSDUCK_VERSION,
 }
 
 
 def acquire_server_pack_sources(cache: Path, *, lock_path: Path = LOCK_PATH) -> dict[str, Path]:
-    """Download + verify + extract ONLY the postgres/nats/tsduck artifacts
+    """Download + verify + extract ONLY the postgres/tsduck artifacts
     from the reviewed runtime-dependency lock (never the ffmpeg/node/ollama
     artifacts the same lock also pins for the unrelated "Core" pack).
 
@@ -672,24 +660,6 @@ def _postgres_sources(postgres_root: Path) -> dict[str, Path]:
             postgres_root / filename, label=f"PostgreSQL license file {filename}"
         )
         sources[f"licenses/postgresql/{filename}"] = path
-    return sources
-
-
-def _nats_sources(nats_root: Path) -> dict[str, Path]:
-    nats_root = _require_real_directory(nats_root, label="NATS source root")
-    sources: dict[str, Path] = {}
-    for filename, (expected_bytes, expected_sha256) in sorted(NATS_BIN_PINS.items()):
-        path = nats_root / filename
-        _validate_pinned_file(
-            path,
-            expected_bytes=expected_bytes,
-            expected_sha256=expected_sha256,
-            label=f"pinned NATS {filename}",
-        )
-        sources[f"bin/{filename}"] = path
-    for filename in NATS_LICENSE_FILES:
-        path = _require_regular_file(nats_root / filename, label=f"NATS license file {filename}")
-        sources[f"licenses/nats/{filename}"] = path
     return sources
 
 
@@ -950,7 +920,6 @@ def build_server_pack(
     *,
     output: Path,
     postgres_root: Path,
-    nats_root: Path,
     tsduck_root: Path,
     signing_private_key: Ed25519PrivateKey,
     signing_key_id: str,
@@ -958,7 +927,7 @@ def build_server_pack(
     source_sha: str,
     compatible_core: str | None = None,
 ) -> dict[str, object]:
-    """Validate the pinned PostgreSQL/NATS/TSDuck inputs and build the
+    """Validate the pinned PostgreSQL/TSDuck inputs and build the
     signed ``native-server-binaries`` pack.
 
     The returned report's ``payload_tree_sha256`` (from
@@ -982,7 +951,6 @@ def build_server_pack(
 
     sources = {
         **_postgres_sources(postgres_root),
-        **_nats_sources(nats_root),
         **_tsduck_sources(tsduck_root),
     }
 
@@ -992,7 +960,6 @@ def build_server_pack(
         "bin/pg_ctl.exe, bin/pg_dump.exe, bin/pg_dumpall.exe, bin/pg_restore.exe, bin/psql.exe, "
         "the runtime DLLs they import, the btree_gist extension, and required "
         "share/ bootstrap + timezone data)\n"
-        f"NATS server {NATS_VERSION} (bin/nats-server.exe)\n"
         f"TSDuck {TSDUCK_VERSION} subset (tsduck/bin/tsp.exe, tscore.dll, "
         "tsduck.dll, and the analyze/continuity/pcradjust/until plugins)\n"
         "See licenses/ for upstream license texts and "
@@ -1016,7 +983,6 @@ def build_server_pack(
             signing_key_id=signing_key_id,
             metadata={
                 "postgres_version": POSTGRES_VERSION,
-                "nats_version": NATS_VERSION,
                 "tsduck_version": TSDUCK_VERSION,
                 "source_sha": source_sha,
             },
@@ -1047,7 +1013,7 @@ def main() -> int:
         "--acquire",
         action="store_true",
         help=(
-            "download + verify + extract postgres/nats/tsduck from the reviewed "
+            "download + verify + extract postgres/tsduck from the reviewed "
             "lock into --cache before building (mutually exclusive with the "
             "--*-root flags)"
         ),
@@ -1060,7 +1026,6 @@ def main() -> int:
     )
     parser.add_argument("--lock", type=Path, default=LOCK_PATH)
     parser.add_argument("--postgres-root", type=Path)
-    parser.add_argument("--nats-root", type=Path)
     parser.add_argument("--tsduck-root", type=Path)
     parser.add_argument("--signing-private-key", required=True, type=Path)
     parser.add_argument("--signing-key-id", required=True)
@@ -1092,12 +1057,11 @@ def main() -> int:
         key = load_ed25519_private_key(args.signing_private_key)
 
         if args.acquire:
-            if args.postgres_root or args.nats_root or args.tsduck_root:
+            if args.postgres_root or args.tsduck_root:
                 raise ServerPackBuildError("--acquire is mutually exclusive with --*-root flags")
             roots = acquire_server_pack_sources(args.cache, lock_path=args.lock)
-            postgres_root, nats_root, tsduck_root = (
+            postgres_root, tsduck_root = (
                 roots["postgres"],
-                roots["nats"],
                 roots["tsduck"],
             )
         else:
@@ -1105,7 +1069,6 @@ def main() -> int:
                 flag
                 for flag, value in (
                     ("--postgres-root", args.postgres_root),
-                    ("--nats-root", args.nats_root),
                     ("--tsduck-root", args.tsduck_root),
                 )
                 if value is None
@@ -1114,9 +1077,8 @@ def main() -> int:
                 raise ServerPackBuildError(
                     f"missing required flags (or pass --acquire instead): {', '.join(missing)}"
                 )
-            postgres_root, nats_root, tsduck_root = (
+            postgres_root, tsduck_root = (
                 args.postgres_root,
-                args.nats_root,
                 args.tsduck_root,
             )
 
@@ -1135,7 +1097,6 @@ def main() -> int:
         report = build_server_pack(
             output=args.output.resolve(),
             postgres_root=postgres_root,
-            nats_root=nats_root,
             tsduck_root=tsduck_root,
             signing_private_key=key,
             signing_key_id=args.signing_key_id,

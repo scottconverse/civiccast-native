@@ -232,7 +232,7 @@ say-so.
 
 These are decided. Do not reopen them without surfacing to the human director first.
 
-- **Messaging substrate: NATS JetStream.** ADR 0001 records the rationale. Apache 2.0 license, single-binary install, sub-millisecond latency, persistent streams with consumer-group fan-out. Redis Streams was rejected for license posture (SSPL/RSAL fork situation creates a procurement smell municipal evaluators will flag); Postgres LISTEN/NOTIFY was rejected for capability (8KB payload limit, no durable replay, no consumer groups). Postgres LISTEN/NOTIFY is still used for low-volume "tell the UI a row changed" purposes — not as the broadcast event bus.
+- **Messaging substrate: in-process broker (`civiccast.platform.broker.InProcessBrokerClient`).** ADR 0001 originally chose NATS JetStream: Apache 2.0 license, single-binary install, sub-millisecond latency, persistent streams with consumer-group fan-out, rejecting Redis Streams for license posture (SSPL/RSAL fork situation creates a procurement smell municipal evaluators will flag) and Postgres LISTEN/NOTIFY for capability (8KB payload limit, no durable replay, no consumer groups). The owner reopened and reversed that decision on 2026-08-20: NATS never did real production work in this codebase, and it has been cut entirely — the supervised child process, the config file, packaging, and every health/readiness gate that required it. ADR 0023 records the reversal and supersedes ADR 0001. The in-process broker is now the sole event-bus implementation for every deployment mode; there is no separate "production" broker mode. Postgres LISTEN/NOTIFY is still used for low-volume "tell the UI a row changed" purposes — not as the broadcast event bus.
 
 - **Whisper runtime: faster-whisper (CTranslate2).** ADR 0002 records the rationale. MIT license, Python-native, in-process API that maps cleanly onto the stabilization layer. Whisper.cpp registered as a future alternate but not shipped in v1.0. The captions module is built against an internal runtime adapter (`civiccast.captions.runtime` protocol) so a community-contributed Whisper.cpp implementation can plug in later without rewriting the module.
 
@@ -269,7 +269,6 @@ Don't pick silently.
 - **Tests: pytest + hypothesis.** Coverage targets: 80% service modules, 90% platform substrate, 95% streaming origin and syndication module (where bugs cause channel outages).
 - **Database: PostgreSQL 17 + pgvector.** Migrations: Alembic, one Python file per migration, both `upgrade` and `downgrade` implemented and tested.
 - **Cache / broker: Redis 7.2 (or Valkey 8 if D-future closes that way).**
-- **Event bus: NATS JetStream** (per ADR 0001).
 - **AI runtime: Ollama for LLMs, faster-whisper (CTranslate2) for ASR** (per ADR 0002).
 - **Pre-commit hooks:** ruff, mypy, trailing-whitespace, end-of-file-fixer, conventional-commit-message check.
 - **Frontend: React 18 + Vite + TypeScript + Tailwind + shadcn/ui.** Per spec §5.2. State management: TanStack Query for server state, Zustand for client state. Forms: React Hook Form + Zod.

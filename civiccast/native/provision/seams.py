@@ -13,22 +13,25 @@ builds the PRODUCTION bundle, mirroring
                                   :func:`initdb_argv`, kept separate from the
                                   spawn so the shape is unit-testable without
                                   a real process)
-* ``write_postgres_conf`` / ``write_pg_hba_conf`` / ``write_nats_conf`` ->
+* ``write_postgres_conf`` / ``write_pg_hba_conf`` ->
   atomic file writes (:func:`_atomic_write_text`)
 * ``ensure_database``         -> BLOCKER #52: ``pg_ctl start`` the
                                   just-configured cluster, ``CREATE
                                   DATABASE`` over ``psql`` if absent,
                                   ``pg_ctl stop`` in a ``finally``
                                   (:func:`default_ensure_database`)
-* ``detect_nats_store``       -> filesystem probe of the store directory
-* ``ensure_nats_store_dir``   -> ``mkdir`` (parents, exist_ok)
+
+NATS JetStream was removed from the product entirely (owner decision
+2026-08-20, ADR 0023 "NATS removed -- in-process event bus", which supersedes
+ADR 0001); this module no longer wires a NATS store-directory or config-file
+seam.
 
 None of the real subprocess/filesystem actions this module wires are
-exercised against a real PostgreSQL or NATS binary in the unit suite (WS5
-task's hard rule: "NO real postgres/nats execution in unit tests" -- that
-proof belongs to the WP2/WP5 live lifecycle matrix). :func:`initdb_argv`'s
-pure argv-shape and the atomic-write helper ARE unit-tested, since neither
-spawns a process or requires PostgreSQL/NATS to exist on the test host.
+exercised against a real PostgreSQL binary in the unit suite (WS5 task's
+hard rule: "NO real postgres execution in unit tests" -- that proof belongs
+to the WP2/WP5 live lifecycle matrix). :func:`initdb_argv`'s pure argv-shape
+and the atomic-write helper ARE unit-tested, since neither spawns a process
+or requires PostgreSQL to exist on the test host.
 """
 
 from __future__ import annotations
@@ -48,7 +51,6 @@ from civiccast.native.pgdata_acl import normalize_pgdata_acl
 from civiccast.native.provision.conf import render_pg_hba_conf, render_pg_hba_trust_conf
 from civiccast.native.provision.models import (
     DatabaseDecision,
-    NatsStoreProbe,
     ProvisionContext,
     ProvisionSeams,
 )
@@ -829,29 +831,6 @@ def migrate_provisioned_schema(
         _run_pg_ctl(_pg_ctl_argv_stop(pg_ctl_path, context), action="stop")
 
 
-def default_detect_nats_store(context: ProvisionContext) -> Callable[[], NatsStoreProbe]:
-    def _detect() -> NatsStoreProbe:
-        path = Path(context.nats_store_dir)
-        exists = path.exists()
-        return NatsStoreProbe(path_exists=exists, is_directory=exists and path.is_dir())
-
-    return _detect
-
-
-def default_ensure_nats_store_dir(context: ProvisionContext) -> Callable[[], None]:
-    def _ensure() -> None:
-        Path(context.nats_store_dir).mkdir(parents=True, exist_ok=True)
-
-    return _ensure
-
-
-def default_write_nats_conf(context: ProvisionContext) -> Callable[[str], None]:
-    def _write(content: str) -> None:
-        _atomic_write_text(context.nats_config_path, content)
-
-    return _write
-
-
 def build_default_seams_for(
     plan: ProvisionPlan,
     context: ProvisionContext,
@@ -898,9 +877,6 @@ def build_default_seams_for(
         ensure_database=default_ensure_database(
             context, plan, pg_ctl_path=pg_ctl_path, psql_path=psql_path
         ),
-        detect_nats_store=default_detect_nats_store(context),
-        ensure_nats_store_dir=default_ensure_nats_store_dir(context),
-        write_nats_conf=default_write_nats_conf(context),
     )
 
 

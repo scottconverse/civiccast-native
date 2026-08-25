@@ -247,7 +247,7 @@ genuine clean-host run first completed by rc14:
 
 1. **Windows installer (controlled beta for testing).** The release `.exe`
    from the GitHub Release page registers a Windows service through the SCM,
-   which supervises the control plane, Postgres, NATS, and the media workers
+   which supervises the control plane, Postgres, and the media workers
    from a bundled runtime under `C:\Program Files\CivicCast (Native)\`, and
    walks the operator through a recovery-kit and first-admin flow.
    Verify the SHA-256 hash against the release's `.sidecar.json` before
@@ -581,16 +581,6 @@ secrets. It is for tests only and must never be enabled at a station.
 
 - **`CIVICCAST_OLLAMA_BASE_URL`** — Local Ollama endpoint for the on-station model tier.
 - **`CIVICCAST_PROVIDER_API_KEY`** — Cloud-provider key for Ollama Cloud or OpenRouter. (Prefer the keyring path: `civiccast model set-provider-key`.)
-
-#### Platform broker (event bus)
-
-- **`CIVICCAST_BROKER_MODE`** — `process` (default) or `nats`.
-- **`CIVICCAST_NATS_URL`** — NATS connection.
-- **`CIVICCAST_NATS_STREAM`** — NATS connection.
-- **`CIVICCAST_NATS_DURABLE`** — NATS connection.
-- **`CIVICCAST_NATS_CA_FILE`** — NATS connection.
-- **`CIVICCAST_NATS_CLIENT_CERT_FILE`** — NATS connection.
-- **`CIVICCAST_NATS_CLIENT_KEY_FILE`** — NATS connection.
 
 #### Diagnostics and overrides
 

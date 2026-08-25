@@ -545,7 +545,7 @@ export interface BetaHandoffArtifact {
 }
 
 export interface BetaHandoffLane {
-  id: 'package-acquisition' | 'clean-windows-install-proof' | 'dependencies' | 'models' | 'nats' | 'mtls' | 'activitypub' | 'external-providers'
+  id: 'package-acquisition' | 'clean-windows-install-proof' | 'dependencies' | 'models' | 'mtls' | 'activitypub' | 'external-providers'
   label: string
   status: 'passed' | 'blocked' | 'credential_or_secret_required' | 'hardware_required'
   ready: boolean

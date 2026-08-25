@@ -162,7 +162,7 @@ class TestFirstRunCableChecks:
             deployment_profile="peg-cable",
             box_profile=box,
             storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
-            nats_ready=True,
+            event_bus_ready=True,
         )
         by_id = {c.id: c for c in report.checks}
         assert by_id["gstreamer_engine"].status == "pass"
@@ -178,7 +178,7 @@ class TestFirstRunCableChecks:
             deployment_profile="public-meetings",
             box_profile=box,
             storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
-            nats_ready=True,
+            event_bus_ready=True,
         )
         by_id = {c.id: c for c in report.checks}
         assert by_id["gstreamer_engine"].status == "fail"
@@ -194,7 +194,7 @@ class TestFirstRunCableChecks:
             deployment_profile="public-meetings",
             box_profile=box,
             storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
-            nats_ready=True,
+            event_bus_ready=True,
         )
         by_id = {c.id: c for c in report.checks}
         assert by_id["decklink_sdi"].status == "skipped"
@@ -206,7 +206,7 @@ class TestFirstRunCableChecks:
             deployment_profile="peg-cable",
             box_profile=box,
             storage_status=type("S", (), {"status": "not_set_up", "operator_message": "no db"})(),
-            nats_ready=True,
+            event_bus_ready=True,
         )
         by_id = {c.id: c for c in report.checks}
         assert by_id["db"].status == "fail"
@@ -217,7 +217,7 @@ class TestFirstRunCableChecks:
         report = run_first_run_cable_checks(
             box_profile=box,
             storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
-            nats_ready=True,
+            event_bus_ready=True,
         )
         by_id = {c.id: c for c in report.checks}
         assert by_id["release_integrity"].status == "skipped"
@@ -227,7 +227,7 @@ class TestFirstRunCableChecks:
         report = run_first_run_cable_checks(
             box_profile=box,
             storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
-            nats_ready=True,
+            event_bus_ready=True,
         )
         assert len(report.checks) == 11
 

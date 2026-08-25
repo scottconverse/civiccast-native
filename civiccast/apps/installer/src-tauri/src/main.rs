@@ -4797,12 +4797,15 @@ fn write_native_activation_self_test_receipt(
 #[cfg(target_os = "windows")]
 fn run_native_pre_activation_checks(staging: &Path) -> Result<(), String> {
     // K1 activation defect (found by a clean-box install proof): the postgres
-    // and nats probes pointed at `dependencies/` paths that the product never
-    // stages there. Those ship inside the signed `native-server-binaries`
+    // probe pointed at a `dependencies/` path that the product never
+    // stages there. It ships inside the signed `native-server-binaries`
     // pack, which `install_layout.py` (`_SERVER_PACK_SUBDIR`) resolves at
     // runtime to `<install_root>\packs\native-server-binaries\payload\bin`
-    // (postgres.exe, pg_ctl.exe, nats-server.exe) -- see
-    // `scripts/build_native_server_pack.py`. node was BUILD-TIME ONLY
+    // (postgres.exe, pg_ctl.exe) -- see
+    // `scripts/build_native_server_pack.py`. NATS JetStream was removed from
+    // the product (owner decision 2026-08-20; see ADR 0023, which supersedes
+    // ADR 0001), so the nats-server.exe probe that used to run here is gone.
+    // node was BUILD-TIME ONLY
     // (`scripts/build_native_app_payload.py` invokes `which(node)` to compile
     // the React portals; the runtime serves them as static dist via Python) and
     // is never staged, so its probe could never pass -- it is removed.
@@ -4820,7 +4823,7 @@ fn run_native_pre_activation_checks(staging: &Path) -> Result<(), String> {
     // channel. `run_native_optional_verified_if_present_checks` (called
     // below) mirrors that posture: verified when staged, never a hard
     // activation failure when absent.
-    let checks: [(&str, &[&str], &str, &str); 6] = [
+    let checks: [(&str, &[&str], &str, &str); 5] = [
         (
             "runtime/python.exe",
             &[
@@ -4843,12 +4846,6 @@ fn run_native_pre_activation_checks(staging: &Path) -> Result<(), String> {
             &["--version"],
             "native-pg-ctl",
             "pg_ctl",
-        ),
-        (
-            "packs/native-server-binaries/payload/bin/nats-server.exe",
-            &["--version"],
-            "native-nats",
-            "nats-server",
         ),
         (
             "dependencies/ffmpeg/bin/ffmpeg.exe",
@@ -5239,7 +5236,7 @@ fn run_native_flat_activation_cli(args: &[String]) -> Option<i32> {
 /// `--startup auto` is a next-boot instruction to the SCM, and nothing under
 /// `src-tauri/src/` ever issued a start -- so a fresh install finished with a
 /// registered, correctly configured, entirely STOPPED CivicCastSupervisor: no
-/// postgres, no NATS, no control plane on 127.0.0.1:8000, and therefore
+/// postgres, no control plane on 127.0.0.1:8000, and therefore
 /// nothing behind the installer's own "Open operator console" button until
 /// the operator happened to reboot. This CLI now registers AND starts, awaits
 /// a real RUNNING state, and fails LOUD with its own exit code
@@ -5420,8 +5417,8 @@ fn run_native_provision_cli(args: &[String]) -> Option<i32> {
 /// (`native_service_registration::stop_native_service`) so the D3
 /// install/upgrade engine and D4 pack extraction never delete/rebuild
 /// `$INSTDIR\runtime`/`$INSTDIR\packs\...\payload` out from under a still-
-/// running `pythonservice.exe` and its long-lived `postgres.exe`/
-/// `nats-server.exe` children. Idempotent: a not-installed or already-stopped
+/// running `pythonservice.exe` and its long-lived `postgres.exe`
+/// child. Idempotent: a not-installed or already-stopped
 /// service is success, matching the "first-ever install" case where there is
 /// nothing to stop yet.
 fn run_native_stop_service_cli(args: &[String]) -> Option<i32> {
@@ -5839,7 +5836,7 @@ fn main() {
             "  --civiccast-write-native-database-url --database-url VALUE   D4 write + read-back verify HKLM\\SOFTWARE\\CivicCast\\Native\\DatabaseUrl"
         );
         println!(
-            "  --civiccast-provision --install-root DIR --owner-run-id ID [--existing-database-url VALUE]   D4 run the journaled PostgreSQL/NATS provisioning engine and write DatabaseUrl"
+            "  --civiccast-provision --install-root DIR --owner-run-id ID [--existing-database-url VALUE]   D4 run the journaled PostgreSQL provisioning engine and write DatabaseUrl"
         );
         println!(
             "  --civiccast-stop-native-service   stop the LocalSystem supervisor service (idempotent; not-installed/already-stopped is success), for use before a tree rebuild"

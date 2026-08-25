@@ -23,7 +23,7 @@ from civiccast.certs.models import (
     ServiceCertificateStatus,
 )
 
-REQUIRED_SERVICE_IDENTITIES = ("civiccast-api", "civiccast-worker", "nats")
+REQUIRED_SERVICE_IDENTITIES = ("civiccast-api", "civiccast-worker")
 ROTATION_DANGER_WINDOW_DAYS = 30
 
 
@@ -107,7 +107,11 @@ class LocalCertificateAuthority:
                 critical=True,
             )
             .add_extension(
-                x509.ExtendedKeyUsage(_extended_key_usages(service_identity)),
+                # NATS JetStream was removed from the product (owner decision
+                # 2026-08-20, ADR 0023). It was the only SERVER_AUTH service
+                # identity here; every remaining identity is a CLIENT_AUTH-only
+                # mTLS client certificate.
+                x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
                 critical=False,
             )
             .sign(ca_key, hashes.SHA256())
@@ -252,12 +256,6 @@ def _common_name(name: x509.Name) -> str:
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-
-
-def _extended_key_usages(service_identity: str) -> list[x509.ObjectIdentifier]:
-    if service_identity == "nats":
-        return [ExtendedKeyUsageOID.SERVER_AUTH]
-    return [ExtendedKeyUsageOID.CLIENT_AUTH]
 
 
 #: Well-known, locale- and domain-independent SIDs. ``icacls`` accepts a raw

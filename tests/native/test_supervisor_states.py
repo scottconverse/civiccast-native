@@ -75,23 +75,17 @@ def test_p3_first_child_is_always_eligible() -> None:
 
 
 def test_p3_dependent_blocked_until_all_predecessors_ready() -> None:
-    # nats needs postgres ready.
-    assert restart_eligible("nats", _states(postgres="starting"), STARTUP_ORDER) is False
-    assert restart_eligible("nats", _states(postgres="ready"), STARTUP_ORDER) is True
-    # control_plane needs BOTH postgres and nats ready.
-    assert (
-        restart_eligible("control_plane", _states(postgres="ready", nats="starting"), STARTUP_ORDER)
-        is False
-    )
-    assert (
-        restart_eligible("control_plane", _states(postgres="ready", nats="ready"), STARTUP_ORDER)
-        is True
-    )
+    # control_plane needs postgres ready. NATS JetStream was removed from the
+    # product (owner decision 2026-08-20; see ADR 0023, which supersedes ADR
+    # 0001), so STARTUP_ORDER is the two-link chain (postgres, control_plane)
+    # -- control_plane's only predecessor is postgres now.
+    assert restart_eligible("control_plane", _states(postgres="starting"), STARTUP_ORDER) is False
+    assert restart_eligible("control_plane", _states(postgres="ready"), STARTUP_ORDER) is True
 
 
 def test_p3_missing_predecessor_is_not_ready_fail_closed() -> None:
     # A predecessor absent from the map counts as not-ready.
-    assert restart_eligible("control_plane", {"postgres": "ready"}, STARTUP_ORDER) is False
+    assert restart_eligible("control_plane", {}, STARTUP_ORDER) is False
 
 
 # --------------------------------------------------------------------------

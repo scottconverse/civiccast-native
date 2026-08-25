@@ -37,11 +37,10 @@ _TRUST_ARTIFACTS: Final[frozenset[str]] = frozenset(
 
 _CHUNK_BYTES: Final[int] = 1024 * 1024
 _ARTIFACT_NAMES: Final[frozenset[str]] = frozenset(
-    {"postgres", "nats", "tsduck", "ffmpeg", "node", "ollama"}
+    {"postgres", "tsduck", "ffmpeg", "node", "ollama"}
 )
 _OUTPUT_ROOTS: Final[dict[str, str]] = {
     "postgres": "postgresql",
-    "nats": "nats",
     "tsduck": "tsduck",
     "ffmpeg": "ffmpeg",
     "node": "node",

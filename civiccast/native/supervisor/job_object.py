@@ -3,7 +3,7 @@
 """Job Object containment for the native supervisor (spec D3).
 
 The supervisor's containment guarantee (AC4: "kill the SUPERVISOR mid-playout
--> Job Object kills the tree, no orphan postgres.exe/nats-server.exe/python
+-> Job Object kills the tree, no orphan postgres.exe/python
 workers survive") rests on THREE Win32 primitives, wrapped here so no other
 module in this package touches ``win32job``/``win32api`` directly:
 
@@ -13,8 +13,8 @@ module in this package touches ``win32job``/``win32api`` directly:
    it. Breakaway is left DISABLED (D3): ``JOB_OBJECT_LIMIT_BREAKAWAY_OK`` /
    ``_SILENT_BREAKAWAY_OK`` are never set, so a descendant cannot detach
    itself from the containment tree. Workers spawned by the control-plane
-   daemon (D2) are captured automatically as descendants of the ``postgres``/
-   ``nats``/``control_plane`` direct children this module assigns -- the
+   daemon (D2) are captured automatically as descendants of the
+   ``postgres``/``control_plane`` direct children this module assigns -- the
    supervisor never assigns a worker pid itself.
 2. ``AssignProcessToJobObject`` -- ``JobObjectController.assign_child(pid)``,
    the seam ``core.py``'s child-lifecycle code calls once per direct child
@@ -187,7 +187,7 @@ class JobObjectApi(Protocol):
 
 class JobObjectController:
     """The supervisor's per-run Job Object owner: create-once, assign every
-    direct child (postgres/nats/control_plane -- D2 workers are captured
+    direct child (postgres/control_plane -- D2 workers are captured
     automatically as control-plane descendants and are never assigned here
     directly), and own the handle whose :meth:`close` triggers kill-on-close.
 

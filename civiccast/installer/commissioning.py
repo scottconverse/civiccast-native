@@ -19,7 +19,7 @@ from whatever step last completed rather than losing progress.
 Each step function is a thin orchestration layer over primitives that
 already exist and are independently tested: S1's ``StationBoxProfile``
 (hardware/engine/clock/backup/TSDuck readiness), the installer's durable
-storage + NATS JetStream health probes, S2's ``HeadendProfile`` catalog,
+storage health probes, S2's ``HeadendProfile`` catalog,
 and the egress module's TSDuck compliance prober. This module does not
 re-implement any of those checks — it aggregates their verdicts into the
 commissioning shape and adds the two genuinely new pieces: channel-setup
@@ -182,15 +182,16 @@ def run_first_run_cable_checks(
     station_name: str = "",
     box_profile: StationBoxProfile | None = None,
     storage_status: object | None = None,
-    nats_ready: bool | None = None,
+    event_bus_ready: bool | None = None,
 ) -> CommissioningCheckReport:
     """Run the Screen 8 first-run cable checks (S3 §6, fail-closed on Continue).
 
     Every check reuses an existing, independently-tested primitive rather
     than re-probing: ``box_profile`` (S1 ``StationBoxProfile``) supplies
     os/disk/engine/DeckLink/TSDuck/clock/backup; ``storage_status``/
-    ``nats_ready`` are injectable for tests and default to the real
-    ``durable_storage_status()`` / ``check_nats_readiness()`` probes.
+    ``event_bus_ready`` are injectable for tests; the event bus is the
+    in-process broker (ADR 0024 removed NATS), so its default probe is the
+    broker factory constructing successfully.
     """
 
     profile = box_profile or probe_station_box_profile(deployment_profile=deployment_profile)
@@ -297,23 +298,25 @@ def run_first_run_cable_checks(
         )
     )
 
-    # 7. services (NATS JetStream)
-    if nats_ready is None:
+    # 7. services (in-process event bus; NATS was removed by ADR 0024)
+    if event_bus_ready is None:
         try:
-            from civiccast.platform import broker_config
+            from civiccast.platform.broker import get_broker_client
 
-            nats_ready = broker_config.check_nats_readiness()
+            event_bus_ready = get_broker_client() is not None
         except Exception:
-            nats_ready = False
+            event_bus_ready = False
     checks.append(
         CommissioningCheckItem(
             id="services",
-            label="Event bus (NATS JetStream)",
-            status="pass" if nats_ready else "warning",
-            detail="JetStream reachable"
-            if nats_ready
-            else "JetStream readiness could not be confirmed.",
-            next_step="" if nats_ready else "Start NATS with JetStream and mTLS, then retry.",
+            label="Event bus (in-process)",
+            status="pass" if event_bus_ready else "warning",
+            detail="In-process event bus available"
+            if event_bus_ready
+            else "In-process event bus could not be constructed.",
+            next_step=""
+            if event_bus_ready
+            else "The in-process event bus failed to construct; check the application logs and retry.",
         )
     )
 

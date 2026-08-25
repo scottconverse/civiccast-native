@@ -4,13 +4,15 @@
 
 Pure -- every child's launch is a ChildSpec (argv/env/cwd + graceful-stop shape),
 never a real subprocess; every readiness gate is exercised through an injected
-stub check (DB SELECT 1, JetStream publish+ack, GET /health), never a real
+stub check (DB SELECT 1, GET /health), never a real
 socket. Covers:
 
 * ChildSpec / GracefulStopAction construction validators (extra=forbid, shape).
-* The three real child contracts (postgres, nats, control_plane) per
+* The two real child contracts (postgres, control_plane) per
   r2-children's exact commands, incl. the RAT-001 maintenance env contract and
-  the egress-workdir AC.
+  the egress-workdir AC. NATS JetStream was removed from the product (owner
+  decision 2026-08-20; see ADR 0023, which supersedes ADR 0001), so the
+  ``nats`` child spec and its JetStream readiness check are gone.
 * Per-child readiness: ready / not_ready / timeout (poll_until_ready with a
   fake clock+sleep -- no real waiting).
 * The RAT-001 maintenance-readiness gate's fail-closed matrix.
@@ -29,13 +31,11 @@ from civiccast.native.supervisor.children import (
     backoff_with_jitter,
     check_control_plane_maintenance_ready,
     check_control_plane_ready,
-    check_nats_ready,
     check_postgres_ready,
     control_plane_child_spec,
     default_egress_work_dir,
     default_upload_dir,
     graceful_stop_action,
-    nats_child_spec,
     poll_until_ready,
     postgres_child_spec,
     read_postmaster_pid,
@@ -198,67 +198,6 @@ def test_postgres_child_spec_stdio_log_name_never_equals_the_l_target(tmp_path) 
 
 
 # ---------------------------------------------------------------------------
-# nats: lame-duck graceful stop ('nats-server --signal ldm=<pid>')
-# ---------------------------------------------------------------------------
-# These pin the spec-fixed ARGV (and its {pid} substitution) -- nothing more.
-# On Windows the command itself fails "Access is denied" pid-independently
-# (the flag routes through the SCM and nats is not a registered service), so
-# what actually ends this child there is the D5 deadline + TerminateProcess.
-# See children.nats_child_spec's stop-template comment for the measurement.
-
-
-def test_nats_child_spec_defaults() -> None:
-    spec = nats_child_spec()
-    assert spec.name == "nats"
-    assert spec.new_process_group is False
-
-
-def test_nats_child_spec_omits_l_flag_by_default() -> None:
-    spec = nats_child_spec()
-    assert "-l" not in spec.argv
-
-
-def test_nats_child_spec_log_path_adds_l_flag() -> None:
-    """Diagnosability regression (2026-08-12, TESTER2 b5 evidence):
-    nats.log was observed at 0 bytes for a 5+ hour run. ``nats-server -l
-    <file>`` makes nats-server own its log file directly. Fails on the
-    pre-fix base (no ``log_path`` parameter exists at all)."""
-
-    spec = nats_child_spec(log_path=r"C:\ProgramData\CivicCast\logs\nats.log")
-    assert "-l" in spec.argv
-    assert spec.argv[spec.argv.index("-l") + 1] == r"C:\ProgramData\CivicCast\logs\nats.log"
-
-
-def test_nats_child_spec_stdio_log_name_stays_unset_with_log_path() -> None:
-    """Scoping check for the Gate A run #4 fix: nats-server does NOT share
-    postgres's Windows sharing-violation defect. nats-server opens its own
-    ``-l`` file directly, in-process (no cmd.exe relaunch the way pg_ctl
-    does), so a same-file same-process repro against the real nats-server.exe
-    did not fail. The fix is therefore scoped to ``postgres_child_spec``
-    only -- ``nats_child_spec`` must keep ``stdio_log_name`` unset (single
-    generic-capture file, same as always) even when ``log_path`` is given."""
-
-    spec = nats_child_spec(log_path=r"C:\ProgramData\CivicCast\logs\nats.log")
-    assert spec.stdio_log_name is None
-
-
-def test_nats_graceful_stop_substitutes_live_pid() -> None:
-    spec = nats_child_spec(nats_server_path="nats-server")
-    action = graceful_stop_action(spec, pid=4321)
-    assert action.kind == "argv"
-    assert action.argv == ["nats-server", "--signal", "ldm=4321"]
-
-
-def test_nats_graceful_stop_pid_changes_with_the_live_child() -> None:
-    spec = nats_child_spec()
-    a1 = graceful_stop_action(spec, pid=111)
-    a2 = graceful_stop_action(spec, pid=222)
-    assert a1.argv != a2.argv
-    assert a1.argv is not None and "ldm=111" in a1.argv
-    assert a2.argv is not None and "ldm=222" in a2.argv
-
-
-# ---------------------------------------------------------------------------
 # control plane: uvicorn + CREATE_NEW_PROCESS_GROUP + CTRL_BREAK_EVENT
 # ---------------------------------------------------------------------------
 
@@ -373,28 +312,6 @@ def test_check_postgres_not_ready_on_raise() -> None:
     result = check_postgres_ready(_raiser)
     assert result.outcome == "not_ready"
     assert "no listener" in result.detail
-
-
-# ---------------------------------------------------------------------------
-# Readiness: nats authenticated JetStream publish+ack round-trip (injected)
-# ---------------------------------------------------------------------------
-
-
-def test_check_nats_ready_true() -> None:
-    assert check_nats_ready(lambda: True).outcome == "ready"
-
-
-def test_check_nats_not_ready_false() -> None:
-    assert check_nats_ready(lambda: False).outcome == "not_ready"
-
-
-def test_check_nats_not_ready_on_raise() -> None:
-    def _raiser() -> bool:
-        raise TimeoutError("no ack")
-
-    result = check_nats_ready(_raiser)
-    assert result.outcome == "not_ready"
-    assert "no ack" in result.detail
 
 
 # ---------------------------------------------------------------------------

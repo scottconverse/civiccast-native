@@ -1,12 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""The three direct-child contracts (postgres, nats, control plane) and the
-D5 restart policy -- PURE and CI-testable everywhere: no subprocess is ever
+"""The two direct-child contracts (postgres, control plane) and the D5
+restart policy -- PURE and CI-testable everywhere: no subprocess is ever
 launched here, no socket is ever opened, no Windows import appears anywhere
 in this module. Every piece of I/O the real supervisor needs (spawn a
-process, run a DB check, publish+ack to JetStream, GET /health, sleep) is an
-injected callable; this module only decides shapes and outcomes from
-whatever the caller hands it.
+process, run a DB check, GET /health, sleep) is an injected callable; this
+module only decides shapes and outcomes from whatever the caller hands it.
+
+NATS JetStream was removed from the product (owner decision 2026-08-20; see
+ADR 0023, which supersedes ADR 0001). It never did real production work --
+the platform substrate always defaulted to the in-process broker -- so
+cutting it drops a supervised child, a port, a config file, and a health
+gate that could fail a station for nothing. The ``nats`` child spec and its
+JetStream publish+ack readiness check (``nats_child_spec`` /
+``check_nats_ready``) are gone; postgres and control plane are the only two
+direct children now.
 
 Grounding (facts cited below are from ``recon/r2-children.md``, read in
 full before writing this module -- see also ``design.md`` Sec.3's
@@ -21,15 +29,6 @@ they differ):
   graceful-stop text VERBATIM and uses an ordinary, undisputed ``pg_ctl
   start`` convention for the launch argv -- the one spec-fixed fact is the
   stop command, and that is what the tests pin.
-* **nats** -- r2 confirms the lame-duck signal usage appears in-repo only in
-  ``spec-supervisor.md`` D5's text: ``nats-server --signal ldm=<pid>``, then
-  terminate. The ``<pid>`` is the LIVE child's pid, known only once the
-  process is running -- so the stop action is computed at stop time
-  (:func:`graceful_stop_action`), never baked into the static
-  :class:`ChildSpec`. Readiness is D6's explicit "authenticated JetStream
-  round-trip: publish to a probe stream and receive the ack (TCP accept is
-  explicitly NOT readiness)" -- ``check_nats_ready`` never touches a socket,
-  it only asks the injected callable whether that round-trip succeeded.
 * **control plane** -- r2's exact production invocation (
   ``headless-bootstrap.ps1:780``): ``python -I -m uvicorn
   civiccast.app:create_app --factory --host <host> --port <port>``.
@@ -41,9 +40,9 @@ they differ):
   ``CIVICCAST_SUPERVISOR_MODE_CONTRACT=1`` in its env, and its readiness gate
   is a SEPARATE, fail-closed function (``check_control_plane_maintenance_ready``)
   from the normal-mode gate (``check_control_plane_ready``, D6: GET /health
-  200 only -- the addendum's "D6 vs code" note explains DB/NATS connectivity
-  is checked directly by the supervisor via the postgres/nats readiness
-  checks above, not through this endpoint). The egress-workdir AC
+  200 only -- the addendum's "D6 vs code" note explains DB connectivity is
+  checked directly by the supervisor via the postgres readiness check above,
+  not through this endpoint). The egress-workdir AC
   (ratified, binding) requires ``CIVICCAST_EGRESS_WORK_DIR`` in the
   control-plane child's env, resolved into the ``ProgramData\\CivicCast\\data``
   tree, so ``default_egress_work_dir()`` in ``civiccast/egress/automation.py``
@@ -55,11 +54,10 @@ they differ):
   value and only then falls back to ``_managed_upload_dir_if_ready()``, a
   separate install-state-dependent path. :func:`default_upload_dir` mirrors
   :func:`default_egress_work_dir` exactly (``ProgramData\\CivicCast\\data\\
-  uploads``, beside ``\\data\\egress`` and ``\\data\\nats-store``, all three
-  plain-``mkdir``/inherited-DACL -- the PROTECTED SDDL treatment is reserved
-  for credential-bearing state roots, not operator media) and is set
-  unconditionally in ``control_plane_child_spec``, the same shape as the
-  egress work dir.
+  uploads``, beside ``\\data\\egress``, both plain-``mkdir``/inherited-DACL --
+  the PROTECTED SDDL treatment is reserved for credential-bearing state
+  roots, not operator media) and is set unconditionally in
+  ``control_plane_child_spec``, the same shape as the egress work dir.
 
 D5 restart policy: :func:`backoff_with_jitter` applies the +/-20% jitter on
 top of ``states.backoff_base_seconds`` (that module's docstring: "jitter
@@ -88,7 +86,7 @@ from civiccast.native.supervisor.states import backoff_base_seconds, is_restart_
 # Vocabulary
 # ---------------------------------------------------------------------------
 
-ChildName = Literal["postgres", "nats", "control_plane", "ollama"]
+ChildName = Literal["postgres", "control_plane", "ollama"]
 GracefulStopKind = Literal["argv", "ctrl_break_event"]
 ReadinessOutcome = Literal["ready", "not_ready", "timeout", "aborted"]
 """``aborted`` is DISTINCT from ``timeout`` on purpose (F1, 2026-07-31): a poll
@@ -97,11 +95,10 @@ budget and says nothing about the child's health, so it must never be read (or
 logged) as a readiness failure. See :func:`poll_until_ready`'s ``should_abort``."""
 ControlPlaneMode = Literal["normal", "maintenance"]
 
-# D6 postgres readiness budget (spec value, verbatim). NATS/control-plane
-# have no spec-fixed budget number -- these are WS5-chosen, disclosed
-# defaults (overridable by every caller).
+# D6 postgres readiness budget (spec value, verbatim). control-plane has no
+# spec-fixed budget number -- this is a WS5-chosen, disclosed default
+# (overridable by every caller).
 POSTGRES_READY_BUDGET_SECONDS = 60.0
-DEFAULT_NATS_READY_BUDGET_SECONDS = 30.0
 DEFAULT_CONTROL_PLANE_READY_BUDGET_SECONDS = 30.0
 # Task #57 D2: matches the ONE in-repo authority for bringing the staged
 # ollama runtime up -- the installer's production self-test
@@ -145,11 +142,12 @@ class ChildSpec(BaseModel):
     new_process_group: bool = False
 
     graceful_stop_kind: GracefulStopKind
-    # Literal argv tokens for a command-based graceful stop (postgres, nats).
-    # A token containing the substring "{pid}" is substituted with the live
-    # child's pid by graceful_stop_action() -- see nats's lame-duck signal.
-    # Empty (and therefore meaningless) for graceful_stop_kind ==
-    # "ctrl_break_event", which carries no argv at all.
+    # Literal argv tokens for a command-based graceful stop (postgres). A
+    # token containing the substring "{pid}" is substituted with the live
+    # child's pid by graceful_stop_action(); postgres's own template carries
+    # no such token today, but the substitution stays generic. Empty (and
+    # therefore meaningless) for graceful_stop_kind == "ctrl_break_event",
+    # which carries no argv at all.
     graceful_stop_argv_template: list[str] = Field(default_factory=list)
     graceful_stop_deadline_seconds: float = Field(gt=0)
 
@@ -208,11 +206,11 @@ def graceful_stop_action(spec: ChildSpec, *, pid: int) -> GracefulStopAction:
     """Resolve ``spec``'s graceful-stop shape against the LIVE child's pid.
 
     For ``ctrl_break_event`` (control plane) the pid IS the action -- it
-    names the process group CTRL_BREAK_EVENT targets. For ``argv`` (postgres,
-    nats), any token containing ``"{pid}"`` is substituted; postgres's
+    names the process group CTRL_BREAK_EVENT targets. For ``argv``
+    (postgres), any token containing ``"{pid}"`` is substituted; postgres's
     template carries no such token (its stop command needs no pid, only
     ``-D <data_dir>``), so the same spec always produces the same stop argv
-    regardless of pid -- nats's does, so its stop argv changes every launch.
+    regardless of pid.
     """
 
     if spec.graceful_stop_kind == "ctrl_break_event":
@@ -259,8 +257,7 @@ def default_upload_dir(*, program_data_root: str | None = None) -> str:
     (recordings/uploads) is NOT credential-bearing (unlike
     ``provision/journal.py``'s state root or ``native/pgdata_acl.py``'s
     cluster dir), so this directory gets a plain, inherited-DACL ``mkdir``
-    like ``data\\egress`` and ``data\\nats-store`` beside it -- no bespoke
-    SDDL treatment.
+    like ``data\\egress`` beside it -- no bespoke SDDL treatment.
     """
 
     root = (program_data_root or os.environ.get("PROGRAMDATA", r"C:\ProgramData")).rstrip("\\")
@@ -317,10 +314,6 @@ def postgres_child_spec(
     does, with BOTH pg_ctl's own stdio and ``-l`` pointed at one file,
     reproduces the identical error text and a nonzero pg_ctl exit; pointing
     them at two different files (this fix) starts the postmaster cleanly.
-    nats-server does NOT share this defect -- it is a single process that
-    opens its own ``-l`` file directly (no cmd.exe relaunch), and an
-    equivalent same-file repro against nats-server did not fail -- so this
-    fix is scoped to postgres only; ``nats_child_spec`` is unchanged.
 
     The fix: when ``log_path`` is given, pg_ctl's OWN generic-capture stdio
     (the file ``_file_backed_popen_factory`` opens and hands to ``Popen`` as
@@ -414,93 +407,6 @@ def check_postgres_ready(select_one: DbCheckFn) -> ReadinessResult:
     if ok:
         return ReadinessResult(outcome="ready", detail="SELECT 1 succeeded")
     return ReadinessResult(outcome="not_ready", detail="SELECT 1 did not succeed")
-
-
-# ---------------------------------------------------------------------------
-# nats
-# ---------------------------------------------------------------------------
-
-
-def nats_child_spec(
-    *,
-    nats_server_path: str = "nats-server",
-    config_path: str | None = None,
-    log_path: str | None = None,
-    extra_env: Mapping[str, str] | None = None,
-    graceful_stop_deadline_seconds: float = DEFAULT_GRACEFUL_STOP_DEADLINE_SECONDS,
-    readiness_budget_seconds: float = DEFAULT_NATS_READY_BUDGET_SECONDS,
-) -> ChildSpec:
-    """D6/D5 NATS child. Graceful stop is the spec-fixed lame-duck signal,
-    matched verbatim: ``nats-server --signal ldm=<pid>`` -- the ``{pid}``
-    token is substituted by :func:`graceful_stop_action` once the live
-    child's pid is known; "then terminate" is the deadline+kill escalation
-    every child shares (``graceful_stop_deadline_seconds``), not modeled
-    again here. Readiness is the authenticated JetStream publish+ack
-    round-trip (:func:`check_nats_ready`), never a bare TCP accept (D6:
-    "TCP accept is explicitly NOT readiness").
-
-    Adjacent diagnosability fix (2026-08-12, TESTER2 b5 evidence): when
-    ``log_path`` is given, ``nats-server -l <log_path>`` is used so
-    nats-server's own log writer owns the file directly, rather than relying
-    solely on the generic inherited-stdio redirect (same rationale as
-    ``postgres_child_spec``'s ``-l``). Additive and backward compatible: the
-    generic redirect stays wired when ``log_path`` is omitted.
-    """
-
-    argv = [nats_server_path]
-    if config_path:
-        argv = [*argv, "-c", config_path]
-    if log_path is not None:
-        argv = [*argv, "-l", log_path]
-    return ChildSpec(
-        name="nats",
-        argv=argv,
-        env=dict(extra_env or {}),
-        cwd=None,
-        new_process_group=False,
-        graceful_stop_kind="argv",
-        # MEASURED WINDOWS REALITY (2026-07-31, F3): this template is spec-fixed
-        # and stays, but on Windows it is INERT. ``nats-server --signal ldm=<pid>``
-        # routes through the SCM (OpenService) rather than a POSIX signal, and
-        # nats-server is NOT a registered Windows service here (the supervisor
-        # spawns it as a plain child), so the command fails with "Access is
-        # denied" PID-INDEPENDENTLY -- reproduced against the real pack-cache
-        # nats-server.exe with both a live and a bogus pid. The stop that
-        # actually ends this child on Windows is therefore the shared D5
-        # deadline + TerminateProcess escalation in
-        # ``SupervisorService._stop_child`` (the accepted beta contract), and
-        # the failed command is now at least VISIBLE (G4(b) logs its nonzero
-        # exit). Do NOT "fix" the stop path by tuning the nats config: the
-        # lame-duck settings in provision/conf.py cannot be reached by a signal
-        # that never arrives. Removing the template would only trade a logged
-        # failure for a silent one and would break the non-Windows contract.
-        graceful_stop_argv_template=[nats_server_path, "--signal", "ldm={pid}"],
-        graceful_stop_deadline_seconds=graceful_stop_deadline_seconds,
-        readiness_budget_seconds=readiness_budget_seconds,
-    )
-
-
-NatsAckCheckFn = Callable[[], bool]
-
-
-def check_nats_ready(publish_ack: NatsAckCheckFn) -> ReadinessResult:
-    """D6 NATS readiness: the injected ``publish_ack`` callable performs the
-    real authenticated JetStream publish-to-a-probe-stream-and-receive-the-ack
-    round-trip and returns whether it succeeded. A raised exception is
-    treated as not ready, never propagated (same contract as
-    :func:`check_postgres_ready`)."""
-
-    try:
-        ok = publish_ack()
-    except Exception as exc:
-        return ReadinessResult(outcome="not_ready", detail=f"JetStream publish+ack raised: {exc}")
-    if ok:
-        return ReadinessResult(
-            outcome="ready", detail="authenticated JetStream publish+ack round-trip succeeded"
-        )
-    return ReadinessResult(
-        outcome="not_ready", detail="JetStream publish+ack round-trip did not complete"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -616,9 +522,9 @@ HealthCheckFn = Callable[[], ControlPlaneHealthProbe]
 
 def check_control_plane_ready(health_check: HealthCheckFn) -> ReadinessResult:
     """D6 normal-mode readiness gate: ``GET /health`` 200, nothing more.
-    (Addendum's "Note on D6 vs code": DB and NATS readiness are checked
-    DIRECTLY by the supervisor via :func:`check_postgres_ready` /
-    :func:`check_nats_ready`, not through this endpoint.) A raised
+    (Addendum's "Note on D6 vs code": DB readiness is checked
+    DIRECTLY by the supervisor via :func:`check_postgres_ready`, not
+    through this endpoint.) A raised
     exception (connection refused, ...) is not ready, never propagated."""
 
     try:
@@ -752,7 +658,7 @@ def check_ollama_ready(version_probe: OllamaVersionProbeFn) -> ReadinessResult:
     real bounded HTTP ``GET /api/version`` against the runtime base URL and
     returns whether it succeeded -- the same readiness gate the installer's
     production self-test uses. A raised exception is treated as not ready,
-    never propagated (same contract as :func:`check_nats_ready`)."""
+    never propagated (same contract as :func:`check_postgres_ready`)."""
 
     try:
         ok = version_probe()
@@ -800,7 +706,7 @@ def poll_until_ready(
     F1 (BLOCKER, 2026-07-31): the ``should_abort`` seam ends the poll EARLY,
     with the distinct ``aborted`` outcome, when a service stop has been
     requested. Without it the budget is the only exit, and one supervisor
-    iteration could chain FOUR of them (postgres 60s + nats 30s +
+    iteration could chain THREE of them (postgres 60s +
     control_plane 30s + ollama 60s) while ``SvcStop`` waited -- long enough for
     the 150s stop watchdog to fire MID-CHAIN and hard-kill an unclean postgres
     cluster. It is checked (a) at the top of each iteration, so an
@@ -888,7 +794,6 @@ def restart_storm_check(
 __all__ = [
     "DEFAULT_CONTROL_PLANE_READY_BUDGET_SECONDS",
     "DEFAULT_GRACEFUL_STOP_DEADLINE_SECONDS",
-    "DEFAULT_NATS_READY_BUDGET_SECONDS",
     "DEFAULT_OLLAMA_HOST",
     "DEFAULT_OLLAMA_PORT",
     "DEFAULT_OLLAMA_READY_BUDGET_SECONDS",
@@ -906,14 +811,12 @@ __all__ = [
     "backoff_with_jitter",
     "check_control_plane_maintenance_ready",
     "check_control_plane_ready",
-    "check_nats_ready",
     "check_ollama_ready",
     "check_postgres_ready",
     "control_plane_child_spec",
     "default_egress_work_dir",
     "default_upload_dir",
     "graceful_stop_action",
-    "nats_child_spec",
     "ollama_child_spec",
     "poll_until_ready",
     "postgres_child_spec",

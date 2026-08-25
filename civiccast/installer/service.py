@@ -509,16 +509,6 @@ def _provider_credentials_are_valid(provider_id: str) -> bool:
     return bool(env_names) and all(os.getenv(name) for name in env_names)
 
 
-class _ActionableNextStep(str):
-    """String subclass preserving env-var copy for legacy case-insensitive tests."""
-
-    def lower(self) -> str:
-        lowered = super().lower()
-        if "civiccast_nats_url" in lowered and "set CIVICCAST_NATS_URL" not in lowered:
-            return lowered + " set CIVICCAST_NATS_URL"
-        return lowered
-
-
 def build_first_run_plan(
     *,
     profile: DeploymentProfile = "public-meetings",
@@ -615,7 +605,6 @@ def run_first_health_check(profile: DeploymentProfile = "public-meetings") -> Fi
     subscriber_secret = os.getenv("CIVICCAST_SUBSCRIBER_WEBHOOK_SECRET")
 
     checks = [
-        _nats_jetstream_check(),
         _mtls_local_ca_check(),
         _external_target_check(
             check_id="portal",
@@ -884,7 +873,7 @@ def build_safe_to_broadcast_contract() -> SafeToBroadcastContract:
                 kind="advanced",
                 failure_state="red",
                 operator_message="This item needs IT help before the station can rely on it.",
-                admin_message="Inspect NATS, mTLS, model runtime, and certificate readiness.",
+                admin_message="Inspect mTLS, model runtime, and certificate readiness.",
             ),
         ],
         five_minutes_before_meeting=[
@@ -5440,10 +5429,9 @@ def _provider_health_checks(first_run_checks: list[HealthCheckItem]) -> list[Sys
         "activitypub": "Federation",
         "internet-archive": "Internet Archive",
         "local-nas": "Archive storage",
-        "nats-jetstream": "Internal event service",
         "mtls-local-ca": "Internal service certificates",
     }
-    advanced_ids = {"nats-jetstream", "mtls-local-ca"}
+    advanced_ids = {"mtls-local-ca"}
     checks: list[SystemHealthCheck] = []
     for item in first_run_checks:
         if item.id not in provider_ids:
@@ -5494,48 +5482,15 @@ def _external_target_check(
     )
 
 
-def _nats_jetstream_check() -> HealthCheckItem:
-    """Verify required NATS JetStream readiness through the platform contract."""
-
-    try:
-        from civiccast.platform import broker_config
-
-        ready = broker_config.check_nats_readiness()
-    except Exception as exc:
-        item = HealthCheckItem(
-            id="nats-jetstream",
-            label="NATS JetStream",
-            state="failed",
-            message=f"NATS JetStream readiness is blocked: {exc}",
-            next_step=(
-                "Set CIVICCAST_BROKER_MODE=production, set "
-                "CIVICCAST_NATS_URL=tls://host:4222, set "
-                "CIVICCAST_NATS_STREAM=CIVICCAST_EVENTS, rotate local CA credentials with "
-                "`civiccast cert rotate civiccast-api` and `civiccast cert rotate nats`, "
-                "start NATS with JetStream and mTLS, then rerun installer health-check."
-            ),
-        )
-        object.__setattr__(item, "next_step", _ActionableNextStep(item.next_step))
-        return item
-    if ready is True:
-        return HealthCheckItem(
-            id="nats-jetstream",
-            label="NATS JetStream",
-            state="ok",
-            message="NATS JetStream configuration, mTLS credentials, and stream connectivity are proven.",
-            next_step="Keep NATS running with mTLS and the CIVICCAST_EVENTS stream before publish.",
-        )
-    return HealthCheckItem(
-        id="nats-jetstream",
-        label="NATS JetStream",
-        state="failed",
-        message="NATS JetStream readiness did not return a positive proof.",
-        next_step="Rerun the NATS readiness check and inspect broker configuration.",
-    )
-
-
 def _mtls_local_ca_check() -> HealthCheckItem:
-    """Verify required local-CA mTLS readiness through the cert package."""
+    """Verify required local-CA mTLS readiness through the cert package.
+
+    NATS JetStream was removed from the product (owner decision 2026-08-20;
+    see ADR 0023, which supersedes ADR 0001) -- this used to be paired with
+    ``_nats_jetstream_check`` (deleted); the local-CA mTLS check stands on
+    its own now, covering only the ``civiccast-api`` and ``civiccast-worker``
+    service identities.
+    """
 
     try:
         from civiccast.certs import readiness
@@ -5548,9 +5503,8 @@ def _mtls_local_ca_check() -> HealthCheckItem:
             state="failed",
             message=f"Local CA mTLS certificate readiness is blocked: {exc}",
             next_step=(
-                "Run `civiccast cert rotate civiccast-api`, `civiccast cert rotate "
-                "civiccast-worker`, and `civiccast cert rotate nats`, then rerun "
-                "installer health-check."
+                "Run `civiccast cert rotate civiccast-api` and `civiccast cert rotate "
+                "civiccast-worker`, then rerun installer health-check."
             ),
         )
     if ready is True:

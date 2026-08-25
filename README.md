@@ -7,7 +7,7 @@ boards, and community media teams.**
 This repository (`civiccast-native`) ships **one product line**: a native
 Windows station-in-a-box. `main` carries it — a signed installer that
 registers a Windows service through the SCM and supervises the control
-plane, Postgres, NATS, and the media workers from a bundled runtime. No
+plane, Postgres, and the media workers from a bundled runtime. No
 WSL, no Docker, no Linux install target. See [BRANCHES.md](BRANCHES.md)
 for the full explanation, including where the retired WSL2/Ubuntu lane's
 history now lives (a separate, private repository, not this one).

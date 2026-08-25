@@ -63,18 +63,21 @@ class TestLocalCAService:
         service.create_ca(common_name="CivicCast Local CA")
 
         api = service.issue_service_certificate("civiccast-api")
-        nats = service.issue_service_certificate("nats")
+        worker = service.issue_service_certificate("civiccast-worker")
 
         api_cert = x509.load_pem_x509_certificate(api.certificate_path.read_bytes())
-        nats_cert = x509.load_pem_x509_certificate(nats.certificate_path.read_bytes())
+        worker_cert = x509.load_pem_x509_certificate(worker.certificate_path.read_bytes())
 
+        # NATS JetStream was removed from the product (owner decision
+        # 2026-08-20, ADR 0023) -- it was the only SERVER_AUTH service
+        # identity. Every remaining identity is CLIENT_AUTH-only.
         assert (
             ExtendedKeyUsageOID.CLIENT_AUTH
             in api_cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
         )
         assert (
-            ExtendedKeyUsageOID.SERVER_AUTH
-            in nats_cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+            ExtendedKeyUsageOID.CLIENT_AUTH
+            in worker_cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
         )
 
     def test_status_responses_expose_paths_fingerprints_and_expiry_only(self, tmp_path) -> None:
@@ -82,7 +85,7 @@ class TestLocalCAService:
         service = authority.LocalCertificateAuthority(tmp_path)
         service.create_ca(common_name="CivicCast Local CA")
 
-        issued = service.issue_service_certificate("nats")
+        issued = service.issue_service_certificate("civiccast-worker")
         payload = issued.model_dump()
 
         assert payload["certificate_path"]

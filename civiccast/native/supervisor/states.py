@@ -21,7 +21,7 @@ diverge), and was surfaced for and received owner approval:
   be able to *hold* that state, so it must be in the enum.
 * ``maintenance`` -- the installer/migration read-only health mode
   (``spec-installer-lifecycle`` D3 / ``spec-migration`` D1): while the D7a
-  maintenance interlock is HELD, bring up Postgres + NATS + control plane in a
+  maintenance interlock is HELD, bring up Postgres + control plane in a
   read-only posture and start NO media workers, leaving only when the interlock
   frees. D6's five states had nowhere to put this.
 
@@ -108,7 +108,7 @@ SupervisorEvent = Literal[
 obligation each event traces to."""
 
 ChildState = Literal["pending", "stopped", "starting", "ready", "stopping", "failed"]
-"""Per-direct-child lifecycle (postgres / nats / control_plane). Used by the D6
+"""Per-direct-child lifecycle (postgres / control_plane). Used by the D6
 dependency-ordering predicate; the workers are not children (D2).
 
 ``pending`` (G1) is the BOOT-TIME init for every ``STARTUP_ORDER`` child: it
@@ -121,7 +121,7 @@ this state existed, ``STARTUP_ORDER`` children booted straight into
 earlier child missed its readiness budget) was indistinguishable from a
 deliberately-stopped child -- ``_needs_restart`` skipped it forever, even
 after the blocking dependency recovered (run 17: control_plane never even
-attempted in 15 minutes despite nats recovering)."""
+attempted in 15 minutes despite postgres recovering)."""
 
 # States in which media workers (owned by the control-plane daemon, D2) are
 # permitted to be running. Everything else -- maintenance (read-only),

@@ -120,7 +120,7 @@ Deliver:
   `tester-handoff/native-caption-r7/evidence/` and
   `.agent-runs/native-windows/wp1-caption-integrity/OWNER-DECISION-caption-adaptive-tier.md`)
 - Cloudflare R2 and S3 CDN adapter dependencies;
-- pinned, licensed PostgreSQL, NATS, FFmpeg, and TSDuck runtime closure;
+- pinned, licensed PostgreSQL, FFmpeg, and TSDuck runtime closure;
 - explicit proof that no beta feature silently depends on a local LLM;
 - audio-tap to ASR to stabilized review row to `active.vtt` integration;
 - CEA-708 insertion and emitted-stream decode-back proof;
@@ -154,7 +154,7 @@ Deliver every v4 D1-D7 requirement and all 17 lifecycle rows, including:
 
 - separate product identity and update channel;
 - pre-execution payload trust verification;
-- real PostgreSQL, NATS, TSDuck, service, ACL, firewall, and registry
+- real PostgreSQL, TSDuck, service, ACL, firewall, and registry
   provisioning;
 - journaled upgrade, real incompatible-schema rollback, power-loss resume,
   rollback-failure halt, and recovery instructions;
