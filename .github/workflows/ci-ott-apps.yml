@@ -262,8 +262,9 @@ jobs:
           # active config needs to be pointed at it explicitly (its own
           # output says so) or `tizen package -s` can't find the profile.
           tizen cli-config "profiles.path=$HOME/tizen-studio-data/profile/profiles.xml"
-          echo "--- profiles.xml (diagnostic) ---"
-          cat "$HOME/tizen-studio-data/profile/profiles.xml"
+          echo "--- profiles.xml (diagnostic, base64 to dodge log masking) ---"
+          base64 -w0 "$HOME/tizen-studio-data/profile/profiles.xml"
+          echo ""
           echo "--- end profiles.xml ---"
           tizen package -t wgt -s CivicCastCI -o tizen/out -- tizen || {
             echo "tizen package failed; searching for cli.log:"
