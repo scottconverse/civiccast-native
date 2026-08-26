@@ -740,6 +740,106 @@ def test_watchdog_forensics_run_only_when_the_driver_is_alive() -> None:
     )
 
 
+# --------------------------------------------------------------------------
+# 14-17. The teardown drain: run 32926056071's VM outlived job SUCCESS and
+#         run 32929704614's Checkout hit EBUSY a minute later
+# --------------------------------------------------------------------------
+
+
+def test_host_launcher_drains_teardown_only_on_the_normal_completion_path() -> None:
+    """The drain must sit after step 5 (Stop-Process) and be reachable only
+    through $launchedPids.Count -gt 0 -- the same condition step 5's own
+    teardown guard already uses. The busy guard (exit 3), the quiet-share
+    detector (exit 4), and the plain timeout (exit 2) must all appear BEFORE
+    the drain block in the file, since PowerShell runs top-to-bottom and each
+    of those is a hard `exit` -- textual ordering is what makes the drain
+    unreachable on any of those three paths."""
+    text = _read(_HOST_LAUNCHER)
+    assert "function Test-DirectoryHandlesFree" in text
+    assert "if ($launchedPids.Count -gt 0) {" in text
+    drain_idx = text.index("Draining sandbox teardown")
+    assert text.index("exit 3") < drain_idx, "the busy guard must exit before the drain block"
+    assert text.index("exit 4") < drain_idx, (
+        "the quiet-share detector must exit before the drain block"
+    )
+    assert text.index("exit 2") < drain_idx, "the plain timeout must exit before the drain block"
+    assert text.index("Stopping this run's own sandbox process(es)") < drain_idx, (
+        "the drain must run after Stop-Process, not before"
+    )
+
+
+def test_teardown_drain_probe_renames_the_directory_not_a_file_inside_it() -> None:
+    """A write-inside-the-folder probe would miss a handle held on a
+    READ-ONLY mapped folder (e.g. sandbox-lab/scripts, ReadOnly=true in the
+    .wsb template) since the guest never writes there -- only a probe on the
+    directory object itself, the same rmdir/rename Checkout's workspace
+    clean performs, reproduces run 32929704614's actual failure."""
+    text = _read(_HOST_LAUNCHER)
+    fn = text[text.index("function Test-DirectoryHandlesFree") :][:2200]
+    assert "Rename-Item -LiteralPath $Path -NewName $probeLeaf" in fn
+    assert "Rename-Item -LiteralPath $probePath -NewName $leaf" in fn
+
+
+def test_teardown_drain_probes_the_runs_own_mapped_folders() -> None:
+    text = _read(_HOST_LAUNCHER)
+    assert "$mappedHostFolders = @($mappedRx.Matches($rendered)" in text, (
+        "the drain must probe the exact folders VSMB shared into THIS run's VM, "
+        "read back from the rendered .wsb rather than a hardcoded list"
+    )
+    drain_fn_area = text[text.index("Draining sandbox teardown") :][:2200]
+    assert "foreach ($folder in $mappedHostFolders)" in drain_fn_area
+    assert "Test-DirectoryHandlesFree -Path $folder" in drain_fn_area
+
+
+def test_teardown_drain_is_bounded_and_does_not_change_the_verdict() -> None:
+    text = _read(_HOST_LAUNCHER)
+    drain_seconds = _int_setting(
+        text, r"\[int\]\$TeardownDrainSeconds\s*=\s*(\d+)", "-TeardownDrainSeconds default"
+    )
+    poll_seconds = _int_setting(
+        text, r"\[int\]\$TeardownDrainPollSeconds\s*=\s*(\d+)", "-TeardownDrainPollSeconds default"
+    )
+    assert 60 <= drain_seconds <= 600, (
+        f"teardown drain bound ({drain_seconds}s) should be a few minutes, not unbounded "
+        "and not so short it can't outlast normal VM exit"
+    )
+    assert 1 <= poll_seconds <= 30
+    assert "TEARDOWN-DRAIN-TIMEOUT.txt" in text
+    assert "Set-Content -Path (Join-Path $OutDir 'TEARDOWN-DRAIN-TIMEOUT.txt')" in text, (
+        "the timeout marker must land in $OutDir so Run-GateA.ps1's unconditional evidence "
+        "copy carries it into evidence\\<source_sha>\\<utc-timestamp>\\ for free"
+    )
+    drain_block = text[text.index("Draining sandbox teardown") : text.index("Write-Host \"Done.")]
+    assert "exit " not in _code_only(drain_block), (
+        "the drain must never exit non-zero or otherwise change this script's own exit code -- "
+        "it is runner hygiene, decided after the product verdict, never a station-acceptance finding"
+    )
+
+
+def test_run_gate_a_passes_teardown_drain_settings_through() -> None:
+    text = _read(_RUN_GATE_A)
+    assert "[int]$TeardownDrainSeconds = 300" in text
+    assert "[int]$TeardownDrainPollSeconds = 5" in text
+    assert "-TeardownDrainSeconds $TeardownDrainSeconds" in text
+    assert "-TeardownDrainPollSeconds $TeardownDrainPollSeconds" in text
+
+
+def test_workflow_waits_for_prior_run_teardown_before_checkout() -> None:
+    """Belt-and-suspenders in CI: a rename-probe loop must run BEFORE
+    Checkout so a leftover VM from the prior job (the host-side drain above
+    only covers the run that just finished) cannot repeat run 32929704614's
+    EBUSY on this job's own workspace clean."""
+    text = _read(_WORKFLOW)
+    wait_idx = text.index("Wait for prior run's workspace to be clean")
+    checkout_idx = text.index("name: Checkout")
+    assert wait_idx < checkout_idx, "the teardown wait must run before Checkout, not after"
+    pre_checkout = text[wait_idx:checkout_idx]
+    assert "Test-DirectoryHandlesFree" in pre_checkout
+    assert "shell: pwsh" in pre_checkout, "match the shell every other step in this workflow uses"
+    for folder in ("scripts", "hoststore", "output", "soak-4h"):
+        assert f"'{folder}'" in pre_checkout, f"pre-checkout probe must cover sandbox-lab/{folder}"
+
+
 def test_forensics_distinguish_spinning_from_blocked_and_bound_the_dump() -> None:
     """One cumulative CPU number cannot tell 'spinning now' from 'burned CPU
     earlier and now blocked'. Two samples can, and that is the bit that picks
