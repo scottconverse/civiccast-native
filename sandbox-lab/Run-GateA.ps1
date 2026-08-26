@@ -102,7 +102,17 @@ param(
     # below) and the caller's next Checkout step run. See
     # docs/ops/gate-a.md, "Teardown drain".
     [int]$TeardownDrainSeconds = 300,
-    [int]$TeardownDrainPollSeconds = 5
+    [int]$TeardownDrainPollSeconds = 5,
+
+    # Passed straight through to Host-Launch-Sandbox-Test.ps1: minutes a
+    # WindowsSandbox server/client process may sit with no vmmemWindowsSandbox
+    # before the pre-launch busy guard classifies it an ORPHAN (a leftover
+    # from a prior run's teardown, see -TeardownDrainSeconds above) rather
+    # than someone else's live session, and proceeds to launch instead of
+    # waiting out the rest of -SandboxWaitMinutes on it. See that script's
+    # <gate-a-orphan-guard> header comment and docs/ops/gate-a.md, "Shared
+    # Windows Sandbox: the busy guard -- orphan detection".
+    [int]$OrphanGraceMinutes = 10
 )
 
 $ErrorActionPreference = 'Stop'
@@ -316,8 +326,8 @@ if (-not (Test-Path $launcherPath)) {
     Exit-HarnessError "Host-Launch-Sandbox-Test.ps1 not found at $launcherPath"
 }
 
-Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes, TeardownDrainSeconds=$TeardownDrainSeconds, TeardownDrainPollSeconds=$TeardownDrainPollSeconds)..."
-& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds
+Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes, TeardownDrainSeconds=$TeardownDrainSeconds, TeardownDrainPollSeconds=$TeardownDrainPollSeconds, OrphanGraceMinutes=$OrphanGraceMinutes)..."
+& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds -OrphanGraceMinutes $OrphanGraceMinutes
 $launcherExit = $LASTEXITCODE
 Write-Step "Host launcher exited with code $launcherExit"
 

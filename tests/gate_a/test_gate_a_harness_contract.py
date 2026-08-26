@@ -857,3 +857,141 @@ def test_forensics_distinguish_spinning_from_blocked_and_bound_the_dump() -> Non
     assert "$OutDir" not in fn, "Get-DriverForensics must not write into the evidence directory"
     assert "Wait-Process -Id $dp.Id -Timeout 120" in fn, "the dump itself must be time-bounded"
     assert "comsvcs.dll,MiniDump" in fn
+
+
+# --------------------------------------------------------------------------
+# 18-22. The orphan guard: run 32930110802 burned its full 90-minute
+#         -SandboxWaitMinutes window on an orphaned WindowsSandboxServer
+#         (PID 17548, 81 MB) with no vmmemWindowsSandbox anywhere in sight,
+#         no WindowsSandboxClient window, and `wsb list` reporting zero
+#         sessions the whole time.
+# --------------------------------------------------------------------------
+
+
+def _busy_guard_block(text: str) -> str:
+    """Slice out just the pre-launch busy/orphan guard, not the whole file.
+
+    Step 5 (far below, teardown of THIS run's own recorded launch PIDs)
+    legitimately calls Stop-Process -- a naive whole-file assertion would
+    either false-positive on that safe call or have to special-case it. The
+    guard block itself runs from its own header comment up to where the
+    script actually launches Windows Sandbox.
+    """
+    start = text.index("1b. Guard: wait for a free sandbox")
+    end = text.index("# 2. Launch Windows Sandbox")
+    return text[start:end]
+
+
+def test_busy_guard_classifies_by_vmmem_presence_not_just_process_name() -> None:
+    """The old guard treated ANY of $SandboxProcessNames as "busy" -- exactly
+    what misread run 32930110802's lone orphaned server process as a live
+    session. The fix must specifically distinguish vmmemWindowsSandbox (the
+    actual VM, multi-GB when real) from the server/client/remote-session
+    shells that can outlive it during teardown or be left behind entirely."""
+    text = _read(_HOST_LAUNCHER)
+    assert "function Get-SandboxBusyEvidence" in text
+    fn = text[text.index("function Get-SandboxBusyEvidence") :][:1400]
+    assert "'vmmemWindowsSandbox'" in fn or '"vmmemWindowsSandbox"' in fn
+    assert "VmmemAlive" in fn
+    assert "$vmmem.Count -gt 0" in fn, (
+        "vmmem presence, not mere process-name membership, must decide 'genuinely busy'"
+    )
+
+
+def test_busy_guard_evidence_records_working_set_and_start_time_per_process() -> None:
+    """The ORPHAN-vs-BUSY call has to be defensible after the fact -- the
+    evidence recorded per poll must carry pid, name, working-set size, and
+    start time for every process, not just a bare process-name list (the
+    original SANDBOX-WAIT.txt shape, which is what left run 32930110802's
+    81 MB / hours-old PID indistinguishable from a real multi-GB VM)."""
+    text = _read(_HOST_LAUNCHER)
+    assert "function Format-SandboxProcessEvidence" in text
+    fn = text[text.index("function Format-SandboxProcessEvidence") :][:900]
+    assert "WorkingSet64" in fn
+    assert "StartTime" in fn
+    assert "ws_mb=" in fn
+    assert "start_utc=" in fn
+
+
+def test_orphan_grace_window_is_parameterized_and_threaded_through_run_gate_a() -> None:
+    host_text = _read(_HOST_LAUNCHER)
+    run_gate_a_text = _read(_RUN_GATE_A)
+    grace = _int_setting(
+        host_text, r"\[int\]\$OrphanGraceMinutes\s*=\s*(\d+)", "-OrphanGraceMinutes default"
+    )
+    assert grace == 10, (
+        "a real launch spawns vmmemWindowsSandbox within seconds to a couple of minutes -- "
+        "10 minutes of continuous absence is not something a live launch produces"
+    )
+    run_gate_a_grace = _int_setting(
+        run_gate_a_text,
+        r"\[int\]\$OrphanGraceMinutes\s*=\s*(\d+)",
+        "Run-GateA.ps1 -OrphanGraceMinutes default",
+    )
+    assert run_gate_a_grace == grace, "the two defaults must agree"
+    assert "-OrphanGraceMinutes $OrphanGraceMinutes" in run_gate_a_text, (
+        "Run-GateA.ps1 must pass its own -OrphanGraceMinutes through to the host launcher, "
+        "not silently drop the caller's override"
+    )
+
+
+def test_orphan_classification_seeds_from_the_oldest_non_vmmem_process_start_time() -> None:
+    """Run 32930110802's orphan PID was already hours old by the time the
+    guard looked at it. Seeding the grace clock from 'now' would force every
+    future run to burn a fresh -OrphanGraceMinutes wait on an already-stale
+    process; seeding from the process's own StartTime lets an old orphan
+    classify on this run's very first evidence read instead."""
+    guard = _busy_guard_block(_read(_HOST_LAUNCHER))
+    assert "$orphanSinceUtc" in guard
+    assert "Sort-Object StartTime" in guard, (
+        "the orphan clock must be seeded from a real process StartTime, not just the poll loop's "
+        "own wall-clock arrival"
+    )
+    assert "$orphanSinceUtc = $null" in guard, (
+        "vmmemWindowsSandbox appearing must reset the orphan clock -- a genuine in-flight launch "
+        "(server process visible a moment before its own VM spawns) must never be misclassified "
+        "as an orphan"
+    )
+
+
+def test_orphan_marker_filename_and_evidence_fields() -> None:
+    text = _read(_HOST_LAUNCHER)
+    assert "$orphanMarkerPath = Join-Path $OutDir 'SANDBOX-ORPHAN.txt'" in text, (
+        "the orphan marker filename is SANDBOX-ORPHAN.txt, parallel to the existing "
+        "SANDBOX-BUSY.txt/SANDBOX-WAIT.txt family"
+    )
+    orphan_body = text[text.index("$orphanBody = @(") :][:1400]
+    for field in (
+        "orphan_detected_utc=",
+        "orphan_since_utc=",
+        "grace_minutes=",
+        "reason=",
+        "action=",
+    ):
+        assert field in orphan_body, f"SANDBOX-ORPHAN.txt evidence is missing {field}"
+    assert "Set-Content -Path $orphanMarkerPath -Value $orphanBody" in text
+
+
+def test_busy_guard_never_stops_a_discovered_process() -> None:
+    """Proceed-not-kill: an orphan classification changes whether this script
+    WAITS before launching; it must never authorize touching a process this
+    run did not itself start. Only step 5's teardown (this run's own
+    recorded launch PIDs, captured after this guard already runs) may call
+    Stop-Process -- see the 2026-08-24 hardening's own header and the
+    "NEVER kill by image name" lesson it was written to avoid repeating."""
+    guard = _code_only(_busy_guard_block(_read(_HOST_LAUNCHER)))
+    assert "Stop-Process" not in guard, (
+        "the busy/orphan guard classifies evidence from processes it never launched -- it must "
+        "never call Stop-Process against them, orphan or not"
+    )
+
+
+def test_judge_stays_ignorant_of_the_orphan_marker() -> None:
+    """An orphan classification never writes SANDBOX-BUSY.txt -- it proceeds
+    to launch instead -- so gate_a_verdict.py's existing BUSY short-circuit
+    is untouched and needs no shape change for the new evidence fields. An
+    orphaned run either produces real evidence (judged normally) or fails
+    post-launch through the existing, honest "no VM process" path."""
+    judge_text = _read(_JUDGE)
+    assert "SANDBOX-BUSY.txt" in judge_text
+    assert "SANDBOX-ORPHAN.txt" not in judge_text
