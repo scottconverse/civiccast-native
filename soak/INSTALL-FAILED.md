@@ -22,3 +22,25 @@ The elevated helper remained in its install job without writing `C:\CivicCastSoa
 To update: uninstall CivicCast (Native) first from Windows Settings > Apps. Your recorded data and database are preserved by uninstall and will be adopted by the new installation. Then run this installer again.
 [2026-08-26 16:51:06] postinstall: FAILED, aborting with exit code 120
 ```
+
+## Fresh install after verified uninstall
+
+- Attempt started UTC: `2026-08-26T23:42:50Z`
+- Failure recorded UTC: `2026-08-26T23:55:54Z`
+- Silent command: `setup.exe /S /D=C:\CivicCastHostStore\install`
+- Pack staging: completed far enough to enter `d3-engine` and `d4-provision`
+- Provision return code: `75`
+- Installer exit code: `116`
+- `CivicCastSupervisor` after failure: absent (SCM error `1060`)
+- `http://127.0.0.1:8000/api/health` after failure: no response
+- Referenced `C:\ProgramData\CivicCast\provision\PROVISION-RECOVERY.md`: absent
+- Result: **FAILED — soak not started**
+
+```text
+[2026-08-26 17:55:45] step d3-engine: begin (old=none)
+[2026-08-26 17:55:51] step d3-engine: SKIPPED (routed to fresh install; existing data adopted, not deleted)
+[2026-08-26 17:55:51] step d4-provision: begin
+[2026-08-26 17:55:54] step d4-provision: returned 75
+[2026-08-26 17:55:54] ALERT: CivicCast (Native) setup could not provision the PostgreSQL server. See the installer log and C:\ProgramData\CivicCast\provision\PROVISION-RECOVERY.md for details.
+[2026-08-26 17:55:54] postinstall: FAILED, aborting with exit code 116
+```
