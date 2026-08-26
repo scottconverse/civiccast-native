@@ -106,7 +106,18 @@ param(
     [int]$TeardownDrainSeconds = 300,
 
     # Poll interval, in seconds, for the teardown drain above.
-    [int]$TeardownDrainPollSeconds = 5
+    [int]$TeardownDrainPollSeconds = 5,
+
+    # HARDENED <gate-a-orphan-guard> 2026-08-26: minutes a WindowsSandbox
+    # server/client process may sit with NO vmmemWindowsSandbox (the actual
+    # VM) before the pre-launch busy guard stops treating it as someone
+    # else's live session and classifies it an ORPHAN instead. A real launch
+    # spawns vmmemWindowsSandbox within seconds to a couple of minutes of the
+    # server process, so 10 minutes of continuous vmmem absence is not
+    # something a live launch produces. See the busy-guard section below and
+    # docs/ops/gate-a.md, "Shared Windows Sandbox: the busy guard -- orphan
+    # detection".
+    [int]$OrphanGraceMinutes = 10
 )
 
 $ErrorActionPreference = 'Stop'
@@ -234,40 +245,159 @@ Write-Host "Output dir stamped clean: $OutDir (SOAK_MINUTES=$SoakMinutes)"
 #     instance system-wide -- if any of $SandboxProcessNames is already
 #     running, it belongs to a different, independent process on this box
 #     (this repo's Gate A harness is not the only thing that launches
-#     Windows Sandbox here). Never launch on top of it, never touch it --
-#     poll every 30s up to -SandboxWaitMinutes for it to clear, logging
-#     progress to SANDBOX-WAIT.txt, and give up cleanly (exit 3) if it is
-#     still busy at the deadline.
+#     Windows Sandbox here). Never launch on top of a REAL session, never
+#     touch it -- poll every 30s up to -SandboxWaitMinutes for it to clear,
+#     logging progress to SANDBOX-WAIT.txt, and give up cleanly (exit 3) if
+#     it is still busy at the deadline.
+#
+#     HARDENED <gate-a-orphan-guard> 2026-08-26: Gate A run 32930110802's
+#     busy guard declared BUSY for the entire 90-minute -SandboxWaitMinutes
+#     window on the strength of ONE process -- WindowsSandboxServer, PID
+#     17548, 81 MB working set, started hours earlier during a prior run's
+#     slow teardown (see <gate-a-teardown-drain> above; PR #48 shrinks how
+#     often this can happen but cannot make it impossible). There was no
+#     vmmemWindowsSandbox (the actual VM -- multi-GB when a session is
+#     real), no WindowsSandboxClient window, and `wsb list` reported zero
+#     sessions throughout. The old guard could not tell an orphaned
+#     leftover server process from someone else's real session and burned
+#     the whole wait window on dead weight.
+#
+#     The fix is evidence-based, not name-based: every poll records BOTH the
+#     full $SandboxProcessNames process list AND whether vmmemWindowsSandbox
+#     specifically is among them (name, PID, working-set bytes, start time
+#     for each -- see Get-SandboxBusyEvidence / Format-SandboxProcessEvidence
+#     below). vmmemWindowsSandbox present, at any point, means a real VM is
+#     running -- genuinely busy, keep waiting exactly as before. Only
+#     WindowsSandboxServer/Client/RemoteSession present, with NO
+#     vmmemWindowsSandbox for -OrphanGraceMinutes (default 10 -- a real
+#     launch spawns vmmemWindowsSandbox within seconds to a couple of
+#     minutes of the server process, so that many minutes of continuous
+#     vmmem absence is not something a live launch produces), is classified
+#     ORPHAN: it writes output\SANDBOX-ORPHAN.txt with the full evidence and
+#     PROCEEDS to launch -- a stale leftover server process does not hold
+#     the machine-wide single-instance slot the way a real VM does, so it
+#     does not block a new session. If the launch then genuinely collides
+#     with something this guard could not see, the existing "no VM process a
+#     few seconds after launch" failure path (exit 1, below) reports that
+#     honestly; this guard never overrides it.
+#
+#     PROCEED-NOT-KILL, always: this guard NEVER calls Stop-Process against
+#     any PID it merely observed here, orphan or not -- only this script's
+#     own teardown (step 5, far below) stops processes, and only the PIDs
+#     THIS run recorded as its own right after its own Start-Process call.
+#     An orphan classification changes whether this script waits before
+#     launching; it never authorizes touching a process this run did not
+#     start.
 $waitLogPath = Join-Path $OutDir 'SANDBOX-WAIT.txt'
-$busyProcs = Get-Process -Name $SandboxProcessNames -ErrorAction SilentlyContinue
-if ($busyProcs) {
-    $busyPidList = ($busyProcs | Select-Object -ExpandProperty Id) -join ', '
-    Write-Warning "Windows Sandbox is already in use (PID(s): $busyPidList). It is a SHARED single-instance resource on this machine -- waiting up to $SandboxWaitMinutes minute(s) for it to become free rather than launching into it."
+$orphanMarkerPath = Join-Path $OutDir 'SANDBOX-ORPHAN.txt'
+
+function Get-SandboxBusyEvidence {
+    <#
+      One evidence snapshot for the busy guard: every $SandboxProcessNames
+      process currently running, split into vmmemWindowsSandbox (the actual
+      VM) and everything else (server/client/remote-session shells, which
+      can legitimately outlive the VM during teardown -- see
+      <gate-a-teardown-drain> above -- or be left behind as an orphan when a
+      teardown never finished draining).
+    #>
+    $all = @(Get-Process -Name $SandboxProcessNames -ErrorAction SilentlyContinue)
+    $vmmem = @($all | Where-Object { $_.ProcessName -eq 'vmmemWindowsSandbox' })
+    $other = @($all | Where-Object { $_.ProcessName -ne 'vmmemWindowsSandbox' })
+    [PSCustomObject]@{
+        All        = $all
+        Vmmem      = $vmmem
+        Other      = $other
+        VmmemAlive = ($vmmem.Count -gt 0)
+    }
+}
+
+function Format-SandboxProcessEvidence {
+    <# Human-readable pid/name/working-set/start-time evidence line, used both
+       in SANDBOX-WAIT.txt's periodic log and in SANDBOX-ORPHAN.txt. #>
+    param([object[]]$Procs)
+    if (-not $Procs -or $Procs.Count -eq 0) { return '<none>' }
+    ($Procs | ForEach-Object {
+        $startUtc = try { $_.StartTime.ToUniversalTime().ToString('o') } catch { 'unknown' }
+        $wsMb = [Math]::Round($_.WorkingSet64 / 1MB, 1)
+        "pid=$($_.Id) name=$($_.ProcessName) ws_mb=$wsMb start_utc=$startUtc"
+    }) -join '; '
+}
+
+$evidence = Get-SandboxBusyEvidence
+if ($evidence.All.Count -gt 0) {
+    Write-Warning "Windows Sandbox process(es) already present: $(Format-SandboxProcessEvidence $evidence.All). It is a SHARED single-instance resource on this machine -- gathering evidence (vmmemWindowsSandbox present = genuinely busy; absent for >= $OrphanGraceMinutes minute(s) = orphan, proceed) rather than waiting blind."
     $waitDeadline = (Get-Date).AddMinutes($SandboxWaitMinutes)
     $lastLogTime = [DateTime]::MinValue
     $logIntervalSeconds = 120
-    while (((Get-Date) -lt $waitDeadline) -and $busyProcs) {
+    # Seeded from the OLDEST currently-present non-vmmem process's own start
+    # time, the first poll that finds vmmem absent -- not from "now" -- so an
+    # already-hours-old orphan (exactly run 32930110802's shape: PID 17548
+    # started hours before this guard ever looked at it) is classified from
+    # this run's very first evidence read instead of forcing every future
+    # run to burn a fresh -OrphanGraceMinutes wait on top of an already-stale
+    # process. Reset to $null the instant vmmemWindowsSandbox is observed, so
+    # a genuine in-flight launch (server process visible a moment before its
+    # own VM spawns) is never mistaken for an orphan.
+    $orphanSinceUtc = $null
+    $orphanMinutes = 0
+    $orphanDetected = $false
+
+    while (((Get-Date) -lt $waitDeadline) -and $evidence.All.Count -gt 0) {
         $now = Get-Date
+
+        if ($evidence.VmmemAlive) {
+            $orphanSinceUtc = $null
+        } else {
+            if (-not $orphanSinceUtc) {
+                $oldestOther = @($evidence.Other | Sort-Object StartTime | Select-Object -First 1)
+                if ($oldestOther.Count -gt 0) {
+                    try { $orphanSinceUtc = $oldestOther[0].StartTime.ToUniversalTime() } catch { $orphanSinceUtc = $now.ToUniversalTime() }
+                } else {
+                    $orphanSinceUtc = $now.ToUniversalTime()
+                }
+            }
+            $orphanMinutes = ((Get-Date).ToUniversalTime() - $orphanSinceUtc).TotalMinutes
+            if ($orphanMinutes -ge $OrphanGraceMinutes) {
+                $orphanDetected = $true
+                break
+            }
+        }
+
         if (($now - $lastLogTime).TotalSeconds -ge $logIntervalSeconds) {
-            $names = ($busyProcs | Select-Object -ExpandProperty ProcessName -Unique) -join ', '
-            $pidList = ($busyProcs | Select-Object -ExpandProperty Id) -join ', '
-            Add-Content -Path $waitLogPath -Value "$($now.ToString('o')) waiting -- sandbox busy: processes=[$names] pids=[$pidList]" -Encoding UTF8
+            $vmmemDetail = if ($evidence.VmmemAlive) { Format-SandboxProcessEvidence $evidence.Vmmem } else { '<absent>' }
+            $orphanNote = if ($evidence.VmmemAlive) { 'vmmem_alive=true (genuinely busy)' } else { "vmmem_alive=false orphan_minutes=$([Math]::Round($orphanMinutes, 1)) grace_minutes=$OrphanGraceMinutes" }
+            Add-Content -Path $waitLogPath -Value "$($now.ToString('o')) waiting -- other=[$(Format-SandboxProcessEvidence $evidence.Other)] vmmem=[$vmmemDetail] $orphanNote" -Encoding UTF8
             $lastLogTime = $now
         }
+
         Start-Sleep -Seconds 30
-        $busyProcs = Get-Process -Name $SandboxProcessNames -ErrorAction SilentlyContinue
+        $evidence = Get-SandboxBusyEvidence
     }
-    if ($busyProcs) {
-        $names = ($busyProcs | Select-Object -ExpandProperty ProcessName -Unique) -join ', '
-        $pidList = ($busyProcs | Select-Object -ExpandProperty Id) -join ', '
-        $finalLine = "$((Get-Date).ToString('o')) still busy after ${SandboxWaitMinutes}m wait -- giving up. processes=[$names] pids=[$pidList]"
+
+    if ($orphanDetected) {
+        $orphanBody = @(
+            "orphan_detected_utc=$((Get-Date).ToUniversalTime().ToString('o'))",
+            "orphan_since_utc=$($orphanSinceUtc.ToString('o'))",
+            "orphan_minutes=$([Math]::Round($orphanMinutes, 1))",
+            "grace_minutes=$OrphanGraceMinutes",
+            "other_processes: $(Format-SandboxProcessEvidence $evidence.Other)",
+            "vmmem_processes: $(Format-SandboxProcessEvidence $evidence.Vmmem)",
+            "reason=WindowsSandbox server/client process(es) present with no vmmemWindowsSandbox (the actual VM) for at least $OrphanGraceMinutes minute(s) -- a real launch spawns vmmemWindowsSandbox within seconds to a couple of minutes, so this is a leftover from a prior run's teardown, not another party's live session.",
+            "action=proceeding with launch WITHOUT stopping the orphaned process(es) -- proceed-not-kill; if this collides with something this guard could not see, the existing post-launch VM check reports that honestly."
+        ) -join [Environment]::NewLine
+        Set-Content -Path $orphanMarkerPath -Value $orphanBody -Encoding UTF8
+        Add-Content -Path $waitLogPath -Value "$((Get-Date).ToString('o')) classified ORPHAN after $([Math]::Round($orphanMinutes, 1)) minute(s) with no vmmemWindowsSandbox -- proceeding to launch. See SANDBOX-ORPHAN.txt." -Encoding UTF8
+        Write-Warning "Windows Sandbox process(es) present but no vmmemWindowsSandbox for >= $OrphanGraceMinutes minute(s) (other=[$(Format-SandboxProcessEvidence $evidence.Other)]) -- classified ORPHAN, not busy. Wrote $orphanMarkerPath. Proceeding to launch WITHOUT touching the orphaned process(es)."
+    } elseif ($evidence.All.Count -gt 0) {
+        $finalLine = "$((Get-Date).ToString('o')) still busy after ${SandboxWaitMinutes}m wait -- giving up. other=[$(Format-SandboxProcessEvidence $evidence.Other)] vmmem=[$(Format-SandboxProcessEvidence $evidence.Vmmem)]"
         Add-Content -Path $waitLogPath -Value $finalLine -Encoding UTF8
         Set-Content -Path (Join-Path $OutDir 'SANDBOX-BUSY.txt') -Value $finalLine -Encoding UTF8
-        Write-Warning "Windows Sandbox is still busy after waiting $SandboxWaitMinutes minute(s) (PIDs: $pidList). Not launching -- this is a shared resource owned by another process, not ours to touch. Exiting cleanly (code 3) without starting or stopping anything."
+        Write-Warning "Windows Sandbox is still busy after waiting $SandboxWaitMinutes minute(s). Not launching -- this is a shared resource owned by another process (vmmemWindowsSandbox observed), not ours to touch. Exiting cleanly (code 3) without starting or stopping anything."
         exit 3
+    } else {
+        Add-Content -Path $waitLogPath -Value "$((Get-Date).ToString('o')) sandbox became free -- proceeding to launch." -Encoding UTF8
+        Write-Host "Windows Sandbox is now free. Proceeding with launch." -ForegroundColor Green
     }
-    Add-Content -Path $waitLogPath -Value "$((Get-Date).ToString('o')) sandbox became free -- proceeding to launch." -Encoding UTF8
-    Write-Host "Windows Sandbox is now free. Proceeding with launch." -ForegroundColor Green
 }
 
 # 2. Launch Windows Sandbox with the .wsb config. WindowsSandbox.exe opens the

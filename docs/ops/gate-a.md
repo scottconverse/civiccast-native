@@ -151,6 +151,85 @@ this guard) only ever serializes **our own** Gate A runs against each
 other — the other party's sandbox usage is invisible to GitHub Actions and
 cannot be coordinated through workflow concurrency.
 
+### Orphan detection: telling a live sandbox from an orphaned server process
+
+**What happened.** Run `32930110802` (2026-08-26) declared `BUSY` and burned
+its entire 90-minute `-SandboxWaitMinutes` window on the strength of a
+single process: `WindowsSandboxServer`, PID `17548`, 81 MB working set,
+started hours earlier during a prior run's slow teardown (see "Teardown
+drain" below — PR #48's drain reduces how often a run leaves this kind of
+leftover behind, but cannot make it impossible; the drain is itself
+best-effort and bounded). There was **no** `vmmemWindowsSandbox` process
+(the actual VM — multi-GB working set when a session is real), **no**
+`WindowsSandboxClient` window, and `wsb list` reported zero sessions for the
+entire wait. The pre-2026-08-26 guard checked only `$SandboxProcessNames`
+membership — any of `WindowsSandboxClient`, `WindowsSandboxRemoteSession`,
+`WindowsSandboxServer`, `vmmemWindowsSandbox` — so it could not tell an
+orphaned leftover shell from another party's real, in-progress session and
+had no way to do anything but wait out the full window on dead weight.
+
+**The fix (`Host-Launch-Sandbox-Test.ps1`'s pre-launch guard, `-OrphanGraceMinutes`,
+default `10`).** The guard is now evidence-based, not name-based.
+`Get-SandboxBusyEvidence` splits every observed `$SandboxProcessNames`
+process into `vmmemWindowsSandbox` (`Vmmem`) versus everything else
+(`Other` — the server/client/remote-session shells), and
+`Format-SandboxProcessEvidence` records pid, process name, working-set
+size, and start time for each. Every poll of the wait loop re-reads this
+evidence and classifies it:
+
+- **`vmmemWindowsSandbox` present, at any point** → genuinely busy. Behavior
+  is unchanged from before this hardening: keep polling up to
+  `-SandboxWaitMinutes`, write `SANDBOX-BUSY.txt` and exit `3` if still busy
+  at the deadline.
+- **Only `Other` processes present, with no `vmmemWindowsSandbox`, for
+  `-OrphanGraceMinutes` minutes** (default `10` — a real launch spawns
+  `vmmemWindowsSandbox` within seconds to a couple of minutes of the server
+  process, so this many minutes of continuous absence is not something a
+  live launch produces) → classified **ORPHAN**. The guard writes
+  `output\SANDBOX-ORPHAN.txt` with the full evidence (pids, names,
+  working-set sizes, start times, how long it was orphaned, the grace
+  threshold) and **proceeds to launch** — it does not wait out the rest of
+  `-SandboxWaitMinutes`, and it does not write `SANDBOX-BUSY.txt`.
+
+  The orphan clock is seeded from the **oldest `Other` process's own
+  `StartTime`**, not from "now" — run `32930110802`'s orphan was already
+  hours old by the time the guard first looked at it, and seeding from
+  `StartTime` lets an already-stale process classify on the very first
+  evidence read instead of forcing every future run to sit through a fresh
+  10-minute wait on top of a process that was never going anywhere. The
+  clock resets to unset the instant `vmmemWindowsSandbox` is observed, so a
+  genuine in-flight launch — the server process becomes visible a moment
+  before its own VM spawns — is never misclassified as an orphan.
+
+- **Nothing present** → unchanged: proceed to launch immediately.
+
+**Proceed-not-kill, always.** A stale leftover server process does not hold
+the machine-wide single-instance Windows Sandbox slot the way a real VM
+does, so it does not need to be removed to unblock a new launch — the guard
+only ever *waits less*, never touches the process. The busy/orphan guard
+contains **no `Stop-Process` call** against anything it merely observes,
+orphan or not; the only `Stop-Process` in this script is step 5's teardown,
+far below, and that is scoped exclusively to the PIDs *this run itself*
+recorded immediately after its own `Start-Process` call (see the
+2026-08-24 hardening above and the "NEVER kill by image name" lesson it was
+written not to repeat). If an orphan classification turns out to be wrong —
+some evidence this guard cannot see means the slot really is taken — the
+subsequent launch simply fails the existing "no Windows Sandbox VM process
+found running a few seconds after launch" check (exit `1`) and reports that
+honestly; nothing about the orphan path overrides or short-circuits it.
+
+**`Run-GateA.ps1`.** Accepts and passes `-OrphanGraceMinutes` (default `10`)
+straight through to `Host-Launch-Sandbox-Test.ps1`, the same way it already
+threads `-SandboxWaitMinutes` and the teardown-drain settings.
+
+**`scripts/gate_a_verdict.py`.** Unchanged by this hardening. An orphan
+classification never writes `SANDBOX-BUSY.txt` — the run proceeds to a real
+launch attempt instead — so the judge's existing `SANDBOX-BUSY.txt`
+short-circuit to a `BUSY` verdict is untouched, and it stays ignorant of
+`SANDBOX-ORPHAN.txt` entirely. An orphaned run either produces real
+evidence (judged normally, exactly like any other run) or fails post-launch
+through the pre-existing, honest "no VM" path above.
+
 ## Teardown drain
 
 **What happened.** Run `32926056071` completed with job **SUCCESS** at
