@@ -66,6 +66,100 @@ came across and what deliberately did not.
   is approximated (poll-interval-paced retry rather than sub-second
   backoff within a pass; size verification rather than a full source-side
   content hash, which would double read I/O over the network per file).
+- **S3/S11 — CEA-708 commissioning decode-back verification.** Closes the gap
+  PR #22 left honest but open: the S3 commissioning wizard's Screen 10 output
+  proof previously always reported `cea708_verified: null` with a blocker when
+  CEA-708 passthrough was requested, because no decode-back check existed. New
+  module `civiccast/installer/cea708_verification.py` writes a deterministic
+  test caption, embeds it through the product's real GStreamer sidecar
+  caption-embed leg (`egress/gst/graph.py caption_embed_leg_from_sidecar`, run
+  via `egress/gst/worker.py` over the same D2 control seam
+  `scripts/prove_native_live_caption_transport.py`'s code already assembles
+  this way for the live appsrc leg), then decodes the emitted stream back
+  with the existing engine-agnostic
+  `civiccast.egress.caption_proof.decode_embedded_captions` and compares.
+  `run_output_proof` (`civiccast/installer/commissioning.py`) now calls this
+  after the main test-pattern/TSDuck window (injectable via a new
+  `caption_verifier` parameter) and reports a real `True`/`False`
+  `cea708_verified` with detail — it stays `None` only when the check itself
+  could not run. Standalone: `civiccast egress verify-captions` runs the same
+  check outside commissioning. Along the way, found and fixed a real latent bug
+  in `civiccast/egress/caption_embed.py`'s `_clean_caption_text`: it had never
+  been exercised against real ffmpeg-decoded closed-caption output before
+  (only hand-written SRT text in tests), so the ASS position tag
+  (`{\an7}`) ffmpeg's `eia_608`/`cc_dec` decoder always wraps real decoded text
+  in would have made every genuine decode-back text comparison mismatch, even
+  when captions embedded and decoded correctly — fixed and covered by a
+  regression test. New test fixtures
+  `tests/egress/fixtures/cea708_{test_caption,no_captions}.mpegts` are real,
+  tiny (~18 KB) MPEG-TS captures with genuine hand-built ATSC A/53
+  CEA-608-in-708 SEI data, verified against the actual production decode path
+  while building this; `tests/installer/test_cea708_verification.py`,
+  `tests/installer/test_commissioning.py`, `tests/egress/test_caption_proof.py`,
+  and `tests/egress/test_caption_embed.py` gained new/updated coverage. **What
+  remains honestly unverified in this dev/CI sandbox**: the real GStreamer
+  embed-subprocess round trip (no `gi`/GStreamer runtime here) — covered by an
+  `@pytest.mark.integration` test that skips without the bundled bindings; a
+  native Windows box with the packaged runtime (or the WSL/system-GStreamer dev
+  tier) is required to exercise it for real. See
+  `docs/spec/3.0/sections/S3-commissioning-wizard.md`'s 2026-08-25 banner.
+- **S27 (Agenda Import Bridge) Phase 4 — `js_portal` source for JS-hydrated
+  agenda portals.** `civiccast/agenda_import/` already bridged Legistar,
+  PrimeGov, and CivicClerk (each with a documented, anonymous, plain-HTTP
+  endpoint — re-verified this pass, unchanged) into a draft S25
+  `MeetingAgenda`; this phase adds a fourth adapter,
+  `civiccast/agenda_import/js_portal.py`'s `JsPortalSource`, for the vendor
+  family that has no such endpoint — CivicPlus AgendaCenter, Granicus, and
+  JS-hydrated Legistar public pages — using
+  [crawl4ai](https://github.com/unclecode/crawl4ai) (Apache-2.0) with a
+  headless Playwright Chromium browser plus a confidence-scored text
+  heuristic (reuses `AgendaItem.confidence` from the PR #21 PDF-import
+  path; net-new `ExternalAgendaItem.confidence` threads it through the
+  shared mapper). Bounded and sandboxed: same-origin only, robots.txt
+  fetched and respected before any navigation, at most two pages per call,
+  a wall-clock timeout, and no auth flow of any kind. Config is per-import
+  (`portal_url` + `portal_vendor_hint`, validated via new
+  `civiccast.agenda_import.config.validate_portal_url`) rather than a new
+  migration — none was needed.
+  crawl4ai + Playwright ship as the new, optional `civiccast[agenda-js-import]`
+  extra, pinned to `crawl4ai>=0.9.2,<0.10` — **not** the first floor this
+  extra was drafted against (`0.7.4`): that version pins `lxml~=5.3`, which
+  collided with `pikepdf`/`sacrebleu`'s own `lxml` floor and forced uv's
+  universal resolver to downgrade the whole project's `lxml` to 5.4.0,
+  reintroducing PYSEC-2026-87 (fixed in 6.1.0) into `uv.lock` — caught via
+  `pip-audit` against the resulting lock during this pass, before it ever
+  reached a commit. `crawl4ai>=0.9.2` relaxed its own constraint to
+  `lxml<7,>=5.3`; re-locked and re-verified clean (`lxml` stays at 6.1.2,
+  `pip-audit` reports no known vulnerabilities). Not bundled by the native
+  Windows installer by default
+  (excluded from `requirements-native-app.txt`'s `uv pip compile` extras,
+  mirroring `captions-runtime`'s existing pattern); absent, the adapter
+  lazy-imports and raises a new `AgendaSourceDependencyMissingError` →
+  HTTP 503, and a new, always-reachable `GET
+  /api/staff/agenda-sources/js-portal/posture` route reports the honest
+  install posture without raising. Also closes a real gap found while
+  implementing this: an import into an **already-published** agenda now
+  reopens it to draft (mirrors `AgendaService.import_from_doc`'s existing
+  PDF-import behavior) — applied to all four vendors, not just
+  `js_portal`, since AI/agenda non-negotiables §4.2 ("operator approves
+  before publish") is equally about a Legistar/PrimeGov/CivicClerk fetch,
+  not only heuristic content. Operator console: `AgendasScreen.tsx` gains
+  an "External agenda import" section (source picker, discover-then-import
+  flow, `js_portal`'s not-installed/loading/installed posture states) —
+  the vendor-bridge API had no console consumer at all before this phase.
+  62 new backend tests (`tests/agenda_import/test_js_portal.py`
+  plus router/mapper additions) against synthetic CivicPlus/Granicus-shaped
+  fixtures (no live-site CI dependency) and 14 new frontend tests; ruff/
+  mypy --strict/tsc/eslint clean. Live-smoke-tested by hand against a real
+  CivicPlus tenant (`friscotexas.gov/AgendaCenter`) — the crawl pipeline
+  itself works end to end, but that tenant's real meeting rows only render
+  after an interactive category-selection step this v1 does not perform,
+  so today's extraction is an honest low-yield miss on that shape of
+  tenant, not a silent wrong answer — see `js_portal.py`'s module
+  docstring for the full live-verification ledger. See
+  `docs/spec/3.0/sections/S27-agenda-import-bridge.md` (net-new — no
+  spec section existed for this module before this phase) for the full
+  design and status.
 - **S14 (Analytics / Audience Measurement) — durable viewership store.**
   Migration `0076_analytics_viewership` (three tables: `viewership_events`,
   `viewership_rollups`, `analytics_report_snapshots`) promotes the
@@ -554,6 +648,373 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **S7 media lifecycle worker — GPL encoder literal removed from the default
+  transcode seed list, resource posture made conservative.** A regression
+  audit of `civiccast/schedule/media_lifecycle_worker.py` found its default
+  transcode format catalog seeded, for every validated asset by default, an
+  `h265_1080p_8mbps` target whose ffmpeg args carried a bare `libx265`
+  (GPL) literal — never resolved through any encoder-selection seam, unlike
+  H.264's `resolve_h264_encoder()`. This repo's no-GPL posture (ADR 0007's
+  compliance section) forbids exactly this. `tests/policy/test_ffmpeg_h264_encoder.py`'s
+  repo-wide sweep missed it because it only ever checked for the literal
+  string `"libx264"`, not because of directory scope (it already walked the
+  whole `civiccast/` tree) — widened to a `_FORBIDDEN_GPL_ENCODER_LITERALS`
+  set (`{"libx264", "libx265"}`) and proved with a planted-literal test
+  (`test_detector_flags_a_planted_libx265_literal`) shaped exactly like the
+  real defect. Independently, the same worker dispatched every seeded
+  format synchronously in its own thread at normal process priority under
+  ffmpeg's flat 6-hour default timeout — a large amount of unsupervised,
+  full-priority ffmpeg work sharing the box with operator requests, with no
+  station-level off switch (the same class of "unfiltered ladder wastes
+  time on rungs the source can't fill" problem PR #45 found and fixed in
+  the VOD packager, here for background proxy generation instead of a
+  synchronous HTTP path). Resolved S7 spec Open decision #1 ("Transcode
+  format defaults... h265_1080p_8mbps (archive)... h264-only for
+  simplicity?") as the named h264-only alternative:
+  `DEFAULT_TRANSCODE_FORMATS` is now a single resolution-aware
+  `h264_720p_5mbps` rendition that never upscales past the source's own
+  probed `height_px` (mirrors PR #45's never-upscale posture, implemented
+  locally); `h264_mezzanine` stays available opt-in via
+  `CIVICCAST_TRANSCODE_FORMATS`, not seeded by default; a new
+  `MediaLifecycleWorkerSettings.transcode_seeding_enabled` switch (default
+  `True`, so first-run ingest still produces a proxy) lets a station turn
+  ingest-time transcoding off entirely; `transcode_concurrency` is an
+  explicit, validated field fixed at `1`, matching what the dispatch loop
+  already does, rather than an unstated implementation detail; and
+  `civiccast.stream._ffmpeg.run_ffmpeg` gained an opt-in `lower_priority`
+  parameter (Windows `BELOW_NORMAL_PRIORITY_CLASS`, default `False` so
+  live egress and the VOD packager's synchronous request path are
+  unaffected) that the worker's dispatched jobs now use together with a
+  per-minute-of-source timeout budget (10 min floor, 10x-realtime, 2h
+  ceiling) replacing the flat 6h default. See ADR 0007's "S7 ingest-time
+  transcode defaults and resource posture" amendment for the full
+  rationale. Files: `civiccast/schedule/media_lifecycle_models.py`,
+  `civiccast/schedule/media_lifecycle_worker.py`,
+  `civiccast/stream/_ffmpeg.py`, `tests/policy/test_ffmpeg_h264_encoder.py`,
+  `tests/schedule/test_media_lifecycle_worker.py`, `tests/stream/test_ffmpeg.py`,
+  `docs/adr/0007-hls-packager-design.md`,
+  `docs/spec/3.0/sections/S7-media-lifecycle-and-readiness.md`. No
+  operator settings UI exists yet for `transcode_seeding_enabled` or any
+  other worker setting — named as real follow-up, not claimed done here.
+- **Asset packaging no longer upscales — the Gate A `/package` timeout.** Gate
+  A's clerk loop uploaded the real 640x360 sample clip (201 Created), called
+  `POST /api/staff/assets/{asset_id}/package`, and got no response at all
+  within its 30 s client budget; the station's own uvicorn access log
+  (`station-diag/final/logs/control_plane.log`) has **no line for the package
+  request** while it does log every later request, so the handler was still
+  running — not deadlocked, not blocking the event loop, just slow. No file on
+  the packaging path changed in the regression window: `git log f31618f..main`
+  touches neither `civiccast/stream/packager.py` nor `_ffmpeg.py`, and
+  `civiccast/schedule/router.py` is byte-identical. What was actually wrong is
+  older than the window and easy to miss — `pack_vod_asset` encoded all four
+  ABR rungs for every source regardless of the source's resolution, so a
+  640x360 clip was **upscaled to 1920x1080 and 1280x720**: pixels invented,
+  4.5 Mbps spent carrying no extra detail, and the full encode cost of a large
+  frame paid twice. Measured on that clip on a fast development box: 18.4 s for
+  the content ladder, of which the two upscaled rungs are 14.6 s (~81%);
+  end-to-end the endpoint took **~19 s steady-state and 23 s on the first call
+  in a process**, against a 30 s client timeout, on hardware considerably
+  faster than the 16 GB sandbox VM. The margin was always thin; it took no
+  code change to cross it. New `civiccast.stream.config.select_ladder` picks
+  the rungs before encoding — never taller than the source, top rung pinned to
+  the source's own resolution, the ladder's top rung still a product cap so a
+  4K source publishes at 1080p and below, and the **full ladder unchanged
+  whenever the source dimensions cannot be read** (the packager never guesses
+  its way into a smaller ladder). `pack_vod_asset` gained
+  `source_width`/`source_height`, and probes the input itself when a caller
+  does not supply them, so all three call sites — the staff package endpoint,
+  first-run sample seeding, and the live finalization worker — get the fix
+  without needing to know about it. Same clip after the change: **3.4 s of
+  content-ladder encode, an 81% reduction**, and the same booted-app
+  upload-then-package measurement that read 22.8 / 19.1 / 18.8 s now reads
+  **4.6 / 4.1 / 3.9 s** — from ~63% of the 30 s budget down to ~14%, so the
+  sandbox VM has room to be several times slower and still answer. The
+  emitted manifest is `360p` (640x360, the source's own resolution) + `240p`
+  + slate, with no upscaled variant. A 1080p or larger source is unaffected
+  in either time or output, which is correct: nothing upscales there. ADR
+  0007 carries the amendment.
+  **Not fixed, stated plainly:** packaging is still a synchronous HTTP request
+  whose latency is proportional to source duration. A 90-minute 1080p meeting
+  still occupies the request — and the operator console's fetch — for as long
+  as the encode takes. Moving it to a job-and-poll contract like the offline
+  caption jobs changes the endpoint's response contract and every caller of
+  it, so it needs its own ADR and an owner decision.
+
+- **Gate A — the stalls were `ConvertTo-Json` walking a cycle in
+  `Get-Content`'s note properties.** Root cause for five runs (4, 6, 7 and both
+  candidate-#11 runs), found by the liveness instrument on its very first
+  outing: `driver_process_alive=true driver_cpu_seconds=449.5
+  driver_working_set_mb=8318.2` — alive, CPU-hot, 8.3 GB resident in a 16 GB
+  VM, so not blocked I/O at all. `Get-Content` emits `PSObject`-wrapped
+  strings carrying `PSPath`/`PSParentPath`/`PSChildName`/`PSDrive`/`PSProvider`/
+  `ReadCount`; `PSProvider` is a `ProviderInfo` whose `.Drives` collection
+  holds `PSDriveInfo` objects that each point back at it — a cycle.
+  `ConvertTo-Json` serializes note properties, so `-Depth N` walks that cycle
+  `N` deep. Measured here, **one** such line: 1,889 chars at depth 3;
+  3,852,872 at depth 6; **98,197,802 at depth 7 (11.2 s)**; at depth 8 it never
+  finished (killed at 180 s having reached 4 GB and 178 s of CPU). The driver
+  serialized **eighty** of them at depth 8 via `install_progress_log_tail`.
+  The same 80 lines as plain strings at depth 8: 5,314 chars in 30 ms. This
+  also explains why the stall always looked positional — the assignment was
+  always followed immediately by a `Save-Summary`, so relocating the capture in
+  the previous change moved the explosion earlier in the run rather than
+  removing it. (Run 3's `t2-render-assert` stall is *not* explained by this and
+  is not claimed to be.) Fixed with two independent defences plus a source-site
+  cast: `ConvertTo-PlainForSummary` rebuilds the summary from plain types
+  before serialization — recursing only into arrays and dictionaries, capping
+  its own depth, and rendering anything else via `ToString()` rather than
+  walking its graph (a cyclic `ProviderInfo` now serializes to 59 characters) —
+  and the serialization depth drops from 8 to 6, which is one more than the
+  deepest real member needs. While fixing it, a second PS 5.1 trap: the
+  sanitizer's first form used `System.Collections.Generic.List[object]` with
+  `return @($out)`, which throws *"Argument types do not match"* in Windows
+  PowerShell 5.1 and silently degraded **every array member of the summary**
+  into one space-joined string; it uses `ArrayList` and
+  `return , ($out.ToArray())` now, the leading comma also keeping
+  single-element arrays as arrays for the judge's counted fields. Finally, when
+  the watchdog fires and the driver is still alive it now also records a CPU
+  delta with a verdict (verified against a real spinning process at
+  `driver_busy_percent=100.8` and a real sleeping one at `0`) and, guarded by a
+  working-set cap and a 120 s timeout, a MiniDump written to `$env:TEMP` —
+  never to the shipped evidence directory, since a full dump of the process
+  this was written for would be 8.3 GB.
+- **Gate A — the remaining synchronous `C:\CivicCastHostStore` reads are now
+  bounded, and the "hung or dead?" question is finally instrumented.** The
+  candidate-#11 run (`831f3df`) is the first Gate A run whose install
+  succeeded end to end (`installer_exit_code: 0`, `d4-activate-station:
+  returned 0` — the run-7 station-bundle failure is resolved, and
+  `d4-activate-station` went 35m09 ✗ → 31m13 ✓ with the shipper quiesced,
+  though against a *different* kit so that is not a controlled comparison).
+  It then stalled, and for the first time the per-statement instrumentation
+  named the step: `stuck_step=install-progress-copied-post-install`,
+  `seq:7`, 509s. That **excludes** the expected culprit rather than
+  confirming it — the hoststore reads (install-dir discovery, `station-set.json`,
+  ARP, service checks) are all separately recorded steps further down and
+  none appeared; what remains is two in-memory assignments and a ~2 KB local
+  JSON write, against a 178-line log whose longest line is 138 characters.
+  Since four runs have now ended with a signature identical whether the
+  driver's thread *blocked* or its process *died*, the driver records its PID
+  (`_DRIVER-PID.txt`) and both watchdog triggers now call `Get-DriverLiveness`
+  as they fire, writing `driver_process_alive=true|false` (plus CPU seconds
+  and working set) into `STALL-TIMEOUT.txt` / `WATCHDOG-TIMEOUT.txt` and the
+  placeholder `DONE.json`. Independently, the three remaining synchronous
+  readers of the mapped install target — `Test-KnownPaths`, the install-tree
+  listing, and `Invoke-StationDiagCapture`'s marker copies — now run through a
+  new `Invoke-BoundedProbe` (a throwaway `powershell.exe` with an arguments
+  file, a result file and a hard timeout), because "targeted and
+  non-recursive" was never the same as "bounded". The quiesce window also
+  stops being lifted when the installer returns; it now runs to the station-up
+  wait, so the 25-second tick no longer resumes underneath 10,683 files of
+  post-install hoststore reads. Moving the install target to a local directory
+  was considered and rejected: this file already records that staging locally
+  hits "os error 112 (not enough space)" on the ~40 GB virtual disk and that
+  activation "REFUSES junction/symlink install-roots", and `Run-GateA.ps1`'s
+  fresh-install guarantee plus `gate_a_verdict.py`'s install/activation checks
+  both read that tree host-side. Also: `_SHIPPER-QUIESCE.marker` joins the
+  shipper's retraction list — the additive mirror was leaving a stale copy on
+  the host that told readers the run was still quiesced when it was not.
+- **Self-hosted native-beta candidate build — the same persisted-cache bug
+  as #41, one script over: `civiccast-ffmpeg-pack-cache`.** Candidate run
+  32858543561 (main=7bf705a) got further than ever before — the PostgreSQL
+  cache fix (#41) held, K1 succeeded — then failed at `build_native_ffmpeg_pack:
+  FFmpeg closure seed bin/ffmpeg.exe is missing:
+  ...\civiccast-ffmpeg-pack-cache\extracted\ffmpeg\bin\ffmpeg.exe`. Same
+  root cause as #41 in a different cache: `acquire_ffmpeg_pack_sources()`'s
+  bare `destination.exists()` check trusted a self-hosted `--cache`'s
+  persisted, interrupted-mid-extraction `extracted/ffmpeg` tree instead of
+  re-extracting it. Fixed the identical way: `_extracted_ffmpeg_is_complete()`
+  re-verifies a pre-existing extraction against the same pinned bin/license
+  file set `build_ffmpeg_pack()` itself requires (reusing the existing
+  `_ffmpeg_sources()` validator) before trusting it; an incomplete tree is
+  cleared and re-extracted.
+
+  Per the pattern of each run peeling one more layer of the same job, did a
+  static sweep of every remaining script `build-native-beta`'s pack-build
+  step calls for the same bug classes (idempotent-cache trust, hosted-only
+  assumptions, live-network fetches, tool availability, hash pins the
+  self-hosted toolchain can't reproduce) rather than waiting for the next
+  run to surface the next layer. Exhaustively grepped every script for both
+  the "trust because it exists" and "refuse because it's non-empty"
+  shapes: `build_native_ollama_pack.py`'s acquire is already immune (always
+  extracts fresh into a temp dir, validates, then atomically replaces the
+  destination — never trusts stale state); `build_native_cuda_pack.py`'s
+  acquire already re-verifies a cached file's hash before ever reusing it,
+  deleting and re-downloading on mismatch; `build_native_bootstrap.py`
+  unconditionally runs `npm ci` (npm's own clean-install operation, not a
+  cache-trust check) and locates NSIS via Tauri's own tool-provisioning
+  cache; every remaining `X.exists() and any(X.iterdir())` refusal
+  (`civiccast-app-payload`, `civiccast-app-payload-scratch`/`pyav-build`,
+  `civiccast-gstreamer-closure`, `build/wp1-native-toolchain`) is either
+  already pre-cleared by the self-hosted-only step #31 added, or lives
+  inside the repo checkout, always fresh via `actions/checkout`, so it can
+  never trigger from self-hosted persistence. No further code changes
+  found necessary in this sweep.
+
+  `tests/native/test_build_native_ffmpeg_pack.py`: +4 tests (complete
+  extraction reused; incomplete extraction — missing `ffmpeg.exe`, the
+  exact observed shape — cleared and re-extracted; no-cache-yet path
+  unaffected; direct unit coverage of the completeness check).
+- **Self-hosted native-beta candidate build — a persisted, interrupted
+  PostgreSQL cache extraction, plus a live MSYS2 keyserver dependency.**
+  Candidate run 32845198987 failed identically in BOTH attempts (a
+  keyring-related retry did not change the outcome) at "Build and verify
+  signed component packs": `pinned PostgreSQL initdb.exe is missing:
+  ...\civiccast-server-pack-cache\extracted\postgres\bin\initdb.exe`.
+  Root cause: `acquire_server_pack_sources()`'s bare `destination.exists()`
+  check trusted a self-hosted `--cache`'s persisted `extracted/postgres`
+  tree — left incomplete by an earlier interrupted run — without
+  re-verifying it, the same idempotent-scratch bug class as
+  `civiccast-build-venv`/`civiccast-msvc-build-tools` (#31), applied here
+  to a different cache. Fixed by re-checking a pre-existing extraction
+  against the same pinned bin/lib/share file set `build_server_pack()`
+  itself requires (`_extracted_tree_is_complete`, reusing the existing
+  `_postgres_sources`/`_tsduck_sources` validators — no duplicated
+  validation logic) before trusting it; an incomplete tree is cleared and
+  re-extracted from the already hash-verified archive.
+
+  Separately investigated per the task: attempt 1's MSYS2 pacman-key
+  keyserver refresh errors (`==> ERROR: Could not update key: <id>`, ~18
+  minutes wasted, non-fatal that run since MSYS2's own hook tolerates the
+  failure). `build_minimal_ffmpeg()` now pre-populates the pacman keyring
+  itself, offline, via a non-login `bash -c` invocation (`pacman-key
+  --init` + `--populate msys2`, both sourced from the pinned, hash-
+  verified MSYS2 base archive already on disk — never a keyserver) before
+  the first login-shell `pacman -U`; MSYS2's own `07-pacman-key.post` hook
+  then sees its trust directory already populated and skips the network
+  `--refresh-keys` step entirely, with no patch to MSYS2's own shipped
+  script. This code has no self-hosted/hosted branch, so the fix applies
+  to both lanes — hosted merely had better keyserver luck, not immunity.
+  Verified locally, outside any runner tree
+  (`C:\CivicCastTester\msys2-keyring-test`, deleted after), against the
+  real pinned MSYS2 base: pre-populating completes in ~7s wholly offline
+  (vs. the observed ~18 minutes), and a subsequent real `pacman -U`
+  against the pinned `nasm` package still passes genuine PGP signature
+  verification and installs successfully.
+
+  `tests/native/test_build_native_server_pack.py`: +4 tests (a complete
+  pre-existing extraction is reused; an incomplete one — missing
+  `initdb.exe`, the exact observed shape — is cleared and re-extracted;
+  the no-cache-yet path is unaffected; direct unit coverage of the
+  completeness check for both artifact kinds).
+- **Self-hosted native-beta candidate build — "Sign the native bootstrap
+  (Azure Artifact Signing)" needs the .NET SDK, not just the runtime.**
+  Candidate run 32838619949 got one step from a complete build, then died:
+  `Exception: Failed to install package: sign 0.9.1-beta.26227.3`.
+  `azure/artifact-signing-action` installs its `sign` CLI (net8.0-targeted,
+  per nuget.org/packages/sign, needing the .NET 8 SDK or later) via `dotnet
+  tool install`. A hosted `windows-latest` runner ships the SDK
+  preinstalled; this box had `dotnet` on PATH but RUNTIME-only (`dotnet
+  --list-sdks` empty, only `Microsoft.NETCore.App 8.0.30`), so the tool
+  install failed with "No .NET SDKs were found." A new self-hosted-only
+  step, "Provision a pinned .NET SDK for the signing action," installs a
+  pinned 8.0.424 SDK (LTS, 8.0.4xx band) via Microsoft's own
+  `dotnet-install.ps1` — a non-admin, caller-owned install into this
+  lane's own `RUNNER_TEMP` scratch root, pinned by exact `-Version` (never
+  `latest`/`LTS`) — then exports `DOTNET_ROOT` and prepends the SDK
+  directory to `GITHUB_PATH` so the signing step resolves it. Idempotent
+  the same way every other self-hosted scratch dir in this job is: a
+  pre-existing tree is trusted only when `dotnet --list-sdks` actually
+  reports the pinned version (not a marker file alone), and an invalid one
+  is cleared and reinstalled. Verified locally, outside any runner tree
+  (`C:\CivicCastTester\dotnet-sdk-test`, deleted after): the exact command
+  the signing action runs internally, `dotnet tool install sign --version
+  0.9.1-beta.26227.3`, succeeds against this pinned SDK. Hosted lane
+  untouched (the step is self-hosted-only). `tests/policy/
+  test_native_beta_candidate_workflow.py`: +2 tests (the provisioning
+  step's shape/ordering/pin, and a regression guard that a floating
+  `latest`/`LTS` version would fail the pin).
+- **PyAV reproducibility gate — the reviewed wheel hash was stale after
+  extending its embedded build-provenance record.** PR #39 (the
+  self-hosted av-provenance fix) added `pyav_sdist_url`/`sha256`/`bytes`
+  to the wheel's embedded `FFMPEG-PROVENANCE.json`, which deterministically
+  changes the compiled wheel's bytes — but `build_native_pyav_wheel.py`'s
+  `EXPECTED_WHEEL_SHA256`/`BYTES` still pinned the PRE-change reference, so
+  the hosted-lane "Two independent Windows workspaces" reproducibility
+  gate (run 32831619693) failed on its very first build: `av-18.0.0-
+  cp311-abi3-win_amd64.whl byte length 4347090 != pinned 4346940`. Not new
+  non-determinism — the embedding mechanism (`SOURCE_DATE_EPOCH`, the
+  fixed zip timestamp, `sort_keys=True` on the JSON) is unchanged and
+  already handled the original FFmpeg-only provenance fields
+  deterministically; the 3 new fields are static compile-time constants
+  with no environment/timestamp dependency. Re-pinned `EXPECTED_WHEEL_
+  SHA256`/`BYTES` to the real value the gate's own workspace-a build
+  reported (`0f9427a4...` / 4,347,090 bytes); cascaded to
+  `requirements-native-app.txt`'s `av==18.0.0` hash pin (the same reviewed
+  wheel identity, enforced separately at install time) and, since that
+  changes the lock file's own bytes, to `APP_REQUIREMENTS_SHA256` in
+  `civiccast/native/app_payload.py` (`git diff` checked before re-pinning,
+  per that constant's own standing rule: exactly one byte range changed,
+  nothing else in the lock). Two test literals
+  (`tests/native/test_pyav_wheel_builder.py`,
+  `tests/native/test_app_payload.py`) updated to match. Not independently
+  re-verified by a local double-build (this box has no pinned MSVC Build
+  Tools install; provisioning one plus two full FFmpeg/PyAV compiles was
+  not feasible in reasonable time) — verified by full test suite instead,
+  and by letting CI's own two-independent-workspace comparison confirm on
+  the next push.
+- **S12 OTT build matrix — Samsung Tizen was the one dishonest cell:
+  `tizen package` never actually ran; the job passed via a static
+  `config.xml`-validation fallback instead of a real `.wgt` build.** Root
+  cause, found via a base64-encoded `profiles.xml` dump on a diagnostic CI
+  run (needed because GitHub's log masking hides the plaintext otherwise):
+  Tizen Studio CLI 2.5.25's `tizen security-profiles add` writes
+  `password="<path>.pwd"` into `profiles.xml` for both the author profile
+  and the auto-attached default distributor profile — a path to a sidecar
+  `.pwd` file that is never created, instead of the real plaintext
+  password. `tizen package`'s signer then reads that path string literally
+  as the PKCS#12 password and fails with `CertificationException: Invaild
+  password` — not a certificate, cli-config, or DISPLAY-less quirk;
+  install, certificate generation, security-profile registration, and
+  cli-config all already worked. Two other projects hit the identical
+  stack trace running `tizen package` headlessly
+  (jellyfin/jellyfin-tizen#66, fgl27/smarttv-twitch#41); the new
+  `civiccast/apps/ott-native/tizen/fix_signing_profile.py` applies the
+  same fix those issues converged on — patch the bogus `.pwd` paths to the
+  real plaintext passwords right before packaging — and stages just the
+  four real runtime files into a clean temp directory first so the
+  resulting `.wgt` doesn't ship this repo's dev/CI-only files. All 8
+  `ci-ott-apps.yml` platforms now produce a real build artifact; see
+  `docs/spec/3.0/sections/S12-ott-apps.md` and `tizen/README.md` for the
+  full diagnosis. `civiccast-tizen-wgt` verified as a real signed widget
+  (contains `author-signature.xml`/`signature1.xml`) on CI run
+  32819441306.
+- **Self-hosted native-beta candidate build — the advisory PyAV posture
+  stopped one layer too early: the independent post-build provenance
+  sweep still rejected the self-hosted-built `av` wheel outright.**
+  Candidate run 32822175257 got through the PyAV build and `uv install`
+  steps (#30's advisory posture) and still failed "Build and verify
+  signed component packs": `"WHEELS/av-18.0.0-cp311-abi3-win_amd64.whl is
+  not an authorized retained dependency wheel"` plus every one of `av`'s
+  installed files reported `"is named by no wheel RECORD"`.
+  `scripts/build_native_app_payload_pack.py`'s `build_app_payload_pack()`
+  runs `scripts/verify_native_app_payload.py`'s independent, deny-by-
+  default `check_app_payload_verification()` on the fully assembled tree
+  AFTER the build — a separate code path from `install_pinned_
+  dependencies()`, with no advisory posture of its own, so it re-rejected
+  the same wheel on its own byte hash regardless of how the earlier steps
+  had authorized it. `_retained_dependency_wheel_provenance()` now
+  authorizes a byte-hash-mismatched `av` wheel by BUILD PROVENANCE instead
+  (name/version pin against the reviewed lock stays a hard failure,
+  unaffected): it re-asserts the two upstream inputs the wheel was
+  compiled FROM — the PyAV sdist and the FFmpeg source archive, both
+  always hash-verified hard-fail on every lane — by reading them back out
+  of the wheel's own embedded `FFMPEG-PROVENANCE.json` (`ffmpeg_
+  provenance()` in `build_native_pyav_wheel.py` now also records the PyAV
+  sdist's hash/bytes, alongside the FFmpeg source archive's it already
+  recorded) and re-checking against the same pinned constants — never
+  trusted unchecked. Once authorized this way, the existing per-member
+  ownership walk needs no further change: it already anchors every
+  installed byte to the IN-RUN wheel's own bytes/RECORD, which resolves
+  the RECORD-mismatch symptom for free — the RECORD was never wrong, it
+  was simply never reached because the wheel was never authorized.
+  `check_app_payload_verification()`/`build_app_payload_pack()` take the
+  same `advisory_pyav_wheel_hash` flag threaded from the CLI; every OTHER
+  retained wheel, and `av` itself on the hosted lane (flag unset, always),
+  is unaffected. `tests/native/test_app_payload_builder.py`: +6 tests
+  (authorizes a provenance-matching wheel; hosted lane still fails the
+  same wheel; a wrong version pin still fails even advisory; a TAMPERED
+  provenance claim still fails; a MISSING provenance file still fails; the
+  flag does not relax any other distribution).
 - **Self-hosted native-beta candidate build — `_work\_temp` scratch dirs
   from a failed run blocked the next run, starting with `civiccast-build-
   venv`.** Candidate run 32810709045 failed "Bootstrap the reviewed Python

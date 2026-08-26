@@ -262,7 +262,35 @@ jobs:
           # active config needs to be pointed at it explicitly (its own
           # output says so) or `tizen package -s` can't find the profile.
           tizen cli-config "profiles.path=$HOME/tizen-studio-data/profile/profiles.xml"
-          tizen package -t wgt -s CivicCastCI -o tizen/out -- tizen || {
+
+          # Root cause (found via a base64'd profiles.xml dump on a diagnostic
+          # CI run, since GitHub's log masking hides the plaintext otherwise):
+          # Tizen Studio CLI 2.5.25's `security-profiles add` writes
+          #   password="/home/.../CivicCastCI.pwd"
+          # into profiles.xml for BOTH the author profile and the
+          # auto-attached default distributor profile -- a path to a sidecar
+          # .pwd file that is never created, instead of the real plaintext
+          # password. `tizen package`'s signer then reads that path string
+          # literally as the PKCS#12 password, and fails with:
+          #   org.tizen.common.sign.exception.CertificationException: Invaild password
+          # at ReadSigningProfileFileCommand.checkPkcs12Password. Confirmed
+          # independently by two other projects hitting the identical stack
+          # trace headlessly (jellyfin/jellyfin-tizen#66,
+          # fgl27/smarttv-twitch#41) -- the latter's fix is the same one
+          # applied here (see fix_signing_profile.py): patch the bogus .pwd
+          # paths to the real plaintext passwords.
+          python3 tizen/fix_signing_profile.py
+
+          # Package only the real W3C-widget runtime files. `tizen package`
+          # zips its whole source directory verbatim -- pointing it at
+          # tizen/ directly would ship this repo's dev/CI-only files
+          # (README.md, validate_config.py, fix_signing_profile.py) inside
+          # the .wgt alongside the app itself.
+          rm -rf /tmp/tizen-package-src
+          mkdir -p /tmp/tizen-package-src
+          cp tizen/config.xml tizen/index.html tizen/icon.png tizen/civiccast-player.js /tmp/tizen-package-src/
+
+          tizen package -t wgt -s CivicCastCI -o tizen/out -- /tmp/tizen-package-src || {
             echo "tizen package failed; searching for cli.log:"
             find "$HOME" -iname "cli.log" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
             exit 1

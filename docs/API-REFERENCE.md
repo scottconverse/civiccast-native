@@ -776,14 +776,23 @@ Read ActivityPub federation status and policy.
 - Request body: none
 - Responses: 200 `ActivityPubStatusResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/agenda-sources/js-portal/posture`
+
+Report whether the optional js_portal (crawl4ai/Playwright) runtime is installed.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: none
+- Request body: none
+- Responses: 200 `JsPortalPostureResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/agenda-sources/{source}/{client_code}/meetings`
 
 List upcoming/recent meetings from an external agenda system.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
-- Parameters: `source` (path, required): `'legistar' | 'primegov' | 'civicclerk'`; `client_code` (path, required): `string`; `since` (query, optional): `string | null` -- Only meetings on/after this date (default: today)
+- Parameters: `source` (path, required): `'legistar' | 'primegov' | 'civicclerk' | 'js_portal'`; `client_code` (path, required): `string`; `since` (query, optional): `string | null` -- Only meetings on/after this date (default: today); `portal_url` (query, optional): `string | null` -- js_portal only: the JS-hydrated portal's own URL. Required when source=js_portal, rejected otherwise.; `portal_vendor_hint` (query, optional): `string | null` -- js_portal only: optional vendor tuning hint (civicplus/granicus/legistar_js/primegov_js/generic).
 - Request body: none
-- Responses: 200 `Array<ExternalMeetingSummary>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Agenda import disabled; 422 Source not yet available in this release; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 502 Upstream fetch failed (includes token-gated tenants)
+- Responses: 200 `Array<ExternalMeetingSummary>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Agenda import disabled; 422 Source not yet available, or (js_portal) portal_url missing/invalid; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 502 Upstream fetch failed (includes token-gated tenants); 503 js_portal only: crawl4ai/Playwright not installed
 
 ### `POST /api/staff/agenda/{agenda_id}/import-external`
 
@@ -792,7 +801,7 @@ Import agenda items from an external agenda system.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
 - Parameters: `agenda_id` (path, required): `string`
 - Request body: `AgendaImportExternalRequest`
-- Responses: 200 `Array<AgendaItem>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Agenda import disabled, or meeting agenda not found; 422 Source not yet available in this release; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 502 Upstream fetch failed (includes token-gated tenants); 503 Durable storage is not ready yet
+- Responses: 200 `Array<AgendaItem>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Agenda import disabled, or meeting agenda not found; 422 Source not yet available in this release; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 502 Upstream fetch failed (includes token-gated tenants); 503 Durable storage is not ready yet, or (js_portal only) the optional crawl4ai/Playwright runtime is not installed
 
 ### `GET /api/staff/agendas`
 
@@ -4439,7 +4448,9 @@ Read CivicCast local federation metadata.
 
 - `client_code` (required): `string`
 - `event_id` (required): `string`
-- `source` (required): `'legistar' | 'primegov' | 'civicclerk'`
+- `portal_url` (optional): `string | null`
+- `portal_vendor_hint` (optional): `string | null`
+- `source` (required): `'legistar' | 'primegov' | 'civicclerk' | 'js_portal'`
 
 ### `AgendaItem`
 
@@ -6638,6 +6649,11 @@ rule (S13 §5.1).
 - `session_id` (optional): `string | null`
 - `terms_version` (optional): `string | null`
 - `view_url` (optional): `string | null`
+
+### `JsPortalPostureResponse`
+
+- `detail` (required): `string`
+- `installed` (required): `boolean`
 
 ### `LegalHoldInput`
 

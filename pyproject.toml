@@ -100,6 +100,33 @@ s3-cdn = [
 captions-runtime = [
   "faster-whisper>=1.2.1,<2",
 ]
+# Agenda Bridge Phase 4 (js_portal) — crawl4ai + Playwright Chromium for
+# JS-hydrated municipal agenda portals (CivicPlus, Granicus, Legistar-JS)
+# that have no documented anonymous JSON/iCal endpoint the way PrimeGov and
+# CivicClerk do (see civiccast/agenda_import/js_portal.py's module
+# docstring for that evaluation). Heavy: Playwright's Chromium binary is a
+# separate ~300 MB download that `pip`/`uv` does NOT fetch — after
+# installing this extra, also run `playwright install chromium` once.
+# Deliberately NOT passed to the native installer's `uv pip compile`
+# invocation (see requirements-native-app.txt's header comment) — the
+# native Windows installer does not bundle this by default; a station that
+# wants js_portal installs it explicitly. civiccast.agenda_import.js_portal
+# lazy-imports crawl4ai only when the source is actually used and reports
+# an honest "not installed" posture otherwise (same convention as
+# civiccast.captions.runtime.FasterWhisperRuntime's captions-runtime extra).
+# Floor pinned to 0.9.2, NOT the first 0.7.x release this extra was
+# originally drafted against: crawl4ai<0.9 requires `lxml~=5.3`, which
+# collides with pikepdf/sacrebleu's own lxml floor and forces uv's
+# universal resolver to downgrade the WHOLE project's lxml to 5.4.0 --
+# reintroducing PYSEC-2026-87 (fixed in 6.1.0), confirmed via `pip-audit`
+# against the resulting lock during this implementation pass. crawl4ai
+# 0.9.2 relaxed its own constraint to `lxml<7,>=5.3`, which is satisfiable
+# alongside lxml 6.1.0 -- re-locked and re-verified clean (no lxml
+# downgrade, no pip-audit finding) against this floor.
+agenda-js-import = [
+  "crawl4ai>=0.9.2,<0.10",
+  "playwright>=1.49,<2",
+]
 
 [project.urls]
 Homepage = "https://github.com/scottconverse/civiccast"
@@ -327,6 +354,8 @@ disallow_untyped_decorators = false
 module = [
   "boto3.*",
   "botocore.*",
+  "crawl4ai.*",
+  "playwright.*",
   "faster_whisper.*",
   "pikepdf.*",
   "reportlab.*",
@@ -347,8 +376,10 @@ ignore_missing_imports = true
 # supervisor adds win32job (Job Object containment, D3), win32pipe/win32file
 # (the D7 control pipe + D2 worker pipes), and win32process (child process
 # groups / CTRL_BREAK). These modules are only ever imported lazily, inside
-# os.name == "nt"-guarded code paths in civiccast/native/.
-module = ["win32event", "win32event.*", "win32security", "win32security.*", "win32api", "win32api.*", "win32job", "win32job.*", "win32pipe", "win32pipe.*", "win32file", "win32file.*", "win32process", "win32process.*", "pywintypes"]
+# os.name == "nt"-guarded code paths in civiccast/native/. win32con added for
+# civiccast/installer/cea708_verification.py's pipe-SDDL identity lookup
+# (TOKEN_QUERY), imported the same lazy os.name == "nt" way.
+module = ["win32event", "win32event.*", "win32security", "win32security.*", "win32api", "win32api.*", "win32job", "win32job.*", "win32pipe", "win32pipe.*", "win32file", "win32file.*", "win32process", "win32process.*", "win32con", "win32con.*", "pywintypes"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

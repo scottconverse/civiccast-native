@@ -678,6 +678,87 @@ jobs:
             --report "artifacts/native-beta/installed-gstreamer-smoke-report.json"
           if ($LASTEXITCODE -ne 0) { throw "Installed GStreamer product smoke failed." }
 
+      # Self-hosted only. Candidate run 32838619949 died right here:
+      # azure/artifact-signing-action installs its `sign` CLI via
+      # `dotnet tool install`, which needs the .NET SDK -- not just the
+      # runtime. A hosted windows-latest runner ships the SDK preinstalled;
+      # this box had only the .NET 8.0 RUNTIME on PATH (`dotnet --list-sdks`
+      # was empty), so `dotnet tool install sign 0.9.1-beta.26227.3` failed
+      # with "No .NET SDKs were found." The `sign` package targets net8.0
+      # and needs the .NET 8 SDK or later to install as a dotnet tool (see
+      # nuget.org/packages/sign and the action's own runner-requirements
+      # docs, which list ".NET runtime 8.0" for self-hosted runners --
+      # accurate about the runtime floor but silent on the SDK `dotnet tool
+      # install` itself additionally needs).
+      #
+      # dotnet-install.ps1 performs a non-admin, caller-owned install --
+      # Microsoft's own documented purpose for CI (learn.microsoft.com/
+      # dotnet/core/tools/dotnet-install-script) -- installed here into this
+      # lane's own scratch root, pinned by exact -Version (an 8.0.4xx LTS
+      # SDK; never `latest`/`LTS`, which would drift silently between runs).
+      # Idempotent the same way every other self-hosted scratch dir in this
+      # job is (see "Ensure a clean self-hosted scratch tree" above):
+      # `dotnet --list-sdks` on any pre-existing tree is the real trust
+      # check, not a marker file alone -- a marker with the SDK binaries
+      # later corrupted or removed would not be caught by a marker-only
+      # check. A valid tree is reused (skips the ~minutes-long re-download);
+      # an invalid one is cleared and reinstalled.
+      #
+      # Trust decision for the script fetch itself: dot.net redirects
+      # (301) to builds.dotnet.microsoft.com over TLS -- both Microsoft-
+      # controlled domains. Microsoft's own signature-validation guidance
+      # covers only the bash variant (dotnet-install.sh + its companion
+      # .sig/.asc) -- there is no published signature or hash for this
+      # PowerShell script to pin against, so trust here rests on TLS plus
+      # the well-known first-party domain, not a hash pin. That is a
+      # deliberately different posture than this workflow's embedded
+      # CPython zip (hash-pinned below in "Acquire the pinned CPython
+      # payload interpreter"): this SDK is build-time signing tooling that
+      # never ships inside the payload, so there is no shipped-byte
+      # provenance obligation the way there is for artifacts the product
+      # embeds.
+      #
+      # Verified locally (not on the runner), 2026-08-25, outside any
+      # runner tree: `dotnet tool install sign --version 0.9.1-beta.26227.3`
+      # -- the exact command/version azure/artifact-signing-action runs
+      # internally -- succeeds against this exact pinned SDK version.
+      - name: Provision a pinned .NET SDK for the signing action (self-hosted only)
+        if: env.BUILD_TARGET == 'self-hosted'
+        shell: pwsh
+        run: |
+          $dotnetSdkVersion = "8.0.424"
+          $dotnetSdkDir = Join-Path $env:RUNNER_TEMP "civiccast-dotnet-sdk"
+          $dotnetExe = Join-Path $dotnetSdkDir "dotnet.exe"
+          $dotnetSdkValid = $false
+          if (Test-Path -LiteralPath $dotnetExe) {
+            $installedSdks = & $dotnetExe --list-sdks 2>$null
+            if ($LASTEXITCODE -eq 0 -and ($installedSdks -match [regex]::Escape($dotnetSdkVersion))) {
+              $dotnetSdkValid = $true
+              Write-Host "Reusing the already-verified .NET SDK $dotnetSdkVersion at $dotnetSdkDir (skipping reinstall)."
+            }
+          }
+          if (-not $dotnetSdkValid) {
+            if (Test-Path -LiteralPath $dotnetSdkDir) {
+              Write-Host "Clearing invalid/incomplete .NET SDK scratch from a previous run: $dotnetSdkDir"
+              Remove-Item -LiteralPath $dotnetSdkDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            New-Item -ItemType Directory -Force -Path $dotnetSdkDir | Out-Null
+            $installScript = Join-Path $env:RUNNER_TEMP "dotnet-install.ps1"
+            Invoke-WebRequest -Uri "https://dot.net/v1/dotnet-install.ps1" -OutFile $installScript
+            & $installScript -Version $dotnetSdkVersion -InstallDir $dotnetSdkDir -NoPath
+            # dotnet-install.ps1 does not reliably set $LASTEXITCODE on
+            # success (observed locally: it stays $null, and `$null -ne 0`
+            # is $true in PowerShell -- checking it here would throw on a
+            # GOOD install). The real gate is what actually landed on disk:
+            $installedSdks = & $dotnetExe --list-sdks 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not ($installedSdks -match [regex]::Escape($dotnetSdkVersion))) {
+              throw "dotnet-install.ps1 did not produce a working .NET SDK $dotnetSdkVersion at $dotnetSdkDir."
+            }
+            Write-Host "Installed .NET SDK $dotnetSdkVersion at $dotnetSdkDir."
+          }
+          "DOTNET_ROOT=$dotnetSdkDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $dotnetSdkDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Sign the native bootstrap (Azure Artifact Signing)
         uses: azure/artifact-signing-action@v2
         with:

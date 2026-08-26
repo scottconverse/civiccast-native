@@ -66,9 +66,9 @@ def test_supply_inputs_and_toolchain_are_exactly_pinned() -> None:
     assert builder.MSVC_COMPILER_VERSION == "19.50.35730"
     assert builder.MSVC_LINKER_VERSION == "14.50.35730.0"
     assert builder.SOURCE_DATE_EPOCH == 1_704_067_200
-    assert builder.EXPECTED_WHEEL_BYTES == 4_346_940
+    assert builder.EXPECTED_WHEEL_BYTES == 4_347_090
     assert builder.EXPECTED_WHEEL_SHA256 == (
-        "445e6a94724b6e83639c3ff4f35135cf3ae7e13a4954957d54cedf91f2e98622"
+        "0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce"
     )
 
 

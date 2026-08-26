@@ -7,6 +7,19 @@
 > per-headend loudness). Disposition per master §11: **extend + net-new.**
 > Code-verified against `main @ 69cc676` (the source the 24h soak runs). File:line citations are
 > to `C:/CivicCastTester/civiccast/civiccast/...`. Overclaiming is the cardinal sin (master §0).
+>
+> **Addendum (2026-08-25, narrow scope — do not read as a rung change for this
+> whole section):** `feat/cea708-decode-back` closed a *different*, narrower gap
+> than the live-loop work this section tracks: S3's commissioning-wizard Screen 10
+> output-proof (a one-shot, bounded, operator-triggered check — not the S11a live
+> ON_AIR decode loop `caption_proof_worker.py` already runs) previously always
+> reported `cea708_verified: null` because no decode-back check was wired into
+> *that specific proof run*. It now runs a real embed-through-decode-back check
+> (new module `civiccast/installer/cea708_verification.py`) and reports a genuine
+> `True`/`False`. See `docs/spec/3.0/sections/S3-commissioning-wizard.md`'s
+> 2026-08-25 banner for the full detail. This addendum does NOT claim any change
+> to this section's own rung table below (loudness, EAS, or the live-loop rung
+> status) — none of that was touched.
 
 This section covers **three compliance subsystems** that share one honest-boundary discipline:
 

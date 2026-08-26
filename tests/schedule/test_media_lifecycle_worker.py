@@ -20,7 +20,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from civiccast.db import Base
+from civiccast.schedule import media_lifecycle_worker as worker_module
 from civiccast.schedule.media_lifecycle_models import (
+    DEFAULT_TRANSCODE_FORMATS,
     READINESS_MISSING_FILE,
     READINESS_NOT_READY,
     READINESS_PENDING_TRANSCODE,
@@ -39,6 +41,7 @@ from civiccast.schedule.media_lifecycle_worker import (
     TranscodeExecutionResult,
 )
 from civiccast.schedule.models import Asset, ScheduleItem
+from civiccast.stream import _ffmpeg as ffmpeg_module
 
 _NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 
@@ -156,10 +159,12 @@ class TestReadinessStateComputation:
             executor=StubTranscodeExecutor(),
         )
         result = worker.run_once(now=_NOW)
-        assert result.transcode_jobs_seeded == 3  # DEFAULT_TRANSCODE_FORMATS
+        assert (
+            result.transcode_jobs_seeded == 1
+        )  # DEFAULT_TRANSCODE_FORMATS (post ADR 0007 amendment)
         with Session(bind=engine) as session:
             jobs = session.query(TranscodeJob).filter(TranscodeJob.asset_id == "a1").all()
-            assert len(jobs) == 3
+            assert len(jobs) == 1
             assert {j.status for j in jobs} == {"completed"}
             row = session.get(AssetReadiness, "a1")
             assert row is not None
@@ -278,7 +283,9 @@ class TestTranscodeDispatch:
         worker = _worker(session_factory, executor=_FailingExecutor())
 
         result = worker.run_once(now=_NOW)
-        assert result.transcode_jobs_failed == 3
+        assert (
+            result.transcode_jobs_failed == 1
+        )  # DEFAULT_TRANSCODE_FORMATS (post ADR 0007 amendment)
         assert result.transcode_jobs_completed == 0
 
         with Session(bind=engine) as session:
@@ -498,3 +505,295 @@ class TestMissingMedia:
         worker = _worker(session_factory)
         missing = worker.list_missing_media(now=_NOW)
         assert missing == []
+
+
+# ---------------------------------------------------------------------------
+# ADR 0007 amendment (S7 resource-posture / license audit): no GPL encoder
+# in the default seed set, a station-level off switch for transcode
+# seeding, an honest (non-silent) concurrency=1, and per-source-duration
+# ffmpeg timeout + BELOW_NORMAL priority for dispatched jobs.
+# ---------------------------------------------------------------------------
+
+
+class TestGplLicensePosture:
+    def test_no_hevc_format_in_default_seed_set(self) -> None:
+        assert "h265_1080p_8mbps" not in DEFAULT_TRANSCODE_FORMATS
+        assert not any("265" in fmt for fmt in DEFAULT_TRANSCODE_FORMATS)
+
+    def test_no_libx265_literal_anywhere_in_the_format_catalog(self) -> None:
+        for output_format, args in worker_module._FORMAT_FFMPEG_ARGS.items():
+            assert "libx265" not in args, (
+                f"{output_format!r} still carries a GPL libx265 literal: {args}"
+            )
+
+
+class TestTranscodeSeedingToggle:
+    def test_enabled_by_default(self) -> None:
+        assert MediaLifecycleWorkerSettings().transcode_seeding_enabled is True
+
+    def test_disabled_seeds_nothing_and_reads_ready(
+        self,
+        engine: Engine,
+        session_factory,  # type: ignore[no-untyped-def]
+        tmp_path: Path,
+    ) -> None:
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        _seed_asset(engine, asset_id="a1", state="validated", file_path=str(media_file))
+        worker = MediaLifecycleWorker(
+            session_factory,
+            settings=MediaLifecycleWorkerSettings(
+                mode="inline", poll_seconds=1.0, transcode_seeding_enabled=False
+            ),
+            transcode_executor=StubTranscodeExecutor(),
+        )
+        result = worker.run_once(now=_NOW)
+        assert result.transcode_jobs_seeded == 0
+        with Session(bind=engine) as session:
+            assert session.query(TranscodeJob).filter(TranscodeJob.asset_id == "a1").count() == 0
+            row = session.get(AssetReadiness, "a1")
+            assert row is not None
+            assert row.readiness_state == READINESS_READY, (
+                "nothing to wait on is not the same as failed -- disabling seeding "
+                "must not strand the asset in pending_transcode forever"
+            )
+
+    def test_from_env_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CIVICCAST_MEDIA_LIFECYCLE_TRANSCODE_SEEDING_ENABLED", "0")
+        assert MediaLifecycleWorkerSettings.from_env().transcode_seeding_enabled is False
+
+    def test_from_env_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CIVICCAST_MEDIA_LIFECYCLE_TRANSCODE_SEEDING_ENABLED", "true")
+        assert MediaLifecycleWorkerSettings.from_env().transcode_seeding_enabled is True
+
+    def test_from_env_unset_keeps_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("CIVICCAST_MEDIA_LIFECYCLE_TRANSCODE_SEEDING_ENABLED", raising=False)
+        assert MediaLifecycleWorkerSettings.from_env().transcode_seeding_enabled is True
+
+
+class TestTranscodeConcurrencyIsHonest:
+    """concurrency is config-surfaced but only one value is implemented --
+    the field must say so instead of silently accepting an unhonored knob."""
+
+    def test_default_is_one(self) -> None:
+        assert MediaLifecycleWorkerSettings().transcode_concurrency == 1
+
+    def test_any_other_value_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="transcode_concurrency"):
+            MediaLifecycleWorkerSettings(transcode_concurrency=2)
+
+    def test_dispatch_never_runs_two_jobs_at_once(
+        self,
+        engine: Engine,
+        session_factory,  # type: ignore[no-untyped-def]
+        tmp_path: Path,
+    ) -> None:
+        """Structural proof, not just a config assertion: dispatch actually
+        serializes jobs one at a time (matters if a future change adds a
+        thread pool without also updating transcode_concurrency)."""
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        _seed_asset(engine, asset_id="a1", state="validated", file_path=str(media_file))
+        in_flight_count = 0
+        max_observed = 0
+
+        class _TrackingExecutor:
+            def run(self, *, asset, output_format, output_dir):  # type: ignore[no-untyped-def]
+                nonlocal in_flight_count, max_observed
+                in_flight_count += 1
+                max_observed = max(max_observed, in_flight_count)
+                in_flight_count -= 1
+                return TranscodeExecutionResult(success=True, output_path=None, file_size_bytes=0)
+
+        worker = _worker(session_factory, executor=_TrackingExecutor())
+        worker.run_once(now=_NOW)
+        assert max_observed == 1
+
+
+class TestTranscodeTimeoutBudget:
+    """_transcode_timeout_seconds: per-minute-of-source budget, floored and
+    capped well below ffmpeg's flat 6h default."""
+
+    def test_unknown_duration_falls_back_to_ceiling(self) -> None:
+        assert (
+            worker_module._transcode_timeout_seconds(None)
+            == worker_module._TRANSCODE_TIMEOUT_CEILING_SECONDS
+        )
+
+    def test_zero_or_negative_duration_falls_back_to_ceiling(self) -> None:
+        assert (
+            worker_module._transcode_timeout_seconds(0)
+            == worker_module._TRANSCODE_TIMEOUT_CEILING_SECONDS
+        )
+        assert (
+            worker_module._transcode_timeout_seconds(-5)
+            == worker_module._TRANSCODE_TIMEOUT_CEILING_SECONDS
+        )
+
+    def test_short_clip_uses_the_floor(self) -> None:
+        assert (
+            worker_module._transcode_timeout_seconds(5)
+            == worker_module._TRANSCODE_TIMEOUT_FLOOR_SECONDS
+        )
+
+    def test_budget_scales_with_source_duration(self) -> None:
+        duration = 120
+        expected = duration * worker_module._TRANSCODE_TIMEOUT_PER_SOURCE_SECOND
+        assert expected > worker_module._TRANSCODE_TIMEOUT_FLOOR_SECONDS
+        assert expected < worker_module._TRANSCODE_TIMEOUT_CEILING_SECONDS
+        assert worker_module._transcode_timeout_seconds(duration) == expected
+
+    def test_long_source_is_capped_below_ffmpegs_six_hour_default(self) -> None:
+        result = worker_module._transcode_timeout_seconds(100_000)
+        assert result == worker_module._TRANSCODE_TIMEOUT_CEILING_SECONDS
+        assert result < ffmpeg_module._DEFAULT_TIMEOUT_SECONDS
+
+
+class TestFfmpegTranscodeExecutorResourcePosture:
+    """FfmpegTranscodeExecutor.run actually applies the never-upscale scale
+    cap, the duration-based timeout, and BELOW_NORMAL priority -- not just
+    that the pieces exist in isolation."""
+
+    def _install_fakes(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+        captured: dict[str, object] = {}
+
+        def fake_run_ffmpeg(args, **kwargs):  # type: ignore[no-untyped-def]
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return ffmpeg_module.FfmpegResult(returncode=1, stdout="", stderr="synthetic, unused")
+
+        monkeypatch.setattr(ffmpeg_module, "check_ffmpeg", lambda: ("7.0", True))
+        monkeypatch.setattr(ffmpeg_module, "resolve_h264_encoder", lambda **_kw: "libopenh264")
+        monkeypatch.setattr(ffmpeg_module, "run_ffmpeg", fake_run_ffmpeg)
+        return captured
+
+    def test_caps_scale_at_source_height_never_upscales(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured = self._install_fakes(monkeypatch)
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        asset = Asset(
+            asset_id="a1",
+            title="x",
+            state="validated",
+            file_path=str(media_file),
+            width_px=640,
+            height_px=360,
+        )
+        FfmpegTranscodeExecutor().run(
+            asset=asset, output_format="h264_720p_5mbps", output_dir=tmp_path
+        )
+        args = captured["args"]
+        assert "scale=-2:360" in args
+        assert "scale=-2:720" not in args, "must never upscale a 360p source to 720p"
+
+    def test_odd_source_height_rounds_down_to_even_for_yuv420p(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured = self._install_fakes(monkeypatch)
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        asset = Asset(
+            asset_id="a1",
+            title="x",
+            state="validated",
+            file_path=str(media_file),
+            width_px=641,
+            height_px=361,
+        )
+        FfmpegTranscodeExecutor().run(
+            asset=asset, output_format="h264_720p_5mbps", output_dir=tmp_path
+        )
+        assert "scale=-2:360" in captured["args"]
+
+    def test_unknown_source_height_keeps_the_rungs_own_cap(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured = self._install_fakes(monkeypatch)
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        asset = Asset(
+            asset_id="a1",
+            title="x",
+            state="validated",
+            file_path=str(media_file),
+            width_px=None,
+            height_px=None,
+        )
+        FfmpegTranscodeExecutor().run(
+            asset=asset, output_format="h264_720p_5mbps", output_dir=tmp_path
+        )
+        assert "scale=-2:720" in captured["args"]
+
+    def test_taller_than_rung_source_still_caps_at_the_rung(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A 4K source must not push the proxy rung past its own cap."""
+        captured = self._install_fakes(monkeypatch)
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        asset = Asset(
+            asset_id="a1",
+            title="x",
+            state="validated",
+            file_path=str(media_file),
+            width_px=3840,
+            height_px=2160,
+        )
+        FfmpegTranscodeExecutor().run(
+            asset=asset, output_format="h264_720p_5mbps", output_dir=tmp_path
+        )
+        assert "scale=-2:720" in captured["args"]
+
+    def test_passes_duration_based_timeout_not_the_flat_six_hour_default(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured = self._install_fakes(monkeypatch)
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        asset = Asset(
+            asset_id="a1",
+            title="x",
+            state="validated",
+            file_path=str(media_file),
+            duration_seconds=120,
+        )
+        FfmpegTranscodeExecutor().run(
+            asset=asset, output_format="h264_720p_5mbps", output_dir=tmp_path
+        )
+        assert captured["kwargs"]["timeout"] == worker_module._transcode_timeout_seconds(120)
+        assert captured["kwargs"]["timeout"] < ffmpeg_module._DEFAULT_TIMEOUT_SECONDS
+
+    def test_dispatches_at_below_normal_priority(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured = self._install_fakes(monkeypatch)
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        asset = Asset(asset_id="a1", title="x", state="validated", file_path=str(media_file))
+        FfmpegTranscodeExecutor().run(
+            asset=asset, output_format="h264_720p_5mbps", output_dir=tmp_path
+        )
+        assert captured["kwargs"]["lower_priority"] is True
+
+    def test_mezzanine_format_carries_no_scale_filter(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """h264_mezzanine is deliberately full-source-resolution -- no
+        scale_filter placeholder, so the never-upscale cap does not apply
+        (there is nothing to cap)."""
+        captured = self._install_fakes(monkeypatch)
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        asset = Asset(
+            asset_id="a1",
+            title="x",
+            state="validated",
+            file_path=str(media_file),
+            height_px=360,
+        )
+        FfmpegTranscodeExecutor().run(
+            asset=asset, output_format="h264_mezzanine", output_dir=tmp_path
+        )
+        assert "-vf" not in captured["args"]

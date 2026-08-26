@@ -23116,7 +23116,7 @@
             "description": "Upstream fetch failed (includes token-gated tenants)"
           },
           "503": {
-            "description": "Durable storage is not ready yet"
+            "description": "Durable storage is not ready yet, or (js_portal only) the optional crawl4ai/Playwright runtime is not installed"
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -23161,7 +23161,8 @@
               "enum": [
                 "legistar",
                 "primegov",
-                "civicclerk"
+                "civicclerk",
+                "js_portal"
               ],
               "type": "string",
               "title": "Source"
@@ -23194,6 +23195,44 @@
               "title": "Since"
             },
             "description": "Only meetings on/after this date (default: today)"
+          },
+          {
+            "name": "portal_url",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "js_portal only: the JS-hydrated portal's own URL. Required when source=js_portal, rejected otherwise.",
+              "title": "Portal Url"
+            },
+            "description": "js_portal only: the JS-hydrated portal's own URL. Required when source=js_portal, rejected otherwise."
+          },
+          {
+            "name": "portal_vendor_hint",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "js_portal only: optional vendor tuning hint (civicplus/granicus/legistar_js/primegov_js/generic).",
+              "title": "Portal Vendor Hint"
+            },
+            "description": "js_portal only: optional vendor tuning hint (civicplus/granicus/legistar_js/primegov_js/generic)."
           }
         ],
         "responses": {
@@ -23215,10 +23254,58 @@
             "description": "Agenda import disabled"
           },
           "422": {
-            "description": "Source not yet available in this release"
+            "description": "Source not yet available, or (js_portal) portal_url missing/invalid"
           },
           "502": {
             "description": "Upstream fetch failed (includes token-gated tenants)"
+          },
+          "503": {
+            "description": "js_portal only: crawl4ai/Playwright not installed"
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/agenda-sources/js-portal/posture": {
+      "get": {
+        "tags": [
+          "staff",
+          "agenda-import"
+        ],
+        "summary": "Report whether the optional js_portal (crawl4ai/Playwright) runtime is installed",
+        "operationId": "js_portal_posture_api_staff_agenda_sources_js_portal_posture_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JsPortalPostureResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -30379,7 +30466,8 @@
             "enum": [
               "legistar",
               "primegov",
-              "civicclerk"
+              "civicclerk",
+              "js_portal"
             ],
             "title": "Source"
           },
@@ -30394,6 +30482,30 @@
             "maxLength": 120,
             "minLength": 1,
             "title": "Event Id"
+          },
+          "portal_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portal Url"
+          },
+          "portal_vendor_hint": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portal Vendor Hint"
           }
         },
         "additionalProperties": false,
@@ -30404,7 +30516,7 @@
           "event_id"
         ],
         "title": "AgendaImportExternalRequest",
-        "description": "POST .../import-external body (plan \u00a76)."
+        "description": "POST .../import-external body (plan \u00a76).\n\n``portal_url``/``portal_vendor_hint`` are ``js_portal``-only additions\n(Phase 4): required exactly when ``source == \"js_portal\"``, forbidden\n(must be omitted/null) for every other source -- enforced below, not by\nthe field types alone, so a legacy client that only ever sends\n``source``/``client_code``/``event_id`` (the first three vendors) is\nunaffected. ``client_code`` stays required for every source, including\n``js_portal`` -- there it is purely an operator-assigned display label\nfor provenance/logging (see ``js_portal.py``'s class docstring), never\nspliced into a request URL, so it does not need the SSRF-conscious\ntenant-token shape :func:`validate_client_code` enforces for the other\nthree vendors... except it still gets that same validation, because a\nshort safe label is a reasonable thing to require regardless of vendor."
       },
       "AgendaItem": {
         "properties": {
@@ -44610,6 +44722,26 @@
         ],
         "title": "InviteJoinView",
         "description": "Result of resolving a public invite token.\n\nEither the join is ready (``needs_terms`` false, ``view_url`` + ``session_id``\npopulated, the token now consumed) or the guest must accept terms first\n(``needs_terms`` true, token NOT consumed, ``terms_version`` to present)."
+      },
+      "JsPortalPostureResponse": {
+        "properties": {
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "installed",
+          "detail"
+        ],
+        "title": "JsPortalPostureResponse",
+        "description": "GET .../agenda-sources/js-portal/posture body -- whether the optional\ncrawl4ai/Playwright runtime is importable on this station, independent\nof whether ``js_portal`` is the currently CIVICCAST_AGENDA_SOURCE-\nselected vendor. Lets the operator console show an honest \"not\ninstalled\" state before the operator even attempts an import."
       },
       "LegalHoldInput": {
         "properties": {

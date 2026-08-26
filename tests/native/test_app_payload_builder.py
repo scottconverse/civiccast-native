@@ -1712,6 +1712,373 @@ def test_forged_third_party_package_fails_against_retained_wheel(
     assert "fastapi/__init__.py" in result.detail
 
 
+# ---------------------------------------------------------------------------
+# Self-hosted av wheel: authorized by build provenance, not wheel byte hash
+# ---------------------------------------------------------------------------
+#
+# Candidate run 32822175257 (self-hosted): #30's advisory posture got the
+# locally-built av wheel through the uv install step, but the pack build's
+# INDEPENDENT deny-by-default provenance sweep (this module, run AFTER the
+# build, from the assembled tree on disk) still required the retained
+# WHEELS/av-*.whl to match the reviewed byte hash exactly -- so it failed
+# with "WHEELS/av-18.0.0-cp311-abi3-win_amd64.whl is not an authorized
+# retained dependency wheel" plus every one of av's installed files "named
+# by no wheel RECORD" (the wheel was never authorized, so none of its
+# members were ever added to the ownership map). advisory_pyav_wheel_hash
+# extends the SAME advisory posture one layer deeper: on a byte-hash miss
+# for `av` specifically, authorize it instead by re-asserting the two
+# upstream, always-hash-verified build inputs (the PyAV sdist, the FFmpeg
+# source archive) recorded in the wheel's own embedded
+# FFMPEG-PROVENANCE.json against the pinned PYAV_SDIST_SHA256/BYTES and
+# FFMPEG_SOURCE_SHA256/BYTES constants -- never a blind bypass.
+
+
+def _write_av_wheel(
+    tree: Path,
+    *,
+    wheel_bytes_suffix: bytes = b"",
+    include_provenance: bool = True,
+    pyav_sdist_sha256: str | None = None,
+    pyav_sdist_bytes: int | None = None,
+    source_archive_sha256: str | None = None,
+    source_archive_bytes: int | None = None,
+) -> tuple[Path, bytes, dict[str, object]]:
+    """Build a minimal `av` retained wheel + its installed site-packages
+    files. Provenance fields default to the REAL pinned upstream-input
+    identity (correct); pass overrides to simulate a tampered claim.
+    `wheel_bytes_suffix` perturbs the wheel's OWN bytes (hence its hash)
+    without touching its provenance claim -- simulating the self-hosted
+    lane's legitimately-different compiled bytes."""
+
+    av_source = b"# av wrapper module (fixture)\n"
+    provenance = {
+        "schema_version": 1,
+        "component": "FFmpeg",
+        "source_archive_sha256": (
+            source_archive_sha256
+            if source_archive_sha256 is not None
+            else verifier.FFMPEG_SOURCE_SHA256
+        ),
+        "source_archive_bytes": (
+            source_archive_bytes
+            if source_archive_bytes is not None
+            else verifier.FFMPEG_SOURCE_BYTES
+        ),
+        "pyav_sdist_sha256": (
+            pyav_sdist_sha256 if pyav_sdist_sha256 is not None else verifier.PYAV_SDIST_SHA256
+        ),
+        "pyav_sdist_bytes": (
+            pyav_sdist_bytes if pyav_sdist_bytes is not None else verifier.PYAV_SDIST_BYTES
+        ),
+    }
+    provenance_bytes = json.dumps(provenance).encode("utf-8")
+    record = (
+        b"av/__init__.py,,\n"
+        b"av-18.0.0.dist-info/FFMPEG-PROVENANCE.json,,\n"
+        b"av-18.0.0.dist-info/RECORD,,\n"
+    )
+
+    wheel = tree / "WHEELS" / "av-18.0.0-cp311-abi3-win_amd64.whl"
+    wheel.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("av/__init__.py", av_source)
+        if include_provenance:
+            archive.writestr("av-18.0.0.dist-info/FFMPEG-PROVENANCE.json", provenance_bytes)
+        archive.writestr("av-18.0.0.dist-info/RECORD", record)
+    if wheel_bytes_suffix:
+        # Perturb the WHEEL FILE's own bytes (its hash) without touching
+        # any archive member -- the self-hosted "legitimately different
+        # compiled bytes" scenario. Appended after the zip's own end-of-
+        # central-directory record, so the archive itself still opens fine
+        # (zipfile reads from the end), matching how a real MSVC-embedded
+        # build-path/PDB-path difference changes the wheel's bytes without
+        # changing what verify_native_app_payload.py's member walk sees.
+        wheel.write_bytes(wheel.read_bytes() + wheel_bytes_suffix)
+
+    package = tree / "Lib" / "site-packages" / "av"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "__init__.py").write_bytes(av_source)
+    dist_info = tree / "Lib" / "site-packages" / "av-18.0.0.dist-info"
+    dist_info.mkdir(parents=True, exist_ok=True)
+    if include_provenance:
+        (dist_info / "FFMPEG-PROVENANCE.json").write_bytes(provenance_bytes)
+    (dist_info / "RECORD").write_bytes(record)
+
+    return wheel, av_source, provenance
+
+
+def _fake_lock_with_wrong_av_hash(tmp_path: Path, *, version: str = "18.0.0") -> tuple[Path, str]:
+    """A reviewed lock pinning av to a hash that will NOT match whatever
+    wheel bytes the test constructs -- simulating the self-hosted lane's
+    legitimately-different compiled wheel."""
+    fake_lock = tmp_path / "requirements-native-app.txt"
+    wrong_hash = "0" * 64
+    fake_lock.write_text(
+        f"av=={version} \\\n    --hash=sha256:{wrong_hash}\n",
+        encoding="utf-8",
+    )
+    return fake_lock, hashlib.sha256(fake_lock.read_bytes()).hexdigest()
+
+
+def _finish_av_manifest(
+    tree: Path,
+    wheel: Path,
+    av_source: bytes,
+    provenance: dict[str, object],
+    *,
+    include_provenance: bool,
+    fake_lock_hash: str,
+) -> None:
+    manifest_path = tree / "app-payload-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["app_lock_sha256"] = fake_lock_hash
+    record_bytes = (
+        b"av/__init__.py,,\n"
+        b"av-18.0.0.dist-info/FFMPEG-PROVENANCE.json,,\n"
+        b"av-18.0.0.dist-info/RECORD,,\n"
+    )
+    additions = [
+        _entry("Lib/site-packages/av/__init__.py", av_source, "av", "18.0.0", "BSD-3-Clause"),
+        _entry(
+            "Lib/site-packages/av-18.0.0.dist-info/RECORD",
+            record_bytes,
+            "av",
+            "18.0.0",
+            "BSD-3-Clause",
+        ),
+        _entry(
+            "WHEELS/av-18.0.0-cp311-abi3-win_amd64.whl",
+            wheel.read_bytes(),
+            "av",
+            "18.0.0",
+            "BSD-3-Clause",
+        ),
+    ]
+    if include_provenance:
+        # A path license_for_payload_path() classifies as EMBEDDED_FFMPEG_
+        # LICENSE (LGPL) records the FFmpeg component's OWN build identity
+        # via component_version_for_payload_path() -- "8c9502e9b0-minimal-
+        # msvc" (EMBEDDED_FFMPEG_BUILD in civiccast/native/app_payload.py),
+        # never PyAV's own "18.0.0" -- matching the house convention already
+        # used elsewhere in this file (see test_pyav_wrapper_and_embedded_
+        # ffmpeg_files_have_distinct_licenses's literal).
+        additions.append(
+            _entry(
+                "Lib/site-packages/av-18.0.0.dist-info/FFMPEG-PROVENANCE.json",
+                json.dumps(provenance).encode("utf-8"),
+                "av",
+                "8c9502e9b0-minimal-msvc",
+                "LGPL-2.1-or-later",
+            )
+        )
+    manifest["files"].extend(
+        {
+            "path": entry.path,
+            "sha256": entry.sha256,
+            "bytes": entry.bytes,
+            "distribution": entry.distribution,
+            "version": entry.version,
+            "license": entry.license,
+        }
+        for entry in additions
+    )
+    manifest["file_count"] = len(manifest["files"])
+    manifest["total_bytes"] = sum(item["bytes"] for item in manifest["files"])
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    entries = [builder.AppFileEntry(**item) for item in manifest["files"]]
+    (tree / "SHA256SUMS").write_text(builder.render_sha256sums(entries), encoding="utf-8")
+    (tree / "LICENSE-BOM.md").write_text(builder.render_app_license_bom(entries), encoding="utf-8")
+
+
+def test_advisory_pyav_wheel_hash_authorizes_a_build_provenance_matching_av_wheel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact candidate-run-32822175257 shape: a self-hosted-compiled av
+    wheel whose bytes legitimately do not match the reviewed pin, but whose
+    embedded FFMPEG-PROVENANCE.json correctly names the pinned, hash-
+    verified PyAV sdist and FFmpeg source it was built from -- authorized."""
+    tree = tmp_path / "payload"
+    _write_minimal_payload(tree)
+    wheel, av_source, provenance = _write_av_wheel(tree, wheel_bytes_suffix=b"self-hosted-build")
+    fake_lock, fake_lock_hash = _fake_lock_with_wrong_av_hash(tmp_path)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_FILE", fake_lock)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_SHA256", fake_lock_hash)
+    _finish_av_manifest(
+        tree, wheel, av_source, provenance, include_provenance=True, fake_lock_hash=fake_lock_hash
+    )
+
+    result = verifier.check_app_payload_verification(tree, advisory_pyav_wheel_hash=True)
+
+    assert result.status == "PASS", result.detail
+
+
+def test_pyav_wheel_hash_mismatch_still_fails_without_the_advisory_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hosted lane's default (advisory_pyav_wheel_hash unset): the SAME
+    wheel that authorizes under advisory=True must still fail outright --
+    hosted-lane behavior is unchanged by this parameter existing."""
+    tree = tmp_path / "payload"
+    _write_minimal_payload(tree)
+    wheel, av_source, provenance = _write_av_wheel(tree, wheel_bytes_suffix=b"self-hosted-build")
+    fake_lock, fake_lock_hash = _fake_lock_with_wrong_av_hash(tmp_path)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_FILE", fake_lock)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_SHA256", fake_lock_hash)
+    _finish_av_manifest(
+        tree, wheel, av_source, provenance, include_provenance=True, fake_lock_hash=fake_lock_hash
+    )
+
+    result = verifier.check_app_payload_verification(
+        tree
+    )  # advisory_pyav_wheel_hash defaults False
+
+    assert result.status == "FAIL"
+    assert "not an authorized retained dependency wheel" in result.detail
+
+
+def test_advisory_pyav_wheel_hash_still_rejects_a_wrong_version_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Build provenance authorizes a byte-hash MISS, never a version miss:
+    av's own name/version pin against the reviewed lock stays a hard
+    failure even in advisory mode."""
+    tree = tmp_path / "payload"
+    _write_minimal_payload(tree)
+    wheel, av_source, provenance = _write_av_wheel(tree)
+    fake_lock, fake_lock_hash = _fake_lock_with_wrong_av_hash(tmp_path, version="17.0.0")
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_FILE", fake_lock)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_SHA256", fake_lock_hash)
+    _finish_av_manifest(
+        tree, wheel, av_source, provenance, include_provenance=True, fake_lock_hash=fake_lock_hash
+    )
+
+    result = verifier.check_app_payload_verification(tree, advisory_pyav_wheel_hash=True)
+
+    assert result.status == "FAIL"
+    assert "not an authorized retained dependency wheel" in result.detail
+
+
+def test_advisory_pyav_wheel_hash_rejects_a_tampered_build_provenance_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not a blind bypass: a wheel whose embedded FFMPEG-PROVENANCE.json
+    claims an upstream sdist hash that does NOT match the pinned
+    PYAV_SDIST_SHA256 must still fail, even in advisory mode."""
+    tree = tmp_path / "payload"
+    _write_minimal_payload(tree)
+    wheel, av_source, provenance = _write_av_wheel(
+        tree,
+        wheel_bytes_suffix=b"self-hosted-build",
+        pyav_sdist_sha256="f" * 64,
+    )
+    fake_lock, fake_lock_hash = _fake_lock_with_wrong_av_hash(tmp_path)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_FILE", fake_lock)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_SHA256", fake_lock_hash)
+    _finish_av_manifest(
+        tree, wheel, av_source, provenance, include_provenance=True, fake_lock_hash=fake_lock_hash
+    )
+
+    result = verifier.check_app_payload_verification(tree, advisory_pyav_wheel_hash=True)
+
+    assert result.status == "FAIL"
+    assert "does not match the pinned upstream build input" in result.detail
+    assert "pyav_sdist_sha256" in result.detail
+
+
+def test_advisory_pyav_wheel_hash_rejects_a_missing_provenance_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wheel with no FFMPEG-PROVENANCE.json at all has nothing to
+    authorize it by build provenance -- must fail with a clear reason, not
+    a silent pass and not a confusing generic mismatch message."""
+    tree = tmp_path / "payload"
+    _write_minimal_payload(tree)
+    wheel, av_source, provenance = _write_av_wheel(
+        tree,
+        wheel_bytes_suffix=b"self-hosted-build",
+        include_provenance=False,
+    )
+    fake_lock, fake_lock_hash = _fake_lock_with_wrong_av_hash(tmp_path)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_FILE", fake_lock)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_SHA256", fake_lock_hash)
+    _finish_av_manifest(
+        tree, wheel, av_source, provenance, include_provenance=False, fake_lock_hash=fake_lock_hash
+    )
+
+    result = verifier.check_app_payload_verification(tree, advisory_pyav_wheel_hash=True)
+
+    assert result.status == "FAIL"
+    assert "has no" in result.detail
+    assert "FFMPEG-PROVENANCE.json" in result.detail
+
+
+def test_advisory_pyav_wheel_hash_does_not_relax_other_distributions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """advisory_pyav_wheel_hash is scoped to `av` alone: a hash-mismatched
+    fastapi wheel must still fail outright even with the flag set."""
+    tree = tmp_path / "payload"
+    _write_minimal_payload(tree)
+    fastapi_source = b"VERSION = 'reviewed'\n"
+    record = b"fastapi/__init__.py,,\nfastapi-1.0.dist-info/RECORD,,\n"
+    wheel = tree / "WHEELS" / "fastapi-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("fastapi/__init__.py", fastapi_source)
+        archive.writestr("fastapi-1.0.dist-info/RECORD", record)
+
+    package = tree / "Lib" / "site-packages" / "fastapi"
+    package.mkdir()
+    (package / "__init__.py").write_bytes(fastapi_source)
+    dist_info = tree / "Lib" / "site-packages" / "fastapi-1.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "RECORD").write_bytes(record)
+
+    fake_lock = tmp_path / "requirements-native-app.txt"
+    fake_lock.write_text(
+        f"fastapi==1.0 \\\n    --hash=sha256:{'0' * 64}\n",
+        encoding="utf-8",
+    )
+    fake_lock_hash = hashlib.sha256(fake_lock.read_bytes()).hexdigest()
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_FILE", fake_lock)
+    monkeypatch.setattr(verifier, "APP_REQUIREMENTS_SHA256", fake_lock_hash)
+
+    manifest_path = tree / "app-payload-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    additions = [
+        _entry("Lib/site-packages/fastapi/__init__.py", fastapi_source, "fastapi", "1.0", "MIT"),
+        _entry("WHEELS/fastapi-1.0-py3-none-any.whl", wheel.read_bytes(), "fastapi", "1.0", "MIT"),
+    ]
+    manifest["files"].extend(
+        {
+            "path": entry.path,
+            "sha256": entry.sha256,
+            "bytes": entry.bytes,
+            "distribution": entry.distribution,
+            "version": entry.version,
+            "license": entry.license,
+        }
+        for entry in additions
+    )
+    manifest["file_count"] = len(manifest["files"])
+    manifest["total_bytes"] = sum(item["bytes"] for item in manifest["files"])
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    entries = [builder.AppFileEntry(**item) for item in manifest["files"]]
+    (tree / "SHA256SUMS").write_text(builder.render_sha256sums(entries), encoding="utf-8")
+    (tree / "LICENSE-BOM.md").write_text(builder.render_app_license_bom(entries), encoding="utf-8")
+
+    result = verifier.check_app_payload_verification(tree, advisory_pyav_wheel_hash=True)
+
+    assert result.status == "FAIL"
+    assert "not an authorized retained dependency wheel" in result.detail
+    assert "fastapi" in result.detail
+
+
 def test_service_host_exe_is_relocated_to_the_payload_root(tmp_path) -> None:
     """Sandbox matrix run 6 (2026-07-30): pywin32's service install MOVES
     pythonservice.exe out of site-packages/win32 into the payload root,

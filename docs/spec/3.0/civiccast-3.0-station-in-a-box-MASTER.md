@@ -464,6 +464,7 @@ Detailed build specs under `docs/spec/3.0/sections/`. "Extend" = code largely ex
 | S24 | `S24-underwriting-spot-management.md` | net-new — underwriting spots + affidavits (`0057_underwriting_spots` — SHIPPED 2026-06-18) |
 | S25 | `S25-meeting-agenda-integration.md` | net-new — agenda + video-timecode chapters (`0058_meeting_agenda` — SHIPPED 2026-06-18; chain HEAD is now `0060_recording_paywall_merge` after S21 + the merge) |
 | S26 | `S26-subscription-paywall.md` | net-new — Stripe paywall (`0059_paywall_access` — SHIPPED 2026-06-18, **optional / V1.x, default OFF**, PCI SAQ-A scope; chain HEAD is now `0060_recording_paywall_merge` after S21's `0056` sibling shipped 2026-06-18 and the merge revision unified the heads) |
+| S27 | `S27-agenda-import-bridge.md` | Phases 1-3 (Legistar/PrimeGov/CivicClerk — plain-HTTP vendor endpoints, no migration of their own) retroactively documented; Phase 4 (`js_portal` — crawl4ai/Playwright for JS-hydrated portals, optional `civiccast[agenda-js-import]` extra, no migration) SHIPPED 2026-08-25 |
 | — | `THIRD-PARTY-LICENSES.md` | dependency licensing manifest + codec-patent caveat |
 
 > Parity closures `0045` (CG depth) and `0052` (SAP/descriptive audio) are **in-section extensions** of S6 and S11 (their owning sections), not standalone files. (Both shipped on disk; numbers reconciled to the as-built chain 2026-06-18.)

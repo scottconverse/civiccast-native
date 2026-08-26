@@ -424,6 +424,30 @@ class TestRunFfmpeg:
             "output.ts",
         ]
 
+    def test_default_priority_is_unchanged(self) -> None:
+        """lower_priority defaults False -- real-time/latency-sensitive
+        callers (live egress, the VOD packager answering an HTTP request)
+        must keep running at normal process priority unless they opt in."""
+        mock_completed = MagicMock(returncode=0, stdout="", stderr="")
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffmpeg"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=mock_completed) as spawn,
+        ):
+            run_ffmpeg(["-version"])
+
+        assert spawn.call_args.kwargs["creationflags"] == 0
+
+    def test_lower_priority_sets_below_normal_creationflags(self) -> None:
+        mock_completed = MagicMock(returncode=0, stdout="", stderr="")
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffmpeg"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=mock_completed) as spawn,
+        ):
+            run_ffmpeg(["-version"], lower_priority=True)
+
+        expected = getattr(ffmpeg_module.subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+        assert spawn.call_args.kwargs["creationflags"] == expected
+
 
 @pytest.mark.parametrize("output_stream", ["stdout", "stderr"])
 def test_probe_ffmpeg_encoders_uses_exact_binary_and_parses_registered_names(

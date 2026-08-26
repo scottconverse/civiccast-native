@@ -33,6 +33,7 @@ __all__ = [
     "H264EncoderUnavailableError",
     "check_ffmpeg",
     "probe_ffmpeg_encoders",
+    "probe_video_dimensions",
     "resolve_h264_encoder",
     "run_ffmpeg",
     "start_ffmpeg",
@@ -40,6 +41,7 @@ __all__ = [
 ]
 
 _FFMPEG_EXECUTABLE = "ffmpeg"
+_FFPROBE_EXECUTABLE = "ffprobe"
 #: Policy order: hardware first, then Windows Media Foundation, then the
 #: royalty-free software encoder, then libx264 (GPL) strictly last. libx264 is
 #: reachable ONLY when the probed binary itself carries it -- a station running
@@ -164,6 +166,58 @@ def probe_ffmpeg_encoders(ffmpeg_path: str) -> frozenset[str]:
             completed.stderr,
         )
     return _parse_ffmpeg_encoders(completed.stdout + "\n" + completed.stderr)
+
+
+def probe_video_dimensions(path: Path) -> tuple[int, int] | None:
+    """Return ``(width, height)`` of ``path``'s first video stream, or None.
+
+    Deliberately total: every failure mode — ffprobe absent, non-zero exit,
+    unparseable output, a file with no video stream — answers ``None`` rather
+    than raising, because the only caller
+    (:func:`civiccast.stream.packager.pack_vod_asset`) treats ``None`` as
+    "dimensions unknown" and falls back to the full ABR ladder. A packaging
+    run must never fail because an optimisation could not measure its input.
+    """
+
+    if shutil.which(_FFPROBE_EXECUTABLE) is None:
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [
+                _FFPROBE_EXECUTABLE,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0:s=x",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if completed.returncode != 0:
+        return None
+    parts = completed.stdout.strip().splitlines()[:1]
+    if not parts:
+        return None
+    fields = parts[0].split("x")
+    if len(fields) < 2:
+        return None
+    try:
+        width, height = int(fields[0]), int(fields[1])
+    except ValueError:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
 
 
 EncoderProbe = Callable[[str], Collection[str]]
@@ -333,6 +387,7 @@ def run_ffmpeg(
     *,
     progress_callback: Callable[[str], None] | None = None,
     timeout: float | None = _DEFAULT_TIMEOUT_SECONDS,
+    lower_priority: bool = False,
 ) -> FfmpegResult:
     """Run ffmpeg with the given argument list.
 
@@ -351,6 +406,16 @@ def run_ffmpeg(
     on expiry — callers that run under a shared lock or need per-job error
     handling should catch it explicitly (see
     ``civiccast.recording.runtime._finalize_segments``).
+
+    ``lower_priority`` starts the subprocess at Windows' BELOW_NORMAL
+    priority class (same ``getattr(subprocess, ..., 0)`` degrade-to-0
+    pattern :func:`start_ffmpeg` already uses for ``CREATE_NO_WINDOW``, so
+    it is a harmless no-op on non-Windows/test platforms). Default is
+    ``False`` — unattended background work (S7's media lifecycle worker)
+    opts in explicitly; real-time/latency-sensitive callers (live egress,
+    the VOD packager answering an operator's HTTP request) must keep
+    running at the process's normal priority, so this must never become a
+    blanket default here.
     """
     ffmpeg_path = _ffmpeg_path()
     resolved_args = _resolve_video_encoder_args(args, ffmpeg_path)
@@ -359,6 +424,8 @@ def run_ffmpeg(
     # Security: shell=False (the default); args is an explicit list, never a string.
     cmd = [ffmpeg_path, "-y", *resolved_args]
 
+    creationflags = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0) if lower_priority else 0
+
     completed = subprocess.run(  # noqa: S603
         cmd,
         capture_output=True,
@@ -366,6 +433,7 @@ def run_ffmpeg(
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
+        creationflags=creationflags,
     )
 
     if progress_callback is not None:

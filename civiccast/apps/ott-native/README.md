@@ -89,11 +89,12 @@ routing, and accessibility polish.
 ## CI
 
 `.github/workflows/ci-ott-apps.yml` builds all four codebases on hosted
-GitHub runners (`ubuntu-latest` for Roku/Android/webOS, `macos-latest` for
-Apple), with per-platform artifacts uploaded and honest reporting where a
-platform's CLI can't run headlessly on a hosted runner (Tizen — see
-`tizen/README.md`). Triggers on changes under this directory plus
-`workflow_dispatch`.
+GitHub runners (`ubuntu-latest` for Roku/Android/Tizen/webOS, `macos-latest`
+for Apple), with per-platform artifacts uploaded and honest reporting for
+the (currently theoretical) case where the headless Tizen Studio install
+itself fails on a given run and the job falls back to static `config.xml`
+validation instead of a real `.wgt` — see `tizen/README.md`. Triggers on
+changes under this directory plus `workflow_dispatch`.
 
 ## Build matrix (developer machine requirements, for local work outside CI)
 
@@ -102,5 +103,5 @@ platform's CLI can't run headlessly on a hosted runner (Tizen — see
 | Roku | `zip` (or `roku-deploy`) + a Roku device on the LAN in dev mode for sideload | any |
 | iOS / tvOS | Xcode 15+ | macOS 13.5+ |
 | Android (`tv`/`firetv`/mobile) | `gradle` 8.7+ (wrapper checked in) + Android SDK | any |
-| Tizen | Tizen Studio CLI (not installable headless on hosted CI — see `tizen/README.md`) | any |
+| Tizen | Tizen Studio CLI (installs and packages headless on hosted CI — see `tizen/README.md`) | any |
 | webOS | `@webosose/ares-cli` (npm, no device needed for packaging) | any |

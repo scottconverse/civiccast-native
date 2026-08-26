@@ -42,8 +42,11 @@ function selectNativeTextTrack(nativeTracks: TextTrackList, trackId: number) {
  *
  * Native HLS (Safari, iOS) bypasses hls.js and uses the <video> element directly.
  * Other browsers dynamically import hls.js on mount for adaptive bitrate
- * switching across the 5-variant ladder (4 content renditions + slate
- * fallback). The dynamic import keeps the initial bundle small — first
+ * switching across whatever ladder the manifest advertises — up to four
+ * content renditions plus the slate fallback, and fewer when the source was
+ * smaller than the top rungs (the packager never upscales). The player reads
+ * the variant list from the manifest and makes no assumption about its
+ * length. The dynamic import keeps the initial bundle small — first
  * paint of the portal page does not pay the hls.js download cost.
  */
 export function HlsPlayer({
@@ -82,6 +85,14 @@ export function HlsPlayer({
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrackOption[]>([])
   const [selectedSubtitleTrack, setSelectedSubtitleTrack] = useState<number>(-1)
+  // Source of truth for "which subtitle track does CivicCast's own UI say is
+  // active" -- see the long comment at its first use below for why hls.js's
+  // own hls.subtitleTrack/SUBTITLE_TRACK_SWITCH cannot be trusted blindly.
+  // null = not yet decided (distinct from -1, which is the legitimate,
+  // explicit "Off" selection -- collapsing the two would make a real "Off"
+  // choice get silently overwritten by the manifest default on the next
+  // SUBTITLE_TRACKS_UPDATED, e.g. after a mid-stream level switch).
+  const desiredSubtitleTrackRef = useRef<number | null>(null)
   const analyticsRef = useRef<AnalyticsContext | undefined>(analytics)
   useEffect(() => {
     analyticsRef.current = analytics
@@ -153,10 +164,18 @@ export function HlsPlayer({
     setErrorMessage('')
     setSubtitleTracks([])
     setSelectedSubtitleTrack(-1)
+    desiredSubtitleTrackRef.current = null
     hlsRef.current = null
 
     // Prefer hls.js when it is supported so Chromium/Firefox can parse HLS
     // subtitle tracks. Safari/iOS fall back to the native HLS path below.
+    // Note this split is NOT "webkit vs everyone else": hls.js requires
+    // MediaSource, and Playwright's Linux WebKit build (what CI's
+    // ubuntu-latest runners use) has it, so hls.js is the real branch
+    // exercised there too -- only WebKit builds that genuinely lack
+    // MediaSource (real Safari/iOS, Playwright's Windows/macOS WebKit
+    // builds) take the native branch below. See the a11y spec's caption
+    // test for how each is exercised in CI.
     let hls: Hls | null = null
     let cancelled = false
     let cleanupNativeHls: (() => void) | null = null
@@ -212,6 +231,42 @@ export function HlsPlayer({
 
       hls = new HlsCtor({ enableWorker: true, lowLatencyMode: false })
       hlsRef.current = hls
+      // hls.js's SubtitleTrackController keeps its own trackId in sync with
+      // the real browser's native <track> element modes: it polls
+      // media.textTracks (WebKit lacks TextTrackList#onchange, so hls.js
+      // falls back to sampling every 500ms instead of listening for a real
+      // 'change' event) and, if it doesn't see any native track marked
+      // "showing", forces hls.subtitleTrack back to -1. That polling can
+      // -- and on a slow/loaded runner reliably does -- land in the window
+      // between hls.js selecting the manifest's DEFAULT=YES subtitle track
+      // (driven purely by playlist metadata, near-instant) and the actual
+      // native <track> DOM element existing (only created once the
+      // subtitle sub-playlist/segment has actually loaded over the
+      // network, i.e. later and jitter-prone). hls.js treats the native
+      // DOM as authoritative, so it "corrects" a still-loading selection
+      // back to "off" -- a genuine hls.js bug (see e.g. video-dev/hls.js
+      // issues #1948 and #4345), not a WebKit or CivicCast one, but one a
+      // real Safari/iOS or slow-network viewer can hit exactly like CI
+      // did (reproduced locally on Linux/WebKit, matching the
+      // ubuntu-latest CI runner: see the caption test's history for the
+      // reproduction). Fatal in this app because CivicCast owns the
+      // caption UI (the English/Spanish/Off buttons below) and never
+      // relies on a browser-native captions menu, so there is no
+      // legitimate external source that should ever move the selection
+      // out from under CivicCast's own choice.
+      //
+      // Fix: track what CivicCast's UI actually asked for
+      // (desiredSubtitleTrackRef) independently of hls.js's internal
+      // trackId, and treat it as authoritative -- seed it from the
+      // manifest's own DEFAULT=YES flag (not from hls.subtitleTrack, which
+      // can read back a stale -1 mid-selection) and re-push it back into
+      // hls.js whenever a SUBTITLE_TRACK_SWITCH disagrees with it. Once
+      // the native <track> element genuinely exists, that re-push
+      // succeeds and durably converges (toggleTrackModes() finally has a
+      // real element to mark "showing" on), so this is a real fix, not a
+      // tighter poll: it makes the desired selection eventually consistent
+      // regardless of how many spurious corrections hls.js's own polling
+      // fires first.
       const syncSubtitleTracks = () => {
         const tracks = hls?.subtitleTracks ?? []
         if (tracks.length === 0) return
@@ -222,7 +277,18 @@ export function HlsPlayer({
             language: track.lang || '',
           })),
         )
-        setSelectedSubtitleTrack(hls?.subtitleTrack ?? -1)
+        if (desiredSubtitleTrackRef.current === null) {
+          const defaultIndex = tracks.findIndex((track) => track.default)
+          desiredSubtitleTrackRef.current = defaultIndex >= 0 ? defaultIndex : -1
+        }
+        applyDesiredSubtitleTrack()
+      }
+      const applyDesiredSubtitleTrack = () => {
+        const desired = desiredSubtitleTrackRef.current ?? -1
+        setSelectedSubtitleTrack(desired)
+        if (hls && hls.subtitleTrack !== desired) {
+          hls.subtitleTrack = desired
+        }
       }
       hls.attachMedia(video)
       hls.on(HlsCtor.Events.MEDIA_ATTACHED, () => {
@@ -236,7 +302,15 @@ export function HlsPlayer({
         syncSubtitleTracks()
       })
       hls.on(HlsCtor.Events.SUBTITLE_TRACK_SWITCH, (_event, data) => {
-        setSelectedSubtitleTrack(data.id)
+        if (data.id === desiredSubtitleTrackRef.current) {
+          setSelectedSubtitleTrack(data.id)
+          return
+        }
+        // hls.js moved away from what CivicCast's UI asked for on its own
+        // (see the long comment above) -- reassert instead of accepting
+        // it, so both the button UI and the actual caption rendering
+        // stay durably correct.
+        applyDesiredSubtitleTrack()
       })
       hls.on(HlsCtor.Events.ERROR, (_event, data) => {
         if (data.fatal) {
@@ -261,6 +335,7 @@ export function HlsPlayer({
   const selectSubtitleTrack = (trackId: number) => {
     const hls = hlsRef.current
     if (hls) {
+      desiredSubtitleTrackRef.current = trackId
       hls.subtitleTrack = trackId
       hls.subtitleDisplay = trackId >= 0
       setSelectedSubtitleTrack(trackId)

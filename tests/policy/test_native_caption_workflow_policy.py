@@ -729,7 +729,109 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # github_env does not raise), net +1 over the two removed. Re-derived by
     # an actual `--collect-only` run on this tree, not by arithmetic: (1619,
     # 1811) -> (1620, 1812).
-    assert (collect("not windows_only"), collect()) == (1620, 1812)
+    #
+    # fix/self-hosted-lane-av-provenance (2026-08-25): +6 pure, 0
+    # windows_only -- candidate run 32822175257 (self-hosted): #30's
+    # advisory posture got the locally-built av wheel through the uv
+    # install step, but the pack build's INDEPENDENT deny-by-default
+    # provenance sweep in scripts/verify_native_app_payload.py (run AFTER
+    # the build, from the assembled tree on disk -- a separate check from
+    # install_pinned_dependencies) still required the retained WHEELS/
+    # av-*.whl to match the reviewed byte hash exactly, so it failed with
+    # "WHEELS/av-18.0.0-cp311-abi3-win_amd64.whl is not an authorized
+    # retained dependency wheel" plus every one of av's installed files
+    # "named by no wheel RECORD" (the wheel was never authorized, so none
+    # of its members were ever added to the ownership map).
+    # advisory_pyav_wheel_hash now threads one layer deeper: on a
+    # byte-hash miss for `av` specifically (name/version pin still
+    # enforced), _retained_dependency_wheel_provenance() authorizes it
+    # instead by BUILD PROVENANCE -- re-asserting the wheel's own embedded
+    # FFMPEG-PROVENANCE.json (extended to also record the PyAV sdist's
+    # hash/bytes, not just FFmpeg's) against the SAME pinned
+    # PYAV_SDIST_SHA256/BYTES and FFMPEG_SOURCE_SHA256/BYTES constants
+    # build_native_pyav_wheel.py's own acquire_verified_artifact calls
+    # already hard-fail on every lane. Once authorized this way the
+    # existing per-member ownership walk needs no further change: it
+    # already trusts the IN-RUN wheel's own bytes/RECORD as the ownership
+    # source, never the reviewed reference's. 6 new platform-independent
+    # tests land in tests/native/test_app_payload_builder.py: authorizes a
+    # provenance-matching av wheel; the hosted lane (flag unset) still
+    # fails the same wheel outright; a wrong version pin still fails even
+    # advisory; a TAMPERED provenance claim still fails (not a blind
+    # bypass); a MISSING provenance file still fails with a clear reason;
+    # and the flag does not relax authorization for any other
+    # distribution (fastapi). Plain function calls, real zipfile fixtures,
+    # and monkeypatched APP_REQUIREMENTS_FILE/SHA256 only -- no OS
+    # dependency, no windows_only marker, so all six collect into both
+    # lanes. Re-derived by an actual `--collect-only` run on this tree,
+    # not by arithmetic: (1620, 1812) -> (1626, 1818).
+    #
+    # fix/self-hosted-lane-msys2-keyring (2026-08-25): +4 pure, 0
+    # windows_only -- candidate run 32845198987 (self-hosted) failed
+    # identically in BOTH attempts at "Build and verify signed component
+    # packs" with "pinned PostgreSQL initdb.exe is missing:
+    # civiccast-server-pack-cache\extracted\postgres\bin\initdb.exe".
+    # acquire_server_pack_sources()'s bare `destination.exists()` check
+    # trusted a self-hosted `--cache`'s persisted, interrupted-mid-
+    # extraction `extracted/postgres` tree instead of re-extracting it --
+    # the same idempotent-scratch bug class as civiccast-build-venv/
+    # civiccast-msvc-build-tools, applied here to a DIFFERENT cache. Fixed
+    # by re-verifying a pre-existing extraction against the same pinned
+    # bin/lib/share file set build_server_pack() itself requires
+    # (_extracted_tree_is_complete, dispatching to the existing
+    # _postgres_sources/_tsduck_sources validators) before trusting it; an
+    # incomplete tree is cleared and re-extracted from the already hash-
+    # verified archive. Separately, attempt 1's MSYS2 pacman-key keyserver
+    # refresh errors ("Could not update key: <id>", ~18 minutes wasted,
+    # non-fatal that run) were investigated and fixed too, per the task:
+    # build_minimal_ffmpeg() now pre-populates the pacman keyring itself,
+    # offline, via a non-login bash invocation (`pacman-key --init` +
+    # `--populate msys2`, both sourced from the pinned, hash-verified
+    # MSYS2 base archive already on disk -- never a keyserver) before the
+    # first login-shell `pacman -U`, whose own copy of MSYS2's `07-pacman-
+    # key.post` hook then sees its trust directory already populated and
+    # skips the network `--refresh-keys` step entirely. Verified locally,
+    # outside any runner tree, against the real pinned MSYS2 base and a
+    # real pinned package (nasm) -- not self-hosted-only: this code has no
+    # lane branch, so the fix applies to hosted too (hosted merely had
+    # better keyserver luck, not immunity). 4 new platform-independent
+    # tests land in tests/native/test_build_native_server_pack.py: a
+    # complete pre-existing extraction is reused (no wasted re-extract); an
+    # incomplete one (missing initdb.exe, the exact observed shape) is
+    # cleared and re-extracted; the ordinary no-cache-yet path is
+    # unaffected; and direct unit coverage of the completeness check for
+    # both artifact kinds. Plain function calls and monkeypatched
+    # fetch_locked_artifact/safe_extract_zip/load_lock only -- no OS
+    # dependency, no windows_only marker, so all four collect into both
+    # lanes. Re-derived by an actual `--collect-only` run on this tree, not
+    # by arithmetic: (1626, 1818) -> (1630, 1822).
+    #
+    # fix/self-hosted-lane-layer10 (2026-08-25): +4 pure, 0 windows_only --
+    # candidate run 32858543561 (self-hosted, main=7bf705a) got past the
+    # PostgreSQL cache fix (#41) and K1, then failed identically at
+    # "build_native_ffmpeg_pack: FFmpeg closure seed bin/ffmpeg.exe is
+    # missing: ...\civiccast-ffmpeg-pack-cache\extracted\ffmpeg\bin\
+    # ffmpeg.exe" -- the same persisted-incomplete-extraction bug as #41,
+    # one script over. Fixed identically:
+    # _extracted_ffmpeg_is_complete() re-verifies a pre-existing extraction
+    # against the same pinned bin/license file set build_ffmpeg_pack()
+    # itself requires (reusing the existing _ffmpeg_sources() validator)
+    # before trusting it; an incomplete tree is cleared and re-extracted.
+    # A static sweep of every remaining script build-native-beta's pack
+    # step calls (ollama, cuda, bootstrap) found each already immune to
+    # this bug class (atomic-replace, per-file re-verify-or-redownload,
+    # and npm's own clean-install respectively) -- no further code changes
+    # needed there. 4 new platform-independent tests land in
+    # tests/native/test_build_native_ffmpeg_pack.py: complete extraction
+    # reused; incomplete extraction (missing ffmpeg.exe, the exact
+    # observed shape) cleared and re-extracted; no-cache-yet path
+    # unaffected; direct unit coverage of the completeness check. Plain
+    # function calls and monkeypatched fetch_locked_artifact/
+    # safe_extract_zip/load_lock only -- no OS dependency, no
+    # windows_only marker, so all four collect into both lanes.
+    # Re-derived by an actual `--collect-only` run on this tree, not by
+    # arithmetic: (1630, 1822) -> (1634, 1826).
+    assert (collect("not windows_only"), collect()) == (1634, 1826)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

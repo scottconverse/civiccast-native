@@ -498,6 +498,224 @@ both `_capture-note.txt` files record *"logs dir not present at
 C:\ProgramData\CivicCast\logs"*, because the install failed before the
 station ever logged anything.
 
+## The hoststore wedge: `C:\CivicCastHostStore` is a mapped folder *and* the install target
+
+The candidate-#11 run (`831f3df`, run id `32871499307`) is the first Gate A run
+where the install **succeeded end to end** — `installer_exit_code: 0`,
+`d4-activate-station: returned 0`. The station-bundle failure from run 7 is
+resolved, and the shipper quiesce measurably helped
+(`d4-activate-station` 35m09 ✗ → 31m13 ✓; `stage-packs` 11m26 → 9m09). Read
+those deltas with care, though: candidate #11 is a **different kit** from the
+one runs 6 and 7 used (different installer SHA, 1,264 dirs vs 968), so this is
+not a controlled comparison of the quiesce alone.
+
+The run then stalled, and for the first time the harness **named the step**.
+
+### What the instrumentation caught
+
+```
+stuck_step=install-progress-copied-post-install  stuck_progress=seq:7
+stuck_since_utc=2026-08-25T17:20:05Z  stalled_seconds=509  threshold_seconds=480
+```
+
+`summary.json` confirms it: `step_seq: 7`,
+`last_completed_step: install-progress-copied-post-install`,
+`install_progress_log_found: true`, `install_progress_log_bytes: 7170`, and
+`install_progress_log_tail: []` — the tail assignment never ran.
+
+That pins the wedge to the three statements after that step:
+
+```powershell
+Save-Summary -Step "install-progress-copied-$Phase"          # seq 7, 17:20:03.379Z ✓
+$summary.install_progress_log_tail = @($lines | Select-Object -Last 80)   # in-memory
+$script:InstallProgressCaptured = $true                                   # in-memory
+Save-Summary -Step "install-progress-captured-$Phase"        # never arrived
+```
+
+**This rules out the obvious suspect rather than confirming it.** The natural
+reading — that the wedge is in the hoststore reads (install-dir discovery,
+`station-set.json` / `activation-self-test.json`, ARP, service checks) — is
+excluded by the instrumentation: every one of those is a separately recorded
+step further down (`post-install-grace-sleep`, `install-dir-located`,
+`install-tree-top-levels`, `service-state-query`), and none appeared.
+
+The data being processed is unremarkable too: the log is 178 lines, longest
+line 138 characters, 3,466 characters across the whole 80-line tail. Two
+in-memory assignments and a ~2 KB local JSON write is not work that takes
+eight and a half minutes.
+
+### What is still unresolved, and the instrument added for it
+
+Four runs have now ended with the same signature: **last step written, nothing
+after, every other process in the VM healthy.** That signature is identical
+whether the driver's *thread blocked* or the driver's *process died* — and an
+unhandled `OutOfMemoryException` in this VM is not hypothetical; this script's
+own `Start-Job`/PSWorkflow comment records one. No post-mortem so far can tell
+those apart, which means none of them can pick a fix with confidence.
+
+So the driver now records its PID (`_DRIVER-PID.txt`), the watchdog is given
+it, and **both** watchdog triggers call `Get-DriverLiveness` at the moment they
+fire, writing the answer into `STALL-TIMEOUT.txt` / `WATCHDOG-TIMEOUT.txt` and
+into the placeholder `DONE.json`:
+
+```
+driver_process_alive=true  driver_pid=6160 driver_cpu_seconds=41.2 driver_working_set_mb=118.4
+driver_process_alive=false driver_pid=6160 (process is gone -- the driver DIED rather than blocked)
+```
+
+The observation is only available while the VM still exists, so it has to be
+made there and then. This is the same shape of fix as `step_seq` was for the
+arming race: the missing instrument, not a guess at the mechanism.
+
+### Bounding the remaining hoststore reads
+
+Independently of the named wedge, the coordinator is right that the
+post-install phase still read a mapped folder synchronously.
+`C:\CivicCastHostStore\install` holds **10,683 files across 1,264
+directories** after a successful install, and the installer's own last step
+spent three minutes merely measuring it (`EstimatedSize corrected` in
+`install-progress.log`). Three readers remained:
+
+| Reader | What it touches | Now |
+|---|---|---|
+| `Test-KnownPaths` | up to 4 probes × 2 marker files | bounded probe, 90 s |
+| install-tree listing | `Get-ChildItem` over the install root | bounded probe, 120 s |
+| `Invoke-StationDiagCapture` marker copies | 2 files, runs up to 3× per run | bounded probe, 60 s |
+
+`Invoke-BoundedProbe` ships a piece of the driver's own logic to a throwaway
+`powershell.exe` with an arguments file and a result file, waits with a hard
+timeout, kills the child if it overruns, and returns `$null` plus a recorded
+error rather than blocking. "Targeted and non-recursive" was never the same as
+"bounded": a single `Test-Path` against a wedged share blocks forever.
+
+The quiesce window also **stops being lifted when the installer returns**. It
+used to be, in a `finally` on the install itself, which put the 25-second tick
+straight back underneath this same hoststore-heavy phase. It is now lifted at
+the station-up wait (`shipper-unquiesced-at-station-up-wait`), which is
+HTTP-bound and is the first phase that genuinely wants prompt shipping.
+
+### Why the install target was NOT moved off the mapped folder
+
+Making the in-sandbox install target a local `C:\CivicCastLocalInstall` would
+remove the dependency outright and is the tidier-sounding option. It is not
+viable, for reasons already recorded in `In-Sandbox-Report.ps1`:
+
+- The `/D=C:\CivicCastHostStore\install` comment documents that staging locally
+  **"blew past the Sandbox's virtual disk (os error 112 'not enough space')
+  during station-pack cache"** — the install is ~12 GB and activation stages
+  ~40 GB of models, against a ~40 GB virtual C:.
+- The same comment records that activation **"REFUSES junction/symlink
+  install-roots"**, closing the obvious dodge of installing locally and linking.
+- `Run-GateA.ps1`'s fresh-install guarantee resets `hoststore\` before every
+  run, and `gate_a_verdict.py`'s `install` and `activation` checks read that
+  tree from the host side. Moving it would mean changing all three plus the
+  evidence contract.
+
+Bounding the accesses is the option that survives all three constraints. The
+mapped install target is therefore a **standing** architectural constraint of
+this harness, not a defect awaiting cleanup.
+
+### One evidence-integrity fix
+
+`_SHIPPER-QUIESCE.marker` joins the shipper's retraction list. The mirror is
+additive, so a marker shipped during the quiesce window survived on the host
+after the driver removed it locally — the preserved evidence for this very run
+contains one, which tells a reader the run was still quiesced when it was not.
+Evidence that misreports harness state is worse than absent evidence.
+
+## The cause of the stalls: `ConvertTo-Json` walking a `Get-Content` cycle
+
+This is the answer to five runs' worth of stalls — 4, 6, 7, and both
+candidate-#11 runs. The liveness instrument added one change earlier is what
+produced it, on the very next run:
+
+```
+driver_process_alive=true driver_pid=6636 driver_cpu_seconds=449.5 driver_working_set_mb=8318.2
+```
+
+Alive, CPU-hot, **8.3 GB resident in a 16 GB VM**. Not blocked I/O — a
+serializer explosion. That single line eliminated every I/O hypothesis at once.
+
+### The mechanism
+
+`Get-Content` does not emit plain strings. Every line is a `PSObject` carrying
+six note properties: `PSPath`, `PSParentPath`, `PSChildName`, `PSDrive`,
+`PSProvider`, `ReadCount`. `PSProvider` is a `ProviderInfo`; its `.Drives` is a
+collection of `PSDriveInfo`; each `PSDriveInfo` has a `.Provider`
+back-reference to that same `ProviderInfo`. **That is a cycle.**
+`ConvertTo-Json` serializes note properties, so `-Depth N` walks that cycle
+`N` levels deep and expands combinatorially.
+
+Measured on this host — **one** `Get-Content` line inside a hashtable:
+
+| `-Depth` | JSON produced | Time |
+|---|---|---|
+| 3 | 1,889 chars | 0.8 ms |
+| 4 | 32,936 chars | 107 ms |
+| 5 | 447,193 chars | 105 ms |
+| 6 | 3,852,872 chars | 620 ms |
+| 7 | **98,197,802 chars** | 11.2 s |
+| 8 | never completed | killed at 180 s, having reached 4 GB / 178 s CPU |
+
+The driver serialized **eighty** such lines at `-Depth 8`. 8.3 GB and 449.5 s
+of CPU is precisely what that costs. The same 80 lines as plain strings at the
+same depth 8: **5,314 chars in 30 ms**.
+
+### Why it always looked like an I/O stall
+
+`install_progress_log_tail` was assigned from `Get-Content` output, and the
+*next* statement was a `Save-Summary`. So the run always died at the first
+serialization after that assignment — which is why runs 4, 6 and 7 all stalled
+just past `station-diag-captured-after-t3t5` (where the capture used to live),
+and why both #11 runs stalled at `install-progress-copied-post-install` after
+the capture was relocated. **The stall followed the code.** Relocating it moved
+the explosion earlier in the run rather than removing it.
+
+(Run 3, which stalled at `t2-render-assert` in a run of `Add-Content` calls, is
+*not* explained by this and is not claimed to be.)
+
+### The fix — two independent defences
+
+Either alone would have prevented this; neither alone prevents the next one.
+
+1. **Sanitize at the boundary.** `ConvertTo-PlainForSummary` rebuilds the
+   summary out of plain types before serialization. It recurses only into
+   arrays and dictionaries, caps its own depth, and renders anything else via
+   `ToString()` rather than walking its object graph — which is exactly what
+   `ConvertTo-Json` does not do. A cyclic `ProviderInfo` now serializes to 59
+   characters instead of expanding forever.
+2. **Serialize at the depth the data needs (6), not 8.** The deepest real
+   member is `install_tree_top_levels`: summary → array → entry → `children` →
+   string = 5. Depth is a blast-radius multiplier for this whole bug class.
+
+Plus a `[string[]]` cast at the source, which strips the decoration before it
+can reach `$summary` at all.
+
+> **A PS 5.1 trap found while fixing this.** The sanitizer first used
+> `System.Collections.Generic.List[object]` and `return @($out)`. In Windows
+> PowerShell 5.1 that combination throws *"Argument types do not match"*,
+> which silently degraded **every array member of the summary** into one
+> space-joined string. It uses `ArrayList` and `return , ($out.ToArray())`
+> now — the leading comma also keeps a single-element array an array, which
+> matters because the judge counts those fields. Caught by the host-side
+> sanitizer test, not by reading the code.
+
+### Forensics for the next unknown
+
+When the watchdog fires **and the driver is still alive**, it now also
+collects:
+
+- a **CPU delta over a fixed interval**, with a verdict. One cumulative CPU
+  number cannot separate "spinning right now" from "burned CPU earlier and is
+  now blocked"; two samples can. Verified against a real spinning process
+  (`driver_busy_percent=100.8 driver_verdict=SPINNING`) and a real sleeping one
+  (`driver_busy_percent=0 driver_verdict=NOT-SPINNING`).
+- a **bounded MiniDump** via `rundll32 comsvcs.dll` — skipped when the working
+  set exceeds `DumpMaxWorkingSetMb` (a full dump of the 8.3 GB process this was
+  written for would be 8.3 GB), time-bounded at 120 s, and written to
+  `$env:TEMP` and **never** to the shipped evidence directory. Only its path
+  and size are recorded, so it must be read inside the VM before teardown.
+
 ## Known harness quirk: the Aug-19 reference run's `completion` check
 
 The PASS fixture used in `tests/gate_a/fixtures/pass-2026-08-19/` is a

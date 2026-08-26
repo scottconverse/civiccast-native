@@ -107,15 +107,39 @@ _LOUDNESS_STATUSES = (LOUDNESS_OK, LOUDNESS_FAILED, LOUDNESS_NOT_CHECKED)
 
 # Open decision #1 in the S7 spec ("how many transcodes per asset acceptable
 # for a 100-asset station?") is unresolved -- surfaced to Scott, not picked
-# silently (per CLAUDE.md "Open decisions" policy). This default matches the
-# spec's own suggested default set and is overridable per station via
-# CIVICCAST_TRANSCODE_FORMATS (comma-separated) so a station can run
-# h264-only until the decision resolves.
-DEFAULT_TRANSCODE_FORMATS: tuple[str, ...] = (
-    "h264_720p_5mbps",
-    "h265_1080p_8mbps",
-    "h264_mezzanine",
-)
+# silently (per CLAUDE.md "Open decisions" policy). The spec's own suggested
+# default set names three formats, phrased as a question the spec itself
+# never closes ("h264_720p_5mbps (proxy), h265_1080p_8mbps (archive),
+# h264_mezzanine (SDI)?" -- S7 spec Open decision #1, with "h264-only for
+# simplicity" offered as the named alternative).
+#
+# ADR 0007 amendment (2026-08-24, S7 resource-posture audit) resolves this
+# to the named alternative, for two independent reasons, not one silent
+# choice standing in for both:
+#
+# 1. LICENSE: h265_1080p_8mbps shipped with a bare "libx265" (GPL) literal.
+#    civiccast never links a GPL encoder into the product (ADR 0007's own
+#    compliance section; enforced by tests/policy/test_ffmpeg_h264_encoder.py
+#    and the native-ffmpeg-pack's gpl_negative_control build check). H.264
+#    has a real GPL-free resolution path (resolve_h264_encoder(): hardware ->
+#    h264_mf -> libopenh264). HEVC has no such path anywhere in this tree --
+#    no hevc_mf/hevc_nvenc resolver exists -- so there is no sanctioned way
+#    to honor an HEVC transcode target today. Removed rather than shipped
+#    opt-in-but-broken; a future ADR can add a real HEVC resolver if operator
+#    demand justifies the engineering.
+# 2. RESOURCE POSTURE: seeding every configured format unconditionally for
+#    every validated asset, dispatched synchronously in the worker thread
+#    with ffmpeg's full 6-hour default timeout, is a large amount of
+#    unsupervised transcoding against the same box that serves operator
+#    requests (see MediaLifecycleWorkerSettings' docstring). The default
+#    seed set is now the single most broadly useful web rendition;
+#    `h264_mezzanine` (near-lossless, -crf 12, the heaviest of the three) is
+#    opt-in via CIVICCAST_TRANSCODE_FORMATS, not seeded by default.
+#
+# Per-station override unchanged: CIVICCAST_TRANSCODE_FORMATS
+# (comma-separated) lets an operator opt back into a wider ladder --
+# including a self-provided HEVC pipeline once one exists.
+DEFAULT_TRANSCODE_FORMATS: tuple[str, ...] = ("h264_720p_5mbps",)
 
 # Archive proof target types, mirroring civiccast.archive.models.ArchiveProof.
 ARCHIVE_TARGET_INTERNET_ARCHIVE = "internet_archive"

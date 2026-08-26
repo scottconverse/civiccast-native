@@ -471,7 +471,17 @@ def test_real_media_trim_proof_duration_matches_trim_window(
     status = worker.run_once(now=datetime(2026, 6, 9, 18, 1, tzinfo=UTC))[0]
 
     assert status.state == FINALIZATION_STATE_COMPLETED
-    packaged_variant = tmp_path / "council-2026-06-09-hls" / "240p" / "playlist.m3u8"
+    package_dir = tmp_path / "council-2026-06-09-hls"
+    # The packager never upscales, so this deliberately tiny 160x90 source
+    # produces one content variant at its own resolution rather than the
+    # ladder's 240p rung (the worker passes no dimensions, so this also
+    # proves pack_vod_asset probes the input for itself). Discover the
+    # variant instead of hard-coding a rung name.
+    content_variants = sorted(
+        path.name for path in package_dir.iterdir() if path.is_dir() and path.name != "slate"
+    )
+    assert content_variants == ["90p"]
+    packaged_variant = package_dir / content_variants[0] / "playlist.m3u8"
     probe = run_ffprobe(packaged_variant)
     assert probe.duration_seconds is not None
     assert abs(probe.duration_seconds - 1) <= 1

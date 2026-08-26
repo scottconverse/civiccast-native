@@ -303,6 +303,15 @@ def _parse_caption_timestamp(value: str) -> float:
 def _clean_caption_text(value: str) -> str:
     cleaned = re.sub(r"<br\s*/?>", " ", unescape(value), flags=re.IGNORECASE)
     cleaned = re.sub(r"<[^>]+>", "", cleaned)
+    # Strip ASS/SSA override blocks (e.g. "{\an7}") that ffmpeg's eia_608/cc_dec ->
+    # srt encoder wraps real decoded closed-caption text in for on-screen position
+    # (\anX). Discovered empirically 2026-08-25 building the CEA-708 decode-back
+    # fixture (docs/spec/3.0/sections/S11-captions-loudness-eas-compliance.md): every
+    # real ffmpeg-decoded CEA-608/708 cue carries this prefix, so without stripping it
+    # here, evaluate_caption_decode_back's text comparison never matches a real
+    # decode against a clean expected cue -- this parser had never been exercised
+    # against real ffmpeg SRT output before, only against hand-written fixture text.
+    cleaned = re.sub(r"\{\\[^}]*\}", "", cleaned)
     return " ".join(cleaned.split())
 
 

@@ -121,10 +121,22 @@ MSVC_LINKER_VERSION: Final[str] = "14.50.35730.0"
 SOURCE_DATE_EPOCH: Final[int] = 1_704_067_200
 UV_VERSION: Final[str] = "uv 0.11.15 (3cffe97c2 2026-05-18 x86_64-pc-windows-msvc)"
 UV_SHA256: Final[str] = "d4ffe0b73cbb1fa3d11242567d55c6e9058c4e885fae9272764409583a4e8640"
+# Re-pinned 2026-08-25 (fix/self-hosted-lane-av-provenance): ffmpeg_provenance()
+# now also embeds pyav_sdist_url/sha256/bytes inside the wheel's own
+# FFMPEG-PROVENANCE.json (see that function's docstring), which changes the
+# reviewed wheel's bytes deterministically -- the embedding mechanism itself
+# (SOURCE_DATE_EPOCH, the fixed zip timestamp, sort_keys=True on the JSON) is
+# unchanged and was already exercised for the FFmpeg-only fields it already
+# carried. Captured from a real hosted `windows-latest` build (run
+# 32831619693's "Two independent Windows workspaces" gate, workspace-a) after
+# that gate correctly caught the stale pin -- both `verify_artifact(candidate,
+# ...)` and `verify_artifact(output, ...)` in build() check the SAME repacked
+# wheel (output is a byte-for-byte copy of candidate), so there is exactly one
+# new reviewed value to carry, not two.
 EXPECTED_WHEEL_SHA256: Final[str] = (
-    "445e6a94724b6e83639c3ff4f35135cf3ae7e13a4954957d54cedf91f2e98622"
+    "0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce"
 )
-EXPECTED_WHEEL_BYTES: Final[int] = 4_346_940
+EXPECTED_WHEEL_BYTES: Final[int] = 4_347_090
 
 _DIST_INFO: Final[str] = f"av-{PYAV_VERSION}.dist-info"
 _RECORD: Final[str] = f"{_DIST_INFO}/RECORD"
@@ -154,7 +166,23 @@ _DOWNLOAD_HOSTS: Final[frozenset[str]] = frozenset(
 
 
 def ffmpeg_provenance() -> dict[str, object]:
-    """Machine-readable notice shipped inside the repaired PyAV wheel."""
+    """Machine-readable notice shipped inside the repaired PyAV wheel.
+
+    Doubles as the wheel's own build-provenance record: alongside the
+    FFmpeg component notice, it names the two pinned, hash-verified
+    upstream inputs this wheel was compiled FROM -- the PyAV sdist and the
+    FFmpeg source archive. Both are acquired via `acquire_verified_artifact`
+    with the default `advisory=False`, so they are a hard failure on every
+    build lane, self-hosted included (see `verify_artifact`'s docstring) --
+    unlike the FINAL COMPILED wheel's own bytes, which can legitimately
+    differ by build machine (docs/process/pyav-wheel-reproducibility.md).
+    `scripts/verify_native_app_payload.py`'s provenance sweep reads these
+    two fields back out of THIS wheel and re-asserts them against the same
+    PYAV_SDIST_SHA256/BYTES and FFMPEG_SOURCE_SHA256/BYTES constants to
+    authorize a self-hosted-built `av` wheel by build provenance instead of
+    by wheel byte hash -- see that module's `_retained_dependency_wheel_
+    provenance` and docs/process/pyav-wheel-reproducibility.md.
+    """
 
     return {
         "schema_version": 1,
@@ -172,6 +200,9 @@ def ffmpeg_provenance() -> dict[str, object]:
             "They may be replaced with interface-compatible modified builds; "
             "keep the filenames expected by the repaired extension modules."
         ),
+        "pyav_sdist_url": PYAV_SDIST_URL,
+        "pyav_sdist_sha256": PYAV_SDIST_SHA256,
+        "pyav_sdist_bytes": PYAV_SDIST_BYTES,
     }
 
 
@@ -751,6 +782,61 @@ def build_minimal_ffmpeg(
     for package in package_paths:
         shutil.copy2(package, package_cache / package.name)
     bash = msys_root / "usr" / "bin" / "bash.exe"
+
+    # Pre-populate the pacman keyring OURSELVES, offline, via a NON-login
+    # bash invocation (`-c`, not `-lc`) -- before the first LOGIN shell
+    # below would otherwise trigger MSYS2's own bootstrap of it. `/etc/
+    # profile` (sourced only by login shells) unconditionally sources every
+    # `/etc/post-install/*.post` hook on EVERY login-shell start;
+    # `07-pacman-key.post`'s `maybe_init_keyring` guards its whole body
+    # (`pacman-key --init`, `--populate msys2`, and -- the actual culprit --
+    # `--refresh-keys`) behind `[ ! -d /etc/pacman.d/gnupg ]`. Creating that
+    # directory first, via `--init`/`--populate` alone, makes the LATER
+    # login shell's own copy of the hook see the work already done and skip
+    # straight past `--refresh-keys` -- nothing inside MSYS2's own shipped
+    # script needs patching.
+    #
+    # `--init` and `--populate msys2` are both OFFLINE: they build the
+    # trust database from the msys2 keyring package
+    # (`usr/share/pacman/keyrings/msys2.gpg`) already inside the pinned,
+    # hash-verified base archive extracted above -- never a live keyserver.
+    # `--refresh-keys` is the ONLY network-dependent step (wrapped `|| true`
+    # in MSYS2's own hook, so it is never itself fatal) and is what
+    # candidate run 32845198987 actually hit, in BOTH attempts: repeated
+    # "==> ERROR: Could not update key: <id>" against an unreachable
+    # keyserver from the self-hosted runner, ~18 minutes of wall-clock time
+    # burned per build before falling through to the already-locally-
+    # trusted keys anyway (the run did not ultimately fail here -- the
+    # bootstrap script tolerates the refresh failing -- but the same call
+    # has no such tolerance for TIMING OUT indefinitely on a worse day, and
+    # 18 minutes is dead weight on every self-hosted build regardless).
+    # `build_minimal_ffmpeg` is NOT self-hosted-only code -- it runs
+    # identically on the hosted lane, which merely gets luckier keyserver
+    # reachability from hosted egress; this fix removes the network
+    # round-trip structurally, for both lanes, not just self-hosted's flaky
+    # case of it.
+    #
+    # Verified locally, outside any runner tree
+    # (C:\CivicCastTester\msys2-keyring-test, deleted after) against this
+    # exact pinned MSYS2 base: pre-populating this way completes in ~7s
+    # wholly offline (zero "refreshing key from hkps://..." lines), and the
+    # subsequent LOGIN-shell `pacman -U` below (unchanged) still performs
+    # real PGP signature verification ("checking keyring... checking
+    # package integrity...") against the pinned nasm package and installs
+    # it successfully -- the keyring this produces is exactly as
+    # trustworthy as MSYS2's own default bootstrap, just without the
+    # keyserver round-trip.
+    runner(
+        [
+            str(bash),
+            "-c",
+            'export PATH="/usr/bin:$PATH"; '
+            'export GNUPGHOME="$(pacman-conf.exe gpgdir)"; '
+            "pacman-key --init && pacman-key --populate msys2 && gpgconf --kill all",
+        ],
+        check=True,
+    )
+
     local_packages = " ".join(
         shlex.quote(f"/tmp/civiccast-build-packages/{path.name}") for path in package_paths
     )

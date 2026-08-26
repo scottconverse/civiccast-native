@@ -77,6 +77,12 @@ from civiccast.native.app_payload import (  # noqa: E402
     is_prohibited_license,
     license_for_payload_path,
 )
+from scripts.build_native_pyav_wheel import (  # noqa: E402
+    FFMPEG_SOURCE_BYTES,
+    FFMPEG_SOURCE_SHA256,
+    PYAV_SDIST_BYTES,
+    PYAV_SDIST_SHA256,
+)
 
 _TRUST_ARTIFACTS = frozenset({"app-payload-manifest.json", "SHA256SUMS", "LICENSE-BOM.md"})
 _REQUIRED_INTERPRETER_FILES = ("python.exe", "python312.dll")
@@ -493,12 +499,91 @@ def _wheel_member_install_path(
     return path.as_posix()
 
 
+_PYAV_DISTRIBUTION = "av"
+
+
+def _pyav_build_provenance_problems(wheel_path: Path, *, version: str) -> list[str]:
+    """Authorize a self-hosted-built `av` wheel by BUILD PROVENANCE instead
+    of by wheel byte hash.
+
+    The final compiled wheel's own bytes can legitimately differ by build
+    machine on the self-hosted lane -- MSVC can embed build-machine-
+    dependent state (absolute scratch paths, PDB paths) even from an
+    identical toolchain; see docs/process/pyav-wheel-reproducibility.md.
+    What does NOT legitimately vary is what the wheel was compiled FROM: the
+    PyAV sdist and the FFmpeg source archive, both acquired by
+    `build_native_pyav_wheel.py`'s `acquire_verified_artifact` with the
+    default `advisory=False` -- a hard failure on every build lane,
+    self-hosted included, if either differs from its pin.
+
+    This reads those two identities back out of the wheel's OWN embedded
+    `<dist-info>/FFMPEG-PROVENANCE.json` (written by that same script's
+    `ffmpeg_provenance()` at build time -- see its docstring, which names
+    this function as the reader) and re-asserts them against the SAME
+    PYAV_SDIST_SHA256/BYTES and FFMPEG_SOURCE_SHA256/BYTES constants this
+    module imports directly from `build_native_pyav_wheel.py` -- never
+    trusting the wheel's self-report unchecked. A missing, unreadable, or
+    mismatched record is a hard failure; only a wheel whose OWN claimed
+    build inputs match the reviewed pins is authorized. Returns the list of
+    PROVENANCE problems (empty means authorized).
+    """
+    dist_info = f"av-{version}.dist-info"
+    provenance_member = f"{dist_info}/FFMPEG-PROVENANCE.json"
+    try:
+        with zipfile.ZipFile(wheel_path) as archive:
+            try:
+                raw = archive.read(provenance_member)
+            except KeyError:
+                return [
+                    f"PROVENANCE: self-hosted-built av wheel has no {provenance_member} "
+                    "to authorize it by build provenance"
+                ]
+    except (OSError, zipfile.BadZipFile) as exc:
+        return [
+            f"PROVENANCE: self-hosted-built av wheel is unreadable: {type(exc).__name__}: {exc}"
+        ]
+    try:
+        provenance = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return [f"PROVENANCE: {provenance_member} is malformed: {type(exc).__name__}: {exc}"]
+    if not isinstance(provenance, dict):
+        return [f"PROVENANCE: {provenance_member} root is not an object"]
+
+    expected_upstream_inputs = {
+        "source_archive_sha256": FFMPEG_SOURCE_SHA256,
+        "source_archive_bytes": FFMPEG_SOURCE_BYTES,
+        "pyav_sdist_sha256": PYAV_SDIST_SHA256,
+        "pyav_sdist_bytes": PYAV_SDIST_BYTES,
+    }
+    return [
+        f"PROVENANCE: {provenance_member} {key}={provenance.get(key)!r} does not match "
+        f"the pinned upstream build input {value!r}"
+        for key, value in expected_upstream_inputs.items()
+        if provenance.get(key) != value
+    ]
+
+
 def _retained_dependency_wheel_provenance(
     tree: Path,
     *,
     require_complete_wheelhouse: bool,
+    advisory_pyav_wheel_hash: bool = False,
 ) -> tuple[dict[str, tuple[str, str]], list[str]]:
-    """Anchor third-party package bytes to hash-authorized retained wheels."""
+    """Anchor third-party package bytes to hash-authorized retained wheels.
+
+    ``advisory_pyav_wheel_hash`` -- see `build_native_app_payload.py`'s
+    `build()` and docs/process/pyav-wheel-reproducibility.md -- must be set
+    whenever the retained `av` wheel may legitimately NOT match the
+    reviewed byte-hash pin, i.e. whenever it was compiled on the
+    self-hosted lane rather than reused byte-exact from the hosted-
+    reviewed reference. When set, ONLY the `av` distribution's authorization
+    falls back to `_pyav_build_provenance_problems` on a byte-hash miss;
+    `av`'s own name/version pin and every OTHER retained wheel are
+    unaffected -- still a hard failure on any mismatch. When unset (the
+    hosted lane's default), behavior is byte-identical to before this
+    parameter existed: every retained wheel, `av` included, must match the
+    reviewed byte hash exactly.
+    """
 
     reviewed, problems = _reviewed_requirement_wheels()
     ownership: dict[str, tuple[str, str]] = {}
@@ -516,7 +601,21 @@ def _retained_dependency_wheel_provenance(
         version = str(parsed_version)
         identity = reviewed.get(distribution)
         wheel_hash = _sha256_file(wheel_path)
-        if identity is None or version != identity[0] or wheel_hash not in identity[1]:
+        authorized = identity is not None and version == identity[0] and wheel_hash in identity[1]
+        version_pin_ok = identity is not None and version == identity[0]
+        if (
+            not authorized
+            and version_pin_ok
+            and advisory_pyav_wheel_hash
+            and distribution == _PYAV_DISTRIBUTION
+        ):
+            provenance_problems = _pyav_build_provenance_problems(wheel_path, version=version)
+            if not provenance_problems:
+                authorized = True
+            else:
+                problems.extend(provenance_problems)
+                continue
+        if not authorized:
             problems.append(
                 f"PROVENANCE: retained dependency wheel {wheel_path.name} does not "
                 "match the reviewed version/hash"
@@ -620,6 +719,7 @@ def _record_provenance(
     *,
     require_console_launchers: bool,
     require_dependency_wheels: bool,
+    advisory_pyav_wheel_hash: bool = False,
 ) -> tuple[dict[str, tuple[str, str]], list[str]]:
     """Reconstruct installed-file ownership from immutable wheel evidence."""
 
@@ -631,6 +731,7 @@ def _record_provenance(
     dependency_ownership, dependency_problems = _retained_dependency_wheel_provenance(
         tree,
         require_complete_wheelhouse=require_dependency_wheels,
+        advisory_pyav_wheel_hash=advisory_pyav_wheel_hash,
     )
     problems.extend(dependency_problems)
     for payload_path, owner in dependency_ownership.items():
@@ -652,12 +753,14 @@ def _verify_independent_provenance(
     *,
     require_console_launchers: bool,
     require_dependency_wheels: bool,
+    advisory_pyav_wheel_hash: bool = False,
 ) -> list[str]:
     ownership, problems = _record_provenance(
         tree,
         civiccast_wheel_sha256,
         require_console_launchers=require_console_launchers,
         require_dependency_wheels=require_dependency_wheels,
+        advisory_pyav_wheel_hash=advisory_pyav_wheel_hash,
     )
     pywin32_versions = {
         version for distribution, version in ownership.values() if distribution == "pywin32"
@@ -801,8 +904,18 @@ def check_app_payload_verification(
     require_caption_pack: bool = False,
     require_console_launchers: bool = False,
     require_dependency_wheels: bool = False,
+    advisory_pyav_wheel_hash: bool = False,
 ) -> PayloadVerification:
-    """Re-derive and byte-check the payload tree against its manifest."""
+    """Re-derive and byte-check the payload tree against its manifest.
+
+    ``advisory_pyav_wheel_hash`` -- forwarded to `_retained_dependency_wheel_
+    provenance` via `_verify_independent_provenance`/`_record_provenance` --
+    must be set on the self-hosted lane, where the retained `av` wheel's own
+    compiled bytes may legitimately differ from the reviewed byte-hash pin
+    (see `_pyav_build_provenance_problems`'s docstring). Unset (the default,
+    and the hosted lane's only value) keeps every retained wheel, `av`
+    included, hash-pinned exactly as before this parameter existed.
+    """
     manifest_path = tree / "app-payload-manifest.json"
     if not manifest_path.is_file():
         return PayloadVerification("FAIL", f"no app-payload-manifest.json at {tree}")
@@ -888,6 +1001,7 @@ def check_app_payload_verification(
             civiccast_wheel_sha256,
             require_console_launchers=require_console_launchers,
             require_dependency_wheels=require_dependency_wheels,
+            advisory_pyav_wheel_hash=advisory_pyav_wheel_hash,
         )
     )
     if require_caption_pack:
@@ -940,12 +1054,23 @@ def check_app_payload_verification(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify a native application payload tree.")
     parser.add_argument("tree", type=Path, help="the built payload tree directory")
+    parser.add_argument(
+        "--advisory-pyav-wheel-hash",
+        action="store_true",
+        help=(
+            "authorize the retained av wheel by build provenance (its own embedded "
+            "PyAV-sdist/FFmpeg-source hashes) when its compiled bytes do not match the "
+            "reviewed byte-hash pin, instead of failing outright -- set this on the "
+            "self-hosted lane only (see docs/process/pyav-wheel-reproducibility.md)"
+        ),
+    )
     args = parser.parse_args(argv)
     result = check_app_payload_verification(
         args.tree.resolve(),
         require_caption_pack=True,
         require_console_launchers=True,
         require_dependency_wheels=True,
+        advisory_pyav_wheel_hash=args.advisory_pyav_wheel_hash,
     )
     print(f"app_payload_verification: {result.status} - {result.detail}")
     return 0 if result.status == "PASS" else 1
