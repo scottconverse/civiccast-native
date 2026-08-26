@@ -199,12 +199,29 @@ jobs:
           else
             echo "$SELECTED" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-          printf '%s\n' "$SELECTED" > changed_files.txt
+          # A truly-empty $SELECTED must produce a truly-empty file: the next
+          # step's `[ ! -s changed_files.txt ]` "nothing to mutate" check
+          # depends on zero bytes meaning zero files. `printf '%s\n' ""`
+          # still emits one newline byte, which made that check permanently
+          # blind to the empty case -- a test-only diff (no non-test .py
+          # changed) fell through to `only_mutate = [""]`, and mutmut then
+          # failed hard with "Stopping early, because we could not find any
+          # test case for any mutant" instead of the intended "informational
+          # skip". See the "Run diff-scoped mutmut" step for the failure.
+          if [ -n "$SELECTED" ]; then
+            printf '%s\n' "$SELECTED" > changed_files.txt
+          else
+            : > changed_files.txt
+          fi
 
       - name: Run diff-scoped mutmut (always informational)
         if: ${{ !cancelled() }}
         run: |
-          if [ ! -s changed_files.txt ]; then
+          # Belt-and-suspenders alongside the scope step's fix: treat a
+          # whitespace/blank-lines-only file the same as a zero-byte file,
+          # so this can never again reach mutmut with an effectively empty
+          # (but non-zero-byte) only_mutate list.
+          if ! grep -q '[^[:space:]]' changed_files.txt 2>/dev/null; then
             echo "Nothing to mutate; skipping mutmut run." >> "$GITHUB_STEP_SUMMARY"
           elif grep -qE '^\[tool\.mutmut\]' pyproject.toml 2>/dev/null; then
             echo "SKIPPED: pyproject.toml already has [tool.mutmut]; merge diff-scoping into the existing section instead. NO mutation data produced." \
