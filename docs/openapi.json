@@ -61273,6 +61273,25 @@
               }
             ],
             "title": "Retention Policy Default"
+          },
+          "poll_interval_seconds": {
+            "type": "integer",
+            "maximum": 3600.0,
+            "minimum": 1.0,
+            "title": "Poll Interval Seconds",
+            "default": 5
+          },
+          "processed_file_mode": {
+            "type": "string",
+            "title": "Processed File Mode",
+            "default": "leave_with_ledger"
+          },
+          "processed_subfolder_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Processed Subfolder Name",
+            "default": "processed"
           }
         },
         "additionalProperties": false,
@@ -61338,6 +61357,69 @@
             "type": "integer",
             "title": "Last Scan Files Found"
           },
+          "poll_interval_seconds": {
+            "type": "integer",
+            "title": "Poll Interval Seconds"
+          },
+          "processed_file_mode": {
+            "type": "string",
+            "title": "Processed File Mode"
+          },
+          "processed_subfolder_name": {
+            "type": "string",
+            "title": "Processed Subfolder Name"
+          },
+          "health_status": {
+            "type": "string",
+            "title": "Health Status"
+          },
+          "degraded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degraded Reason"
+          },
+          "degraded_since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degraded Since"
+          },
+          "last_poll_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Poll At"
+          },
+          "last_ingest_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Ingest At"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -61360,6 +61442,14 @@
           "retention_policy_default",
           "last_scanned_at",
           "last_scan_files_found",
+          "poll_interval_seconds",
+          "processed_file_mode",
+          "processed_subfolder_name",
+          "health_status",
+          "degraded_reason",
+          "degraded_since",
+          "last_poll_at",
+          "last_ingest_at",
           "created_at",
           "updated_at"
         ],

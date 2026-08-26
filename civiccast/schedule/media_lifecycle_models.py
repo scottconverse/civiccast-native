@@ -153,6 +153,48 @@ _ARCHIVE_TARGET_TYPES = (ARCHIVE_TARGET_INTERNET_ARCHIVE, *_ARCHIVE_TARGET_LOCAL
 
 RETENTION_POLICIES = ("default", "permanent", "meeting", "short")
 
+# ADR 0024: watch-folder processed-file disposition. Both modes NEVER delete
+# the source file (delete-safety posture) -- "leave_with_ledger" leaves it in
+# place in monitor_path and relies on the watch_folder_file_state ledger
+# table to remember it was ingested (so it isn't re-ingested every poll);
+# "move_to_subfolder" additionally moves it to processed_subfolder_name under
+# monitor_path once ingest succeeds, purely for operator tidiness.
+PROCESSED_FILE_MODE_LEAVE_WITH_LEDGER = "leave_with_ledger"
+PROCESSED_FILE_MODE_MOVE_TO_SUBFOLDER = "move_to_subfolder"
+PROCESSED_FILE_MODES = (
+    PROCESSED_FILE_MODE_LEAVE_WITH_LEDGER,
+    PROCESSED_FILE_MODE_MOVE_TO_SUBFOLDER,
+)
+
+# Watch-folder config health, surfaced to the operator so an unreachable
+# monitor_path (USB unplugged, SMB share down) is a visible degraded state,
+# never a silent failure (ADR 0024). "unknown" is the pre-first-poll state.
+WATCH_FOLDER_HEALTH_OK = "ok"
+WATCH_FOLDER_HEALTH_DEGRADED = "degraded"
+WATCH_FOLDER_HEALTH_UNKNOWN = "unknown"
+WATCH_FOLDER_HEALTH_STATES = (
+    WATCH_FOLDER_HEALTH_OK,
+    WATCH_FOLDER_HEALTH_DEGRADED,
+    WATCH_FOLDER_HEALTH_UNKNOWN,
+)
+
+# Per-file ledger states (watch_folder_file_state.status). "pending" covers a
+# file the daemon has seen at least once but has not yet observed the same
+# size+mtime on two consecutive polls (D13 settle window) -- this is what
+# keeps a still-copying file from being ingested mid-write.
+FILE_STATE_PENDING = "pending"
+FILE_STATE_STABLE = "stable"
+FILE_STATE_INGESTING = "ingesting"
+FILE_STATE_INGESTED = "ingested"
+FILE_STATE_FAILED = "failed"
+FILE_STATES = (
+    FILE_STATE_PENDING,
+    FILE_STATE_STABLE,
+    FILE_STATE_INGESTING,
+    FILE_STATE_INGESTED,
+    FILE_STATE_FAILED,
+)
+
 
 def _uuid_key() -> str:
     return uuid.uuid4().hex
@@ -355,11 +397,95 @@ class WatchFolderConfig(Base):
     last_scan_files_found: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # Poll cadence -- distinct from settle_window_seconds above (that's the
+    # write-completion stability window, D13; this is how often the daemon
+    # lists the directory at all). Spec §6 states a 5s default.
+    poll_interval_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=5, server_default="5"
+    )
+    # ADR 0024: processed-file disposition. Never deletes the source file
+    # either way (delete-safety posture).
+    processed_file_mode: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=PROCESSED_FILE_MODE_LEAVE_WITH_LEDGER,
+        server_default=PROCESSED_FILE_MODE_LEAVE_WITH_LEDGER,
+    )
+    processed_subfolder_name: Mapped[str] = mapped_column(
+        String(200), nullable=False, default="processed", server_default="processed"
+    )
+    # Worker-owned health/status fields -- never operator-set directly (same
+    # ownership split as AssetReadiness above); see
+    # civiccast.schedule.watch_folder_worker for the writer.
+    health_status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=WATCH_FOLDER_HEALTH_UNKNOWN,
+        server_default=WATCH_FOLDER_HEALTH_UNKNOWN,
+    )
+    degraded_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    degraded_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_ingest_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=_now,
         server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_now,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class WatchFolderFileState(Base):
+    """Per-file settle-window + reprocess-on-change ledger for one config.
+
+    One row per ``(config_id, file_path)``. Durable across daemon restarts:
+    without this table, a settle-window check ("stable across two polls")
+    can't survive the process dying between polls, and there would be no
+    way to distinguish "already ingested, unchanged" from "new file" on
+    every subsequent scan -- which is what ``leave_with_ledger`` mode's
+    "ledger" half refers to (:mod:`civiccast.schedule.watch_folder_worker`).
+    """
+
+    __tablename__ = "watch_folder_file_state"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'stable', 'ingesting', 'ingested', 'failed')",
+            name="watch_folder_file_state_status_check",
+        ),
+        Index("ix_watch_folder_file_state_config_id", "config_id"),
+        Index("ux_watch_folder_file_state_config_path", "config_id", "file_path", unique=True),
+    )
+
+    state_id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid_key)
+    config_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    file_mtime: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=FILE_STATE_PENDING, server_default=FILE_STATE_PENDING
+    )
+    # Set the first time the current (file_size_bytes, file_mtime) pair is
+    # observed unchanged from the prior poll -- i.e. once, not twice, this
+    # becomes non-null; a THIRD identical poll only confirms what's already
+    # "stable". Reset to None whenever size/mtime moves (still writing, or
+    # changed post-ingest).
+    stable_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_ingest_job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(71), nullable=True)
+    ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -561,12 +687,24 @@ class WatchFolderConfigInput(BaseModel):
     enabled: bool = True
     settle_window_seconds: int = Field(default=10, ge=1, le=3600)
     retention_policy_default: str | None = Field(default=None)
+    # Spec §6 default: 5s poll cadence. Distinct from settle_window_seconds
+    # (write-completion stability window, D13).
+    poll_interval_seconds: int = Field(default=5, ge=1, le=3600)
+    processed_file_mode: str = Field(default=PROCESSED_FILE_MODE_LEAVE_WITH_LEDGER)
+    processed_subfolder_name: str = Field(default="processed", min_length=1, max_length=200)
 
     @field_validator("retention_policy_default")
     @classmethod
     def _valid_policy(cls, value: str | None) -> str | None:
         if value is not None and value not in RETENTION_POLICIES:
             raise ValueError(f"retention_policy_default must be one of {RETENTION_POLICIES}")
+        return value
+
+    @field_validator("processed_file_mode")
+    @classmethod
+    def _valid_processed_mode(cls, value: str) -> str:
+        if value not in PROCESSED_FILE_MODES:
+            raise ValueError(f"processed_file_mode must be one of {PROCESSED_FILE_MODES}")
         return value
 
 
@@ -581,10 +719,25 @@ class WatchFolderConfigResponse(BaseModel):
     retention_policy_default: str | None
     last_scanned_at: datetime | None
     last_scan_files_found: int
+    poll_interval_seconds: int
+    processed_file_mode: str
+    processed_subfolder_name: str
+    health_status: str
+    degraded_reason: str | None
+    degraded_since: datetime | None
+    last_poll_at: datetime | None
+    last_ingest_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
-    @field_validator("last_scanned_at", "created_at", "updated_at")
+    @field_validator(
+        "last_scanned_at",
+        "degraded_since",
+        "last_poll_at",
+        "last_ingest_at",
+        "created_at",
+        "updated_at",
+    )
     @classmethod
     def _aware_utc(cls, value: datetime | None) -> datetime | None:
         if value is None:

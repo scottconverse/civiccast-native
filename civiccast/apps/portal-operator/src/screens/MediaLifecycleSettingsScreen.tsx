@@ -25,6 +25,20 @@ import type {
 
 const RETENTION_POLICIES = ['default', 'permanent', 'meeting', 'short'] as const
 
+function fmtRelativeTime(iso: string | null): string {
+  if (!iso) return 'never'
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return 'never'
+  const diffSeconds = Math.max(0, Math.round((Date.now() - then) / 1000))
+  if (diffSeconds < 60) return `${diffSeconds}s ago`
+  const diffMinutes = Math.round(diffSeconds / 60)
+  if (diffMinutes < 60) return `${diffMinutes}m ago`
+  const diffHours = Math.round(diffMinutes / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+  const diffDays = Math.round(diffHours / 24)
+  return `${diffDays}d ago`
+}
+
 function fmtBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
@@ -64,6 +78,38 @@ function InlineError({ error }: { error: Error }) {
 // ---------------------------------------------------------------------------
 // Watch folders
 // ---------------------------------------------------------------------------
+
+// S7 watch-folder poll daemon status. Health/poll/ingest fields are worker-
+// owned (never operator-set) -- see WatchFolderConfigResponse. Surfacing
+// "degraded" here is the point: an unreachable monitor_path (USB unplugged,
+// NAS/SMB share down) must be a visible state on the config, never a
+// silent failure the operator only discovers when a meeting recording
+// never shows up.
+function WatchFolderStatus({ config }: { config: WatchFolderConfigResponse }) {
+  const isDegraded = config.health_status === 'degraded'
+  const isUnknown = config.health_status === 'unknown'
+  const statusColor = isDegraded ? 'var(--cc-err)' : isUnknown ? 'var(--cc-ink-3)' : 'var(--cc-ink-2)'
+  const statusLabel = isDegraded ? 'Degraded' : isUnknown ? 'Not polled yet' : 'OK'
+
+  return (
+    <div className="flex flex-col items-end gap-0.5 text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+      <span className="font-medium" style={{ color: statusColor }} role={isDegraded ? 'alert' : undefined}>
+        {statusLabel}
+      </span>
+      <span>Last poll: {fmtRelativeTime(config.last_poll_at)}</span>
+      <span>Last ingest: {fmtRelativeTime(config.last_ingest_at)}</span>
+      {isDegraded && config.degraded_reason && (
+        <span
+          className="max-w-[220px] text-right"
+          style={{ color: 'var(--cc-err)' }}
+          title={config.degraded_reason}
+        >
+          {config.degraded_reason}
+        </span>
+      )}
+    </div>
+  )
+}
 
 function WatchFolderSection() {
   const queryClient = useQueryClient()
@@ -139,10 +185,11 @@ function WatchFolderSection() {
               style={{ background: 'var(--cc-surface-2)' }}
             >
               <span className="cc-mono">{config.monitor_path}</span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <span style={{ color: config.enabled ? 'var(--cc-ink)' : 'var(--cc-ink-3)' }}>
                   {config.enabled ? 'Enabled' : 'Disabled'}
                 </span>
+                <WatchFolderStatus config={config} />
                 <button
                   type="button"
                   onClick={() => deleteMutation.mutate(config.config_id)}

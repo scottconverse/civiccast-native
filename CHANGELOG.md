@@ -15,6 +15,57 @@ came across and what deliberately did not.
 
 ### Added
 
+- **S7 watch-folder poll daemon (the piece PR #19 explicitly deferred).**
+  PR #19 built `WatchFolderConfig`'s data model, CRUD API, and settings UI
+  but shipped no daemon — nothing polled `monitor_path`, detected files, or
+  called into ingest, so spec §6 DONE criterion 9 ("watch-folder hands-off;
+  operator sees ingests") was unmet despite `ROADMAP.status.yaml` already
+  carrying `status: built` for the section. `civiccast/schedule/
+  watch_folder_worker.py`'s `WatchFolderWorker` (migration
+  `0080_watch_folder_daemon`, chained after `0079_media_lifecycle`) is that
+  daemon, same env-gated inline/off + poll-seconds shape as the sibling S7
+  workers: polls each enabled config's `monitor_path` (local disk, USB, or
+  NAS/SMB) on its own `poll_interval_seconds` (new column, spec default 5s
+  — distinct from the pre-existing `settle_window_seconds`, the D13
+  write-completion stability window); detects new/changed files via a
+  durable per-file ledger (`watch_folder_file_state`, new table) requiring
+  size+mtime unchanged across two consecutive polls before ingest (partial-
+  copy safety); ingests through the SAME upload pipeline an operator's
+  manual upload uses (`PostgresAssetStore.ingest_upload`) — never a
+  parallel pipeline — recording provenance via `MediaIngestJob(source_kind=
+  "watch_folder", source_path=<original path>)`; verifies post-copy size
+  match (catches a truncated SMB copy); applies the operator's chosen
+  processed-file disposition, `leave_with_ledger` (default) or
+  `move_to_subfolder` (new `processed_file_mode`/`processed_subfolder_name`
+  columns) — **neither mode ever deletes the source file**
+  (delete-safety posture, see below); surfaces an unreachable path as a
+  visible per-config degraded state (new `health_status`/`degraded_reason`/
+  `degraded_since`/`last_poll_at`/`last_ingest_at` columns) rather than
+  failing silently; and re-ingests a changed already-ingested file against
+  the SAME asset via `MediaLifecycleStore.apply_replace_source` (now
+  accepting a `source_kind` parameter so watch-folder-originated
+  reprocesses are provenance-tagged correctly) instead of creating a
+  duplicate asset. Concurrency: per-folder work is fully serialized; up to
+  `max_concurrent_folders` (default 4) different folders may be scanned at
+  once; `max_files_ingested_per_pass_per_folder` (default 25) bounds one
+  pass's per-file work. Processed-file disposition, degraded-state
+  visibility, and the delete-safety posture were open decisions the spec
+  text itself didn't resolve — recorded in
+  `docs/adr/0024-watch-folder-daemon-processed-file-and-degraded-state.md`.
+  Registered as `civiccast-watch-folder-worker` in the app lifespan's
+  `ThreadSupervisor` list (same RAT-001 maintenance-mode fail-closed
+  posture as every other background worker). Settings screen: a new status
+  column per watch folder (health, last poll, last ingest, and — when
+  degraded — the reason, `role="alert"`). Tests: 10 tmp-dir-based
+  end-to-end worker tests (real filesystem, real ffmpeg-generated video
+  content through the real ffprobe pipeline where ffmpeg is on PATH) +
+  5 app-wiring tests + 6 settings-screen vitest tests. Known gaps, called
+  out in the spec file's own build note and ADR 0024 rather than silently
+  claimed: no 24h unattended soak, no real-NAS/SMB field test, and the
+  spec's "asynchronous retry/backoff" + "CRC" wording for SMB resilience
+  is approximated (poll-interval-paced retry rather than sub-second
+  backoff within a pass; size verification rather than a full source-side
+  content hash, which would double read I/O over the network per file).
 - **S3/S11 — CEA-708 commissioning decode-back verification.** Closes the gap
   PR #22 left honest but open: the S3 commissioning wizard's Screen 10 output
   proof previously always reported `cea708_verified: null` with a blocker when

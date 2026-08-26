@@ -4829,6 +4829,9 @@ export interface WatchFolderConfigInput {
   enabled?: boolean
   settle_window_seconds?: number
   retention_policy_default?: string | null
+  poll_interval_seconds?: number
+  processed_file_mode?: string
+  processed_subfolder_name?: string
 }
 
 export interface WatchFolderConfigResponse {
@@ -4840,6 +4843,14 @@ export interface WatchFolderConfigResponse {
   retention_policy_default: string | null
   last_scanned_at: string | null
   last_scan_files_found: number
+  poll_interval_seconds: number
+  processed_file_mode: string
+  processed_subfolder_name: string
+  health_status: string
+  degraded_reason: string | null
+  degraded_since: string | null
+  last_poll_at: string | null
+  last_ingest_at: string | null
   created_at: string
   updated_at: string
 }

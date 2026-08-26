@@ -95,15 +95,19 @@ def test_expected_head_matches_the_single_migration_head() -> None:
     # asset_archive_proofs + media_lifecycle_audit_log, plus
     # assets.legal_hold/legal_hold_reason) is rechained after
     # 0078_agenda_item_confidence (rather than the original 0076) so it
-    # lands after the already-merged 0078, and is the current head.
-    assert expected_migration_head() == "0079_media_lifecycle"
+    # lands after the already-merged 0078. 0080_watch_folder_daemon (S7
+    # watch-folder poll daemon: poll_interval_seconds/processed_file_mode/
+    # health_status/degraded_*/last_poll_at/last_ingest_at columns on
+    # watch_folder_configs + the new watch_folder_file_state ledger table)
+    # chains after 0079_media_lifecycle and is the current head.
+    assert expected_migration_head() == "0080_watch_folder_daemon"
 
 
 def test_expected_head_does_not_depend_on_current_working_directory(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     expected_migration_head.cache_clear()
     monkeypatch.chdir(tmp_path)
     try:
-        assert expected_migration_head() == "0079_media_lifecycle"
+        assert expected_migration_head() == "0080_watch_folder_daemon"
     finally:
         expected_migration_head.cache_clear()
 
@@ -118,7 +122,7 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
         conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL)")
         conn.execute(
             "INSERT INTO alembic_version (version_num) VALUES (?)",
-            ("0079_media_lifecycle",),
+            ("0080_watch_folder_daemon",),
         )
         conn.commit()
 
@@ -131,8 +135,8 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
 
     assert status == SchemaStatus(
         state="current",
-        db_revision="0079_media_lifecycle",
-        expected_head="0079_media_lifecycle",
+        db_revision="0080_watch_folder_daemon",
+        expected_head="0080_watch_folder_daemon",
     )
 
 
