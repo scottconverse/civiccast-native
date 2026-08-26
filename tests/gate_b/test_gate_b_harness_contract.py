@@ -30,6 +30,7 @@ from types import ModuleType
 
 import pytest
 
+
 def _find_repo_root(start: Path) -> Path:
     """Walk upward from ``start`` to the CivicCast repo root.
 
