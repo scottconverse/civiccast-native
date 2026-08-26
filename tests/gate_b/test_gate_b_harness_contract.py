@@ -30,7 +30,36 @@ from types import ModuleType
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+def _find_repo_root(start: Path) -> Path:
+    """Walk upward from ``start`` to the CivicCast repo root.
+
+    A fixed ``parents[2]`` offset assumes this file always sits two
+    directories below the repo root. That breaks under mutmut: the
+    mutation-report job copies only the diff-scoped Python source (and a
+    fixed ``also_copy`` list that does not include ``sandbox-lab`` or
+    ``gate-b``) into a ``mutants/`` directory, so
+    ``mutants/tests/gate_b/<this file>`` has no ``sandbox-lab`` sibling at
+    the depth the fixed offset expects -- ``mutants/`` itself is nested
+    inside the real checkout, though, so walking upward past it lands back
+    on the real repo root, which does have ``sandbox-lab``. Recognise the
+    root by a marker instead of a hardcoded depth: the presence of the
+    PowerShell driver Gate B's tests read (shared with Gate A's contract
+    test, see ``tests/gate_a/test_gate_a_harness_contract.py``), falling
+    back to ``.git`` for any other caller that lands here without
+    ``sandbox-lab`` on disk at all.
+    """
+    for candidate in (start, *start.parents):
+        if (candidate / "sandbox-lab" / "scripts" / "In-Sandbox-Report.ps1").is_file():
+            return candidate
+        if (candidate / ".git").exists():
+            return candidate
+    raise RuntimeError(
+        f"could not locate the CivicCast repo root by walking up from {start} -- "
+        "expected to find sandbox-lab/scripts/In-Sandbox-Report.ps1 or a .git marker"
+    )
+
+
+_REPO_ROOT = _find_repo_root(Path(__file__).resolve())
 
 _MODULE = _REPO_ROOT / "sandbox-lab" / "common" / "CivicCastStationHarness.psm1"
 _GATE_A_DRIVER = _REPO_ROOT / "sandbox-lab" / "scripts" / "In-Sandbox-Report.ps1"
