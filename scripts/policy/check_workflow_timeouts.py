@@ -69,6 +69,16 @@ LONG_BY_DESIGN: dict[tuple[str, str], str] = {
         "asserts that ordering across all three files so a fix in one place cannot look "
         "correct while changing nothing."
     ),
+    ("publish-staged-kit.yml", "publish"): (
+        "2026-08-26: uploads an already-staged ~25 GB kit (packs\\, station\\, the setup.exe) "
+        "from C:\\CivicCastTester\\kit-staging\\<sha> as a workflow artifact. Healthy egress on "
+        "this box's link runs well under the 20 GB/3h rate gate-a-station-acceptance.yml's own "
+        "'ARTIFACT DOWNLOAD' header documents for the equivalent-size download, so a 180-minute "
+        "job ceiling would fail a perfectly healthy upload partway through, not just a wedged "
+        "one. 300 minutes gives the transfer real headroom above that baseline while still being "
+        "a hard, finite ceiling -- the upload-artifact step itself carries its own "
+        "timeout-minutes per this file's rule 3, so a wedge is still caught well before 300."
+    ),
 }
 
 
