@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+#
+# publish-staged-kit -- exposes an already-locally-staged, Gate-A-passed
+# native-beta candidate kit as a downloadable GitHub Actions artifact.
+#
+# WHAT THIS IS FOR: kits built by native-beta-candidate-artifacts.yml's
+# self-hosted lane land straight on this box at
+# C:\CivicCastTester\kit-staging\<sha>\ (packs\, station\, the setup.exe)
+# without ever being uploaded, because gate-a-station-acceptance.yml reuses
+# them in place (see that workflow's "Reuse a locally pre-staged kit" step)
+# and a full upload/download round-trip of a ~25 GB kit is pure waste when
+# both sides are the same physical machine. That local-only optimization
+# means a kit that has already PASSED Gate A three times has no path off
+# this box for a remote fleet tester -- this workflow is that path: given a
+# sha, it uploads the exact staged bytes at that path as a workflow
+# artifact so a fleet tester machine can `gh run download`/`actions/
+# download-artifact` them from GitHub instead of needing access to this
+# box's disk.
+#
+# WHY NOT A NORMAL CI TRIGGER: this is a one-shot, operator-invoked publish
+# of bytes that already exist and have already been judged -- it builds
+# nothing and verifies nothing beyond "the named kit is actually present
+# and complete". workflow_dispatch with an explicit sha input keeps it from
+# ever running unattended or against the wrong candidate.
+#
+# RUNNER + CONCURRENCY: this must run on THIS box (the kit lives on its
+# local disk, not in the runner's ephemeral workspace) and must never run
+# at the same time as a gate-a-station-acceptance.yml run or a
+# native-beta-candidate-artifacts.yml self-hosted build -- all three
+# contend for the same physical hardware. Sharing the "sandbox-lab"
+# concurrency group (same as those two workflows) is what serializes this
+# against them; see gate-a-station-acceptance.yml's own concurrency
+# comment for the full rationale. cancel-in-progress: false because a
+# ~25 GB upload that gets killed partway through has to start over from
+# zero, not resume.
+
+name: publish-staged-kit
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full source sha of the staged kit under C:\\CivicCastTester\\kit-staging\\ (the directory name exactly, e.g. 99db2c6e60f10dabc6503b4ada25ba09aef0491d)"
+        required: true
+        type: string
+
+concurrency:
+  # Shared with gate-a-station-acceptance.yml and native-beta-candidate-
+  # artifacts.yml's self-hosted build_target lane: all three run on this
+  # one physical sandbox-lab box and must never execute at the same time.
+  # cancel-in-progress: false so a queued run waits its turn instead of
+  # dropping a multi-hour upload already in flight.
+  group: sandbox-lab
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Upload the staged kit as a workflow artifact
+    runs-on: [self-hosted, windows, sandbox-lab]
+    timeout-minutes: 300
+    steps:
+      - name: Verify the staged kit exists and looks complete
+        id: verify_kit
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $sha = "${{ inputs.sha }}"
+          if ([string]::IsNullOrWhiteSpace($sha)) {
+            Write-Error "sha input is required and was empty."
+            exit 1
+          }
+
+          $kitDir = Join-Path "C:\CivicCastTester\kit-staging" $sha
+          if (-not (Test-Path -LiteralPath $kitDir -PathType Container)) {
+            Write-Error "No staged kit directory at $kitDir -- nothing to publish. Confirm the sha matches a directory under C:\CivicCastTester\kit-staging\ on this box."
+            exit 1
+          }
+
+          $setupExe = Get-ChildItem -LiteralPath $kitDir -Filter "*setup.exe" -ErrorAction SilentlyContinue
+          if (-not $setupExe) {
+            Write-Error "$kitDir exists but contains no *setup.exe -- this does not look like a complete staged kit. Refusing to publish a partial/corrupt directory."
+            exit 1
+          }
+
+          Write-Host "Verified staged kit at $kitDir (setup exe: $($setupExe.Name))"
+          "kit_dir=$kitDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload staged kit
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 280
+        with:
+          name: native-beta-kit-${{ inputs.sha }}
+          path: C:\CivicCastTester\kit-staging\${{ inputs.sha }}\**
+          if-no-files-found: error
+          retention-days: 3
