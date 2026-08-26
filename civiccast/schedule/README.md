@@ -152,3 +152,23 @@ Schedule + DB-engine contract:
   + cleanroom (TEST-001 / TEST-002).
 - `tests/schedule/test_app_wiring.py` — DI contract for `create_app()`
   with and without `DATABASE_URL` set (ADR 0008 §Director Decisions).
+
+## S7 media lifecycle worker (`media_lifecycle_worker.py`)
+
+Readiness computation, ingest-time transcode seeding/dispatch, and the
+archival verification gate (CLAUDE.md §4.6). Env-gated
+`MediaLifecycleWorkerSettings` (same per-station config pattern as
+`retention_worker.py` / `media_integrity_worker.py`); see its docstring for
+the full `CIVICCAST_MEDIA_LIFECYCLE_*` / `CIVICCAST_TRANSCODE_*` env vars.
+
+**Transcode defaults and resource posture (ADR 0007 amendment,
+2026-08-24):** the default seed set is a single web-friendly, resolution-
+aware H.264 rendition (`DEFAULT_TRANSCODE_FORMATS`) — no GPL encoder, and
+never upscales past the source's own probed resolution. Dispatched jobs run
+at Windows `BELOW_NORMAL_PRIORITY_CLASS` under a per-minute-of-source
+timeout budget (10 min floor, 10x-realtime, 2h ceiling) rather than
+ffmpeg's flat 6h default, and `transcode_seeding_enabled` lets a station
+turn ingest-time transcoding off entirely. See ADR 0007 for the full
+rationale (a real GPL-license defect plus a resource-posture defect, found
+together in one audit) and `tests/policy/test_ffmpeg_h264_encoder.py` for
+the widened GPL-encoder-literal sweep this closed.

@@ -190,6 +190,102 @@ without modifying any existing constants in `civiccast.stream.config`.
 arrives in v0.4 (portal-polish rung), this BANDWIDTH inflation can be
 removed. Tracked in `next-cleanup.md`.
 
+## S7 ingest-time transcode defaults and resource posture (2026-08-24 amendment)
+
+This ADR's "Compliance" section already forbids any module outside
+`civiccast.stream._ffmpeg` from invoking ffmpeg directly and, per that
+module's own resolver, forbids a bare `libx264` (GPL) literal anywhere
+except the resolver itself. A regression audit of
+`civiccast.schedule.media_lifecycle_worker` (S7's transcode-on-ingest
+worker, spec §7's "Transcode on ingest" section) found that compliance
+posture violated in a second, unenforced dimension: the worker's default
+transcode format seed list carried an `h265_1080p_8mbps` target whose
+ffmpeg args template invoked `libx265` — GPL, and never resolved through
+any encoder-selection seam at all, just a bare literal. This was possible
+because `tests/policy/test_ffmpeg_h264_encoder.py`'s repo-wide sweep only
+ever checked for the string `"libx264"`; it walked the whole `civiccast/`
+tree the entire time, so the gap was in which GPL encoder NAME it
+recognized, not which directory it covered.
+
+**Resolution of S7 spec Open decision #1** ("Transcode format defaults:
+h264_720p_5mbps (proxy), h265_1080p_8mbps (archive), h264_mezzanine
+(SDI)?" — phrased as an open question, with "h264-only for simplicity"
+named as the alternative): resolved to the h264-only alternative, for two
+independent, compounding reasons:
+
+1. **License.** H.264 has a real GPL-free resolution path
+   (`resolve_h264_encoder()`: hardware → `h264_mf` → the royalty-free
+   `libopenh264`, with GPL `libx264` reachable only when the exact probed
+   binary itself already carries it). HEVC has no such path anywhere in
+   this tree — no `hevc_mf`/`hevc_nvenc` resolver exists. There is
+   therefore no sanctioned way to honor an HEVC transcode target today.
+   Per this ADR's own compliance posture, the target is **removed**
+   rather than shipped opt-in-but-broken or silently GPL-linked. A future
+   ADR may add a real HEVC resolver, mirroring `resolve_h264_encoder()`'s
+   shape, if operator demand justifies the engineering; nothing here
+   forecloses that.
+2. **Resource posture.** Independently of the license defect, the worker
+   seeded every configured format unconditionally for every validated
+   asset and dispatched each synchronously in its own thread, at normal
+   process priority, under ffmpeg's flat 6-hour default timeout — a large
+   amount of unsupervised, full-priority ffmpeg work sharing the box with
+   operator HTTP requests, with no station-level way to turn it down. This
+   is the same class of problem PR #45 found and fixed in the VOD
+   packager's ABR ladder (a fixed-resolution ladder applied regardless of
+   source resolution wasted most of its wall time on rungs the source
+   couldn't fill, which is what blew `POST /api/staff/assets/{id}/package`
+   past its caller's timeout) — S7's worker has the same "test every rung
+   against a source small enough to already fit inside the first one"
+   inefficiency, just for background proxy generation instead of a
+   synchronous HTTP path.
+
+**What changed** (`civiccast/schedule/media_lifecycle_models.py`,
+`civiccast/schedule/media_lifecycle_worker.py`,
+`civiccast/stream/_ffmpeg.py`):
+
+- `DEFAULT_TRANSCODE_FORMATS` is now `("h264_720p_5mbps",)` — one web
+  rendition, not three. `h264_mezzanine` (near-lossless, `-crf 12`, the
+  heaviest of the three formats) remains available but is opt-in via the
+  existing `CIVICCAST_TRANSCODE_FORMATS` override, not seeded by default.
+- The `h264_720p_5mbps` template's scale filter is resolved at call time
+  and capped at the SOURCE asset's own `height_px` when ffprobe measured
+  one at ingest — the proxy never upscales past the source, the same
+  never-upscale posture PR #45 gave `civiccast.stream.config.select_ladder`
+  for the VOD packager, implemented locally here (this branch does not
+  depend on PR #45's unmerged `stream/config.py` change).
+- `MediaLifecycleWorkerSettings` gained `transcode_seeding_enabled`
+  (default `True`, so first-run ingest still produces a proxy per spec
+  §7/DONE criterion 3 — this is a resource-posture fix, not a silent
+  removal of a DONE criterion) and an explicit, validated
+  `transcode_concurrency` field fixed at `1` (the dispatch loop already
+  ran jobs strictly one at a time; the field makes that fact
+  station-configurable in principle and honest — it raises rather than
+  silently ignoring any other value, since parallel dispatch is not
+  implemented).
+- Each dispatched transcode now runs at Windows `BELOW_NORMAL_PRIORITY_CLASS`
+  (`civiccast.stream._ffmpeg.run_ffmpeg`'s new `lower_priority` parameter,
+  opt-in and default `False` so real-time/latency-sensitive callers — live
+  egress, the VOD packager answering an operator's HTTP request — are
+  unaffected) and under a per-minute-of-source timeout budget
+  (`_transcode_timeout_seconds`: 10 minute floor, 10x-realtime budget, 2
+  hour ceiling) instead of the flat 6-hour default.
+- `tests/policy/test_ffmpeg_h264_encoder.py`'s sweep is widened from a
+  single hard-coded `"libx264"` string to a `_FORBIDDEN_GPL_ENCODER_LITERALS`
+  set (currently `{"libx264", "libx265"}`), proved against a planted
+  `libx265` literal shaped exactly like the real defect
+  (`test_detector_flags_a_planted_libx265_literal`), with the resolver's
+  narrow exception scoped to `libx264` only — a hypothetical stray
+  `libx265` in the resolver file itself would still be flagged, since no
+  HEVC resolver exists there to justify it.
+
+**Not done here, named rather than silently deferred:** no operator-facing
+settings UI exists for `transcode_seeding_enabled` (or any other
+`MediaLifecycleWorkerSettings` field) — the config surface today is the
+env-gated dataclass, the same per-station mechanism `retention_worker` and
+`media_integrity_worker` already use as their own config surface, appropriate
+for a single-station-per-install product but not yet an operator-visible
+toggle. A dedicated settings panel is real follow-up work, not claimed done
+by this amendment.
 ## ABR ladder selection: never upscale (v0.3 amendment)
 
 The four-rung ladder above describes the ladder's *shape*, and the original

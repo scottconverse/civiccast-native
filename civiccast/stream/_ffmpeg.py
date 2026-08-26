@@ -387,6 +387,7 @@ def run_ffmpeg(
     *,
     progress_callback: Callable[[str], None] | None = None,
     timeout: float | None = _DEFAULT_TIMEOUT_SECONDS,
+    lower_priority: bool = False,
 ) -> FfmpegResult:
     """Run ffmpeg with the given argument list.
 
@@ -405,6 +406,16 @@ def run_ffmpeg(
     on expiry — callers that run under a shared lock or need per-job error
     handling should catch it explicitly (see
     ``civiccast.recording.runtime._finalize_segments``).
+
+    ``lower_priority`` starts the subprocess at Windows' BELOW_NORMAL
+    priority class (same ``getattr(subprocess, ..., 0)`` degrade-to-0
+    pattern :func:`start_ffmpeg` already uses for ``CREATE_NO_WINDOW``, so
+    it is a harmless no-op on non-Windows/test platforms). Default is
+    ``False`` — unattended background work (S7's media lifecycle worker)
+    opts in explicitly; real-time/latency-sensitive callers (live egress,
+    the VOD packager answering an operator's HTTP request) must keep
+    running at the process's normal priority, so this must never become a
+    blanket default here.
     """
     ffmpeg_path = _ffmpeg_path()
     resolved_args = _resolve_video_encoder_args(args, ffmpeg_path)
@@ -413,6 +424,8 @@ def run_ffmpeg(
     # Security: shell=False (the default); args is an explicit list, never a string.
     cmd = [ffmpeg_path, "-y", *resolved_args]
 
+    creationflags = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0) if lower_priority else 0
+
     completed = subprocess.run(  # noqa: S603
         cmd,
         capture_output=True,
@@ -420,6 +433,7 @@ def run_ffmpeg(
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
+        creationflags=creationflags,
     )
 
     if progress_callback is not None:
