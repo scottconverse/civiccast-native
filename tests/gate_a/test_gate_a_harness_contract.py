@@ -809,7 +809,7 @@ def test_teardown_drain_is_bounded_and_does_not_change_the_verdict() -> None:
         "the timeout marker must land in $OutDir so Run-GateA.ps1's unconditional evidence "
         "copy carries it into evidence\\<source_sha>\\<utc-timestamp>\\ for free"
     )
-    drain_block = text[text.index("Draining sandbox teardown") : text.index("Write-Host \"Done.")]
+    drain_block = text[text.index("Draining sandbox teardown") : text.index('Write-Host "Done.')]
     assert "exit " not in _code_only(drain_block), (
         "the drain must never exit non-zero or otherwise change this script's own exit code -- "
         "it is runner hygiene, decided after the product verdict, never a station-acceptance finding"
