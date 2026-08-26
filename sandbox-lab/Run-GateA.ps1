@@ -24,7 +24,11 @@
 #      persistent install directory would silently skip install evidence).
 #   5. Run Host-Launch-Sandbox-Test.ps1, which itself clears output\, writes
 #      SOAK_MINUTES.txt, renders the .wsb from its template, launches the
-#      Sandbox, and polls for the authoritative DONE.json completion signal.
+#      Sandbox, polls for the authoritative DONE.json completion signal, and
+#      (on the normal-completion path only) drains its own teardown -- waits,
+#      bounded, for the VM and its mapped-folder handles to actually release
+#      before returning, so a following Checkout step does not hit EBUSY on a
+#      still-tearing-down VM. See docs/ops/gate-a.md, "Teardown drain".
 #   6. Judge the result with scripts/gate_a_verdict.py (fail-closed).
 #   7. Copy output\ to evidence\<source_sha>\<utc-timestamp>\ regardless of
 #      verdict -- a FAIL needs its evidence preserved at least as much as a
@@ -89,7 +93,16 @@ param(
     # run is declared a harness error rather than waited out to
     # -TimeoutMinutes. See that script's quiet-share detector and
     # docs/ops/gate-a.md, "Mapped-folder stalls".
-    [int]$QuietShareMinutes = 15
+    [int]$QuietShareMinutes = 15,
+
+    # Passed straight through to Host-Launch-Sandbox-Test.ps1: bound (seconds)
+    # and poll interval (seconds) for its post-teardown drain, which waits
+    # for the sandbox VM and its VSMB handles on the mapped folders to
+    # actually release before this script's own evidence copy (step 6/7
+    # below) and the caller's next Checkout step run. See
+    # docs/ops/gate-a.md, "Teardown drain".
+    [int]$TeardownDrainSeconds = 300,
+    [int]$TeardownDrainPollSeconds = 5
 )
 
 $ErrorActionPreference = 'Stop'
@@ -303,8 +316,8 @@ if (-not (Test-Path $launcherPath)) {
     Exit-HarnessError "Host-Launch-Sandbox-Test.ps1 not found at $launcherPath"
 }
 
-Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes)..."
-& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes
+Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes, TeardownDrainSeconds=$TeardownDrainSeconds, TeardownDrainPollSeconds=$TeardownDrainPollSeconds)..."
+& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds
 $launcherExit = $LASTEXITCODE
 Write-Step "Host launcher exited with code $launcherExit"
 

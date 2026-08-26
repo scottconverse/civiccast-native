@@ -88,6 +88,107 @@ jobs:
     runs-on: [self-hosted, windows, sandbox-lab]
     timeout-minutes: 180
     steps:
+      # Belt-and-suspenders on top of Host-Launch-Sandbox-Test.ps1's own
+      # teardown-drain (docs/ops/gate-a.md, "Teardown drain"): that drain
+      # covers the run that just finished, but this self-hosted runner's
+      # workspace persists across jobs, so if some future path skips or
+      # exhausts that drain, a leftover VM from the PRIOR job could still be
+      # releasing its VSMB handles on sandbox-lab/ the moment THIS job's
+      # Checkout step starts. Observed on run 32929704614: Checkout's
+      # workspace clean hit "EBUSY: resource busy or locked, rmdir
+      # ...sandbox-lab/scripts" plus permission warnings under
+      # hoststore\install\dependencies\ollama and runtime\python312.zip,
+      # about a minute after the prior run (32926056071) reported job
+      # SUCCESS while vmmemWindowsSandbox was still exiting.
+      - name: Wait for prior run's workspace to be clean
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          # No sandbox-lab\ from a prior checkout -- first run on this
+          # workspace, nothing to wait on.
+          if (-not (Test-Path 'sandbox-lab')) {
+            Write-Host "No sandbox-lab/ present yet -- nothing to drain, proceeding to Checkout."
+            exit 0
+          }
+
+          # Same rename-probe technique as Host-Launch-Sandbox-Test.ps1's own
+          # teardown-drain (Test-DirectoryHandlesFree): renaming a directory
+          # away and back is the exact operation Checkout's workspace clean
+          # performs (rmdir/rename), so it fails closed on precisely the
+          # handle that caused run 32929704614's EBUSY, not just on some file
+          # inside the directory.
+          function Test-DirectoryHandlesFree {
+              param([string]$Path)
+              if (-not (Test-Path -LiteralPath $Path)) { return $true }
+              $parent = Split-Path -Parent $Path
+              $leaf = Split-Path -Leaf $Path
+              $probeLeaf = "$leaf.checkout-drain-probe-$([guid]::NewGuid().ToString('N'))"
+              $probePath = Join-Path $parent $probeLeaf
+              try {
+                  Rename-Item -LiteralPath $Path -NewName $probeLeaf -ErrorAction Stop
+              } catch {
+                  return $false
+              }
+              try {
+                  Rename-Item -LiteralPath $probePath -NewName $leaf -ErrorAction Stop
+                  return $true
+              } catch {
+                  Start-Sleep -Milliseconds 500
+                  try {
+                      Rename-Item -LiteralPath $probePath -NewName $leaf -ErrorAction Stop
+                  } catch {
+                      Write-Warning "Could not rename $probePath back to $leaf -- left renamed for manual recovery: $_"
+                  }
+                  return $false
+              }
+          }
+
+          # The subdirectories a prior Gate A run maps into Windows Sandbox
+          # (sandbox-lab/CivicCastSandboxTest.wsb.template's MappedFolders) --
+          # the exact set whose host directory handles VSMB can still be
+          # holding open. kit-download/kit-staging are excluded: they hold
+          # multi-GB junctions/trees where a false-negative EBUSY is far more
+          # likely to come from ordinary size than from a held handle, and
+          # they are not what run 32929704614 actually hit.
+          $probeTargets = @('scripts', 'hoststore', 'output', 'soak-4h') |
+              ForEach-Object { Join-Path 'sandbox-lab' $_ } |
+              Where-Object { Test-Path $_ }
+
+          if (-not $probeTargets) {
+            Write-Host "sandbox-lab/ present but none of its mapped subfolders exist -- proceeding to Checkout."
+            exit 0
+          }
+
+          $boundSeconds = 300
+          $pollSeconds = 5
+          $deadline = (Get-Date).AddSeconds($boundSeconds)
+          $clean = $false
+          $lastBusy = $null
+          while ($true) {
+              $busy = @($probeTargets | Where-Object { -not (Test-DirectoryHandlesFree -Path $_) })
+              if ($busy.Count -eq 0) {
+                  $clean = $true
+                  break
+              }
+              $lastBusy = $busy -join ', '
+              Write-Host "$((Get-Date).ToString('o')) waiting on prior run's teardown -- still locked: $lastBusy"
+              if ((Get-Date) -ge $deadline) { break }
+              Start-Sleep -Seconds $pollSeconds
+          }
+
+          if ($clean) {
+              Write-Host "Workspace is clean -- all of $($probeTargets -join ', ') are rename-able. Proceeding to Checkout."
+          } else {
+              # Do not fail the job over this -- it is exactly the same
+              # runner-hygiene, non-product condition
+              # Host-Launch-Sandbox-Test.ps1's own drain marker describes.
+              # Log clearly and let Checkout itself either succeed (the
+              # handle may release in the gap) or fail with its own EBUSY,
+              # which is at least now attributable to this wait having
+              # already happened rather than a surprise.
+              Write-Warning "Still waiting on prior run's teardown after ${boundSeconds}s (last locked: $lastBusy). Proceeding to Checkout anyway -- if it fails with EBUSY, re-run the job once the sandbox VM referenced in the runner's process list has fully exited."
+          }
+
       - name: Checkout
         uses: actions/checkout@v4
 

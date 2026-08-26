@@ -151,6 +151,62 @@ this guard) only ever serializes **our own** Gate A runs against each
 other — the other party's sandbox usage is invisible to GitHub Actions and
 cannot be coordinated through workflow concurrency.
 
+## Teardown drain
+
+**What happened.** Run `32926056071` completed with job **SUCCESS** at
+~04:17Z, but `vmmemWindowsSandbox` (15.6 GB) kept running for several more
+minutes afterward, still holding VSMB handles on the run's own mapped
+folders (`sandbox-lab/hoststore/...`, `sandbox-lab/scripts`). A second Gate A
+run (`32929704614`), dispatched one minute later, failed at **Checkout**:
+`git` could not clean the workspace (`EBUSY: resource busy or locked, rmdir
+...sandbox-lab/scripts`), plus permission warnings under
+`hoststore\install\dependencies\ollama` and `runtime\python312.zip`. The VM
+finished exiting on its own a few minutes later, on no schedule tied to
+either job. Windows Sandbox's `Stop-Process` (the teardown guard above) only
+**requests** the VM stop — it returns as soon as the request is accepted,
+not once the VM and the VSMB handles it holds on every `MappedFolder` are
+actually released. Back-to-back Gate A runs — which the 3-consecutive-green
+promotion rule below requires — keep hitting this.
+
+**The fix, host side (`Host-Launch-Sandbox-Test.ps1`, step 6).** After the
+teardown guard's `Stop-Process` (step 5), and **only on the
+normal-completion path** (never on the busy-guard's exit `3`, the
+quiet-share detector's exit `4`, or the plain-timeout exit `2` — all three
+return before step 6, so this drain can only run on an invocation that
+itself confirmed launching a sandbox, `$launchedPids.Count -gt 0`), the
+script polls every `-TeardownDrainPollSeconds` (default `5`), bounded by
+`-TeardownDrainSeconds` (default `300` = 5 minutes), until **both**:
+
+- no process with any of the recorded launched PIDs remains, and
+- every one of this run's mapped host folders (read back from the rendered
+  `.wsb`, so it is the exact list VSMB shared into this VM — normally
+  `kit-download`, `output`, `scripts`, `hoststore`, `soak-4h`) round-trips a
+  `Test-DirectoryHandlesFree` probe: rename the directory away and back.
+  This renames the *directory itself* rather than writing a file inside it,
+  because that is the exact operation (`rmdir`/rename) Checkout's workspace
+  clean performs and the exact operation that failed with EBUSY — and
+  because a write-inside-the-folder probe would never catch a handle held on
+  a **read-only** mapped folder like `scripts`, where VSMB still opens a
+  handle on the host directory even though the guest cannot write to it.
+
+If the bound is reached without both conditions holding, the script writes
+`TEARDOWN-DRAIN-TIMEOUT.txt` into `output\` (carried into
+`evidence\<source_sha>\<utc-timestamp>\` for free by `Run-GateA.ps1`'s
+existing unconditional evidence copy) and emits a warning. **The verdict is
+never changed** — by the time the drain runs, the product verdict is already
+decided; this is runner hygiene, not a station-acceptance finding.
+
+**The fix, workflow side (`gate-a-station-acceptance.yml`).**
+Belt-and-suspenders on top of the host-side drain: a `Wait for prior run's
+workspace to be clean` step runs **before** `Checkout`. If `sandbox-lab/`
+already exists in the workspace (a self-hosted runner's workspace persists
+across jobs), it runs the same rename-probe loop (bounded 300s, 5s poll)
+against `sandbox-lab/{scripts,hoststore,output,soak-4h}` and logs what it's
+still waiting on. It never fails the job on timeout — it logs a warning and
+lets `Checkout` proceed, so a real, still-attributable EBUSY is at least now
+distinguishable from a cold start rather than the job failing silently on
+this step instead.
+
 ## Station-up wait, diagnostics capture, and the script-level watchdog
 
 Added after the 8579e66-run3 evidence showed the station's own process

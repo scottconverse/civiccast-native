@@ -56,6 +56,20 @@
 # SANDBOX-BUSY.txt means this run never launched (someone else held the
 # resource); HOST-QUIET-SHARE.txt means it launched and then stopped being
 # able to report. Neither is a station-acceptance finding.
+#
+# HARDENED <gate-a-teardown-drain> 2026-08-26: Gate A run 32926056071
+# finished (job SUCCESS) at ~04:17Z while vmmemWindowsSandbox (15.6 GB) was
+# still tearing down, still holding VSMB handles on this run's own mapped
+# folders. A second Gate A run (32929704614) dispatched one minute later hit
+# a checkout EBUSY on sandbox-lab/scripts ("EBUSY: resource busy or locked,
+# rmdir ...") plus permission warnings under
+# hoststore\install\dependencies\ollama and runtime\python312.zip -- the VM
+# finished exiting on its own a few minutes after that. Stop-Process below
+# (step 5) only REQUESTS the VM stop; it returns as soon as the request is
+# accepted, not once the VM and its VSMB handles are actually gone. Step 6
+# below drains that teardown -- bounded, so a VM that never lets go cannot
+# hang this script forever -- before handing control back to the caller
+# (Run-GateA.ps1, then the workflow's next Checkout step).
 param(
     [string]$Root = $PSScriptRoot,
     # Must stay ABOVE In-Sandbox-Report.ps1's own -MaxScriptMinutes (150) so
@@ -80,7 +94,19 @@ param(
     # ~25s, so this is ~36x the expected quiet interval -- generous enough
     # that a slow host or a stalled tick cannot trip it, tight enough to end
     # a dead run in minutes instead of hours.
-    [int]$QuietShareMinutes = 15
+    [int]$QuietShareMinutes = 15,
+
+    # Bound on step 6's teardown-drain, in seconds. After Stop-Process (step
+    # 5) is issued against this run's own recorded sandbox PIDs, the drain
+    # polls until BOTH the VM process is gone AND every one of this run's
+    # mapped host folders is confirmed rename-able (VSMB handle released)
+    # before returning. 300s (5 minutes) is generous relative to the few
+    # minutes run 32926056071's VM took to actually exit after job success,
+    # while still bounding this script's own runtime.
+    [int]$TeardownDrainSeconds = 300,
+
+    # Poll interval, in seconds, for the teardown drain above.
+    [int]$TeardownDrainPollSeconds = 5
 )
 
 $ErrorActionPreference = 'Stop'
@@ -186,6 +212,12 @@ if ($resolutionNotes.Count -gt 0) {
     Write-Host "No MappedFolder HostFolder path needed reparse-point resolution."
 }
 
+# Final, resolved set of MappedFolder host directories for this run -- read
+# back from $rendered (post reparse-point substitution) rather than the
+# earlier $declaredPaths, so this is exactly what VSMB actually shares into
+# the VM. Step 6's teardown-drain probes this same list.
+$mappedHostFolders = @($mappedRx.Matches($rendered) | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+
 # 1. Stamp a clean output dir so a stale DONE.marker from a previous run can
 #    never be mistaken for this run's completion.
 if (Test-Path $OutDir) {
@@ -285,6 +317,50 @@ function Get-NewestOutputActivityUtc {
         if ($newest) { return $newest.LastWriteTimeUtc }
     } catch {}
     return $null
+}
+
+function Test-DirectoryHandlesFree {
+    <#
+      Probe whether a directory is free of open handles by renaming it away
+      and back -- the exact operation ("rmdir"/rename of the directory
+      itself) that failed with EBUSY on run 32929704614's checkout. A
+      write-a-file-inside probe would not catch a handle held on the
+      directory object itself (e.g. a read-only MappedFolder like
+      sandbox-lab\scripts, which VSMB still opens a handle on even though
+      the guest cannot write to it), so this renames the directory, not a
+      file inside it.
+
+      Returns $true if the directory doesn't exist (nothing to drain) or the
+      rename round-trip succeeded; $false if either rename failed. Best-
+      effort restores the original name before returning false so a failed
+      probe never leaves the tree in a renamed state.
+    #>
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    $parent = Split-Path -Parent $Path
+    $leaf = Split-Path -Leaf $Path
+    $probeLeaf = "$leaf.drain-probe-$([guid]::NewGuid().ToString('N'))"
+    $probePath = Join-Path $parent $probeLeaf
+    try {
+        Rename-Item -LiteralPath $Path -NewName $probeLeaf -ErrorAction Stop
+    } catch {
+        return $false
+    }
+    try {
+        Rename-Item -LiteralPath $probePath -NewName $leaf -ErrorAction Stop
+        return $true
+    } catch {
+        # The away-rename succeeded but the rename-back failed -- try once
+        # more before giving up, so a transient hiccup doesn't strand the
+        # directory under its probe name.
+        Start-Sleep -Milliseconds 500
+        try {
+            Rename-Item -LiteralPath $probePath -NewName $leaf -ErrorAction Stop
+        } catch {
+            Write-Warning "Teardown-drain probe could not rename $probePath back to $leaf -- left renamed for manual recovery: $_"
+        }
+        return $false
+    }
 }
 
 $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
@@ -393,6 +469,74 @@ if ($launchedPids.Count -gt 0) {
     }
 } else {
     Write-Warning "No sandbox PID(s) were recorded for this run -- leaving any running sandbox processes untouched rather than stopping by process name."
+}
+
+# 6. Drain the teardown before returning control. See the
+#    <gate-a-teardown-drain> header comment at the top of this file for the
+#    observed failure this fixes.
+#
+#    Ownership guard: only wait on a sandbox VM if THIS invocation actually
+#    launched one. That is exactly the $launchedPids.Count -gt 0 condition
+#    below -- every other exit path in this script (the busy guard's exit 3,
+#    the quiet-share detector's exit 4, and the plain-timeout exit 2) returns
+#    before this point, so this code is unreachable on a run that never
+#    launched a sandbox or that never confirmed its own launch. A run that
+#    took the busy-guard path never touches vmmemWindowsSandbox at all -- it
+#    belongs to the other party sharing this box, exactly as that guard's own
+#    header documents.
+if ($launchedPids.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Draining sandbox teardown (bounded ${TeardownDrainSeconds}s) before returning control..."
+    $drainDeadline = (Get-Date).AddSeconds($TeardownDrainSeconds)
+    $drained = $false
+    $lastDrainDetail = $null
+    while ($true) {
+        $stillAlive = @(Get-Process -Id $launchedPids -ErrorAction SilentlyContinue)
+        $vmGone = ($stillAlive.Count -eq 0)
+
+        $handlesFree = $true
+        $busyFolder = $null
+        foreach ($folder in $mappedHostFolders) {
+            if (-not (Test-DirectoryHandlesFree -Path $folder)) {
+                $handlesFree = $false
+                $busyFolder = $folder
+                break
+            }
+        }
+
+        if ($vmGone -and $handlesFree) {
+            $drained = $true
+            break
+        }
+
+        $lastDrainDetail = "vm_gone=$vmGone handles_free=$handlesFree busy_folder=$busyFolder remaining_pids=$(($stillAlive | Select-Object -ExpandProperty Id) -join ', ')"
+        if ((Get-Date) -ge $drainDeadline) { break }
+        Start-Sleep -Seconds $TeardownDrainPollSeconds
+    }
+
+    if ($drained) {
+        Write-Host "Teardown drain complete -- VM process gone and all mapped folders confirmed free of handles." -ForegroundColor Green
+    } else {
+        # Runner hygiene only. The product verdict was already decided above
+        # (or, on a non-zero exit path, is decided by Run-GateA.ps1's
+        # judge/forensics run against the evidence already copied) -- this
+        # marker never changes it, and this script's own exit code stays 0
+        # here regardless. It lands in $OutDir so Run-GateA.ps1's
+        # unconditional evidence copy (step 6/7 of its own header) carries it
+        # into evidence\<source_sha>\<utc-timestamp>\ alongside everything
+        # else, without needing a second hook point.
+        $timeoutBody = @(
+            "teardown_drain_timeout_utc=$((Get-Date).ToUniversalTime().ToString('o'))",
+            "bound_seconds=$TeardownDrainSeconds poll_seconds=$TeardownDrainPollSeconds",
+            "last_detail: $lastDrainDetail",
+            "mapped_folders_probed: $($mappedHostFolders -join '; ')",
+            "reason=the sandbox VM and/or its VSMB handles on the mapped folders above were still not released after waiting ${TeardownDrainSeconds}s past Stop-Process -- runner hygiene only, not a station-acceptance finding. A following job's Checkout step may still hit EBUSY; see docs/ops/gate-a.md, 'Teardown drain'."
+        ) -join [Environment]::NewLine
+        Set-Content -Path (Join-Path $OutDir 'TEARDOWN-DRAIN-TIMEOUT.txt') -Value $timeoutBody -Encoding UTF8
+        Write-Warning "Teardown drain timed out after ${TeardownDrainSeconds}s ($lastDrainDetail). Wrote TEARDOWN-DRAIN-TIMEOUT.txt to $OutDir. This is runner hygiene, not a station-acceptance finding -- the verdict above is unaffected."
+    }
+} else {
+    Write-Host "No sandbox PID(s) were recorded for this run -- skipping the teardown drain (nothing this run confirmed launching)."
 }
 
 Write-Host "Done. Full evidence (transcript, install-progress.log, summary.json) is in $OutDir" -ForegroundColor Cyan
