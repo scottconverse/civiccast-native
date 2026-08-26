@@ -32,6 +32,12 @@ SELF_HOSTED_ALLOWLIST = {
     "vm-cleanroom-release.yml": "needs the local Hyper-V VM harness",
     "six-hour-soak.yml": "exceeds the hosted 6-hour job ceiling",
     "gate-a-station-acceptance.yml": "needs Windows Sandbox on the local sandbox-lab runner for the clean-box station-acceptance gate",
+    "publish-staged-kit.yml": (
+        "publishes the locally staged, Gate-A-passed kit bytes from "
+        "C:\\CivicCastTester\\kit-staging\\<sha> as a workflow artifact; "
+        "hosted runners cannot reach this box's disk, so the upload must "
+        "run on the same self-hosted sandbox-lab box the kit is staged on"
+    ),
     "gate-b-reboot-soak.yml": (
         "2026-08-25: needs Hyper-V on the local sandbox-lab runner. Gate B is the 3.0 MASTER "
         "spec §12 24h unattended soak WITH REBOOT, and a hosted runner can offer neither half "

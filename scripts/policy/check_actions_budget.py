@@ -81,6 +81,23 @@ DOCUMENTED_BUDGET_EXCEPTIONS: dict[str, str] = {
         "multi-GB station-bundle/kit artifacts the 2026-08-20 storage-budget "
         "incident was about."
     ),
+    "publish-staged-kit.yml": (
+        "2026-08-26: shares Gate A's and Gate B's 'sandbox-lab' concurrency "
+        "group with cancel-in-progress: false rather than this check's "
+        "default per-ref '${{ github.workflow }}-${{ github.ref }}' + "
+        "cancel-in-progress: true shape, for the identical hardware-"
+        "contention reason -- this workflow, gate-a-station-acceptance.yml, "
+        "and native-beta-candidate-artifacts.yml's self-hosted lane all run "
+        "on the ONE physical sandbox-lab box, and a newer dispatch must "
+        "queue behind an in-flight ~25 GB artifact upload rather than "
+        "cancel it partway through (a cancelled multi-hour upload cannot "
+        "resume, it restarts from zero). Its upload-artifact step also uses "
+        "retention-days: 3, not this check's 1-day default: it is a "
+        "one-shot operator-invoked publish of a kit that already passed "
+        "Gate A, meant to give a remote fleet tester a real window to "
+        "start the download, not a routine CI artifact regenerated on "
+        "every push."
+    ),
 }
 
 
