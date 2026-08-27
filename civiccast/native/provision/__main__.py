@@ -97,7 +97,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from civiccast.native.pgdata_acl import PgDataAclError
-from civiccast.native.provision.journal import JournalError, journal_path
+from civiccast.native.provision.journal import JournalError, journal_path, load_journal
 from civiccast.native.provision.models import (
     ProvisionContext,
     ProvisionJournal,
@@ -110,6 +110,7 @@ from civiccast.native.provision.orchestrator import (
     halt_adopt_foreign_cluster,
     halt_resume_credential_lost,
     run_provision,
+    write_recovery_document,
 )
 from civiccast.native.provision.seams import (
     AdoptionForeignClusterError,
@@ -529,6 +530,75 @@ def resolve_provision_paths(
 
 
 # ---------------------------------------------------------------------------
+# N-16 (fleet-tester candidate 99db2c6, soak/INSTALL-FAILED.md /
+# soak/evidence-provision-failure/): adopted-journal staleness.
+#
+# Uninstall preserves ProgramData -- including this CLI's own provisioning
+# journal -- by design (see ProvisionCliAction.ADOPT_EXISTING's N-15 doc).
+# That is correct for the journal's DATA-lifecycle fields (nothing here ever
+# re-derives ``postgres_data_dir``/``postgres_config_path``/
+# ``postgres_hba_path``, all of which live under ``program_data_root`` and
+# stay fixed regardless of where the product's OWN files are installed). It
+# is WRONG for ``context.server_pack_path``: that is the one journal field
+# derived from ``install_root`` (Program Files, or wherever ``/D=`` pointed a
+# given run), and a later install to a DIFFERENT ``install_root`` over the
+# SAME preserved ProgramData leaves the adopted journal naming a pack path
+# under the OLD location -- which no longer exists once the candidate lives
+# somewhere else. Nothing downstream re-validated that path against THIS
+# run's install root before trusting it: a TERMINAL (COMPLETE/FAILED) journal
+# short-circuits ``run_provision`` without ever touching a seam at all (see
+# that function's own docstring -- "left alone on rerun"), and even a
+# non-terminal one would drive the recorded (stale) path forward.
+#
+# Live-diagnosed (read-only, not reproduced against real files -- see
+# soak/INSTALL-FAILED.md's own "no preserved data or candidate files were
+# modified to test that inference" caveat) on candidate 99db2c6: a fresh
+# install to ``C:\CivicCastHostStore\install`` after an uninstall that
+# preserved ``C:\ProgramData\CivicCast`` adopted a 2026-08-16 journal whose
+# ``server_pack_path`` still named
+# ``C:\Program Files\CivicCast (Native)\packs\native-server-binaries.ccpack``
+# -- a path Program Files no longer had (only a residual ``uninstall.exe``
+# was left there), while the real candidate pack sat under the NEW install
+# root instead. Provisioning returned rc 75.
+# ---------------------------------------------------------------------------
+
+
+def journal_stale_reason(existing: ProvisionJournal, *, paths: ProvisionPaths) -> str | None:
+    """Return why the ADOPTED ``existing`` journal is stale relative to THIS
+    run's ``paths``, or ``None`` if it is still trustworthy.
+
+    Deliberately checks ONLY ``server_pack_path`` -- the sole journal
+    ``context`` field :func:`resolve_provision_paths` derives from
+    ``install_root`` (every sibling recorded artifact path --
+    ``postgres_data_dir``/``postgres_config_path``/``postgres_hba_path``/
+    ``state_root`` -- derives from ``program_data_root`` instead, which does
+    not vary with where the product's own files are installed, so a mismatch
+    there would mean something else entirely: a different ProgramData root,
+    not a stale journal). Does NOT independently probe whether the
+    RE-DERIVED (current-run) ``server_pack_path`` exists on disk -- that is
+    :func:`~civiccast.native.provision.seams.build_default_seams_for`'s
+    ``verify_pack`` seam's job, which already fails loud (and, after this
+    same fix, always leaves an operator recovery document) when re-derivation
+    still can't find a real pack. This function only answers "is the
+    RECORDED path still describing THIS run", not "does a pack exist" --
+    conflating the two would make every adoption test that fakes pack
+    verification (no real ``.ccpack`` staged on the test host) look stale.
+    """
+
+    recorded = existing.context.server_pack_path
+    expected = paths.server_pack_path
+    if recorded != expected:
+        return (
+            f"the adopted journal's server_pack_path ({recorded!r}) does not match "
+            f"this run's install root -- expected {expected!r}. This is the exact "
+            "signature of an install to a DIFFERENT location (e.g. a custom /D= "
+            "directory) over a ProgramData tree preserved from a PRIOR install at "
+            "the OLD location."
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Pack public key decoding (a PUBLIC key -- not credential-sensitive; safe to
 # pass on argv, unlike the password)
 # ---------------------------------------------------------------------------
@@ -682,6 +752,26 @@ def _run_engine_and_finish(
         # DatabaseUrl.
         detail = str(exc).replace(database_url, "[database-url redacted]")
         detail = detail.replace(context.database_password, "[password redacted]")
+        write_recovery_document(
+            context.state_root,
+            reason=(
+                "the database was provisioned but its data directory's ACL could not be "
+                f"normalized before restarting the cluster for schema migration: {detail}"
+            ),
+            attempting="schema_migration (pgdata ACL normalization)",
+            next_steps=[
+                "PostgreSQL cluster/role/database were successfully provisioned -- this "
+                "failure is NOT a lost or foreign cluster. Only the data directory's ACL "
+                "normalization before restarting for schema migration failed, so "
+                "'alembic upgrade head' was never attempted.",
+                f"Data directory: {context.postgres_data_dir}",
+                "Check filesystem permissions on the data directory (the service account "
+                "must be able to set its own DACL there) before retrying.",
+                "This provisioning run will not be silently retried. Once the permission "
+                "issue is resolved, run the installer again.",
+                f"Preserve this journal for support: {journal_path(context.state_root)}",
+            ],
+        )
         sys.stderr.write(
             f"provision outcome: schema_acl_normalization_failed (the database was "
             f"provisioned but its data directory's ACL could not be normalized before "
@@ -695,6 +785,26 @@ def _run_engine_and_finish(
         # redacted detail only.
         detail = str(exc).replace(database_url, "[database-url redacted]")
         detail = detail.replace(context.database_password, "[password redacted]")
+        write_recovery_document(
+            context.state_root,
+            reason=(
+                f"the database was provisioned but 'alembic upgrade head' did not complete: {detail}"
+            ),
+            attempting="schema_migration",
+            next_steps=[
+                "PostgreSQL cluster/role/database were successfully provisioned -- this "
+                "failure is NOT a lost or foreign cluster. Only the post-provision schema "
+                "migration to alembic head failed.",
+                f"Data directory: {context.postgres_data_dir}",
+                "Read the failure detail recorded above; a common cause is the migration "
+                "target already holding a schema at an unexpected revision -- do not hand-"
+                "edit the database without a verified backup, escalate to support instead.",
+                "This provisioning run will not be silently retried. Once the blocking "
+                "condition is resolved, run the installer again (idempotent -- already-"
+                "applied migrations are skipped).",
+                f"Preserve this journal for support: {journal_path(context.state_root)}",
+            ],
+        )
         sys.stderr.write(
             f"provision outcome: schema_migration_failed (the database was provisioned "
             f"but 'alembic upgrade head' did not complete: {detail})\n"
@@ -715,6 +825,39 @@ def main(argv: list[str] | None = None) -> int:
         server_pack_path=args.server_pack_path,
         initdb_path=args.initdb_path,
     )
+
+    # N-16: an adopted journal (ProgramData preserved by uninstall) whose
+    # recorded server_pack_path no longer matches THIS run's install root is
+    # stale -- see journal_stale_reason's docstring. Checked FIRST, before
+    # anything (including run_provision's own terminal-journal short-circuit)
+    # ever trusts it, so a fresh run always re-derives every path from the
+    # CURRENT install location rather than a prior one. Only the provisioning
+    # bookkeeping file is reset here -- the preserved PostgreSQL data
+    # directory (station data) is never touched by this.
+    try:
+        existing_journal = load_journal(paths.state_root)
+    except JournalError as exc:
+        write_recovery_document(
+            paths.state_root,
+            reason=f"the provisioning journal at {paths.state_root!r} is corrupt/unparseable: {exc}",
+            attempting="reading the adopted provisioning journal",
+        )
+        sys.stderr.write(
+            "provision outcome: unexpected error reading the provisioning "
+            f"journal at {paths.state_root!r}: {exc}\n"
+        )
+        return EXIT_UNEXPECTED
+    if existing_journal is not None:
+        stale_reason = journal_stale_reason(existing_journal, paths=paths)
+        if stale_reason is not None:
+            sys.stderr.write(
+                f"provision outcome: adopted provisioning journal at {paths.state_root!r} "
+                f"is STALE ({stale_reason}); resetting it so this run re-derives every path "
+                "from the CURRENT install location. The preserved PostgreSQL data directory "
+                "is NOT touched by this reset -- only the provisioning-run bookkeeping "
+                "journal is cleared.\n"
+            )
+            journal_path(paths.state_root).unlink(missing_ok=True)
 
     cluster_exists = probe_cluster_exists(paths.postgres_data_dir)
 
@@ -737,6 +880,13 @@ def main(argv: list[str] | None = None) -> int:
                 # resumable -- a corrupt journal already raised above.
                 credential_lost_journal = probe_credential_lost_journal(paths.state_root)
         except JournalError as exc:
+            write_recovery_document(
+                paths.state_root,
+                reason=(
+                    f"the provisioning journal at {paths.state_root!r} is corrupt/unparseable: {exc}"
+                ),
+                attempting="classifying the adopted provisioning journal (resumable vs credential-lost)",
+            )
             sys.stderr.write(
                 "provision outcome: unexpected error reading the provisioning "
                 f"journal at {paths.state_root!r}: {exc}\n"
@@ -783,6 +933,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         public_key = decode_pack_public_key(args.pack_public_key_base64)
     except Exception as exc:
+        write_recovery_document(
+            paths.state_root,
+            reason=f"the server-binaries pack's embedded public key could not be decoded: {exc}",
+            attempting="decoding the pack public key",
+        )
         sys.stderr.write(f"provision outcome: unexpected error decoding pack public key: {exc}\n")
         return EXIT_UNEXPECTED
 
@@ -805,6 +960,28 @@ def main(argv: list[str] | None = None) -> int:
             seams.verify_pack()
         except Exception as exc:
             detail = str(exc).replace(context.database_password, "[password redacted]")
+            write_recovery_document(
+                paths.state_root,
+                reason=(
+                    "the server-binaries pack could not be verified before adopting the "
+                    f"surviving cluster (server_pack_path={context.server_pack_path!r}): {detail}"
+                ),
+                attempting="pack_verified (pre-adoption re-verification)",
+                next_steps=[
+                    "A surviving PostgreSQL data directory was found and this installer "
+                    "attempted to ADOPT it (re-establish a fresh credential on it, station "
+                    "data preserved) -- but its server-binaries pack could not be verified "
+                    f"at {context.server_pack_path!r}, this run's CURRENT install root.",
+                    "The surviving PostgreSQL data directory itself was NOT touched -- "
+                    "this failure happened before any adoption action ran.",
+                    "Obtain a correctly signed server-binaries pack at the path above "
+                    "before retrying (a corrupt or partial install/copy is the most common "
+                    "cause).",
+                    "This provisioning run will not be silently retried. Once the pack is "
+                    "verifiable, run the installer again.",
+                    f"Preserve this journal for support: {journal_path(paths.state_root)}",
+                ],
+            )
             sys.stderr.write(
                 "provision outcome: provisioning_failed (the server-binaries pack could not "
                 f"be verified before adopting the surviving cluster: {detail})\n"
@@ -842,6 +1019,28 @@ def main(argv: list[str] | None = None) -> int:
             # credential could not be re-established must not advertise a
             # DatabaseUrl.
             detail = str(exc).replace(context.database_password, "[password redacted]")
+            write_recovery_document(
+                paths.state_root,
+                reason=(
+                    "could not re-establish the database credential on the surviving "
+                    f"cluster at {paths.postgres_data_dir!r}: {detail}"
+                ),
+                attempting="postgres_cluster_ready (credential adoption)",
+                next_steps=[
+                    "A surviving PostgreSQL data directory was found and this installer "
+                    "attempted to re-establish a fresh credential on it (station data "
+                    "preserved; no initdb, no database drop) -- that attempt failed while "
+                    "running pg_ctl/psql, not because the cluster is foreign.",
+                    f"Data directory: {paths.postgres_data_dir}",
+                    "Check that postgres could actually start against the just-written "
+                    "loopback-trust config (port/host conflicts, permissions) and that the "
+                    "pg_ctl/psql binaries in the server-binaries pack are present before "
+                    "retrying.",
+                    "This provisioning run will not be silently retried. Once the blocking "
+                    "condition is resolved, run the installer again.",
+                    f"Preserve this journal for support: {journal_path(paths.state_root)}",
+                ],
+            )
             sys.stderr.write(
                 "provision outcome: provisioning_failed (could not re-establish the database "
                 f"credential on the surviving cluster at {paths.postgres_data_dir!r}: {detail})\n"

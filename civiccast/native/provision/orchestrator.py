@@ -324,14 +324,38 @@ def halt_adopt_foreign_cluster(
     )
 
 
-def _write_recovery_document(
-    journal: ProvisionJournal,
+def write_recovery_document(
+    state_root: str | Path,
     *,
     reason: str,
-    attempting: ProvisionPhase,
+    attempting: str,
+    journal_path_for_reference: str | Path | None = None,
     next_steps: list[str] | None = None,
 ) -> Path:
-    """Write the operator recovery markdown next to the journal; return its path.
+    """Write the operator recovery markdown under ``state_root``; return its
+    path.
+
+    The GENERAL form of what used to be a ``ProvisionJournal``-only helper
+    (see :func:`_write_recovery_document` below, now a thin wrapper over
+    this): every real provisioning failure this engine can produce halts
+    through a journal (:func:`_halt`), but ``civiccast.native.provision.
+    __main__.main`` also has several failure points that occur BEFORE a
+    journal exists at all -- decoding the pack public key, reading a corrupt
+    journal, or a pre-check (adoption's own ``verify_pack``/credential-reset
+    calls) that fails before ``run_provision`` is ever invoked. Every one of
+    those still exits with the SAME installer-level code the NSIS hook chain
+    maps to a single, unconditional "see PROVISION-RECOVERY.md" message
+    (``nsis-hooks-bootstrap.nsh``'s ``step d4-provision`` handling: ANY
+    nonzero exit from the Python CLI collapses to installer exit 75 via
+    ``native_service_registration::run_native_provision``'s generic error
+    wrapping, so the SAME static "see ... PROVISION-RECOVERY.md" text is
+    shown for every one of them, not just the ones that happen to route
+    through this module's own ``_halt``). A failure message that references a
+    document that was never written is a dead end for the operator
+    (fleet-tester candidate 99db2c6, ``soak/INSTALL-FAILED.md``: "Referenced
+    ... PROVISION-RECOVERY.md: absent") -- so every one of those call sites
+    now calls this function directly, keyed on the state root alone rather
+    than a full journal.
 
     ``next_steps`` defaults to the generic mid-run-failure guidance below;
     callers with a MORE SPECIFIC, already-diagnosed situation (see
@@ -343,15 +367,19 @@ def _write_recovery_document(
     not the files).
     """
 
-    state_root = Path(journal.context.state_root)
+    state_root = Path(state_root)
     state_root.mkdir(parents=True, exist_ok=True)
     doc_path = state_root / RECOVERY_DOC_NAME
-    journal_file = journal_io.journal_path(state_root)
+    journal_file = (
+        Path(journal_path_for_reference)
+        if journal_path_for_reference is not None
+        else journal_io.journal_path(state_root)
+    )
 
     if next_steps is None:
         next_steps = [
             "Do NOT assume PostgreSQL is safely provisioned -- "
-            f"provisioning halted while attempting {attempting.value!r}.",
+            f"provisioning halted while attempting {attempting!r}.",
             f"Read the failure reason recorded in this journal: {journal_file}",
             "If the failure was a server-binaries pack verification refusal, "
             "obtain a correctly signed pack before retrying.",
@@ -372,7 +400,7 @@ def _write_recovery_document(
         ]
     recovery = ProvisionRecovery(
         written_utc=datetime.now(UTC).isoformat(),
-        attempting_phase=attempting.value,
+        attempting_phase=attempting,
         reason=reason,
         journal_path=str(journal_file),
         next_steps=next_steps,
@@ -395,9 +423,31 @@ def _write_recovery_document(
     return doc_path
 
 
+def _write_recovery_document(
+    journal: ProvisionJournal,
+    *,
+    reason: str,
+    attempting: ProvisionPhase,
+    next_steps: list[str] | None = None,
+) -> Path:
+    """Journal-bound wrapper over :func:`write_recovery_document` -- the shape
+    every in-engine halt (:func:`_halt`) already used before that function was
+    generalized so ``__main__.py``'s pre-journal failure points could call it
+    too. Behavior is byte-for-byte unchanged for every existing caller."""
+
+    return write_recovery_document(
+        journal.context.state_root,
+        reason=reason,
+        attempting=attempting.value,
+        journal_path_for_reference=journal_io.journal_path(journal.context.state_root),
+        next_steps=next_steps,
+    )
+
+
 __all__ = [
     "RECOVERY_DOC_NAME",
     "halt_adopt_foreign_cluster",
     "halt_resume_credential_lost",
     "run_provision",
+    "write_recovery_document",
 ]

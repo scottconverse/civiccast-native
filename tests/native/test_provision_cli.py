@@ -40,6 +40,7 @@ from civiccast.native.provision.__main__ import (
     decode_pack_public_key,
     format_handoff_line,
     generate_database_password,
+    journal_stale_reason,
     main,
     parse_handoff_line,
     probe_cluster_exists,
@@ -862,6 +863,495 @@ def test_main_adopt_refuses_a_foreign_cluster_honestly(tmp_path, capsys, monkeyp
     assert reloaded.phase is ProvisionPhase.FAILED
 
 
+# ---------------------------------------------------------------------------
+# N-16 (fleet-tester candidate 99db2c6, soak/INSTALL-FAILED.md /
+# soak/evidence-provision-failure/): adopted-journal staleness (BUG 1) and
+# every provisioning-failure path must actually write PROVISION-RECOVERY.md
+# before the installer's own static message references it (BUG 2).
+# ---------------------------------------------------------------------------
+
+
+def test_journal_stale_reason_none_when_server_pack_path_matches(tmp_path) -> None:
+    paths = resolve_provision_paths(
+        install_root=str(tmp_path / "install"), program_data_root=str(tmp_path / "pd")
+    )
+    journal = _seeded_journal(tmp_path, phase=ProvisionPhase.COMPLETE)
+    # _seeded_journal's own context.server_pack_path is an unrelated fixed
+    # value; rebuild one whose server_pack_path genuinely matches paths, the
+    # only case journal_stale_reason must call trustworthy.
+    matching = journal.model_copy(
+        update={
+            "context": journal.context.model_copy(
+                update={"server_pack_path": paths.server_pack_path}
+            )
+        }
+    )
+    assert journal_stale_reason(matching, paths=paths) is None
+
+
+def test_journal_stale_reason_flags_a_mismatched_server_pack_path(tmp_path) -> None:
+    """N-16 root cause: an adopted journal from a PRIOR install_root (e.g. the
+    default Program Files location) recorded a server_pack_path that no
+    longer describes THIS run's install root (e.g. a custom /D= directory).
+    journal_stale_reason must say so, naming both paths."""
+
+    old_paths = resolve_provision_paths(
+        install_root=r"C:\Program Files\CivicCast (Native)",
+        program_data_root=str(tmp_path / "pd"),
+    )
+    new_paths = resolve_provision_paths(
+        install_root=r"C:\CivicCastHostStore\install",
+        program_data_root=str(tmp_path / "pd"),
+    )
+    journal = _seeded_journal(tmp_path, phase=ProvisionPhase.COMPLETE)
+    stale = journal.model_copy(
+        update={
+            "context": journal.context.model_copy(
+                update={"server_pack_path": old_paths.server_pack_path}
+            )
+        }
+    )
+    reason = journal_stale_reason(stale, paths=new_paths)
+    assert reason is not None
+    assert repr(old_paths.server_pack_path) in reason
+    assert repr(new_paths.server_pack_path) in reason
+
+
+def test_main_resets_a_stale_adopted_journal_and_still_adopts_the_cluster(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """N-16 (root cause, BUG 1): the EXACT fleet-tester shape -- an uninstall
+    preserved ProgramData (and its provisioning journal) at the OLD
+    install_root's server_pack_path, then a fresh install ran against a
+    DIFFERENT install_root (a custom /D= directory). Before the fix, the
+    stale COMPLETE journal was adopted as-is (harmless only by accident, since
+    the ADOPT_EXISTING branch always rebuilds a throwaway fresh context for
+    its own seams -- but a non-terminal/FAILED stale journal from the old
+    root would otherwise wedge every future run's classification on a path
+    that can never be revalidated). After the fix, main() detects the
+    mismatch up front, resets the journal bookkeeping file (never touching
+    the preserved PostgreSQL data directory), and the run proceeds to adopt
+    the surviving cluster and re-derive every path from the CURRENT install
+    root."""
+
+    import pathlib
+
+    import civiccast.native.provision.__main__ as provision_main
+    import civiccast.native.provision.seams as seams_module
+    from civiccast.native.provision.seams import CredentialAdoptionResult
+
+    monkeypatch.setattr(seams_module, "verify_server_binaries_pack", lambda *a, **k: None)
+
+    old_install_root = tmp_path / "old-install"
+    new_install_root = tmp_path / "new-install"
+    program_data_root = tmp_path / "pd"
+    scratch_url = f"sqlite:///{(tmp_path / 'scratch.db').as_posix()}"
+
+    old_paths = resolve_provision_paths(
+        install_root=str(old_install_root), program_data_root=str(program_data_root)
+    )
+    new_paths = resolve_provision_paths(
+        install_root=str(new_install_root), program_data_root=str(program_data_root)
+    )
+    # Both installs share the SAME ProgramData (that is exactly what
+    # uninstall preserves) -- state_root and postgres_data_dir must be
+    # identical between the two derivations.
+    assert old_paths.state_root == new_paths.state_root
+    assert old_paths.postgres_data_dir == new_paths.postgres_data_dir
+    assert old_paths.server_pack_path != new_paths.server_pack_path
+
+    data_dir = pathlib.Path(new_paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+    # A marker file standing in for "station data" -- untouched by a stale-
+    # journal reset, which only ever removes provision-journal.json.
+    (data_dir / "station-marker.txt").write_text("preserved\n", encoding="utf-8")
+
+    prior_plan = ProvisionPlan(
+        postgres_major_version="17",
+        database_name="civiccast",
+        database_username="civiccast_svc",
+        server_pack_product_version="1.0.0",
+        server_pack_compatible_core="1.0.0",
+        server_pack_signing_key_id="key-1",
+    )
+    stale_context = ProvisionContext(
+        postgres_data_dir=old_paths.postgres_data_dir,
+        postgres_config_path=old_paths.postgres_config_path,
+        postgres_hba_path=old_paths.postgres_hba_path,
+        database_password="old-run-password",
+        server_pack_path=old_paths.server_pack_path,  # the STALE, OLD path
+        state_root=old_paths.state_root,
+        owner_run_id="old-run-1",
+    )
+    write_journal(
+        ProvisionJournal(plan=prior_plan, context=stale_context, phase=ProvisionPhase.COMPLETE)
+    )
+
+    def fake_reset(context, plan, *, pg_ctl_path, psql_path):
+        return CredentialAdoptionResult(detail="re-established credential (faked)")
+
+    monkeypatch.setattr(provision_main, "reset_cluster_credential", fake_reset)
+    engine_calls = _wire_fresh_install_run_path(monkeypatch, scratch_url)
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(new_install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "",
+                "--pack-public-key-base64": _valid_pack_key_b64(),
+            },
+        )
+    )
+
+    assert code == EXIT_SUCCESS, "adoption must still succeed once the stale journal is reset"
+    captured = capsys.readouterr()
+    assert f"{HANDOFF_MARKER_PREFIX}{scratch_url}" in captured.out
+    assert "STALE" in captured.err
+
+    # Station data (the preserved data directory and everything in it) was
+    # NEVER touched by the reset.
+    assert (data_dir / "station-marker.txt").read_text(encoding="utf-8") == "preserved\n"
+
+    # The engine actually ran (proves the stale COMPLETE journal no longer
+    # short-circuits run_provision), and it did so against the CURRENT
+    # install root's re-derived server_pack_path, never the stale one.
+    assert engine_calls
+    _, engine_context = engine_calls[0]
+    assert engine_context.server_pack_path == new_paths.server_pack_path
+    assert engine_context.server_pack_path != old_paths.server_pack_path
+
+
+def test_main_does_not_reset_a_matching_adopted_journal(tmp_path, capsys, monkeypatch) -> None:
+    """Journal valid (server_pack_path matches THIS run's install root) ->
+    unchanged behavior: no staleness reset, no "STALE" breadcrumb, and the
+    prior journal's un-related history is not disturbed before adoption
+    proceeds. This is the control case for
+    test_main_resets_a_stale_adopted_journal_and_still_adopts_the_cluster."""
+
+    import pathlib
+
+    import civiccast.native.provision.__main__ as provision_main
+    import civiccast.native.provision.seams as seams_module
+    from civiccast.native.provision.seams import CredentialAdoptionResult
+
+    monkeypatch.setattr(seams_module, "verify_server_binaries_pack", lambda *a, **k: None)
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    scratch_url = f"sqlite:///{(tmp_path / 'scratch.db').as_posix()}"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+    prior_plan = ProvisionPlan(
+        postgres_major_version="17",
+        database_name="civiccast",
+        database_username="civiccast_svc",
+        server_pack_product_version="1.0.0",
+        server_pack_compatible_core="1.0.0",
+        server_pack_signing_key_id="key-1",
+    )
+    matching_context = ProvisionContext(
+        postgres_data_dir=paths.postgres_data_dir,
+        postgres_config_path=paths.postgres_config_path,
+        postgres_hba_path=paths.postgres_hba_path,
+        database_password="old-run-password",
+        server_pack_path=paths.server_pack_path,  # matches THIS run exactly
+        state_root=paths.state_root,
+        owner_run_id="old-run-1",
+    )
+    write_journal(
+        ProvisionJournal(plan=prior_plan, context=matching_context, phase=ProvisionPhase.COMPLETE)
+    )
+
+    monkeypatch.setattr(
+        provision_main,
+        "reset_cluster_credential",
+        lambda context, plan, *, pg_ctl_path, psql_path: CredentialAdoptionResult(
+            detail="re-established credential (faked)"
+        ),
+    )
+    _wire_fresh_install_run_path(monkeypatch, scratch_url)
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "",
+                "--pack-public-key-base64": _valid_pack_key_b64(),
+            },
+        )
+    )
+
+    assert code == EXIT_SUCCESS
+    captured = capsys.readouterr()
+    assert "STALE" not in captured.err
+
+
+def test_main_stale_journal_reset_also_protects_the_run_branch(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """N-16, the OTHER hazard the general staleness check closes: a stale
+    TERMINAL (here FAILED) journal at this state_root, found when
+    ``cluster_exists`` is FALSE (no PG_VERSION -- e.g. an operator cleared
+    the data directory but the provisioning bookkeeping file survived).
+    Before this fix, ``run_provision`` would have loaded that OLD, terminal
+    journal and returned it UNCHANGED (its own documented "terminal phases
+    are left alone on rerun" contract) WITHOUT ever calling ``verify_pack``
+    against the CURRENT install root -- a stale FAILED journal from a
+    different install_root would then wedge every future run at that same
+    terminal phase forever, never re-attempted. After the fix, the
+    staleness check resets it before ``run_provision`` ever sees it, so a
+    genuinely fresh run (RUN branch, since cluster_exists is False here)
+    proceeds normally."""
+
+    old_install_root = tmp_path / "old-install"
+    new_install_root = tmp_path / "new-install"
+    program_data_root = tmp_path / "pd"
+    scratch_url = f"sqlite:///{(tmp_path / 'scratch.db').as_posix()}"
+
+    old_paths = resolve_provision_paths(
+        install_root=str(old_install_root), program_data_root=str(program_data_root)
+    )
+    new_paths = resolve_provision_paths(
+        install_root=str(new_install_root), program_data_root=str(program_data_root)
+    )
+    assert old_paths.server_pack_path != new_paths.server_pack_path
+
+    prior_plan = ProvisionPlan(
+        postgres_major_version="17",
+        database_name="civiccast",
+        database_username="civiccast_svc",
+        server_pack_product_version="1.0.0",
+        server_pack_compatible_core="1.0.0",
+        server_pack_signing_key_id="key-1",
+    )
+    stale_context = ProvisionContext(
+        postgres_data_dir=old_paths.postgres_data_dir,
+        postgres_config_path=old_paths.postgres_config_path,
+        postgres_hba_path=old_paths.postgres_hba_path,
+        database_password="old-run-password",
+        server_pack_path=old_paths.server_pack_path,
+        state_root=old_paths.state_root,
+        owner_run_id="old-run-1",
+    )
+    write_journal(
+        ProvisionJournal(plan=prior_plan, context=stale_context, phase=ProvisionPhase.FAILED)
+    )
+
+    engine_calls = _wire_fresh_install_run_path(monkeypatch, scratch_url)
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(new_install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "",
+                "--pack-public-key-base64": _valid_pack_key_b64(),
+            },
+        )
+    )
+
+    assert code == EXIT_SUCCESS, (
+        "a stale FAILED journal from a DIFFERENT install root must not permanently "
+        "wedge a fresh run at that data directory"
+    )
+    captured = capsys.readouterr()
+    assert f"{HANDOFF_MARKER_PREFIX}{scratch_url}" in captured.out
+    assert "STALE" in captured.err
+    assert engine_calls
+    _, engine_context = engine_calls[0]
+    assert engine_context.server_pack_path == new_paths.server_pack_path
+
+
+def test_main_adopt_pack_verification_failure_writes_recovery_document(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """BUG 2: the ADOPT_EXISTING pre-check's own pack-verification failure
+    (before reset_cluster_credential ever runs) must write
+    PROVISION-RECOVERY.md -- the NSIS hook chain shows the SAME static "see
+    ... PROVISION-RECOVERY.md" message for every nonzero exit this CLI can
+    produce (every one collapses to installer exit 75), so every one of
+    them must leave that file behind."""
+
+    import pathlib
+
+    import civiccast.native.provision.seams as seams_module
+
+    def failing_verify(*a, **k):
+        raise RuntimeError("signature mismatch")
+
+    monkeypatch.setattr(seams_module, "verify_server_binaries_pack", failing_verify)
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "",
+                "--pack-public-key-base64": _valid_pack_key_b64(),
+            },
+        )
+    )
+
+    assert code == EXIT_PROVISIONING_FAILED
+    captured = capsys.readouterr()
+    assert HANDOFF_MARKER_PREFIX not in captured.out
+
+    recovery_doc = pathlib.Path(paths.state_root) / "PROVISION-RECOVERY.md"
+    assert recovery_doc.exists(), (
+        "a pre-adoption pack verification failure must still write the recovery "
+        "document the installer's failure message references"
+    )
+    content = recovery_doc.read_text(encoding="utf-8")
+    assert "pack" in content.lower()
+
+
+def test_main_adopt_credential_reset_fault_writes_recovery_document(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """BUG 2: a real (non-foreign-cluster) fault while re-establishing the
+    adoption credential -- e.g. pg_ctl/psql execution failure -- must also
+    write PROVISION-RECOVERY.md, distinct from the foreign-cluster refusal
+    path (already covered by test_main_adopt_refuses_a_foreign_cluster_honestly),
+    which already wrote one via halt_adopt_foreign_cluster."""
+
+    import pathlib
+
+    import civiccast.native.provision.__main__ as provision_main
+    import civiccast.native.provision.seams as seams_module
+
+    monkeypatch.setattr(seams_module, "verify_server_binaries_pack", lambda *a, **k: None)
+
+    def faulting_reset(context, plan, *, pg_ctl_path, psql_path):
+        raise RuntimeError("pg_ctl start failed (exit 1): could not bind port 5432")
+
+    monkeypatch.setattr(provision_main, "reset_cluster_credential", faulting_reset)
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "",
+                "--pack-public-key-base64": _valid_pack_key_b64(),
+            },
+        )
+    )
+
+    assert code == EXIT_PROVISIONING_FAILED
+    captured = capsys.readouterr()
+    assert HANDOFF_MARKER_PREFIX not in captured.out
+
+    recovery_doc = pathlib.Path(paths.state_root) / "PROVISION-RECOVERY.md"
+    assert recovery_doc.exists(), (
+        "a real credential-reset fault must still write the recovery document "
+        "the installer's failure message references"
+    )
+    content = recovery_doc.read_text(encoding="utf-8")
+    assert paths.postgres_data_dir in content
+
+
+def test_main_pack_key_decode_failure_writes_recovery_document(tmp_path, capsys) -> None:
+    """BUG 2: even the earliest RUN/ADOPT_EXISTING-shared failure point
+    (decoding the embedded pack public key, before any plan/context/journal
+    exists) must leave PROVISION-RECOVERY.md behind."""
+
+    import pathlib
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--pack-public-key-base64": "not-valid-base64!!!",
+            },
+        )
+    )
+
+    assert code == EXIT_UNEXPECTED
+    captured = capsys.readouterr()
+    assert HANDOFF_MARKER_PREFIX not in captured.out
+
+    recovery_doc = pathlib.Path(paths.state_root) / "PROVISION-RECOVERY.md"
+    assert recovery_doc.exists(), (
+        "a pack-public-key decode failure must still write the recovery document"
+    )
+
+
+def test_main_corrupt_adopted_journal_writes_recovery_document(tmp_path, capsys) -> None:
+    """BUG 2: a present-but-corrupt adopted journal is fail-loud
+    (EXIT_UNEXPECTED, never silently treated as absent) -- but it must still
+    leave an operator recovery document, since this exit ALSO collapses to
+    installer exit 75 with the SAME static "see ... PROVISION-RECOVERY.md"
+    message."""
+
+    import pathlib
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    state_root = pathlib.Path(paths.state_root)
+    state_root.mkdir(parents=True)
+    (state_root / "provision-journal.json").write_text("{not valid json", encoding="utf-8")
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+            },
+        )
+    )
+
+    assert code == EXIT_UNEXPECTED
+    captured = capsys.readouterr()
+    assert HANDOFF_MARKER_PREFIX not in captured.out
+
+    recovery_doc = state_root / "PROVISION-RECOVERY.md"
+    assert recovery_doc.exists(), "a corrupt adopted journal must still write the recovery document"
+
+
 def test_exit_codes_are_distinct() -> None:
     codes = {
         EXIT_SUCCESS,
@@ -982,11 +1472,16 @@ def test_main_migration_failure_exits_its_own_code_and_never_leaks_the_password(
     generated credential reach stderr even when the exception text embeds
     the connection URL."""
 
+    import pathlib
+
     import civiccast.native.provision.__main__ as provision_main
 
     install_root = tmp_path / "install"
     program_data_root = tmp_path / "pd"
     scratch_url = f"sqlite:///{(tmp_path / 'scratch.db').as_posix()}"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
     _wire_fresh_install_run_path(monkeypatch, scratch_url)
 
     generated: list[str] = []
@@ -1017,6 +1512,16 @@ def test_main_migration_failure_exits_its_own_code_and_never_leaks_the_password(
     assert generated, "the failing migrate seam must have observed the run's password"
     assert generated[0] not in captured.err, "the generated password reached stderr"
 
+    # BUG 2: a schema-migration failure ALSO collapses to the installer's
+    # generic "see ... PROVISION-RECOVERY.md" exit-75 message -- it must
+    # leave that document behind too, not just an in-engine journal halt.
+    recovery_doc = pathlib.Path(paths.state_root) / "PROVISION-RECOVERY.md"
+    assert recovery_doc.exists(), (
+        "a post-provision schema-migration failure must write the recovery document"
+    )
+    content = recovery_doc.read_text(encoding="utf-8")
+    assert generated[0] not in content, "the generated password reached the recovery document"
+
 
 def test_main_pgdata_acl_failure_inside_migrate_exits_its_own_code_not_alembics(
     tmp_path, capsys, monkeypatch
@@ -1036,12 +1541,17 @@ def test_main_pgdata_acl_failure_inside_migrate_exits_its_own_code_not_alembics(
     that suppression is CORRECT here, unlike the wrong step name), and the
     generated credential must still never reach stderr."""
 
+    import pathlib
+
     import civiccast.native.provision.__main__ as provision_main
     from civiccast.native.pgdata_acl import FAILURE_STEP, PgDataAclError
 
     install_root = tmp_path / "install"
     program_data_root = tmp_path / "pd"
     scratch_url = f"sqlite:///{(tmp_path / 'scratch.db').as_posix()}"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
     _wire_fresh_install_run_path(monkeypatch, scratch_url)
 
     generated: list[str] = []
@@ -1081,6 +1591,12 @@ def test_main_pgdata_acl_failure_inside_migrate_exits_its_own_code_not_alembics(
     assert FAILURE_STEP in captured.err, "the ACL step's own breadcrumb must be preserved"
     assert generated, "the failing migrate seam must have observed the run's password"
     assert generated[0] not in captured.err, "the generated password reached stderr"
+
+    # BUG 2: this ALSO collapses to the installer's generic exit-75 message.
+    recovery_doc = pathlib.Path(paths.state_root) / "PROVISION-RECOVERY.md"
+    assert recovery_doc.exists(), "an ACL-normalization failure must write the recovery document"
+    content = recovery_doc.read_text(encoding="utf-8")
+    assert generated[0] not in content, "the generated password reached the recovery document"
 
 
 # ---------------------------------------------------------------------------
