@@ -1,0 +1,7 @@
+﻿2026-08-27T02:25:11.8862346Z,health=200,operator=200,portal=200,cpu_percent=74,free_ram_mb=12678,phase=pre-reboot
+2026-08-27T02:40:53.2064966Z,health=200,operator=200,portal=200,cpu_percent=68,free_ram_mb=13026,phase=pre-reboot
+2026-08-27T02:41:18.2614828Z,health=200,operator=200,portal=200,cpu_percent=66,free_ram_mb=13005,phase=pre-reboot
+2026-08-27T02:41:51.7119895Z,health=200,operator=200,portal=200,cpu_percent=73,free_ram_mb=12942,phase=pre-reboot
+2026-08-27T02:42:17.4279524Z,health=200,operator=200,portal=200,cpu_percent=66,free_ram_mb=12931,phase=pre-reboot
+2026-08-27T02:42:36.9788610Z,health=200,operator=200,portal=200,cpu_percent=35,free_ram_mb=12984,phase=pre-reboot
+2026-08-27T02:43:05.8772582Z,health=200,operator=200,portal=200,cpu_percent=48,free_ram_mb=12924,phase=pre-reboot
