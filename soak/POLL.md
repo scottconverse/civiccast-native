@@ -1,1 +1,1 @@
-2026-08-27T20:19:06Z — fetched origin at the Phase 3 boundary; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; verified USB milestone 41d279c is pushed and USB-source installation is next.
+2026-08-27T20:24:06Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; elevated USB-source installer PID 5712 remains active.
