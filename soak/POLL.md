@@ -1,1 +1,1 @@
-2026-08-27T17:35Z — fetched origin before Phase 1; directive head dcd00b7 (DIRECTIVE-5b), no newer directive present.
+2026-08-27T17:33Z — fetched origin entering Phase 2; directive head dcd00b7 (DIRECTIVE-5b), DIRECTIVE-6 not present.
