@@ -1,1 +1,1 @@
-2026-08-27T20:49:07Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; installer PID 5712 remains active in station activation, with service absent and health not yet answering.
+2026-08-27T20:54:07Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; station activation remains active and is writing translation component blobs, with service and health still pending.
