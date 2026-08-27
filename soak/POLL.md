@@ -1,1 +1,1 @@
-2026-08-27T19:19Z — fetched origin during candidate 13 transfer; directive head 1f373b1 (DIRECTIVE-6), no newer directive present.
+2026-08-27T19:24Z — fetched origin during candidate 13 transfer; directive head 1f373b1 (DIRECTIVE-6), no newer directive present.
