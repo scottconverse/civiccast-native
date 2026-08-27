@@ -1,0 +1,20 @@
+﻿{
+    "schema":  "civiccast-native-soak8h-v1",
+    "candidate":  "99db2c6e60f10dabc6503b4ada25ba09aef0491d",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "start_utc":  "2026-08-27T02:25:07.9848218Z",
+    "completed_utc":  "2026-08-27T10:28:08.8625244Z",
+    "installer_exit_code":  0,
+    "pre_reboot_unhealthy_beats":  0,
+    "unattended_recovery_minutes":  1.041,
+    "post_reboot_unhealthy_beats":  0,
+    "heartbeat_gaps_over_25_minutes_excluding_reboot":  [
+                                                            [
+
+                                                            ]
+                                                        ],
+    "verdict":  "FAIL",
+    "reasons":  [
+                    "1 non-reboot heartbeat gaps exceeded 25 minutes"
+                ]
+}
