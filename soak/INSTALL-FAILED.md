@@ -44,3 +44,15 @@ To update: uninstall CivicCast (Native) first from Windows Settings > Apps. Your
 [2026-08-26 17:55:54] ALERT: CivicCast (Native) setup could not provision the PostgreSQL server. See the installer log and C:\ProgramData\CivicCast\provision\PROVISION-RECOVERY.md for details.
 [2026-08-26 17:55:54] postinstall: FAILED, aborting with exit code 116
 ```
+
+### Provisioning-path diagnosis
+
+Read-only follow-up found a path mismatch after the custom `/D=` install:
+
+- Candidate payload exists under `C:\CivicCastHostStore\install`, including `packs`, `runtime`, `dependencies`, and `CivicCast Native.exe`.
+- `C:\Program Files\CivicCast (Native)` contains only a residual `uninstall.exe`; it has no `packs` directory.
+- The preserved `C:\ProgramData\CivicCast\provision\provision-journal.json` records `server_pack_path` as `C:\Program Files\CivicCast (Native)\packs\native-server-binaries.ccpack`.
+- The journal is stale from `2026-08-16`, remains in phase `complete`, and was not updated by the failed `2026-08-26` attempt.
+- The upgrade engine explicitly chose `fresh_install` while preserving and adopting the existing ProgramData root as-is.
+
+This evidence is consistent with provisioning return `75` being caused by the adopted provisioning state referring to the default Program Files pack path while the requested candidate payload was installed under `C:\CivicCastHostStore\install`. No preserved data or candidate files were modified to test that inference.
