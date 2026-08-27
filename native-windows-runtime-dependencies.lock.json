@@ -2,17 +2,17 @@
   "artifacts": {
     "ffmpeg": {
       "archive": "zip",
-      "bytes": 70708853,
+      "bytes": 70834788,
       "expected_executables": [
         "bin/ffmpeg.exe",
         "bin/ffprobe.exe"
       ],
-      "filename": "ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1.zip",
-      "sha256": "375df631ddf38bf38feb7bbd67259c454045b8ea75b96af62c33a440ba799f48",
+      "filename": "ffmpeg-n8.1.2-46-g139afe709a-win64-lgpl-shared-8.1.zip",
+      "sha256": "030f498b2d14af6e408cefc6553e2af837dd6fb9cf48c701d638f17186e75816",
       "spdx_license": "LGPL-3.0-or-later",
-      "strip_prefix": "ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1",
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-12-13-15/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1.zip",
-      "version": "n8.1.2-34-g9b6c8969e0"
+      "strip_prefix": "ffmpeg-n8.1.2-46-g139afe709a-win64-lgpl-shared-8.1",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-26-13-06/ffmpeg-n8.1.2-46-g139afe709a-win64-lgpl-shared-8.1.zip",
+      "version": "n8.1.2-46-g139afe709a"
     },
     "node": {
       "archive": "zip",

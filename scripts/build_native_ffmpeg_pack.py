@@ -106,7 +106,30 @@ FFMPEG_RUNTIME_COMPONENT: Final[str] = "native-ffmpeg-runtime"
 #: asserts the loaded lock's ``version`` equals this before fetching, so a
 #: lock edited out from under this builder fails loud instead of silently
 #: shipping an unreviewed FFmpeg.
-FFMPEG_VERSION: Final[str] = "n8.1.2-34-g9b6c8969e0"
+#:
+#: RE-PINNED 2026-08-27: the previously reviewed autobuild
+#: (``autobuild-2026-08-12-13-15``, ``n8.1.2-34-g9b6c8969e0``) was pruned
+#: from BtbN/FFmpeg-Builds' GitHub releases -- BtbN retains only recent daily
+#: autobuilds plus one per calendar month, and this one was neither (candidate
+#: run 33094460301 hit a 404 on the exact pinned URL). Confirmed unrecoverable
+#: before repinning: the exact bytes are gone from GitHub (404 on the asset
+#: URL and via ``objects.githubusercontent.com``), from the Wayback Machine
+#: (empty CDX index for the URL), and from every web/code search checked; the
+#: locally cached ``build/native-pyav-cache/ffmpeg-8c95...``.tar.gz is a
+#: DIFFERENT artifact (FFmpeg SOURCE at commit ``8c9502e9b0...`` for the PyAV
+#: build lane, not this lane's BtbN win64-lgpl-shared BINARY archive -- wrong
+#: commit, wrong size, wrong type). Re-pinned to the next same-branch BtbN
+#: autobuild still live at review time
+#: (``autobuild-2026-08-26-13-06``, ``n8.1.2-46-g139afe709a`` -- 12 commits
+#: ahead on the same ``n8.1.2`` release line, same ``win64-lgpl-shared-8.1``
+#: build variant). Re-reviewed before repinning: a real ``pefile`` PE-import
+#: closure walk against the new archive reaches the exact same nine
+#: ``bin/`` files as the previous pin (no new or dropped imports), and a live
+#: ``-version``/``-L``/testsrc-encode/ffprobe proof (the same shape
+#: ``prove_ffmpeg_runtime`` runs) passed locally against the new archive:
+#: LGPLv3 self-report, ``--disable-libx264``/``--disable-libx265``, and a real
+#: h264/aac mp4 produced and probed successfully.
+FFMPEG_VERSION: Final[str] = "n8.1.2-46-g139afe709a"
 
 #: The reviewed SPDX identifier for this artifact, cross-checked three ways
 #: (see ``civiccast.native.runtime_licenses``'s Category 7 header): the
@@ -149,42 +172,45 @@ class FfmpegPackBuildError(RuntimeError):
 # (it backs the ``dshow``/``gdigrab`` input devices), so it stays even though
 # no current call site names those devices -- the walk decides membership, not
 # a guess about which features get used.
+#: Re-derived 2026-08-27 against the repinned archive (see ``FFMPEG_VERSION``)
+#: -- same nine-file set, same DLL SONAME versions (ABI-compatible, 12
+#: commits forward on the same ``n8.1.2`` release branch), new bytes/hashes.
 FFMPEG_BIN_PINS: Final[dict[str, tuple[int, str]]] = {
     "avcodec-62.dll": (
-        70_883_840,
-        "c6033284027a2da01018503b8677176878d7caa4836de71fa695ddee59fac64f",
+        70_869_504,
+        "6c06bf22e6bd52bfd4bababcacd04b1bf7aeb57a4cd1d0ddf62bd988ff3855bc",
     ),
     "avdevice-62.dll": (
-        3_924_992,
-        "e50691bb3822f7bfc3aefc52c6b46ab013abb5ae6fa8ad158903663a21d98ad2",
+        3_923_968,
+        "80b625d1b7f253ab2eedc598888b910b625447c8e9beecf1ebf9330741fa8826",
     ),
     "avfilter-11.dll": (
-        29_825_536,
-        "b8298dfeb8931f11486ee14fedb8f6d4ce29022f180223a57b4e5b2078480082",
+        30_029_312,
+        "ea9c0366d5210f6cf12276402ecb32798223fbe351dd619dbb2e5f119254dcdc",
     ),
     "avformat-62.dll": (
-        22_077_440,
-        "a584a9590110c5fd631fce7a86d715de95a5dc91ea866401f1a6358973ada397",
+        22_107_136,
+        "b3c5592c898f17b2a7613e605c332aacb614b34d42d2b9790df99963856d85e1",
     ),
     "avutil-60.dll": (
-        2_937_856,
-        "4627a38fe77213af8cba4e2cee2e1376df48ca1872416e0889dd7b7dedbeadc2",
+        2_937_344,
+        "11ebd1519d6f0ca8b4124ca6262c5cec2b603994ed6403a3c3af0a71c29bd16d",
     ),
     "ffmpeg.exe": (
-        542_208,
-        "df1e981731defa2210dac674e9ca7cc48bbe0ab8120a050b4be25d4a1dd68bd8",
+        541_184,
+        "9746d57c1fc4e1ab5c23bb677b6c1117feec412ea9c2c47bea49286f71a970a6",
     ),
     "ffprobe.exe": (
-        227_840,
-        "d175e48003b3cdecc3ef6884dbbce5a8ea4de273069ff6fdc8fb533ee63e18e7",
+        225_792,
+        "ad7568a5bb3dd4b5fad281950ff498d06d839b7370486f1c6382b5964b95ca16",
     ),
     "swresample-6.dll": (
-        723_968,
-        "4f17df0f7c8913baab07ae40231f100b95dac59389e314d235c1f1f678008e46",
+        722_944,
+        "8b7dc6c13f38d33d4b9cde4e49bb458f3c1b0a9ee90a1dd67f624db3f5a7954f",
     ),
     "swscale-9.dll": (
-        12_570_624,
-        "32a459c634b234811c5781b0dbb0fcc143b58c000d893e20d7f65231659e89c2",
+        12_759_040,
+        "990e3de8fa34401f8c3a10750a676ea106271e59783d3321151b83075c6a7bfc",
     ),
 }
 

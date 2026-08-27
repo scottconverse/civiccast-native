@@ -23,7 +23,7 @@ ARTIFACT_NAMES = {"postgres", "tsduck", "ffmpeg", "node", "ollama"}
 EXPECTED_VERSIONS = {
     "postgres": "17.10-2",
     "tsduck": "3.44-4676",
-    "ffmpeg": "n8.1.2-34-g9b6c8969e0",
+    "ffmpeg": "n8.1.2-46-g139afe709a",
     "node": "24.15.0",
     "ollama": "0.30.6",
 }
