@@ -1,1 +1,1 @@
-2026-08-27T20:39:06Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; responsive USB-source installer PID 5712 and child PID 8364 remain active with 10,649 install files present.
+2026-08-27T20:44:07Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; installer log proves preserved data was adopted, provision returned 0, and child PID 8364 remains in station activation.
