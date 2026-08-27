@@ -648,6 +648,39 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Runtime-dependency acquisition survives upstream release pruning
+  (mirror-first fetch + reviewed fallback URLs).** Candidate build run
+  33094460301 failed with a 404 in `scripts/build_native_ffmpeg_pack.py`'s
+  `--acquire` because BtbN/FFmpeg-Builds pruned the pinned autobuild release
+  tag (BtbN keeps only recent daily tags plus one per calendar month). PR
+  #52 repinned to the next surviving build, but that pin is equally
+  prunable — a lock edit can never be the durable fix. `scripts/
+  provision_native_runtime_dependencies.py`'s `fetch_locked_artifact` (the
+  shared acquisition primitive behind the ffmpeg, server, ollama, and cuda
+  pack builders) now: (1) consults a persistent, hash-addressed archive
+  mirror (`CIVICCAST_RUNTIME_ARTIFACT_MIRROR` env var or `mirror=` param,
+  layout `<mirror>/<sha256>/<filename>`) before touching the network,
+  ignoring-then-repairing any entry that fails verification; (2) writes
+  every verified download back through to the mirror, so the pinned bytes
+  outlive the upstream tag; and (3) accepts an optional, reviewed
+  `fallback_urls` list in the lock (same HTTPS-host allowlist, tried in
+  order after the primary URL fails, with an all-sources failure report).
+  The committed lock's size+SHA-256 pin stays the sole admission authority
+  on every path — mirror hits and fallback downloads are verified exactly
+  like a fresh primary download. Wiring:
+  `.github/workflows/native-beta-candidate-artifacts.yml` restores the
+  FFmpeg archive via `actions/cache` (keyed on the runtime lock file) on
+  the hosted lane, and points the self-hosted lane at the box-local
+  persistent mirror `C:\CivicCastTester\runtime-artifact-mirror` (outside
+  the runner work/temp trees, same box-local precedent as `kit-staging`) —
+  seeded with the currently pinned FFmpeg archive, hash-verified, at review
+  time. 14 new tests in
+  `tests/native/test_runtime_dependency_provisioner.py` cover the
+  mirror-hit-with-zero-network path, env-var configuration, corrupt-entry
+  repair, write-through admission, mirror-write-failure tolerance,
+  primary-404-to-fallback ordering, all-sources-fail reporting, and the
+  `fallback_urls` schema boundary.
+
 - **S7 media lifecycle worker — GPL encoder literal removed from the default
   transcode seed list, resource posture made conservative.** A regression
   audit of `civiccast/schedule/media_lifecycle_worker.py` found its default

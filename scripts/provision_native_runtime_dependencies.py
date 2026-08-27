@@ -13,9 +13,11 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import urllib.parse
 import urllib.request
@@ -29,6 +31,16 @@ LOCK_PATH: Final[Path] = ROOT / "native-windows-runtime-dependencies.lock.json"
 DEFAULT_CACHE: Final[Path] = ROOT / "build" / "native-runtime-dependency-cache"
 DEFAULT_OUTPUT: Final[Path] = ROOT / "build" / "native-runtime-dependencies"
 MANIFEST_NAME: Final[str] = "native-runtime-dependencies-manifest.json"
+#: Optional persistent, hash-addressed archive mirror. When set (or passed as
+#: ``fetch_locked_artifact``'s ``mirror=``), verified archives are read from
+#: and written back to ``<mirror>/<sha256>/<filename>`` -- a survival layer
+#: for upstream release assets that can vanish (BtbN/FFmpeg-Builds prunes
+#: daily autobuild tags; candidate run 33094460301 died on a 404 of the
+#: then-pinned asset). The committed lock's size+SHA-256 pin stays the sole
+#: admission authority: a mirror entry is verified exactly like a fresh
+#: download before it is used, and ignored (then repaired) if it does not
+#: match.
+MIRROR_ENV_VAR: Final[str] = "CIVICCAST_RUNTIME_ARTIFACT_MIRROR"
 SHA256SUMS_NAME: Final[str] = "SHA256SUMS"
 LICENSE_BOM_NAME: Final[str] = "LICENSE-BOM.md"
 _TRUST_ARTIFACTS: Final[frozenset[str]] = frozenset(
@@ -164,11 +176,32 @@ def validate_lock(lock: Mapping[str, Any]) -> None:
             | ({"include"} if name in {"postgres", "node"} else set())
             | ({"license_notice"} if name == "ollama" else set())
         )
-        if set(artifact) != allowed_fields:
+        # ``fallback_urls`` is the one OPTIONAL field: a reviewed, ordered
+        # list of alternate download URLs for the same exact bytes, tried
+        # only after the primary URL fails. Same host allowlist, same
+        # size+SHA-256 verification -- a fallback can change where the bytes
+        # come from, never which bytes are accepted.
+        if set(artifact) - {"fallback_urls"} != allowed_fields:
             raise RuntimeDependencyProvisionError(
                 f"{name} artifact fields differ from the reviewed schema"
             )
         _validated_download_url(artifact["url"])
+        if "fallback_urls" in artifact:
+            fallback_urls = artifact["fallback_urls"]
+            if (
+                not isinstance(fallback_urls, list)
+                or not fallback_urls
+                or any(not isinstance(item, str) for item in fallback_urls)
+            ):
+                raise RuntimeDependencyProvisionError(
+                    f"{name} artifact fallback_urls must be a non-empty list of URLs"
+                )
+            for item in fallback_urls:
+                _validated_download_url(item)
+            if len({artifact["url"], *fallback_urls}) != len(fallback_urls) + 1:
+                raise RuntimeDependencyProvisionError(
+                    f"{name} artifact fallback_urls contain duplicates"
+                )
 
         filename = artifact["filename"]
         if not isinstance(filename, str) or not filename or filename != Path(filename).name:
@@ -309,6 +342,66 @@ def _verify_artifact(path: Path, artifact: Mapping[str, Any]) -> None:
         )
 
 
+def _artifact_download_urls(artifact: Mapping[str, Any]) -> list[str]:
+    """The reviewed acquisition order: the primary URL, then any reviewed
+    fallbacks. Every entry re-passes the host/scheme boundary here so a lock
+    that skipped ``validate_lock`` still cannot smuggle in an unapproved
+    source."""
+
+    urls = [str(_validated_download_url(artifact.get("url")).geturl())]
+    fallback_urls = artifact.get("fallback_urls")
+    if isinstance(fallback_urls, Sequence) and not isinstance(fallback_urls, str):
+        for item in fallback_urls:
+            urls.append(str(_validated_download_url(item).geturl()))
+    return urls
+
+
+def _configured_mirror(mirror: Path | None) -> Path | None:
+    if mirror is not None:
+        return mirror
+    value = os.environ.get(MIRROR_ENV_VAR, "").strip()
+    return Path(value) if value else None
+
+
+def _mirror_entry(mirror: Path, artifact: Mapping[str, Any]) -> Path:
+    return mirror / str(artifact["sha256"]) / str(artifact["filename"])
+
+
+def _admit_to_mirror(
+    name: str,
+    verified_archive: Path,
+    artifact: Mapping[str, Any],
+    mirror: Path | None,
+) -> None:
+    """Best-effort write-through of an already-verified archive into the
+    persistent mirror. A mirror write failure (permissions, disk) must never
+    fail an acquisition that already holds verified bytes -- it only costs
+    resilience on a FUTURE run, so it warns loudly instead."""
+
+    if mirror is None:
+        return
+    entry = _mirror_entry(mirror, artifact)
+    try:
+        if entry.is_file():
+            try:
+                _verify_artifact(entry, artifact)
+            except RuntimeDependencyProvisionError:
+                pass  # a corrupt entry is rewritten below
+            else:
+                return
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        partial = entry.with_name(f"{entry.name}.partial")
+        shutil.copyfile(verified_archive, partial)
+        _verify_artifact(partial, artifact)
+        partial.replace(entry)
+    except (OSError, RuntimeDependencyProvisionError) as exc:
+        print(
+            f"WARNING: could not admit the verified {name} artifact into the "
+            f"runtime artifact mirror at {entry}: {exc}",
+            file=sys.stderr,
+        )
+
+
 def fetch_locked_artifact(
     name: str,
     artifact: Mapping[str, Any],
@@ -316,44 +409,94 @@ def fetch_locked_artifact(
     *,
     offline: bool = False,
     opener: Callable[..., Any] = urllib.request.urlopen,
+    mirror: Path | None = None,
 ) -> Path:
-    """Acquire one reviewed artifact, verifying bytes before cache admission."""
+    """Acquire one reviewed artifact, verifying bytes before cache admission.
 
-    _validated_download_url(artifact.get("url"))
+    Acquisition order, every step gated by the SAME size+SHA-256 pin:
+
+    1. The run's ``cache`` directory (verified, never trusted bare).
+    2. The persistent hash-addressed mirror (``mirror=``, or the
+       ``CIVICCAST_RUNTIME_ARTIFACT_MIRROR`` environment variable) at
+       ``<mirror>/<sha256>/<filename>`` -- an entry that fails verification
+       is ignored here and repaired after a successful download.
+    3. The lock's primary ``url``, then each reviewed ``fallback_urls`` entry
+       in order. Only when every reviewed source fails does acquisition fail.
+
+    A successful network download is written back into the mirror
+    (best-effort) so the pinned bytes survive upstream release pruning.
+    """
+
+    urls = _artifact_download_urls(artifact)
     cache.mkdir(parents=True, exist_ok=True)
     destination = cache / str(artifact["filename"])
+    partial = destination.with_name(f"{destination.name}.partial")
     if destination.exists():
         _verify_artifact(destination, artifact)
         return destination
+
+    mirror_root = _configured_mirror(mirror)
+    if mirror_root is not None:
+        entry = _mirror_entry(mirror_root, artifact)
+        if entry.is_file():
+            try:
+                _verify_artifact(entry, artifact)
+            except RuntimeDependencyProvisionError as exc:
+                print(
+                    f"WARNING: runtime artifact mirror entry for {name} failed "
+                    f"verification and is ignored: {exc}",
+                    file=sys.stderr,
+                )
+            else:
+                try:
+                    partial.unlink(missing_ok=True)
+                    shutil.copyfile(entry, partial)
+                    _verify_artifact(partial, artifact)
+                    partial.replace(destination)
+                except Exception:
+                    partial.unlink(missing_ok=True)
+                    raise
+                return destination
+
     if offline:
         raise RuntimeDependencyProvisionError(
             f"offline cache is missing reviewed {name} artifact: {destination}"
         )
 
-    partial = destination.with_name(f"{destination.name}.partial")
-    partial.unlink(missing_ok=True)
-    request = urllib.request.Request(
-        str(artifact["url"]),
-        headers={"User-Agent": "CivicCast-native-runtime-provisioner/1"},
-    )
-    try:
-        with opener(request, timeout=60) as response:
-            final_url = response.geturl()
-            try:
-                _validated_download_url(final_url)
-            except RuntimeDependencyProvisionError as exc:
-                raise RuntimeDependencyProvisionError(
-                    f"{name} download redirect refused: {final_url}"
-                ) from exc
-            with partial.open("wb") as handle:
-                while chunk := response.read(_CHUNK_BYTES):
-                    handle.write(chunk)
-        _verify_artifact(partial, artifact)
-        partial.replace(destination)
-    except Exception:
+    failures: list[str] = []
+    last_error: Exception | None = None
+    for url in urls:
         partial.unlink(missing_ok=True)
-        raise
-    return destination
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "CivicCast-native-runtime-provisioner/1"},
+        )
+        try:
+            with opener(request, timeout=60) as response:
+                final_url = response.geturl()
+                try:
+                    _validated_download_url(final_url)
+                except RuntimeDependencyProvisionError as exc:
+                    raise RuntimeDependencyProvisionError(
+                        f"{name} download redirect refused: {final_url}"
+                    ) from exc
+                with partial.open("wb") as handle:
+                    while chunk := response.read(_CHUNK_BYTES):
+                        handle.write(chunk)
+            _verify_artifact(partial, artifact)
+        except Exception as exc:
+            partial.unlink(missing_ok=True)
+            if len(urls) == 1:
+                raise
+            failures.append(f"{url}: {exc}")
+            last_error = exc
+            continue
+        partial.replace(destination)
+        _admit_to_mirror(name, destination, artifact, mirror_root)
+        return destination
+    raise RuntimeDependencyProvisionError(
+        f"every reviewed source for the {name} artifact failed: " + "; ".join(failures)
+    ) from last_error
 
 
 def _archive_relative_path(

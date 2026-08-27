@@ -310,6 +310,205 @@ def test_fetch_offline_refuses_a_missing_cache_entry(
         )
 
 
+def test_fetch_prefers_a_verified_mirror_entry_before_any_network(
+    provisioner: object,
+    tmp_path: Path,
+) -> None:
+    """The cache-first path: a hash-verified mirror hit must satisfy the
+    acquisition with ZERO network use, even though the upstream URL may no
+    longer exist (the BtbN autobuild-pruning failure mode)."""
+
+    body = b"reviewed runtime artifact"
+    artifact = _artifact("tsduck", body)
+    mirror = tmp_path / "mirror"
+    entry = mirror / str(artifact["sha256"]) / "tsduck.zip"
+    entry.parent.mkdir(parents=True)
+    entry.write_bytes(body)
+    cache = tmp_path / "cache"
+
+    cached = provisioner.fetch_locked_artifact(
+        "tsduck",
+        artifact,
+        cache,
+        mirror=mirror,
+        opener=lambda *_args, **_kwargs: pytest.fail("a mirror hit must not open a URL"),
+    )
+    assert cached == cache / "tsduck.zip"
+    assert cached.read_bytes() == body
+    assert entry.read_bytes() == body
+    assert not (cache / "tsduck.zip.partial").exists()
+
+
+def test_fetch_mirror_is_configurable_by_environment_variable(
+    provisioner: object,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"reviewed runtime artifact"
+    artifact = _artifact("tsduck", body)
+    mirror = tmp_path / "mirror"
+    entry = mirror / str(artifact["sha256"]) / "tsduck.zip"
+    entry.parent.mkdir(parents=True)
+    entry.write_bytes(body)
+    monkeypatch.setenv(provisioner.MIRROR_ENV_VAR, str(mirror))
+
+    cached = provisioner.fetch_locked_artifact(
+        "tsduck",
+        artifact,
+        tmp_path / "cache",
+        opener=lambda *_args, **_kwargs: pytest.fail("a mirror hit must not open a URL"),
+    )
+    assert cached.read_bytes() == body
+
+
+def test_fetch_ignores_a_corrupt_mirror_entry_then_repairs_it_from_the_network(
+    provisioner: object,
+    tmp_path: Path,
+) -> None:
+    body = b"reviewed runtime artifact"
+    artifact = _artifact("tsduck", body)
+    mirror = tmp_path / "mirror"
+    entry = mirror / str(artifact["sha256"]) / "tsduck.zip"
+    entry.parent.mkdir(parents=True)
+    entry.write_bytes(b"tampered mirror bytes")
+
+    def opener(_request: object, *, timeout: float) -> _Response:
+        assert timeout == 60
+        return _Response(body, "https://github.com/civiccast-fixtures/tsduck.zip")
+
+    cached = provisioner.fetch_locked_artifact(
+        "tsduck", artifact, tmp_path / "cache", opener=opener, mirror=mirror
+    )
+    assert cached.read_bytes() == body
+    assert entry.read_bytes() == body  # repaired from the verified download
+    assert not entry.with_name("tsduck.zip.partial").exists()
+
+
+def test_fetch_admits_a_verified_download_into_the_mirror(
+    provisioner: object,
+    tmp_path: Path,
+) -> None:
+    body = b"reviewed runtime artifact"
+    artifact = _artifact("tsduck", body)
+    mirror = tmp_path / "mirror"
+
+    def opener(_request: object, *, timeout: float) -> _Response:
+        assert timeout == 60
+        return _Response(body, "https://github.com/civiccast-fixtures/tsduck.zip")
+
+    cached = provisioner.fetch_locked_artifact(
+        "tsduck", artifact, tmp_path / "cache", opener=opener, mirror=mirror
+    )
+    assert cached.read_bytes() == body
+    entry = mirror / str(artifact["sha256"]) / "tsduck.zip"
+    assert entry.read_bytes() == body
+
+
+def test_fetch_mirror_write_failure_never_fails_a_verified_acquisition(
+    provisioner: object,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    body = b"reviewed runtime artifact"
+    artifact = _artifact("tsduck", body)
+    mirror = tmp_path / "mirror"
+    mirror.write_bytes(b"a file where the mirror directory should be")
+
+    def opener(_request: object, *, timeout: float) -> _Response:
+        assert timeout == 60
+        return _Response(body, "https://github.com/civiccast-fixtures/tsduck.zip")
+
+    cached = provisioner.fetch_locked_artifact(
+        "tsduck", artifact, tmp_path / "cache", opener=opener, mirror=mirror
+    )
+    assert cached.read_bytes() == body
+    assert "could not admit" in capsys.readouterr().err
+
+
+def test_fetch_falls_back_to_the_next_reviewed_url_when_the_primary_fails(
+    provisioner: object,
+    tmp_path: Path,
+) -> None:
+    body = b"reviewed runtime artifact"
+    artifact = _artifact("tsduck", body)
+    artifact["fallback_urls"] = ["https://github.com/civiccast-fixtures/mirror/tsduck.zip"]
+    calls: list[str] = []
+
+    def opener(request: object, *, timeout: float) -> _Response:
+        assert timeout == 60
+        url = request.full_url  # type: ignore[attr-defined]
+        calls.append(url)
+        if url == "https://github.com/civiccast-fixtures/tsduck.zip":
+            raise OSError("HTTP Error 404: Not Found (upstream release pruned)")
+        return _Response(body, url)
+
+    cached = provisioner.fetch_locked_artifact("tsduck", artifact, tmp_path, opener=opener)
+    assert cached.read_bytes() == body
+    assert calls == [
+        "https://github.com/civiccast-fixtures/tsduck.zip",
+        "https://github.com/civiccast-fixtures/mirror/tsduck.zip",
+    ]
+    assert not (tmp_path / "tsduck.zip.partial").exists()
+
+
+def test_fetch_reports_every_reviewed_source_when_all_of_them_fail(
+    provisioner: object,
+    tmp_path: Path,
+) -> None:
+    artifact = _artifact("tsduck", b"reviewed runtime artifact")
+    artifact["fallback_urls"] = ["https://github.com/civiccast-fixtures/mirror/tsduck.zip"]
+
+    def opener(request: object, *, timeout: float) -> _Response:
+        assert timeout == 60
+        raise OSError(f"HTTP Error 404: Not Found for {request.full_url}")  # type: ignore[attr-defined]
+
+    with pytest.raises(
+        provisioner.RuntimeDependencyProvisionError, match="every reviewed source"
+    ) as excinfo:
+        provisioner.fetch_locked_artifact("tsduck", artifact, tmp_path, opener=opener)
+    assert "civiccast-fixtures/tsduck.zip" in str(excinfo.value)
+    assert "civiccast-fixtures/mirror/tsduck.zip" in str(excinfo.value)
+    assert not (tmp_path / "tsduck.zip").exists()
+    assert not (tmp_path / "tsduck.zip.partial").exists()
+
+
+def test_validate_lock_accepts_reviewed_fallback_urls(provisioner: object) -> None:
+    lock = provisioner.load_lock()
+    lock["artifacts"]["ffmpeg"]["fallback_urls"] = [
+        "https://github.com/civiccast-fixtures/mirror/ffmpeg.zip"
+    ]
+    provisioner.validate_lock(lock)
+
+
+@pytest.mark.parametrize(
+    ("value", "match"),
+    [
+        ([], "non-empty"),
+        ("https://github.com/one.zip", "non-empty"),
+        ([42], "non-empty"),
+        (["http://github.com/one.zip"], "HTTPS"),
+        (["https://attacker.invalid/one.zip"], "approved"),
+        (
+            [
+                "https://github.com/civiccast-fixtures/one.zip",
+                "https://github.com/civiccast-fixtures/one.zip",
+            ],
+            "duplicates",
+        ),
+    ],
+)
+def test_validate_lock_rejects_unreviewable_fallback_urls(
+    provisioner: object,
+    value: object,
+    match: str,
+) -> None:
+    lock = provisioner.load_lock()
+    lock["artifacts"]["ffmpeg"]["fallback_urls"] = value
+
+    with pytest.raises(provisioner.RuntimeDependencyProvisionError, match=match):
+        provisioner.validate_lock(lock)
+
+
 @pytest.mark.parametrize(
     "member",
     [
