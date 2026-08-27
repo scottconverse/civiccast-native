@@ -5,3 +5,5 @@
 2026-08-27T21:45:46.8689802Z,health=200,operator=200,portal=200,cpu_percent=8,free_ram_mb=12468,phase=pre-reboot
 2026-08-27T21:55:50.1306264Z,health=200,operator=200,portal=200,cpu_percent=26,free_ram_mb=12509,phase=pre-reboot
 2026-08-27T22:05:51.4323485Z,health=200,operator=200,portal=200,cpu_percent=23,free_ram_mb=12567,phase=pre-reboot
+2026-08-27T22:15:54.7288872Z,health=200,operator=200,portal=200,cpu_percent=18,free_ram_mb=12524,phase=pre-reboot
+2026-08-27T22:25:56.0302975Z,health=200,operator=200,portal=200,cpu_percent=5,free_ram_mb=12588,phase=pre-reboot
