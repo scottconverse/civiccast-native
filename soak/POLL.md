@@ -1,1 +1,1 @@
-2026-08-27T20:04:06Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; recorded PID 11364 and child Robocopy PID 10500 remain alive while the final translation pack copies to USB.
+2026-08-27T20:09:06Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; USB copy completed at 15 files/26,851,361,224 bytes and SHA256 verification resumed under PID 6076 after replacing unavailable Get-FileHash with .NET SHA256.
