@@ -1,0 +1,6 @@
+"FullName","Bytes","LastWriteTimeUtc","ArchivedTail"
+"C:\ProgramData\CivicCast\logs\supervisor.log","4103","2026-08-26T23:37:34.7863130Z","supervisor.log.tail-200.txt"
+"C:\ProgramData\CivicCast\logs\postgres.log","1257387","2026-08-26T23:37:34.6063078Z","postgres.log.tail-200.txt"
+"C:\ProgramData\CivicCast\logs\control_plane.log","462093","2026-08-26T23:15:31.1167119Z","control_plane.log.tail-200.txt"
+"C:\ProgramData\CivicCast\logs\ollama.log","137968","2026-08-26T22:26:28.1786424Z","ollama.log.tail-200.txt"
+"C:\ProgramData\CivicCast\logs\nats.log","4183","2026-08-16T01:01:16.9354105Z","nats.log.tail-200.txt"

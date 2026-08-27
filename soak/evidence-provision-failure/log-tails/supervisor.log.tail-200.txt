@@ -1,0 +1,28 @@
+2026-08-13 18:32:27,837 WARNING civiccast.native.supervisor: station not yet activated; supervisor starting in pre-activation mode (packaged portals and the setup handoff are still served so first-run setup can be completed)
+2026-08-13 18:32:27,837 INFO civiccast.native.supervisor: CivicCast supervisor service starting up
+2026-08-13 18:32:27,853 INFO civiccast.native.supervisor: D7 control pipe opened: control pipe '\\\\.\\pipe\\civiccast-supervisor' created
+2026-08-13 18:32:27,853 WARNING civiccast.native.supervisor: ollama child skipped (degraded AI, service healthy): no staged ollama model store at C:\Program Files\CivicCast (Native)\models\ollama or C:\Program Files\CivicCast (Native)\packs\local-ai-model\models or C:\ProgramData\CivicCast\packs\local-ai-model\models
+2026-08-15 15:15:45,015 INFO civiccast.native.supervisor.core: child recovery aborted before child postgres: a service stop was requested
+2026-08-15 15:15:45,015 INFO civiccast.native.supervisor: stop requested; running graceful stop chain
+2026-08-15 15:15:45,015 INFO civiccast.native.supervisor: stop: issued ctrl_break_event graceful action for control_plane
+2026-08-15 15:16:00,030 WARNING civiccast.native.supervisor: stop: control_plane overran the 15s graceful deadline; TerminateProcess
+2026-08-15 15:16:00,032 INFO civiccast.native.supervisor: stop: issued ctrl_break_event graceful action for ollama
+2026-08-15 15:16:15,038 WARNING civiccast.native.supervisor: stop: ollama overran the 15s graceful deadline; TerminateProcess
+2026-08-15 15:16:15,773 WARNING civiccast.native.supervisor: stop command ['C:\\Program Files\\CivicCast (Native)\\packs\\native-server-binaries\\payload\\bin\\nats-server.exe', '--signal', 'ldm=2704'] exited 1 (nonzero): nats-server: could not access service: The specified service does not exist as an installed service.
+2026-08-15 15:16:15,773 INFO civiccast.native.supervisor: stop: issued argv graceful action for nats
+2026-08-15 15:16:30,778 WARNING civiccast.native.supervisor: stop: nats overran the 15s graceful deadline; TerminateProcess
+2026-08-15 15:16:30,982 INFO civiccast.native.supervisor: stop: issued argv graceful action for postgres
+2026-08-15 15:16:30,998 INFO civiccast.native.supervisor: CivicCast supervisor service stopped
+2026-08-15 19:01:14,253 WARNING civiccast.native.supervisor: station not yet activated; supervisor starting in pre-activation mode (packaged portals and the setup handoff are still served so first-run setup can be completed)
+2026-08-15 19:01:14,253 INFO civiccast.native.supervisor: CivicCast supervisor service starting up
+2026-08-15 19:01:14,253 INFO civiccast.native.supervisor: D7 control pipe opened: control pipe '\\\\.\\pipe\\civiccast-supervisor' created
+2026-08-26 17:36:48,178 INFO civiccast.native.supervisor: stop requested; running graceful stop chain
+2026-08-26 17:36:48,207 INFO civiccast.native.supervisor: stop: issued ctrl_break_event graceful action for control_plane
+2026-08-26 17:37:03,212 WARNING civiccast.native.supervisor: stop: control_plane overran the 15s graceful deadline; TerminateProcess
+2026-08-26 17:37:03,218 INFO civiccast.native.supervisor: stop: issued ctrl_break_event graceful action for ollama
+2026-08-26 17:37:18,224 WARNING civiccast.native.supervisor: stop: ollama overran the 15s graceful deadline; TerminateProcess
+2026-08-26 17:37:19,332 WARNING civiccast.native.supervisor: stop command ['C:\\Program Files\\CivicCast (Native)\\packs\\native-server-binaries\\payload\\bin\\nats-server.exe', '--signal', 'ldm=3236'] exited 1 (nonzero): nats-server: could not access service: The specified service does not exist as an installed service.
+2026-08-26 17:37:19,336 INFO civiccast.native.supervisor: stop: issued argv graceful action for nats
+2026-08-26 17:37:34,342 WARNING civiccast.native.supervisor: stop: nats overran the 15s graceful deadline; TerminateProcess
+2026-08-26 17:37:34,633 INFO civiccast.native.supervisor: stop: issued argv graceful action for postgres
+2026-08-26 17:37:34,785 INFO civiccast.native.supervisor: CivicCast supervisor service stopped

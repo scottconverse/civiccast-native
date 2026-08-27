@@ -1,0 +1,52 @@
+[2704] 2026/08/13 18:32:29.271129 [INF] Starting nats-server
+[2704] 2026/08/13 18:32:29.272046 [INF]   Version:  2.14.3
+[2704] 2026/08/13 18:32:29.272046 [INF]   Git:      [9b17a58]
+[2704] 2026/08/13 18:32:29.272046 [INF]   Name:     NCANEDYCHE24FPTK43NFRJY5NYFX4OTU27LKE2KFRVVL2ISXRDJL6TBI
+[2704] 2026/08/13 18:32:29.272046 [INF]   Node:     aCGPvYpV
+[2704] 2026/08/13 18:32:29.272046 [INF]   ID:       NCANEDYCHE24FPTK43NFRJY5NYFX4OTU27LKE2KFRVVL2ISXRDJL6TBI
+[2704] 2026/08/13 18:32:29.272046 [INF] Using configuration file: C:\ProgramData\CivicCast\config\nats-server.conf (sha256:a33af638dc6bb99e0e594c11e6e2a113c73b271a2c211797b868dcbafdab5667)
+[2704] 2026/08/13 18:32:29.272550 [INF] Starting JetStream
+[2704] 2026/08/13 18:32:29.272550 [INF]     _ ___ _____ ___ _____ ___ ___   _   __  __
+[2704] 2026/08/13 18:32:29.272550 [INF]  _ | | __|_   _/ __|_   _| _ \ __| /_\ |  \/  |
+[2704] 2026/08/13 18:32:29.273276 [INF] | || | _|  | | \__ \ | | |   / _| / _ \| |\/| |
+[2704] 2026/08/13 18:32:29.273276 [INF]  \__/|___| |_| |___/ |_| |_|_\___/_/ \_\_|  |_|
+[2704] 2026/08/13 18:32:29.273276 [INF] 
+[2704] 2026/08/13 18:32:29.273276 [INF]          https://docs.nats.io/jetstream
+[2704] 2026/08/13 18:32:29.273276 [INF] 
+[2704] 2026/08/13 18:32:29.273276 [INF] ---------------- JETSTREAM ----------------
+[2704] 2026/08/13 18:32:29.273276 [INF]   Strict:          true
+[2704] 2026/08/13 18:32:29.273276 [INF]   Max Memory:      20.84 GB
+[2704] 2026/08/13 18:32:29.273276 [INF]   Max Storage:     1.00 TB
+[2704] 2026/08/13 18:32:29.273276 [INF]   Store Directory: "C:\ProgramData\CivicCast\data\nats-store\jetstream"
+[2704] 2026/08/13 18:32:29.273276 [INF]   API Level:       4
+[2704] 2026/08/13 18:32:29.273276 [INF] -------------------------------------------
+[2704] 2026/08/13 18:32:29.274859 [INF] Took 2.309ms to start JetStream
+[2704] 2026/08/13 18:32:29.276089 [INF] Listening for client connections on 127.0.0.1:4222
+[2704] 2026/08/13 18:32:29.276089 [INF] Server is ready
+[3236] 2026/08/15 19:01:16.881984 [INF] Starting nats-server
+[3236] 2026/08/15 19:01:16.883059 [INF]   Version:  2.14.3
+[3236] 2026/08/15 19:01:16.883059 [INF]   Git:      [9b17a58]
+[3236] 2026/08/15 19:01:16.883059 [INF]   Name:     NDXEKSBNVSASRR7DLGDASW6ICB7TTRXK7S63EUQRSOHNDUEB5FURY7GV
+[3236] 2026/08/15 19:01:16.883059 [INF]   Node:     8qs2wcsv
+[3236] 2026/08/15 19:01:16.883059 [INF]   ID:       NDXEKSBNVSASRR7DLGDASW6ICB7TTRXK7S63EUQRSOHNDUEB5FURY7GV
+[3236] 2026/08/15 19:01:16.883059 [INF] Using configuration file: C:\ProgramData\CivicCast\config\nats-server.conf (sha256:a33af638dc6bb99e0e594c11e6e2a113c73b271a2c211797b868dcbafdab5667)
+[3236] 2026/08/15 19:01:16.883059 [INF] Starting JetStream
+[3236] 2026/08/15 19:01:16.884105 [INF]     _ ___ _____ ___ _____ ___ ___   _   __  __
+[3236] 2026/08/15 19:01:16.884105 [INF]  _ | | __|_   _/ __|_   _| _ \ __| /_\ |  \/  |
+[3236] 2026/08/15 19:01:16.884105 [INF] | || | _|  | | \__ \ | | |   / _| / _ \| |\/| |
+[3236] 2026/08/15 19:01:16.884105 [INF]  \__/|___| |_| |___/ |_| |_|_\___/_/ \_\_|  |_|
+[3236] 2026/08/15 19:01:16.884105 [INF] 
+[3236] 2026/08/15 19:01:16.884105 [INF]          https://docs.nats.io/jetstream
+[3236] 2026/08/15 19:01:16.884105 [INF] 
+[3236] 2026/08/15 19:01:16.884105 [INF] ---------------- JETSTREAM ----------------
+[3236] 2026/08/15 19:01:16.884105 [INF]   Strict:          true
+[3236] 2026/08/15 19:01:16.884105 [INF]   Max Memory:      20.84 GB
+[3236] 2026/08/15 19:01:16.884105 [INF]   Max Storage:     1.00 TB
+[3236] 2026/08/15 19:01:16.884105 [INF]   Store Directory: "C:\ProgramData\CivicCast\data\nats-store\jetstream"
+[3236] 2026/08/15 19:01:16.884105 [INF]   API Level:       4
+[3236] 2026/08/15 19:01:16.884105 [INF] -------------------------------------------
+[3236] 2026/08/15 19:01:16.898024 [INF]   Starting restore for stream '$G > CIVICCAST_SUPERVISOR_PROBE'
+[3236] 2026/08/15 19:01:16.934326 [INF]   Restored 1 messages for stream '$G > CIVICCAST_SUPERVISOR_PROBE' in 36ms
+[3236] 2026/08/15 19:01:16.934326 [INF] Took 50.7413ms to start JetStream
+[3236] 2026/08/15 19:01:16.935410 [INF] Listening for client connections on 127.0.0.1:4222
+[3236] 2026/08/15 19:01:16.935410 [INF] Server is ready

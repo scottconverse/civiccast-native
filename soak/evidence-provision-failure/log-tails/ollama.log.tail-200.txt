@@ -1,0 +1,200 @@
+warmup: flash attention is enabled
+init_audio: audio input is in experimental stage and may have reduced quality:
+    https://github.com/ggml-org/llama.cpp/discussions/13759
+srv    load_model: loaded multimodal model, 'C:\ProgramData\CivicCast\packs\local-ai-model\models\blobs\sha256-675ad6e68101ca9413ec806855c452362f0213f2dfc5800996b086fdb8119842'
+srv    load_model: initializing slots, n_slots = 1
+common_speculative_init: no implementations specified for speculative decoding
+slot   load_model: id  0 | task -1 | new slot, n_ctx = 4096
+srv    load_model: prompt cache is enabled, size limit: 8192 MiB
+srv    load_model: use `--cache-ram 0` to disable the prompt cache
+srv    load_model: for more info see https://github.com/ggml-org/llama.cpp/pull/16391
+srv    load_model: context checkpoints enabled, max = 32, min spacing = 256
+srv          init: --cache-idle-slots requires --kv-unified, disabling
+init: chat template, example_format: '<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+How are you?<|im_end|>
+<|im_start|>assistant
+'
+srv          init: init: chat template, thinking = 0
+srv  llama_server: model loaded
+srv  llama_server: server is listening on http://127.0.0.1:63318
+srv  update_slots: all slots are idle
+time=2026-08-13T18:50:26.908-06:00 level=INFO source=llama_server.go:1198 msg="llama-server started in 26.43 seconds"
+time=2026-08-13T18:50:27.252-06:00 level=INFO source=images.go:354 msg="template selection" model=registry.ollama.ai/library/gemma4:12b selected=renderer_parser renderer=gemma4 parser=gemma4 go_template=null chat_template="[tools completion vision audio thinking]" harmony=null renderer_parser="[completion vision audio tools thinking]"
+time=2026-08-13T18:50:27.255-06:00 level=INFO source=sched.go:729 msg="loaded runners" count=1
+time=2026-08-13T18:50:27.256-06:00 level=INFO source=llama_server.go:1131 msg="waiting for llama-server to start responding"
+time=2026-08-13T18:50:27.257-06:00 level=INFO source=llama_server.go:1198 msg="llama-server started in 26.78 seconds"
+srv  log_server_r: done request: POST /tokenize 127.0.0.1 200
+slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+srv  get_availabl: updating prompt cache
+srv          load:  - looking for better prompt, base f_keep = -1.000, sim = 0.000
+srv        update:  - cache state: 0 prompts, 0.000 MiB (limits: 8192.000 MiB, 4096 tokens, 8589934592 est)
+srv  get_availabl: prompt cache update took 0.17 ms
+slot launch_slot_: id  0 | task -1 | sampler chain: logits -> penalties -> ?dry -> ?top-n-sigma -> top-k -> ?typical -> top-p -> ?min-p -> ?xtc -> ?temp-ext -> dist 
+slot launch_slot_: id  0 | task -1 | sampler params: 
+	repeat_last_n = 64, repeat_penalty = 1.100, frequency_penalty = 0.000, presence_penalty = 0.000
+	dry_multiplier = 0.000, dry_base = 1.750, dry_allowed_length = 2, dry_penalty_last_n = 4096
+	top_k = 64, top_p = 0.950, min_p = 0.000, xtc_probability = 0.000, xtc_threshold = 0.100, typical_p = 1.000, top_n_sigma = -1.000, temp = 1.000
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000, adaptive_target = -1.000, adaptive_decay = 0.900
+slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+slot update_slots: id  0 | task 0 | new prompt, n_ctx_slot = 4096, n_keep = 4, task.n_tokens = 37
+slot update_slots: id  0 | task 0 | cached n_tokens = 0, memory_seq_rm [0, end)
+srv  log_server_r: done request: POST /completion 127.0.0.1 200
+slot update_slots: id  0 | task 0 | cached n_tokens = 33, memory_seq_rm [33, end)
+slot init_sampler: id  0 | task 0 | init sampler, took 0.38 ms, tokens: text = 37, total = 37
+slot create_check: id  0 | task 0 | created context checkpoint 1 of 32 (pos_min = 0, pos_max = 32, n_tokens = 33, size = 10.314 MiB)
+slot print_timing: id  0 | task 0 | n_decoded =    100, tg =   5.88 t/s
+slot print_timing: id  0 | task 0 | n_decoded =    118, tg =   5.89 t/s
+slot print_timing: id  0 | task 0 | n_decoded =    136, tg =   5.88 t/s
+[GIN] 2026/08/13 - 18:50:53 | 200 |     31.7055ms |       127.0.0.1 | GET      "/api/tags"
+slot print_timing: id  0 | task 0 | prompt eval time =    1706.36 ms /    37 tokens (   46.12 ms per token,    21.68 tokens per second)
+slot print_timing: id  0 | task 0 |        eval time =   25368.94 ms /   149 tokens (  170.26 ms per token,     5.87 tokens per second)
+slot print_timing: id  0 | task 0 |       total time =   27075.30 ms /   186 tokens
+slot print_timing: id  0 | task 0 |    graphs reused =          0
+slot      release: id  0 | task 0 | stop processing: n_tokens = 185, truncated = 0
+srv  update_slots: all slots are idle
+srv  log_server_r: done request: POST /tokenize 127.0.0.1 200
+[GIN] 2026/08/13 - 18:50:54 | 200 |   54.5708299s |       127.0.0.1 | POST     "/api/generate"
+srv  log_server_r: done request: POST /tokenize 127.0.0.1 200
+slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, sim_best = 0.727 (> 0.100 thold), f_keep = 0.130
+srv  get_availabl: updating prompt cache
+srv   prompt_save:  - saving prompt with length 185, total state size = 60.708 MiB (draft: 0.000 MiB)
+srv          load:  - looking for better prompt, base f_keep = 0.130, sim = 0.727
+srv        update:  - cache state: 1 prompts, 71.022 MiB (limits: 8192.000 MiB, 4096 tokens, 21338 est)
+srv        update:    - prompt 0000028606525C60:     185 tokens, checkpoints:  1,    71.022 MiB
+srv  get_availabl: prompt cache update took 36.71 ms
+slot launch_slot_: id  0 | task -1 | sampler chain: logits -> penalties -> ?dry -> ?top-n-sigma -> top-k -> ?typical -> top-p -> ?min-p -> ?xtc -> temp-ext -> dist 
+slot launch_slot_: id  0 | task -1 | sampler params: 
+	repeat_last_n = 64, repeat_penalty = 1.100, frequency_penalty = 0.000, presence_penalty = 0.000
+	dry_multiplier = 0.000, dry_base = 1.750, dry_allowed_length = 2, dry_penalty_last_n = 4096
+	top_k = 64, top_p = 0.950, min_p = 0.000, xtc_probability = 0.000, xtc_threshold = 0.100, typical_p = 1.000, top_n_sigma = -1.000, temp = 0.000
+	mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000, adaptive_target = -1.000, adaptive_decay = 0.900
+slot launch_slot_: id  0 | task 151 | processing task, is_child = 0
+slot update_slots: id  0 | task 151 | new prompt, n_ctx_slot = 4096, n_keep = 4, task.n_tokens = 33
+slot update_slots: id  0 | task 151 | Checking checkpoint with [0, 32] against 0...
+slot update_slots: id  0 | task 151 | restored context checkpoint (pos_min = 0, pos_max = 32, n_tokens = 33, n_past = 24, size = 10.314 MiB)
+slot update_slots: id  0 | task 151 | erased invalidated context checkpoint (pos_min = 0, pos_max = 32, n_tokens = 33, n_swa = 1024, pos_next = 24, size = 10.314 MiB)
+slot update_slots: id  0 | task 151 | cached n_tokens = 24, memory_seq_rm [24, end)
+srv  log_server_r: done request: POST /completion 127.0.0.1 200
+slot create_check: id  0 | task 151 | created context checkpoint 1 of 32 (pos_min = 0, pos_max = 23, n_tokens = 24, size = 7.501 MiB)
+slot update_slots: id  0 | task 151 | cached n_tokens = 29, memory_seq_rm [29, end)
+slot init_sampler: id  0 | task 151 | init sampler, took 0.01 ms, tokens: text = 33, total = 33
+slot print_timing: id  0 | task 151 | prompt eval time =    1883.66 ms /     9 tokens (  209.30 ms per token,     4.78 tokens per second)
+slot print_timing: id  0 | task 151 |        eval time =   20011.45 ms /    94 tokens (  212.89 ms per token,     4.70 tokens per second)
+slot print_timing: id  0 | task 151 |       total time =   21895.10 ms /   103 tokens
+slot print_timing: id  0 | task 151 |    graphs reused =          0
+slot      release: id  0 | task 151 | stop processing: n_tokens = 126, truncated = 0
+srv  update_slots: all slots are idle
+srv  log_server_r: done request: POST /tokenize 127.0.0.1 200
+[GIN] 2026/08/13 - 18:51:32 | 200 |   22.7081292s |       127.0.0.1 | POST     "/api/generate"
+time=2026-08-13T22:38:55.831-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h17m48.253991934s consecutive_failures=0
+time=2026-08-14T01:56:44.097-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h31m29.028583661s consecutive_failures=0
+[GIN] 2026/08/14 - 02:00:09 | 200 |     19.9569ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-14T06:28:13.128-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h17m15.072212452s consecutive_failures=0
+time=2026-08-14T09:45:28.202-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h13m53.558508364s consecutive_failures=0
+time=2026-08-14T13:59:18.652-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h49m4.198626856s consecutive_failures=0
+time=2026-08-14T17:48:22.851-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h12m52.17164172s consecutive_failures=0
+time=2026-08-15T10:19:31.799-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h38m50.554555196s consecutive_failures=0
+[GIN] 2026/08/15 - 10:19:38 | 200 |     20.2716ms |       127.0.0.1 | GET      "/api/tags"
+[GIN] 2026/08/15 - 10:20:55 | 200 |       520.1µs |       127.0.0.1 | GET      "/api/version"
+time=2026-08-15T13:58:22.353-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h13m49.142028356s consecutive_failures=0
+time=2026-08-15T19:01:14.343-06:00 level=INFO source=routes.go:1919 msg="server config" env="map[CUDA_VISIBLE_DEVICES: GGML_VK_VISIBLE_DEVICES: GPU_DEVICE_ORDINAL: HIP_VISIBLE_DEVICES: HSA_OVERRIDE_GFX_VERSION: HTTPS_PROXY: HTTP_PROXY: LLAMA_ARG_FIT: LLAMA_ARG_FIT_TARGET: NO_PROXY:127.0.0.1,localhost OLLAMA_CONTEXT_LENGTH:0 OLLAMA_DEBUG:INFO OLLAMA_DEBUG_LOG_REQUESTS:false OLLAMA_EDITOR: OLLAMA_FLASH_ATTENTION:false OLLAMA_GO_TEMPLATE:true OLLAMA_GPU_OVERHEAD:0 OLLAMA_HOST:http://127.0.0.1:11434 OLLAMA_IGPU_ENABLE: OLLAMA_KEEP_ALIVE:5m0s OLLAMA_KV_CACHE_TYPE: OLLAMA_LLM_LIBRARY: OLLAMA_LOAD_TIMEOUT:5m0s OLLAMA_MAX_LOADED_MODELS:0 OLLAMA_MAX_QUEUE:512 OLLAMA_MAX_TRANSFER_STREAMS:4 OLLAMA_MODELS:C:\\ProgramData\\CivicCast\\packs\\local-ai-model\\models OLLAMA_NOHISTORY:false OLLAMA_NOPRUNE:false OLLAMA_NO_CLOUD:true OLLAMA_NUM_PARALLEL:1 OLLAMA_ORIGINS:[http://localhost https://localhost http://localhost:* https://localhost:* http://127.0.0.1 https://127.0.0.1 http://127.0.0.1:* https://127.0.0.1:* http://0.0.0.0 https://0.0.0.0 http://0.0.0.0:* https://0.0.0.0:* app://* file://* tauri://* vscode-webview://* vscode-file://*] OLLAMA_REMOTES:[ollama.com] OLLAMA_SCHED_SPREAD:false OLLAMA_VULKAN:true ROCR_VISIBLE_DEVICES:]"
+time=2026-08-15T19:01:14.344-06:00 level=INFO source=routes.go:1921 msg="Ollama cloud disabled: true"
+time=2026-08-15T19:01:14.351-06:00 level=INFO source=images.go:864 msg="total blobs: 5"
+time=2026-08-15T19:01:14.351-06:00 level=INFO source=images.go:871 msg="total unused blobs removed: 0"
+time=2026-08-15T19:01:14.353-06:00 level=INFO source=routes.go:1981 msg="Listening on 127.0.0.1:11434 (version 0.30.6)"
+time=2026-08-15T19:01:14.353-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h43m24.655921475s consecutive_failures=0
+time=2026-08-15T19:01:14.353-06:00 level=INFO source=runner.go:60 msg="discovering available GPUs..."
+time=2026-08-15T19:01:14.428-06:00 level=INFO source=model_list_cache.go:111 msg="model list cache hydration complete" models=1 failures=0 elapsed=75.478ms
+time=2026-08-15T19:01:15.536-06:00 level=INFO source=runner.go:396 msg="dropping integrated GPU; to enable, set OLLAMA_IGPU_ENABLE=1" id=0 library=Vulkan compute=0.0 name=Vulkan0 description="AMD Radeon 780M Graphics" pci_id=""
+time=2026-08-15T19:01:15.536-06:00 level=INFO source=types.go:50 msg="inference compute" id=cpu library=cpu compute="" name=cpu description=cpu libdirs=ollama driver="" pci_id="" type="" total="27.8 GiB" available="11.5 GiB"
+time=2026-08-15T19:01:15.536-06:00 level=INFO source=routes.go:2031 msg="vram-based default context" total_vram="0 B" default_num_ctx=4096
+[GIN] 2026/08/15 - 19:01:15 | 200 |            0s |       127.0.0.1 | GET      "/api/version"
+[GIN] 2026/08/15 - 19:01:42 | 200 |      1.5913ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-15T22:44:39.009-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h37m27.519958949s consecutive_failures=0
+[GIN] 2026/08/16 - 02:00:24 | 200 |      7.4968ms |       127.0.0.1 | GET      "/api/tags"
+[GIN] 2026/08/16 - 03:00:26 | 200 |       792.7µs |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-16T03:22:06.529-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h23m3.852774716s consecutive_failures=0
+time=2026-08-16T06:45:10.382-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h22m19.830279481s consecutive_failures=0
+time=2026-08-16T10:07:30.213-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h33m48.271042044s consecutive_failures=0
+time=2026-08-16T13:41:18.485-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h44m59.215021883s consecutive_failures=0
+time=2026-08-16T17:26:15.704-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h10m39.605649872s consecutive_failures=0
+time=2026-08-16T21:36:55.311-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h45m36.83019511s consecutive_failures=0
+time=2026-08-17T01:22:32.142-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h15m45.246769577s consecutive_failures=0
+[GIN] 2026/08/17 - 02:00:15 | 200 |      9.3968ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-17T04:38:17.389-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h55m39.556280896s consecutive_failures=0
+time=2026-08-17T08:33:56.945-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h24m7.904254772s consecutive_failures=0
+time=2026-08-17T11:58:04.850-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h16m43.2638634s consecutive_failures=0
+time=2026-08-17T15:14:46.599-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h46m55.042366819s consecutive_failures=0
+time=2026-08-17T19:01:41.643-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h41m56.418586143s consecutive_failures=0
+time=2026-08-17T22:43:38.062-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h3m28.977897404s consecutive_failures=0
+[GIN] 2026/08/18 - 02:00:24 | 200 |      7.9064ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-18T02:47:07.040-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h36m9.246607713s consecutive_failures=0
+time=2026-08-18T07:23:16.288-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h19m20.99510296s consecutive_failures=0
+time=2026-08-18T11:42:37.286-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h34m27.386007302s consecutive_failures=0
+time=2026-08-18T15:17:03.153-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h29m1.198960697s consecutive_failures=0
+time=2026-08-18T19:46:04.353-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h45m13.421655024s consecutive_failures=0
+time=2026-08-18T23:31:17.775-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h3m15.795067292s consecutive_failures=0
+[GIN] 2026/08/19 - 02:00:31 | 200 |      7.3208ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-19T03:34:33.571-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h32m59.091002187s consecutive_failures=0
+time=2026-08-19T07:07:32.663-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h38m5.825888676s consecutive_failures=0
+time=2026-08-19T10:45:38.489-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h42m10.605677525s consecutive_failures=0
+time=2026-08-19T15:27:47.571-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h35m41.39008535s consecutive_failures=0
+time=2026-08-19T20:03:28.962-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h30m18.249766634s consecutive_failures=0
+[GIN] 2026/08/19 - 20:47:47 | 200 |            0s |       127.0.0.1 | GET      "/api/version"
+[GIN] 2026/08/19 - 20:47:48 | 200 |       535.8µs |       127.0.0.1 | GET      "/api/version"
+[GIN] 2026/08/19 - 20:47:48 | 401 |    252.8455ms |       127.0.0.1 | POST     "/api/me"
+time=2026-08-19T23:33:47.212-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h42m40.804657491s consecutive_failures=0
+[GIN] 2026/08/20 - 02:00:08 | 200 |      8.3962ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-20T04:16:28.017-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h13m1.222451681s consecutive_failures=0
+time=2026-08-20T07:29:29.241-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h3m2.008105919s consecutive_failures=0
+time=2026-08-20T11:32:31.250-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h45m4.618245571s consecutive_failures=0
+time=2026-08-20T16:17:34.452-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h40m46.138470469s consecutive_failures=0
+time=2026-08-20T19:58:20.591-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h36m30.064940768s consecutive_failures=0
+time=2026-08-20T23:34:50.659-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h32m4.068112003s consecutive_failures=0
+[GIN] 2026/08/21 - 02:00:14 | 200 |      7.3472ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-21T04:06:54.728-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h47m26.841743861s consecutive_failures=0
+time=2026-08-21T08:54:21.570-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h16m33.834492006s consecutive_failures=0
+time=2026-08-21T13:10:55.405-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h39m44.866545737s consecutive_failures=0
+time=2026-08-21T16:50:38.757-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h48m41.320641321s consecutive_failures=0
+time=2026-08-21T20:39:20.079-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h17m26.531501453s consecutive_failures=0
+time=2026-08-21T23:56:46.611-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h2m3.128030098s consecutive_failures=0
+[GIN] 2026/08/22 - 02:00:26 | 200 |     11.9873ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-22T03:58:49.739-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h46m32.632361097s consecutive_failures=0
+time=2026-08-22T07:45:22.372-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h26m55.658946561s consecutive_failures=0
+time=2026-08-22T12:12:18.031-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h19m30.243101353s consecutive_failures=0
+time=2026-08-22T16:31:46.735-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h41m5.381250594s consecutive_failures=0
+time=2026-08-22T21:12:52.118-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h46m52.650767622s consecutive_failures=0
+time=2026-08-23T01:59:44.769-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h15m17.287747417s consecutive_failures=0
+[GIN] 2026/08/23 - 02:00:03 | 200 |      8.3202ms |       127.0.0.1 | GET      "/api/tags"
+[GIN] 2026/08/23 - 03:00:05 | 200 |      1.0869ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-23T05:15:02.058-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h24m36.723831312s consecutive_failures=0
+time=2026-08-23T08:39:38.782-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h15m29.307545353s consecutive_failures=0
+time=2026-08-23T11:55:08.091-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h29m21.249503168s consecutive_failures=0
+time=2026-08-23T15:24:27.802-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h44m45.228407926s consecutive_failures=0
+time=2026-08-23T19:09:13.031-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h45m9.248472362s consecutive_failures=0
+time=2026-08-23T23:54:22.280-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h29m32.930082993s consecutive_failures=0
+[GIN] 2026/08/24 - 02:00:25 | 200 |      8.0677ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-24T03:23:55.211-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h39m48.635543114s consecutive_failures=0
+time=2026-08-24T08:03:43.846-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h8m24.278346642s consecutive_failures=0
+time=2026-08-24T12:12:08.125-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h7m38.942198413s consecutive_failures=0
+time=2026-08-24T16:19:45.531-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h50m53.784346883s consecutive_failures=0
+time=2026-08-24T20:10:39.316-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h49m13.027714981s consecutive_failures=0
+time=2026-08-24T23:59:52.344-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h10m39.213116903s consecutive_failures=0
+[GIN] 2026/08/25 - 02:00:01 | 200 |      9.0946ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-25T04:10:31.558-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h11m53.649822863s consecutive_failures=0
+time=2026-08-25T08:22:25.208-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h36m4.401718392s consecutive_failures=0
+time=2026-08-25T11:58:29.610-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h5m43.348517574s consecutive_failures=0
+time=2026-08-25T16:04:11.495-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h17m52.023426639s consecutive_failures=0
+time=2026-08-25T19:22:03.519-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h43m30.431410371s consecutive_failures=0
+time=2026-08-26T00:05:33.951-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h1m52.377390896s consecutive_failures=0
+[GIN] 2026/08/26 - 02:00:07 | 200 |     12.0368ms |       127.0.0.1 | GET      "/api/tags"
+time=2026-08-26T04:07:26.329-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h42m56.861559974s consecutive_failures=0
+time=2026-08-26T07:50:23.191-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h13m57.113190185s consecutive_failures=0
+time=2026-08-26T12:04:19.039-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=4h22m9.13479652s consecutive_failures=0
+time=2026-08-26T16:26:28.177-06:00 level=INFO source=model_recommendations.go:177 msg="model recommendations cache sleep scheduled" wait=3h54m41.518819369s consecutive_failures=0
