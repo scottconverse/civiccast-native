@@ -851,7 +851,27 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # dependency, no windows_only marker, so all nine collect into both
     # lanes. Re-derived by an actual `--collect-only` run on this tree, not by
     # arithmetic: (1634, 1826) -> (1643, 1835).
-    assert (collect("not windows_only"), collect()) == (1643, 1835)
+    #
+    # fix/ffmpeg-acquire-mirror-fallback (2026-08-27): +14 pure, 0
+    # windows_only -- candidate run 33094460301 died on a 404 because
+    # BtbN/FFmpeg-Builds pruned the pinned autobuild release (repinned in
+    # #52, but the new pin is equally prunable). fetch_locked_artifact now
+    # consults a persistent hash-addressed archive mirror
+    # (CIVICCAST_RUNTIME_ARTIFACT_MIRROR / mirror=) before any network,
+    # writes every verified download back through to it, and tries the
+    # lock's optional reviewed fallback_urls in order after the primary URL
+    # fails; the size+SHA-256 pin stays the sole admission authority on
+    # every path. 14 new tests land in
+    # tests/native/test_runtime_dependency_provisioner.py: mirror hit with
+    # zero network, env-var configuration, corrupt-mirror-entry
+    # ignore-then-repair, write-through admission, mirror-write-failure
+    # tolerance, primary-404-to-fallback ordering, all-sources-fail
+    # reporting, fallback_urls schema acceptance, and 6 parametrized
+    # fallback_urls schema rejections. All injected-opener/tmp_path
+    # fixtures, no OS dependency, no windows_only marker, so all fourteen
+    # collect into both lanes. Re-derived by an actual `--collect-only` run
+    # on this tree, not by arithmetic: (1643, 1835) -> (1657, 1849).
+    assert (collect("not windows_only"), collect()) == (1657, 1849)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

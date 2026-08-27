@@ -444,6 +444,30 @@ jobs:
             Remove-Item -LiteralPath $gstreamerStage -Recurse -Force -ErrorAction SilentlyContinue
           }
 
+      # The BtbN/FFmpeg-Builds autobuild release asset the runtime lock pins
+      # is PRUNABLE upstream: BtbN keeps only recent daily autobuild tags
+      # plus one per calendar month, and candidate run 33094460301 died on a
+      # 404 of the previously pinned asset (repinned in PR #52 -- but the new
+      # pin is exactly as prunable). Two independent survival layers now hold
+      # the verified bytes across upstream pruning:
+      #   - hosted lane: this actions/cache entry, keyed on the runtime lock
+      #     file, restores the archive into the pack build's scratch cache so
+      #     a run between lock edits never needs the upstream URL at all;
+      #   - self-hosted lane: the persistent hash-addressed mirror under
+      #     C:\CivicCastTester\runtime-artifact-mirror (see the env on the
+      #     pack-build step below), which fetch_locked_artifact consults
+      #     before any network and repopulates write-through after every
+      #     verified download.
+      # The lock's size+SHA-256 pin stays the sole admission authority on
+      # every path: a cache or mirror hit is verified exactly like a fresh
+      # download before a single byte of it is used.
+      - name: Restore the pinned FFmpeg archive cache (hosted lane)
+        if: env.BUILD_TARGET != 'self-hosted'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\civiccast-ffmpeg-pack-cache\archives
+          key: ffmpeg-pack-archive-${{ hashFiles('native-windows-runtime-dependencies.lock.json') }}
+
       - name: Assert clean source tree before pack build
         shell: pwsh
         run: |
@@ -466,6 +490,13 @@ jobs:
         shell: pwsh
         env:
           PACK_SIGNING_PRIVATE_KEY: ${{ secrets.CIVICCAST_PACK_SIGNING_PRIVATE_KEY }}
+          # Self-hosted lane only: a persistent, hash-addressed archive
+          # mirror OUTSIDE the runner work/temp trees, surviving workflow
+          # cleanup and runner work-dir wipes (same box-local precedent as
+          # C:\CivicCastTester\kit-staging). Empty on the hosted lane, which
+          # fetch_locked_artifact treats as unset. See the comment on the
+          # "Restore the pinned FFmpeg archive cache" step above.
+          CIVICCAST_RUNTIME_ARTIFACT_MIRROR: ${{ env.BUILD_TARGET == 'self-hosted' && 'C:\CivicCastTester\runtime-artifact-mirror' || '' }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:PACK_PUBLIC_KEY_BASE64)) { throw "Pack public key variable is missing." }
           if ([string]::IsNullOrWhiteSpace($env:PACK_SIGNING_KEY_ID)) { throw "Pack signing key-id variable is missing." }
