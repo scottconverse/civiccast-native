@@ -1,1 +1,1 @@
-2026-08-27T20:54:07Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; station activation remains active and is writing translation component blobs, with service and health still pending.
+2026-08-27T21:04:07Z — fetched origin at the Phase 4 boundary; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; first healthy soak heartbeat is pushed and the eight-hour clock is active.
