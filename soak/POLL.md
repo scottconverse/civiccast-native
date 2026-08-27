@@ -1,1 +1,1 @@
-2026-08-27T20:14:06Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; USB SHA256 verification is progressing under PID 6076 (14 of 15 files reached).
+2026-08-27T20:19:06Z — fetched origin at the Phase 3 boundary; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; verified USB milestone 41d279c is pushed and USB-source installation is next.
