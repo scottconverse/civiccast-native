@@ -1,1 +1,1 @@
-2026-08-27T20:44:07Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; installer log proves preserved data was adopted, provision returned 0, and child PID 8364 remains in station activation.
+2026-08-27T20:49:07Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; installer PID 5712 remains active in station activation, with service absent and health not yet answering.
