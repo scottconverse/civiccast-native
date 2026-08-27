@@ -831,7 +831,27 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # windows_only marker, so all four collect into both lanes.
     # Re-derived by an actual `--collect-only` run on this tree, not by
     # arithmetic: (1630, 1822) -> (1634, 1826).
-    assert (collect("not windows_only"), collect()) == (1634, 1826)
+    #
+    # fix/provision-adopt-stale-journal (2026-08-26): +9 pure, 0 windows_only --
+    # fleet-tester candidate 99db2c6 (soak/INSTALL-FAILED.md) hit an
+    # uninstall-then-reinstall-to-a-different-install-root path where the
+    # adopted D4 provisioning journal's server_pack_path was never revalidated
+    # against the current install root, and several provisioning-failure
+    # paths never wrote PROVISION-RECOVERY.md despite the installer's static
+    # failure message always referencing it. 9 new tests land in
+    # tests/native/test_provision_cli.py: journal_stale_reason unit coverage
+    # (matching vs mismatched server_pack_path), an end-to-end main() test
+    # reproducing the exact fleet-tester shape (stale COMPLETE journal from a
+    # different install_root, adoption still succeeds, station data
+    # preserved), a control test for a matching (non-stale) journal, a
+    # RUN-branch test proving a stale FAILED journal no longer wedges a fresh
+    # run, and recovery-document-written assertions for the pack-verification,
+    # credential-reset-fault, pack-key-decode, and corrupt-adopted-journal
+    # failure points. All monkeypatched-seam/tmp_path fixtures, no OS
+    # dependency, no windows_only marker, so all nine collect into both
+    # lanes. Re-derived by an actual `--collect-only` run on this tree, not by
+    # arithmetic: (1634, 1826) -> (1643, 1835).
+    assert (collect("not windows_only"), collect()) == (1643, 1835)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
