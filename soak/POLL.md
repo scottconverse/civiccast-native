@@ -1,1 +1,1 @@
-2026-08-27T20:09:06Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; USB copy completed at 15 files/26,851,361,224 bytes and SHA256 verification resumed under PID 6076 after replacing unavailable Get-FileHash with .NET SHA256.
+2026-08-27T20:14:06Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; USB SHA256 verification is progressing under PID 6076 (14 of 15 files reached).
