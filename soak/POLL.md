@@ -1,1 +1,1 @@
-2026-08-27T21:39:07Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; beat 4 at 21:35:45Z was fully healthy with zero unhealthy beats.
+2026-08-27T21:44:07Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; healthy runner remains on schedule immediately before beat 5 and its due heartbeat push.
