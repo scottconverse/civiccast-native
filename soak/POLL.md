@@ -1,1 +1,1 @@
-2026-08-28T01:04:10Z — fetched origin; directive head 1f373b1 (DIRECTIVE-6), no newer directive present; beat 24 remains fully healthy and the unattended T+4h reboot window begins at 01:05:36Z.
+2026-08-28T23:30:50Z — fetched origin; directive head 8f828f6 (DIRECTIVE-7), no DIRECTIVE-8 present; standing by without touching the station or USB.
