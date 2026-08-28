@@ -880,3 +880,69 @@ def test_native_beta_candidate_workflow_contract_rejects_elevated_station_bundle
         _assert_build_native_station_bundle_python_provisioning_needs_no_elevation(
             mutated_workflow["jobs"]["build-native-station-bundle"]
         )
+
+
+def _assert_kit_carries_the_quickstart_card(job: dict[str, object]) -> None:
+    """The field-tested first-run gap: a station volunteer who unboxes the USB
+    kit has no plain-language walkthrough, only the installer screens and
+    (if setup fails) the operator console's own error copy. docs/QUICKSTART-
+    OPERATOR.md fixes that, but only if it actually reaches the stick --
+    this pins its presence in the assembled kit, not just in the repo.
+    """
+    step_names = [step["name"] for step in job["steps"]]
+    checkout_name = "Checkout exact candidate"
+    colocate_name = "Co-locate the installer and station bundle into one kit"
+    assert checkout_name in step_names, (
+        "the assemble job has no repo checkout; docs/QUICKSTART-OPERATOR.md "
+        "cannot be read from anywhere without one"
+    )
+    assert step_names.index(checkout_name) < step_names.index(colocate_name)
+
+    steps = {step["name"]: step for step in job["steps"]}
+    colocate = steps[colocate_name]["run"]
+    assert 'Test-Path -LiteralPath $quickstartSource' in colocate
+    assert '$quickstartSource = "docs/QUICKSTART-OPERATOR.md"' in colocate
+    assert (
+        'Copy-Item -LiteralPath $quickstartSource -Destination '
+        '(Join-Path $kit "QUICKSTART-OPERATOR.md")' in colocate
+    )
+    assert 'Kit assembly: QUICKSTART-OPERATOR.md is not co-located at the kit root' in colocate
+
+    upload = steps["Upload the installable native-beta kit"]
+    # kit/** is a recursive glob over the SAME $kit root the co-locate step
+    # writes QUICKSTART-OPERATOR.md into, so the upload step needs no
+    # separate path entry -- but this pins the invariant that makes that
+    # true, so a future path narrowing here cannot silently drop the card.
+    assert upload["with"]["path"].strip() == "kit/**"
+
+
+def test_native_beta_candidate_workflow_kit_assembly_carries_the_quickstart_card() -> None:
+    _, workflow = _workflow()
+    _assert_kit_carries_the_quickstart_card(workflow["jobs"]["assemble-native-beta-kit"])
+
+
+def test_native_beta_candidate_workflow_contract_rejects_a_kit_missing_the_quickstart_card() -> (
+    None
+):
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace(
+        '$quickstartSource = "docs/QUICKSTART-OPERATOR.md"\n'
+        "          if (-not (Test-Path -LiteralPath $quickstartSource)) {\n"
+        '            throw "Kit assembly: $quickstartSource not found in the checked-out source tree."\n'
+        "          }\n"
+        "          Copy-Item -LiteralPath $quickstartSource -Destination "
+        '(Join-Path $kit "QUICKSTART-OPERATOR.md")\n'
+        '          $quickstartPlaced = Join-Path $kit "QUICKSTART-OPERATOR.md"\n'
+        "          if (-not (Test-Path -LiteralPath $quickstartPlaced)) {\n"
+        '            throw "Kit assembly: QUICKSTART-OPERATOR.md is not co-located at the kit root next to the installer."\n'
+        "          }\n\n",
+        "",
+        1,
+    )
+    assert mutated != text, "test's expected literal has drifted from the workflow"
+
+    mutated_workflow = yaml.load(mutated, Loader=yaml.BaseLoader)
+    with pytest.raises(AssertionError):
+        _assert_kit_carries_the_quickstart_card(
+            mutated_workflow["jobs"]["assemble-native-beta-kit"]
+        )

@@ -1157,6 +1157,12 @@ jobs:
     # sight -- see the per-step timeouts below.
     timeout-minutes: 45
     steps:
+      # Only needed for docs/QUICKSTART-OPERATOR.md, which this job co-locates
+      # into the kit root below -- the two heavy dependency jobs already
+      # produce and mirror the installer/station-bundle bytes themselves.
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+
       - name: Resolve build target and local candidate root
         id: build_target
         shell: pwsh
@@ -1245,7 +1251,23 @@ jobs:
           }
           $stationPacks = @(Get-ChildItem -Path $kitStation -Filter "*.ccpack")
           if ($stationPacks.Count -eq 0) { throw "Kit assembly: the co-located station bundle carries no component packs." }
-          Write-Host "Assembled kit at ${kit}: $($setup.Name) + .\station\station-index.json + $($stationPacks.Count) station pack(s) + $($packSource.Count) installer pack(s)."
+
+          # Field testing on candidate 9d4477b found the first-run experience
+          # fails the operator-readiness bar for a non-technical station
+          # volunteer. docs/QUICKSTART-OPERATOR.md is the fix: a one-page,
+          # plain-language walkthrough that ships at the kit root, next to
+          # setup.exe, so it is the first thing a volunteer sees on the stick.
+          $quickstartSource = "docs/QUICKSTART-OPERATOR.md"
+          if (-not (Test-Path -LiteralPath $quickstartSource)) {
+            throw "Kit assembly: $quickstartSource not found in the checked-out source tree."
+          }
+          Copy-Item -LiteralPath $quickstartSource -Destination (Join-Path $kit "QUICKSTART-OPERATOR.md")
+          $quickstartPlaced = Join-Path $kit "QUICKSTART-OPERATOR.md"
+          if (-not (Test-Path -LiteralPath $quickstartPlaced)) {
+            throw "Kit assembly: QUICKSTART-OPERATOR.md is not co-located at the kit root next to the installer."
+          }
+
+          Write-Host "Assembled kit at ${kit}: $($setup.Name) + .\station\station-index.json + $($stationPacks.Count) station pack(s) + $($packSource.Count) installer pack(s) + QUICKSTART-OPERATOR.md."
 
       # Skipped by default on the self-hosted lane: this kit is ~21.9 GB and
       # already sits at C:\CivicCastTester\kit-staging\<sha>\ on the same box
