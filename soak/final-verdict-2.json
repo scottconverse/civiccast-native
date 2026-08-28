@@ -1,0 +1,19 @@
+﻿{
+    "schema":  "civiccast-native-soak8h-v2",
+    "candidate":  "75cc13f46a4682a3a9972d91656bd6d57eac9c07",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "start_utc":  "2026-08-27T21:05:36.4286968Z",
+    "completed_utc":  "2026-08-28T05:10:15.2775060Z",
+    "installer_exit_code":  0,
+    "pre_reboot_unhealthy_beats":  0,
+    "unattended_recovery_minutes":  1.008,
+    "post_reboot_unhealthy_beats":  0,
+    "max_nonreboot_gap_minutes":  10.073,
+    "nonreboot_gaps_over_25min":  [
+
+                                  ],
+    "verdict":  "PASS",
+    "reasons":  [
+
+                ]
+}
