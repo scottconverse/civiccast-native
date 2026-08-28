@@ -2973,10 +2973,22 @@ def test_postuninstall_final_breadcrumbs_do_not_log_a_programdata_create_folder(
     assert positions == sorted(positions), "expected these two breadcrumbs in this order"
 
     step_messages = re.findall(r'!insertmacro CIVICCAST_STEP "([^"]*)"', postuninstall)
-    assert step_messages[-1].startswith("postuninstall: removed the Tauri InstallDirRegKey"), (
-        "expected the InstallDirRegKey breadcrumb to be the LAST "
-        "!insertmacro CIVICCAST_STEP call in POSTUNINSTALL -- the exact tail "
-        "the operator log showed"
+    # Updated 2026-08-28 (candidate 9d4477b shortcut-removal fix): the
+    # InstallDirRegKey breadcrumb was the tail this test originally pinned,
+    # but Start Menu/Desktop shortcut removal now runs unconditionally AFTER
+    # it (see that block's own doc comment for why it must not be gated
+    # behind the $R2 tree-retention check InstallDirRegKey's removal sits
+    # inside) and logs its own breadcrumb, which is now the real tail.
+    assert step_messages[-1] == "postuninstall: Start Menu + Desktop shortcuts removed", (
+        "expected the shortcut-removal breadcrumb to be the LAST "
+        "!insertmacro CIVICCAST_STEP call in POSTUNINSTALL -- it must run "
+        "unconditionally, after every other step including the gated "
+        "InstallDirRegKey removal this test used to pin as the tail"
+    )
+    assert step_messages[-2].startswith("postuninstall: removed the Tauri InstallDirRegKey"), (
+        "the InstallDirRegKey breadcrumb (this test's ORIGINAL tail pin, "
+        "the exact tail the operator log showed) must still be the "
+        "second-to-last breadcrumb, immediately before shortcut removal"
     )
 
     # The guard from the sibling test, re-verified against the shared macro
@@ -3012,6 +3024,125 @@ def test_postinstall_rewrites_installlocation_without_embedded_quotes() -> None:
     assert postinstall.index(quiet) < postinstall.index(rewrite), (
         "the InstallLocation rewrite belongs with the end-of-chain last-wins "
         "registry writes, after QuietUninstallString"
+    )
+
+
+def test_postinstall_creates_start_menu_and_desktop_shortcuts_to_the_running_station() -> None:
+    """Field report 2026-08-28 (candidate 9d4477b): once the setup wizard's
+    own window closes, an operator had NO clickable path back to the
+    operator console or the public portal at all -- this installer created
+    no shortcut of any kind pointing at either surface. Fix: a Start Menu
+    folder ("CivicCast (Native)") carrying both console and portal
+    Internet Shortcuts, plus a Desktop shortcut to the console alone, all
+    written at the very end of POSTINSTALL (after every other end-of-chain
+    write, so they only appear once the install has actually succeeded)."""
+    hooks_text = NATIVE_HOOKS.read_text(encoding="utf-8")
+    postinstall = _postinstall_block(hooks_text)
+
+    assert 'CreateDirectory "$SMPROGRAMS\\${PRODUCTNAME}"' in postinstall, (
+        "POSTINSTALL must create a per-product Start Menu folder before "
+        "writing shortcuts into it"
+    )
+    for expected in (
+        'WriteINIStr "$SMPROGRAMS\\${PRODUCTNAME}\\CivicCast Operator Console.url" '
+        '"InternetShortcut" "URL" "http://127.0.0.1:8000/operator/"',
+        'WriteINIStr "$SMPROGRAMS\\${PRODUCTNAME}\\CivicCast Public Portal.url" '
+        '"InternetShortcut" "URL" "http://127.0.0.1:8000/"',
+        'WriteINIStr "$DESKTOP\\CivicCast Operator Console.url" '
+        '"InternetShortcut" "URL" "http://127.0.0.1:8000/operator/"',
+    ):
+        assert expected in postinstall, f"expected {expected!r} in nsis-hooks-bootstrap.nsh POSTINSTALL"
+
+    # Placement: strictly after the InstallLocation rewrite, which is the
+    # documented last-wins end-of-chain write -- shortcuts must not be
+    # created before the install itself is known to have succeeded.
+    rewrite = 'WriteRegStr SHCTX "${UNINSTKEY}" "InstallLocation" "$INSTDIR"'
+    shortcuts_begin = postinstall.index('CreateDirectory "$SMPROGRAMS\\${PRODUCTNAME}"')
+    assert postinstall.index(rewrite) < shortcuts_begin, (
+        "shortcut creation must run after the InstallLocation rewrite, "
+        "at the very end of a successful POSTINSTALL"
+    )
+
+    # Silent-install safety: no dialog may accompany shortcut creation --
+    # a missed/failed shortcut is cosmetic, never install-blocking.
+    shortcuts_block = postinstall[shortcuts_begin:]
+    assert "MessageBox" not in shortcuts_block, (
+        "shortcut creation must stay silent-safe -- no MessageBox, even on failure"
+    )
+    assert "CIVICCAST_FAIL" not in shortcuts_block, (
+        "a shortcut write failing must never abort the install "
+        "(CIVICCAST_FAIL is the install-blocking vocabulary)"
+    )
+    assert "CIVICCAST_ALERT" not in shortcuts_block, (
+        "shortcut creation must not raise an operator-facing alert on failure "
+        "(non-fatal, breadcrumb-only per the block's own doc comment)"
+    )
+
+
+def test_postinstall_shortcut_urls_match_main_rs_constants() -> None:
+    """Drift guard: the two URLs hardcoded into the NSIS shortcuts above must
+    stay byte-identical to `main.rs`'s own `OPERATOR_CONSOLE_URL` /
+    `RESIDENT_PORTAL_URL` constants -- the same values the setup wizard's own
+    finish screen uses for "Open operator console" -- so the two can never
+    silently drift apart."""
+    postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
+    main_rs = INSTALLER_MAIN_RS.read_text(encoding="utf-8")
+
+    operator_console_match = re.search(
+        r'const OPERATOR_CONSOLE_URL: &str = "([^"]+)";', main_rs
+    )
+    portal_match = re.search(r'const RESIDENT_PORTAL_URL: &str = "([^"]+)";', main_rs)
+    assert operator_console_match, "main.rs must still declare OPERATOR_CONSOLE_URL"
+    assert portal_match, "main.rs must still declare RESIDENT_PORTAL_URL"
+
+    operator_console_url = operator_console_match.group(1)
+    portal_url = portal_match.group(1)
+
+    assert postinstall.count(f'"URL" "{operator_console_url}"') == 2, (
+        f"expected the operator console URL {operator_console_url!r} in exactly "
+        "two shortcuts (Start Menu + Desktop)"
+    )
+    assert postinstall.count(f'"URL" "{portal_url}"') == 1, (
+        f"expected the public portal URL {portal_url!r} in exactly one shortcut (Start Menu)"
+    )
+
+
+def test_postuninstall_removes_the_start_menu_and_desktop_shortcuts() -> None:
+    """The counterpart to the POSTINSTALL creation test above: an uninstall
+    must remove both Start Menu shortcuts and the folder, plus the Desktop
+    shortcut, and must do so UNCONDITIONALLY -- unlike the $INSTDIR
+    runtime/packs trees, shortcut removal is not gated behind confirming the
+    supervisor service stopped (see the block's own doc comment for why:
+    deleting a shortcut carries none of the still-running-process hazard
+    that gate exists to guard against)."""
+    hooks_text = NATIVE_HOOKS.read_text(encoding="utf-8")
+    postuninstall = hooks_text.split("!macro NSIS_HOOK_POSTUNINSTALL", 1)[1].split(
+        "!macroend", 1
+    )[0]
+
+    for expected in (
+        'Delete "$SMPROGRAMS\\${PRODUCTNAME}\\CivicCast Operator Console.url"',
+        'Delete "$SMPROGRAMS\\${PRODUCTNAME}\\CivicCast Public Portal.url"',
+        'RMDir "$SMPROGRAMS\\${PRODUCTNAME}"',
+        'Delete "$DESKTOP\\CivicCast Operator Console.url"',
+    ):
+        assert expected in postuninstall, f"expected {expected!r} in nsis-hooks-bootstrap.nsh POSTUNINSTALL"
+
+    # Placement: strictly AFTER the $R2 tree-retention gate's closing
+    # ${EndIf} (the DeleteRegKey line just inside it is the last statement
+    # of that gated arm), proving shortcut removal is not nested inside --
+    # and therefore not skipped by -- the "service stop unconfirmed" branch.
+    gated_marker = 'DeleteRegKey HKLM "Software\\civiccast\\CivicCast (Native)"'
+    shortcuts_marker = 'Delete "$SMPROGRAMS\\${PRODUCTNAME}\\CivicCast Operator Console.url"'
+    assert postuninstall.index(gated_marker) < postuninstall.index(shortcuts_marker), (
+        "shortcut removal must be placed after the gated InstallDirRegKey removal"
+    )
+    between = postuninstall[
+        postuninstall.index(gated_marker) : postuninstall.index(shortcuts_marker)
+    ]
+    assert between.count("${EndIf}") >= 1, (
+        "shortcut removal must sit OUTSIDE (after the closing ${EndIf} of) the "
+        "$R2 service-stop-confirmed gate, so it always runs"
     )
 
 

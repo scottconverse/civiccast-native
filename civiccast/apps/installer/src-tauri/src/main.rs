@@ -78,29 +78,85 @@ fn installer_state_path() -> Result<PathBuf, String> {
 /// The native runtime host's own diagnostic log (`runtime_host_log`'s
 /// output). The retired WSL product's headless-bootstrap and WSL2/Ubuntu
 /// bootstrap logs used to be candidates here too, but both those scripts
-/// were removed with the WSL lane, and this is now the only log
-/// `open_installer_log` / `newest_installer_log_path` has to serve.
+/// were removed with the WSL lane, and this is now the only per-user-root
+/// log `open_installer_log` / `newest_installer_log_path` has to serve. See
+/// [`installer_progress_log_path`] for the OTHER log this command serves --
+/// the elevated NSIS installer's own step-by-step transcript, which lives
+/// under a different (per-machine) root entirely.
 fn installer_log_candidates(root: &Path) -> [PathBuf; 1] {
     [root.join("runtime-host.log")]
 }
 
+/// Where the ELEVATED NSIS installer writes its own step-by-step transcript
+/// (`nsis-hooks-bootstrap.nsh`'s `CIVICCAST_STEP`/`CIVICCAST_FAIL` macros,
+/// which `FileOpen $2 "$COMMONPROGRAMDATA\CivicCast\install-progress.log" a`
+/// opens directly): `<program_data_root>\CivicCast\install-progress.log`,
+/// the SAME per-machine writable root [`acquisition_download_root_from`]
+/// already derives for the GUI's own component downloads. Pure aside from
+/// the caller's own root resolution -- mirrors that function's `_from`
+/// split so the mapping is unit-testable without touching `%PROGRAMDATA%`.
+///
+/// This is the log the download screen's own copy means by "installer log"
+/// (bug fix, field report 2026-08-28, candidate 9d4477b): the elevated
+/// install phase that writes it runs and completes BEFORE the GUI's
+/// acquisition/download screen ever exists, while `runtime-host.log`
+/// (`installer_log_candidates`'s only prior candidate) is written by the
+/// native service, which has not started yet at that point -- so on a fresh
+/// install `newest_installer_log_path` previously had nothing to find and
+/// `open_installer_log` failed every single time the button that told the
+/// operator to use it was actually visible.
+fn installer_progress_log_path_from(program_data_root: &Path) -> PathBuf {
+    acquisition_download_root_from(program_data_root).join("install-progress.log")
+}
 
-fn newest_installer_log_path() -> Result<PathBuf, String> {
-    let root = installer_state_root()?;
-    installer_log_candidates(&root)
-        .into_iter()
+fn installer_progress_log_path() -> PathBuf {
+    let program_data = std::env::var("PROGRAMDATA")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    installer_progress_log_path_from(&program_data)
+}
+
+/// Picks whichever candidate exists on disk AND was modified most recently
+/// -- pure aside from the two filesystem reads per candidate (`is_file`,
+/// `metadata().modified()`), factored out so [`newest_installer_log_path`]'s
+/// selection logic is unit-testable against real (temp-directory) files
+/// without needing to fake `%PROGRAMDATA%`/`%USERPROFILE%` themselves.
+fn newest_existing_log_path(candidates: &[PathBuf]) -> Result<PathBuf, String> {
+    candidates
+        .iter()
         .filter(|path| path.is_file())
         .max_by_key(|path| {
             fs::metadata(path)
                 .and_then(|metadata| metadata.modified())
                 .ok()
         })
+        .cloned()
         .ok_or_else(|| {
+            let checked: Vec<String> = candidates.iter().map(|path| path.display().to_string()).collect();
             format!(
-                "No CivicCast installer log exists yet in {}.",
-                root.display()
+                "No CivicCast installer log exists yet. Checked: {}.",
+                checked.join(", ")
             )
         })
+}
+
+/// The two independently-written logs an operator's "Open installer log"
+/// click might mean, newest-first: the elevated NSIS installer's own
+/// step-by-step transcript ([`installer_progress_log_path`], which exists
+/// as soon as the elevated install phase ran) and the native runtime
+/// host's diagnostic log (`installer_log_candidates`, which only exists
+/// once the native service has actually started). Missing an
+/// `installer_state_root()` (e.g. `USERPROFILE` unset) drops the second
+/// candidate rather than failing the whole lookup -- the first is always
+/// resolvable and is usually the one that matters on a fresh install.
+fn newest_installer_log_path() -> Result<PathBuf, String> {
+    let mut candidates = vec![installer_progress_log_path()];
+    if let Ok(root) = installer_state_root() {
+        candidates.extend(installer_log_candidates(&root));
+    }
+    newest_existing_log_path(&candidates)
 }
 
 fn installer_shutdown_marker_paths() -> Vec<PathBuf> {
@@ -1585,6 +1641,114 @@ try {{
         );
     }
 
+    // -----------------------------------------------------------------
+    // Bug fix (field report 2026-08-28, candidate 9d4477b): "Open installer
+    // log" was a no-op on the download screen. Root cause was TWO bugs
+    // stacked: `newest_installer_log_path` only ever looked for
+    // `runtime-host.log` (written by the native service, which has not
+    // started yet on that screen) and never for `install-progress.log`
+    // (written by the elevated NSIS installer, which HAS run by then); and
+    // the command hardcoded `notepad.exe` instead of the OS default
+    // handler. These tests cover the log-PATH resolution half (pure /
+    // real-temp-file logic); the frontend half (visible error surfacing) is
+    // covered in `cancel-retry.test.ts`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn installer_progress_log_path_from_matches_the_nsis_bootstrap_hooks_own_path() {
+        // `nsis-hooks-bootstrap.nsh` opens
+        // `$COMMONPROGRAMDATA\CivicCast\install-progress.log` directly; this
+        // must resolve to the exact same relative path under whatever
+        // `%PROGRAMDATA%` (`$COMMONPROGRAMDATA`'s Rust-visible equivalent)
+        // actually is on this machine.
+        let program_data = Path::new(r"C:\ProgramData");
+        assert_eq!(
+            installer_progress_log_path_from(program_data),
+            Path::new(r"C:\ProgramData\CivicCast\install-progress.log")
+        );
+        // And it must share the SAME per-machine root
+        // `acquisition_download_root_from` already derives for the GUI's
+        // own component downloads -- one root, never a second, parallel
+        // ProgramData convention.
+        assert_eq!(
+            installer_progress_log_path_from(program_data),
+            acquisition_download_root_from(program_data).join("install-progress.log")
+        );
+    }
+
+    fn installer_log_scratch_dir(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "civiccast-installer-log-{label}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create scratch dir");
+        root
+    }
+
+    #[test]
+    fn newest_existing_log_path_picks_whichever_candidate_was_modified_last() {
+        let root = installer_log_scratch_dir("newest-wins");
+        let older = root.join("install-progress.log");
+        let newer = root.join("runtime-host.log");
+        fs::write(&older, b"older transcript").expect("write older log");
+        // Distinct, coarse-safe mtimes: some filesystems only carry
+        // second-resolution timestamps, so a same-instant write pair would
+        // make this test flaky rather than load-bearing.
+        std::thread::sleep(Duration::from_millis(1100));
+        fs::write(&newer, b"newer transcript").expect("write newer log");
+
+        let picked = newest_existing_log_path(&[older.clone(), newer.clone()])
+            .expect("at least one candidate exists");
+        assert_eq!(picked, newer);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn newest_existing_log_path_skips_candidates_that_do_not_exist() {
+        let root = installer_log_scratch_dir("skip-missing");
+        let missing = root.join("install-progress.log");
+        let present = root.join("runtime-host.log");
+        fs::write(&present, b"the only real file").expect("write present log");
+
+        let picked = newest_existing_log_path(&[missing, present.clone()])
+            .expect("the one real candidate must be found");
+        assert_eq!(picked, present);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn newest_existing_log_path_fails_loud_and_names_every_candidate_it_checked() {
+        // The exact shape `open_installer_log` propagates to the frontend
+        // as a rejected promise -- AcquisitionFlow.tsx's onClick must have
+        // something legible to show, not a bare "undefined".
+        let root = installer_log_scratch_dir("all-missing");
+        let first = root.join("install-progress.log");
+        let second = root.join("runtime-host.log");
+
+        let error = newest_existing_log_path(&[first.clone(), second.clone()])
+            .expect_err("no candidate exists yet");
+        assert!(error.contains("No CivicCast installer log exists yet"));
+        assert!(error.contains(&first.display().to_string()));
+        assert!(error.contains(&second.display().to_string()));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // No test here mutates the real `PROGRAMDATA` env var to exercise the
+    // non-`_from` `newest_installer_log_path`/`installer_progress_log_path`
+    // directly (parallel test threads share the process environment -- the
+    // same reason `acquisition_catalog.rs`'s
+    // `components_base_url_defaults_when_the_env_override_is_unset` gives
+    // for the identical restraint, and why `acquisition_download_root()`
+    // itself has no dedicated test either, only `acquisition_download_root_from`
+    // above). `installer_progress_log_path_from` and `newest_existing_log_path`
+    // together prove the real functions "by construction": each real
+    // function is a one-line composition of a tested pure half with a
+    // single environment read.
+
     #[test]
     fn nonce_operator_url_survives_state_rewrites() {
         // A PS-success-path state file carries the nonce URL; plain rewrites
@@ -1835,6 +1999,56 @@ try {{
         assert!(
             codes.iter().all(|code| *code != 0),
             "no failure may report success"
+        );
+    }
+
+    /// Bug fix: `--civiccast-restore-setup-handoff` "ran and returned
+    /// nothing" from a terminal on a release build, because
+    /// `windows_subsystem = "windows"` (top of this file) leaves the
+    /// process with no console, so every println!/eprintln! in
+    /// `run_setup_handoff_recovery_pass` silently went nowhere.
+    /// `attach_or_alloc_console_for_cli_recovery` fixes this ONLY if it
+    /// runs BEFORE that function's first print -- a call placed after
+    /// would compile clean and still reproduce the bug. This is a
+    /// text-contract test on the crate's OWN source (the same
+    /// `CARGO_MANIFEST_DIR`-relative self-read convention
+    /// `service_name_mirror_matches_the_python_source_of_truth` in
+    /// `native_service_registration.rs` already uses), because the ordering
+    /// bug is invisible to a normal unit test: `run_native_restore_setup_
+    /// handoff_cli` calls `std::process::exit` deep in its callee on every
+    /// real code path, and a debug test build never reproduces the
+    /// consoleless condition in the first place (`windows_subsystem` is
+    /// unset for debug builds).
+    #[test]
+    fn attach_console_call_precedes_the_recovery_pass_in_source_order() {
+        let main_rs = concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs");
+        let source = std::fs::read_to_string(main_rs)
+            .unwrap_or_else(|error| panic!("could not read {main_rs}: {error}"));
+
+        let function_start = source
+            .find("fn run_native_restore_setup_handoff_cli(")
+            .expect("run_native_restore_setup_handoff_cli must still exist");
+        let function_body = &source[function_start..];
+        let function_end = function_body
+            .find("\n}\n")
+            .expect("could not find the end of run_native_restore_setup_handoff_cli");
+        let function_body = &function_body[..function_end];
+
+        let attach_call = function_body
+            .find("attach_or_alloc_console_for_cli_recovery();")
+            .expect(
+                "run_native_restore_setup_handoff_cli must call \
+                 attach_or_alloc_console_for_cli_recovery()",
+            );
+        let recovery_call = function_body
+            .find("run_setup_handoff_recovery_pass(")
+            .expect("run_native_restore_setup_handoff_cli must still call run_setup_handoff_recovery_pass");
+
+        assert!(
+            attach_call < recovery_call,
+            "attach_or_alloc_console_for_cli_recovery() must be called BEFORE \
+             run_setup_handoff_recovery_pass, or its console attach/alloc has \
+             no effect on that function's own println!/eprintln! output"
         );
     }
 
@@ -2811,35 +3025,60 @@ fn rebuild_operator_console_handoff_after_reset() {
     );
 }
 
+/// Opens the newest installer log ([`newest_installer_log_path`]) in the
+/// OS's own DEFAULT handler for that file type, the same way
+/// [`open_operator_console`] opens a URL in the default browser -- never a
+/// hardcoded application. The prior implementation spawned `notepad.exe`
+/// directly, which is a second bug on top of the missing-candidate one
+/// (field report 2026-08-28, candidate 9d4477b): a station without
+/// `notepad.exe` on `PATH`, or with `.log` reassociated to a different
+/// viewer, would have the button fail even once the log itself existed.
+/// `cmd.exe /C start "" <path>` is the SAME shell-default-handler idiom
+/// [`open_operator_console`] already uses for URLs; the empty `""` is the
+/// `start` command's window-title placeholder, required so a path is never
+/// misparsed as the title.
 #[tauri::command(rename_all = "camelCase")]
 fn open_installer_log() -> Result<String, String> {
     let path = newest_installer_log_path()?;
+    let path_display = path.display().to_string();
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
 
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        Command::new("notepad.exe")
-            .arg(&path)
+        let status = Command::new("cmd.exe")
+            .args(["/C", "start", "", &path_display])
             .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
+            .status()
             .map_err(|error| format!("Could not open the installer log: {error}"))?;
-        return Ok(format!(
-            "Opened the CivicCast installer log: {}",
-            path.display()
+        if status.success() {
+            return Ok(format!("Opened the CivicCast installer log: {path_display}"));
+        }
+        return Err(format!(
+            "Windows could not open the installer log; cmd.exe exited with {status}."
         ));
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("open")
+            .arg(&path)
+            .status()
+            .map_err(|error| format!("Could not open the installer log: {error}"))?;
+        if status.success() {
+            return Ok(format!("Opened the CivicCast installer log: {path_display}"));
+        }
+        return Err(format!(
+            "macOS could not open the installer log; open exited with {status}."
+        ));
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         let status = Command::new("xdg-open")
             .arg(&path)
             .status()
             .map_err(|error| format!("Could not open the installer log: {error}"))?;
         if status.success() {
-            Ok(format!(
-                "Opened the CivicCast installer log: {}",
-                path.display()
-            ))
+            Ok(format!("Opened the CivicCast installer log: {path_display}"))
         } else {
             Err(format!(
                 "Could not open the installer log: xdg-open exited with {status}."
@@ -5738,6 +5977,58 @@ fn run_setup_handoff_recovery_pass(is_elevated_child: bool) -> i32 {
 /// `POST /api/setup/login` is nonce-gated and is the ONLY route to a staff
 /// token, that is not a first-run inconvenience: it is no sign-in, ever.
 ///
+/// Gives this process a real console before any CLI recovery output is
+/// printed, on a release build only (bug fix, field report: `--civiccast-
+/// restore-setup-handoff` "runs and returns nothing" from a terminal).
+///
+/// Root cause: the top-of-file `#![cfg_attr(not(debug_assertions),
+/// windows_subsystem = "windows")]` makes a RELEASE build a GUI-subsystem
+/// binary -- correct for the ordinary double-clicked setup wizard, which
+/// must never flash a console window behind it, but it also means the
+/// process starts with NO console at all. `GetStdHandle` for stdout/stderr
+/// then returns an invalid handle, so every `println!`/`eprintln!` in
+/// [`run_setup_handoff_recovery_pass`] below -- the exit-0/85/86/87 recovery
+/// messages this CLI flag exists to print -- silently goes nowhere when an
+/// operator or a support script invokes this exe from `cmd.exe`/PowerShell.
+/// A debug build never shows the bug (`windows_subsystem` is unset there),
+/// which is exactly why it was field-observed only against a release
+/// candidate.
+///
+/// `AttachConsole(ATTACH_PARENT_PROCESS)` connects to the INVOKING
+/// terminal's own console when the process was launched from one (the
+/// common case this flag is meant for); `AllocConsole()` is the fallback
+/// when that fails (e.g. no parent console at all -- launched from Explorer
+/// or a non-console parent), so the message still lands somewhere visible
+/// rather than being lost a second way. Rust's stdio handles are resolved
+/// via `GetStdHandle` fresh on every write (not cached at process startup),
+/// so calling this BEFORE the first print -- and only before the first
+/// print -- is what makes it take effect; see the doc comment at this
+/// function's one call site in [`run_native_restore_setup_handoff_cli`] for
+/// why that ordering is enforced there.
+///
+/// Narrow by design: only this one CLI flag calls it. No other code path in
+/// this binary prints to a console the operator is watching this way, and
+/// the ordinary GUI launch (no CLI flags at all) must keep behaving exactly
+/// as `windows_subsystem = "windows"` already guarantees -- no console ever
+/// appears behind the setup wizard.
+#[cfg(target_os = "windows")]
+fn attach_or_alloc_console_for_cli_recovery() {
+    use windows_sys::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
+
+    // SAFETY: both are argument-free (or take a plain integer) Win32 calls
+    // documented to be safe to invoke from any thread; neither takes a
+    // pointer this code supplies. A failed AttachConsole (no parent console,
+    // or one already attached) is expected and handled by falling back to
+    // AllocConsole -- never treated as an error worth reporting, since
+    // there is no console yet to report it to.
+    let attached = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    if attached == 0 {
+        unsafe {
+            AllocConsole();
+        }
+    }
+}
+
 /// The fix is a self-elevating recovery for THIS ACTION ONLY. The manifest
 /// stays `asInvoker`, so ordinary launches still never prompt.
 fn run_native_restore_setup_handoff_cli(args: &[String]) -> Option<i32> {
@@ -5746,6 +6037,11 @@ fn run_native_restore_setup_handoff_cli(args: &[String]) -> Option<i32> {
     }
     #[cfg(target_os = "windows")]
     {
+        // MUST run before run_setup_handoff_recovery_pass's first
+        // println!/eprintln! -- see attach_or_alloc_console_for_cli_recovery's
+        // own doc comment for why the ordering, not merely the call, is
+        // what fixes the bug.
+        attach_or_alloc_console_for_cli_recovery();
         Some(run_setup_handoff_recovery_pass(command_line_has_arg(
             args,
             RESTORE_SETUP_HANDOFF_ELEVATED_MARKER,

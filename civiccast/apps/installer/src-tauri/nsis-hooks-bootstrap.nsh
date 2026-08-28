@@ -1345,6 +1345,81 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; write-last-wins placement rationale as QuietUninstallString above.
   WriteRegStr SHCTX "${UNINSTKEY}" "InstallLocation" "$INSTDIR"
   !insertmacro CIVICCAST_STEP "postinstall: InstallLocation rewritten unquoted"
+  ;
+  ; ===================================================================
+  ; Start Menu + Desktop shortcuts to the RUNNING STATION's own web
+  ; surfaces (bug fix, field report 2026-08-28, candidate 9d4477b): once
+  ; this setup wizard's own window closes, an operator had NO clickable
+  ; path back to the operator console or the public portal at all. The
+  ; setup app's finish screen does offer "Open operator console"
+  ; (App.tsx's primaryActionLabel), but that control disappears with the
+  ; window, and this installer creates no shortcut of any kind pointing at
+  ; either surface -- Tauri's own generated Start Menu/Desktop entries (if
+  ; any) point at "$INSTDIR\${MAINBINARYNAME}.exe", which is the SETUP
+  ; WIZARD, not the running service; relaunching it re-runs first-run
+  ; setup, it does not open the console.
+  ;
+  ; URLs are the SAME fixed literals `main.rs` hardcodes
+  ; (`OPERATOR_CONSOLE_URL`, `RESIDENT_PORTAL_URL`) -- NSIS has no access to
+  ; installer-state.json's (possibly nonce-bearing) operatorConsoleUrl at
+  ; this point in the chain: that file is written by the GUI's OWN first
+  ; run, which has not happened yet when POSTINSTALL executes. A future nonce
+  ; scheme would need a first-run rewrite of these shortcuts from inside the
+  ; app, not a POSTINSTALL-time value that cannot exist yet.
+  ; tests/policy/test_native_installer_identity.py pins both literals against
+  ; `main.rs`'s own constants so the two can never silently drift apart.
+  ;
+  ; Internet Shortcut (.url) files, not .lnk: a .url file is a plain
+  ; INI-format text file (WriteINIStr writes it directly, creating the file
+  ; and section if either is missing) that needs no icon resource and no
+  ; target executable to resolve -- both matter here, because this
+  ; installer embeds exactly one icon (icons/icon.ico, used only for the
+  ; installer/uninstaller binaries themselves per tauri.native.conf.json)
+  ; and the shortcut's target is a URL, not a file on this machine. Windows
+  ; opens a .url file in the system's default browser at click time,
+  ; whatever that is.
+  ;
+  ; SetShellVarContext all: matches this product's fixed perMachine install
+  ; mode (tauri.native.conf.json's "installMode": "perMachine", not
+  ; operator-selectable) so $SMPROGRAMS/$DESKTOP resolve to the ALL USERS
+  ; locations -- every operator on this station sees the same two entries,
+  ; not just whichever account happened to run setup. Called explicitly
+  ; (never assumed already in effect) so this block's correctness does not
+  ; depend on undocumented behavior of Tauri's own generated installer.nsi.
+  ;
+  ; Best-effort, deliberately: unlike every CIVICCAST_FAIL step above, a
+  ; shortcut that could not be written does not abort or alarm the
+  ; install -- the station itself is fully installed and functional either
+  ; way, and the operator can still reach both surfaces via the setup
+  ; wizard's own finish screen. ClearErrors/${If} ${Errors} only logs a
+  ; breadcrumb so a report of "no shortcuts" is diagnosable from
+  ; install-progress.log without turning a cosmetic miss into a failed
+  ; install.
+  ; ===================================================================
+  SetShellVarContext all
+  CreateDirectory "$SMPROGRAMS\${PRODUCTNAME}"
+  ClearErrors
+  WriteINIStr "$SMPROGRAMS\${PRODUCTNAME}\CivicCast Operator Console.url" "InternetShortcut" "URL" "http://127.0.0.1:8000/operator/"
+  ${If} ${Errors}
+    !insertmacro CIVICCAST_STEP "postinstall: could not write the Start Menu operator console shortcut (non-fatal)"
+    ClearErrors
+  ${Else}
+    !insertmacro CIVICCAST_STEP "postinstall: Start Menu operator console shortcut written"
+  ${EndIf}
+  WriteINIStr "$SMPROGRAMS\${PRODUCTNAME}\CivicCast Public Portal.url" "InternetShortcut" "URL" "http://127.0.0.1:8000/"
+  ${If} ${Errors}
+    !insertmacro CIVICCAST_STEP "postinstall: could not write the Start Menu public portal shortcut (non-fatal)"
+    ClearErrors
+  ${Else}
+    !insertmacro CIVICCAST_STEP "postinstall: Start Menu public portal shortcut written"
+  ${EndIf}
+  WriteINIStr "$DESKTOP\CivicCast Operator Console.url" "InternetShortcut" "URL" "http://127.0.0.1:8000/operator/"
+  ${If} ${Errors}
+    !insertmacro CIVICCAST_STEP "postinstall: could not write the Desktop operator console shortcut (non-fatal)"
+    ClearErrors
+  ${Else}
+    !insertmacro CIVICCAST_STEP "postinstall: Desktop operator console shortcut written"
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
@@ -1769,4 +1844,24 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; recovery documents) that is preserved across uninstall by design. Purge
   ; remains a separate, typed operator action in the lifecycle implementation,
   ; not something a normal uninstall ever performs.
+  ;
+  ; Start Menu + Desktop shortcut removal (bug fix, field report 2026-08-28,
+  ; candidate 9d4477b): the counterpart to POSTINSTALL's shortcut creation
+  ; above. Deliberately OUTSIDE the $R2 tree-retention gate above (runs
+  ; unconditionally, on EVERY uninstall, even one that skipped removing
+  ; $INSTDIR because the supervisor service could not be confirmed stopped):
+  ; unlike the runtime/packs trees, a Start Menu or Desktop shortcut is
+  ; state this product owns independently of $INSTDIR and of whether the
+  ; service is still running -- deleting a shortcut file carries none of
+  ; the "still-running process holding the tree open" hazard that gate
+  ; exists to guard against, so there is no safety reason to withhold it on
+  ; that path, and every reason not to: a shortcut surviving a failed
+  ; uninstall would point an operator at a station this machine may no
+  ; longer be running as a service at all.
+  SetShellVarContext all
+  Delete "$SMPROGRAMS\${PRODUCTNAME}\CivicCast Operator Console.url"
+  Delete "$SMPROGRAMS\${PRODUCTNAME}\CivicCast Public Portal.url"
+  RMDir "$SMPROGRAMS\${PRODUCTNAME}"
+  Delete "$DESKTOP\CivicCast Operator Console.url"
+  !insertmacro CIVICCAST_STEP "postuninstall: Start Menu + Desktop shortcuts removed"
 !macroend

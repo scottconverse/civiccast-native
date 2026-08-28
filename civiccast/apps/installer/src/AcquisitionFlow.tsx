@@ -669,6 +669,14 @@ export function DownloadingScreen({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [retryMessage, setRetryMessage] = useState<string>("");
   const [cancelError, setCancelError] = useState<string>("");
+  // Bug fix (field report 2026-08-28, candidate 9d4477b): "Open installer
+  // log" had no error state at all -- its onClick awaited openInstallerLog()
+  // directly, so a rejected promise (no log found yet, or the OS could not
+  // launch a viewer) surfaced nowhere but the devtools console. From the
+  // operator's chair the button simply did nothing. This state gives that
+  // failure a visible home, the same way cancelError already does for "Stop
+  // downloading".
+  const [logOpenError, setLogOpenError] = useState<string>("");
 
   const allDone = components.every((component) => component.state === "complete" || component.state === "found_locally");
   // Something is still in flight or still waiting to start -- i.e. there is
@@ -728,7 +736,9 @@ export function DownloadingScreen({
   // fires for a row already in `downloading` -- so a driver that never
   // started produced a screen with no indication of trouble at all.
   const nothingMoving = noBytesMovedYet(components, (nowMillis - screenEntryMillis.current) / 1000);
-  const alertMessage = cancelError
+  const alertMessage = logOpenError
+    ? logOpenError
+    : cancelError
     ? cancelError
     : startError
       ? startError
@@ -881,7 +891,20 @@ export function DownloadingScreen({
             type="button"
             className="secondary-action"
             onClick={async () => {
-              setRetryMessage(await openInstallerLog());
+              setLogOpenError("");
+              try {
+                setRetryMessage(await openInstallerLog());
+              } catch (error) {
+                // The prior version awaited openInstallerLog() with no
+                // catch at all, so a rejection (no log on disk yet, or the
+                // OS could not launch a viewer for it) became a silent
+                // unhandled promise rejection -- the button visibly did
+                // nothing. Surface it through the same alert surface
+                // "Stop downloading" already uses for its own failures.
+                setLogOpenError(
+                  error instanceof Error ? error.message : String(error)
+                );
+              }
             }}
           >
             Open installer log

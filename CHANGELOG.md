@@ -648,6 +648,101 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **GUI installer re-downloaded the 7GB local AI model even after offline-kit
+  activation already installed it; "Open installer log" was a no-op; no
+  shortcut existed anywhere back to the running station; and the setup CLI's
+  handoff-recovery flag printed nothing from a terminal (four related field
+  findings, 2026-08-28, candidate 9d4477b, USB-kit GUI installer run).**
+  1. **Local AI model re-download.** Station activation's
+     `compose_ollama_model_store` (`native_activation.rs`) merges every
+     required model component's signed pack into
+     `<install_root>\models\ollama\{blobs,manifests}\registry.ollama.ai\
+     library\<repo>\<tag>`, but the GUI download screen's `local_ai_model`
+     catalog entries (`acquisition_catalog.rs`) only ever checked
+     `<install_root>\packs\local-ai-model\models\...` — a path nothing in
+     this codebase writes. `ensure_component_available` therefore always
+     fell through to a live ~7GB pull from `registry.ollama.ai`, even though
+     `install-progress.log` showed every pack `copied_from_offline` and
+     postinstall `SUCCESS`. `local_ai_model_items` now carries a SECOND
+     `staged_at` candidate at the merged station-activation store
+     (`merged_ollama_model_store_root`, additive — `CatalogItem.staged_at`
+     was already a `Vec<PathBuf>` checked in order, no schema change) for
+     the manifest item and every blob item (config + all layers), mirroring
+     the exact relative layout `native_packs::validate_ollama_model_contract`
+     already encodes. `captions-floor` had the equivalent fix from day one
+     (`FLOOR_STAGED_ROOT`'s special-case); `local_ai_model` never got the
+     matching candidate until now. 3 new Rust tests in
+     `acquisition_catalog.rs`: every item's candidate-path shape, a
+     regression pinning the exact `models\ollama` path the field miss
+     needed, and `ensure_component_available` accepting a hash-matching file
+     staged only at the new path without a download.
+  2. **"Open installer log" did nothing when clicked.** Two stacked bugs:
+     `newest_installer_log_path` (`main.rs`) only ever looked for
+     `runtime-host.log` under the per-user state root — written by the
+     native service, which has not started yet on the download screen — and
+     never for `install-progress.log` (the NSIS elevated installer's own
+     transcript, written under `%PROGRAMDATA%\CivicCast` and already
+     complete by the time that screen exists); and the command hardcoded
+     `notepad.exe` instead of the OS default handler
+     (`cmd.exe /C start ""`, the same idiom `open_operator_console` already
+     uses for URLs). Frontend compounded it: `AcquisitionFlow.tsx`'s onClick
+     awaited `openInstallerLog()` with no `try`/`catch`, so a rejected
+     command surfaced nowhere but the devtools console — the button visibly
+     did nothing. Fixed all three: `newest_installer_log_path` now checks
+     both logs and returns whichever exists and was modified most recently;
+     the command opens the OS default handler; the button now surfaces a
+     failure through the same `role="alert"` region "Stop downloading"
+     already uses. 5 new Rust tests (pure path resolution +
+     real-temp-file selection logic) and 3 new frontend tests (success,
+     visible failure, error clearing on a later success).
+  3. **No shortcut anywhere led back to the running station.** Once the
+     setup wizard's window closed, an operator had no clickable path to the
+     operator console or public portal — the setup app's own finish screen
+     offers "Open operator console", but that control disappears with the
+     window, and this installer created no Start Menu or Desktop entry
+     pointing at either surface (only Tauri's own shortcut to the setup
+     wizard itself, which just re-runs first-run setup). `NSIS_HOOK_
+     POSTINSTALL` now writes a `CivicCast (Native)` Start Menu folder with
+     two Internet Shortcut (`.url`, no icon-resource plumbing needed) files
+     — "CivicCast Operator Console" and "CivicCast Public Portal" — plus a
+     Desktop "CivicCast Operator Console" shortcut, at literal URLs matching
+     `main.rs`'s own `OPERATOR_CONSOLE_URL`/`RESIDENT_PORTAL_URL` constants
+     (installer-state's URL isn't resolvable yet at POSTINSTALL time — the
+     GUI's own first run hasn't happened). Best-effort and silent-safe: a
+     write failure logs a breadcrumb but never aborts or alerts. `NSIS_HOOK_
+     POSTUNINSTALL` removes all three, unconditionally — deliberately
+     outside the `$R2` service-stop-confirmed gate that guards the
+     `$INSTDIR` runtime/packs tree removal, since a shortcut carries none of
+     that gate's still-running-process hazard. 3 new policy tests in
+     `tests/policy/test_native_installer_identity.py` (creation shape +
+     placement + no dialogs, a `main.rs`-constant drift guard, and
+     unconditional removal), plus one pre-existing breadcrumb-tail pin
+     updated to the new true tail.
+  4. **`--civiccast-restore-setup-handoff` ran and printed nothing from a
+     terminal.** The top-of-file `#![cfg_attr(not(debug_assertions),
+     windows_subsystem = "windows")]` makes a release build GUI-subsystem,
+     so the process starts with no console at all -- `run_setup_handoff_
+     recovery_pass`'s exit-0/85/86/87 messages (the whole point of this CLI
+     recovery flag) had nowhere to go. `run_native_restore_setup_handoff_cli`
+     now calls a new `attach_or_alloc_console_for_cli_recovery` (Windows-
+     only) BEFORE that function's first print: `AttachConsole
+     (ATTACH_PARENT_PROCESS)` connects to the invoking terminal when one
+     exists, falling back to `AllocConsole()` when it does not. Rust
+     resolves stdio handles via `GetStdHandle` fresh on every write, so
+     calling this before the first print -- and nowhere else in the binary
+     -- is what fixes it without touching the ordinary GUI launch (which
+     still never shows a console, unchanged). 1 new text-contract test
+     (`attach_console_call_precedes_the_recovery_pass_in_source_order`,
+     mirroring `native_service_registration.rs`'s existing self-source-read
+     convention) pins the call ordering itself, since the bug is invisible
+     to a normal unit test (`windows_subsystem` is unset in debug/test
+     builds, so the consoleless condition never reproduces there) and every
+     real code path through this function ends in `std::process::exit`.
+  Full verification: `cargo test` (399 passed) + `cargo clippy` in the
+  installer crate, `npm run typecheck` + `vitest run` (145 passed) in the
+  installer frontend, and the repository's `pytest tests/policy` suite
+  (1828 passed) all green.
+
 - **D4 provisioning survives a reserved/excluded Windows TCP port instead of
   crashing PostgreSQL's bind (two real LPM deployment failures, 2026-08-27,
   candidate 75cc13f).** Both independent installer runs failed identically
