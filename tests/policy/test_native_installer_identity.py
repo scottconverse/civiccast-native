@@ -3040,8 +3040,7 @@ def test_postinstall_creates_start_menu_and_desktop_shortcuts_to_the_running_sta
     postinstall = _postinstall_block(hooks_text)
 
     assert 'CreateDirectory "$SMPROGRAMS\\${PRODUCTNAME}"' in postinstall, (
-        "POSTINSTALL must create a per-product Start Menu folder before "
-        "writing shortcuts into it"
+        "POSTINSTALL must create a per-product Start Menu folder before writing shortcuts into it"
     )
     for expected in (
         'WriteINIStr "$SMPROGRAMS\\${PRODUCTNAME}\\CivicCast Operator Console.url" '
@@ -3051,7 +3050,9 @@ def test_postinstall_creates_start_menu_and_desktop_shortcuts_to_the_running_sta
         'WriteINIStr "$DESKTOP\\CivicCast Operator Console.url" '
         '"InternetShortcut" "URL" "http://127.0.0.1:8000/operator/"',
     ):
-        assert expected in postinstall, f"expected {expected!r} in nsis-hooks-bootstrap.nsh POSTINSTALL"
+        assert expected in postinstall, (
+            f"expected {expected!r} in nsis-hooks-bootstrap.nsh POSTINSTALL"
+        )
 
     # Placement: strictly after the InstallLocation rewrite, which is the
     # documented last-wins end-of-chain write -- shortcuts must not be
@@ -3088,9 +3089,7 @@ def test_postinstall_shortcut_urls_match_main_rs_constants() -> None:
     postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
     main_rs = INSTALLER_MAIN_RS.read_text(encoding="utf-8")
 
-    operator_console_match = re.search(
-        r'const OPERATOR_CONSOLE_URL: &str = "([^"]+)";', main_rs
-    )
+    operator_console_match = re.search(r'const OPERATOR_CONSOLE_URL: &str = "([^"]+)";', main_rs)
     portal_match = re.search(r'const RESIDENT_PORTAL_URL: &str = "([^"]+)";', main_rs)
     assert operator_console_match, "main.rs must still declare OPERATOR_CONSOLE_URL"
     assert portal_match, "main.rs must still declare RESIDENT_PORTAL_URL"
@@ -3116,9 +3115,9 @@ def test_postuninstall_removes_the_start_menu_and_desktop_shortcuts() -> None:
     deleting a shortcut carries none of the still-running-process hazard
     that gate exists to guard against)."""
     hooks_text = NATIVE_HOOKS.read_text(encoding="utf-8")
-    postuninstall = hooks_text.split("!macro NSIS_HOOK_POSTUNINSTALL", 1)[1].split(
-        "!macroend", 1
-    )[0]
+    postuninstall = hooks_text.split("!macro NSIS_HOOK_POSTUNINSTALL", 1)[1].split("!macroend", 1)[
+        0
+    ]
 
     for expected in (
         'Delete "$SMPROGRAMS\\${PRODUCTNAME}\\CivicCast Operator Console.url"',
@@ -3126,7 +3125,9 @@ def test_postuninstall_removes_the_start_menu_and_desktop_shortcuts() -> None:
         'RMDir "$SMPROGRAMS\\${PRODUCTNAME}"',
         'Delete "$DESKTOP\\CivicCast Operator Console.url"',
     ):
-        assert expected in postuninstall, f"expected {expected!r} in nsis-hooks-bootstrap.nsh POSTUNINSTALL"
+        assert expected in postuninstall, (
+            f"expected {expected!r} in nsis-hooks-bootstrap.nsh POSTUNINSTALL"
+        )
 
     # Placement: strictly AFTER the $R2 tree-retention gate's closing
     # ${EndIf} (the DeleteRegKey line just inside it is the last statement
