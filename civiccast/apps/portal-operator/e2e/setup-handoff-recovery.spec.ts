@@ -13,6 +13,18 @@ import type { Page } from '@playwright/test'
 const MOCK_NONCE = 'e2e-recovered-setup-nonce'
 const MOCK_CODE_FILE = 'C:\\ProgramData\\CivicCast\\setup-recovery\\code.txt'
 
+/**
+ * The command-line/API recovery path now lives inside a de-emphasized
+ * "For IT staff" disclosure under the calm "This station hasn't been set
+ * up yet" headline (field-test finding: the un-gated version was the scary
+ * front-and-center error a non-technical station volunteer walked into).
+ * Every test below that needs the disclosure's contents opens it first.
+ */
+async function openItStaffDisclosure(page: Page) {
+  await expect(page.getByRole('heading', { name: "This station hasn't been set up yet" })).toBeVisible()
+  await page.getByText('For IT staff: restore setup access').click()
+}
+
 async function mockCommonRoutes(page: Page) {
   await page.route('**/api/version', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ version: '1.0.0-rc18' }) })
@@ -52,6 +64,7 @@ test('cold operator console shows the in-product setup-recovery action, not only
   })
 
   await page.goto('/#/setup')
+  await openItStaffDisclosure(page)
 
   await expect(page.getByRole('heading', { name: 'Restore the setup handoff the Windows installer creates' })).toBeVisible()
   // The pre-existing command-line instruction stays -- this is an ADDITIONAL
@@ -115,6 +128,7 @@ test('a mocked valid recovery code resumes setup and the dead-end is gone', asyn
   })
 
   await page.goto('/#/setup')
+  await openItStaffDisclosure(page)
   await expect(page.getByRole('heading', { name: 'Restore the setup handoff the Windows installer creates' })).toBeVisible()
 
   await page.getByRole('button', { name: 'I lost my setup link' }).click()
@@ -163,6 +177,7 @@ test('a wrong recovery code shows an error and keeps the panel open for another 
   })
 
   await page.goto('/#/setup')
+  await openItStaffDisclosure(page)
   await page.getByRole('button', { name: 'I lost my setup link' }).click()
   await page.getByLabel('Recovery code').fill('zzzzzzzz')
   await page.getByRole('button', { name: 'Continue' }).click()
