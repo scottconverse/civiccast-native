@@ -975,6 +975,11 @@ def main(argv: list[str] | None = None) -> int:
             next_steps=[
                 "Every candidate PostgreSQL port this installer tried failed a local "
                 f"loopback bind test on {args.postgres_host!r}: {port_selection.detail}",
+                "Ports tried, in the order attempted, and why each one was rejected:\n"
+                + "\n".join(
+                    f"   - port {attempt.port}: {attempt.outcome} -- {attempt.detail}"
+                    for attempt in port_selection.attempts
+                ),
                 "This almost always means Windows has administratively EXCLUDED these "
                 "ports from use (a Hyper-V/WSL 'winnat' dynamic port reservation made at "
                 "boot -- these move across reboots) or security software is blocking the "
