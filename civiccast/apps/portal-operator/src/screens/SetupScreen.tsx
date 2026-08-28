@@ -1545,7 +1545,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
         </div>
       )}
 
-      {stateQuery.error && (
+      {stateQuery.error && !isSetupHandoffError(stateQuery.error) && (
         <div role="alert" className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
           Could not read setup state. {apiMessage(stateQuery.error, 'Try again.')}
         </div>
@@ -1556,33 +1556,46 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
           className="rounded-md p-4 text-sm"
           style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
         >
-          <h2 className="m-0 text-base font-semibold">Restore the setup handoff the Windows installer creates</h2>
-          <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-            The first setup page needs the one-time operator handoff created by the Windows
-            installer, and this page was opened without it. Nothing is wrong with the station, and{' '}
-            <strong>simply reopening CivicCast will not fix it</strong> &mdash; an ordinary launch
-            cannot read the protected value that the handoff is built from.
+          <h2 className="m-0 text-base font-semibold">This station hasn&apos;t been set up yet</h2>
+          <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+            Setup starts from the CivicCast installer. If the installer is still open on this
+            computer, go back to it and click <strong>Open operator console</strong> there.
           </p>
-          <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-            On the station itself, run CivicCast once with the recovery switch and approve the
-            Windows administrator prompt:
-          </p>
-          <code
-            className="mt-2 block overflow-x-auto rounded p-2 text-xs"
-            style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink)' }}
-          >
-            &quot;C:\Program Files\CivicCast (Native)\CivicCast Native.exe&quot;
-            --civiccast-restore-setup-handoff
-          </code>
-          <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-            It restores the handoff for the Windows account that runs it, then{' '}
-            <strong>Open operator console</strong> works normally. You must be an administrator of
-            that computer; the command refuses rather than revealing anything if you are not.
-          </p>
-          <p className="m-0 mt-3 text-xs font-semibold" style={{ color: 'var(--cc-ink) ' }}>
-            Or, without a command line:
-          </p>
-          <HandoffRecoveryPanel onRecovered={() => void stateQuery.refetch()} />
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs font-semibold" style={{ color: 'var(--cc-ink-3)' }}>
+              For IT staff: restore setup access
+            </summary>
+            <div className="mt-3 grid gap-2">
+              <h3 className="m-0 text-sm font-semibold">Restore the setup handoff the Windows installer creates</h3>
+              <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+                The first setup page needs the one-time operator handoff created by the Windows
+                installer, and this page was opened without it. Nothing is wrong with the station, and{' '}
+                <strong>simply reopening CivicCast will not fix it</strong> &mdash; an ordinary launch
+                cannot read the protected value that the handoff is built from.
+              </p>
+              <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+                On the station itself, run CivicCast once with the recovery switch and approve the
+                Windows administrator prompt:
+              </p>
+              <code
+                className="block overflow-x-auto rounded p-2 text-xs"
+                style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink)' }}
+              >
+                &quot;C:\Program Files\CivicCast (Native)\CivicCast Native.exe&quot;
+                --civiccast-restore-setup-handoff
+              </code>
+              <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+                It restores the handoff for the Windows account that runs it, then{' '}
+                <strong>Open operator console</strong> works normally. You must be an administrator
+                of that computer; the command refuses rather than revealing anything if you are
+                not.
+              </p>
+              <p className="m-0 text-xs font-semibold" style={{ color: 'var(--cc-ink) ' }}>
+                Or, without a command line:
+              </p>
+              <HandoffRecoveryPanel onRecovered={() => void stateQuery.refetch()} />
+            </div>
+          </details>
         </section>
       )}
 

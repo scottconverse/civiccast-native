@@ -256,6 +256,12 @@ describe('Handoff recovery panel code_file path', () => {
     stubHandoffRecoverableStation(relocatedCodeFile)
     renderSetupScreen()
 
+    // The command-line/API recovery path lives inside a de-emphasized "For IT
+    // staff" disclosure now (calm "This station hasn't been set up yet"
+    // headline up top) -- open it before the button underneath is reachable.
+    const disclosure = await screen.findByText('For IT staff: restore setup access')
+    fireEvent.click(disclosure)
+
     const startButton = await screen.findByRole('button', { name: /i lost my setup link/i })
     fireEvent.click(startButton)
 
@@ -264,5 +270,60 @@ describe('Handoff recovery panel code_file path', () => {
     expect(
       screen.queryByText('C:\\ProgramData\\CivicCast\\setup-recovery\\code.txt'),
     ).toBeNull()
+  })
+})
+
+/**
+ * Field-test finding (2026-08-28, candidate 9d4477b): a station volunteer
+ * who reaches the operator console before the installer hands off to it saw
+ * a red "Could not read setup state" alert with admin-only command/code
+ * instructions front and center -- owner verdict "I can't hand this to an
+ * LPM person." The fix is copy/layout only (isSetupHandoffError's security
+ * gate and the recovery mutations it protects are unchanged): the never-
+ * set-up-yet state gets a calm headline and points back at the installer,
+ * and the IT-only recovery path moves into a de-emphasized disclosure. A
+ * genuinely broken setup-state read (a real backend error, not a missing
+ * handoff) must keep the red alert -- the code can tell the two apart
+ * (`isSetupHandoffError` gates strictly on a 403 whose message mentions
+ * "operator console" or "setup"), so this pins that it still does.
+ */
+describe('First-run funnel copy: never-set-up vs. genuinely broken setup-state read', () => {
+  it('shows the calm "hasn\'t been set up yet" headline for the no-handoff 403, not the red error banner', async () => {
+    stubHandoffRecoverableStation('C:\\ProgramData\\CivicCast\\setup-recovery\\code.txt')
+    renderSetupScreen()
+
+    await screen.findByRole('heading', { name: "This station hasn't been set up yet" })
+    expect(screen.queryByText(/Could not read setup state\./)).toBeNull()
+
+    // The IT-only recovery path is present but collapsed by default. jsdom
+    // does not implement <details>'s native content-hiding (unlike a real
+    // browser -- see e2e/setup-handoff-recovery.spec.ts's openItStaffDisclosure,
+    // which proves the visible/collapsed behavior against real Chromium), so
+    // this checks the one thing jsdom does model faithfully: the element's
+    // own `open` state.
+    const disclosure = screen.getByText('For IT staff: restore setup access').closest('details')
+    expect(disclosure).not.toBeNull()
+    expect((disclosure as HTMLDetailsElement).open).toBe(false)
+  })
+
+  it('keeps the red error banner for a genuinely broken setup-state read (not a missing handoff)', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/setup/station-state') {
+        return jsonResponse({ detail: 'Internal server error.' }, 500)
+      }
+      if (url === '/api/setup/storage') {
+        return jsonResponse({ status: 'not_configured', next_step: 'Choose Prepare storage in the installer.' })
+      }
+      if (url === '/api/staff/auth/me') {
+        return jsonResponse({ detail: 'not authenticated' }, 403)
+      }
+      return jsonResponse({ detail: 'not stubbed' }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderSetupScreen()
+
+    await screen.findByText(/Could not read setup state\./)
+    expect(screen.queryByRole('heading', { name: "This station hasn't been set up yet" })).toBeNull()
   })
 })
