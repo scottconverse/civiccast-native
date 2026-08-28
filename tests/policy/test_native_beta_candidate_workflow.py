@@ -900,13 +900,13 @@ def _assert_kit_carries_the_quickstart_card(job: dict[str, object]) -> None:
 
     steps = {step["name"]: step for step in job["steps"]}
     colocate = steps[colocate_name]["run"]
-    assert 'Test-Path -LiteralPath $quickstartSource' in colocate
+    assert "Test-Path -LiteralPath $quickstartSource" in colocate
     assert '$quickstartSource = "docs/QUICKSTART-OPERATOR.md"' in colocate
     assert (
-        'Copy-Item -LiteralPath $quickstartSource -Destination '
+        "Copy-Item -LiteralPath $quickstartSource -Destination "
         '(Join-Path $kit "QUICKSTART-OPERATOR.md")' in colocate
     )
-    assert 'Kit assembly: QUICKSTART-OPERATOR.md is not co-located at the kit root' in colocate
+    assert "Kit assembly: QUICKSTART-OPERATOR.md is not co-located at the kit root" in colocate
 
     upload = steps["Upload the installable native-beta kit"]
     # kit/** is a recursive glob over the SAME $kit root the co-locate step
