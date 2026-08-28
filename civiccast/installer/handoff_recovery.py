@@ -258,42 +258,102 @@ def start_recovery(*, harden_acl: AclApplier | None = None) -> RecoveryStartResu
     is repaired on the very next recovery attempt instead of needing a
     separate remediation step.
 
-    Raises :class:`HandoffRecoveryError` if the directory's ACL could not be
-    applied: a challenge file this call could not actually secure to
-    Administrators+SYSTEM must never be left in place looking like a working
-    recovery path.
+    Raises :class:`HandoffRecoveryError` for ANY failure in the mkdir/ACL/
+    write sequence -- not only a refused ACL. Field incident 2026-08-28: a
+    caller whose token does not carry the ``SY``/``BA`` SIDs (e.g. an
+    administrator account that is a member of Administrators but running
+    de-elevated, which is the *default* Windows token state -- UAC only
+    attaches the group when a process is actually elevated) can apply the
+    directory's own ACL successfully (``SetNamedSecurityInfo`` only needs
+    ``WRITE_DAC``, which an owner already has) and then get a bare
+    ``PermissionError`` writing ``code.txt`` into the directory it just
+    locked itself out of. Previously that exception was never caught here
+    or in the router (only :class:`HandoffRecoveryError` was), so it
+    propagated as an unhandled 500 with no cleanup -- a half-hardened
+    directory with no challenge file in it, which is silent and confusing
+    for the NEXT call rather than answering THIS one honestly. The whole
+    sequence is now one fail-loud unit: every exception (mkdir, ACL, either
+    write) is caught and :class:`HandoffRecoveryError` is raised -- so a
+    caller of this function gets EITHER a fully written, fully hardened
+    challenge, or a clean exception and no trace of a half-issued one; this
+    function's return must never be reachable except in the fully-written,
+    fully-secured case -- there is no partial-success return. Cleanup on
+    failure is conditional, not unconditional: if the failure happened
+    before ``code.txt`` was actually overwritten (mkdir or ACL refused), a
+    STILL-VALID code from an earlier call is left exactly as it was --this
+    IS the "regenerate" action's own error path, and a failed regenerate
+    must not also destroy the operator's still-usable earlier code. Once
+    ``code.txt`` has actually been overwritten, both files are removed on
+    any later failure in the same attempt, since ``state.json`` can no
+    longer be trusted to describe whatever ``code.txt`` now contains.
     """
 
     directory = recovery_dir()
+    code_path = code_file_path()
+    state_path = _state_path()
+    apply_acl = harden_acl if harden_acl is not None else _harden_recovery_dir_acl
+    # Only true once `_atomic_write(code_path, ...)` has actually RETURNED,
+    # i.e. `code_path`'s previous content (if any -- this may be a
+    # regenerate over a still-valid earlier code) is confirmed replaced.
+    # Cleanup below must never run before this: a caller whose ACL/mkdir
+    # step failed on a REGENERATE must get their exception back with the
+    # STILL-VALID earlier code left exactly as it was, not have this failed
+    # attempt delete it out from under them.
+    overwrote_code_file = False
 
     with _RECOVERY_LOCK:
-        directory.mkdir(parents=True, exist_ok=True)
-
-        apply_acl = harden_acl if harden_acl is not None else _harden_recovery_dir_acl
         try:
+            directory.mkdir(parents=True, exist_ok=True)
             apply_acl(directory)
+
+            code = _generate_code()
+            salt = secrets.token_hex(16)
+            now = datetime.now(UTC)
+            expires_at = now + timedelta(seconds=CODE_TTL_SECONDS)
+            state = {
+                "code_hash": _hash_code(code, salt=salt),
+                "salt": salt,
+                "created_at": now.isoformat(),
+                "expires_at": expires_at.isoformat(),
+                "attempts": 0,
+                "consumed": False,
+            }
+
+            _atomic_write(code_path, code + "\n")
+            overwrote_code_file = True
+            _atomic_write(state_path, json.dumps(state))
+
+            # Defense in depth: prove THIS call can still read back what it
+            # just wrote before ever telling an HTTP caller it succeeded.
+            # ``_atomic_write``'s fsync+replace already guarantees the bytes
+            # landed on disk; this additionally guarantees the identity that
+            # is about to answer "yes, a code is ready" is not itself locked
+            # out of the file it is describing.
+            if code_path.read_text(encoding="utf-8").strip() != code:
+                raise HandoffRecoveryError(
+                    f"wrote {code_path} but could not read back the code that was just "
+                    "written -- refusing to report a code as issued"
+                )
         except Exception as exc:
+            if overwrote_code_file:
+                # Once code.txt has been overwritten there is no intact
+                # previous challenge left to protect: state.json (old or
+                # new) can no longer be trusted to describe whatever code.txt
+                # now contains, so both must go rather than leave a
+                # plaintext code on disk with mismatched/stale verification
+                # state next to it.
+                with contextlib.suppress(OSError):
+                    code_path.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    state_path.unlink(missing_ok=True)
+            if isinstance(exc, HandoffRecoveryError):
+                raise
             raise HandoffRecoveryError(
-                f"could not restrict {directory} to Administrators and SYSTEM: {exc}"
+                f"could not issue and secure a setup recovery code restricted to "
+                f"Administrators and SYSTEM under {directory}: {exc}"
             ) from exc
 
-        code = _generate_code()
-        salt = secrets.token_hex(16)
-        now = datetime.now(UTC)
-        expires_at = now + timedelta(seconds=CODE_TTL_SECONDS)
-        state = {
-            "code_hash": _hash_code(code, salt=salt),
-            "salt": salt,
-            "created_at": now.isoformat(),
-            "expires_at": expires_at.isoformat(),
-            "attempts": 0,
-            "consumed": False,
-        }
-
-        _atomic_write(code_file_path(), code + "\n")
-        _atomic_write(_state_path(), json.dumps(state))
-
-    return RecoveryStartResult(code_file=str(code_file_path()), expires_in=CODE_TTL_SECONDS)
+    return RecoveryStartResult(code_file=str(code_path), expires_in=CODE_TTL_SECONDS)
 
 
 @dataclass(frozen=True)

@@ -23,7 +23,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import { SetupScreen } from './SetupScreen'
 
@@ -211,7 +211,12 @@ describe('First setup WITH the installer handoff nonce', () => {
  * does NOT match the component's hard-coded `C:\ProgramData\...` fallback --
  * the same way a station with `%ProgramData%` relocated would.
  */
-function stubHandoffRecoverableStation(codeFile: string) {
+function stubHandoffRecoverableStation(
+  codeFile: string,
+  options: { startResponses?: Array<{ status: number; body: unknown }> } = {},
+) {
+  const responses = options.startResponses
+  let startCallCount = 0
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
@@ -236,12 +241,69 @@ function stubHandoffRecoverableStation(codeFile: string) {
       return jsonResponse({ detail: 'not authenticated' }, 403)
     }
     if (url === '/api/setup/handoff-recovery/start' && method === 'POST') {
+      if (responses) {
+        const response = responses[Math.min(startCallCount, responses.length - 1)]
+        startCallCount += 1
+        return jsonResponse(response.body, response.status)
+      }
       return jsonResponse({ code_file: codeFile, expires_in: 900 })
     }
     return jsonResponse({ detail: 'not stubbed' }, 404)
   })
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
+}
+
+/** Resolves each queued deferred in order, one per real `fetch` request that
+ * matches ``matchesPath`` -- lets a test observe the pending state a mutation
+ * is in WHILE its request is still in flight, then release it deliberately. */
+function stubHandoffRecoveryWithControlledStart(
+  codeFile: string,
+  matchesPath: string,
+  expiresInSequence: number[] = [900],
+): { fetchMock: ReturnType<typeof vi.fn>; releaseNext: () => void } {
+  const releases: Array<() => void> = []
+  let callCount = 0
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? 'GET'
+    if (url === '/api/setup/station-state' && method === 'GET') {
+      return jsonResponse(
+        {
+          detail:
+            'Storage setup requires the installer handoff nonce. Open the ' +
+            'operator console from the CivicCast installer before preparing storage.',
+        },
+        403,
+      )
+    }
+    if (url === '/api/setup/storage' && method === 'GET') {
+      return jsonResponse({
+        status: 'not_configured',
+        message: 'CivicCast has not prepared a local database yet.',
+        next_step: 'Choose Prepare storage in the installer.',
+      })
+    }
+    if (url === '/api/staff/auth/me') {
+      return jsonResponse({ detail: 'not authenticated' }, 403)
+    }
+    if (url === matchesPath && method === 'POST') {
+      await new Promise<void>((resolve) => releases.push(resolve))
+      const expiresIn = expiresInSequence[Math.min(callCount, expiresInSequence.length - 1)]
+      callCount += 1
+      return jsonResponse({ code_file: codeFile, expires_in: expiresIn })
+    }
+    return jsonResponse({ detail: 'not stubbed' }, 404)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return {
+    fetchMock,
+    releaseNext: () => {
+      const next = releases.shift()
+      if (!next) throw new Error('no pending /handoff-recovery/start call to release')
+      next()
+    },
+  }
 }
 
 describe('Handoff recovery panel code_file path', () => {
@@ -325,5 +387,153 @@ describe('First-run funnel copy: never-set-up vs. genuinely broken setup-state r
 
     await screen.findByText(/Could not read setup state\./)
     expect(screen.queryByRole('heading', { name: "This station hasn't been set up yet" })).toBeNull()
+  })
+})
+
+/**
+ * Field bug 2026-08-28: clicking "Get a new code" on a live station produced
+ * NO visible response -- no pending indicator, no success confirmation, only
+ * a countdown reset a distracted clerk would never notice. The mutation
+ * itself worked (same `startHandoffRecovery` call the initial "I lost my
+ * setup link" click already uses and already had coverage for), so the
+ * defect was purely the panel's silence about its own outcome. These tests
+ * pin the fix: a visible pending state while the request is in flight, an
+ * explicit timestamped confirmation on success (distinguishing a first issue
+ * from a regenerate), and a visible error on failure -- matching the page's
+ * existing "never a dead control" standard (see the W-2 doc comment above
+ * `HandoffRecoveryPanel`).
+ */
+describe('Handoff recovery panel visible feedback (field bug 2026-08-28)', () => {
+  const codeFile = 'C:\\ProgramData\\CivicCast\\setup-recovery\\code.txt'
+
+  // The recovery panel's own `<form>` is the scope for these assertions:
+  // `SetupScreen` also renders an unrelated top-level alert for the mocked
+  // `/api/setup/station-state` 403 ("Could not read setup state...") that
+  // otherwise collides with a bare `getByRole('alert')`/`getByRole('status')`
+  // query and asserts on the WRONG element.
+  async function recoveryForm() {
+    // `findByLabelText`, not `getByLabelText`: the form (and its "Recovery
+    // code" field) only exists once `startHandoffRecovery` has actually
+    // resolved and the panel has re-rendered into its 'code-requested'
+    // phase -- a synchronous query here would race that.
+    const label = await screen.findByLabelText('Recovery code')
+    const form = label.closest('form')
+    if (!form) throw new Error('recovery form not found')
+    return within(form)
+  }
+
+  // PR #57 moved the whole IT recovery path (including "I lost my setup
+  // link") behind a collapsed "For IT staff: restore setup access"
+  // disclosure -- open it first, matching the convention the code_file-path
+  // test above and e2e/setup-handoff-recovery.spec.ts's openItStaffDisclosure
+  // both already use.
+  async function openItStaffDisclosure() {
+    const disclosure = await screen.findByText('For IT staff: restore setup access')
+    fireEvent.click(disclosure)
+  }
+
+  it('shows a pending label on "I lost my setup link" and then an explicit, non-regenerate confirmation', async () => {
+    const { releaseNext } = stubHandoffRecoveryWithControlledStart(
+      codeFile,
+      '/api/setup/handoff-recovery/start',
+    )
+    renderSetupScreen()
+    await openItStaffDisclosure()
+
+    const startButton = await screen.findByRole('button', { name: /i lost my setup link/i })
+    fireEvent.click(startButton)
+
+    // Pending state visible WHILE the request is still in flight.
+    await screen.findByRole('button', { name: /requesting a recovery code/i })
+
+    releaseNext()
+
+    const form = await recoveryForm()
+    const confirmation = await form.findByRole('status')
+    expect(confirmation.textContent).toMatch(/a recovery code was written to/i)
+    expect(confirmation.textContent).toMatch(/code\.txt/)
+    // The FIRST issuance is not a regenerate: no "old code" framing.
+    expect(confirmation.textContent).not.toMatch(/old code/i)
+  })
+
+  it('clicking "Get a new code" shows a pending state, then an explicit regenerate confirmation with a reset countdown', async () => {
+    // First code expires almost immediately; the regenerated one gets the
+    // real 15-minute TTL. This makes the reset unambiguous to assert on: if
+    // `expiresAt` were NOT actually reset by the second response, the panel
+    // would still show "This code has expired" after the wait below instead
+    // of a fresh, long countdown.
+    const { releaseNext } = stubHandoffRecoveryWithControlledStart(
+      codeFile,
+      '/api/setup/handoff-recovery/start',
+      [1, 900],
+    )
+    renderSetupScreen()
+    await openItStaffDisclosure()
+
+    const startButton = await screen.findByRole('button', { name: /i lost my setup link/i })
+    fireEvent.click(startButton)
+    // Wait for the mutation to actually reach the fetch call before
+    // releasing it -- `mutate()` does not call `mutationFn` synchronously.
+    await screen.findByRole('button', { name: /requesting a recovery code/i })
+    releaseNext()
+    const form = await recoveryForm()
+    await form.findByRole('status')
+
+    // Let the short-lived first code actually expire.
+    await waitFor(() => expect(form.getByRole('alert').textContent).toMatch(/expired/i), {
+      timeout: 3000,
+    })
+
+    const getNewCodeButton = form.getByRole('button', { name: 'Get a new code' })
+    fireEvent.click(getNewCodeButton)
+
+    // Pending state visible for the REGENERATE click too -- this is the
+    // exact control the field report said produced nothing at all.
+    await screen.findByRole('button', { name: /requesting a new code/i })
+    // The stale code input is not submittable while a fresh code is in flight.
+    expect((screen.getByLabelText('Recovery code') as HTMLInputElement).disabled).toBe(true)
+
+    releaseNext()
+
+    await waitFor(() => {
+      const confirmation = form.getByRole('status')
+      expect(confirmation.textContent).toMatch(/a new code was written to/i)
+      expect(confirmation.textContent).toMatch(/old code no longer works/i)
+    })
+    // The "expired" alert is gone and a fresh, long countdown is back --
+    // proof `expiresAt` was actually reset, not just redrawn with stale data.
+    expect(form.queryByRole('alert')).toBeNull()
+    const refreshedCountdown = await form.findByText(/this code expires in \d+ seconds?/i)
+    // Anchored capture, not a bare `/\d+/`: the same paragraph also says
+    // "the 8-character code below", and a loose digit match would grab the
+    // "8" from that instead of the actual countdown value.
+    const refreshedSecondsLeft = Number(
+      refreshedCountdown.textContent?.match(/expires in (\d+) seconds?/i)?.[1],
+    )
+    expect(refreshedSecondsLeft).toBeGreaterThan(890)
+  })
+
+  it('shows a visible error, not silence, when "Get a new code" fails', async () => {
+    stubHandoffRecoverableStation(codeFile, {
+      startResponses: [
+        { status: 200, body: { code_file: codeFile, expires_in: 900 } },
+        {
+          status: 503,
+          body: { detail: 'CivicCast could not prepare a setup recovery code: disk is full' },
+        },
+      ],
+    })
+    renderSetupScreen()
+    await openItStaffDisclosure()
+
+    const startButton = await screen.findByRole('button', { name: /i lost my setup link/i })
+    fireEvent.click(startButton)
+    const form = await recoveryForm()
+    await form.findByRole('status')
+
+    fireEvent.click(form.getByRole('button', { name: 'Get a new code' }))
+
+    const alert = await form.findByRole('alert')
+    expect(alert.textContent).toMatch(/disk is full/i)
   })
 })
