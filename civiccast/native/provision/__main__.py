@@ -112,6 +112,11 @@ from civiccast.native.provision.orchestrator import (
     run_provision,
     write_recovery_document,
 )
+from civiccast.native.provision.port_select import (
+    DEFAULT_PORT_CANDIDATES,
+    format_excluded_ranges_for_operator,
+    resolve_provision_port,
+)
 from civiccast.native.provision.seams import (
     AdoptionForeignClusterError,
     build_default_seams_for,
@@ -940,6 +945,72 @@ def main(argv: list[str] | None = None) -> int:
         )
         sys.stderr.write(f"provision outcome: unexpected error decoding pack public key: {exc}\n")
         return EXIT_UNEXPECTED
+
+    # Real-world LPM deployment failure (2026-08-27, candidate 75cc13f, two
+    # independent installer runs): pg_ctl start failed with "could not bind
+    # IPv4 address 127.0.0.1: Permission denied" / "could not create any
+    # TCP/IP sockets" because port 5432 sat inside a Windows-administered
+    # excluded TCP port range (Hyper-V/WSL winnat reservations move at boot)
+    # -- PROVISION-RECOVERY.md correctly named the pg_ctl diagnostic (PR #51)
+    # but nothing survived it. Resolved BEFORE build_plan_and_context so the
+    # chosen port -- whether the standard 5432 or a documented fallback --
+    # flows into every downstream consumer through context.postgres_port: the
+    # rendered postgresql.conf, the pg_ctl start/stop argv, and (via
+    # resolve_database_url below) the DatabaseUrl this run hands back to the
+    # Rust caller, which is the single source of truth every runtime consumer
+    # (the supervisor's postgres child spec) must read the port from.
+    port_selection = resolve_provision_port(
+        host=args.postgres_host,
+        preferred_port=args.postgres_port,
+        candidates=DEFAULT_PORT_CANDIDATES,
+    )
+    if port_selection.outcome == "no_candidate_available":
+        excluded_text = format_excluded_ranges_for_operator(port_selection.netsh_raw_output)
+        write_recovery_document(
+            paths.state_root,
+            reason=(
+                f"no usable PostgreSQL port on host {args.postgres_host!r}: {port_selection.detail}"
+            ),
+            attempting="port_selection",
+            next_steps=[
+                "Every candidate PostgreSQL port this installer tried failed a local "
+                f"loopback bind test on {args.postgres_host!r}: {port_selection.detail}",
+                "Ports tried, in the order attempted, and why each one was rejected:\n"
+                + "\n".join(
+                    f"   - port {attempt.port}: {attempt.outcome} -- {attempt.detail}"
+                    for attempt in port_selection.attempts
+                ),
+                "This almost always means Windows has administratively EXCLUDED these "
+                "ports from use (a Hyper-V/WSL 'winnat' dynamic port reservation made at "
+                "boot -- these move across reboots) or security software is blocking the "
+                "bind. Any program asking for one of these exact ports would fail "
+                "identically; this is not specific to PostgreSQL.",
+                f"Windows-excluded TCP port ranges observed at the time of this failure "
+                f"('netsh int ipv4 show excludedportrange protocol=tcp'):\n{excluded_text}",
+                "To reset the Hyper-V/WSL NAT port reservation table (run as "
+                "Administrator, in order): 'net stop winnat' then 'net start winnat' -- "
+                "this frequently frees a port that was excluded only because of a stale "
+                "reservation, then retry the install.",
+                "If a port is genuinely in use by another service (not Windows-excluded), "
+                "stop that service or free the port before retrying.",
+                "This provisioning run will not be silently retried. Once a port is free, "
+                "run the installer again.",
+                f"Preserve this journal for support: {journal_path(paths.state_root)}",
+            ],
+        )
+        sys.stderr.write(
+            "provision outcome: provisioning_failed (no usable PostgreSQL port found: "
+            f"{port_selection.detail})\n"
+        )
+        return EXIT_PROVISIONING_FAILED
+    assert port_selection.port is not None  # outcome == "selected" guarantees this
+    if port_selection.port != args.postgres_port:
+        sys.stderr.write(
+            f"provision outcome: postgres port {args.postgres_port} was unavailable "
+            f"(Windows-excluded range or bind refusal); selected fallback port "
+            f"{port_selection.port} instead -- {port_selection.detail}\n"
+        )
+    args.postgres_port = port_selection.port
 
     database_password = generate_database_password()
     plan, context = build_plan_and_context(

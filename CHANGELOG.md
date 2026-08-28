@@ -648,6 +648,60 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **D4 provisioning survives a reserved/excluded Windows TCP port instead of
+  crashing PostgreSQL's bind (two real LPM deployment failures, 2026-08-27,
+  candidate 75cc13f).** Both independent installer runs failed identically
+  at `d4-provision` (installer exit 116, engine rc 75):
+  `pg_ctl start` could not bind `127.0.0.1:5432` — `WSAEACCES` ("Permission
+  denied"), `could not create any TCP/IP sockets` — because the port sat
+  inside a Windows-administered excluded TCP port range (a Hyper-V/WSL
+  `winnat` dynamic reservation, which moves across reboots). PR #51's
+  `PROVISION-RECOVERY.md` correctly named the pg_ctl diagnostic but nothing
+  survived it — any program asking for that exact port would have failed
+  identically. New `civiccast.native.provision.port_select` module: before
+  `pg_ctl start` ever runs, the CLI test-binds the intended
+  `127.0.0.1:<port>` itself; on a bind refusal it reads
+  `netsh int ipv4 show excludedportrange protocol=tcp`'s excluded-range
+  table and falls forward through a small documented candidate list (5432,
+  5433, 5434, 5435, 5544 — 5432 always tried first), skipping any candidate
+  already inside an excluded range and real-bind-testing every other one.
+  The first bindable candidate becomes `context.postgres_port` — the single
+  field every downstream write already derives the port from (rendered
+  `postgresql.conf`, the `pg_ctl start`/`stop` argv, and (via
+  `resolve_database_url`) the `DatabaseUrl` handed back to the Rust caller
+  and written to `HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl`, this
+  station's single source of truth for the port). If every candidate is
+  excluded or refuses to bind, provisioning halts fail-closed (never a
+  silent guess) and `PROVISION-RECOVERY.md` now names the exact cause —
+  every port tried, the Windows-excluded ranges quoted verbatim, and the
+  copy-paste fix commands (`net stop winnat` / `net start winnat`, `netsh
+  int ipv4 show excludedportrange protocol=tcp`) — instead of a bare pg_ctl
+  crash. Consumer-side gap closed in the same pass:
+  `civiccast.native.supervisor.service`'s `default_dependency_provider`
+  never parsed the postgres host/port out of `DATABASE_URL` at all (unlike
+  `civiccast.native.upgrade.pg_lifecycle.derive_pg_lifecycle_paths`, which
+  already did this correctly for the D3 upgrade engine) — the SUPERVISED
+  postgres child's own launch argv silently used `Supervisor`'s
+  `"127.0.0.1"`/`5432` defaults regardless of what D4 actually provisioned,
+  so a station whose port fell back off 5432 would have started its
+  running service pinned to the wrong port forever, even though the
+  provisioning-time fix above had already worked. `build_production_service`
+  gained `db_host`/`db_port` parameters (default `"127.0.0.1"`/`5432`,
+  backward compatible), `ProductionDependencies` gained matching fields, and
+  `default_dependency_provider` now parses `DATABASE_URL` the same way D3
+  does before threading the result through. 27 new tests: 20 in
+  `tests/native/test_provision_port_select.py` (excluded-range parsing
+  against realistic `netsh` output, the pure fallback-selection decision
+  logic with an injected bind seam, real local TCP bind-test coverage
+  against genuinely free/held ports, and a regression pinned to the exact
+  LPM failure signature), 2 in `tests/native/test_provision_cli.py` (the
+  honest no-port-available recovery document, and the fallback port
+  actually flowing into the provisioned context), and 5 in
+  `tests/native/test_supervisor_service.py` (the `db_host`/`db_port`
+  wiring through `build_production_service`, `default_dependency_provider`'s
+  `DATABASE_URL` parsing and its unparsable-URL fallback, and the factory's
+  pass-through of both fields).
+
 - **Runtime-dependency acquisition survives upstream release pruning
   (mirror-first fetch + reviewed fallback URLs).** Candidate build run
   33094460301 failed with a 404 in `scripts/build_native_ffmpeg_pack.py`'s
