@@ -83,6 +83,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from civiccast.db import connect_options
@@ -1503,6 +1504,8 @@ def build_production_service(
     program_data_root: str | None = None,
     control_plane_env: dict[str, str] | None = None,
     layout: InstallLayout | None = None,
+    db_host: str = "127.0.0.1",
+    db_port: int = 5432,
 ) -> SupervisorService:
     """Assemble a production :class:`SupervisorService`. Binds the Windows-real
     seams this layer owns -- the concrete child runner, the Job Object API, the
@@ -1516,7 +1519,23 @@ def build_production_service(
     ``sys.executable`` + ``%PROGRAMDATA%``). Under LocalSystem (CWD System32,
     stock PATH -- the installer writes no PATH changes) the previous bare
     ``pg_ctl``/``python`` and relative ``pgdata`` made every child spawn
-    FileNotFoundError or a System32-relative cluster path."""
+    FileNotFoundError or a System32-relative cluster path.
+
+    ``db_host``/``db_port`` (real-world LPM deployment fix, 2026-08-27): the
+    ONLY caller is :func:`default_dependency_provider`, which parses these out
+    of the SAME ``DATABASE_URL`` it builds ``postgres_probe`` against -- the
+    D4-provisioned ``DatabaseUrl`` registry value is this station's single
+    source of truth for the port PostgreSQL actually listens on (D4 may have
+    fallen back off the standard 5432 -- see
+    ``civiccast.native.provision.port_select``). Before this fix, these two
+    parameters did not exist at all and ``Supervisor`` silently used its own
+    ``"127.0.0.1"``/``5432`` defaults for the postgres child's LAUNCH argv
+    (``postgres_child_spec``'s ``-o "-p <port> -h <host>"``) regardless of
+    what the registry actually said -- ``postgres_probe`` (a live SELECT 1)
+    correctly dialed the configured port, so the divergence was invisible
+    until a station whose D4 run picked a NON-standard port (this fix's other
+    half) started a postgres server pinned to the wrong one and every
+    subsequent connection failed."""
 
     cfg = config or SupervisorConfig()
     # F1: ONE stop Event, shared by the run loop (which waits on it) and the
@@ -1597,6 +1616,14 @@ def build_production_service(
         postmaster_pid_reader=lambda: read_postmaster_pid(postgres_data_dir),
         postgres_data_dir=postgres_data_dir,
         pg_ctl_path=str(layout.pg_ctl_path),
+        # Real-world LPM deployment fix (2026-08-27): thread the SAME
+        # host/port default_dependency_provider parsed out of DATABASE_URL
+        # (the D4-provisioned single source of truth) into the postgres
+        # child's own launch argv, so a station whose port fell back off the
+        # standard 5432 starts postgres on the port it was actually
+        # provisioned with, not a silently wrong default.
+        db_host=db_host,
+        db_port=db_port,
         # Adjacent diagnosability fix (2026-08-12, TESTER2 b5 evidence):
         # postgres.log was observed at 0 bytes for a 5+ hour run.
         # Pointing pg_ctl at its OWN ``-l`` log file makes it
@@ -1781,6 +1808,13 @@ class ProductionDependencies:
     # Task #57 D2: the ollama readiness probe (GET /api/version). ``None``
     # lets build_production_service fall back to its default probe.
     ollama_probe: Callable[[], bool] | None = None
+    # Real-world LPM deployment fix (2026-08-27): the host/port
+    # default_dependency_provider parsed out of DATABASE_URL, so the postgres
+    # child's launch argv agrees with the D4-provisioned DatabaseUrl (the
+    # single source of truth) instead of build_production_service's own
+    # "127.0.0.1"/5432 defaults.
+    db_host: str = "127.0.0.1"
+    db_port: int = 5432
 
 
 DependencyProvider = Callable[[], ProductionDependencies]
@@ -1877,6 +1911,28 @@ def default_dependency_provider() -> ProductionDependencies:
             "provider needs a database URL to bind the alerting Session. Set "
             "DATABASE_URL in the service environment before running under the SCM."
         )
+
+    # Real-world LPM deployment fix (2026-08-27): parse the postgres host/port
+    # out of the SAME DATABASE_URL every other seam below connects to, the
+    # SAME way civiccast.native.upgrade.pg_lifecycle.derive_pg_lifecycle_paths
+    # already does for the D3 upgrade engine -- D4 provisioning's DatabaseUrl
+    # registry value is this station's single source of truth for the actual
+    # postgres port (it may have fallen back off the standard 5432; see
+    # civiccast.native.provision.port_select), and until this fix nothing
+    # threaded that value into the postgres CHILD's own launch argv --
+    # postgres_probe (a live SELECT 1, below) correctly dialed the configured
+    # port, but build_production_service silently used its own "127.0.0.1"/
+    # 5432 defaults to actually START the server, so a station whose port
+    # fell back would start postgres on the WRONG port forever. An unparsable
+    # database_url falls back to those same defaults silently here -- it is
+    # diagnosed loudly elsewhere (postgres_probe/engine connect below fail
+    # with the real cause).
+    db_host = "127.0.0.1"
+    db_port = 5432
+    with contextlib.suppress(Exception):
+        parsed_db_url = make_url(normalize_database_url(database_url))
+        db_host = parsed_db_url.host or db_host
+        db_port = parsed_db_url.port or db_port
 
     # DB engine + Session factory (same create_engine pattern as app.py).
     # normalize_database_url rewrites a bare `postgresql://` scheme (which
@@ -2041,6 +2097,11 @@ def default_dependency_provider() -> ProductionDependencies:
         # Task #57 D2: readiness for the OPTIONAL ollama child -- the bounded
         # GET /api/version against the app-side clients' base URL.
         ollama_probe=_default_ollama_version_probe,
+        # Real-world LPM deployment fix (2026-08-27): the postgres child's
+        # launch host/port, parsed from the SAME DATABASE_URL above -- see
+        # this function's docstring.
+        db_host=db_host,
+        db_port=db_port,
     )
 
 
@@ -2078,6 +2139,8 @@ def build_production_service_factory(
             ollama_probe=deps.ollama_probe,
             program_data_root=deps.program_data_root,
             control_plane_env=deps.control_plane_env,
+            db_host=deps.db_host,
+            db_port=deps.db_port,
         )
 
     return factory

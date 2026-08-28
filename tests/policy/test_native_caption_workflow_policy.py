@@ -871,7 +871,32 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # fixtures, no OS dependency, no windows_only marker, so all fourteen
     # collect into both lanes. Re-derived by an actual `--collect-only` run
     # on this tree, not by arithmetic: (1643, 1835) -> (1657, 1849).
-    assert (collect("not windows_only"), collect()) == (1657, 1849)
+    #
+    # fix/provision-port-reservation (2026-08-27): +27 pure, 0 windows_only --
+    # two real LPM deployment failures (candidate 75cc13f) both died at
+    # d4-provision because pg_ctl could not bind 127.0.0.1:5432 (a
+    # Windows-excluded TCP port range, Hyper-V/WSL winnat). New
+    # civiccast.native.provision.port_select test-binds the intended port
+    # before pg_ctl ever runs and falls forward through a documented
+    # candidate list, skipping excluded ranges and honest-failing when none
+    # bind; the consumer-side gap (the running supervisor's postgres child
+    # never read the port back out of DATABASE_URL, unlike the D3 upgrade
+    # engine) is closed too. 27 new tests: 20 in the new
+    # tests/native/test_provision_port_select.py (excluded-range parsing
+    # against realistic netsh output, the pure fallback-selection decision
+    # logic, real local TCP bind-test coverage against genuinely free/held
+    # ports -- no real postgres/netsh process -- and the LPM failure-shape
+    # regression), 2 in test_provision_cli.py (the honest no-port-available
+    # recovery document, and the fallback port flowing into the provisioned
+    # context), and 5 in test_supervisor_service.py (db_host/db_port wiring
+    # through build_production_service, default_dependency_provider's
+    # DATABASE_URL parsing plus its unparsable-URL fallback, and the
+    # factory's pass-through). All monkeypatched-seam/tmp_path/real-local-
+    # socket fixtures, no OS dependency, no windows_only marker, so all
+    # twenty-seven collect into both lanes. Re-derived by an actual
+    # `--collect-only` run on this tree, not by arithmetic:
+    # (1657, 1849) -> (1684, 1876).
+    assert (collect("not windows_only"), collect()) == (1684, 1876)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

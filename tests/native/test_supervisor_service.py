@@ -866,6 +866,62 @@ def test_build_production_service_wires_postgres_log_path() -> None:
     assert service._supervisor._postgres_log_path == str(expected_root / "postgres.log")
 
 
+def test_build_production_service_wires_db_host_and_port_into_the_postgres_child() -> None:
+    """Real-world LPM deployment fix (2026-08-27): before this fix,
+    ``build_production_service`` had no ``db_host``/``db_port`` parameters at
+    all, so the postgres child's LAUNCH argv (``postgres_child_spec``'s
+    ``-o "-p <port> -h <host>"``) always used ``Supervisor``'s own
+    ``"127.0.0.1"``/``5432`` defaults regardless of what D4 provisioning
+    actually persisted to the DatabaseUrl registry value (which may have
+    fallen back off 5432 -- see ``civiccast.native.provision.port_select``).
+    Fails on the pre-fix tree with a ``TypeError`` (unexpected keyword
+    argument)."""
+
+    class _Guard:
+        pass
+
+    class _Outbox:
+        def fire(self, *, summary: str, detail: str) -> None:
+            pass
+
+    service = build_production_service(
+        logging.getLogger("test.supervisor.service.dbportfix"),
+        guard=_Guard(),  # type: ignore[arg-type]
+        alert_outbox=_Outbox(),
+        postgres_probe=lambda: True,
+        health_probe=lambda: pytest.fail("probe should not run at wiring time"),  # type: ignore[arg-type,return-value]
+        db_host="10.0.0.7",
+        db_port=5433,
+    )
+
+    assert service._supervisor._db_host == "10.0.0.7"
+    assert service._supervisor._db_port == 5433
+
+
+def test_build_production_service_defaults_db_host_and_port_when_omitted() -> None:
+    """Backward-compat control case: a caller that does not pass db_host/
+    db_port (every pre-existing test in this file) must still get the
+    standard 127.0.0.1:5432 defaults, unchanged."""
+
+    class _Guard:
+        pass
+
+    class _Outbox:
+        def fire(self, *, summary: str, detail: str) -> None:
+            pass
+
+    service = build_production_service(
+        logging.getLogger("test.supervisor.service.dbportdefault"),
+        guard=_Guard(),  # type: ignore[arg-type]
+        alert_outbox=_Outbox(),
+        postgres_probe=lambda: True,
+        health_probe=lambda: pytest.fail("probe should not run at wiring time"),  # type: ignore[arg-type,return-value]
+    )
+
+    assert service._supervisor._db_host == "127.0.0.1"
+    assert service._supervisor._db_port == 5432
+
+
 def test_f1_build_production_service_shares_one_stop_event_with_the_supervisor() -> None:
     """F1 (BLOCKER, 2026-07-31): ``request_stop`` only SET the run loop's Event,
     and nothing inside ``Supervisor.start()``/``tick()`` ever read it -- so one
@@ -1125,6 +1181,107 @@ def test_default_dependency_provider_normalizes_bare_postgresql_scheme(
 
     assert captured["url"].startswith("postgresql+psycopg://")
     assert "tr0ub4dor" in captured["url"]  # password must survive, not be corrupted
+
+
+def test_default_dependency_provider_parses_db_host_and_port_from_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real-world LPM deployment fix (2026-08-27): D4 provisioning's
+    DatabaseUrl registry value is this station's single source of truth for
+    the ACTUAL postgres port (which may have fallen back off the standard
+    5432 -- civiccast.native.provision.port_select). Before this fix,
+    ProductionDependencies carried no db_host/db_port at all, so a station
+    provisioned on a fallback port started its postgres child pinned to the
+    wrong one forever. This proves the provider actually parses them out of
+    DATABASE_URL, mirroring civiccast.native.upgrade.pg_lifecycle.
+    derive_pg_lifecycle_paths's established host/port parsing."""
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://civiccast:tr0ub4dor@127.0.0.1:5433/civiccast")
+
+    import civiccast.native.supervisor.service as service_module
+
+    class _FakeEngine:
+        pass
+
+    monkeypatch.setattr(service_module, "create_engine", lambda url, **kwargs: _FakeEngine())
+
+    deps = service_module.default_dependency_provider()
+
+    assert deps.db_host == "127.0.0.1"
+    assert deps.db_port == 5433
+
+
+def test_default_dependency_provider_falls_back_to_default_port_when_url_omits_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DATABASE_URL that parses (so ``create_engine`` -- faked here -- still
+    receives a valid string) but omits an explicit port must fall back to the
+    D4 CLI's own 5432 default for ``db_port`` specifically, via the same
+    ``parsed.port or db_port`` pattern
+    ``civiccast.native.upgrade.pg_lifecycle.derive_pg_lifecycle_paths``
+    already established -- while still picking up the REAL host from the
+    URL, proving the fallback is per-field, not all-or-nothing.
+
+    (A URL SQLAlchemy's own ``make_url`` cannot parse at all is not
+    separately exercised here: ``normalize_database_url`` is called a SECOND
+    time, unprotected, when building the real ``create_engine`` argument a
+    few lines later in this same function -- so a genuinely malformed URL
+    still fails loudly there, by design, regardless of this host/port
+    derivation's own suppression.)"""
+
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql://civiccast:tr0ub4dor@db.internal.example/civiccast"
+    )
+
+    import civiccast.native.supervisor.service as service_module
+
+    class _FakeEngine:
+        pass
+
+    monkeypatch.setattr(service_module, "create_engine", lambda url, **kwargs: _FakeEngine())
+
+    deps = service_module.default_dependency_provider()
+
+    assert deps.db_host == "db.internal.example"
+    assert deps.db_port == 5432
+
+
+def test_build_production_service_factory_threads_db_host_and_port_from_deps() -> None:
+    """The factory (the SCM entry point's actual call path) must pass
+    ``deps.db_host``/``deps.db_port`` through to ``build_production_service``
+    -- the ONE call site this fix's consumer half depends on; before the fix
+    ``factory()`` never read those two fields off ``ProductionDependencies``
+    at all, silently discarding them even after ``default_dependency_provider``
+    parsed them correctly."""
+
+    from civiccast.native.supervisor.service import (
+        ProductionDependencies,
+        build_production_service_factory,
+    )
+
+    class _Guard:
+        pass
+
+    class _Outbox:
+        def fire(self, *, summary: str, detail: str) -> None:
+            pass
+
+    def provider() -> ProductionDependencies:
+        return ProductionDependencies(
+            guard=_Guard(),  # type: ignore[arg-type]
+            alert_outbox=_Outbox(),  # type: ignore[arg-type]
+            postgres_probe=lambda: True,
+            health_probe=lambda: pytest.fail("probe must not run at wiring time"),  # type: ignore[arg-type,return-value]
+            program_data_root=r"Z:\pd",
+            db_host="10.0.0.7",
+            db_port=5433,
+        )
+
+    factory = build_production_service_factory(dependency_provider=provider)
+    service = factory(logging.getLogger("test.entrypoint.factory.dbport"))
+
+    assert service._supervisor._db_host == "10.0.0.7"
+    assert service._supervisor._db_port == 5433
 
 
 def test_provider_connect_timeout_pinned_against_env_tuning(

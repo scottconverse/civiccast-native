@@ -832,6 +832,7 @@ def test_main_adopt_refuses_a_foreign_cluster_honestly(tmp_path, capsys, monkeyp
         )
 
     monkeypatch.setattr(provision_main, "reset_cluster_credential", foreign_reset)
+    _fake_port_resolver_always_available(monkeypatch)
 
     code = main(
         _required_args(
@@ -1192,6 +1193,7 @@ def test_main_adopt_pack_verification_failure_writes_recovery_document(
         raise RuntimeError("signature mismatch")
 
     monkeypatch.setattr(seams_module, "verify_server_binaries_pack", failing_verify)
+    _fake_port_resolver_always_available(monkeypatch)
 
     install_root = tmp_path / "install"
     program_data_root = tmp_path / "pd"
@@ -1247,6 +1249,7 @@ def test_main_adopt_credential_reset_fault_writes_recovery_document(
         raise RuntimeError("pg_ctl start failed (exit 1): could not bind port 5432")
 
     monkeypatch.setattr(provision_main, "reset_cluster_credential", faulting_reset)
+    _fake_port_resolver_always_available(monkeypatch)
 
     install_root = tmp_path / "install"
     program_data_root = tmp_path / "pd"
@@ -1378,6 +1381,32 @@ def _valid_pack_key_b64() -> str:
     )
 
 
+def _fake_port_resolver_always_available(monkeypatch) -> None:
+    """Fake ``civiccast.native.provision.__main__.resolve_provision_port`` to
+    a deterministic "the preferred port is available" result.
+
+    Every RUN/ADOPT_EXISTING test in this file reaches this real-seam call
+    (real-world LPM deployment fix, 2026-08-27) before it ever reaches
+    ``run_provision``/``reset_cluster_credential``. This file's HARD RULE is
+    no real postgres/pg_ctl/initdb -- a real TCP bind + ``netsh`` probe is
+    NOT postgres, but it is still real host-dependent I/O this shared test
+    suite should not depend on (and, on a box already carrying the same
+    Hyper-V/WSL port-reservation posture the LPM failure was caused by, the
+    real probe can behave unpredictably). See test_provision_port_select.py
+    for direct, thorough coverage of the real ``port_select`` module."""
+
+    import civiccast.native.provision.__main__ as provision_main
+    from civiccast.native.provision.port_select import PortSelectionResult
+
+    monkeypatch.setattr(
+        provision_main,
+        "resolve_provision_port",
+        lambda *, host, preferred_port, candidates=None: PortSelectionResult(
+            outcome="selected", port=preferred_port, detail="faked: preferred port available"
+        ),
+    )
+
+
 def _wire_fresh_install_run_path(monkeypatch, scratch_url: str):
     """Fake ONLY the engine + pg_ctl (this file's HARD RULE: no real
     postgres/initdb spawn); everything after the engine runs REAL code.
@@ -1409,6 +1438,7 @@ def _wire_fresh_install_run_path(monkeypatch, scratch_url: str):
     monkeypatch.setattr(
         provision_main, "resolve_database_url", lambda *, plan, context: scratch_url
     )
+    _fake_port_resolver_always_available(monkeypatch)
     # pg_ctl start/stop around the migration: bounded executor faked; the
     # alembic run itself stays REAL.
     monkeypatch.setattr(
@@ -1459,6 +1489,147 @@ def test_main_fresh_install_brings_the_schema_to_alembic_head(
         "a fresh install must leave the provisioned database at alembic head -- "
         "an empty schema kills every table-touching product function"
     )
+
+
+# ---------------------------------------------------------------------------
+# Real-world LPM deployment fix (2026-08-27, candidate 75cc13f): port
+# pre-check + fallback wiring. Both live installer runs failed identically at
+# d4-provision because pg_ctl could not bind 127.0.0.1:5432 ("Permission
+# denied" / Windows-excluded TCP port range). resolve_provision_port itself
+# is proven directly in test_provision_port_select.py; these tests prove
+# main() actually WIRES it in -- honest failure when no port is available,
+# and the fallback port flowing into the context every downstream seam (and
+# therefore the DatabaseUrl handoff) uses.
+# ---------------------------------------------------------------------------
+
+
+def test_main_writes_an_honest_recovery_document_when_no_port_is_available(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """Regression for the exact LPM failure shape: every candidate port
+    rejected. main() must halt BEFORE touching any real seam (no password
+    generated, no journal-driving engine call), write PROVISION-RECOVERY.md
+    naming the Windows-excluded ranges and the winnat fix commands, print no
+    DatabaseUrl handoff, and exit EXIT_PROVISIONING_FAILED -- never let a bare
+    pg_ctl crash reach the operator."""
+
+    import pathlib
+
+    import civiccast.native.provision.__main__ as provision_main
+    from civiccast.native.provision.port_select import PortAttempt, PortSelectionResult
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+
+    netsh_text = "      5432        5432     *\n     50000       50059     *\n"
+    fake_result = PortSelectionResult(
+        outcome="no_candidate_available",
+        port=None,
+        attempts=tuple(
+            PortAttempt(
+                port=port,
+                outcome="bind_failed",
+                detail=f"bind failed on 127.0.0.1:{port} (winerror=10013): Permission denied",
+            )
+            for port in (5432, 5433, 5434, 5435, 5544)
+        ),
+        detail="no usable port on host '127.0.0.1'; every candidate was rejected",
+        netsh_raw_output=netsh_text,
+    )
+    monkeypatch.setattr(provision_main, "resolve_provision_port", lambda **kwargs: fake_result)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("must not run any real seam once port selection fails")
+
+    monkeypatch.setattr(provision_main, "run_provision", fail_if_called)
+    monkeypatch.setattr(provision_main, "generate_database_password", fail_if_called)
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--pack-public-key-base64": _valid_pack_key_b64(),
+            },
+        )
+    )
+
+    assert code == EXIT_PROVISIONING_FAILED
+    captured = capsys.readouterr()
+    assert HANDOFF_MARKER_PREFIX not in captured.out
+    assert "no usable PostgreSQL port" in captured.err
+
+    recovery_doc = pathlib.Path(paths.state_root) / "PROVISION-RECOVERY.md"
+    assert recovery_doc.exists(), "the no-port-available halt must write the recovery document"
+    content = recovery_doc.read_text(encoding="utf-8")
+    for port in (5432, 5433, 5434, 5435, 5544):
+        assert str(port) in content
+    assert "winnat" in content
+    assert "net stop winnat" in content and "net start winnat" in content
+    assert "netsh int ipv4 show excludedportrange" in content
+    # The raw netsh output is quoted verbatim, not just summarized.
+    assert "50000" in content and "5432        5432" in content
+
+
+def test_main_uses_the_fallback_port_and_it_flows_into_the_provisioned_context(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """When resolve_provision_port falls back off the preferred 5432 (the
+    excluded-range/bind-refusal case both real installer runs hit), the
+    FALLBACK port -- not 5432 -- must be what lands in context.postgres_port,
+    the single field every downstream seam (config render, pg_ctl argv,
+    resolve_database_url's DatabaseUrl) derives the port from."""
+
+    import civiccast.native.provision.__main__ as provision_main
+    from civiccast.native.provision.port_select import PortAttempt, PortSelectionResult
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    scratch_url = f"sqlite:///{(tmp_path / 'scratch.db').as_posix()}"
+    engine_calls = _wire_fresh_install_run_path(monkeypatch, scratch_url)
+
+    fake_result = PortSelectionResult(
+        outcome="selected",
+        port=5433,
+        attempts=(
+            PortAttempt(
+                port=5432,
+                outcome="bind_failed",
+                detail="bind failed on 127.0.0.1:5432 (winerror=10013): Permission denied",
+            ),
+            PortAttempt(port=5433, outcome="available", detail="bind succeeded on 127.0.0.1:5433"),
+        ),
+        detail="selected port 5433: bind succeeded on 127.0.0.1:5433",
+    )
+    # Overrides _wire_fresh_install_run_path's own default (preferred-port-
+    # available) fake -- this test proves the FALLBACK path specifically.
+    monkeypatch.setattr(provision_main, "resolve_provision_port", lambda **kwargs: fake_result)
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--pack-public-key-base64": _valid_pack_key_b64(),
+            },
+        )
+    )
+
+    assert code == EXIT_SUCCESS
+    assert engine_calls, "the engine must still run, against the fallback port"
+    _, engine_context = engine_calls[0]
+    assert engine_context.postgres_port == 5433, (
+        "the fallback port selection must flow into the provisioned context -- the "
+        "single source of truth every downstream consumer reads the port from"
+    )
+    captured = capsys.readouterr()
+    assert "postgres port 5432 was unavailable" in captured.err
+    assert "selected fallback port 5433" in captured.err
 
 
 def test_main_migration_failure_exits_its_own_code_and_never_leaks_the_password(
