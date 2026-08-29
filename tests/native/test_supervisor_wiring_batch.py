@@ -658,11 +658,14 @@ def test_provider_pre_activation_station_starts_in_pre_activation_mode(
 
     Chain L (TESTER2 request-0050c) narrows what "without" means. The degrade
     used to hand the child a completely EMPTY env, which also threw away the
-    packaged portal paths and the setup nonce -- neither of which depends on
-    activation (the portals arrive with the native-app-payload pack; the nonce
-    is persisted at D4 provision time). That is why a station that installed
-    cleanly, ran, and answered /health still 404'd /operator/. The overlay must
-    now carry those and STILL withhold every activated-station marker."""
+    packaged portal paths -- which do not depend on activation (they arrive
+    with the native-app-payload pack). That is why a station that installed
+    cleanly, ran, and answered /health still 404'd /operator/. The overlay
+    must carry those and STILL withhold every activated-station marker.
+    (The setup-nonce env var this overlay used to also carry was retired
+    2026-08-29 -- owner decision -- once the control plane's loopback-only
+    bind made it a redundant, failure-prone gate; see
+    civiccast.installer.router._require_local_setup_request.)"""
 
     import civiccast.native.station_runtime as station_runtime
 
@@ -676,7 +679,6 @@ def test_provider_pre_activation_station_starts_in_pre_activation_mode(
         raise exc_type("station-set.json is missing (not yet activated)")
 
     monkeypatch.setattr(station_runtime, "station_environment_for_python", raising_env)
-    monkeypatch.setattr(station_runtime, "read_persisted_setup_nonce", lambda: "nonce-from-d4")
     monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
     _fake_runtime_python(tmp_path, monkeypatch)
 
@@ -686,7 +688,7 @@ def test_provider_pre_activation_station_starts_in_pre_activation_mode(
 
     assert deps.control_plane_env["CIVICCAST_OPERATOR_CONSOLE_DIST"]
     assert deps.control_plane_env["CIVICCAST_PUBLIC_PORTAL_DIST"]
-    assert deps.control_plane_env["CIVICCAST_SETUP_NONCE"] == "nonce-from-d4"
+    assert "CIVICCAST_SETUP_NONCE" not in deps.control_plane_env
     # No activated-station markers, and none of the captions/GStreamer wiring
     # that genuinely does require an activated station.
     assert "CIVICCAST_NATIVE_STATION" not in deps.control_plane_env

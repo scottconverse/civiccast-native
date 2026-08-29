@@ -50,9 +50,11 @@ npm run dev
 # Vite proxies /api/* to http://127.0.0.1:8000.
 ```
 
-Open the installer handoff URL with the setup nonce when one is configured,
-then choose **Prepare storage** in Setup. The operator app will hit the live
-backend and activate the database without a server restart.
+Open `http://127.0.0.1:5173/#/setup` (or whatever port Vite prints) from the
+station computer itself, then choose **Prepare storage** in Setup. First
+setup is admitted from loopback only -- no query string or handoff needed.
+The operator app will hit the live backend and activate the database without
+a server restart.
 
 ## Optional Postgres Dev Startup
 

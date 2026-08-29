@@ -10394,26 +10394,6 @@
         ],
         "summary": "Read local setup state before staff auth exists",
         "operationId": "public_station_state_api_setup_station_state_get",
-        "parameters": [
-          {
-            "name": "X-CivicCast-Setup-Nonce",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Installer handoff nonce required for setup mutations before staff authentication exists.",
-              "title": "X-Civiccast-Setup-Nonce"
-            },
-            "description": "Installer handoff nonce required for setup mutations before staff authentication exists."
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -10426,17 +10406,7 @@
             }
           },
           "403": {
-            "description": "Local setup access denied or installer setup nonce missing/invalid."
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
           }
         }
       }
@@ -10448,26 +10418,6 @@
         ],
         "summary": "Read local durable storage setup state before staff auth exists",
         "operationId": "public_storage_state_api_setup_storage_get",
-        "parameters": [
-          {
-            "name": "X-CivicCast-Setup-Nonce",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Installer handoff nonce required for setup mutations before staff authentication exists.",
-              "title": "X-Civiccast-Setup-Nonce"
-            },
-            "description": "Installer handoff nonce required for setup mutations before staff authentication exists."
-          }
-        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -10480,17 +10430,7 @@
             }
           },
           "403": {
-            "description": "Local setup access denied or installer setup nonce missing/invalid."
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
           }
         }
       },
@@ -10500,35 +10440,15 @@
         ],
         "summary": "Prepare installer-managed durable storage before staff auth exists",
         "operationId": "public_storage_setup_api_setup_storage_post",
-        "parameters": [
-          {
-            "name": "X-CivicCast-Setup-Nonce",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Installer handoff nonce required for setup mutations before staff authentication exists.",
-              "title": "X-Civiccast-Setup-Nonce"
-            },
-            "description": "Installer handoff nonce required for setup mutations before staff authentication exists."
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PublicStorageSetupRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -10542,7 +10462,7 @@
             }
           },
           "403": {
-            "description": "Local setup access denied or installer setup nonce missing/invalid."
+            "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
           },
           "422": {
             "description": "Validation Error",
@@ -10564,35 +10484,15 @@
         ],
         "summary": "Complete local first-admin setup before staff auth exists",
         "operationId": "public_first_admin_setup_api_setup_first_admin_post",
-        "parameters": [
-          {
-            "name": "X-CivicCast-Setup-Nonce",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Installer handoff nonce required for setup mutations before staff authentication exists.",
-              "title": "X-Civiccast-Setup-Nonce"
-            },
-            "description": "Installer handoff nonce required for setup mutations before staff authentication exists."
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/FirstAdminSetupRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -10606,7 +10506,7 @@
             }
           },
           "403": {
-            "description": "Local setup access denied or installer setup nonce missing/invalid."
+            "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
           },
           "422": {
             "description": "Validation Error",
@@ -10628,35 +10528,15 @@
         ],
         "summary": "Record that the operator saved or printed the one-time recovery kit",
         "operationId": "public_recovery_kit_acknowledge_api_setup_recovery_kit_acknowledge_post",
-        "parameters": [
-          {
-            "name": "X-CivicCast-Setup-Nonce",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Installer handoff nonce required for setup mutations before staff authentication exists.",
-              "title": "X-Civiccast-Setup-Nonce"
-            },
-            "description": "Installer handoff nonce required for setup mutations before staff authentication exists."
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RecoveryKitAcknowledgeRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -10670,7 +10550,7 @@
             }
           },
           "403": {
-            "description": "Local setup access denied or installer setup nonce missing/invalid."
+            "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
           },
           "422": {
             "description": "Validation Error",
@@ -10692,35 +10572,15 @@
         ],
         "summary": "Sign in with the local first-admin password",
         "operationId": "public_station_login_api_setup_login_post",
-        "parameters": [
-          {
-            "name": "X-CivicCast-Setup-Nonce",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Installer handoff nonce required for setup mutations before staff authentication exists.",
-              "title": "X-Civiccast-Setup-Nonce"
-            },
-            "description": "Installer handoff nonce required for setup mutations before staff authentication exists."
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/StationLoginRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -10734,7 +10594,7 @@
             }
           },
           "403": {
-            "description": "Local setup access denied or installer setup nonce missing/invalid."
+            "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
           },
           "422": {
             "description": "Validation Error",
@@ -10756,35 +10616,15 @@
         ],
         "summary": "Recover the local first-admin account with a one-time recovery code",
         "operationId": "public_station_recovery_api_setup_recover_post",
-        "parameters": [
-          {
-            "name": "X-CivicCast-Setup-Nonce",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Installer handoff nonce required for setup mutations before staff authentication exists.",
-              "title": "X-Civiccast-Setup-Nonce"
-            },
-            "description": "Installer handoff nonce required for setup mutations before staff authentication exists."
-          }
-        ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/StationRecoveryRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -10798,77 +10638,7 @@
             }
           },
           "403": {
-            "description": "Local setup access denied or installer setup nonce missing/invalid."
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/setup/handoff-recovery/start": {
-      "post": {
-        "tags": [
-          "setup"
-        ],
-        "summary": "Issue a local-admin setup-recovery code for a lost or expired setup link",
-        "description": "W-2: the in-product recovery path for the SetupScreen dead-end.\n\nDeliberately NOT gated by ``_require_local_setup_mutation`` /\n``_require_local_setup_request`` -- both of those demand the very setup\nnonce this route exists to route around when it has been lost. Loopback-\nonly admission plus a dedicated 3/hour budget\n(``_require_handoff_recovery_start_request``) is the substitute gate: see\n``civiccast.installer.handoff_recovery`` for the full trust-model\nwriteup. Never returns the code itself, only where to go read it.",
-        "operationId": "public_handoff_recovery_start_api_setup_handoff_recovery_start_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HandoffRecoveryStartResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Local setup access denied or installer setup nonce missing/invalid."
-          }
-        }
-      }
-    },
-    "/api/setup/handoff-recovery/complete": {
-      "post": {
-        "tags": [
-          "setup"
-        ],
-        "summary": "Redeem a local-admin setup-recovery code and resume setup",
-        "description": "W-2: verify the disposable code and grant exactly what the nonce\nheader path already grants -- the station's own setup nonce -- rather\nthan minting a second kind of setup credential. The operator console\nstores the returned value exactly where it stores a nonce read from the\nhandoff URL and every subsequent ``/api/setup/*`` call proceeds through\nthe ordinary, unchanged nonce-header admission path.",
-        "operationId": "public_handoff_recovery_complete_api_setup_handoff_recovery_complete_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HandoffRecoveryCompleteRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HandoffRecoveryCompleteResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Local setup access denied or installer setup nonce missing/invalid."
+            "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
           },
           "422": {
             "description": "Validation Error",
@@ -43924,73 +43694,6 @@
         "type": "object",
         "title": "HandbackRequest",
         "description": "Operator request to return a channel from takeover to its schedule."
-      },
-      "HandoffRecoveryCompleteRequest": {
-        "properties": {
-          "code": {
-            "type": "string",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Code"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "code"
-        ],
-        "title": "HandoffRecoveryCompleteRequest",
-        "description": "W-2: redeem a local-admin setup-handoff recovery code."
-      },
-      "HandoffRecoveryCompleteResponse": {
-        "properties": {
-          "status": {
-            "type": "string",
-            "const": "recovered",
-            "title": "Status"
-          },
-          "setup_nonce": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Setup Nonce"
-          },
-          "next_step": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Next Step"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "status",
-          "setup_nonce",
-          "next_step"
-        ],
-        "title": "HandoffRecoveryCompleteResponse",
-        "description": "W-2: successful recovery grants the station's own setup nonce.\n\nDeliberately the SAME credential ``X-CivicCast-Setup-Nonce`` already\nadmits -- not a second kind of setup credential. The operator console\nstores it exactly where it stores a nonce read from the handoff URL\n(``window.sessionStorage['civiccast.setupNonce']``) and setup resumes\nthrough the ordinary nonce-header path from then on."
-      },
-      "HandoffRecoveryStartResponse": {
-        "properties": {
-          "code_file": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Code File"
-          },
-          "expires_in": {
-            "type": "integer",
-            "exclusiveMinimum": 0.0,
-            "title": "Expires In"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "code_file",
-          "expires_in"
-        ],
-        "title": "HandoffRecoveryStartResponse",
-        "description": "W-2: response for issuing a local-admin setup-handoff recovery code.\n\nNever carries the code itself -- only where an administrator of this\ncomputer can go read it (``civiccast.installer.handoff_recovery``)."
       },
       "HardwareProbe": {
         "properties": {

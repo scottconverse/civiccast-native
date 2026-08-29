@@ -383,44 +383,6 @@ class StationAuthResponse(BaseModel):
     next_step: Annotated[str, Field(min_length=1)]
 
 
-class HandoffRecoveryStartResponse(BaseModel):
-    """W-2: response for issuing a local-admin setup-handoff recovery code.
-
-    Never carries the code itself -- only where an administrator of this
-    computer can go read it (``civiccast.installer.handoff_recovery``).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    code_file: Annotated[str, Field(min_length=1)]
-    expires_in: Annotated[int, Field(gt=0)]
-
-
-class HandoffRecoveryCompleteRequest(BaseModel):
-    """W-2: redeem a local-admin setup-handoff recovery code."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    code: Annotated[str, Field(min_length=1, max_length=64)]
-
-
-class HandoffRecoveryCompleteResponse(BaseModel):
-    """W-2: successful recovery grants the station's own setup nonce.
-
-    Deliberately the SAME credential ``X-CivicCast-Setup-Nonce`` already
-    admits -- not a second kind of setup credential. The operator console
-    stores it exactly where it stores a nonce read from the handoff URL
-    (``window.sessionStorage['civiccast.setupNonce']``) and setup resumes
-    through the ordinary nonce-header path from then on.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["recovered"]
-    setup_nonce: Annotated[str, Field(min_length=1)]
-    next_step: Annotated[str, Field(min_length=1)]
-
-
 class StationSetupState(BaseModel):
     """Current station setup state without secret values."""
 

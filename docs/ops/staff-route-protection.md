@@ -79,8 +79,10 @@ The app verifies the token before dispatching the request to any `/api/staff/*` 
 
 For the standard standalone setup path, the operator console Setup screen
 prepares durable local storage, applies migrations, creates the first admin,
-and generates the printable recovery kit. Open the console from the installer
-handoff URL so the setup nonce is present before choosing **Prepare storage**.
+and generates the printable recovery kit. `/api/setup/*` is admitted by
+loopback alone (the control plane binds `127.0.0.1` only, so it is
+unreachable from the network by construction); open the console from the
+station itself before choosing **Prepare storage**.
 
 The lifecycle CLI remains the technical-administrator override and recovery
 path for scripted deployments. Use it only after storage is already configured

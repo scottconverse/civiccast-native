@@ -3,9 +3,12 @@
 """Run a redacted isolated first-run proof against the real setup API.
 
 This is intentionally a product-level proof script, not a unit-test fixture. It
-creates a brand-new profile root, forces the installer nonce path, prepares
-managed storage, creates the first admin, acknowledges the recovery kit, signs in,
-and records only non-secret evidence.
+creates a brand-new profile root, exercises the loopback-only /api/setup/*
+surface exactly as a local caller would (no token of any kind -- the
+installer-handoff nonce was retired 2026-08-29, owner decision, once the
+control plane's loopback-only bind made it a redundant gate), prepares
+managed storage, creates the first admin, acknowledges the recovery kit,
+signs in, and records only non-secret evidence.
 """
 
 from __future__ import annotations
@@ -31,15 +34,11 @@ from civiccast.app import create_app
 from civiccast.db import reset_engine
 from scripts.collect_source_state import collect_source_state
 
-_SETUP_NONCE = "isolated-first-run-attestation-nonce"
-_SETUP_HEADERS = {"X-CivicCast-Setup-Nonce": _SETUP_NONCE}
 _PASSWORD = "Correct-Horse-Battery-Staple-2026"
 _ENV_KEYS = (
     "CIVICCAST_MANAGED_STORAGE_DIR",
     "CIVICCAST_STATION_STATE_PATH",
     "CIVICCAST_TESTER_OPS_STATE_PATH",
-    "CIVICCAST_SETUP_NONCE",
-    "CIVICCAST_REQUIRE_SETUP_NONCE",
     "CIVICCAST_OPERATOR_CONSOLE_URL",
     "CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB",
     "CIVICCAST_ALERTING",
@@ -72,17 +71,12 @@ def run_attestation(*, artifact_root: Path, profile_root: Path) -> dict[str, Any
             "dependency_probes": _dependency_probes(),
             "environment": _environment_evidence(profile_root),
         }
-        storage_before = _json_response(client.get("/api/setup/storage", headers=_SETUP_HEADERS))
-        station_before = _json_response(
-            client.get("/api/setup/station-state", headers=_SETUP_HEADERS)
-        )
-        storage_ready = _json_response(
-            client.post("/api/setup/storage", headers=_SETUP_HEADERS, json={})
-        )
+        storage_before = _json_response(client.get("/api/setup/storage"))
+        station_before = _json_response(client.get("/api/setup/station-state"))
+        storage_ready = _json_response(client.post("/api/setup/storage", json={}))
         first_admin_raw = _json_response(
             client.post(
                 "/api/setup/first-admin",
-                headers=_SETUP_HEADERS,
                 json={
                     "station_name": "Isolated First Run Test Station",
                     "admin_display_name": "Setup Admin",
@@ -97,20 +91,16 @@ def run_attestation(*, artifact_root: Path, profile_root: Path) -> dict[str, Any
         acknowledged = _json_response(
             client.post(
                 "/api/setup/recovery-kit/acknowledge",
-                headers=_SETUP_HEADERS,
                 json={"confirmed": True},
             )
         )
         login_raw = _json_response(
             client.post(
                 "/api/setup/login",
-                headers=_SETUP_HEADERS,
                 json={"admin_username": "setup-admin", "admin_password": _PASSWORD},
             )
         )
-        station_after = _json_response(
-            client.get("/api/setup/station-state", headers=_SETUP_HEADERS)
-        )
+        station_after = _json_response(client.get("/api/setup/station-state"))
         public_schedule = _json_response(client.get("/api/public/schedule/coming-up"))
 
         managed_root = profile_root / "managed-storage"
@@ -191,8 +181,6 @@ def _install_isolated_env(profile_root: Path) -> None:
     os.environ["CIVICCAST_MANAGED_STORAGE_DIR"] = str(profile_root / "managed-storage")
     os.environ["CIVICCAST_STATION_STATE_PATH"] = str(profile_root / "station-state.json")
     os.environ["CIVICCAST_TESTER_OPS_STATE_PATH"] = str(profile_root / "tester-ops-state.json")
-    os.environ["CIVICCAST_SETUP_NONCE"] = _SETUP_NONCE
-    os.environ["CIVICCAST_REQUIRE_SETUP_NONCE"] = "1"
     os.environ["CIVICCAST_OPERATOR_CONSOLE_URL"] = "http://127.0.0.1:8000/operator/"
     os.environ["CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB"] = "1"
     # This proof owns the first-run setup surface, not the scheduled alert
@@ -286,8 +274,10 @@ def _environment_evidence(profile_root: Path) -> dict[str, Any]:
         "allow_ephemeral_stores_unset": "CIVICCAST_ALLOW_EPHEMERAL_STORES" not in os.environ,
         "managed_storage_dir": str(profile_root / "managed-storage"),
         "station_state_path": str(profile_root / "station-state.json"),
-        "setup_nonce_present": bool(os.environ.get("CIVICCAST_SETUP_NONCE")),
-        "setup_nonce_redacted": True,
+        # The installer-handoff setup nonce was retired 2026-08-29 (owner
+        # decision): /api/setup/* is admitted by loopback alone now, and
+        # this proof's TestClient calls are loopback by construction, so
+        # there is no token of any kind for this evidence to report.
     }
 
 
@@ -320,7 +310,7 @@ def _assert_expected_paths(profile_root: Path, paths: Mapping[str, Path]) -> Non
 
 def _assert_secret_redaction(station_state_path: Path) -> None:
     raw = station_state_path.read_text(encoding="utf-8")
-    forbidden = [_PASSWORD, _SETUP_NONCE, "ccst_", "CC-"]
+    forbidden = [_PASSWORD, "ccst_", "CC-"]
     leaked = [value for value in forbidden if value in raw]
     if leaked:
         raise RuntimeError(f"station-state contains raw secret markers: {leaked!r}")

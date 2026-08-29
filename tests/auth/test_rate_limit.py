@@ -18,8 +18,6 @@ from civiccast.auth.rate_limit import AuthRateLimiter, client_ip
 from civiccast.auth.store import InMemoryStaffTokenStore
 from civiccast.auth.tokens import token_matches_exactly
 
-_SETUP_NONCE = "rate-limit-nonce"
-_SETUP_HEADERS = {"X-CivicCast-Setup-Nonce": _SETUP_NONCE}
 _CONFIGURED_TOKEN = "ccenv1_eLgPYWMIlFTY9OV5oKIxZejCZmleu_NFVhFSjXd3fQo"
 
 
@@ -88,15 +86,12 @@ def test_client_ip_falls_back_to_unknown_without_a_client() -> None:
 
 
 def test_setup_login_trips_429_with_retry_after(monkeypatch) -> None:
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "3")
     monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
     client = TestClient(create_app())
 
     login_body = {"admin_username": "avery", "admin_password": "wrong password entirely"}
-    responses = [
-        client.post("/api/setup/login", headers=_SETUP_HEADERS, json=login_body) for _ in range(4)
-    ]
+    responses = [client.post("/api/setup/login", json=login_body) for _ in range(4)]
 
     # First 3 are real auth attempts (401, no such admin yet); the 4th is
     # rate-limited before it ever reaches login logic.
@@ -108,7 +103,6 @@ def test_setup_login_trips_429_with_retry_after(monkeypatch) -> None:
 
 
 def test_setup_rate_limit_keys_are_independent_per_route(monkeypatch) -> None:
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "1")
     monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
     client = TestClient(create_app())
@@ -120,9 +114,9 @@ def test_setup_rate_limit_keys_are_independent_per_route(monkeypatch) -> None:
         "new_admin_password": "irrelevant password",
     }
 
-    first_login = client.post("/api/setup/login", headers=_SETUP_HEADERS, json=login_body)
-    second_login = client.post("/api/setup/login", headers=_SETUP_HEADERS, json=login_body)
-    first_recover = client.post("/api/setup/recover", headers=_SETUP_HEADERS, json=recover_body)
+    first_login = client.post("/api/setup/login", json=login_body)
+    second_login = client.post("/api/setup/login", json=login_body)
+    first_recover = client.post("/api/setup/recover", json=recover_body)
 
     assert first_login.status_code == 401
     assert second_login.status_code == 429
@@ -134,12 +128,10 @@ def test_default_limit_survives_the_existing_full_setup_flow(monkeypatch, tmp_pa
     """Defaults must never trip the documented 10-step operator flow."""
 
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
 
     setup = client.post(
         "/api/setup/first-admin",
-        headers=_SETUP_HEADERS,
         json={
             "station_name": "Pinegrove School Board",
             "admin_display_name": "Avery Admin",
@@ -153,7 +145,6 @@ def test_default_limit_survives_the_existing_full_setup_flow(monkeypatch, tmp_pa
     for _ in range(5):
         login = client.post(
             "/api/setup/login",
-            headers=_SETUP_HEADERS,
             json={"admin_username": "avery", "admin_password": "correct horse battery staple"},
         )
         assert login.status_code == 200

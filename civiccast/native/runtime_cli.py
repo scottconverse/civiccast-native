@@ -53,10 +53,6 @@ from civiccast.native.models import (
     MaintenanceRecord,
 )
 from civiccast.native.runtime_guard import RUN_KEY_PATH, RUNTIME_HOST_FLAG, WSL_DISTRO_NAME, decide
-from civiccast.native.setup_nonce import (
-    build_setup_handoff_report,
-    read_persisted_setup_nonce_status,
-)
 from civiccast.native.win_probes import (
     WSL_EXE,
     RuntimeOwnerMutex,
@@ -184,54 +180,6 @@ def runtime_probe(json_output: Annotated[bool, _JSON_OPTION] = False) -> None:
     typer.echo(inputs.model_dump_json(indent=2))
     if not json_output:
         pass  # the structured dump IS the diagnostic report either way
-
-
-@runtime_app.command("setup-handoff")
-def runtime_setup_handoff(json_output: Annotated[bool, _JSON_OPTION] = False) -> None:
-    """Print the operator-console handoff URL for this native station.
-
-    THE GAP THIS CLOSES. Every ``/api/setup/*`` route -- including
-    ``POST /api/setup/login``, the ONLY way to obtain a staff token on a
-    native station -- is gated on the installer handoff nonce
-    (``civiccast/installer/router.py``'s ``_require_local_setup_request`` /
-    ``_require_local_setup_mutation``). The nonce is minted once per
-    provisioning run and persisted to ``HKLM\\SOFTWARE\\CivicCast\\Native``,
-    which is ACL'd to SYSTEM + Administrators only. The setup app that is
-    supposed to hand it over ships ``asInvoker``
-    (``apps/installer/src-tauri/build.rs``), so it cannot read that key and
-    silently opens the console with NO nonce in the URL -- after which the
-    console tells the operator to reopen the setup app, the exact control
-    that just failed. Before this command there was no supported way out of
-    that loop short of reinstalling.
-
-    WHY THIS IS NOT A WEAKENING. It re-reads the SAME value the installer
-    already persisted, from the SAME ACL-hardened key, and grants access to
-    exactly the principal Windows already grants it to: a local
-    Administrator, who could read the key with ``reg query`` regardless. It
-    mints nothing, writes nothing, changes no ACL, adds no static token, and
-    opens no unauthenticated endpoint. A non-elevated caller gets a named
-    "run this elevated" refusal and no nonce.
-
-    The nonce is a credential. Run this from an elevated prompt on the
-    station itself, and do not paste the output anywhere.
-    """
-
-    report = build_setup_handoff_report(read_persisted_setup_nonce_status())
-    if json_output:
-        # `url` is null on every failure branch -- a machine reader must never
-        # have to parse prose to find out whether it got a handoff.
-        typer.echo(
-            json.dumps(
-                {"url": report.url, "message": report.message, "ok": report.exit_code == 0},
-                indent=2,
-            )
-        )
-    else:
-        if report.url:
-            typer.echo(report.url)
-        typer.echo(report.message)
-    if report.exit_code != 0:
-        raise typer.Exit(code=report.exit_code)
 
 
 # ---------------------------------------------------------------------------

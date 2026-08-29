@@ -61,7 +61,7 @@ function stubStorageReadyStation() {
 }
 
 function renderSetupScreen() {
-  window.history.replaceState(null, '', '/operator/?nonce=fresh-setup-nonce#/setup')
+  window.history.replaceState(null, '', '/operator/#/setup')
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>

@@ -2151,21 +2151,6 @@ export interface HandbackRequest {
   notes?: string | null
 }
 
-export interface HandoffRecoveryCompleteRequest {
-  code: string
-}
-
-export interface HandoffRecoveryCompleteResponse {
-  status: string
-  setup_nonce: string
-  next_step: string
-}
-
-export interface HandoffRecoveryStartResponse {
-  code_file: string
-  expires_in: number
-}
-
 export interface HardwareProbe {
   cpu: CPUInfo
   ram: RAMInfo

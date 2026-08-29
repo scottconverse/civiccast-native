@@ -332,8 +332,6 @@ station needs.
 - **`CIVICCAST_EVIDENCE_DIR`** — Where proof artifacts (continuity proof, soak logs) are written.
 - **`CIVICCAST_VERSION`** — Reported and update-checked version pins.
 - **`CIVICCAST_AVAILABLE_VERSION`** — Reported and update-checked version pins.
-- **`CIVICCAST_SETUP_NONCE`** — First-run protection for the setup wizard.
-- **`CIVICCAST_REQUIRE_SETUP_NONCE`** — First-run protection for the setup wizard.
 - **`CIVICCAST_ALLOW_FIRST_ADMIN_RESET`** — Permit a setup_admin reset after first-admin loss.
 - **`CIVICCAST_ALLOW_EPHEMERAL_STORES`** — Permit in-memory stores. **Tests only.**
 - **`CIVICCAST_ALLOW_INSECURE_MANIFEST`** — Permit an unsigned install manifest. **Tests only.**

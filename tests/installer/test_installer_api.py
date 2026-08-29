@@ -31,9 +31,6 @@ from civiccast.installer.service import (
 from civiccast.installer.tsduck_install import TsduckInstallReport
 from civiccast.schedule.ingest import FfprobeResult
 
-_SETUP_NONCE = "storage-nonce"
-_SETUP_HEADERS = {"X-CivicCast-Setup-Nonce": _SETUP_NONCE}
-
 
 def _external_database_reports_current(monkeypatch) -> None:
     """Make the stand-in ``DATABASE_URL`` answer like a healthy database.
@@ -86,17 +83,22 @@ def test_installer_summary_exposes_operator_console_handoff_url(monkeypatch) -> 
     assert payload["ready"] is False
 
 
-def test_installer_summary_appends_setup_nonce_to_handoff_url(monkeypatch) -> None:
+def test_installer_summary_ignores_a_legacy_setup_nonce_env_var(monkeypatch) -> None:
+    """The installer-handoff nonce was retired 2026-08-29 (owner decision):
+    the control plane binds 127.0.0.1 only, so first setup is unreachable
+    from the network by construction and the nonce was a redundant,
+    failure-prone gate. A station upgraded from an older build may still
+    carry a leftover CIVICCAST_SETUP_NONCE in its environment; the handoff
+    URL must never append it."""
+
     monkeypatch.setenv("CIVICCAST_OPERATOR_CONSOLE_URL", "http://127.0.0.1:5173/setup")
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", "nonce-from-installer")
+    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", "leftover-from-an-older-build")
     client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
 
     response = client.get("/api/staff/installer/summary")
 
     assert response.status_code == 200
-    assert response.json()["operator_console_url"] == (
-        "http://127.0.0.1:5173/setup?nonce=nonce-from-installer"
-    )
+    assert response.json()["operator_console_url"] == "http://127.0.0.1:5173/setup"
 
 
 def test_tester_ops_state_survives_concurrent_health_panels(
@@ -133,7 +135,6 @@ def test_packaged_operator_console_is_served_from_api_when_configured(
     operator_dist.mkdir()
     (operator_dist / "index.html").write_text("<h1>Operator console</h1>", encoding="utf-8")
     monkeypatch.setenv("CIVICCAST_OPERATOR_CONSOLE_DIST", str(operator_dist))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", "packaged-nonce")
     client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
 
     summary = client.get("/api/staff/installer/summary")
@@ -141,9 +142,7 @@ def test_packaged_operator_console_is_served_from_api_when_configured(
     operator_deep_link = client.get("/operator/setup")
 
     assert summary.status_code == 200
-    assert summary.json()["operator_console_url"] == (
-        "http://127.0.0.1:8000/operator/?nonce=packaged-nonce"
-    )
+    assert summary.json()["operator_console_url"] == "http://127.0.0.1:8000/operator/"
     assert operator.status_code == 200
     assert "Operator console" in operator.text
     assert operator_deep_link.status_code == 200
@@ -173,12 +172,10 @@ def test_public_storage_setup_prepares_local_durable_database(
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
     monkeypatch.setenv("CIVICCAST_MANAGED_STORAGE_DIR", str(tmp_path / "managed"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
 
     before = client.get(
         "/api/setup/storage",
-        headers=_SETUP_HEADERS,
     )
     assert before.status_code == 200
     assert before.json()["status"] == "not_configured"
@@ -187,7 +184,6 @@ def test_public_storage_setup_prepares_local_durable_database(
         response = client.post(
             "/api/setup/storage",
             json={},
-            headers=_SETUP_HEADERS,
         )
 
         assert response.status_code == 200
@@ -230,7 +226,6 @@ def test_public_storage_setup_enables_first_asset_upload_without_manual_upload_d
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
     monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
     monkeypatch.setenv("CIVICCAST_MANAGED_STORAGE_DIR", str(tmp_path / "managed"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
     ffprobe_result = FfprobeResult(
         duration_seconds=60,
@@ -246,7 +241,6 @@ def test_public_storage_setup_enables_first_asset_upload_without_manual_upload_d
         setup = client.post(
             "/api/setup/storage",
             json={},
-            headers=_SETUP_HEADERS,
         )
         assert setup.status_code == 200
         assert os.environ["CIVICCAST_UPLOAD_DIR"] == str(tmp_path / "managed" / "uploads")
@@ -288,7 +282,6 @@ def test_other_worker_observes_completed_managed_storage_without_restart(
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
     monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
     monkeypatch.setenv("CIVICCAST_MANAGED_STORAGE_DIR", str(tmp_path / "managed"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     other_worker = create_app()
     setup_client = TestClient(create_app())
     other_client = TestClient(
@@ -300,7 +293,6 @@ def test_other_worker_observes_completed_managed_storage_without_restart(
         setup = setup_client.post(
             "/api/setup/storage",
             json={},
-            headers=_SETUP_HEADERS,
         )
         assert setup.status_code == 200
         os.environ.pop("DATABASE_URL", None)
@@ -330,20 +322,39 @@ def test_other_worker_observes_completed_managed_storage_without_restart(
         gc.collect()
 
 
-def test_public_storage_setup_requires_nonce_before_state_change(
+def test_public_storage_setup_succeeds_from_loopback_with_no_token_of_any_kind(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    """OWNER DECISION 2026-08-29: the installer-handoff nonce is retired --
+    the control plane binds 127.0.0.1 only, so a loopback request is already
+    unreachable from the network by construction. First setup on this
+    station now needs nothing but a request that actually arrives on
+    loopback: no header, no query param, no cookie, no CIVICCAST_SETUP_NONCE
+    env var. This is the regression test for the field loop the nonce used
+    to cause (installer button -> console -> First Setup dead-ended)."""
+
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
     monkeypatch.setenv("CIVICCAST_MANAGED_STORAGE_DIR", str(tmp_path / "managed"))
     client = TestClient(create_app())
 
-    response = client.post("/api/setup/storage", json={})
+    try:
+        response = client.post("/api/setup/storage", json={})
 
-    assert response.status_code == 403
-    assert "installer handoff nonce" in response.json()["detail"]
-    assert not (tmp_path / "managed" / "data" / "civiccast.sqlite3").exists()
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"
+        assert (tmp_path / "managed" / "data" / "civiccast.sqlite3").exists()
+    finally:
+        import gc
+
+        from civiccast.db import reset_engine
+
+        client.close()
+        reset_engine()
+        os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("CIVICCAST_UPLOAD_DIR", None)
+        gc.collect()
 
 
 def test_public_storage_setup_rejects_client_supplied_storage_dir(
@@ -352,7 +363,6 @@ def test_public_storage_setup_rejects_client_supplied_storage_dir(
 ) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_MANAGED_STORAGE_DIR", str(tmp_path / "managed"))
     arbitrary = tmp_path / "attacker-chosen"
     client = TestClient(create_app())
@@ -360,27 +370,30 @@ def test_public_storage_setup_rejects_client_supplied_storage_dir(
     response = client.post(
         "/api/setup/storage",
         json={"storage_dir": str(arbitrary)},
-        headers=_SETUP_HEADERS,
     )
 
     assert response.status_code == 422
     assert not arbitrary.exists()
 
 
-def test_public_first_admin_setup_rejects_missing_nonce_before_body_validation(
-    monkeypatch,
-) -> None:
-    """G-24: the nonce/local-access gate must run before Pydantic body
-    validation, so a malformed body with no nonce gets 403 (authz), not
-    422 (which would run the handler's body-parsing before the gate).
+def test_public_first_admin_setup_rejects_malformed_body_from_non_loopback_before_validation() -> (
+    None
+):
+    """G-24: the local-access gate must run before Pydantic body validation,
+    so a malformed body from a non-loopback caller gets 403 (authz), not 422
+    (which would mean the handler's body-parsing ran before the gate). A
+    loopback caller with the same malformed body gets ordinary 422 body
+    validation instead, since there is no other gate left to intercept it.
     """
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
-    client = TestClient(create_app())
+    remote_client = TestClient(create_app(), client=("203.0.113.20", 4242))
+    loopback_client = TestClient(create_app())
 
-    response = client.post("/api/setup/first-admin", json={})
+    remote_response = remote_client.post("/api/setup/first-admin", json={})
+    loopback_response = loopback_client.post("/api/setup/first-admin", json={})
 
-    assert response.status_code == 403
-    assert "nonce" in response.json()["detail"].lower()
+    assert remote_response.status_code == 403
+    assert "station computer itself" in remote_response.json()["detail"]
+    assert loopback_response.status_code == 422
 
 
 def test_staff_storage_setup_requires_setup_admin_role(monkeypatch, tmp_path: Path) -> None:
@@ -740,16 +753,14 @@ def test_safe_to_broadcast_contract_defines_required_optional_and_five_minute_co
 
 def test_station_state_reports_unacknowledged_recovery_kit(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
 
-    before = client.get("/api/setup/station-state", headers=_SETUP_HEADERS)
+    before = client.get("/api/setup/station-state")
     assert before.status_code == 200
     assert before.json()["recovery_kit_acknowledged"] is False
 
     setup = client.post(
         "/api/setup/first-admin",
-        headers=_SETUP_HEADERS,
         json={
             "station_name": "Pinegrove School Board",
             "admin_display_name": "Avery Admin",
@@ -760,7 +771,7 @@ def test_station_state_reports_unacknowledged_recovery_kit(monkeypatch, tmp_path
     )
     assert setup.status_code == 200
 
-    state = client.get("/api/setup/station-state", headers=_SETUP_HEADERS)
+    state = client.get("/api/setup/station-state")
     assert state.status_code == 200
     payload = state.json()
     assert payload["setup_complete"] is True
@@ -770,11 +781,9 @@ def test_station_state_reports_unacknowledged_recovery_kit(monkeypatch, tmp_path
 
 def test_recovery_kit_acknowledge_records_confirmation(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
     setup = client.post(
         "/api/setup/first-admin",
-        headers=_SETUP_HEADERS,
         json={
             "station_name": "Pinegrove School Board",
             "admin_display_name": "Avery Admin",
@@ -788,13 +797,12 @@ def test_recovery_kit_acknowledge_records_confirmation(monkeypatch, tmp_path) ->
     ack = client.post(
         "/api/setup/recovery-kit/acknowledge",
         json={"confirmed": True},
-        headers=_SETUP_HEADERS,
     )
     assert ack.status_code == 200
     assert ack.json()["recovery_kit_acknowledged"] is True
     assert "rehearsal" in ack.json()["next_step"].lower()
 
-    state = client.get("/api/setup/station-state", headers=_SETUP_HEADERS)
+    state = client.get("/api/setup/station-state")
     assert state.json()["recovery_kit_acknowledged"] is True
 
     raw = json.loads((tmp_path / "station-state.json").read_text(encoding="utf-8"))
@@ -804,19 +812,16 @@ def test_recovery_kit_acknowledge_records_confirmation(monkeypatch, tmp_path) ->
 
 def test_recovery_kit_acknowledge_requires_setup_and_confirmation(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
 
     too_early = client.post(
         "/api/setup/recovery-kit/acknowledge",
         json={"confirmed": True},
-        headers=_SETUP_HEADERS,
     )
     assert too_early.status_code == 409
 
     setup = client.post(
         "/api/setup/first-admin",
-        headers=_SETUP_HEADERS,
         json={
             "station_name": "Pinegrove",
             "admin_display_name": "Avery Admin",
@@ -830,14 +835,18 @@ def test_recovery_kit_acknowledge_requires_setup_and_confirmation(monkeypatch, t
     not_confirmed = client.post(
         "/api/setup/recovery-kit/acknowledge",
         json={"confirmed": False},
-        headers=_SETUP_HEADERS,
     )
     assert not_confirmed.status_code == 400
-    state = client.get("/api/setup/station-state", headers=_SETUP_HEADERS)
+    state = client.get("/api/setup/station-state")
     assert state.json()["recovery_kit_acknowledged"] is False
 
 
 def test_public_first_admin_setup_rejects_spoofed_host_header() -> None:
+    """The loopback gate is decided from the ASGI transport's own peer
+    address (``request.client.host``), never a caller-supplied header --
+    so claiming ``Host: 127.0.0.1:8000`` from a real remote peer must not
+    grant access."""
+
     client = TestClient(create_app(), client=("203.0.113.20", 4242))
 
     response = client.get(
@@ -846,41 +855,27 @@ def test_public_first_admin_setup_rejects_spoofed_host_header() -> None:
     )
 
     assert response.status_code == 403
-
-
-def test_public_first_admin_setup_requires_nonce_when_reached_through_public_host() -> None:
-    client = TestClient(create_app())
-
-    response = client.get(
-        "/api/setup/station-state",
-        headers={"host": "meetings.example.gov"},
+    assert (
+        response.json()["detail"]
+        == "First setup can only be done from the station computer itself."
     )
 
-    assert response.status_code == 403
-    assert "civiccast_setup_nonce" in response.json()["detail"].lower()
 
-
-def test_public_first_admin_setup_accepts_configured_setup_nonce(monkeypatch) -> None:
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", "nonce-from-installer")
+def test_public_setup_station_state_allowed_from_loopback_with_no_token() -> None:
     client = TestClient(create_app())
 
-    missing = client.get("/api/setup/station-state")
-    valid = client.get(
-        "/api/setup/station-state",
-        headers={"X-CivicCast-Setup-Nonce": "nonce-from-installer"},
-    )
+    response = client.get("/api/setup/station-state")
 
-    assert missing.status_code == 403
-    assert valid.status_code == 200
+    assert response.status_code == 200
 
 
-def test_public_setup_session_mutations_reject_missing_configured_nonce(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
-    client = TestClient(create_app())
+def test_public_setup_session_mutations_refused_from_non_loopback(tmp_path) -> None:
+    """Every pre-staff-auth /api/setup/* mutation must refuse a non-loopback
+    caller with the SAME honest detail -- never nonce-shaped wording (there
+    is no nonce anymore) and never advice to click a control the caller
+    cannot reach from off the station."""
+
+    client = TestClient(create_app(), client=("203.0.113.20", 4242))
     setup_payload = {
         "station_name": "Pinegrove School Board",
         "admin_display_name": "Avery Admin",
@@ -910,11 +905,15 @@ def test_public_setup_session_mutations_reject_missing_configured_nonce(
         json={"confirmed": True},
     )
 
+    expected_detail = "First setup can only be done from the station computer itself."
     assert first_admin.status_code == 403
     assert login.status_code == 403
     assert recovery.status_code == 403
     assert acknowledge.status_code == 403
-    assert first_admin.json()["detail"] == "Invalid or missing setup nonce."
+    assert first_admin.json()["detail"] == expected_detail
+    assert login.json()["detail"] == expected_detail
+    assert recovery.json()["detail"] == expected_detail
+    assert acknowledge.json()["detail"] == expected_detail
 
 
 def test_public_first_admin_setup_generates_recovery_kit_and_staff_token(
@@ -922,16 +921,14 @@ def test_public_first_admin_setup_generates_recovery_kit_and_staff_token(
     tmp_path,
 ) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
 
-    before = client.get("/api/setup/station-state", headers=_SETUP_HEADERS)
+    before = client.get("/api/setup/station-state")
     assert before.status_code == 200
     assert before.json()["status"] == "not_started"
 
     response = client.post(
         "/api/setup/first-admin",
-        headers=_SETUP_HEADERS,
         json={
             "station_name": "Pinegrove School Board",
             "admin_display_name": "Avery Admin",
@@ -970,12 +967,10 @@ def test_first_admin_setup_persists_first_station_commissioning_defaults(
     tmp_path,
 ) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
 
     response = client.post(
         "/api/setup/first-admin",
-        headers=_SETUP_HEADERS,
         json={
             "station_name": "Pinegrove School Board",
             "admin_display_name": "Avery Admin",
@@ -1013,7 +1008,7 @@ def test_first_admin_setup_persists_first_station_commissioning_defaults(
     assert profile["operation_mode"] == "test"
     assert profile["dashboard_ready_state"] == "not_ready"
 
-    state = client.get("/api/setup/station-state", headers=_SETUP_HEADERS)
+    state = client.get("/api/setup/station-state")
     assert state.status_code == 200
     assert state.json()["profile"] == profile
 
@@ -1024,11 +1019,9 @@ def test_first_admin_setup_persists_first_station_commissioning_defaults(
 
 def test_station_login_and_recovery_rotate_browser_tokens(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
     setup = client.post(
         "/api/setup/first-admin",
-        headers=_SETUP_HEADERS,
         json={
             "station_name": "Pinegrove School Board",
             "admin_display_name": "Avery Admin",
@@ -1043,7 +1036,6 @@ def test_station_login_and_recovery_rotate_browser_tokens(monkeypatch, tmp_path)
 
     login = client.post(
         "/api/setup/login",
-        headers=_SETUP_HEADERS,
         json={
             "admin_username": "avery",
             "admin_password": "correct horse battery staple",
@@ -1061,7 +1053,6 @@ def test_station_login_and_recovery_rotate_browser_tokens(monkeypatch, tmp_path)
 
     recovery = client.post(
         "/api/setup/recover",
-        headers=_SETUP_HEADERS,
         json={
             "admin_username": "avery",
             "recovery_code": recovery_code,
@@ -1073,7 +1064,6 @@ def test_station_login_and_recovery_rotate_browser_tokens(monkeypatch, tmp_path)
 
     reused = client.post(
         "/api/setup/recover",
-        headers=_SETUP_HEADERS,
         json={
             "admin_username": "avery",
             "recovery_code": recovery_code,
@@ -1083,7 +1073,6 @@ def test_station_login_and_recovery_rotate_browser_tokens(monkeypatch, tmp_path)
     assert reused.status_code == 401
     old_password = client.post(
         "/api/setup/login",
-        headers=_SETUP_HEADERS,
         json={
             "admin_username": "avery",
             "admin_password": "correct horse battery staple",
@@ -1091,7 +1080,6 @@ def test_station_login_and_recovery_rotate_browser_tokens(monkeypatch, tmp_path)
     )
     new_password = client.post(
         "/api/setup/login",
-        headers=_SETUP_HEADERS,
         json={
             "admin_username": "avery",
             "admin_password": "fresh horse battery staple",
@@ -1106,7 +1094,6 @@ def test_first_admin_setup_is_one_time_unless_reset_is_explicit(
     tmp_path,
 ) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     client = TestClient(create_app())
     payload = {
         "station_name": "Pinegrove",
@@ -1120,11 +1107,10 @@ def test_first_admin_setup_is_one_time_unless_reset_is_explicit(
         client.post(
             "/api/setup/first-admin",
             json=payload,
-            headers=_SETUP_HEADERS,
         ).status_code
         == 200
     )
-    second = client.post("/api/setup/first-admin", json=payload, headers=_SETUP_HEADERS)
+    second = client.post("/api/setup/first-admin", json=payload)
 
     assert second.status_code == 409
     assert "already complete" in second.json()["detail"]
@@ -1244,7 +1230,6 @@ def test_backup_provider_source_update_and_support_contracts_are_operator_safe(
         str(tmp_path / "provider-proof-evidence.json"),
     )
     monkeypatch.setenv("CIVICCAST_SUPPORT_BUNDLE_DIR", str(tmp_path / "support"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     for env_name in (
         "CIVICCAST_YOUTUBE_CLIENT_ID",
         "CIVICCAST_YOUTUBE_CLIENT_SECRET",
@@ -1566,14 +1551,15 @@ def test_backup_provider_source_update_and_support_contracts_are_operator_safe(
     assert "super-youtube-secret" not in raw_bundle
     assert "top-secret-db" not in raw_bundle
     assert "top-secret-note" not in raw_bundle
-    assert _SETUP_NONCE not in raw_bundle
     parsed = json.loads(raw_bundle)
     assert parsed["environment"]["CIVICCAST_YOUTUBE_CLIENT_SECRET"]["value"] == "[redacted]"
     assert parsed["environment"]["DATABASE_URL"]["value"] == "[redacted]"
     assert parsed["operator_note"] == {"provided": True, "length": len(operator_note)}
-    assert parsed["redaction"]["setup_nonce"] == "redacted"
-    assert "nonce=redacted" in parsed["station_setup"]["operator_console_url"]
-    assert "nonce=redacted" in parsed["system_health"]["setup"]["operator_console_url"]
+    # The installer-handoff nonce was retired 2026-08-29 (owner decision):
+    # operator_console_url() no longer appends a ?nonce= query param at all,
+    # so there is nothing left to redact from either embedded URL.
+    assert "nonce=" not in parsed["station_setup"]["operator_console_url"]
+    assert "nonce=" not in parsed["system_health"]["setup"]["operator_console_url"]
 
     download = client.get(
         f"/api/staff/installer/support-bundle/{support_payload['bundle_id']}/download"

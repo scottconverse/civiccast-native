@@ -1770,84 +1770,11 @@ def test_main_pgdata_acl_failure_inside_migrate_exits_its_own_code_not_alembics(
     assert generated[0] not in content, "the generated password reached the recovery document"
 
 
-# ---------------------------------------------------------------------------
-# Setup-nonce generation + handoff (native front door).
-#
-# BLOCKER this closes: a native station had NO setup nonce anywhere. The
-# control plane's env never carried CIVICCAST_SETUP_NONCE, so every
-# /api/setup/* mutation 403'd ("Storage setup requires the installer handoff
-# nonce") and first-run setup could not be completed at all. The nonce is
-# generated HERE, at provision time, and persisted by the Rust caller into the
-# same ACL-hardened HKLM\SOFTWARE\CivicCast\Native key DatabaseUrl already
-# uses -- via the same stdout marker-line handoff, for the same reason (the
-# value never appears on any argv).
-# ---------------------------------------------------------------------------
-
-
-def test_generate_setup_nonce_has_adequate_length_and_url_safe_charset() -> None:
-    from civiccast.native.setup_nonce import generate_setup_nonce
-
-    nonce = generate_setup_nonce()
-    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
-    assert set(nonce) <= allowed
-    # The Rust installer side re-validates against exactly this envelope
-    # (main.rs's `validated_setup_nonce`: 16..=256 URL-safe characters), so a
-    # nonce this generator produces must always survive that check.
-    assert 16 <= len(nonce) <= 256
-
-
-def test_generate_setup_nonce_is_not_repeated_across_calls() -> None:
-    from civiccast.native.setup_nonce import generate_setup_nonce
-
-    assert len({generate_setup_nonce() for _ in range(5)}) == 5
-
-
-def test_validate_setup_nonce_matches_the_rust_installer_envelope() -> None:
-    from civiccast.native.setup_nonce import validate_setup_nonce
-
-    assert validate_setup_nonce("a" * 16) == "a" * 16
-    assert validate_setup_nonce("  padded-nonce-value-1234  ") == "padded-nonce-value-1234"
-    assert validate_setup_nonce("a" * 15) is None
-    assert validate_setup_nonce("a" * 257) is None
-    assert validate_setup_nonce("has spaces in it 1234") is None
-    assert validate_setup_nonce("semicolon;injection;1234") is None
-    assert validate_setup_nonce(None) is None
-    assert validate_setup_nonce("") is None
-
-
-def test_format_and_parse_setup_nonce_line_round_trip() -> None:
-    from civiccast.native.provision.__main__ import (
-        SETUP_NONCE_MARKER_PREFIX,
-        format_setup_nonce_line,
-        parse_setup_nonce_line,
-    )
-
-    nonce = "abcdEFGH-1234_5678wxyz"
-    line = format_setup_nonce_line(nonce)
-    assert line == f"{SETUP_NONCE_MARKER_PREFIX}{nonce}"
-    assert parse_setup_nonce_line(line) == nonce
-
-
-def test_parse_setup_nonce_line_is_not_confused_by_the_database_url_marker() -> None:
-    from civiccast.native.provision.__main__ import (
-        SETUP_NONCE_MARKER_PREFIX,
-        parse_setup_nonce_line,
-    )
-
-    captured = "\n".join(
-        [
-            f"{HANDOFF_MARKER_PREFIX}postgresql://u:p@127.0.0.1:5432/civiccast",
-            f"{SETUP_NONCE_MARKER_PREFIX}abcdEFGH-1234_5678wxyz",
-        ]
-    )
-    assert parse_setup_nonce_line(captured) == "abcdEFGH-1234_5678wxyz"
-    assert parse_handoff_line(captured) == "postgresql://u:p@127.0.0.1:5432/civiccast"
-    assert SETUP_NONCE_MARKER_PREFIX != HANDOFF_MARKER_PREFIX
-
-
-def test_format_setup_nonce_line_refuses_a_value_outside_the_validated_envelope() -> None:
-    from civiccast.native.provision.__main__ import format_setup_nonce_line
-
-    for bad in ("short", "has spaces 1234567890", "with\nnewline12345"):
-        with pytest.raises(ValueError, match="setup nonce"):
-            format_setup_nonce_line(bad)
+# Setup-nonce generation + handoff (native front door) was retired
+# 2026-08-29 (owner decision): the control plane binds 127.0.0.1 only, so
+# first setup is unreachable from the network by construction and the nonce
+# was a redundant gate that produced repeated field failures. First setup is
+# now admitted by loopback alone
+# (civiccast.installer.router._require_local_setup_request). The tests that
+# used to live in this section covered civiccast.native.setup_nonce and the
+# provision CLI's SETUP_NONCE_MARKER_PREFIX handoff line, both removed.

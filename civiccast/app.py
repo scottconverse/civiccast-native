@@ -1580,7 +1580,7 @@ def create_app() -> FastAPI:
             allow_origins=allowed_origins,
             allow_credentials=False,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-            allow_headers=["Authorization", "Content-Type", "X-CivicCast-Setup-Nonce"],
+            allow_headers=["Authorization", "Content-Type"],
         )
     app.state.auth_rate_limiter = AuthRateLimiter()
     # QA-2 part 3: per-app instance (never a shared module singleton) so tests

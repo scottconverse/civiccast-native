@@ -271,172 +271,6 @@ fn newest_existing_installer_state_path() -> Result<Option<PathBuf>, String> {
 }
 
 
-/// The nonce-bearing operator URL is written once by the bootstrap success
-/// path; every later plain `write_installer_state` used to clobber it back to
-/// the nonce-less constant, dead-ending First Setup ("Could not read setup
-/// state") with no operator-visible recovery. Preserve an existing nonce URL
-/// -- but only after re-checking it against the authoritative source; see
-/// [`resolved_operator_console_url`] for why blind preservation is exactly
-/// the bug BLOCKER N-02 found.
-fn preserved_operator_console_url() -> Option<String> {
-    let path = newest_existing_installer_state_path().ok()??;
-    let raw = fs::read_to_string(path).ok()?;
-    let current_nonce = current_setup_nonce_for_reverification();
-    resolved_operator_console_url(Some(&raw), current_nonce.as_deref())
-}
-
-fn nonce_operator_url_from_state(raw: &str) -> Option<String> {
-    let key_at = raw.find("\"operator_console_url\"")?;
-    let after_key = &raw[key_at + "\"operator_console_url\"".len()..];
-    let colon = after_key.find(':')?;
-    let after_colon = &after_key[colon + 1..];
-    let open = after_colon.find('"')?;
-    let rest = &after_colon[open + 1..];
-    let close = rest.find('"')?;
-    let url = &rest[..close];
-    if url.contains("nonce=") {
-        Some(url.to_string())
-    } else {
-        None
-    }
-}
-
-/// The correct nonce-bearing operator-console URL to hand off right now,
-/// given what the state cache remembers and the CURRENT authoritative nonce
-/// (or `None` when re-checking it was skipped or failed this time).
-///
-/// Pure -- callers resolve the cache and the authoritative nonce separately
-/// and pass both in, so this decision is unit-testable without real I/O.
-///
-/// BLOCKER N-02 (2026-08-01 native sandbox re-walk of b1c6fe4d, findings.json
-/// entry N-02): after uninstall + reinstall, `cached_raw` still carried the
-/// PREVIOUS install's nonce baked into `operator_console_url`. The old logic
-/// (`nonce_operator_url_from_state` used alone) only checked whether the
-/// cache had ANY `nonce=` at all, so it preserved that stale value forever;
-/// the server correctly 403'd every setup mutation, and even "Reset
-/// progress" could not recover -- it only deleted the cache file, and
-/// nothing ever rebuilt a URL from the authoritative source afterward, so
-/// first setup stayed unreachable by any supported path.
-///
-/// The fix: when an authoritative nonce is available right now, it ALWAYS
-/// wins, whether the cache agrees, disagrees, or is empty. The cache is only
-/// trusted as a last resort, when re-checking the authoritative source was
-/// not attempted (an unlatched branch) or came back empty (registry
-/// unreadable, WSL probe failed) -- never as a substitute for it.
-fn resolved_operator_console_url(
-    cached_raw: Option<&str>,
-    current_nonce: Option<&str>,
-) -> Option<String> {
-    match current_nonce {
-        Some(nonce) => Some(format!("{OPERATOR_CONSOLE_URL}?nonce={nonce}")),
-        None => cached_raw.and_then(nonce_operator_url_from_state),
-    }
-}
-
-/// The authoritative nonce to compare the cache against right now.
-///
-/// The native station's authoritative source is a local registry read
-/// (`native_setup_nonce_from_registry`): cheap, synchronous, no subprocess,
-/// so re-checking it on every write/poll -- cached or not -- is always safe.
-/// That is exactly what fixes BLOCKER N-02 (a stale cached nonce surviving a
-/// reinstall must never outrank the current one just because something was
-/// already cached).
-///
-/// The retired WSL product used to gate this on a "cheap to re-verify?"
-/// question, because its own authoritative source shelled out to `wsl.exe`
-/// on every call and re-probing that on every write/poll was a process
-/// storm. The native product has no such cost, so the gate was removed along
-/// with the WSL lane rather than carried forward unused.
-fn current_setup_nonce_for_reverification() -> Option<String> {
-    native_setup_nonce_from_registry()
-}
-
-/// The operator-console URL `reset_local_installer_state` should hand back
-/// after clearing the cache: built strictly from the CURRENT authoritative
-/// nonce (`None` cache -- there is nothing left to preserve, on purpose).
-///
-/// This is the second half of the BLOCKER N-02 fix: deleting the cache alone
-/// was not "recovery" -- nothing rebuilt a working URL afterward, so the
-/// very next read either stayed "null" or fell back to the bare, nonce-less
-/// `OPERATOR_CONSOLE_URL`. Reset must hand back a URL that already carries
-/// today's nonce, immediately, not "eventually, if something else happens to
-/// write state first."
-fn reset_operator_console_url(current_nonce: Option<&str>) -> String {
-    resolved_operator_console_url(None, current_nonce).unwrap_or_else(|| OPERATOR_CONSOLE_URL.to_string())
-}
-
-fn validated_setup_nonce(raw: &str) -> Option<String> {
-    let nonce = raw.trim();
-    if !(16..=256).contains(&nonce.len())
-        || !nonce
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-    {
-        return None;
-    }
-    Some(nonce.to_string())
-}
-
-
-
-/// The native station's setup-handoff nonce, read from the ACL-hardened
-/// `HKLM\SOFTWARE\CivicCast\Native\SetupNonce` the elevated installer wrote at
-/// provision time (`native_service_registration::write_setup_nonce`, same key
-/// and same SYSTEM+Administrators DACL as `DatabaseUrl`).
-///
-/// This is now the ONLY setup-nonce source: the retired WSL product used to
-/// keep its own nonce inside its distro at `/var/lib/civiccast/setup-nonce`,
-/// a path a native station never had and never shells out to look for.
-#[cfg(target_os = "windows")]
-fn native_setup_nonce_from_registry() -> Option<String> {
-    native_service_registration::read_setup_nonce().and_then(|nonce| validated_setup_nonce(&nonce))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn native_setup_nonce_from_registry() -> Option<String> {
-    None
-}
-
-fn restore_setup_handoff_url_if_available(raw: String) -> String {
-    let cached_url = nonce_operator_url_from_state(&raw);
-    // The native station's authoritative source is a cheap local registry
-    // read (`native_setup_nonce_from_registry`), so it always re-checks,
-    // cached or not -- that is the BLOCKER N-02 fix: a stale cached nonce
-    // (surviving a reinstall) must never outrank the current one just
-    // because something was already cached.
-    let current_nonce = current_setup_nonce_for_reverification();
-    let Some(operator_url) = resolved_operator_console_url(Some(&raw), current_nonce.as_deref())
-    else {
-        return raw;
-    };
-    if cached_url.as_deref() == Some(operator_url.as_str()) {
-        // Cache already holds today's nonce -- nothing to rewrite.
-        return raw;
-    }
-    let lane = installer_state_string_field(&raw, "current_lane_id")
-        .unwrap_or_else(|| "runtime".to_string());
-    let status =
-        installer_state_string_field(&raw, "status").unwrap_or_else(|| "ready".to_string());
-    let message = installer_state_string_field(&raw, "message")
-        .unwrap_or_else(|| "CivicCast is running and healthy on this computer.".to_string());
-    if write_installer_state_with_operator_url(
-        &lane,
-        &status,
-        &message,
-        installer_state_reboot_required(&raw),
-        &operator_url,
-    )
-    .is_ok()
-    {
-        if let Ok(path) = installer_state_path() {
-            if let Ok(recovered) = fs::read_to_string(path) {
-                return normalize_installer_state_text(recovered);
-            }
-        }
-    }
-    raw
-}
-
 fn json_escape(value: &str) -> String {
     value
         .replace('\\', "\\\\")
@@ -469,13 +303,12 @@ fn write_installer_state(
     message: &str,
     reboot_required: bool,
 ) -> Result<(), String> {
-    let preserved = preserved_operator_console_url();
     write_installer_state_with_operator_url(
         lane_id,
         status,
         message,
         reboot_required,
-        preserved.as_deref().unwrap_or(OPERATOR_CONSOLE_URL),
+        OPERATOR_CONSOLE_URL,
     )
 }
 
@@ -1749,170 +1582,6 @@ try {{
     // function is a one-line composition of a tested pure half with a
     // single environment read.
 
-    #[test]
-    fn nonce_operator_url_survives_state_rewrites() {
-        // A PS-success-path state file carries the nonce URL; plain rewrites
-        // must preserve it (losing it dead-ends First Setup with no recovery).
-        let with_nonce = r#"{"schema_version":1,"status":"ready","operator_console_url":"http://127.0.0.1:8000/operator/?nonce=abc123","resident_portal_url":"http://127.0.0.1:8000/"}"#;
-        assert_eq!(
-            nonce_operator_url_from_state(with_nonce).as_deref(),
-            Some("http://127.0.0.1:8000/operator/?nonce=abc123")
-        );
-        // Nonce-less URLs are not worth preserving.
-        let plain = r#"{"operator_console_url": "http://127.0.0.1:8000/operator/"}"#;
-        assert_eq!(nonce_operator_url_from_state(plain), None);
-        assert_eq!(nonce_operator_url_from_state("not json at all"), None);
-    }
-
-    // --- BLOCKER N-02 (2026-08-01 native sandbox re-walk of b1c6fe4d,
-    // findings.json entry N-02): after uninstall + reinstall, the cached
-    // state file's handoff URL still carried the PREVIOUS install's nonce.
-    // The server correctly 403'd every setup mutation, and "Reset progress"
-    // could not recover either. These tests pin the fix at the pure-decision
-    // layer: the CURRENT authoritative nonce must always win over whatever a
-    // cache remembers, and Reset must rebuild the handoff from that same
-    // authoritative source rather than merely deleting the cache. ---
-
-    #[test]
-    fn handoff_url_uses_the_authoritative_nonce_even_when_a_stale_one_is_cached() {
-        // Simulated reinstall: the cache still has the OLD install's nonce
-        // baked into operator_console_url, but the authoritative source
-        // (registry, on native) now reports a DIFFERENT, current one. The old
-        // logic (nonce_operator_url_from_state alone) only checked whether
-        // the cache had ANY nonce= and would have preserved the stale value
-        // forever -- exactly the BLOCKER.
-        let cached_raw = r#"{"schema_version":1,"status":"ready","operator_console_url":"http://127.0.0.1:8000/operator/?nonce=OLD-STALE-PREVIOUS-INSTALL-NONCE","resident_portal_url":"http://127.0.0.1:8000/"}"#;
-        let current_authoritative_nonce = "NEW-CURRENT-REINSTALL-NONCE-VALUE";
-        assert_eq!(
-            resolved_operator_console_url(Some(cached_raw), Some(current_authoritative_nonce)),
-            Some(format!(
-                "{OPERATOR_CONSOLE_URL}?nonce={current_authoritative_nonce}"
-            ))
-        );
-    }
-
-    #[test]
-    fn handoff_url_keeps_the_cached_nonce_when_the_authoritative_source_was_not_rechecked() {
-        // The WSL lane's anti-storm guard deliberately skips re-probing
-        // wsl.exe once a nonce is already cached (may_cheaply_reverify_setup_
-        // nonce returns false for it), so callers pass current_nonce = None
-        // in that case. The cached value must survive untouched here -- this
-        // is the pre-existing wsl.exe-storm fix staying intact, not a
-        // regression.
-        let cached_raw = r#"{"operator_console_url":"http://127.0.0.1:8000/operator/?nonce=STILL-GOOD-CACHED-NONCE","resident_portal_url":"http://127.0.0.1:8000/"}"#;
-        assert_eq!(
-            resolved_operator_console_url(Some(cached_raw), None),
-            Some("http://127.0.0.1:8000/operator/?nonce=STILL-GOOD-CACHED-NONCE".to_string())
-        );
-    }
-
-    #[test]
-    fn handoff_url_recovers_when_the_cache_is_empty_and_an_authoritative_nonce_exists() {
-        assert_eq!(
-            resolved_operator_console_url(None, Some("FRESH-NONCE-AFTER-RESET-OR-FIRST-RUN")),
-            Some(format!(
-                "{OPERATOR_CONSOLE_URL}?nonce=FRESH-NONCE-AFTER-RESET-OR-FIRST-RUN"
-            ))
-        );
-    }
-
-    #[test]
-    fn handoff_url_is_absent_when_neither_cache_nor_authoritative_source_has_one() {
-        assert_eq!(resolved_operator_console_url(None, None), None);
-    }
-
-    #[test]
-    fn reset_progress_prefers_authoritative_nonce_over_populated_stale_cache() {
-        // Part (b) of BLOCKER N-02 continued: reset_operator_console_url
-        // hard-codes cache=None when calling resolved_operator_console_url,
-        // so a stale cache value structurally cannot leak through. This test
-        // pins that guarantee explicitly by proving that even IF a populated
-        // stale cache existed alongside a fresh authoritative nonce, the
-        // authoritative nonce would always win. This ensures future
-        // refactoring cannot accidentally pass cache through the reset path.
-        let stale_cached_json = r#"{"schema_version":1,"status":"ready","operator_console_url":"http://127.0.0.1:8000/operator/?nonce=OLD-STALE-CACHED-NONCE-RESET-SCENARIO","resident_portal_url":"http://127.0.0.1:8000/"}"#;
-        let fresh_authoritative_nonce = "FRESH-RESET-NONCE-AFTER-CACHE-WIPE";
-
-        assert_eq!(
-            resolved_operator_console_url(Some(stale_cached_json), Some(fresh_authoritative_nonce)),
-            Some(format!("{OPERATOR_CONSOLE_URL}?nonce={fresh_authoritative_nonce}"))
-        );
-    }
-
-    #[test]
-    fn reset_progress_rebuilds_the_handoff_url_from_the_authoritative_nonce_not_a_stale_cache() {
-        // Part (b) of BLOCKER N-02: deleting the cache alone was not
-        // "recovery" -- reset_operator_console_url never looks at the
-        // deleted cache at all, so whatever nonce used to be cached (stale
-        // or otherwise) cannot leak through. The result depends ONLY on the
-        // current authoritative nonce.
-        let current_authoritative_nonce = "N2-FRESH-REINSTALL-NONCE-VALUE-ABC";
-        assert_eq!(
-            reset_operator_console_url(Some(current_authoritative_nonce)),
-            format!("{OPERATOR_CONSOLE_URL}?nonce={current_authoritative_nonce}")
-        );
-        // No authoritative nonce available right now (e.g. a station that has
-        // never been provisioned) -- fall back to the bare URL rather than
-        // fabricate or resurrect anything.
-        assert_eq!(reset_operator_console_url(None), OPERATOR_CONSOLE_URL);
-    }
-
-    // --- Setup-handoff recovery (`--civiccast-restore-setup-handoff`). The
-    // registry read these tests sit in front of is exercised for real in
-    // `native_service_registration::tests::read_setup_nonce_from_*`. ---
-
-    #[test]
-    fn restore_setup_handoff_cli_ignores_every_ordinary_launch() {
-        // The single most important property of this command: it must NOT
-        // hijack a normal GUI launch, a headless bootstrap, or any other
-        // subcommand. If this regressed, opening CivicCast Setup normally
-        // would start prompting for administrator rights -- exactly the
-        // outcome the manifest is deliberately `asInvoker` to avoid.
-        for ordinary in [
-            vec![],
-            vec!["--civiccast-runtime-host".to_string()],
-            vec!["--civiccast-repair".to_string(), r"C:\CivicCast".to_string()],
-        ] {
-            assert_eq!(
-                run_native_restore_setup_handoff_cli(&ordinary),
-                None,
-                "ordinary launch {ordinary:?} must not enter the recovery path"
-            );
-        }
-    }
-
-    #[test]
-    fn restore_setup_handoff_flags_are_distinguishable_so_the_child_cannot_re_elevate() {
-        // Exact-match parsing (command_line_has_arg) is what makes the
-        // re-entry guard safe: the marker must NOT satisfy the base flag, or
-        // the elevated child would re-enter the "ask Windows" branch and loop
-        // UAC prompts forever instead of refusing.
-        let marker_only = vec![RESTORE_SETUP_HANDOFF_ELEVATED_MARKER.to_string()];
-        assert!(
-            !command_line_has_arg(&marker_only, RESTORE_SETUP_HANDOFF_FLAG),
-            "the longer marker must not satisfy the base flag"
-        );
-        assert_eq!(
-            run_native_restore_setup_handoff_cli(&marker_only),
-            None,
-            "the marker alone must not trigger a recovery pass"
-        );
-
-        // ...which is precisely why the elevated child is launched with BOTH.
-        let child_args = vec![
-            RESTORE_SETUP_HANDOFF_FLAG.to_string(),
-            RESTORE_SETUP_HANDOFF_ELEVATED_MARKER.to_string(),
-        ];
-        assert!(command_line_has_arg(
-            &child_args,
-            RESTORE_SETUP_HANDOFF_FLAG
-        ));
-        assert!(command_line_has_arg(
-            &child_args,
-            RESTORE_SETUP_HANDOFF_ELEVATED_MARKER
-        ));
-    }
-
     // --- K1 fix: `--civiccast-activate-station` vs `--civiccast-distribution`
     // dispatch precedence. `run_native_distribution_cli` triggers on
     // `--civiccast-acquire-channel` / `--civiccast-import-station` ALONE,
@@ -1957,110 +1626,6 @@ try {{
             run_native_flat_activation_cli(&args).is_some(),
             "the activation CLI must claim this invocation"
         );
-    }
-
-    #[test]
-    fn restore_setup_handoff_elevation_command_quotes_an_awkward_install_path() {
-        // The real install path is `C:\Program Files\CivicCast (Native)\...`,
-        // and an operator's machine can carry an apostrophe. Quote via
-        // powershell_single_quote, never by interpolating raw.
-        let executable = r#"C:\Program Files\O'Brien Lab\CivicCast Setup.exe"#;
-        let quoted = powershell_single_quote(executable);
-        assert_eq!(
-            quoted,
-            r#"'C:\Program Files\O''Brien Lab\CivicCast Setup.exe'"#
-        );
-
-        let argument_list =
-            format!("{RESTORE_SETUP_HANDOFF_FLAG} {RESTORE_SETUP_HANDOFF_ELEVATED_MARKER}");
-        assert_eq!(
-            powershell_single_quote(&argument_list),
-            format!("'{RESTORE_SETUP_HANDOFF_FLAG} {RESTORE_SETUP_HANDOFF_ELEVATED_MARKER}'")
-        );
-    }
-
-    #[test]
-    fn restore_setup_handoff_exit_codes_stay_distinct_and_named() {
-        // An operator (and the docs) must be able to tell "you are not an
-        // administrator" from "this station has no nonce" from "the stored
-        // nonce is corrupt" -- three different remedies. Collapsing any two
-        // is the same class of mistake as the Option<String> read this
-        // change replaced.
-        let codes = [
-            RESTORE_SETUP_HANDOFF_REFUSED_EXIT,
-            RESTORE_SETUP_HANDOFF_MISSING_EXIT,
-            RESTORE_SETUP_HANDOFF_INVALID_EXIT,
-        ];
-        assert_eq!(
-            codes.len(),
-            codes.iter().collect::<std::collections::HashSet<_>>().len(),
-            "recovery exit codes must stay distinct"
-        );
-        assert!(
-            codes.iter().all(|code| *code != 0),
-            "no failure may report success"
-        );
-    }
-
-    /// Bug fix: `--civiccast-restore-setup-handoff` "ran and returned
-    /// nothing" from a terminal on a release build, because
-    /// `windows_subsystem = "windows"` (top of this file) leaves the
-    /// process with no console, so every println!/eprintln! in
-    /// `run_setup_handoff_recovery_pass` silently went nowhere.
-    /// `attach_or_alloc_console_for_cli_recovery` fixes this ONLY if it
-    /// runs BEFORE that function's first print -- a call placed after
-    /// would compile clean and still reproduce the bug. This is a
-    /// text-contract test on the crate's OWN source (the same
-    /// `CARGO_MANIFEST_DIR`-relative self-read convention
-    /// `service_name_mirror_matches_the_python_source_of_truth` in
-    /// `native_service_registration.rs` already uses), because the ordering
-    /// bug is invisible to a normal unit test: `run_native_restore_setup_
-    /// handoff_cli` calls `std::process::exit` deep in its callee on every
-    /// real code path, and a debug test build never reproduces the
-    /// consoleless condition in the first place (`windows_subsystem` is
-    /// unset for debug builds).
-    #[test]
-    fn attach_console_call_precedes_the_recovery_pass_in_source_order() {
-        let main_rs = concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs");
-        let source = std::fs::read_to_string(main_rs)
-            .unwrap_or_else(|error| panic!("could not read {main_rs}: {error}"));
-
-        let function_start = source
-            .find("fn run_native_restore_setup_handoff_cli(")
-            .expect("run_native_restore_setup_handoff_cli must still exist");
-        let function_body = &source[function_start..];
-        let function_end = function_body
-            .find("\n}\n")
-            .expect("could not find the end of run_native_restore_setup_handoff_cli");
-        let function_body = &function_body[..function_end];
-
-        let attach_call = function_body
-            .find("attach_or_alloc_console_for_cli_recovery();")
-            .expect(
-                "run_native_restore_setup_handoff_cli must call \
-                 attach_or_alloc_console_for_cli_recovery()",
-            );
-        let recovery_call = function_body
-            .find("run_setup_handoff_recovery_pass(")
-            .expect("run_native_restore_setup_handoff_cli must still call run_setup_handoff_recovery_pass");
-
-        assert!(
-            attach_call < recovery_call,
-            "attach_or_alloc_console_for_cli_recovery() must be called BEFORE \
-             run_setup_handoff_recovery_pass, or its console attach/alloc has \
-             no effect on that function's own println!/eprintln! output"
-        );
-    }
-
-    #[test]
-    fn setup_nonce_recovery_accepts_only_bounded_url_safe_values() {
-        assert_eq!(
-            validated_setup_nonce("  Abc_123-safe-NONCE  \r\n").as_deref(),
-            Some("Abc_123-safe-NONCE")
-        );
-        assert_eq!(validated_setup_nonce("short"), None);
-        assert_eq!(validated_setup_nonce("contains a space and ?query"), None);
-        assert_eq!(validated_setup_nonce(&"a".repeat(257)), None);
     }
 
     #[test]
@@ -2199,15 +1764,6 @@ try {{
         assert!(validate_local_console_url("file:///etc/passwd").is_err());
         assert!(validate_local_console_url("http://127.0.0.1:8000.evil.com/").is_err());
     }
-
-    #[test]
-    fn powershell_single_quote_doubles_embedded_quotes() {
-        assert_eq!(powershell_single_quote("plain"), "'plain'");
-        // The classic single-quote breakout is neutralised by doubling.
-        assert_eq!(powershell_single_quote("a'b"), "'a''b'");
-        assert_eq!(powershell_single_quote("'; rm -rf /"), "'''; rm -rf /'");
-    }
-
 
 
 
@@ -3030,14 +2586,14 @@ fn read_local_installer_state_blocking() -> Result<String, String> {
     let Some(path) = newest_existing_installer_state_path()? else {
         return Ok("null".to_string());
     };
-    let raw = restore_setup_handoff_url_if_available(normalize_installer_state_text(
+    let raw = normalize_installer_state_text(
         fs::read_to_string(&path)
             .map_err(|error| format!("Could not read installer state file: {error}"))?,
-    ));
+    );
     // Persisted "ready" is a claim, not a lifetime guarantee. Reconcile both
-    // directions against live health while preserving the nonce-bearing
-    // operator URL. Reboot-pending states are exempt inside the transition
-    // core because a previous installation may still answer during reboot work.
+    // directions against live health. Reboot-pending states are exempt
+    // inside the transition core because a previous installation may still
+    // answer during reboot work.
     let transition = if installer_state_reboot_required(&raw) {
         RuntimeStateTransition::None
     } else {
@@ -3084,41 +2640,7 @@ fn reset_local_installer_state() -> Result<String, String> {
                 .map_err(|error| format!("Could not remove installer state file: {error}"))?;
         }
     }
-    rebuild_operator_console_handoff_after_reset();
     Ok("CivicCast reset installer progress. Durable records were not deleted.".to_string())
-}
-
-/// The missing half of BLOCKER N-02's part (b).
-///
-/// [`reset_operator_console_url`] has existed -- and been unit-tested -- since
-/// the N-02 fix, but NOTHING EVER CALLED IT: `reset_local_installer_state`
-/// only deleted files. So "Reset progress" cleared the cache and then left the
-/// station with no handoff at all, and the very next read fell back to the
-/// bare, nonce-less `OPERATOR_CONSOLE_URL` -- the same dead end N-02 set out
-/// to fix. Deleting a cache is not recovery unless something rebuilds from the
-/// authoritative source afterward; this is that something.
-///
-/// Deliberately best-effort and side-effect-only: reset itself must still
-/// succeed on a station that has no nonce to rebuild from (never provisioned,
-/// or -- the common case for an `asInvoker` setup app -- a registry read the
-/// current token may not perform). When there is no authoritative nonce this
-/// writes NOTHING, leaving the just-cleared "fresh start" state intact rather
-/// than resurrecting a state file carrying a useless bare URL.
-fn rebuild_operator_console_handoff_after_reset() {
-    // Cache is gone by now; this always performs the (cheap, local)
-    // authoritative registry read, which is the entire point of rebuilding
-    // here.
-    let Some(nonce) = current_setup_nonce_for_reverification() else {
-        return;
-    };
-    let operator_url = reset_operator_console_url(Some(nonce.as_str()));
-    let _ = write_installer_state_with_operator_url(
-        "runtime",
-        "ready",
-        "CivicCast reset installer progress. Durable records were not deleted.",
-        false,
-        &operator_url,
-    );
 }
 
 /// Opens the newest installer log ([`newest_installer_log_path`]) in the
@@ -4028,14 +3550,6 @@ fn decode_windows_command_output(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).to_string()
 }
 
-
-
-
-
-#[cfg(target_os = "windows")]
-fn powershell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
 
 
 
@@ -5928,7 +5442,7 @@ fn run_native_stop_service_cli(args: &[String]) -> Option<i32> {
 /// the macro, before the existing ActiveRuntime selector bookkeeping): runs
 /// `native_service_registration::teardown_native_state`'s ordered, idempotent
 /// steps (stop service -> remove service -> delete firewall rule -> clear the
-/// credential registry values `DatabaseUrl`/`SetupNonce` -> clear the install
+/// credential registry value `DatabaseUrl` -> clear the install
 /// markers `InstalledVersion` -> remove the now-empty `CivicCast\Native` key
 /// -> clear a released Maintenance interlock blob (the last two, N-20,
 /// carried) and prints one line
@@ -6027,277 +5541,8 @@ fn run_native_uninstall_preflight_cli(args: &[String]) -> Option<i32> {
     }
 }
 
-/// The operator-facing recovery flag.
-const RESTORE_SETUP_HANDOFF_FLAG: &str = "--civiccast-restore-setup-handoff";
-
-/// Internal re-entry marker. Present ONLY on the elevated child this command
-/// launches of itself, so the child can never re-elevate again -- one UAC
-/// prompt per operator action, and a refusal instead of a prompt loop if the
-/// elevated read still fails.
-///
-/// Exact-match arg parsing (see [`command_line_has_arg`]) means this longer
-/// flag does NOT satisfy [`RESTORE_SETUP_HANDOFF_FLAG`]; the child is launched
-/// with BOTH on purpose.
-const RESTORE_SETUP_HANDOFF_ELEVATED_MARKER: &str =
-    "--civiccast-restore-setup-handoff-elevated-child";
-
-/// Exit code for a NAMED REFUSAL: the nonce exists but this token may not read
-/// it, and elevation did not (or could not) fix that. Never accompanied by a
-/// nonce on any stream.
-const RESTORE_SETUP_HANDOFF_REFUSED_EXIT: i32 = 85;
-
-/// Exit code for "this station has no persisted nonce at all" -- a different
-/// operator situation with a different remedy (re-provision), which is exactly
-/// why [`native_service_registration::SetupNonceRead`] refuses to collapse it
-/// into the refusal above.
-const RESTORE_SETUP_HANDOFF_MISSING_EXIT: i32 = 86;
-
-/// Exit code for a persisted value that fails the shared envelope. Fails
-/// closed rather than forwarding a value the control plane's
-/// `hmac.compare_digest` would reject anyway.
-const RESTORE_SETUP_HANDOFF_INVALID_EXIT: i32 = 87;
-
-/// Rewrite the cached operator-console URL, preserving every other field of
-/// whatever installer state already exists.
-///
-/// Used by the recovery path only. Preserving lane/status/message/reboot
-/// matters because recovery can be run at ANY point in a station's life --
-/// clobbering a real in-progress lane with a synthetic "ready" would make the
-/// setup app lie about where the install actually is.
-#[cfg(target_os = "windows")]
-fn persist_operator_console_url(operator_url: &str) -> Result<(), String> {
-    let raw = newest_existing_installer_state_path()?
-        .and_then(|path| fs::read_to_string(path).ok())
-        .map(normalize_installer_state_text)
-        .unwrap_or_default();
-    let lane = installer_state_string_field(&raw, "current_lane_id")
-        .unwrap_or_else(|| "runtime".to_string());
-    let status =
-        installer_state_string_field(&raw, "status").unwrap_or_else(|| "ready".to_string());
-    let message = installer_state_string_field(&raw, "message")
-        .unwrap_or_else(|| "CivicCast is running and healthy on this computer.".to_string());
-    write_installer_state_with_operator_url(
-        &lane,
-        &status,
-        &message,
-        installer_state_reboot_required(&raw),
-        operator_url,
-    )
-}
-
-/// Re-launch THIS binary elevated for one recovery pass, and hand back its
-/// exit code.
-///
-/// `-Wait -PassThru` so the operator's exit code is the elevated child's
-/// real verdict, not "we managed to ask".
-#[cfg(target_os = "windows")]
-fn relaunch_elevated_for_setup_handoff() -> i32 {
-    let executable = match std::env::current_exe() {
-        Ok(path) => path,
-        Err(error) => {
-            eprintln!("Could not locate the CivicCast Setup executable to re-run elevated: {error}");
-            return RESTORE_SETUP_HANDOFF_REFUSED_EXIT;
-        }
-    };
-    let argument_list = format!(
-        "{RESTORE_SETUP_HANDOFF_FLAG} {RESTORE_SETUP_HANDOFF_ELEVATED_MARKER}"
-    );
-    let elevated = format!(
-        "$ErrorActionPreference='Stop'; $process = Start-Process -FilePath {} -ArgumentList {} -Verb RunAs -WindowStyle Hidden -Wait -PassThru; if ($null -eq $process) {{ throw 'Windows did not return an elevated CivicCast Setup process.' }}; exit $process.ExitCode",
-        powershell_single_quote(&executable.to_string_lossy()),
-        powershell_single_quote(&argument_list)
-    );
-    let mut command = Command::new("powershell.exe");
-    command.args([
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        &elevated,
-    ]);
-    hide_windows_command(&mut command);
-    match command.status() {
-        Ok(status) => status.code().unwrap_or(RESTORE_SETUP_HANDOFF_REFUSED_EXIT),
-        Err(error) => {
-            eprintln!(
-                "Windows refused or could not start the elevated recovery pass: {error}\n\
-                 Approve the Windows administrator prompt, or sign in as an administrator and try again."
-            );
-            RESTORE_SETUP_HANDOFF_REFUSED_EXIT
-        }
-    }
-}
-
-/// One recovery pass against the real registry.
-///
-/// `is_elevated_child` is the RE-ENTRY guard, not an elevation claim: it says
-/// "an elevated attempt has already been made, so do not ask again -- refuse."
-/// Whether this process can actually read the key is decided by the key's own
-/// ACL, via [`native_service_registration::read_setup_nonce_status`] -- the
-/// real authorization boundary, not a token heuristic that could drift from it.
-///
-/// SECURITY: no branch here prints the nonce, and none prints the rebuilt URL
-/// either -- the URL CONTAINS the nonce, so echoing it to a console or a
-/// captured CI/support log would leak the credential this whole path exists to
-/// protect. Nothing here mints, writes, rotates, or relaxes anything: the ACL,
-/// the stored value, and the app manifest are all untouched.
-#[cfg(target_os = "windows")]
-fn run_setup_handoff_recovery_pass(is_elevated_child: bool) -> i32 {
-    match native_service_registration::read_setup_nonce_status() {
-        native_service_registration::SetupNonceRead::Ok(nonce) => {
-            let operator_url = reset_operator_console_url(Some(nonce.as_str()));
-            match persist_operator_console_url(&operator_url) {
-                Ok(()) => {
-                    println!(
-                        "CivicCast restored the operator-console setup handoff for this Windows \
-                         account.\nReopen CivicCast Setup and use \"Open operator console\"."
-                    );
-                    0
-                }
-                Err(error) => {
-                    eprintln!("Could not save the restored operator-console handoff: {error}");
-                    RESTORE_SETUP_HANDOFF_REFUSED_EXIT
-                }
-            }
-        }
-        native_service_registration::SetupNonceRead::AccessDenied => {
-            if is_elevated_child {
-                // The NAMED REFUSAL required of a caller that may not read the
-                // key. No nonce, no partial value, no fallback that would make
-                // a guessable credential authoritative.
-                eprintln!(
-                    "REFUSED: setup-handoff recovery needs administrator rights.\n\
-                     The station's setup nonce exists, but this account may not read \
-                     HKLM\\SOFTWARE\\CivicCast\\Native\\SetupNonce -- it is restricted to SYSTEM \
-                     and Administrators by design, and that restriction is intact.\n\
-                     Sign in as an administrator of this computer and run the recovery again."
-                );
-                return RESTORE_SETUP_HANDOFF_REFUSED_EXIT;
-            }
-            // Expected on every ordinary launch: the setup app ships asInvoker,
-            // so its own token cannot read the key even for an administrator
-            // (UAC's filtered token carries Administrators as deny-only). Ask
-            // Windows for one elevated pass -- ONLY for this recovery action,
-            // never for ordinary launches.
-            println!(
-                "CivicCast needs administrator approval once to restore the operator-console \
-                 handoff. Approve the Windows prompt."
-            );
-            relaunch_elevated_for_setup_handoff()
-        }
-        native_service_registration::SetupNonceRead::Missing => {
-            eprintln!(
-                "No setup nonce is stored on this computer, so there is no operator-console \
-                 handoff to restore.\nThis station was never provisioned, or was provisioned by a \
-                 build from before the handoff existed. Re-run CivicCast provisioning."
-            );
-            RESTORE_SETUP_HANDOFF_MISSING_EXIT
-        }
-        native_service_registration::SetupNonceRead::Invalid => {
-            eprintln!(
-                "The stored setup nonce is malformed and was NOT used.\nRe-run CivicCast \
-                 provisioning to mint a fresh one."
-            );
-            RESTORE_SETUP_HANDOFF_INVALID_EXIT
-        }
-    }
-}
-
-/// `--civiccast-restore-setup-handoff` -- the supported recovery for a native
-/// station whose operator console opens without its `?nonce=` handoff.
-///
-/// Why this exists: the installer persists the nonce to an ACL-hardened HKLM
-/// key (SYSTEM + Administrators), but the Tauri setup app ships `asInvoker`,
-/// so its own read is refused on every ordinary launch -- including launches
-/// by an administrator. The console then opens bare, the SPA sends no
-/// `X-CivicCast-Setup-Nonce`, and `/api/setup/*` correctly 403s. Because
-/// `POST /api/setup/login` is nonce-gated and is the ONLY route to a staff
-/// token, that is not a first-run inconvenience: it is no sign-in, ever.
-///
-/// Gives this process a real console before any CLI recovery output is
-/// printed, on a release build only (bug fix, field report: `--civiccast-
-/// restore-setup-handoff` "runs and returns nothing" from a terminal).
-///
-/// Root cause: the top-of-file `#![cfg_attr(not(debug_assertions),
-/// windows_subsystem = "windows")]` makes a RELEASE build a GUI-subsystem
-/// binary -- correct for the ordinary double-clicked setup wizard, which
-/// must never flash a console window behind it, but it also means the
-/// process starts with NO console at all. `GetStdHandle` for stdout/stderr
-/// then returns an invalid handle, so every `println!`/`eprintln!` in
-/// [`run_setup_handoff_recovery_pass`] below -- the exit-0/85/86/87 recovery
-/// messages this CLI flag exists to print -- silently goes nowhere when an
-/// operator or a support script invokes this exe from `cmd.exe`/PowerShell.
-/// A debug build never shows the bug (`windows_subsystem` is unset there),
-/// which is exactly why it was field-observed only against a release
-/// candidate.
-///
-/// `AttachConsole(ATTACH_PARENT_PROCESS)` connects to the INVOKING
-/// terminal's own console when the process was launched from one (the
-/// common case this flag is meant for); `AllocConsole()` is the fallback
-/// when that fails (e.g. no parent console at all -- launched from Explorer
-/// or a non-console parent), so the message still lands somewhere visible
-/// rather than being lost a second way. Rust's stdio handles are resolved
-/// via `GetStdHandle` fresh on every write (not cached at process startup),
-/// so calling this BEFORE the first print -- and only before the first
-/// print -- is what makes it take effect; see the doc comment at this
-/// function's one call site in [`run_native_restore_setup_handoff_cli`] for
-/// why that ordering is enforced there.
-///
-/// Narrow by design: only this one CLI flag calls it. No other code path in
-/// this binary prints to a console the operator is watching this way, and
-/// the ordinary GUI launch (no CLI flags at all) must keep behaving exactly
-/// as `windows_subsystem = "windows"` already guarantees -- no console ever
-/// appears behind the setup wizard.
-#[cfg(target_os = "windows")]
-fn attach_or_alloc_console_for_cli_recovery() {
-    use windows_sys::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
-
-    // SAFETY: both are argument-free (or take a plain integer) Win32 calls
-    // documented to be safe to invoke from any thread; neither takes a
-    // pointer this code supplies. A failed AttachConsole (no parent console,
-    // or one already attached) is expected and handled by falling back to
-    // AllocConsole -- never treated as an error worth reporting, since
-    // there is no console yet to report it to.
-    let attached = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
-    if attached == 0 {
-        unsafe {
-            AllocConsole();
-        }
-    }
-}
-
-/// The fix is a self-elevating recovery for THIS ACTION ONLY. The manifest
-/// stays `asInvoker`, so ordinary launches still never prompt.
-fn run_native_restore_setup_handoff_cli(args: &[String]) -> Option<i32> {
-    if !command_line_has_arg(args, RESTORE_SETUP_HANDOFF_FLAG) {
-        return None;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // MUST run before run_setup_handoff_recovery_pass's first
-        // println!/eprintln! -- see attach_or_alloc_console_for_cli_recovery's
-        // own doc comment for why the ordering, not merely the call, is
-        // what fixes the bug.
-        attach_or_alloc_console_for_cli_recovery();
-        Some(run_setup_handoff_recovery_pass(command_line_has_arg(
-            args,
-            RESTORE_SETUP_HANDOFF_ELEVATED_MARKER,
-        )))
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        eprintln!(
-            "Setup-handoff recovery reads a Windows registry key and is only available on Windows."
-        );
-        Some(72)
-    }
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(exit_code) = run_native_restore_setup_handoff_cli(&args) {
-        std::process::exit(exit_code);
-    }
     if let Some(exit_code) = run_native_uninstall_policy_cli(&args) {
         std::process::exit(exit_code);
     }
@@ -6375,13 +5620,10 @@ fn main() {
             "  --civiccast-stop-native-service   stop the LocalSystem supervisor service (idempotent; not-installed/already-stopped is success), for use before a tree rebuild"
         );
         println!(
-            "  --civiccast-teardown-native-state --install-root DIR   D4/D1 uninstall teardown: stop + remove the service, delete the firewall rule, clear the credential registry values (DatabaseUrl, SetupNonce) and the install markers (InstalledVersion), remove the now-empty CivicCast\\Native key, and clear a released Maintenance interlock blob (idempotent, continues past individual absences; exit 0=all steps ok, 82=the service could not be confirmed stopped (unsafe to remove the program tree), 80=some other real failure)"
+            "  --civiccast-teardown-native-state --install-root DIR   D4/D1 uninstall teardown: stop + remove the service, delete the firewall rule, clear the credential registry values (DatabaseUrl) and the install markers (InstalledVersion), remove the now-empty CivicCast\\Native key, and clear a released Maintenance interlock blob (idempotent, continues past individual absences; exit 0=all steps ok, 82=the service could not be confirmed stopped (unsafe to remove the program tree), 80=some other real failure)"
         );
         println!(
             "  --civiccast-repair INSTDIR [--installer-dir DIR] [--require-component NAME]...   D5 re-verify and repair the installed application, version, selector, runtime, dependency, and (if present) caption trees; exit 0=all-verified, 76=repaired, 79=unrepairable"
-        );
-        println!(
-            "  --civiccast-restore-setup-handoff   restore the operator-console setup handoff when \"Open operator console\" opens without its ?nonce= (asks Windows for administrator approval ONCE, for this action only); exit 0=restored, 85=refused (not an administrator; no nonce is disclosed), 86=this station has no stored nonce, 87=the stored nonce is malformed"
         );
         return;
     }

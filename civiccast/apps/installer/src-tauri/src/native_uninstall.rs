@@ -1038,23 +1038,6 @@ pub const NATIVE_D4_STATE_INVENTORY: &[StateInventoryItem] = &[
             product-owned cluster is a separate, still-open unit of work",
     },
     StateInventoryItem {
-        kind: StateItemKind::RegistryValue,
-        identifier: r"HKLM\SOFTWARE\CivicCast\Native\SetupNonce",
-        established_by: "winreg set_value through the SAME ACL-hardened writer \
-            as DatabaseUrl (native_service_registration::write_setup_nonce, \
-            called by run_native_provision during the --civiccast-provision \
-            step of NSIS_HOOK_POSTINSTALL)",
-        removed_by: "native_service_registration::teardown_native_state's \
-            \"clear credentials\" step (delete_native_credential_values), \
-            driven by --civiccast-teardown-native-state \
-            (NSIS_HOOK_PREUNINSTALL; result carried into \
-            NSIS_HOOK_POSTUNINSTALL). SECURITY FIX F-02: this nonce authorizes \
-            creating the station's FIRST ADMINISTRATOR \
-            (civiccast/installer/router.py's _require_local_setup_mutation), \
-            so it is a credential in exactly the sense DatabaseUrl is and was \
-            found surviving uninstall beside it in the same re-walk sweep",
-    },
-    StateInventoryItem {
         kind: StateItemKind::FirewallRule,
         identifier: crate::native_service_registration::FIREWALL_RULE_NAME,
         established_by: "netsh advfirewall firewall add rule (NSIS_HOOK_POSTINSTALL)",
@@ -1095,15 +1078,17 @@ mod state_inventory_tests {
     use super::*;
 
     #[test]
-    fn inventory_has_exactly_the_five_d4_items_service_three_registry_firewall() {
-        assert_eq!(NATIVE_D4_STATE_INVENTORY.len(), 5);
+    fn inventory_has_exactly_the_four_d4_items_service_two_registry_firewall() {
+        assert_eq!(NATIVE_D4_STATE_INVENTORY.len(), 4);
         assert_eq!(
             NATIVE_D4_STATE_INVENTORY
                 .iter()
                 .filter(|item| item.kind == StateItemKind::RegistryValue)
                 .count(),
-            3,
-            "DatabaseUrl, SetupNonce and InstalledVersion are all tracked registry values"
+            2,
+            "DatabaseUrl and InstalledVersion are the tracked registry values -- the \
+             installer-handoff SetupNonce this inventory used to also track was retired \
+             along with the rest of the nonce/handoff mechanism"
         );
         assert!(NATIVE_D4_STATE_INVENTORY
             .iter()
@@ -1182,9 +1167,7 @@ mod state_inventory_tests {
     /// F-02 (sandbox newcomer re-walk `dd7f835f`, 2026-08-01): the live
     /// PostgreSQL password was read verbatim out of
     /// `HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl` on a machine where the
-    /// product had already been uninstalled through its own uninstaller, and
-    /// the installer-handoff `SetupNonce` (which authorizes creating the
-    /// station's FIRST ADMINISTRATOR) sat beside it. Both are CREDENTIALS.
+    /// product had already been uninstalled through its own uninstaller.
     /// "Uninstall deliberately preserves product data" is a decision about
     /// DATA -- it was never a decision to leave live secrets on a machine the
     /// product no longer occupies.
@@ -1195,12 +1178,15 @@ mod state_inventory_tests {
     /// the "deliberately preserved until a future PURGE" fate that
     /// `every_item_names_both_an_establishing_and_a_removing_step` above
     /// otherwise permits.
+    ///
+    /// RETIRED: the installer-handoff `SetupNonce` used to be tracked here
+    /// too, as a second credential beside `DatabaseUrl`. The nonce/handoff
+    /// mechanism was retired in favor of the control plane admitting first
+    /// setup purely by checking the request's peer IP is loopback, so there
+    /// is no longer a second credential-shaped value under this key.
     #[test]
     fn every_credential_bearing_value_is_removed_by_an_ordinary_uninstall() {
-        for identifier in [
-            r"HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl",
-            r"HKLM\SOFTWARE\CivicCast\Native\SetupNonce",
-        ] {
+        for identifier in [r"HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl"] {
             let item = NATIVE_D4_STATE_INVENTORY
                 .iter()
                 .find(|item| item.identifier == identifier)

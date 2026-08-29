@@ -44,10 +44,11 @@ here):
   (:func:`format_handoff_line`). Every other write this module performs
   (``sys.stderr.write`` progress lines) is static text or a phase name --
   never the password or a URL containing it. Grepping this file for
-  ``print(`` finds exactly THREE call sites: the DatabaseUrl handoff line and
-  the two :func:`format_setup_nonce_line` calls, which carry the installer
-  handoff NONCE (a different secret, on its own distinctly prefixed line --
-  see :data:`SETUP_NONCE_MARKER_PREFIX`) and never the password.
+  ``print(`` finds exactly ONE call site: the DatabaseUrl handoff line. (The
+  installer-handoff setup nonce that used to travel the same way was retired
+  2026-08-29 -- owner decision -- once the control plane's loopback-only bind
+  made it a redundant gate; see ``civiccast.installer.router.
+  _require_local_setup_request``.)
 * ``civiccast.native.provision.orchestrator`` never writes the password into
   a journal history entry, the recovery document, or a log line -- verified
   by inspection: every ``_persist``/``_halt`` call's ``detail`` string is
@@ -125,7 +126,6 @@ from civiccast.native.provision.seams import (
     psql_path_for,
     reset_cluster_credential,
 )
-from civiccast.native.setup_nonce import generate_setup_nonce, validate_setup_nonce
 
 # ---------------------------------------------------------------------------
 # Exit codes -- the installer branches on a number, not stderr text (same
@@ -213,55 +213,6 @@ def parse_handoff_line(captured_stdout: str) -> str | None:
     for line in captured_stdout.splitlines():
         if line.startswith(HANDOFF_MARKER_PREFIX):
             return line[len(HANDOFF_MARKER_PREFIX) :]
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Setup-nonce handoff: the SAME marker-line mechanism, for the installer
-# handoff nonce (`civiccast.native.setup_nonce`).
-#
-# The nonce is generated here, at provision time, and handed to the already-
-# elevated Rust installer, which persists it into the ACL-hardened
-# HKLM\SOFTWARE\CivicCast\Native key beside DatabaseUrl. It travels on stdout
-# rather than an argv for exactly the reason the DatabaseUrl does: an argv is
-# world-readable to any process that can enumerate command lines.
-#
-# Unlike the DatabaseUrl line, this one is printed on EVERY successful exit --
-# including NOOP_REUSE_EXISTING, where no cluster work happens at all. The
-# nonce is a per-install handoff token, not a credential bound to the
-# preserved cluster, so a reinstall/upgrade over an existing database must
-# still end up with a usable one. A station provisioned by a build from before
-# this existed otherwise has no nonce at all and can never complete setup.
-# ---------------------------------------------------------------------------
-
-SETUP_NONCE_MARKER_PREFIX = "CIVICCAST_SETUP_NONCE="
-
-
-def format_setup_nonce_line(nonce: str) -> str:
-    """The one stdout line carrying the setup nonce.
-
-    Re-validates against the shared envelope rather than trusting the caller:
-    this value ends up in the installer's handoff URL query string and in a
-    registry write, and an out-of-envelope value would be rejected at the far
-    end anyway -- failing here says why, instead of silently producing a line
-    the Rust parser discards.
-    """
-
-    validated = validate_setup_nonce(nonce)
-    if validated is None:
-        raise ValueError(
-            "setup nonce must be 16-256 URL-safe characters (A-Z a-z 0-9 - _), "
-            "matching the installer's own validated_setup_nonce envelope"
-        )
-    return f"{SETUP_NONCE_MARKER_PREFIX}{validated}"
-
-
-def parse_setup_nonce_line(captured_stdout: str) -> str | None:
-    """Mirrored by the Rust side's ``parse_provision_setup_nonce``."""
-
-    for line in captured_stdout.splitlines():
-        if line.startswith(SETUP_NONCE_MARKER_PREFIX):
-            return validate_setup_nonce(line[len(SETUP_NONCE_MARKER_PREFIX) :])
     return None
 
 
@@ -818,7 +769,6 @@ def _run_engine_and_finish(
     sys.stderr.write("provision outcome: schema migrated to alembic head\n")
 
     print(format_handoff_line(database_url))
-    print(format_setup_nonce_line(generate_setup_nonce()))
     return EXIT_SUCCESS
 
 
@@ -910,12 +860,6 @@ def main(argv: list[str] | None = None) -> int:
             "provision outcome: noop_reuse_existing (an existing PostgreSQL cluster and "
             "an existing DatabaseUrl registry value were both found; neither was touched)\n"
         )
-        # A fresh handoff nonce even on the no-op path: it is a per-install
-        # token, not cluster state. See SETUP_NONCE_MARKER_PREFIX's section
-        # comment -- without this a reinstall/upgrade over a preserved cluster
-        # (and any station provisioned before the nonce existed) could never
-        # complete setup.
-        print(format_setup_nonce_line(generate_setup_nonce()))
         return EXIT_SUCCESS
 
     if action is ProvisionCliAction.FAIL_LOUD_CREDENTIAL_LOST:

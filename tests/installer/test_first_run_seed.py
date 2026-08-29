@@ -30,9 +30,6 @@ from civiccast.schedule.models import ASSET_STATE_VALIDATED, StaffAssetRow, Uplo
 from civiccast.schedule.store import AssetNotFoundError
 from civiccast.stream.packager import VodPackageResult
 
-_SETUP_NONCE = "storage-nonce"
-_SETUP_HEADERS = {"X-CivicCast-Setup-Nonce": _SETUP_NONCE}
-
 _FFPROBE_SAMPLE = FfprobeResult(
     duration_seconds=20,
     codec_video="h264",
@@ -183,16 +180,13 @@ def _seed_patches() -> Iterator[None]:
 
 def test_first_admin_setup_seeds_sample_content_and_starter_schedule(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     asset_store = FakeFirstRunAssetStore()
     schedule_store = FakeScheduleStore()
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", headers=_SETUP_HEADERS, json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         assert setup_response.status_code == 200
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
@@ -234,7 +228,6 @@ def test_first_admin_setup_skips_seeding_when_sample_content_disabled(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     asset_store = FakeFirstRunAssetStore()
     schedule_store = FakeScheduleStore()
@@ -243,7 +236,6 @@ def test_first_admin_setup_skips_seeding_when_sample_content_disabled(
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
         setup_response = client.post(
             "/api/setup/first-admin",
-            headers=_SETUP_HEADERS,
             json=_setup_payload(sample_content_enabled=False),
         )
         token = setup_response.json()["operator_console_token"]
@@ -263,7 +255,6 @@ def test_first_admin_setup_seeds_content_without_schedule_when_toggle_off(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     asset_store = FakeFirstRunAssetStore()
     schedule_store = FakeScheduleStore()
@@ -272,7 +263,6 @@ def test_first_admin_setup_seeds_content_without_schedule_when_toggle_off(
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
         setup_response = client.post(
             "/api/setup/first-admin",
-            headers=_SETUP_HEADERS,
             json=_setup_payload(initial_schedule_enabled=False),
         )
         token = setup_response.json()["operator_console_token"]
@@ -291,7 +281,6 @@ def test_first_admin_setup_seeds_content_without_schedule_when_toggle_off(
 
 def test_first_run_seed_failure_is_persisted_visible_and_retryable(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     asset_store = FakeFirstRunAssetStore()
     asset_store.fail_mark_packaged = True
@@ -299,9 +288,7 @@ def test_first_run_seed_failure_is_persisted_visible_and_retryable(monkeypatch, 
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", headers=_SETUP_HEADERS, json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         assert setup_response.status_code == 200  # first-admin never blocks on seeding
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
@@ -334,16 +321,13 @@ def test_first_run_seed_failure_is_persisted_visible_and_retryable(monkeypatch, 
 
 def test_first_run_seed_fails_loudly_without_upload_storage(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.delenv("CIVICCAST_UPLOAD_DIR", raising=False)
     asset_store = FakeFirstRunAssetStore()
     schedule_store = FakeScheduleStore()
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", headers=_SETUP_HEADERS, json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         status_response = client.get(
             "/api/staff/installer/sample-seed-status",
@@ -361,7 +345,6 @@ def test_first_run_seed_schedule_step_failure_keeps_the_seeded_asset_id(
     monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     asset_store = FakeFirstRunAssetStore()
     schedule_store = FakeScheduleStore()
@@ -369,9 +352,7 @@ def test_first_run_seed_schedule_step_failure_keeps_the_seeded_asset_id(
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", headers=_SETUP_HEADERS, json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         status_response = client.get(
             "/api/staff/installer/sample-seed-status",
@@ -395,7 +376,6 @@ def test_retry_after_schedule_step_failure_resumes_instead_of_reseeding(
     """Codex review, PR #419 P2: retrying a schedule-only failure must not
     publish a second sample asset while the first stays public."""
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     asset_store = FakeFirstRunAssetStore()
     schedule_store = FakeScheduleStore()
@@ -403,9 +383,7 @@ def test_retry_after_schedule_step_failure_resumes_instead_of_reseeding(
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", headers=_SETUP_HEADERS, json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
 
@@ -436,7 +414,6 @@ def test_retry_after_ingest_failure_still_reseeds_from_scratch(monkeypatch, tmp_
     """Only a schedule-step failure (asset already published) resumes.
     A failure with no published asset yet has nothing to resume from."""
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     asset_store = FakeFirstRunAssetStore()
     asset_store.fail_mark_packaged = True
@@ -444,9 +421,7 @@ def test_retry_after_ingest_failure_still_reseeds_from_scratch(monkeypatch, tmp_
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", headers=_SETUP_HEADERS, json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
 
@@ -474,16 +449,13 @@ def test_abandoned_pending_seed_is_reconciled_to_failed_on_read(monkeypatch, tmp
     nothing for "pending", so an un-reconciled record is a silent failure,
     which audit K3-1 requires this feature never produce."""
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     asset_store = FakeFirstRunAssetStore()
     schedule_store = FakeScheduleStore()
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", headers=_SETUP_HEADERS, json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         assert setup_response.status_code == 200
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
@@ -519,16 +491,13 @@ def test_pending_seed_within_the_staleness_window_is_left_alone(monkeypatch, tmp
     """A pending record that is merely a few seconds old (the normal,
     still-in-flight case) must not be reconciled away."""
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICCAST_SETUP_NONCE", _SETUP_NONCE)
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     asset_store = FakeFirstRunAssetStore()
     schedule_store = FakeScheduleStore()
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", headers=_SETUP_HEADERS, json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
 

@@ -1167,11 +1167,9 @@ fn write_value_to_key(
     sddl: &str,
     validate: fn(&str) -> Result<(), String>,
 ) -> Result<(), String> {
-    // The validator is a PARAMETER, not a hardcoded call: this key now holds
-    // two different credential-bearing values with two different shapes
-    // (a `postgresql://` URL and a URL-safe setup nonce), and running the
-    // DatabaseUrl check over a nonce would reject every valid one. Each caller
-    // names the check its own value must pass; neither can skip having one.
+    // The validator is a PARAMETER, not a hardcoded call: this function is
+    // shared by every value written under this key, and each caller names
+    // the check its own value must pass rather than skipping one.
     validate(value)?;
     let root_key = RegKey::predef(root);
     // KEY_ALL_ACCESS (not just KEY_READ|KEY_SET_VALUE): setting a NEW security
@@ -1220,147 +1218,20 @@ pub fn write_database_url(value: &str) -> Result<(), String> {
     )
 }
 
-/// Persist the installer-handoff setup nonce beside `DatabaseUrl`, in the SAME
-/// ACL-hardened key (SYSTEM + Administrators only, inheritance disabled).
-///
-/// The nonce authorizes creating the station's FIRST ADMINISTRATOR
-/// (`civiccast/installer/router.py`'s `_require_local_setup_mutation`
-/// compares it against `X-CivicCast-Setup-Nonce` with `hmac.compare_digest`),
-/// so it gets the database credential's protection, not a weaker one -- on a
-/// shared municipal PC "another user of the same machine" is a realistic
-/// threat, which is exactly why that DACL exists.
-///
-/// Read back by two consumers: the LocalSystem supervisor
-/// (`civiccast.native.setup_nonce.read_persisted_setup_nonce`, which puts it
-/// in the control plane child's `CIVICCAST_SETUP_NONCE`), and this installer
-/// itself (`main.rs`'s `native_setup_nonce_from_registry`, which builds the
-/// `?nonce=` handoff URL behind "Open operator console").
-#[cfg(target_os = "windows")]
-pub fn write_setup_nonce(value: &str) -> Result<(), String> {
-    write_value_to_key(
-        HKEY_LOCAL_MACHINE,
-        DATABASE_URL_KEY,
-        SETUP_NONCE_VALUE_NAME,
-        value,
-        SYSTEM_ADMIN_ONLY_SDDL,
-        validate_setup_nonce_value,
-    )
-}
-
-/// WHY the setup nonce could not be read -- the distinction `Option<String>`
-/// destroys.
-///
-/// BLOCKER N-04 (the setup-handoff recovery lane): every caller of the old
-/// `Option`-returning read collapsed "this process is not elevated, so the
-/// ACL refused us" into the same `None` as "this station never had a nonce".
-/// Those two need OPPOSITE operator responses -- the first is recoverable by
-/// re-running elevated, the second is not recoverable at all -- and the setup
-/// app cannot tell an operator which one they are in without this.
-///
-/// Mirrors the Python half's status vocabulary
-/// (`civiccast.native.setup_nonce.read_persisted_setup_nonce_status`:
-/// `ok` / `access-denied` / `missing` / `invalid`) so both ends of the same
-/// recovery name the same failures the same way.
-#[cfg(target_os = "windows")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SetupNonceRead {
-    /// A persisted value that survived [`validate_setup_nonce_value`].
-    Ok(String),
-    /// The key exists but this token may not read it -- Win32 error 5. On a
-    /// station provisioned normally this is the `asInvoker` setup app's
-    /// EXPECTED result, including when an administrator launched it, because
-    /// UAC's filtered token carries `Administrators` as deny-only.
-    AccessDenied,
-    /// No key, or no `SetupNonce` value under it -- never provisioned, or
-    /// provisioned by a build from before the nonce existed.
-    Missing,
-    /// A persisted value that does NOT survive [`validate_setup_nonce_value`].
-    /// Treated as absent on purpose: handing a malformed value to the control
-    /// plane would fail its `hmac.compare_digest` anyway, and forwarding it
-    /// would only turn a clear refusal into a confusing 403.
-    Invalid,
-}
-
-/// Real logic for [`read_setup_nonce`], parameterized over the predefined
-/// registry root -- the SAME pure/thin-wrapper split [`write_value_to_key`]
-/// and [`delete_values_from_key`] already use in this file, and for the same
-/// reason.
-///
-/// N-02's test suite only ever covered the PURE functions, which is precisely
-/// how the handoff defect shipped: nothing drove the real registry read. This
-/// seam lets `tests::read_setup_nonce_from_*` exercise this exact function
-/// through a real (non-admin, HKCU-scoped) round trip.
-///
-/// Reads ONLY. Creates nothing, writes nothing, and changes no ACL -- an
-/// unreadable key stays unreadable, and this function has no path that could
-/// widen one.
-#[cfg(target_os = "windows")]
-fn read_setup_nonce_from(root: winreg::HKEY, key_path: &str) -> SetupNonceRead {
-    let key = match RegKey::predef(root).open_subkey_with_flags(key_path, KEY_READ | KEY_WOW64_64KEY)
-    {
-        Ok(key) => key,
-        Err(error) if error.raw_os_error() == Some(ACCESS_DENIED_WIN32) => {
-            return SetupNonceRead::AccessDenied
-        }
-        Err(_) => return SetupNonceRead::Missing,
-    };
-    let value: String = match key.get_value(SETUP_NONCE_VALUE_NAME) {
-        Ok(value) => value,
-        Err(error) if error.raw_os_error() == Some(ACCESS_DENIED_WIN32) => {
-            return SetupNonceRead::AccessDenied
-        }
-        Err(_) => return SetupNonceRead::Missing,
-    };
-    let nonce = value.trim().to_string();
-    match validate_setup_nonce_value(&nonce) {
-        Ok(()) => SetupNonceRead::Ok(nonce),
-        Err(_) => SetupNonceRead::Invalid,
-    }
-}
-
-/// `ERROR_ACCESS_DENIED`. Named rather than inlined because distinguishing it
-/// from every other failure is the entire point of [`SetupNonceRead`].
-#[cfg(target_os = "windows")]
-const ACCESS_DENIED_WIN32: i32 = 5;
-
-/// Read the persisted setup nonce back, naming WHY when there is none.
-///
-/// Thin wrapper over [`read_setup_nonce_from`] against the real
-/// `HKLM`/[`DATABASE_URL_KEY`] the elevated installer wrote.
-#[cfg(target_os = "windows")]
-pub fn read_setup_nonce_status() -> SetupNonceRead {
-    read_setup_nonce_from(HKEY_LOCAL_MACHINE, DATABASE_URL_KEY)
-}
-
-/// Read the persisted setup nonce back, or `None`.
-///
-/// `None` covers every legitimate absence -- a station provisioned by a build
-/// from before the nonce existed, a key this process cannot read -- and
-/// callers MUST degrade rather than invent a value: an absent nonce means
-/// setup mutations stay refused (correct, fail-closed), while a fabricated one
-/// would make a guessable credential authoritative. A persisted value that
-/// does not survive [`validate_setup_nonce_value`] is treated as absent.
-///
-/// Contract unchanged; now a thin wrapper over [`read_setup_nonce_status`]
-/// for callers that genuinely cannot act on the distinction.
-#[cfg(target_os = "windows")]
-pub fn read_setup_nonce() -> Option<String> {
-    match read_setup_nonce_status() {
-        SetupNonceRead::Ok(nonce) => Some(nonce),
-        _ => None,
-    }
-}
-
 /// Every value under [`DATABASE_URL_KEY`] that carries a LIVE SECRET.
 ///
-/// `DatabaseUrl` embeds the PostgreSQL password for the `civiccast_svc` role;
-/// `SetupNonce` is the installer-handoff token that authorizes creating the
-/// station's FIRST ADMINISTRATOR (`civiccast/installer/router.py`'s
-/// `_require_local_setup_mutation`). Both are written through
-/// [`write_value_to_key`] with [`SYSTEM_ADMIN_ONLY_SDDL`], and both are
-/// deleted together by [`delete_native_credential_values`] -- a station that
-/// no longer exists must not leave either of them behind.
-pub const CREDENTIAL_VALUE_NAMES: &[&str] = &[DATABASE_URL_VALUE_NAME, SETUP_NONCE_VALUE_NAME];
+/// `DatabaseUrl` embeds the PostgreSQL password for the `civiccast_svc` role.
+/// Written through [`write_value_to_key`] with [`SYSTEM_ADMIN_ONLY_SDDL`],
+/// and deleted by [`delete_native_credential_values`] -- a station that no
+/// longer exists must not leave it behind.
+///
+/// RETIRED: this set used to also carry the installer-handoff setup nonce
+/// (`SetupNonce`). The nonce/handoff mechanism was retired in favor of the
+/// control plane admitting first setup purely by checking the request's peer
+/// IP is loopback (`civiccast/installer/router.py`'s
+/// `_require_local_setup_request`), so there is no longer a second
+/// credential-shaped value under this key to track here.
+pub const CREDENTIAL_VALUE_NAMES: &[&str] = &[DATABASE_URL_VALUE_NAME];
 
 /// Real logic for the deletion counterparts below, parameterized over the
 /// predefined registry root -- the SAME pure/thin-wrapper split
@@ -1674,11 +1545,7 @@ pub fn delete_native_registry_values() -> Result<Vec<(&'static str, bool)>, Stri
     delete_values_from_key(
         HKEY_LOCAL_MACHINE,
         DATABASE_URL_KEY,
-        &[
-            DATABASE_URL_VALUE_NAME,
-            SETUP_NONCE_VALUE_NAME,
-            INSTALLED_VERSION_VALUE_NAME,
-        ],
+        &[DATABASE_URL_VALUE_NAME, INSTALLED_VERSION_VALUE_NAME],
     )
 }
 
@@ -1783,58 +1650,6 @@ pub fn parse_provision_handoff(captured_stdout: &str) -> Option<String> {
         .map(|value| value.to_string())
 }
 
-/// The provisioning engine's SETUP-NONCE handoff marker
-/// (`civiccast.native.provision.__main__.SETUP_NONCE_MARKER_PREFIX`).
-///
-/// A different secret from the DatabaseUrl, on its own distinctly prefixed
-/// line, and printed on EVERY successful provisioning exit -- including the
-/// no-op reuse path, because the nonce is a per-install handoff token rather
-/// than cluster state (see that constant's section comment in the Python
-/// module for the full reasoning).
-pub const PROVISION_SETUP_NONCE_MARKER_PREFIX: &str = "CIVICCAST_SETUP_NONCE=";
-
-/// The registry value name the setup nonce is persisted under, beside
-/// [`DATABASE_URL_VALUE_NAME`] in the SAME ACL-hardened key. Mirrors
-/// `civiccast.native.setup_nonce.SETUP_NONCE_VALUE_NAME`, which is what the
-/// LocalSystem supervisor reads it back through.
-pub const SETUP_NONCE_VALUE_NAME: &str = "SetupNonce";
-
-/// Pure validation for a setup nonce before it is written to the registry or
-/// pasted into the installer's handoff URL. The SAME envelope both other ends
-/// state independently -- `main.rs`'s `validated_setup_nonce` and
-/// `civiccast.native.setup_nonce.validate_setup_nonce`. Fails CLOSED: a nonce
-/// is an authorization token, and accepting a short or punctuation-bearing
-/// value would either weaken the gate or smuggle characters into a URL query
-/// string.
-pub fn validate_setup_nonce_value(value: &str) -> Result<(), String> {
-    let nonce = value.trim();
-    if !(16..=256).contains(&nonce.len()) {
-        return Err("Setup nonce must be 16-256 characters.".to_string());
-    }
-    if !nonce
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-    {
-        return Err(
-            "Setup nonce must contain only URL-safe characters (A-Z a-z 0-9 - _).".to_string(),
-        );
-    }
-    Ok(())
-}
-
-/// Mirrors `civiccast.native.provision.__main__.parse_setup_nonce_line`:
-/// first line carrying the marker wins, and the value must survive
-/// [`validate_setup_nonce_value`] -- a malformed line yields `None` rather
-/// than a bad registry write.
-pub fn parse_provision_setup_nonce(captured_stdout: &str) -> Option<String> {
-    captured_stdout
-        .lines()
-        .find_map(|line| line.strip_prefix(PROVISION_SETUP_NONCE_MARKER_PREFIX))
-        .map(str::trim)
-        .filter(|value| validate_setup_nonce_value(value).is_ok())
-        .map(str::to_string)
-}
-
 /// Base64-encode an Ed25519 public key's raw 32 bytes (STANDARD alphabet,
 /// matching `native_packs.rs`'s own `BASE64` usage) -- the ONE argv value
 /// this module passes to the Python engine that is NOT credential-sensitive:
@@ -1908,22 +1723,6 @@ pub fn run_native_provision(
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // The setup nonce is written on EVERY successful provisioning exit,
-    // including the no-op reuse path (which prints no DatabaseUrl line at
-    // all): it is a per-install handoff token, not cluster state, and without
-    // it the control plane refuses every /api/setup/* mutation and first-run
-    // setup cannot be completed. Fails LOUD -- an install that finishes with
-    // no nonce is an install whose operator can never create the first
-    // administrator, which is not a warning.
-    let Some(setup_nonce) = parse_provision_setup_nonce(&stdout) else {
-        return Err(
-            "CivicCast (Native) provisioning printed no valid setup-nonce handoff line, so \
-             first-run setup could never be authorized on this station. See the provisioning \
-             journal under %ProgramData%\\CivicCast\\provision."
-                .to_string(),
-        );
-    };
-    write_setup_nonce(&setup_nonce)?;
     // Chain G: claim the dual-runtime selector this install just earned the
     // right to. Nothing else in a native install ever wrote
     // HKLM\SOFTWARE\CivicCast\ActiveRuntime, so every native station came up
@@ -1942,9 +1741,9 @@ pub fn run_native_provision(
     let selector_claim = crate::native_uninstall::claim_install_selector();
     eprintln!("{}", selector_claim.detail);
     if let Some(error) = selector_claim.write_error {
-        // Fails LOUD for the same reason the setup nonce does: an install
-        // that finishes without the selector it decided to claim produces a
-        // station whose control plane can never start.
+        // Fails LOUD: an install that finishes without the selector it
+        // decided to claim produces a station whose control plane can never
+        // start.
         return Err(format!(
             "CivicCast (Native) provisioning could not claim the dual-runtime selector, so the \
              station's control plane would never be authorized to start: {error}"
@@ -3553,27 +3352,27 @@ mod tests {
     /// the predefined root/path differ -- the same HKCU-scoped, non-admin
     /// convention that test already established, for the same reason).
     ///
-    /// Writes a DatabaseUrl-shaped value and a SetupNonce-shaped value through
-    /// the production writer, deletes them through the production deleter, and
-    /// proves BOTH are actually gone by reading them back. Then runs the
-    /// deleter a second time to prove idempotency (already-absent is success,
-    /// reported as "was already absent", not an error) -- the property the
-    /// uninstall path depends on, since a station may be uninstalled after a
-    /// failed install that never wrote either value.
+    /// Writes a DatabaseUrl-shaped value through the production writer,
+    /// deletes it through the production deleter, and proves it is actually
+    /// gone by reading it back. Then runs the deleter a second time to prove
+    /// idempotency (already-absent is success, reported as "was already
+    /// absent", not an error) -- the property the uninstall path depends on,
+    /// since a station may be uninstalled after a failed install that never
+    /// wrote the value.
     #[cfg(target_os = "windows")]
     #[test]
-    fn delete_values_from_key_removes_both_credential_values_and_is_idempotent() {
+    fn delete_values_from_key_removes_the_credential_value_and_is_idempotent() {
         use winreg::enums::HKEY_CURRENT_USER;
 
         let scratch_path = format!(
-            r"Software\CivicCastAclHardenTest\delete_values_from_key_removes_both_credential_values_and_is_idempotent\{}",
+            r"Software\CivicCastAclHardenTest\delete_values_from_key_removes_the_credential_value_and_is_idempotent\{}",
             std::process::id()
         );
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let _ = hkcu.delete_subkey_all(&scratch_path);
 
         // Written through the PRODUCTION writer, so this test would also fail
-        // if the write path stopped landing the values at all.
+        // if the write path stopped landing the value at all.
         write_value_to_key(
             HKEY_CURRENT_USER,
             &scratch_path,
@@ -3583,56 +3382,42 @@ mod tests {
             validate_database_url_value,
         )
         .expect("scratch DatabaseUrl write must succeed");
-        write_value_to_key(
-            HKEY_CURRENT_USER,
-            &scratch_path,
-            SETUP_NONCE_VALUE_NAME,
-            "nn05NL7FQU9HDgqqePiiHKatM2pve_QIVbbANCdt-HI",
-            "D:(A;;GA;;;WD)",
-            validate_setup_nonce_value,
-        )
-        .expect("scratch SetupNonce write must succeed");
 
         let first = delete_values_from_key(
             HKEY_CURRENT_USER,
             &scratch_path,
-            &[DATABASE_URL_VALUE_NAME, SETUP_NONCE_VALUE_NAME],
+            &[DATABASE_URL_VALUE_NAME],
         )
-        .expect("deleting the credential values must succeed");
+        .expect("deleting the credential value must succeed");
         assert_eq!(
             first,
-            vec![(DATABASE_URL_VALUE_NAME, true), (SETUP_NONCE_VALUE_NAME, true)],
-            "both credential values must be reported as ACTUALLY deleted"
+            vec![(DATABASE_URL_VALUE_NAME, true)],
+            "the credential value must be reported as ACTUALLY deleted"
         );
 
-        // The real proof: read them back. A reported deletion that did not
+        // The real proof: read it back. A reported deletion that did not
         // happen is exactly the class of claim F-02 was.
         let key = hkcu
             .open_subkey_with_flags(&scratch_path, KEY_READ | KEY_WOW64_64KEY)
             .expect("the scratch key itself must survive -- only its VALUES are deleted");
-        for name in [DATABASE_URL_VALUE_NAME, SETUP_NONCE_VALUE_NAME] {
-            let readback: Result<String, _> = key.get_value(name);
-            assert!(
-                readback.is_err(),
-                "{name} must be GONE from the registry after the teardown deletion, not merely \
-                 reported as deleted"
-            );
-        }
+        let readback: Result<String, _> = key.get_value(DATABASE_URL_VALUE_NAME);
+        assert!(
+            readback.is_err(),
+            "{DATABASE_URL_VALUE_NAME} must be GONE from the registry after the teardown \
+             deletion, not merely reported as deleted"
+        );
         drop(key);
 
         let second = delete_values_from_key(
             HKEY_CURRENT_USER,
             &scratch_path,
-            &[DATABASE_URL_VALUE_NAME, SETUP_NONCE_VALUE_NAME],
+            &[DATABASE_URL_VALUE_NAME],
         )
-        .expect("a second deletion over already-absent values must be success, not an error");
+        .expect("a second deletion over an already-absent value must be success, not an error");
         assert_eq!(
             second,
-            vec![
-                (DATABASE_URL_VALUE_NAME, false),
-                (SETUP_NONCE_VALUE_NAME, false)
-            ],
-            "already-absent values must be reported as such, never as a fresh deletion"
+            vec![(DATABASE_URL_VALUE_NAME, false)],
+            "an already-absent value must be reported as such, never as a fresh deletion"
         );
 
         // ...and an entirely absent KEY is idempotent success too.
@@ -3641,7 +3426,7 @@ mod tests {
         let absent_key = delete_values_from_key(
             HKEY_CURRENT_USER,
             &scratch_path,
-            &[DATABASE_URL_VALUE_NAME, SETUP_NONCE_VALUE_NAME],
+            &[DATABASE_URL_VALUE_NAME],
         )
         .expect("an absent key must be idempotent success");
         assert!(absent_key.iter().all(|(_, deleted)| !deleted));
@@ -3725,7 +3510,7 @@ mod tests {
         );
         assert_eq!(
             CREDENTIAL_VALUE_NAMES,
-            &[DATABASE_URL_VALUE_NAME, SETUP_NONCE_VALUE_NAME],
+            &[DATABASE_URL_VALUE_NAME],
             "every value under CivicCast\\Native that carries a live secret must be in the set \
              the teardown clears"
         );
@@ -4135,271 +3920,4 @@ mod tests {
         let _ = hkcu.delete_subkey_all(&scratch_path);
     }
 
-    #[test]
-    fn the_setup_nonce_marker_is_distinct_from_the_database_url_marker() {
-        // Both lines appear on the SAME captured stdout on the fresh-provision
-        // path. A shared or prefix-overlapping marker would make one parser
-        // silently return the other's secret.
-        assert_ne!(
-            PROVISION_SETUP_NONCE_MARKER_PREFIX,
-            PROVISION_HANDOFF_MARKER_PREFIX
-        );
-        assert!(!PROVISION_SETUP_NONCE_MARKER_PREFIX.starts_with(PROVISION_HANDOFF_MARKER_PREFIX));
-        assert!(!PROVISION_HANDOFF_MARKER_PREFIX.starts_with(PROVISION_SETUP_NONCE_MARKER_PREFIX));
-    }
-
-    #[test]
-    fn parse_provision_setup_nonce_finds_its_own_line_among_the_other_secret_and_noise() {
-        let captured = format!(
-            "some unrelated diagnostic line\n\
-             {PROVISION_HANDOFF_MARKER_PREFIX}postgresql://u:p@127.0.0.1:5432/civiccast\n\
-             {PROVISION_SETUP_NONCE_MARKER_PREFIX}abcdEFGH-1234_5678wxyz\n\
-             trailing noise\n"
-        );
-
-        assert_eq!(
-            parse_provision_setup_nonce(&captured).as_deref(),
-            Some("abcdEFGH-1234_5678wxyz")
-        );
-        // ...and the DatabaseUrl parser is unaffected by the new line.
-        assert_eq!(
-            parse_provision_handoff(&captured).as_deref(),
-            Some("postgresql://u:p@127.0.0.1:5432/civiccast")
-        );
-    }
-
-    #[test]
-    fn parse_provision_setup_nonce_is_none_when_absent_or_malformed() {
-        assert_eq!(parse_provision_setup_nonce(""), None);
-        assert_eq!(parse_provision_setup_nonce("nothing here\nor here\n"), None);
-        // Present but outside the envelope: treated as ABSENT rather than
-        // written to the registry, so a garbled line can never install a weak
-        // or injection-bearing nonce.
-        for bad in ["short", "has spaces in it 1234", "semi;colons;in;it;1234"] {
-            assert_eq!(
-                parse_provision_setup_nonce(&format!(
-                    "{PROVISION_SETUP_NONCE_MARKER_PREFIX}{bad}\n"
-                )),
-                None,
-                "a malformed nonce line must not parse: {bad:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn validate_setup_nonce_value_states_the_same_envelope_as_both_other_ends() {
-        // main.rs's `validated_setup_nonce` and
-        // civiccast.native.setup_nonce.validate_setup_nonce state this same
-        // rule independently; all three are tested against it so no end can
-        // drift without a test going red.
-        assert!(validate_setup_nonce_value(&"a".repeat(16)).is_ok());
-        assert!(validate_setup_nonce_value(&"a".repeat(256)).is_ok());
-        assert!(validate_setup_nonce_value("a-b_C9").is_err());
-        assert!(validate_setup_nonce_value(&"a".repeat(257)).is_err());
-        assert!(validate_setup_nonce_value("has spaces in it 1234").is_err());
-        assert!(validate_setup_nonce_value("").is_err());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn write_value_to_key_refuses_a_nonce_that_fails_its_own_validator() {
-        use winreg::enums::HKEY_CURRENT_USER;
-
-        let scratch_path = format!(
-            r"Software\CivicCastAclHardenTest\write_value_to_key_refuses_a_nonce_that_fails_its_own_validator\{}",
-            std::process::id()
-        );
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let _ = hkcu.delete_subkey_all(&scratch_path);
-
-        // The validator is a parameter now; this proves it is actually
-        // ENFORCED per value, not just carried, and that the wrong validator
-        // cannot be silently skipped.
-        let error = write_value_to_key(
-            HKEY_CURRENT_USER,
-            &scratch_path,
-            "TestSetupNonce",
-            "too-short",
-            SYSTEM_ADMIN_ONLY_SDDL,
-            validate_setup_nonce_value,
-        )
-        .expect_err("an out-of-envelope nonce must be refused before any registry write");
-        assert!(error.contains("16-256"), "unexpected error text: {error}");
-
-        // A DatabaseUrl-shaped value must ALSO be refused under the nonce
-        // validator -- the two shapes are not interchangeable.
-        assert!(write_value_to_key(
-            HKEY_CURRENT_USER,
-            &scratch_path,
-            "TestSetupNonce",
-            "postgresql://u:p@127.0.0.1:5432/civiccast",
-            SYSTEM_ADMIN_ONLY_SDDL,
-            validate_setup_nonce_value,
-        )
-        .is_err());
-
-        let _ = hkcu.delete_subkey_all(&scratch_path);
-    }
-
-    /// `WRITE_DAC`. The key's OWNER holds this implicitly even after the DACL
-    /// stops granting them anything else, which is the only reason the
-    /// access-denied test below can clean up after itself.
-    #[cfg(target_os = "windows")]
-    const WRITE_DAC_ACCESS: u32 = 0x0004_0000;
-
-    /// Best-effort teardown for a key whose DACL was deliberately restricted:
-    /// reopen via the owner's implicit `WRITE_DAC`, put a permissive DACL
-    /// back, then delete. Never asserts -- a leaked scratch key under
-    /// `HKCU\Software\CivicCastAclHardenTest` is harmless, and a cleanup
-    /// failure must not turn into a false test failure.
-    #[cfg(target_os = "windows")]
-    fn release_and_delete_scratch_key(scratch_path: &str) {
-        use winreg::enums::HKEY_CURRENT_USER;
-
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        if let Ok(key) = hkcu.open_subkey_with_flags(scratch_path, WRITE_DAC_ACCESS) {
-            let _ = registry_acl::harden_key_acl(key.raw_handle(), "D:(A;;GA;;;WD)");
-        }
-        let _ = hkcu.delete_subkey_all(scratch_path);
-    }
-
-    /// THE regression test for the shipped defect (BLOCKER N-04).
-    ///
-    /// N-02's suite covered only the pure URL/nonce decision functions, so
-    /// nothing ever drove the real registry read -- and the real registry read
-    /// is where the handoff actually broke. This drives the production
-    /// [`read_setup_nonce_from`] against a REAL key whose DACL excludes this
-    /// process's token, reproducing on HKCU exactly what
-    /// `HKLM\SOFTWARE\CivicCast\Native`'s SYSTEM+Administrators DACL does to
-    /// the `asInvoker` setup app: the value is genuinely there, and the read
-    /// is genuinely refused.
-    ///
-    /// The load-bearing assertion is that this is `AccessDenied` and NOT
-    /// `Missing` -- collapsing the two is the bug. `AccessDenied` is what
-    /// tells the setup app "re-run this elevated and you will get it", which
-    /// is the only actionable answer an operator can be given.
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn read_setup_nonce_from_names_access_denied_rather_than_missing_when_the_dacl_refuses_us() {
-        use winreg::enums::HKEY_CURRENT_USER;
-
-        let scratch_path = format!(
-            r"Software\CivicCastAclHardenTest\read_setup_nonce_from_names_access_denied\{}",
-            std::process::id()
-        );
-        release_and_delete_scratch_key(&scratch_path);
-
-        let nonce = "nn05NL7FQU9HDgqqePiiHKatM2pve_QIVbbANCdt-HI";
-        // SYSTEM ONLY -- deliberately NOT granting Administrators either, so
-        // the refusal holds whether or not the test host happens to run
-        // elevated (GitHub's windows-latest runner does). The key's creator
-        // still owns it, which is what makes cleanup possible; ownership does
-        // not grant KEY_QUERY_VALUE, which is what makes the read fail.
-        write_value_to_key(
-            HKEY_CURRENT_USER,
-            &scratch_path,
-            SETUP_NONCE_VALUE_NAME,
-            nonce,
-            "D:P(A;;GA;;;SY)",
-            validate_setup_nonce_value,
-        )
-        .expect("the scratch write must succeed -- it runs on a handle opened before hardening");
-
-        let outcome = read_setup_nonce_from(HKEY_CURRENT_USER, &scratch_path);
-        assert_eq!(
-            outcome,
-            SetupNonceRead::AccessDenied,
-            "a DACL-refused read must be named AccessDenied, never collapsed into Missing"
-        );
-        // Belt and braces: whatever else happens, a refused read must not
-        // surface the value through the Option-shaped wrapper's contract.
-        assert!(
-            !matches!(outcome, SetupNonceRead::Ok(_)),
-            "a refused read must never yield a nonce"
-        );
-
-        release_and_delete_scratch_key(&scratch_path);
-    }
-
-    /// The success half of the same impure path: a readable key round-trips
-    /// through the PRODUCTION writer and the PRODUCTION reader. Without this,
-    /// the access-denied test above could pass against a reader that was
-    /// simply broken for every input.
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn read_setup_nonce_from_round_trips_a_readable_value() {
-        use winreg::enums::HKEY_CURRENT_USER;
-
-        let scratch_path = format!(
-            r"Software\CivicCastAclHardenTest\read_setup_nonce_from_round_trips\{}",
-            std::process::id()
-        );
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let _ = hkcu.delete_subkey_all(&scratch_path);
-
-        let nonce = "nn05NL7FQU9HDgqqePiiHKatM2pve_QIVbbANCdt-HI";
-        write_value_to_key(
-            HKEY_CURRENT_USER,
-            &scratch_path,
-            SETUP_NONCE_VALUE_NAME,
-            nonce,
-            "D:(A;;GA;;;WD)",
-            validate_setup_nonce_value,
-        )
-        .expect("scratch SetupNonce write must succeed");
-
-        assert_eq!(
-            read_setup_nonce_from(HKEY_CURRENT_USER, &scratch_path),
-            SetupNonceRead::Ok(nonce.to_string())
-        );
-
-        let _ = hkcu.delete_subkey_all(&scratch_path);
-    }
-
-    /// The two remaining absences, which must stay distinguishable from each
-    /// other AND from `AccessDenied`.
-    ///
-    /// `Invalid` is written with the RAW winreg setter on purpose -- the
-    /// production writer's validator would (correctly) refuse it, so this is
-    /// the only way to simulate a station carrying a corrupted value, which
-    /// must fail closed rather than be forwarded to the control plane.
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn read_setup_nonce_from_separates_a_missing_key_from_a_malformed_value() {
-        use winreg::enums::{HKEY_CURRENT_USER, KEY_ALL_ACCESS};
-
-        let scratch_path = format!(
-            r"Software\CivicCastAclHardenTest\read_setup_nonce_from_missing_vs_invalid\{}",
-            std::process::id()
-        );
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let _ = hkcu.delete_subkey_all(&scratch_path);
-
-        // Nothing created yet.
-        assert_eq!(
-            read_setup_nonce_from(HKEY_CURRENT_USER, &scratch_path),
-            SetupNonceRead::Missing,
-            "an absent key is Missing"
-        );
-
-        // Key exists, value does not.
-        let (key, _) = hkcu
-            .create_subkey_with_flags(&scratch_path, KEY_ALL_ACCESS)
-            .expect("scratch key creation must succeed");
-        assert_eq!(
-            read_setup_nonce_from(HKEY_CURRENT_USER, &scratch_path),
-            SetupNonceRead::Missing,
-            "a key without the value is Missing"
-        );
-
-        key.set_value(SETUP_NONCE_VALUE_NAME, &"too-short")
-            .expect("raw scratch write must succeed");
-        assert_eq!(
-            read_setup_nonce_from(HKEY_CURRENT_USER, &scratch_path),
-            SetupNonceRead::Invalid,
-            "a value outside the shared envelope is Invalid, never Ok"
-        );
-
-        let _ = hkcu.delete_subkey_all(&scratch_path);
-    }
 }

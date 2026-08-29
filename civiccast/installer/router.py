@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-import hmac
 import ipaddress
 import os
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Any, cast
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -30,11 +29,6 @@ from civiccast.installer.contribution_install import (
     install_remote_contribution,
 )
 from civiccast.installer.handoff import build_beta_handoff_summary
-from civiccast.installer.handoff_recovery import (
-    HandoffRecoveryError,
-    complete_recovery,
-    start_recovery,
-)
 from civiccast.installer.model_state import mark_model_unavailable
 from civiccast.installer.models import (
     AcceptancePacketResponse,
@@ -50,9 +44,6 @@ from civiccast.installer.models import (
     FirstAdminSetupResponse,
     FirstRunHealthReport,
     FirstRunPlan,
-    HandoffRecoveryCompleteRequest,
-    HandoffRecoveryCompleteResponse,
-    HandoffRecoveryStartResponse,
     InstallerSummary,
     ModelBundleManifest,
     ModelBundleRequest,
@@ -158,20 +149,13 @@ from civiccast.schedule.router import get_postgres_store, get_schedule_store
 
 staff_router = APIRouter(prefix="/api/staff/installer", tags=["staff", "installer"])
 public_router = APIRouter(prefix="/api/setup", tags=["setup"])
-_SETUP_NONCE_HEADER = "X-CivicCast-Setup-Nonce"
-SetupNonceHeader = Annotated[
-    str | None,
-    Header(
-        alias=_SETUP_NONCE_HEADER,
-        description=(
-            "Installer handoff nonce required for setup mutations before staff "
-            "authentication exists."
-        ),
-    ),
-]
-_LOCAL_HOSTNAMES = {"localhost", "localhost.localdomain", "testserver"}
 _LOCAL_SETUP_ACCESS_RESPONSES: dict[int | str, dict[str, Any]] = {
-    403: {"description": ("Local setup access denied or installer setup nonce missing/invalid.")}
+    403: {
+        "description": (
+            "First setup is only reachable from the station computer itself "
+            "(loopback), or the station is already configured."
+        )
+    }
 }
 
 
@@ -1052,31 +1036,85 @@ def staff_storage_setup(request: Request, payload: StorageSetupRequest) -> Manag
         ) from exc
 
 
-def _require_local_setup_mutation(request: Request) -> None:
-    """Require the installer handoff nonce before local setup changes state.
+def _enforce_setup_rate_limit(request: Request) -> None:
+    """Rate-limit every pre-staff-auth setup/login/recovery route.
 
-    Wired as a ``Depends()`` on every ``/api/setup/*`` mutation route (G-24)
-    rather than called as the first line of the handler body, so the
-    nonce/local-access gate runs before FastAPI validates the request body.
-    A malformed body with no nonce now gets 403, not 422.
+    A single choke point (called from ``_require_local_setup_request``,
+    which every ``/api/setup/*`` handler already calls first) covers
+    station-state, storage, first-admin, recovery-kit acknowledge, login,
+    and recover in one place — these are exactly the password-bearing and
+    setup-nonce-guessing surfaces named in audit item #27. Loopback is NOT
+    exempted: a local attacker on a shared or LAN-exposed box is real.
+    Keyed by (client IP, path) so one noisy route can't burn another's
+    budget and one client can't burn another's.
     """
 
-    _require_local_setup_request(request)
-    expected_nonce = os.environ.get("CIVICCAST_SETUP_NONCE")
-    if not expected_nonce:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Storage setup requires the installer handoff nonce. Open the "
-                "operator console from the CivicCast installer before preparing storage."
-            ),
-        )
-    provided_nonce = request.headers.get(_SETUP_NONCE_HEADER)
-    if not provided_nonce or not hmac.compare_digest(expected_nonce, provided_nonce):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing setup nonce.",
-        )
+    limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
+    limit, window_seconds = auth_rate_limit_config()
+    key = f"{client_ip(request)}:{request.url.path}"
+    if limiter.allow(key, limit=limit, window_seconds=window_seconds):
+        return
+    retry_after = limiter.retry_after_seconds(key, window_seconds=window_seconds)
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Too many setup requests. Wait before trying again.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _require_local_setup_request(request: Request) -> None:
+    """Allow unauthenticated first setup only from the station's own loopback.
+
+    OWNER DECISION 2026-08-29: the installer-handoff nonce this gate used to
+    also enforce is retired. The station's control plane binds
+    ``127.0.0.1`` only (``civiccast.native.supervisor.core``'s
+    ``control_plane_host`` default; verified live via ``netstat`` showing
+    ``TCP 127.0.0.1:8000 LISTENING`` and nothing on ``0.0.0.0``), so first
+    setup is already unreachable from the network by construction -- the
+    nonce was guarding a door inside a room the network can't enter. It
+    produced four separate field failures in two days (nonce unreadable
+    across the elevated-installer/normal-user split, the recovery code file
+    never written, "Get a new code" silently no-op'ing, the elevated CLI
+    restore printing nothing) for a control that a PEG station in a locked,
+    cleared-personnel room does not need on top of the loopback bind.
+
+    The ONE guard that still matters -- a configured station must never
+    offer first setup again -- lives in
+    ``civiccast.installer.station_state.complete_first_admin_setup``
+    (raises ``StationSetupAlreadyCompleteError``, which the router turns
+    into 409) and is untouched by this change.
+
+    ``request.client.host`` is the ASGI transport's own peer address (set by
+    the socket the connection actually arrived on), never a
+    caller-supplied header like ``X-Forwarded-For`` -- so a remote caller
+    cannot spoof it into looking local. If a reverse proxy is ever placed in
+    front of this app, that proxy would need to terminate the connection
+    itself and this check would need to move to (or validate) the proxy's
+    own trusted-peer configuration; nothing here reads a forwarded-for style
+    header today, so there is nothing for a remote caller to forge.
+    """
+
+    _enforce_setup_rate_limit(request)
+    if _is_local_client(request):
+        return
+    if request.app.debug or request.scope.get("client") is None:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="First setup can only be done from the station computer itself.",
+    )
+
+
+def _is_local_client(request: Request) -> bool:
+    if request.client is None:
+        return True
+    host = request.client.host
+    if host in {"localhost", "testclient"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 @public_router.get(
@@ -1085,10 +1123,7 @@ def _require_local_setup_mutation(request: Request) -> None:
     summary="Read local setup state before staff auth exists",
     responses=_LOCAL_SETUP_ACCESS_RESPONSES,
 )
-def public_station_state(
-    request: Request,
-    _setup_nonce: SetupNonceHeader = None,
-) -> StationSetupState:
+def public_station_state(request: Request) -> StationSetupState:
     _require_local_setup_request(request)
     return read_station_setup()
 
@@ -1099,10 +1134,7 @@ def public_station_state(
     summary="Read local durable storage setup state before staff auth exists",
     responses=_LOCAL_SETUP_ACCESS_RESPONSES,
 )
-def public_storage_state(
-    request: Request,
-    _setup_nonce: SetupNonceHeader = None,
-) -> ManagedStorageStatus:
+def public_storage_state(request: Request) -> ManagedStorageStatus:
     _require_local_setup_request(request)
     return durable_storage_status()
 
@@ -1112,12 +1144,11 @@ def public_storage_state(
     response_model=ManagedStorageStatus,
     summary="Prepare installer-managed durable storage before staff auth exists",
     responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_local_setup_mutation)],
+    dependencies=[Depends(_require_local_setup_request)],
 )
 def public_storage_setup(
     _payload: PublicStorageSetupRequest,
     request: Request,
-    _setup_nonce: SetupNonceHeader = None,
 ) -> ManagedStorageStatus:
     if os.environ.get("DATABASE_URL"):
         return durable_storage_status()
@@ -1137,13 +1168,12 @@ def public_storage_setup(
     response_model=FirstAdminSetupResponse,
     summary="Complete local first-admin setup before staff auth exists",
     responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_local_setup_mutation)],
+    dependencies=[Depends(_require_local_setup_request)],
 )
 def public_first_admin_setup(
     payload: FirstAdminSetupRequest,
     request: Request,
     background_tasks: BackgroundTasks,
-    _setup_nonce: SetupNonceHeader = None,
     postgres_store: Any = Depends(get_postgres_store),
     publish_store: Any = Depends(get_publish_store),
     schedule_store: Any = Depends(get_schedule_store),
@@ -1167,12 +1197,11 @@ def public_first_admin_setup(
     response_model=StationSetupState,
     summary="Record that the operator saved or printed the one-time recovery kit",
     responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_local_setup_mutation)],
+    dependencies=[Depends(_require_local_setup_request)],
 )
 def public_recovery_kit_acknowledge(
     payload: RecoveryKitAcknowledgeRequest,
     request: Request,
-    _setup_nonce: SetupNonceHeader = None,
 ) -> StationSetupState:
     if not payload.confirmed:
         raise HTTPException(
@@ -1190,12 +1219,11 @@ def public_recovery_kit_acknowledge(
     response_model=StationAuthResponse,
     summary="Sign in with the local first-admin password",
     responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_local_setup_mutation)],
+    dependencies=[Depends(_require_local_setup_request)],
 )
 def public_station_login(
     payload: StationLoginRequest,
     request: Request,
-    _setup_nonce: SetupNonceHeader = None,
 ) -> StationAuthResponse:
     try:
         return login_station_admin(payload)
@@ -1208,12 +1236,11 @@ def public_station_login(
     response_model=StationAuthResponse,
     summary="Recover the local first-admin account with a one-time recovery code",
     responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_local_setup_mutation)],
+    dependencies=[Depends(_require_local_setup_request)],
 )
 def public_station_recovery(
     payload: StationRecoveryRequest,
     request: Request,
-    _setup_nonce: SetupNonceHeader = None,
 ) -> StationAuthResponse:
     try:
         return recover_station_admin(payload)
@@ -1301,252 +1328,6 @@ def _ensure_storage_recording_target(
     resolver = request.app.dependency_overrides.get(get_recording_target_store)
     recording_target_store = resolver() if callable(resolver) else None
     ensure_default_recording_target(recording_target_store, upload_dir=Path(storage.upload_dir))
-
-
-def _enforce_setup_rate_limit(request: Request) -> None:
-    """Rate-limit every pre-staff-auth setup/login/recovery route.
-
-    A single choke point (called from ``_require_local_setup_request``,
-    which every ``/api/setup/*`` handler already calls first) covers
-    station-state, storage, first-admin, recovery-kit acknowledge, login,
-    and recover in one place — these are exactly the password-bearing and
-    setup-nonce-guessing surfaces named in audit item #27. Loopback is NOT
-    exempted: a local attacker on a shared or LAN-exposed box is real.
-    Keyed by (client IP, path) so one noisy route can't burn another's
-    budget and one client can't burn another's.
-    """
-
-    limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
-    limit, window_seconds = auth_rate_limit_config()
-    key = f"{client_ip(request)}:{request.url.path}"
-    if limiter.allow(key, limit=limit, window_seconds=window_seconds):
-        return
-    retry_after = limiter.retry_after_seconds(key, window_seconds=window_seconds)
-    raise HTTPException(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        detail="Too many setup requests. Wait before trying again.",
-        headers={"Retry-After": str(retry_after)},
-    )
-
-
-#: W-2's own rate budget for issuing a recovery code -- deliberately NOT the
-#: shared, env-configurable ``auth_rate_limit_config()`` default every other
-#: ``/api/setup/*`` mutation uses: the design spec fixes this one at exactly
-#: 3/hour regardless of ``CIVICCAST_AUTH_RATE_LIMIT``, because a code this
-#: route issues is a disposable, single-use admin-proof secret, not a login
-#: attempt -- three fresh codes an hour is generous for a real operator and
-#: still small next to a Windows UAC prompt's own friction.
-_HANDOFF_RECOVERY_START_LIMIT = 3
-_HANDOFF_RECOVERY_START_WINDOW_SECONDS = 60 * 60
-
-
-def _require_handoff_recovery_start_request(request: Request) -> None:
-    """Loopback-only, 3/hour: the W-2 recovery-code issuance gate.
-
-    Deliberately does NOT call ``_require_local_setup_request`` /
-    ``_enforce_setup_rate_limit``: those enforce the installer handoff nonce
-    when ``CIVICCAST_SETUP_NONCE`` is configured, which is exactly the case
-    every station in the W-2 scenario is in -- the nonce IS configured, the
-    operator just does not have it. Requiring it here would recreate the
-    dead end this route exists to fix. Loopback via ``_is_local_client`` is
-    the substitute admission gate; the challenge file it issues is what
-    proves admin-on-box (see ``civiccast.installer.handoff_recovery``'s
-    module docstring for the full trust-model reasoning).
-    """
-
-    if not _is_local_client(request):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=("Setup recovery is only available from the local installer or local browser."),
-        )
-    limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
-    key = f"{client_ip(request)}:{request.url.path}"
-    if limiter.allow(
-        key,
-        limit=_HANDOFF_RECOVERY_START_LIMIT,
-        window_seconds=_HANDOFF_RECOVERY_START_WINDOW_SECONDS,
-    ):
-        return
-    retry_after = limiter.retry_after_seconds(
-        key, window_seconds=_HANDOFF_RECOVERY_START_WINDOW_SECONDS
-    )
-    raise HTTPException(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        detail="Too many setup recovery requests. Wait before trying again.",
-        headers={"Retry-After": str(retry_after)},
-    )
-
-
-def _require_handoff_recovery_complete_request(request: Request) -> None:
-    """Loopback-only, shared auth-sensitive rate budget: the W-2 code-
-    redemption gate.
-
-    Reuses ``_enforce_setup_rate_limit`` (the generic per-IP-per-path budget
-    every other pre-staff-auth setup/login/recovery route already shares)
-    rather than a dedicated counter: redeeming a code is a guess against a
-    secret the same way station login/recovery are, so it belongs in the
-    same budget class, on top of the code's own 5-guess burn
-    (``civiccast.installer.handoff_recovery.MAX_ATTEMPTS``). Deliberately
-    does not require the setup nonce, for the same reason
-    ``_require_handoff_recovery_start_request`` does not.
-    """
-
-    _enforce_setup_rate_limit(request)
-    if not _is_local_client(request):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=("Setup recovery is only available from the local installer or local browser."),
-        )
-
-
-def _require_local_setup_request(request: Request) -> None:
-    """Allow unauthenticated first setup only from local installer/browser flows."""
-
-    _enforce_setup_rate_limit(request)
-    expected_nonce = os.environ.get("CIVICCAST_SETUP_NONCE")
-    local_client = _is_local_client(request)
-    public_host = _host_header_is_public(request)
-    nonce_required = (
-        expected_nonce is not None
-        or os.environ.get("CIVICCAST_REQUIRE_SETUP_NONCE") == "1"
-        or (local_client and public_host)
-    )
-    if nonce_required:
-        if not expected_nonce:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "First-admin setup was reached through a non-local host name. "
-                    "Set CIVICCAST_SETUP_NONCE and launch the installer handoff URL "
-                    "with that nonce before exposing setup through a reverse proxy."
-                ),
-            )
-        provided_nonce = request.headers.get(_SETUP_NONCE_HEADER)
-        if not provided_nonce or not hmac.compare_digest(expected_nonce, provided_nonce):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Invalid or missing setup nonce.",
-            )
-
-    if local_client:
-        return
-    if request.app.debug or request.scope.get("client") is None:
-        return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail=(
-            "First-admin setup is only available from the local installer or local browser. "
-            "Set up the station locally before exposing CivicCast on the network."
-        ),
-    )
-
-
-def _is_local_client(request: Request) -> bool:
-    if request.client is None:
-        return True
-    host = request.client.host
-    if host in {"localhost", "testclient"}:
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def _host_header_is_public(request: Request) -> bool:
-    host = _host_header_hostname(request.headers.get("host", ""))
-    if not host:
-        return False
-    if host in _LOCAL_HOSTNAMES:
-        return False
-    try:
-        return not ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return True
-
-
-def _host_header_hostname(host_header: str) -> str:
-    host_header = host_header.strip().lower()
-    if host_header.startswith("["):
-        closing = host_header.find("]")
-        return host_header[1:closing] if closing > 0 else host_header
-    return host_header.split(":", 1)[0]
-
-
-@public_router.post(
-    "/handoff-recovery/start",
-    response_model=HandoffRecoveryStartResponse,
-    summary="Issue a local-admin setup-recovery code for a lost or expired setup link",
-    responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_handoff_recovery_start_request)],
-)
-def public_handoff_recovery_start() -> HandoffRecoveryStartResponse:
-    """W-2: the in-product recovery path for the SetupScreen dead-end.
-
-    Deliberately NOT gated by ``_require_local_setup_mutation`` /
-    ``_require_local_setup_request`` -- both of those demand the very setup
-    nonce this route exists to route around when it has been lost. Loopback-
-    only admission plus a dedicated 3/hour budget
-    (``_require_handoff_recovery_start_request``) is the substitute gate: see
-    ``civiccast.installer.handoff_recovery`` for the full trust-model
-    writeup. Never returns the code itself, only where to go read it.
-    """
-
-    try:
-        result = start_recovery()
-    except HandoffRecoveryError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"CivicCast could not prepare a setup recovery code: {exc}",
-        ) from exc
-    return HandoffRecoveryStartResponse(code_file=result.code_file, expires_in=result.expires_in)
-
-
-@public_router.post(
-    "/handoff-recovery/complete",
-    response_model=HandoffRecoveryCompleteResponse,
-    summary="Redeem a local-admin setup-recovery code and resume setup",
-    responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_handoff_recovery_complete_request)],
-)
-def public_handoff_recovery_complete(
-    payload: HandoffRecoveryCompleteRequest,
-) -> HandoffRecoveryCompleteResponse:
-    """W-2: verify the disposable code and grant exactly what the nonce
-    header path already grants -- the station's own setup nonce -- rather
-    than minting a second kind of setup credential. The operator console
-    stores the returned value exactly where it stores a nonce read from the
-    handoff URL and every subsequent ``/api/setup/*`` call proceeds through
-    the ordinary, unchanged nonce-header admission path.
-    """
-
-    outcome = complete_recovery(payload.code)
-    if not outcome.ok:
-        # No oracle: every failure (no active code, replayed, burned,
-        # expired, or simply wrong) answers with the exact same 403 so an
-        # unauthenticated caller learns nothing about which guess was closer.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or expired setup recovery code.",
-        )
-    setup_nonce = os.environ.get("CIVICCAST_SETUP_NONCE")
-    if not setup_nonce:
-        # The disposable code proved admin-on-box, but there is no installer
-        # nonce configured to hand back -- the same "not a provisioned
-        # station" case _require_local_setup_mutation already answers for
-        # the ordinary nonce path. Fail closed instead of granting nothing.
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "CivicCast verified your administrator code, but this station has no "
-                "setup handoff configured. Reinstall or repair CivicCast (Native)."
-            ),
-        )
-    return HandoffRecoveryCompleteResponse(
-        status="recovered",
-        setup_nonce=setup_nonce,
-        next_step="Setup will resume automatically.",
-    )
 
 
 @staff_router.get(
