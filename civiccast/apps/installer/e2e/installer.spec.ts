@@ -931,7 +931,7 @@ test("installer shows the download experience first by default on a fresh instal
   await expect(continueToPlan).toBeVisible({ timeout: 5000 });
   await continueToPlan.click();
 
-  await expect(page.getByRole("heading", { name: "What We'll Download" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What CivicCast Needs" })).toBeVisible();
   await page.getByRole("button", { name: "Continue" }).click();
 
   await expect(page.getByRole("heading", { name: "Downloading" })).toBeVisible();
