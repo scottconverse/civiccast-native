@@ -1,0 +1,24 @@
+{
+  "coverage_valid": true,
+  "invalid_reasons": [],
+  "dimensions": {
+    "screens": {"inventoried": 2, "tested": 1, "failed": 1, "blocked": 1, "excluded": 0, "unverifiable": 0},
+    "controls": {"inventoried": 2, "tested": 0, "failed": 0, "blocked": 2, "excluded": 0, "unverifiable": 0},
+    "paths": {"inventoried": 6, "tested": 3, "failed": 1, "blocked": 3, "excluded": 0, "unverifiable": 0},
+    "visual_states": {"inventoried": 2, "tested": 1, "failed": 1, "blocked": 1, "excluded": 0, "unverifiable": 0},
+    "public_surfaces": {"inventoried": 0, "tested": 0, "failed": 0, "blocked": 0, "excluded": 0, "unverifiable": 0},
+    "links": {"inventoried": 0, "tested": 0, "failed": 0, "blocked": 0, "excluded": 0, "unverifiable": 0}
+  },
+  "items": [
+    {"id": "SCREEN-UAC", "result": "blocked", "reason": "Secure desktop is not agent-driveable; 8b authorized a substitution.", "evidence": ["soak/CARD-RUN.md"]},
+    {"id": "SCREEN-WELCOME", "result": "failed", "reason": "Required an unmentioned Next action.", "evidence": ["soak/CARD-RUN.md"]},
+    {"id": "CONTROL-NEXT", "result": "blocked", "reason": "Strict card-only behavior forbids adding an unlisted click.", "evidence": ["soak/CARD-RUN.md"]},
+    {"id": "CONTROL-CANCEL", "result": "blocked", "reason": "Not instructed by the card.", "evidence": ["soak/CARD-RUN.md"]},
+    {"id": "CARD-STEP-1", "result": "passed", "reason": "Kit fixture present.", "evidence": ["soak/CARD-RUN.md"]},
+    {"id": "CARD-STEP-2", "result": "passed", "reason": "Reached normal installer with the 8b substitution; findings retained.", "evidence": ["soak/CARD-RUN.md"]},
+    {"id": "CARD-STEP-3", "result": "failed", "reason": "Installer did not advance on its own.", "evidence": ["soak/CARD-RUN.md"]},
+    {"id": "CARD-STEP-4", "result": "blocked", "reason": "Installation never began.", "evidence": ["soak/CARD-RUN.md"]},
+    {"id": "CARD-STEP-5", "result": "blocked", "reason": "Installation never began.", "evidence": ["soak/CARD-RUN.md"]},
+    {"id": "CARD-STEP-6", "result": "blocked", "reason": "Installation never began.", "evidence": ["soak/CARD-RUN.md"]}
+  ]
+}

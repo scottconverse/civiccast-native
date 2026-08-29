@@ -1,0 +1,29 @@
+{
+  "schema": "stranger-test-v1",
+  "candidate": "4eca7292c93a5395b337d6b404fc2bf0a6383003",
+  "card_steps_total": 6,
+  "steps_matching": 2,
+  "findings": [
+    {
+      "n": 1,
+      "step": 2,
+      "class": "card-gap",
+      "text": "The card covers SmartScreen but not the Windows elevation consent prompt that appeared before installation."
+    },
+    {
+      "n": 2,
+      "step": 2,
+      "class": "agent-limitation",
+      "text": "The secure-desktop elevation prompt could not be read or clicked by the available Windows automation; DIRECTIVE 8b supplied an elevated-launch substitution for the human UAC Yes."
+    },
+    {
+      "n": 3,
+      "step": 3,
+      "class": "card-gap",
+      "text": "The normal installer required an unmentioned Next action while the card said setup does everything on its own, so strict card-only execution stopped before installation."
+    }
+  ],
+  "install_offline": false,
+  "station_healthy": false,
+  "verdict": "FAIL"
+}

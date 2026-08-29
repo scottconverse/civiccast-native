@@ -1,0 +1,10 @@
+{
+  "stage": "walkthrough",
+  "verdict": "FAIL",
+  "strict_zero": false,
+  "severity": {"Blocker": 1, "Critical": 0, "Major": 1, "Minor": 1, "Nit": 0},
+  "coverage_valid": true,
+  "run_ids": ["civiccast-stranger-4eca729-desktop-vbma6o5"],
+  "blocking_findings": ["FINDING-001", "FINDING-003"],
+  "evidence": ["soak/CARD-RUN.md", "soak/stranger-verdict.json", "soak/walkthrough-8/findings.json", "soak/walkthrough-8/coverage-ledger.json"]
+}

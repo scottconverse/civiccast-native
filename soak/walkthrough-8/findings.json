@@ -1,0 +1,43 @@
+{
+  "findings": [
+    {
+      "id": "FINDING-001",
+      "stage": "walkthrough",
+      "location": "card step 2 / Windows elevation boundary",
+      "severity": "Major",
+      "confirmed": true,
+      "expected": "The no-experience card explains every required operator action before installation.",
+      "actual": "Windows presented an elevation consent prompt that the card does not mention.",
+      "reproduction": ["On a virgin machine, launch the signed candidate #16 setup program exactly as the card says."],
+      "evidence": ["soak/CARD-RUN.md"],
+      "suggested_fix": "Add the one-human-click UAC instruction accepted by DIRECTIVE 8b.",
+      "suggested_test": "Repeat the virgin-machine card-only run with a human operator."
+    },
+    {
+      "id": "FINDING-002",
+      "stage": "walkthrough",
+      "location": "card step 2 / secure desktop",
+      "severity": "Minor",
+      "confirmed": true,
+      "expected": "The test agent can drive every non-human boundary or records the limitation.",
+      "actual": "Secure desktop is not available to the Windows automation surface; DIRECTIVE 8b authorized one precise elevated-launch substitution.",
+      "reproduction": ["Launch the setup program from a non-elevated process and observe consent.exe."],
+      "evidence": ["soak/CARD-RUN.md"],
+      "suggested_fix": "Use a human for the OS-designed secure-desktop click.",
+      "suggested_test": "Human retest of the UAC click."
+    },
+    {
+      "id": "FINDING-003",
+      "stage": "walkthrough",
+      "location": "card step 3 / CivicCast (Native) Setup welcome page",
+      "severity": "Blocker",
+      "confirmed": true,
+      "expected": "After the card's double-click, setup begins and advances on its own.",
+      "actual": "The normal installer remained at a welcome wizard requiring an unmentioned Next action; no service, ProgramData, or port 8000 listener appeared.",
+      "reproduction": ["Complete the authorized UAC substitution, then follow card step 3 without adding any unlisted action."],
+      "evidence": ["soak/CARD-RUN.md"],
+      "suggested_fix": "Make the installer begin automatically or add the complete wizard sequence to the card.",
+      "suggested_test": "Virgin-machine card-only acceptance must reach installation without extra-card knowledge."
+    }
+  ]
+}

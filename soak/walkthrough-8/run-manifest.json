@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.1",
+  "run_id": "civiccast-stranger-4eca729-desktop-vbma6o5",
+  "stage": "walkthrough",
+  "mode": "candidate",
+  "project": "CivicCast",
+  "commit": "4eca7292c93a5395b337d6b404fc2bf0a6383003",
+  "artifact_ids": [
+    "sha256:c9284f1b98d53015a459f8788fd8730a6b379291744169c1963dbf06fd866aaa"
+  ],
+  "platform_scope": [
+    "Microsoft Windows 11 Pro 10.0.26200 build 26200 x64 locale 0409"
+  ],
+  "started_at": "2026-08-29T13:46:55Z",
+  "environment_artifacts": [
+    "soak/VIRGIN.md",
+    "soak/KIT-16.md",
+    "soak/CARD-RUN.md"
+  ],
+  "worktree_state": "clean",
+  "dirty_diff_sha256": null,
+  "dirty_diff_evidence": null,
+  "lockfiles": [],
+  "seeds": []
+}
