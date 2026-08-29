@@ -648,6 +648,68 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Setup-handoff recovery: an unhandled write failure after the challenge
+  directory was already hardened could crash the request instead of ever
+  reaching the "no 200 without a real file" contract, and "Get a new code"
+  gave no visible feedback at all (field session 2026-08-28, candidate
+  9d4477b).** On the First Setup page's "restore setup handoff" panel,
+  clicking "Get a new code" produced no visible change on screen, and a
+  separate live report on the same station found the countdown-carrying
+  `/api/setup/handoff-recovery/start` success response with no
+  `code.txt` on disk to back it up. Reading
+  `civiccast.installer.handoff_recovery.start_recovery` end to end and
+  reproducing it locally against a REAL (non-mocked) `win32security` ACL
+  call found the actual defect: `start_recovery` hardens the challenge
+  directory to SYSTEM+Administrators-only, THEN writes `code.txt`/
+  `state.json` into it — so a caller whose token does not carry the
+  `SY`/`BA` SIDs it just granted the directory (the *default* Windows
+  token state for an administrator account running de-elevated; UAC only
+  attaches the Administrators group to a genuinely elevated process) gets
+  a bare `PermissionError` writing the code file it just locked itself out
+  of. That exception was never caught anywhere — not in
+  `handoff_recovery.py` (only `HandoffRecoveryError` was), not in
+  `civiccast.installer.router`'s `public_handoff_recovery_start` — so it
+  reached the HTTP layer as an unhandled 500 with no cleanup, rather than
+  the module's own fail-loud `HandoffRecoveryError`/503 contract. No code
+  path in this codebase can turn a real write/ACL failure into a
+  fabricated 200 (every return from `start_recovery` already required the
+  writes to have succeeded), so the field station's specific "live
+  countdown, missing file" combination could not be conclusively
+  reproduced from source alone; it is consistent with this exact
+  uncaught-exception class landing on a run where the privilege assumption
+  did not hold, or with the on-machine check running under different
+  privileges than the control-plane process (a non-elevated `Test-Path`
+  against a SYSTEM+Administrators-only directory throws Access Denied,
+  which is a well-known false-negative case for that cmdlet) — reported as
+  an open question rather than settled, per this repo's own
+  claims-of-absence discipline. Fixed regardless: the whole
+  mkdir/ACL/write sequence in `start_recovery` is now one fail-loud unit —
+  ANY exception (mkdir, ACL, either write, or a new read-back-what-was-
+  just-written verification) removes any file that attempt created and
+  raises `HandoffRecoveryError`, so a caller of this function gets EITHER
+  a fully written, fully hardened challenge, or a clean exception and no
+  trace of a half-issued one; there is no partial-success return. Frontend
+  fix in the same pass: `SetupScreen.tsx`'s `HandoffRecoveryPanel` now
+  shows a visible pending label on both "I lost my setup link" and "Get a
+  new code" while the request is in flight, an explicit
+  `role="status"` confirmation on success naming the write time and, for a
+  regenerate specifically, that the old code no longer works, and disables
+  the stale code input while a new one is being issued — matching the
+  page's existing "never a dead control" standard (see the W-2 doc
+  comment above `HandoffRecoveryPanel`). Also flagged, not fixed here (out
+  of scope — `civiccast/apps/installer/` is owned by a concurrent
+  session): `--civiccast-restore-setup-handoff`'s recovery pass already
+  prints an explicit result on every branch, but the installer binary
+  compiles as a Windows GUI-subsystem executable in release builds
+  (`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`),
+  so none of that output is visible when run from an existing terminal —
+  a separate, precisely diagnosed follow-up. 3 new tests in
+  `tests/installer/test_handoff_recovery.py` (a write failure after
+  successful hardening raises `HandoffRecoveryError` and leaves no partial
+  state; a failed read-back of the just-written code also fails loud), 3
+  new tests in `src/screens/SetupScreenNoNonce.test.tsx` (pending label on
+  first issue, pending label + reset countdown + explicit regenerate
+  confirmation on "Get a new code", visible error on a failed regenerate).
 - **GUI installer re-downloaded the 7GB local AI model even after offline-kit
   activation already installed it; "Open installer log" was a no-op; no
   shortcut existed anywhere back to the running station; and the setup CLI's

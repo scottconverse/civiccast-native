@@ -116,6 +116,91 @@ def test_start_recovery_raises_when_the_acl_cannot_be_applied(tmp_path: Path) ->
     assert not handoff_recovery.code_file_path().exists()
 
 
+def test_start_recovery_preserves_the_previous_code_when_a_regenerate_fails_before_overwriting_it(
+    tmp_path: Path,
+) -> None:
+    """A failed "Get a new code" (`start_recovery` called again over an
+    already-valid earlier code) must not ALSO destroy the still-usable
+    earlier code -- that would turn one failed regenerate into total
+    lockout. Only once ``code.txt`` has actually been overwritten is there
+    no longer an intact previous challenge to protect (covered by
+    :func:`test_start_recovery_raises_when_the_code_file_cannot_be_written_after_hardening`,
+    which removes the half-written state after that point)."""
+
+    acl = _AclRecorder()
+    start_recovery(harden_acl=acl)
+    original_code = _read_code()
+
+    def _refuse(directory: Path) -> None:
+        raise PermissionError("access denied writing the DACL")
+
+    with pytest.raises(HandoffRecoveryError):
+        start_recovery(harden_acl=_refuse)
+
+    assert _read_code() == original_code
+    assert complete_recovery(original_code).ok is True
+
+
+def test_start_recovery_raises_when_the_code_file_cannot_be_written_after_hardening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Field incident 2026-08-28: on a real box, the ACL hardening step can
+    succeed (it only needs WRITE_DAC, which the directory's own creator
+    already has) while the SAME call's own write into that now-hardened
+    directory fails with a bare ``PermissionError`` -- e.g. a caller whose
+    token does not carry the ``SY``/``BA`` SIDs it just granted the
+    directory (a de-elevated administrator is the *default* Windows token
+    state; UAC only attaches the Administrators group to an elevated
+    process). Before this fix that ``PermissionError`` was never caught --
+    neither here nor in the router -- so it reached an HTTP caller as an
+    unhandled 500 instead of the module's own fail-loud
+    :class:`HandoffRecoveryError`/503 contract. This directly repros that
+    class of bug through the injected seam (never the real ``win32security``
+    call -- see the module docstring)."""
+
+    acl = _AclRecorder()
+
+    def _fail_to_write(path: Path, content: str) -> None:
+        raise PermissionError(f"access denied writing {path}")
+
+    monkeypatch.setattr(handoff_recovery, "_atomic_write", _fail_to_write)
+
+    with pytest.raises(HandoffRecoveryError, match="Administrators and SYSTEM"):
+        start_recovery(harden_acl=acl)
+
+    # The ACL step itself ran (this is not a refused-ACL failure)...
+    assert acl.calls == [handoff_recovery.recovery_dir()]
+    # ...but no half-issued challenge is left behind: a caller that got the
+    # exception must never also be able to redeem a code for this attempt.
+    assert not handoff_recovery.code_file_path().exists()
+    assert not (handoff_recovery.recovery_dir() / handoff_recovery._STATE_FILENAME).exists()
+
+
+def test_start_recovery_raises_if_it_cannot_read_back_what_it_just_wrote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defense in depth beyond the write itself succeeding: if this call
+    cannot read back the code it just wrote (the identity answering "a code
+    is ready" is not the identity that can actually reach the file it is
+    describing), it must refuse to report success rather than hand back a
+    ``code_file`` path an admin who follows it may not be able to open
+    either."""
+
+    real_read_text = Path.read_text
+
+    def _lie_on_readback(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == handoff_recovery.CODE_FILENAME:
+            raise PermissionError(f"access denied reading {self}")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _lie_on_readback)
+
+    with pytest.raises(HandoffRecoveryError, match="Administrators and SYSTEM"):
+        start_recovery(harden_acl=_AclRecorder())
+
+    assert not handoff_recovery.code_file_path().exists()
+
+
 def test_start_recovery_regenerates_and_invalidates_the_previous_code(tmp_path: Path) -> None:
     acl = _AclRecorder()
     start_recovery(harden_acl=acl)

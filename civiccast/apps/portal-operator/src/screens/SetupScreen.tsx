@@ -1210,6 +1210,11 @@ function StationAdminTools({ canManageProviders }: { canManageProviders: boolean
 // with `%ProgramData%` relocated writes the challenge file somewhere this
 // literal does not point to.
 const HANDOFF_RECOVERY_CODE_FILE = 'C:\\ProgramData\\CivicCast\\setup-recovery\\code.txt'
+// Filename only (not the full path -- that varies with %ProgramData%, see
+// `HANDOFF_RECOVERY_CODE_FILE` above), for the plain-language confirmation
+// text after a code is issued/regenerated. Mirrors
+// `civiccast.installer.handoff_recovery.CODE_FILENAME`.
+const HANDOFF_RECOVERY_CODE_FILENAME = 'code.txt'
 const SUPPORT_ISSUE_URL =
   'https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20'
 
@@ -1250,6 +1255,15 @@ function HandoffRecoveryPanel({ onRecovered }: { onRecovered: () => void }) {
   const [codeFile, setCodeFile] = useState<string | null>(null)
   const [expiresAt, setExpiresAt] = useState<number | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  // W-2 field bug 2026-08-28: "Get a new code" called the same mutation as
+  // "I lost my setup link" and DID work -- the countdown really did reset --
+  // but nothing on screen said so, so a regenerate looked identical to a
+  // dead button. issuedAt timestamps the confirmation text below; regenerated
+  // (true from the SECOND successful issuance on) is what turns that text
+  // into an explicit "the old code no longer works" rather than implying
+  // this is the station's first and only code.
+  const [issuedAt, setIssuedAt] = useState<Date | null>(null)
+  const [regenerated, setRegenerated] = useState(false)
 
   useEffect(() => {
     if (phase !== 'code-requested') return
@@ -1262,6 +1276,8 @@ function HandoffRecoveryPanel({ onRecovered }: { onRecovered: () => void }) {
     onSuccess: (response) => {
       setExpiresAt(Date.now() + response.expires_in * 1000)
       setNow(Date.now())
+      setRegenerated(phase === 'code-requested')
+      setIssuedAt(new Date())
       setCode('')
       setCodeFile(response.code_file)
       setPhase('code-requested')
@@ -1292,10 +1308,11 @@ function HandoffRecoveryPanel({ onRecovered }: { onRecovered: () => void }) {
           type="button"
           onClick={() => startMutation.mutate()}
           disabled={startMutation.isPending}
+          aria-busy={startMutation.isPending}
           className="rounded-md px-3 py-2 text-sm font-semibold"
           style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
         >
-          I lost my setup link
+          {startMutation.isPending ? 'Requesting a recovery code...' : 'I lost my setup link'}
         </button>
         {startMutation.isError && (
           <p role="alert" className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-err)' }}>
@@ -1332,6 +1349,26 @@ function HandoffRecoveryPanel({ onRecovered }: { onRecovered: () => void }) {
       >
         {codeFile ?? HANDOFF_RECOVERY_CODE_FILE}
       </code>
+      {issuedAt && !startMutation.isPending && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-ok-soft)', color: 'var(--cc-ink)' }}
+        >
+          {regenerated ? (
+            <>
+              A new code was written to <span className="cc-mono">{HANDOFF_RECOVERY_CODE_FILENAME}</span> at{' '}
+              {issuedAt.toLocaleTimeString()} -- the old code no longer works.
+            </>
+          ) : (
+            <>
+              A recovery code was written to <span className="cc-mono">{HANDOFF_RECOVERY_CODE_FILENAME}</span> at{' '}
+              {issuedAt.toLocaleTimeString()}.
+            </>
+          )}
+        </div>
+      )}
       <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
         Windows will ask for administrator permission to open it. Then type the 8-character code
         below.{' '}
@@ -1347,7 +1384,7 @@ function HandoffRecoveryPanel({ onRecovered }: { onRecovered: () => void }) {
           id="handoff-recovery-code"
           value={code}
           onChange={(event) => setCode(event.target.value.toUpperCase())}
-          disabled={isExpired}
+          disabled={isExpired || startMutation.isPending}
           autoComplete="off"
           spellCheck={false}
           aria-invalid={completeMutation.isError ? true : undefined}
@@ -1363,21 +1400,22 @@ function HandoffRecoveryPanel({ onRecovered }: { onRecovered: () => void }) {
       ) : (
         <button
           type="submit"
-          disabled={completeMutation.isPending || code.trim().length === 0}
+          disabled={completeMutation.isPending || startMutation.isPending || code.trim().length === 0}
           className="rounded-md px-3 py-2 text-sm font-semibold"
           style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}
         >
-          Continue
+          {completeMutation.isPending ? 'Checking code...' : 'Continue'}
         </button>
       )}
       <button
         type="button"
         onClick={() => startMutation.mutate()}
         disabled={startMutation.isPending}
+        aria-busy={startMutation.isPending}
         className="justify-self-start text-xs font-semibold underline underline-offset-2"
         style={{ color: 'var(--cc-brand)' }}
       >
-        Get a new code
+        {startMutation.isPending ? 'Requesting a new code...' : 'Get a new code'}
       </button>
       {completeMutation.isError && (
         <div
