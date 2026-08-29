@@ -61,6 +61,15 @@ describe("cancel, retry and the stall watchdog on the downloading screen", () =>
   let invokeMock: ReturnType<typeof vi.fn<Bridge["invoke"]>>;
   /** What the polled installer state currently reports. Mutated by each test. */
   let reported: AcquisitionComponentProgress[];
+  /**
+   * What `open_installer_log` does when the button below is clicked --
+   * a function (not a plain value) so a test can make it reject, matching
+   * the real command's own `Result<String, String>` failure mode (bug fix,
+   * field report 2026-08-28, candidate 9d4477b: `open_installer_log` fails
+   * loud whenever no installer log exists yet, which the download screen's
+   * button previously swallowed as a silent no-op).
+   */
+  let openInstallerLogOutcome: () => Promise<string>;
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -69,6 +78,7 @@ describe("cancel, retry and the stall watchdog on the downloading screen", () =>
     window.localStorage.clear();
     vi.useFakeTimers();
     reported = [];
+    openInstallerLogOutcome = async () => "Opened the CivicCast installer log: C:\\ProgramData\\CivicCast\\install-progress.log";
     invokeMock = vi.fn(async (command: string) => {
       if (matches(command, "start_acquisition", "startAcquisition")) {
         return "CivicCast started downloading its components.";
@@ -88,6 +98,9 @@ describe("cancel, retry and the stall watchdog on the downloading screen", () =>
       }
       if (matches(command, "read_local_installer_state", "readLocalInstallerState")) {
         return progressJson(reported);
+      }
+      if (matches(command, "open_installer_log", "openInstallerLog")) {
+        return openInstallerLogOutcome();
       }
       throw new Error(`unexpected command in test: ${command}`);
     });
@@ -282,5 +295,67 @@ describe("cancel, retry and the stall watchdog on the downloading screen", () =>
     await mount();
     await tick((NO_BYTES_MOVED_THRESHOLD_SECONDS + 10) * 1000);
     expect(alertText()).toBe("");
+  });
+
+  // -------------------------------------------------------------------
+  // 4. "Open installer log" (bug fix, field report 2026-08-28, candidate
+  // 9d4477b): the button's onClick used to await `openInstallerLog()` with
+  // no try/catch at all, so a rejected command (the common case: no log
+  // exists on disk yet) became a silent unhandled promise rejection --
+  // nothing on screen ever changed when the operator clicked it.
+  // -------------------------------------------------------------------
+
+  it("reports success through the status message when the native command resolves", async () => {
+    reported = [
+      { id: "app_runtime", state: "downloading", bytes_done: 5_000_000, bytes_total: 500_000_000, elapsed_seconds: 2 }
+    ];
+    await mount();
+
+    const openLogButton = buttonNamed(/^Open installer log$/);
+    expect(openLogButton, "the download screen must offer this control").toBeTruthy();
+    await click(openLogButton!);
+
+    expect(callsTo("open_installer_log", "openInstallerLog")).toHaveLength(1);
+    expect(container.textContent).toMatch(/Opened the CivicCast installer log/);
+    expect(alertText()).toBe("");
+  });
+
+  it("surfaces a visible alert instead of silently doing nothing when the native command rejects", async () => {
+    reported = [
+      { id: "app_runtime", state: "downloading", bytes_done: 5_000_000, bytes_total: 500_000_000, elapsed_seconds: 2 }
+    ];
+    openInstallerLogOutcome = async () => {
+      throw new Error("No CivicCast installer log exists yet.");
+    };
+    await mount();
+
+    const openLogButton = buttonNamed(/^Open installer log$/);
+    await click(openLogButton!);
+
+    // invokeNativeInstallerAny tries BOTH the snake_case and camelCase
+    // command names in sequence and only stops at the first success, so a
+    // command that fails under both names is invoked twice, not once.
+    expect(callsTo("open_installer_log", "openInstallerLog")).toHaveLength(2);
+    // The load-bearing assertion: before this fix, NOTHING here changed --
+    // no alert, no status message, no error anywhere in the DOM.
+    expect(alertText()).toMatch(/no civiccast installer log exists yet/i);
+  });
+
+  it("clears a prior log-open error once a later click succeeds", async () => {
+    reported = [
+      { id: "app_runtime", state: "downloading", bytes_done: 5_000_000, bytes_total: 500_000_000, elapsed_seconds: 2 }
+    ];
+    openInstallerLogOutcome = async () => {
+      throw new Error("No CivicCast installer log exists yet.");
+    };
+    await mount();
+    await click(buttonNamed(/^Open installer log$/)!);
+    expect(alertText()).toMatch(/no civiccast installer log exists yet/i);
+
+    openInstallerLogOutcome = async () => "Opened the CivicCast installer log: C:\\ProgramData\\CivicCast\\install-progress.log";
+    await click(buttonNamed(/^Open installer log$/)!);
+
+    expect(alertText()).toBe("");
+    expect(container.textContent).toMatch(/Opened the CivicCast installer log/);
   });
 });
