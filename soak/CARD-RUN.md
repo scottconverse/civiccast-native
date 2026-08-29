@@ -18,6 +18,7 @@
 - The card does not mention this elevation prompt or tell a no-experience operator what to select.
 - The Windows automation surface cannot read or operate secure-desktop security dialogs, so the requested choice could not be made honestly and no silent/elevated fallback was used.
 - Verdict: **COULD-NOT-PERFORM** after the literal launch because the secure-desktop prompt is not agent-driveable.
+- 2026-08-29T14:06:20Z — **SUBSTITUTED: elevated launch = human's UAC Yes (per DIRECTIVE 8b)**. No other card step is substituted; strict card-only behavior resumes when the normal installer window exists.
 
 ## Findings
 
