@@ -358,4 +358,30 @@ describe("cancel, retry and the stall watchdog on the downloading screen", () =>
     expect(alertText()).toBe("");
     expect(container.textContent).toMatch(/Opened the CivicCast installer log/);
   });
+
+  // Offline-kit honesty (field finding, 2026-08-29, candidate 4eca729): a USB-kit
+  // install downloads NOTHING, yet the screen's header said "Downloading" and told
+  // the operator to keep the connection alive for a "0 KB of 9.7 GB" transfer that
+  // never happens. The operator reported this as the installer hanging. When no row
+  // has needed the network, the header must say so; the moment one genuinely starts
+  // transferring, the download copy must come back.
+  it("says Setting Up, not Downloading, when every component came from the kit", async () => {
+    reported = [
+      { id: "app_runtime", state: "found_locally", bytes_total: 482_000_000, bytes_done: 482_000_000 },
+      { id: "local_ai_model", state: "pending", bytes_total: 7_600_000_000, bytes_done: 0 }
+    ] as unknown as AcquisitionComponentProgress[];
+    await mount(["app_runtime", "local_ai_model"]);
+
+    expect(container.textContent).toContain("Setting Up");
+    expect(container.textContent).not.toContain("If a download is interrupted");
+
+    // One row starts genuinely transferring -> the honest download copy returns.
+    reported = [
+      { id: "app_runtime", state: "found_locally", bytes_total: 482_000_000, bytes_done: 482_000_000 },
+      { id: "local_ai_model", state: "downloading", bytes_total: 7_600_000_000, bytes_done: 1_000 }
+    ] as unknown as AcquisitionComponentProgress[];
+    await tick(4000);
+
+    expect(container.textContent).toContain("Downloading");
+  });
 });

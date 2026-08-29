@@ -389,10 +389,10 @@ export function DownloadPlanScreen({
     <main className="shell shell-frame">
       <header className="topbar">
         <div>
-          <h1>What We'll Download</h1>
+          <h1>What CivicCast Needs</h1>
           <p className="lead">
-            CivicCast is a small program that downloads what it needs. These are the large pieces; everything else
-            downloads quietly in the background.
+            These are the large pieces CivicCast runs on. Anything already on this computer or on your USB kit is used
+            as-is and is not downloaded again; only what is missing comes from the internet.
           </p>
         </div>
       </header>
@@ -679,6 +679,16 @@ export function DownloadingScreen({
   const [logOpenError, setLogOpenError] = useState<string>("");
 
   const allDone = components.every((component) => component.state === "complete" || component.state === "found_locally");
+  // Offline-kit honesty (field finding, 2026-08-29): a USB-kit install downloads
+  // NOTHING, but the screen still said "Downloading ... 0 KB of 9.7 GB" and told
+  // the operator to keep an internet connection alive. When no row has needed the
+  // network -- every row is already satisfied locally, or is still waiting behind
+  // rows that were -- the header must not claim a download is happening. A row
+  // that has genuinely started transferring flips this back to the download copy.
+  const everythingIsLocal =
+    components.length > 0 &&
+    components.every((component) => component.state === "found_locally" || component.state === "pending") &&
+    components.some((component) => component.state === "found_locally");
   // Something is still in flight or still waiting to start -- i.e. there is
   // something a cancel would actually stop. A canceled or errored row is NOT
   // stoppable (its own Resume/Retry is the affordance), so the control
@@ -751,8 +761,12 @@ export function DownloadingScreen({
     <main className="shell shell-frame">
       <header className="topbar">
         <div>
-          <h1>Downloading</h1>
-          <p className="lead">Keep CivicCast Installer open. If a download is interrupted, use Resume download.</p>
+          <h1>{everythingIsLocal ? "Setting Up" : "Downloading"}</h1>
+          <p className="lead">
+            {everythingIsLocal
+              ? "Everything CivicCast needs was found on this computer or your USB kit — nothing is being downloaded. Keep this window open while it finishes."
+              : "Keep CivicCast Installer open. If a download is interrupted, use Resume download."}
+          </p>
         </div>
       </header>
 
