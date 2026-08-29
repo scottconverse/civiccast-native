@@ -190,6 +190,21 @@
 //! `component_acquisition::caption_floor_tier_destination` path-join helper
 //! (never a second, parallel one) -- exactly the shape that function's own
 //! test already exercises.
+//!
+//! **`local_ai_model` carries a SECOND `staged_at` candidate (fixed
+//! 2026-08-28, field report against candidate 9d4477b).** Station
+//! activation's `native_activation::compose_ollama_model_store` never wrote
+//! into [`local_ai_model_root`]'s `packs\local-ai-model\models\` -- nothing
+//! in this codebase does, on either the flat or versioned activation path.
+//! It writes into the MERGED store at
+//! `<install_root>\models\ollama\{manifests,blobs}\...`
+//! ([`merged_ollama_model_store_root`]) instead. `local_ai_model_items`
+//! therefore checks both roots, so a station whose model the offline kit's
+//! activation already installed is recognized without re-downloading ~7GB
+//! from the public Ollama registry. `captions-floor` had the equivalent fix
+//! from day one via `FLOOR_STAGED_ROOT`'s special-case in
+//! `native_activation.rs` -- `local_ai_model` never got the matching
+//! candidate here until now.
 
 use std::path::{Path, PathBuf};
 
@@ -364,6 +379,34 @@ fn local_ai_model_root(root: &Path) -> PathBuf {
     packs_dir(root).join("local-ai-model").join("models")
 }
 
+/// The station-activation MERGED Ollama model store
+/// (`native_activation.rs::compose_ollama_model_store`, called from both
+/// `activate_flat_station_with`'s `extract_flat_distribution_components` and
+/// the versioned `stage_distribution_with` self-test wrapper): every
+/// required native model component's own signed-pack `manifests`/`blobs`
+/// subtree (`summary-gemma4-12b`, `summary-gemma4-e4b`,
+/// `translation-translategemma-4b`) is merged into
+/// `<install_root>\models\ollama\{manifests,blobs}\...` at station
+/// activation time, using the EXACT SAME relative layout
+/// `native_packs::validate_ollama_model_contract`'s `manifest_path`/
+/// `config_path`/layer `path` strings encode --
+/// `manifests/<registry>/library/<repository>/<tag>` and
+/// `blobs/sha256-<digest>` -- which [`local_ai_model_items`] below mirrors
+/// item-for-item.
+///
+/// A SECOND `staged_at` candidate at this root (alongside
+/// [`local_ai_model_root`]'s existing one, which nothing in this codebase
+/// ever writes -- the GUI acquisition flow is the only writer, into the
+/// per-machine download root) is how a station whose 7GB local AI model was
+/// already installed from the offline kit's activation flow is recognized
+/// by [`component_acquisition::ensure_component_available`] without a
+/// redundant re-download from the public Ollama registry. Field report
+/// 2026-08-28, candidate 9d4477b: the GUI download screen re-downloaded the
+/// model even though `install-progress.log` showed every pack
+/// `copied_from_offline` and postinstall `SUCCESS`.
+fn merged_ollama_model_store_root(install_root: &Path) -> PathBuf {
+    install_root.join("models").join("ollama")
+}
 
 /// One item for a reviewed Ollama blob (config or a layer): a
 /// [`ComponentSource::OllamaBlob`] item, verified against its own
@@ -389,7 +432,10 @@ fn ollama_blob_item(
             sha256: blob.sha256.clone(),
         },
         destination: local_ai_model_root(roots.download).join(&relative),
-        staged_at: vec![local_ai_model_root(roots.staged).join(&relative)],
+        staged_at: vec![
+            local_ai_model_root(roots.staged).join(&relative),
+            merged_ollama_model_store_root(roots.staged).join(&relative),
+        ],
         trust: AcquisitionTrust::PinnedFile,
     }
 }
@@ -454,7 +500,10 @@ pub(crate) fn local_ai_model_items(
             sha256: model.manifest_sha256.clone(),
         },
         destination: local_ai_model_root(roots.download).join(&manifest_relative),
-        staged_at: vec![local_ai_model_root(roots.staged).join(&manifest_relative)],
+        staged_at: vec![
+            local_ai_model_root(roots.staged).join(&manifest_relative),
+            merged_ollama_model_store_root(roots.staged).join(&manifest_relative),
+        ],
         trust: AcquisitionTrust::PinnedFile,
     };
 
@@ -1081,6 +1130,207 @@ mod tests {
                 root.join("blobs").join(format!("sha256-{}", layer.sha256))
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Bug fix (field report 2026-08-28, candidate 9d4477b): local_ai_model
+    // must recognize the station-activation MERGED Ollama model store
+    // (`native_activation::compose_ollama_model_store`,
+    // `<install_root>\models\ollama\...`) as a second `staged_at`
+    // candidate, alongside the pre-existing `packs\local-ai-model\models\`
+    // candidate that nothing in this codebase ever writes.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn local_ai_model_items_check_the_merged_ollama_model_store_as_a_second_staged_at_candidate() {
+        let trust = test_trust();
+        let installer_dir = Path::new(r"C:\Program Files\CivicCast (Native)");
+        let catalog = production_catalog(installer_dir, installer_dir, &trust, "1.0.0-rc15");
+        let component = catalog.iter().find(|c| c.id == "local_ai_model").expect("present");
+        let model = native_packs::reviewed_ollama_model(LOCAL_AI_MODEL_LOCK_KEY).expect("gemma4-12b");
+        assert_eq!(component.items.len(), 2 + model.layers.len());
+
+        for item in &component.items {
+            assert_eq!(
+                item.staged_at.len(),
+                2,
+                "every local_ai_model item must carry exactly two staged_at candidates \
+                 (the unused packs\\local-ai-model\\models\\ root, then the merged \
+                 station-activation store)"
+            );
+            // The relative suffix under BOTH candidates must be identical --
+            // the whole point of the merged-store fix is that it is the
+            // SAME relative Ollama layout under a different root.
+            let legacy_relative = item.staged_at[0]
+                .strip_prefix(local_ai_model_root(installer_dir))
+                .expect("first candidate is under the legacy local-ai-model root");
+            let merged_relative = item.staged_at[1]
+                .strip_prefix(merged_ollama_model_store_root(installer_dir))
+                .expect("second candidate is under the merged station-activation store");
+            assert_eq!(
+                legacy_relative, merged_relative,
+                "the merged-store candidate must mirror the legacy candidate's relative path"
+            );
+            // And that suffix must live directly under `manifests\` or
+            // `blobs\`, matching `native_activation::compose_ollama_model_store`'s
+            // own top-level layout.
+            let top_level = merged_relative
+                .components()
+                .next()
+                .expect("relative path has at least one component");
+            assert!(
+                top_level.as_os_str() == "manifests" || top_level.as_os_str() == "blobs",
+                "unexpected top-level component: {top_level:?}"
+            );
+        }
+
+        // The manifest item's merged-store candidate names the exact
+        // registry/library/repo/tag path
+        // `native_packs::validate_ollama_model_contract`'s own
+        // `manifest_path` string encodes.
+        assert_eq!(
+            component.items[0].staged_at[1],
+            merged_ollama_model_store_root(installer_dir)
+                .join("manifests")
+                .join(&model.registry)
+                .join("library")
+                .join(&model.repository)
+                .join(&model.tag)
+        );
+        // Every blob item's (config, then each layer) merged-store
+        // candidate names the exact `blobs/sha256-<digest>` path that same
+        // function encodes.
+        assert_eq!(
+            component.items[1].staged_at[1],
+            merged_ollama_model_store_root(installer_dir)
+                .join("blobs")
+                .join(format!("sha256-{}", model.config.sha256))
+        );
+        for (item, layer) in component.items[2..].iter().zip(model.layers.iter()) {
+            assert_eq!(
+                item.staged_at[1],
+                merged_ollama_model_store_root(installer_dir)
+                    .join("blobs")
+                    .join(format!("sha256-{}", layer.sha256))
+            );
+        }
+    }
+
+    #[test]
+    fn local_ai_model_staged_at_regression_must_include_the_models_ollama_merged_store_path() {
+        // Regression test encoding the EXACT miss from the field report,
+        // spelled out as a literal path (not derived through the same
+        // helper the production code calls) so a future refactor of
+        // `merged_ollama_model_store_root` cannot silently reintroduce the
+        // gap this test exists to close.
+        let trust = test_trust();
+        let installer_dir = Path::new(r"C:\Program Files\CivicCast (Native)");
+        let catalog = production_catalog(installer_dir, installer_dir, &trust, "1.0.0-rc15");
+        let component = catalog.iter().find(|c| c.id == "local_ai_model").expect("present");
+        let model = native_packs::reviewed_ollama_model(LOCAL_AI_MODEL_LOCK_KEY).expect("gemma4-12b");
+
+        let expected_manifest_path = installer_dir
+            .join("models")
+            .join("ollama")
+            .join("manifests")
+            .join("registry.ollama.ai")
+            .join("library")
+            .join(&model.repository)
+            .join(&model.tag);
+        assert!(
+            component.items[0].staged_at.contains(&expected_manifest_path),
+            "local_ai_model manifest item's staged_at candidates {:?} must include the \
+             station-activation merged store path {}",
+            component.items[0].staged_at,
+            expected_manifest_path.display()
+        );
+
+        let expected_config_path = installer_dir
+            .join("models")
+            .join("ollama")
+            .join("blobs")
+            .join(format!("sha256-{}", model.config.sha256));
+        assert!(
+            component.items[1].staged_at.contains(&expected_config_path),
+            "local_ai_model config item's staged_at candidates {:?} must include the \
+             station-activation merged store path {}",
+            component.items[1].staged_at,
+            expected_config_path.display()
+        );
+    }
+
+    #[test]
+    fn ensure_component_available_accepts_a_local_ai_model_file_staged_only_at_the_merged_store_path()
+    {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        let trust = test_trust();
+        let scratch_root = std::env::temp_dir().join(format!(
+            "civiccast-local-ai-model-merged-store-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&scratch_root);
+        // Two distinct roots, mirroring production exactly: `installer_dir`
+        // (elevated-install/`$INSTDIR`) and `download_root`
+        // (non-elevated-writable `%PROGRAMDATA%\CivicCast`) are never the
+        // same directory on a real machine.
+        let installer_dir = scratch_root.join("Program Files").join("CivicCast (Native)");
+        let download_root = scratch_root.join("ProgramData").join("CivicCast");
+        fs::create_dir_all(&installer_dir).expect("create scratch install root");
+        fs::create_dir_all(&download_root).expect("create scratch download root");
+
+        let catalog = production_catalog(&installer_dir, &download_root, &trust, "1.0.0-rc15");
+        let component = catalog.iter().find(|c| c.id == "local_ai_model").expect("present");
+        // The config blob item: smallest of the pinned items to hash in a test.
+        let item = &component.items[1];
+
+        // A fabricated body with its OWN freshly computed digest -- the
+        // item's real `expected` is pinned against the real gemma4-12b
+        // config blob's actual bytes, which this test cannot reproduce.
+        // What matters here is the CANDIDATE-RESOLUTION behavior
+        // (`ensure_component_available` accepting a hash-matching file at
+        // the merged-store path), not the specific pinned digest, so this
+        // test verifies against a locally-computed `ExpectedArtifact` built
+        // from the fabricated body itself.
+        let body = b"fabricated config blob bytes for the merged-store acceptance test".to_vec();
+        let mut digest = Sha256::new();
+        digest.update(&body);
+        let fabricated_expected = ExpectedArtifact::Pinned {
+            bytes: body.len() as u64,
+            sha256: format!("{:x}", digest.finalize()),
+        };
+
+        // Simulate exactly what a real station activation produced: bytes
+        // present ONLY at the merged store candidate (staged_at[1]) --
+        // nothing at `destination` (the writable download root) and nothing
+        // at the legacy `packs\local-ai-model\models\` candidate
+        // (staged_at[0]), matching the field report where the offline kit's
+        // activation had already run and the GUI's download root was empty.
+        let merged_store_path = &item.staged_at[1];
+        fs::create_dir_all(merged_store_path.parent().expect("has a parent")).expect("mkdir");
+        fs::write(merged_store_path, &body).expect("stage the file at the merged store path");
+        assert!(!item.destination.exists());
+        assert!(!item.staged_at[0].exists());
+
+        let result = component_acquisition::ensure_component_available(
+            &item.destination,
+            &item.staged_at,
+            &item.source,
+            &fabricated_expected,
+            &component_acquisition::NoopProgress,
+        );
+        assert_eq!(
+            result.expect("the merged-store candidate must verify and be accepted"),
+            *merged_store_path,
+            "ensure_component_available must return the merged-store candidate, not attempt a download"
+        );
+        assert!(
+            !item.destination.exists(),
+            "no download must have been written to the writable download root"
+        );
+
+        let _ = fs::remove_dir_all(&scratch_root);
     }
 
     #[test]
