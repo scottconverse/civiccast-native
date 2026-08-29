@@ -952,17 +952,40 @@ pub fn ensure_component_available(
     expected: &ExpectedArtifact,
     progress: &dyn ProgressObserver,
 ) -> Result<PathBuf, AcquisitionError> {
+    if let Some(found) = locally_verified_pinned_path(destination, already_at, expected) {
+        return Ok(found);
+    }
+    download_component(source, destination, expected, progress)
+}
+
+/// The offline-first candidate loop [`ensure_component_available`] runs
+/// before ever touching the network, pulled out so a caller can run the SAME
+/// no-network check on its own -- e.g. a pre-pass that wants to know which
+/// components are already fully satisfied on disk before the sequential
+/// download driver starts (`main.rs`'s `prescan_locally_satisfied_components`,
+/// added after a field failure where an unrelated EARLIER catalog component
+/// stuck on a bad connection left an already-satisfied LATER one, like
+/// `local_ai_model`, showing "Waiting" the whole time it was stuck: the
+/// component was never actually missing, the sequential driver simply had
+/// not reached it yet). Never a second, weaker check -- this IS the check
+/// [`ensure_component_available`] uses, just callable before the download
+/// fallback it guards.
+pub fn locally_verified_pinned_path(
+    destination: &Path,
+    already_at: &[PathBuf],
+    expected: &ExpectedArtifact,
+) -> Option<PathBuf> {
     if let ExpectedArtifact::Pinned { bytes, sha256 } = expected {
         for candidate in std::iter::once(destination).chain(already_at.iter().map(Path::new)) {
             if candidate.is_file()
                 && partial_len(candidate).ok() == Some(*bytes)
                 && hash_file(candidate).ok().as_deref() == Some(sha256.as_str())
             {
-                return Ok(candidate.to_path_buf());
+                return Some(candidate.to_path_buf());
             }
         }
     }
-    download_component(source, destination, expected, progress)
+    None
 }
 
 #[cfg(test)]

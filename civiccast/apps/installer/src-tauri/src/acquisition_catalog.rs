@@ -1259,6 +1259,113 @@ mod tests {
         );
     }
 
+    /// End-to-end regression for the field miss (candidate 9d4477b, and the
+    /// re-check against candidate #16/4eca729 that prompted this test): both
+    /// prior tests above prove the two path-BUILDING functions
+    /// (`merged_ollama_model_store_root`, `compose_component_root`-style
+    /// joins) agree in STRING form. This test instead runs the REAL writer
+    /// (`native_activation::compose_ollama_model_store`) against a synthetic
+    /// staged tree and proves `local_ai_model_items`' merged-store
+    /// `staged_at` candidate names a file that function actually wrote --
+    /// so a future change that alters either side's path arithmetic (not
+    /// just this one) fails a real filesystem assertion, not just a string
+    /// comparison against another string.
+    #[test]
+    fn local_ai_model_merged_store_candidate_names_a_file_compose_ollama_model_store_actually_writes(
+    ) {
+        let root = std::env::temp_dir().join(format!(
+            "civiccast-acquisition-catalog-merged-store-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create test install root");
+
+        let model = native_packs::reviewed_ollama_model(LOCAL_AI_MODEL_LOCK_KEY).expect("gemma4-12b");
+
+        // Stage all three required model components at the SAME relative
+        // layout `compose_ollama_model_store` requires (it errors if any is
+        // missing) -- only `summary-gemma4-12b`'s manifest/config paths need
+        // to match the reviewed lock exactly, since that is the component
+        // `local_ai_model_items` derives its candidate from.
+        for component in [
+            "summary-gemma4-12b",
+            "summary-gemma4-e4b",
+            "translation-translategemma-4b",
+        ] {
+            let component_root = root.join("components").join(component);
+            std::fs::create_dir_all(component_root.join("blobs")).expect("blobs dir");
+            std::fs::create_dir_all(component_root.join("manifests")).expect("manifests dir");
+        }
+        let gemma_root = root.join("components").join("summary-gemma4-12b");
+        let manifest_dir = gemma_root
+            .join("manifests")
+            .join(&model.registry)
+            .join("library")
+            .join(&model.repository);
+        std::fs::create_dir_all(&manifest_dir).expect("gemma manifest dir");
+        let manifest_bytes = b"synthetic manifest for regression test";
+        std::fs::write(manifest_dir.join(&model.tag), manifest_bytes).expect("write manifest");
+        let config_blob_name = format!("sha256-{}", model.config.sha256);
+        let config_bytes = b"synthetic config blob for regression test";
+        std::fs::write(gemma_root.join("blobs").join(&config_blob_name), config_bytes)
+            .expect("write config blob");
+
+        crate::native_activation::compose_ollama_model_store(&root)
+            .expect("compose the merged Ollama model store");
+
+        // `local_ai_model_items` derives these exact candidates -- assert
+        // against ITS output, not a hand-written literal, so a change to
+        // either `merged_ollama_model_store_root` or `local_ai_model_items`
+        // is caught the same way a change to `compose_ollama_model_store`
+        // is.
+        let trust = test_trust();
+        let items = local_ai_model_items(
+            CatalogRoots {
+                download: &root,
+                staged: &root,
+            },
+            LOCAL_AI_MODEL_LOCK_KEY,
+        )
+        .expect("local_ai_model_items resolves for the production lock key");
+        let _ = &trust; // trust is unused by local_ai_model_items itself; kept for parity with sibling tests.
+
+        let manifest_item = &items[0];
+        let merged_manifest_candidate = manifest_item
+            .staged_at
+            .last()
+            .expect("manifest item carries a merged-store candidate");
+        assert!(
+            merged_manifest_candidate.is_file(),
+            "compose_ollama_model_store did not write a file at the catalog's own merged-store \
+             manifest candidate: {}",
+            merged_manifest_candidate.display()
+        );
+        assert_eq!(
+            std::fs::read(merged_manifest_candidate).expect("read composed manifest"),
+            manifest_bytes,
+            "the file at the catalog's merged-store candidate is not the one \
+             compose_ollama_model_store actually wrote"
+        );
+
+        let config_item = &items[1];
+        let merged_config_candidate = config_item
+            .staged_at
+            .last()
+            .expect("config item carries a merged-store candidate");
+        assert!(
+            merged_config_candidate.is_file(),
+            "compose_ollama_model_store did not write a file at the catalog's own merged-store \
+             config candidate: {}",
+            merged_config_candidate.display()
+        );
+        assert_eq!(
+            std::fs::read(merged_config_candidate).expect("read composed config blob"),
+            config_bytes
+        );
+
+        std::fs::remove_dir_all(&root).expect("clean up test install root");
+    }
+
     #[test]
     fn ensure_component_available_accepts_a_local_ai_model_file_staged_only_at_the_merged_store_path()
     {
