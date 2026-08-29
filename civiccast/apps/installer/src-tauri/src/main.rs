@@ -2461,6 +2461,102 @@ try {{
         );
     }
 
+    /// Field failure, candidate #16 (4eca729): `local_ai_model` was already
+    /// fully satisfied on disk (station activation's own
+    /// `compose_ollama_model_store` output) but the GUI showed it "Waiting"
+    /// because the strictly sequential driver
+    /// (`run_acquisition_components`) had not reached it yet -- an earlier,
+    /// unconditional, optional catalog entry (`captions_large` /
+    /// `cuda_runtime`) was stuck on a bad connection ahead of it. This test
+    /// proves the fix's core property directly: an already-satisfied
+    /// component is recognized regardless of an EARLIER, unsatisfied
+    /// component's state -- `locally_satisfied_progress_rows` never has to
+    /// wait its turn.
+    #[test]
+    fn locally_satisfied_progress_rows_finds_a_satisfied_component_behind_an_unsatisfied_one() {
+        let root = std::env::temp_dir().join(format!(
+            "civiccast-main-prescan-order-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("mkdir scratch");
+
+        fn sha256_hex(bytes: &[u8]) -> String {
+            use sha2::{Digest, Sha256};
+            let mut digest = Sha256::new();
+            digest.update(bytes);
+            format!("{:x}", digest.finalize())
+        }
+
+        // Stands in for `captions_large`/`cuda_runtime`: nothing on disk at
+        // its destination or any staged_at candidate, so it is NOT locally
+        // satisfied -- exactly the shape of an optional component the
+        // offline kit never staged, which would need a real (possibly
+        // stuck) network transfer to resolve.
+        let stuck_ahead = acquisition_catalog::CatalogComponent {
+            id: "test-only-prescan-stuck-ahead".to_string(),
+            items: vec![acquisition_catalog::CatalogItem {
+                source: component_acquisition::ComponentSource::HuggingFaceFile {
+                    repo: "unused/unused".to_string(),
+                    revision: "0".repeat(40),
+                    path: "never-staged.bin".to_string(),
+                },
+                expected: component_acquisition::ExpectedArtifact::Pinned {
+                    bytes: 12345,
+                    sha256: "0".repeat(64),
+                },
+                destination: root.join("never-staged.bin"),
+                staged_at: Vec::new(),
+                trust: acquisition_catalog::AcquisitionTrust::PinnedFile,
+            }],
+        };
+
+        // Stands in for `local_ai_model`: already present at its
+        // staged_at candidate (station activation's composed store),
+        // matching bytes and sha256 -- fully satisfied without ever
+        // touching the network.
+        let body = b"already installed by station activation".to_vec();
+        let staged_path = root.join("merged-store").join("already-installed.bin");
+        fs::create_dir_all(staged_path.parent().unwrap()).expect("mkdir staged parent");
+        fs::write(&staged_path, &body).expect("pre-stage the merged-store file");
+        let already_satisfied_behind = acquisition_catalog::CatalogComponent {
+            id: "test-only-prescan-already-satisfied-behind".to_string(),
+            items: vec![acquisition_catalog::CatalogItem {
+                source: component_acquisition::ComponentSource::HuggingFaceFile {
+                    repo: "unused/unused".to_string(),
+                    revision: "0".repeat(40),
+                    path: "already-installed.bin".to_string(),
+                },
+                expected: component_acquisition::ExpectedArtifact::Pinned {
+                    bytes: body.len() as u64,
+                    sha256: sha256_hex(&body),
+                },
+                // Never written at `destination` itself -- only reachable
+                // via the second `staged_at` candidate, mirroring
+                // `local_ai_model_items`'s merged-store candidate.
+                destination: root.join("never-written-download-dest.bin"),
+                staged_at: vec![staged_path],
+                trust: acquisition_catalog::AcquisitionTrust::PinnedFile,
+            }],
+        };
+
+        let components = vec![stuck_ahead, already_satisfied_behind];
+        let rows = locally_satisfied_progress_rows(&components);
+
+        assert_eq!(
+            rows.len(),
+            1,
+            "only the already-satisfied component should produce a row, got: {rows:?}"
+        );
+        assert_eq!(rows[0].id, "test-only-prescan-already-satisfied-behind");
+        assert_eq!(
+            rows[0].state,
+            acquisition_state::AcquisitionComponentState::FoundLocally
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn run_single_acquisition_component_aggregates_multiple_pinned_items_into_one_found_locally_progress_entry(
     ) {
@@ -3282,20 +3378,24 @@ fn component_bytes_total_hint(component: &acquisition_catalog::CatalogComponent)
 /// via the EXISTING chain (`component_acquisition::acquire_and_verify_pack`,
 /// which itself calls `native_packs::verify_pack` -- never a second,
 /// parallel verifier).
-fn run_pack_item(
+/// The offline-first candidate loop [`run_pack_item`] runs before ever
+/// touching the network, pulled out so a caller can run the SAME no-network
+/// check on its own -- the signed-pack counterpart to
+/// `component_acquisition::locally_verified_pinned_path`, used by the same
+/// pre-pass (`prescan_locally_satisfied_components`). Chain H1: the download
+/// destination and the installer-staged location are no longer the same
+/// folder, so BOTH are offered to the SAME signed manifest verifier. The
+/// staged copy is what the R7 log already reported as "Found locally --
+/// verified" for app_runtime and server_binaries; moving the download root
+/// must not lose that, and must not cause a re-download into the writable
+/// root of something already delivered.
+fn locally_verified_pack_path(
     item: &acquisition_catalog::CatalogItem,
     trust: &native_packs::PackTrust,
     expected_component: &str,
     expected_product_version: &str,
     expected_compatible_core: &str,
-    observer: &dyn component_acquisition::ProgressObserver,
-) -> Result<(), component_acquisition::AcquisitionError> {
-    // Chain H1: the download destination and the installer-staged location
-    // are no longer the same folder, so BOTH are offered to the SAME signed
-    // manifest verifier. The staged copy is what the R7 log already reported
-    // as "Found locally -- verified" for app_runtime and server_binaries;
-    // moving the download root must not lose that, and must not cause a
-    // re-download into the writable root of something already delivered.
+) -> Option<PathBuf> {
     for candidate in std::iter::once(&item.destination).chain(item.staged_at.iter()) {
         if native_packs::verify_pack(
             candidate,
@@ -3306,8 +3406,30 @@ fn run_pack_item(
         )
         .is_ok()
         {
-            return Ok(());
+            return Some(candidate.clone());
         }
+    }
+    None
+}
+
+fn run_pack_item(
+    item: &acquisition_catalog::CatalogItem,
+    trust: &native_packs::PackTrust,
+    expected_component: &str,
+    expected_product_version: &str,
+    expected_compatible_core: &str,
+    observer: &dyn component_acquisition::ProgressObserver,
+) -> Result<(), component_acquisition::AcquisitionError> {
+    if locally_verified_pack_path(
+        item,
+        trust,
+        expected_component,
+        expected_product_version,
+        expected_compatible_core,
+    )
+    .is_some()
+    {
+        return Ok(());
     }
     component_acquisition::acquire_and_verify_pack(
         &item.source,
@@ -3319,6 +3441,116 @@ fn run_pack_item(
         observer,
     )
     .map(|_verified| ())
+}
+
+/// The no-network counterpart to [`run_catalog_item`]: true when `item`
+/// already resolves locally (staged by the elevated installer or by station
+/// activation) under the SAME verification each trust kind's real driver
+/// uses, without ever constructing a download. Used only by
+/// [`prescan_locally_satisfied_components`].
+fn catalog_item_locally_satisfied(item: &acquisition_catalog::CatalogItem) -> bool {
+    match &item.trust {
+        acquisition_catalog::AcquisitionTrust::PinnedFile => {
+            component_acquisition::locally_verified_pinned_path(
+                &item.destination,
+                &item.staged_at,
+                &item.expected,
+            )
+            .is_some()
+        }
+        acquisition_catalog::AcquisitionTrust::Pack {
+            trust,
+            expected_component,
+            expected_product_version,
+            expected_compatible_core,
+        } => locally_verified_pack_path(
+            item,
+            trust,
+            expected_component,
+            expected_product_version,
+            expected_compatible_core,
+        )
+        .is_some(),
+    }
+}
+
+/// True when EVERY item in `component` is already satisfied on disk -- see
+/// [`catalog_item_locally_satisfied`].
+fn component_locally_satisfied(component: &acquisition_catalog::CatalogComponent) -> bool {
+    !component.items.is_empty()
+        && component
+            .items
+            .iter()
+            .all(catalog_item_locally_satisfied)
+}
+
+/// Field failure, candidate #16 (4eca729): the production catalog is a
+/// FIXED list (`acquisition_catalog::PRODUCTION_CATALOG_IDS`) run by a
+/// strictly sequential, single-threaded driver
+/// (`run_acquisition_components`) in that exact order --
+/// `app_runtime, server_binaries, captions_medium, captions_large,
+/// cuda_runtime, local_ai_model`. Two of the entries ahead of
+/// `local_ai_model` (`captions_large`, `cuda_runtime`) are OPTIONAL,
+/// large, and NOT guaranteed to be staged by the offline USB kit -- and
+/// the backend has no hardware- or selection-based gating on them at all
+/// (`start_acquisition` takes no arguments; every id in
+/// `PRODUCTION_CATALOG_IDS` always runs). On a station with poor or no
+/// internet, whichever of those isn't staged offline can sit downloading
+/// for hours (the download engine's own timeout is
+/// `component_acquisition.rs`'s `6 * 60 * 60` seconds) before the driver
+/// ever reaches `local_ai_model` -- even on a machine where station
+/// activation's `compose_ollama_model_store` already installed that exact
+/// model and `local_ai_model`'s own offline-first check
+/// (`acquisition_catalog::local_ai_model_items`'s `staged_at` candidates)
+/// would resolve it in milliseconds. The GUI showed "Local AI model" stuck
+/// on "Waiting" (`AcquisitionComponentState::Pending`) for the whole time,
+/// even though the model was already usable.
+///
+/// This pass runs the exact same no-network local checks
+/// (`catalog_item_locally_satisfied`) the sequential driver itself would
+/// use once it reaches each component, over EVERY component up front, and
+/// persists `found_locally` immediately for anything that already
+/// resolves -- so the GUI reflects real on-disk state within milliseconds
+/// of the driver starting, decoupled from whatever an unrelated, unstaged,
+/// optional component is doing on a slow connection. It does not skip or
+/// weaken any later verification: the sequential loop below still visits
+/// every component in the same order and performs its own real
+/// (network-capable) run when it gets there, which re-confirms the same
+/// local match at negligible cost for anything already marked here. No
+/// hash or signature check is bypassed by this pass -- it only moves an
+/// already-passing check's write earlier.
+/// Pure half of [`prescan_locally_satisfied_components`]: the `found_locally`
+/// progress rows for every already-satisfied component in `components`, in
+/// order. Separated out the same way `acquisition_state::upsert_into` is
+/// separated from `acquisition_state::upsert` -- so a test can exercise the
+/// actual satisfaction logic without touching the process-wide
+/// `ACQUISITION_STORE` other parallel `cargo test` threads also share.
+fn locally_satisfied_progress_rows(
+    components: &[acquisition_catalog::CatalogComponent],
+) -> Vec<acquisition_state::AcquisitionComponentProgress> {
+    components
+        .iter()
+        .filter(|component| component_locally_satisfied(component))
+        .map(|component| acquisition_state::AcquisitionComponentProgress {
+            id: component.id.clone(),
+            state: acquisition_state::AcquisitionComponentState::FoundLocally,
+            bytes_done: component_bytes_total_hint(component).unwrap_or(0),
+            bytes_total: component_bytes_total_hint(component),
+            elapsed_seconds: 0,
+            error: None,
+        })
+        .collect()
+}
+
+fn prescan_locally_satisfied_components(components: &[acquisition_catalog::CatalogComponent]) {
+    let rows = locally_satisfied_progress_rows(components);
+    if rows.is_empty() {
+        return;
+    }
+    for row in rows {
+        acquisition_state::upsert(row);
+    }
+    let _ = persist_acquisition_progress();
 }
 
 /// Runs one catalog item (dispatching on its [`acquisition_catalog::AcquisitionTrust`]),
@@ -3483,6 +3715,11 @@ fn run_acquisition_components(components: &[acquisition_catalog::CatalogComponen
     for component in components {
         remember_acquisition_config(component.clone());
     }
+    // See `prescan_locally_satisfied_components`'s own doc: run before the
+    // sequential, potentially network-blocking loop below so an
+    // already-satisfied component is never left showing "Waiting" behind an
+    // unrelated, still-in-progress one.
+    prescan_locally_satisfied_components(components);
     for component in components {
         // G011.3: stop between components too, not only mid-transfer. A
         // cancel that arrives while a component is being verified (or in the

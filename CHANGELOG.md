@@ -648,6 +648,50 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **GUI acquisition screen showed "Local AI model" stuck on "Waiting" for
+  15+ minutes on a real board-demo machine (candidate #16, 4eca729) even
+  though station activation had already installed it and PR #56's
+  `merged_ollama_model_store_root` fix was present and structurally
+  correct.** Root-caused by re-deriving both sides of PR #56's path match
+  from the actual code (`native_activation::compose_ollama_model_store`
+  writes to `<install_root>\models\ollama\...`;
+  `acquisition_catalog::merged_ollama_model_store_root(roots.staged)`
+  resolves to the SAME path, since `roots.staged` is
+  `acquisition_installer_directory()` = `current_exe().parent()`, and
+  `--civiccast-activate-station --install-root "$INSTDIR"` passes that
+  same directory as `install_root` -- so the original 9d4477b path miss is
+  confirmed fixed, not the cause here) — this is a DIFFERENT defect. The
+  real cause: `main.rs`'s `run_acquisition_components` is a strictly
+  sequential, single-threaded driver over a FIXED list
+  (`acquisition_catalog::PRODUCTION_CATALOG_IDS`: `app_runtime,
+  server_binaries, captions_medium, captions_large, cuda_runtime,
+  local_ai_model`) with no hardware- or selection-based gating at all
+  (`start_acquisition` takes no arguments; `captions_large` and
+  `cuda_runtime` are both `required: false` on the frontend but always run
+  on the backend). On a station with poor or no internet, whichever
+  optional entry ahead of `local_ai_model` was not staged offline could sit
+  downloading for hours (`component_acquisition.rs`'s per-request timeout
+  is `6 * 60 * 60` seconds) before the driver ever reached
+  `local_ai_model` — even though that component's own offline-first check
+  would have resolved in milliseconds. Fix: a `prescan_locally_satisfied_components`
+  pass now runs every catalog component's existing no-network local-check
+  (factored out as `component_acquisition::locally_verified_pinned_path`
+  and `main.rs`'s `locally_verified_pack_path`, reused — never duplicated
+  — by the real sequential driver) up front, before the sequential loop
+  starts, and persists `found_locally` immediately for anything already
+  satisfied — decoupling an already-installed component's GUI state from
+  an unrelated, still-transferring one. No hash or signature check was
+  weakened; the sequential loop still performs its own full run over every
+  component afterward. Two new tests: `acquisition_catalog.rs`'s
+  `local_ai_model_merged_store_candidate_names_a_file_compose_ollama_model_store_actually_writes`
+  runs the REAL `compose_ollama_model_store` writer against a synthetic
+  staged tree and asserts the catalog's own merged-store candidate names a
+  file it actually wrote (mutation-tested: fails when the two path
+  functions are made to disagree); `main.rs`'s
+  `locally_satisfied_progress_rows_finds_a_satisfied_component_behind_an_unsatisfied_one`
+  proves an already-satisfied component is recognized regardless of an
+  earlier, unsatisfied component's state.
+
 - **Setup-handoff recovery: an unhandled write failure after the challenge
   directory was already hardened could crash the request instead of ever
   reaching the "no 200 without a real file" contract, and "Get a new code"

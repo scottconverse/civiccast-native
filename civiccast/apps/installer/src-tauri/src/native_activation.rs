@@ -103,7 +103,7 @@ where
     )
 }
 
-fn compose_ollama_model_store(staging: &Path) -> Result<(), String> {
+pub(crate) fn compose_ollama_model_store(staging: &Path) -> Result<(), String> {
     let destination = staging.join("models").join("ollama");
     ensure_directory_or_create(&destination, "composed Ollama model store")?;
     for component in &REQUIRED_COMPONENTS[2..] {
