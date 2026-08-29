@@ -281,7 +281,7 @@ describe('SetupScreen first-admin form validation', () => {
 
 describe('SetupScreen first-admin recovery kit gate', () => {
   it('leaves the one-time recovery kit panel after acknowledgement succeeds', async () => {
-    window.history.replaceState(null, '', '/operator/?nonce=fresh-setup-nonce#/setup')
+    window.history.replaceState(null, '', '/operator/#/setup')
     vi.stubGlobal('URL', {
       ...URL,
       createObjectURL: vi.fn(() => 'blob:civiccast-recovery-kit'),
@@ -303,7 +303,7 @@ describe('SetupScreen first-admin recovery kit gate', () => {
           recovery_kit_created: setupComplete,
           recovery_kit_id: setupComplete ? 'rk_test' : null,
           recovery_kit_acknowledged: recoveryKitAcknowledged,
-          operator_console_url: 'http://127.0.0.1:8000/operator/?nonce=fresh-setup-nonce',
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
           next_step: setupComplete ? 'Open System Health.' : 'Create the first admin.',
         })
       }
@@ -341,7 +341,7 @@ describe('SetupScreen first-admin recovery kit gate', () => {
             instructions: ['Store the kit offline.'],
             excludes: ['staff bearer token values'],
           },
-          operator_console_url: 'http://127.0.0.1:8000/operator/?nonce=fresh-setup-nonce',
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
           operator_console_token: 'ccst_test_operator_console_token',
           next_step: 'Save the recovery kit.',
         })
@@ -355,7 +355,7 @@ describe('SetupScreen first-admin recovery kit gate', () => {
           recovery_kit_created: true,
           recovery_kit_id: 'rk_test',
           recovery_kit_acknowledged: true,
-          operator_console_url: 'http://127.0.0.1:8000/operator/?nonce=fresh-setup-nonce',
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
           next_step: 'Open System Health.',
         })
       }

@@ -86,9 +86,6 @@ import type {
   DiagnosticBundleResponse,
   FirstAdminSetupRequest,
   FirstAdminSetupResponse,
-  HandoffRecoveryCompleteRequest,
-  HandoffRecoveryCompleteResponse,
-  HandoffRecoveryStartResponse,
   FollowerModerationRequest,
   DeliveryRetryRecord,
   FollowerRecord,
@@ -292,35 +289,11 @@ function runtimeStaffToken(): string | null {
   )
 }
 
-/**
- * Whether this browser holds the installer's one-time setup handoff.
- *
- * Every `/api/setup/*` mutation is 403 without it (GauntletGate W-2), so a
- * screen that offers such an action must ask this first rather than presenting
- * a control that cannot succeed.
- */
-export function hasSetupNonce(): boolean {
-  return runtimeSetupNonce() !== null
-}
-
-function runtimeSetupNonce(): string | null {
-  if (typeof window === 'undefined') return null
-  const hash = window.location.hash
-  const hashQuery = hash.includes('?') ? hash.slice(hash.indexOf('?')) : ''
-  const urlNonce =
-    new URLSearchParams(window.location.search).get('nonce') ??
-    new URLSearchParams(hashQuery).get('nonce')
-  return urlNonce ?? window.sessionStorage.getItem('civiccast.setupNonce')
-}
-
 function userFacingApiDetail(detail?: string): string | undefined {
   if (!detail) return detail
   const normalized = detail.toLowerCase()
   if (normalized.includes('missing authorization header') || normalized.includes('bearer <staff-token>')) {
     return 'Sign in with the local station admin account, then try again.'
-  }
-  if (normalized.includes('setup nonce') || normalized.includes('x-civiccast-setup-nonce')) {
-    return 'Open the operator console from the CivicCast installer handoff, then continue setup.'
   }
   return detail
 }
@@ -423,11 +396,6 @@ export interface EgressSchemaCurrency {
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, timeoutMs } = opts
   const staffToken = runtimeStaffToken()
-  const setupNonce = runtimeSetupNonce()
-
-  if (setupNonce && typeof window !== 'undefined') {
-    window.sessionStorage.setItem('civiccast.setupNonce', setupNonce)
-  }
 
   const controller = timeoutMs != null ? new AbortController() : undefined
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined
@@ -438,7 +406,6 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       headers: {
         Accept: 'application/json',
         ...(staffToken ? { Authorization: `Bearer ${staffToken}` } : {}),
-        ...(setupNonce ? { 'X-CivicCast-Setup-Nonce': setupNonce } : {}),
         ...(body != null ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body != null ? JSON.stringify(body) : undefined,
@@ -499,18 +466,12 @@ async function requestForm<T>(
   method: 'POST' | 'PUT' = 'POST',
 ): Promise<T> {
   const staffToken = runtimeStaffToken()
-  const setupNonce = runtimeSetupNonce()
-
-  if (setupNonce && typeof window !== 'undefined') {
-    window.sessionStorage.setItem('civiccast.setupNonce', setupNonce)
-  }
 
   const res = await fetch(`${runtimeApiBase()}${path}`, {
     method,
     headers: {
       Accept: 'application/json',
       ...(staffToken ? { Authorization: `Bearer ${staffToken}` } : {}),
-      ...(setupNonce ? { 'X-CivicCast-Setup-Nonce': setupNonce } : {}),
     },
     body,
   })
@@ -586,34 +547,6 @@ export function recoverStationAdmin(
   payload: StationRecoveryRequest,
 ): Promise<StationAuthResponse> {
   return request<StationAuthResponse>('/api/setup/recover', {
-    method: 'POST',
-    body: payload,
-  })
-}
-
-/**
- * W-2: issue a local-admin setup-recovery code for a lost or expired setup
- * link. Never receives the code itself -- only the file path an
- * administrator of this computer can open to read it.
- */
-export function startHandoffRecovery(): Promise<HandoffRecoveryStartResponse> {
-  return request<HandoffRecoveryStartResponse>('/api/setup/handoff-recovery/start', {
-    method: 'POST',
-    body: {},
-  })
-}
-
-/**
- * W-2: redeem the code an administrator read from that file. On success the
- * response carries the station's own setup nonce -- store it exactly where
- * a nonce read from the handoff URL is stored (`civiccast.setupNonce`) so
- * every following `/api/setup/*` call resumes through the ordinary
- * nonce-header path.
- */
-export function completeHandoffRecovery(
-  payload: HandoffRecoveryCompleteRequest,
-): Promise<HandoffRecoveryCompleteResponse> {
-  return request<HandoffRecoveryCompleteResponse>('/api/setup/handoff-recovery/complete', {
     method: 'POST',
     body: payload,
   })
@@ -1262,16 +1195,10 @@ export function createAppBuild(payload: BuildRequest): Promise<AppBuildRecord> {
 
 async function downloadStaffBlob(path: string): Promise<Blob> {
   const token = runtimeStaffToken()
-  const setupNonce = runtimeSetupNonce()
-
-  if (setupNonce && typeof window !== 'undefined') {
-    window.sessionStorage.setItem('civiccast.setupNonce', setupNonce)
-  }
 
   const res = await fetch(`${runtimeApiBase()}${path}`, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(setupNonce ? { 'X-CivicCast-Setup-Nonce': setupNonce } : {}),
     },
   })
   if (!res.ok) {
@@ -1297,18 +1224,12 @@ async function downloadStaffBlob(path: string): Promise<Blob> {
 /** POST a JSON body and return the response as a Blob (carries the staff bearer token). */
 async function postForBlob(path: string, body: unknown): Promise<Blob> {
   const token = runtimeStaffToken()
-  const setupNonce = runtimeSetupNonce()
-
-  if (setupNonce && typeof window !== 'undefined') {
-    window.sessionStorage.setItem('civiccast.setupNonce', setupNonce)
-  }
 
   const res = await fetch(`${runtimeApiBase()}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(setupNonce ? { 'X-CivicCast-Setup-Nonce': setupNonce } : {}),
     },
     body: JSON.stringify(body),
   })
@@ -1881,14 +1802,12 @@ export async function getCaptionReviewAudioClip(
   reviewItemId: string,
 ): Promise<Blob> {
   const staffToken = runtimeStaffToken()
-  const setupNonce = runtimeSetupNonce()
   const response = await fetch(
     `${runtimeApiBase()}/api/staff/captions/review-items/${encodeURIComponent(reviewItemId)}/clip`,
     {
       headers: {
         Accept: 'audio/wav',
         ...(staffToken ? { Authorization: `Bearer ${staffToken}` } : {}),
-        ...(setupNonce ? { 'X-CivicCast-Setup-Nonce': setupNonce } : {}),
       },
     },
   )
@@ -3092,10 +3011,6 @@ export async function importAgendaFromDoc(
   contentType: string = 'text/plain',
 ): Promise<AgendaItem[]> {
   const staffToken = runtimeStaffToken()
-  const setupNonce = runtimeSetupNonce()
-  if (setupNonce && typeof window !== 'undefined') {
-    window.sessionStorage.setItem('civiccast.setupNonce', setupNonce)
-  }
   const res = await fetch(
     `${runtimeApiBase()}${AGENDAS}/${encodeURIComponent(agendaId)}/import`,
     {
@@ -3104,7 +3019,6 @@ export async function importAgendaFromDoc(
         Accept: 'application/json',
         'Content-Type': contentType,
         ...(staffToken ? { Authorization: `Bearer ${staffToken}` } : {}),
-        ...(setupNonce ? { 'X-CivicCast-Setup-Nonce': setupNonce } : {}),
       },
       body: doc,
     },

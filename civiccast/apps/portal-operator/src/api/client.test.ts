@@ -81,35 +81,33 @@ describe('staff authentication throttling', () => {
   })
 })
 
-describe('setup nonce handoff', () => {
+describe('setup requests carry no nonce', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     window.localStorage.clear()
     window.sessionStorage.clear()
   })
 
-  it('prefers the installer URL nonce over a stale stored nonce', async () => {
-    window.history.replaceState(null, '', '/operator/?nonce=fresh-installer-nonce#/setup')
-    window.sessionStorage.setItem('civiccast.setupNonce', 'stale-nonce')
-    const fetchMock = vi.fn(async () => (
+  it('never sends an X-CivicCast-Setup-Nonce header -- first setup is admitted by loopback IP alone', async () => {
+    // Even a stray query-string value or a leftover sessionStorage key from
+    // before the nonce/handoff mechanism was retired must not resurface as
+    // a header: the backend no longer recognizes one, and the frontend must
+    // not manufacture one either.
+    window.history.replaceState(null, '', '/operator/?nonce=stray-leftover-value#/setup')
+    window.sessionStorage.setItem('civiccast.setupNonce', 'stale-leftover-value')
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ setup_complete: false }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
-      })
-    ))
+      }),
+    )
     vi.stubGlobal('fetch', fetchMock)
 
     await getStationSetupState()
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/setup/station-state',
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          'X-CivicCast-Setup-Nonce': 'fresh-installer-nonce',
-        }),
-      }),
-    )
-    expect(window.sessionStorage.getItem('civiccast.setupNonce')).toBe('fresh-installer-nonce')
+    const init = fetchMock.mock.calls[0]![1]
+    const headers = init?.headers as Record<string, string>
+    expect(headers).not.toHaveProperty('X-CivicCast-Setup-Nonce')
   })
 })
 

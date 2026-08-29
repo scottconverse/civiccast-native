@@ -320,7 +320,6 @@ Never send:
 
 - admin passwords;
 - recovery codes;
-- setup nonce values;
 - provider credentials;
 - private keys;
 - resident information;

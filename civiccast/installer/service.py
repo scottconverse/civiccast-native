@@ -3140,8 +3140,8 @@ def create_diagnostic_bundle(
     pulled into the bundle's ``logs`` section, in addition to the native
     runtime host's own diagnostic log. Every collected line passes through the same
     ``_redact_log_text`` choke point used for the rest of the bundle, so a
-    stray secret or the setup nonce in an FFmpeg/bootstrap log line cannot
-    leave the machine unredacted."""
+    stray secret in an FFmpeg/bootstrap log line cannot leave the machine
+    unredacted."""
 
     generated_at = datetime.now(UTC)
     bundle_id = f"support-{generated_at.strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
@@ -3178,7 +3178,6 @@ def create_diagnostic_bundle(
             "tokens_passwords_private_keys_provider_credentials": "redacted",
             "subscriber_data": "excluded",
             "raw_logs": "tail, redacted",
-            "setup_nonce": "redacted",
         },
     }
     content = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
@@ -3225,7 +3224,6 @@ def create_diagnostic_bundle(
             "provider credential values",
             "subscriber data",
             "raw media files",
-            "setup nonce",
         ],
         next_step="Attach this bundle to the tester bug report if support asks for it.",
     )
@@ -3372,7 +3370,6 @@ def create_acceptance_packet() -> AcceptancePacketResponse:
         "redaction": {
             "tokens_passwords_private_keys_provider_credentials": "redacted",
             "subscriber_data": "excluded",
-            "setup_nonce": "redacted",
         },
     }
     content = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
@@ -4863,15 +4860,18 @@ def _env_key_is_secret(key: str) -> bool:
 
 
 def _redact_console_url_in_mapping(data: dict[str, object]) -> dict[str, object]:
-    """Strip the setup-nonce query param from any embedded operator-console URL.
+    """Strip any ``?nonce=`` query param from an embedded operator-console URL.
 
-    ``operator_console_url()`` bakes ``CIVICCAST_SETUP_NONCE`` into the URL as a
-    ``?nonce=`` query param for legitimate loopback handoff use. Diagnostic
-    bundles are explicitly meant to leave the machine (sent to support), so any
-    nested model carrying that URL (``StationSetupState.operator_console_url``,
-    reachable both directly and via ``SystemHealthReport.setup``) must have the
-    nonce redacted before serialization. Recurses through dicts/lists so any
-    future nesting point is covered without a second fix site.
+    ``operator_console_url()`` no longer bakes a nonce into the URL (the
+    installer-handoff nonce was retired 2026-08-29 -- owner decision -- once
+    the control plane's loopback-only bind made it a redundant gate), so this
+    is now defense-in-depth against a legacy/pre-upgrade value rather than an
+    everyday scrub. Diagnostic bundles are explicitly meant to leave the
+    machine (sent to support), so any nested model carrying that URL
+    (``StationSetupState.operator_console_url``, reachable both directly and
+    via ``SystemHealthReport.setup``) still gets any stray nonce redacted
+    before serialization. Recurses through dicts/lists so any future nesting
+    point is covered without a second fix site.
     """
 
     def _scrub(value: object) -> object:
@@ -5685,21 +5685,21 @@ def build_model_bundle_manifest(request: ModelBundleRequest) -> ModelBundleManif
 
 
 def operator_console_url() -> str:
-    """Return the operator console handoff target used by installer surfaces."""
+    """Return the operator console handoff target used by installer surfaces.
+
+    Used to append a ``?nonce=`` query param from ``CIVICCAST_SETUP_NONCE``.
+    That installer-handoff nonce was retired 2026-08-29 (owner decision): the
+    control plane binds ``127.0.0.1`` only, so first setup is unreachable
+    from the network by construction and the nonce was a redundant,
+    failure-prone gate. The URL is now always the plain console target.
+    """
 
     default_url = (
         "http://127.0.0.1:8000/operator/"
         if os.getenv("CIVICCAST_OPERATOR_CONSOLE_DIST")
         else "http://127.0.0.1:5173"
     )
-    url = os.getenv("CIVICCAST_OPERATOR_CONSOLE_URL", default_url)
-    nonce = os.getenv("CIVICCAST_SETUP_NONCE")
-    if not nonce:
-        return url
-    parts = urlsplit(url)
-    query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    query.setdefault("nonce", nonce)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    return os.getenv("CIVICCAST_OPERATOR_CONSOLE_URL", default_url)
 
 
 _OPTIONAL_INSTALLER_LANE_IDS = frozenset({"ffmpeg", "ndi"})

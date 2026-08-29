@@ -97,7 +97,6 @@ Do not include:
 
 - Recovery codes.
 - Passwords.
-- Setup nonces (one-time setup codes shown during first-admin creation).
 - Provider credentials.
 - Private keys.
 - Subscriber data.

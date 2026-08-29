@@ -1657,17 +1657,21 @@ def test_station_runtime_exposes_the_tier_selection_seam() -> None:
 
 # ---------------------------------------------------------------------------
 # Front door: the control-plane child env must carry the packaged portal dist
-# paths and the setup nonce.
+# paths.
 #
-# BLOCKER these close: civiccast/app.py's _mount_packaged_portals mounts
+# BLOCKER this closes: civiccast/app.py's _mount_packaged_portals mounts
 # /operator and / ONLY when CIVICCAST_OPERATOR_CONSOLE_DIST /
 # CIVICCAST_PUBLIC_PORTAL_DIST are set. Nothing on a NATIVE station ever set
 # them (only the WSL headless-bootstrap.ps1 did), so the control plane came up
 # answering /health and 404ing the operator console and the resident portal --
-# the two surfaces the whole product is reached through. The same env build
-# never carried CIVICCAST_SETUP_NONCE either, so every /api/setup/* mutation
-# 403'd with "Storage setup requires the installer handoff nonce" and first-run
-# setup could not be completed at all.
+# the two surfaces the whole product is reached through.
+#
+# The env used to also carry CIVICCAST_SETUP_NONCE, gating every
+# /api/setup/* mutation. That nonce was retired 2026-08-29 (owner decision):
+# the control plane binds 127.0.0.1 only, so first setup is unreachable from
+# the network by construction and the nonce was a redundant, failure-prone
+# gate. First setup is now admitted by loopback alone
+# (civiccast.installer.router._require_local_setup_request).
 # ---------------------------------------------------------------------------
 
 
@@ -1713,33 +1717,25 @@ def test_station_environment_points_the_control_plane_at_the_packaged_portals(
     assert Path(env["CIVICCAST_PUBLIC_PORTAL_DIST"]).is_dir()
 
 
-def test_pre_activation_environment_carries_the_front_door_and_the_setup_handoff(
+def test_pre_activation_environment_carries_the_front_door(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Chain L (TESTER2 request-0050c). A station that is installed but not yet
-    activated must still get everything that is ALREADY true at that point: the
-    packaged portals (delivered by the native-app-payload pack) and the setup
-    nonce (persisted by the elevated installer at D4 provision time). Without
-    the first the operator console 404s; without the second every
-    ``/api/setup/*`` mutation 403s, so first-run setup could be neither reached
-    nor completed."""
+    activated must still get everything that is ALREADY true at that point:
+    the packaged portals (delivered by the native-app-payload pack). Without
+    them the operator console 404s, so first-run setup could not even be
+    reached."""
 
     from civiccast.native import station_runtime
-
-    monkeypatch.setattr(
-        station_runtime, "read_persisted_setup_nonce", lambda: "test-nonce-0123456789abcdef"
-    )
 
     env = station_runtime.pre_activation_control_plane_environment()
 
     assert env["CIVICCAST_OPERATOR_CONSOLE_DIST"]
     assert env["CIVICCAST_PUBLIC_PORTAL_DIST"]
-    assert env["CIVICCAST_SETUP_NONCE"] == "test-nonce-0123456789abcdef"
+    assert "CIVICCAST_SETUP_NONCE" not in env
 
 
-def test_pre_activation_environment_never_claims_the_station_is_activated(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_pre_activation_environment_never_claims_the_station_is_activated() -> None:
     """``installer/service.py``'s ``_native_station_activated`` reads
     ``CIVICCAST_NATIVE_STATION`` + ``CIVICCAST_NATIVE_STATION_MANIFEST`` to
     decide whether setup has finished. Serving the front door a not-yet-
@@ -1747,47 +1743,18 @@ def test_pre_activation_environment_never_claims_the_station_is_activated(
 
     from civiccast.native import station_runtime
 
-    monkeypatch.setattr(station_runtime, "read_persisted_setup_nonce", lambda: None)
-
     env = station_runtime.pre_activation_control_plane_environment()
 
     assert "CIVICCAST_NATIVE_STATION" not in env
     assert "CIVICCAST_NATIVE_STATION_MANIFEST" not in env
-    assert "CIVICCAST_SETUP_NONCE" not in env
 
 
-def test_station_environment_carries_the_persisted_setup_nonce(
+def test_station_environment_never_carries_a_setup_nonce(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from civiccast.native import station_runtime
-
-    version_root, files = _write_station(tmp_path)
-    monkeypatch.setattr(station_runtime, "WHISPER_MODEL_FILES", files)
-    # Device selection is hardware-adaptive (owner ruling 2026-08-15); pin the
-    # probe so these env assertions are deterministic on any test machine.
-    monkeypatch.setattr(station_runtime, "_probe_nvidia_vram_gb", lambda: None)
-    monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
-    monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
-    monkeypatch.setattr(
-        station_runtime, "read_persisted_setup_nonce", lambda: "test-nonce-0123456789abcdef"
-    )
-
-    env = station_runtime.load_native_station_environment(
-        version_root,
-        program_data_root=tmp_path / "ProgramData" / "CivicCast",
-    )
-
-    assert env["CIVICCAST_SETUP_NONCE"] == "test-nonce-0123456789abcdef"
-
-
-def test_station_environment_omits_the_setup_nonce_when_none_is_persisted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Absent is absent -- never a placeholder. router.py's
-    ``_require_local_setup_mutation`` compares the header against this exact
-    value with ``hmac.compare_digest``; emitting an empty or invented nonce
-    would either 403 confusingly or, worse, make a guessable one authoritative.
-    """
+    """The retired installer-handoff nonce must never resurface on the child
+    env -- first setup is admitted by loopback alone now
+    (``civiccast.installer.router._require_local_setup_request``)."""
 
     from civiccast.native import station_runtime
 
@@ -1798,7 +1765,6 @@ def test_station_environment_omits_the_setup_nonce_when_none_is_persisted(
     monkeypatch.setattr(station_runtime, "_probe_nvidia_vram_gb", lambda: None)
     monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
     monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
-    monkeypatch.setattr(station_runtime, "read_persisted_setup_nonce", lambda: None)
 
     env = station_runtime.load_native_station_environment(
         version_root,

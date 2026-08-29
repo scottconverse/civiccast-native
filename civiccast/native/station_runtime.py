@@ -65,7 +65,6 @@ from civiccast.native.gstreamer_runtime import (
     GstreamerRuntimeError,
     installed_gstreamer_environment,
 )
-from civiccast.native.setup_nonce import read_persisted_setup_nonce
 from civiccast.native.supervisor.install_layout import packaged_portal_dist_dirs
 
 _LOG = logging.getLogger(__name__)
@@ -1042,15 +1041,18 @@ def pre_activation_control_plane_environment() -> dict[str, str]:
     genuinely requires an activated station, and the front door plus the setup
     handoff, which do not.
 
-    What is in here, and why each one is activation-independent:
+    What is in here, and why it is activation-independent:
 
     * the packaged portal dists -- delivered by the ``native-app-payload``
       pack (see :func:`packaged_portal_environment`); without them the
-      operator console 404s and first-run setup cannot even be REACHED;
-    * the installer-handoff setup nonce -- persisted by the ELEVATED installer
-      at D4 provision time (``civiccast.native.setup_nonce``), which has run
-      on any station that got this far; without it every ``/api/setup/*``
-      mutation answers 403 and first-run setup cannot be COMPLETED.
+      operator console 404s and first-run setup cannot even be REACHED.
+
+    The installer-handoff setup nonce that used to live here was retired
+    2026-08-29 (owner decision): the control plane binds ``127.0.0.1`` only,
+    so first setup is unreachable from the network by construction and the
+    nonce was a redundant gate that produced repeated field failures. First
+    setup is now admitted by loopback alone
+    (``civiccast.installer.router._require_local_setup_request``).
 
     What is deliberately NOT in here: ``CIVICCAST_NATIVE_STATION`` and
     ``CIVICCAST_NATIVE_STATION_MANIFEST``. ``installer/service.py``'s
@@ -1060,15 +1062,11 @@ def pre_activation_control_plane_environment() -> dict[str, str]:
     claim that activation happened.
     """
 
-    environment = {
+    return {
         **packaged_portal_environment(),
         **lan_only_station_environment(),
         **native_reported_version_environment(),
     }
-    setup_nonce = read_persisted_setup_nonce()
-    if setup_nonce:
-        environment["CIVICCAST_SETUP_NONCE"] = setup_nonce
-    return environment
 
 
 def _resolve_gstreamer_egress_environment(
@@ -1356,19 +1354,12 @@ def load_native_station_environment(
             environment,
             repair_hook=gstreamer_repair_hook,
         )
-    # The installer-handoff nonce the elevated installer persisted at provision
-    # time (civiccast.native.setup_nonce). Without it every /api/setup/*
-    # mutation answers 403 and first-run setup cannot be completed at all.
-    #
-    # Absent stays ABSENT -- never an empty string or a placeholder.
-    # `installer/router.py` compares this against the request header with
-    # `hmac.compare_digest`, and a station provisioned by an older build
-    # legitimately has no nonce; refusing setup is the correct fail-closed
-    # outcome there, whereas emitting a fabricated value would make a guessable
-    # credential authoritative.
-    setup_nonce = read_persisted_setup_nonce()
-    if setup_nonce:
-        environment["CIVICCAST_SETUP_NONCE"] = setup_nonce
+    # The installer-handoff setup nonce that used to be injected here was
+    # retired 2026-08-29 (owner decision): the control plane binds
+    # 127.0.0.1 only, so first setup is unreachable from the network by
+    # construction and the nonce was a redundant, failure-prone gate. First
+    # setup is now admitted by loopback alone
+    # (civiccast.installer.router._require_local_setup_request).
     return environment
 
 

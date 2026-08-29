@@ -4,11 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   acknowledgeRecoveryKit,
   ApiError,
-  completeHandoffRecovery,
   configureBackup,
   completePublicFirstAdminSetup,
   getBackupStatus,
-  hasSetupNonce,
   getPublicStorageState,
   getProviderReadiness,
   getStaffIdentity,
@@ -19,7 +17,6 @@ import {
   recoverStationAdmin,
   recordProviderProof,
   saveProviderCredentials,
-  startHandoffRecovery,
   testProviderConnection,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
@@ -38,8 +35,6 @@ import type {
   StationLoginRequest,
   StationRecoveryRequest,
 } from '../types/api.generated'
-
-const STORAGE_HANDOFF_NOTE_ID = 'storage-installer-handoff-note'
 
 // Setup-wizard provider ids that expose a live "Test connection" (CDN
 // providers). Pairs with the backend's CDN_CREDENTIAL_PROVIDER_IDS.
@@ -72,10 +67,19 @@ function apiMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
-function isSetupHandoffError(error: unknown): boolean {
-  if (!(error instanceof ApiError)) return false
-  const message = `${error.detail ?? ''} ${error.message}`.toLowerCase()
-  return error.status === 403 && (message.includes('operator console') || message.includes('setup'))
+/**
+ * First setup is admitted purely by the FastAPI backend checking that the
+ * request's peer IP is loopback (civiccast/installer/router.py's
+ * `_require_local_setup_request`). A request from anywhere else gets a
+ * plain 403 with this stable detail text -- match on it so this screen can
+ * tell that refusal apart from any other 403 without over-matching.
+ */
+function isNonLocalSetupError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    (error.detail ?? '').toLowerCase().includes('station computer itself')
+  )
 }
 
 function Field({
@@ -453,12 +457,6 @@ function StorageSetupPanel({
 }) {
   const ready = storage?.status === 'ready'
   const busy = isLoading || isPreparing
-  // GauntletGate W-2: every /api/setup/* mutation 403s without the installer's
-  // one-time handoff nonce. A console reached directly -- a bookmark, a refresh
-  // that drops the query string, a typed URL -- has no nonce, and offering an
-  // enabled primary action there hands the user a guaranteed failure. The nonce
-  // gate is a good security control; presenting a dead button is not.
-  const canPrepare = hasSetupNonce()
   return (
     <section
       className="grid gap-3 rounded-md p-4"
@@ -488,45 +486,18 @@ function StorageSetupPanel({
         ) : (
           <button
             type="button"
-            disabled={busy || !canPrepare}
-            aria-describedby={canPrepare ? undefined : STORAGE_HANDOFF_NOTE_ID}
+            disabled={busy}
             onClick={onPrepare}
             className="rounded-md px-4 py-2 text-sm font-semibold"
             style={{
-              background: busy || !canPrepare ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
-              color: busy || !canPrepare ? 'var(--cc-ink-3)' : 'var(--cc-brand-ink)',
+              background: busy ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
+              color: busy ? 'var(--cc-ink-3)' : 'var(--cc-brand-ink)',
             }}
           >
             {isPreparing ? 'Preparing...' : 'Prepare storage'}
           </button>
         )}
       </div>
-      {!ready && !canPrepare && (
-        <div
-          id={STORAGE_HANDOFF_NOTE_ID}
-          role="note"
-          aria-label="Restore the setup handoff the Windows installer creates"
-          className="rounded-md p-3 text-xs"
-          style={{
-            background: 'var(--cc-warn-soft)',
-            border: '1px solid var(--cc-warn)',
-            color: 'var(--cc-ink)',
-          }}
-        >
-          <strong className="block text-sm">Restore the setup handoff the Windows installer creates</strong>
-          <span>
-            Preparing storage needs the one-time handoff the Windows installer creates, and this
-            page was opened without it. Nothing is wrong with the station, but reopening CivicCast
-            will not recreate it. On the station, run{' '}
-            <code>
-              &quot;C:\Program Files\CivicCast (Native)\CivicCast Native.exe&quot;
-              --civiccast-restore-setup-handoff
-            </code>{' '}
-            as an administrator and approve the Windows prompt, then use{' '}
-            <strong>Open operator console</strong> and prepare storage from there.
-          </span>
-        </div>
-      )}
       {storage && (
         <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
           Next step: {storage.next_step}
@@ -1202,29 +1173,8 @@ function StationAdminTools({ canManageProviders }: { canManageProviders: boolean
   )
 }
 
-// Fallback only, for the default-`%PROGRAMDATA%` case and the sliver of a
-// render before `startHandoffRecovery`'s response lands. The API's
-// `code_file` (see `HandoffRecoveryPanel`'s `codeFile` state) is the real
-// path and MUST be preferred: `civiccast.installer.handoff_recovery.
-// recovery_dir` builds it from the live `PROGRAMDATA` env var, so a station
-// with `%ProgramData%` relocated writes the challenge file somewhere this
-// literal does not point to.
-const HANDOFF_RECOVERY_CODE_FILE = 'C:\\ProgramData\\CivicCast\\setup-recovery\\code.txt'
-// Filename only (not the full path -- that varies with %ProgramData%, see
-// `HANDOFF_RECOVERY_CODE_FILE` above), for the plain-language confirmation
-// text after a code is issued/regenerated. Mirrors
-// `civiccast.installer.handoff_recovery.CODE_FILENAME`.
-const HANDOFF_RECOVERY_CODE_FILENAME = 'code.txt'
 const SUPPORT_ISSUE_URL =
   'https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20'
-
-function isServiceDegradedError(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 503
-}
-
-function isRateLimitedError(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 429
-}
 
 function SupportLink() {
   return (
@@ -1235,213 +1185,6 @@ function SupportLink() {
       </a>
       .
     </>
-  )
-}
-
-/**
- * W-2: in-product recovery for a lost or expired setup link, for the
- * clerk who is the actual first-run operator at most stations -- not just
- * someone comfortable running an installer command line. Proves the same
- * thing the setup link's nonce already proves (administrator of this
- * computer) via a disposable, single-use code an administrator reads from a
- * protected file on the station itself. On success it resumes the ordinary
- * setup flow exactly as if the setup link had worked -- see
- * `completeHandoffRecovery` in `../api/client`.
- */
-function HandoffRecoveryPanel({ onRecovered }: { onRecovered: () => void }) {
-  const queryClient = useQueryClient()
-  const [phase, setPhase] = useState<'idle' | 'code-requested'>('idle')
-  const [code, setCode] = useState('')
-  const [codeFile, setCodeFile] = useState<string | null>(null)
-  const [expiresAt, setExpiresAt] = useState<number | null>(null)
-  const [now, setNow] = useState(() => Date.now())
-  // W-2 field bug 2026-08-28: "Get a new code" called the same mutation as
-  // "I lost my setup link" and DID work -- the countdown really did reset --
-  // but nothing on screen said so, so a regenerate looked identical to a
-  // dead button. issuedAt timestamps the confirmation text below; regenerated
-  // (true from the SECOND successful issuance on) is what turns that text
-  // into an explicit "the old code no longer works" rather than implying
-  // this is the station's first and only code.
-  const [issuedAt, setIssuedAt] = useState<Date | null>(null)
-  const [regenerated, setRegenerated] = useState(false)
-
-  useEffect(() => {
-    if (phase !== 'code-requested') return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [phase])
-
-  const startMutation = useMutation({
-    mutationFn: startHandoffRecovery,
-    onSuccess: (response) => {
-      setExpiresAt(Date.now() + response.expires_in * 1000)
-      setNow(Date.now())
-      setRegenerated(phase === 'code-requested')
-      setIssuedAt(new Date())
-      setCode('')
-      setCodeFile(response.code_file)
-      setPhase('code-requested')
-    },
-  })
-
-  const completeMutation = useMutation({
-    mutationFn: completeHandoffRecovery,
-    onSuccess: (response) => {
-      window.sessionStorage.setItem('civiccast.setupNonce', response.setup_nonce)
-      setPhase('idle')
-      setCode('')
-      setCodeFile(null)
-      setExpiresAt(null)
-      void queryClient.invalidateQueries({ queryKey: ['station-setup-state'] })
-      void queryClient.invalidateQueries({ queryKey: ['setup-storage-state'] })
-      onRecovered()
-    },
-  })
-
-  const isExpired = phase === 'code-requested' && expiresAt !== null && now >= expiresAt
-  const secondsLeft = expiresAt !== null ? Math.max(0, Math.round((expiresAt - now) / 1000)) : 0
-
-  if (phase === 'idle') {
-    return (
-      <div className="mt-3">
-        <button
-          type="button"
-          onClick={() => startMutation.mutate()}
-          disabled={startMutation.isPending}
-          aria-busy={startMutation.isPending}
-          className="rounded-md px-3 py-2 text-sm font-semibold"
-          style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
-        >
-          {startMutation.isPending ? 'Requesting a recovery code...' : 'I lost my setup link'}
-        </button>
-        {startMutation.isError && (
-          <p role="alert" className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-err)' }}>
-            {isServiceDegradedError(startMutation.error) ? (
-              <>
-                CivicCast could not prepare a recovery code right now. <SupportLink />
-              </>
-            ) : isRateLimitedError(startMutation.error) ? (
-              apiMessage(startMutation.error, 'Too many recovery attempts. Wait before trying again.')
-            ) : (
-              apiMessage(startMutation.error, 'Could not start setup recovery.')
-            )}
-          </p>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <form
-      className="mt-3 grid gap-2 rounded-md p-3"
-      style={{ background: 'var(--cc-surface-3)', border: '1px solid var(--cc-line)' }}
-      onSubmit={(event) => {
-        event.preventDefault()
-        completeMutation.mutate({ code: code.trim() })
-      }}
-    >
-      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-        Prove you are an administrator of this computer. On this computer, open this file:
-      </p>
-      <code
-        className="cc-mono block overflow-x-auto rounded p-2 text-xs"
-        style={{ background: 'var(--cc-surface)', color: 'var(--cc-ink)' }}
-      >
-        {codeFile ?? HANDOFF_RECOVERY_CODE_FILE}
-      </code>
-      {issuedAt && !startMutation.isPending && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="rounded-md p-2 text-xs"
-          style={{ background: 'var(--cc-ok-soft)', color: 'var(--cc-ink)' }}
-        >
-          {regenerated ? (
-            <>
-              A new code was written to <span className="cc-mono">{HANDOFF_RECOVERY_CODE_FILENAME}</span> at{' '}
-              {issuedAt.toLocaleTimeString()} -- the old code no longer works.
-            </>
-          ) : (
-            <>
-              A recovery code was written to <span className="cc-mono">{HANDOFF_RECOVERY_CODE_FILENAME}</span> at{' '}
-              {issuedAt.toLocaleTimeString()}.
-            </>
-          )}
-        </div>
-      )}
-      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-        Windows will ask for administrator permission to open it. Then type the 8-character code
-        below.{' '}
-        {!isExpired && (
-          <>
-            This code expires in {secondsLeft} second{secondsLeft === 1 ? '' : 's'}.
-          </>
-        )}
-      </p>
-      <label className="grid gap-1 text-sm" htmlFor="handoff-recovery-code">
-        <span className="font-semibold">Recovery code</span>
-        <input
-          id="handoff-recovery-code"
-          value={code}
-          onChange={(event) => setCode(event.target.value.toUpperCase())}
-          disabled={isExpired || startMutation.isPending}
-          autoComplete="off"
-          spellCheck={false}
-          aria-invalid={completeMutation.isError ? true : undefined}
-          aria-describedby={completeMutation.isError ? 'handoff-recovery-code-error' : undefined}
-          className="cc-mono rounded-md px-3 py-2"
-          style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
-        />
-      </label>
-      {isExpired ? (
-        <div role="alert" className="rounded-md p-2 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
-          This code has expired. Request a new one below.
-        </div>
-      ) : (
-        <button
-          type="submit"
-          disabled={completeMutation.isPending || startMutation.isPending || code.trim().length === 0}
-          className="rounded-md px-3 py-2 text-sm font-semibold"
-          style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}
-        >
-          {completeMutation.isPending ? 'Checking code...' : 'Continue'}
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={() => startMutation.mutate()}
-        disabled={startMutation.isPending}
-        aria-busy={startMutation.isPending}
-        className="justify-self-start text-xs font-semibold underline underline-offset-2"
-        style={{ color: 'var(--cc-brand)' }}
-      >
-        {startMutation.isPending ? 'Requesting a new code...' : 'Get a new code'}
-      </button>
-      {completeMutation.isError && (
-        <div
-          id="handoff-recovery-code-error"
-          role="alert"
-          className="rounded-md p-2 text-xs"
-          style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
-        >
-          {isServiceDegradedError(completeMutation.error) ? (
-            <>
-              CivicCast verified your administrator code, but this station has no setup link
-              configured. <SupportLink />
-            </>
-          ) : (
-            'That code did not work. It may be mistyped or expired -- check the file again, or get a new code above.'
-          )}
-        </div>
-      )}
-      {startMutation.isError && (
-        <div role="alert" className="rounded-md p-2 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
-          {isRateLimitedError(startMutation.error)
-            ? apiMessage(startMutation.error, 'Too many recovery attempts. Wait before trying again.')
-            : apiMessage(startMutation.error, 'Could not prepare a new code.')}
-        </div>
-      )}
-    </form>
   )
 }
 
@@ -1583,57 +1326,28 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
         </div>
       )}
 
-      {stateQuery.error && !isSetupHandoffError(stateQuery.error) && (
+      {stateQuery.error && !isNonLocalSetupError(stateQuery.error) && (
         <div role="alert" className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
           Could not read setup state. {apiMessage(stateQuery.error, 'Try again.')}
         </div>
       )}
 
-      {stateQuery.error && isSetupHandoffError(stateQuery.error) && (
+      {stateQuery.error && isNonLocalSetupError(stateQuery.error) && (
         <section
+          role="alert"
           className="rounded-md p-4 text-sm"
-          style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+          style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
         >
-          <h2 className="m-0 text-base font-semibold">This station hasn&apos;t been set up yet</h2>
-          <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-            Setup starts from the CivicCast installer. If the installer is still open on this
-            computer, go back to it and click <strong>Open operator console</strong> there.
+          <h2 className="m-0 text-base font-semibold">First setup can only be done from the station computer itself</h2>
+          <p className="m-0 mt-1 text-sm">
+            This page must be opened in a browser running on the station itself &mdash; not in a
+            remote desktop viewer&apos;s own separate computer, and not from another computer on
+            the network.
           </p>
-          <details className="mt-3">
-            <summary className="cursor-pointer text-xs font-semibold" style={{ color: 'var(--cc-ink-3)' }}>
-              For IT staff: restore setup access
-            </summary>
-            <div className="mt-3 grid gap-2">
-              <h3 className="m-0 text-sm font-semibold">Restore the setup handoff the Windows installer creates</h3>
-              <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-                The first setup page needs the one-time operator handoff created by the Windows
-                installer, and this page was opened without it. Nothing is wrong with the station, and{' '}
-                <strong>simply reopening CivicCast will not fix it</strong> &mdash; an ordinary launch
-                cannot read the protected value that the handoff is built from.
-              </p>
-              <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-                On the station itself, run CivicCast once with the recovery switch and approve the
-                Windows administrator prompt:
-              </p>
-              <code
-                className="block overflow-x-auto rounded p-2 text-xs"
-                style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink)' }}
-              >
-                &quot;C:\Program Files\CivicCast (Native)\CivicCast Native.exe&quot;
-                --civiccast-restore-setup-handoff
-              </code>
-              <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-                It restores the handoff for the Windows account that runs it, then{' '}
-                <strong>Open operator console</strong> works normally. You must be an administrator
-                of that computer; the command refuses rather than revealing anything if you are
-                not.
-              </p>
-              <p className="m-0 text-xs font-semibold" style={{ color: 'var(--cc-ink) ' }}>
-                Or, without a command line:
-              </p>
-              <HandoffRecoveryPanel onRecovered={() => void stateQuery.refetch()} />
-            </div>
-          </details>
+          <p className="m-0 mt-2 text-sm">
+            If you believe this browser really is running on the station itself, that&apos;s worth
+            reporting. <SupportLink />
+          </p>
         </section>
       )}
 

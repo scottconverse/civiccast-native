@@ -288,18 +288,20 @@ def test_installer_can_open_local_operator_console_from_tauri() -> None:
     assert '"openOperatorConsole"' in api_source
 
 
-def test_installer_state_rewrites_preserve_the_setup_nonce_url() -> None:
-    """release: 1.0.0-rc1. Every plain write_installer_state() reset
-    operator_console_url to the nonce-less constant, so any state write after
-    bootstrap success (e.g. an app restart) permanently lost the one-time
-    setup handoff -- First Setup dead-ended with 'Could not read setup state'
-    and the UI's own advice looped back to the same broken handoff."""
+def test_installer_state_rewrites_always_use_the_plain_operator_console_url() -> None:
+    """The one-time setup-nonce handoff was retired: first setup is now
+    admitted purely by the control plane checking the request's peer IP is
+    loopback (civiccast/installer/router.py's _require_local_setup_request),
+    so there is no longer a nonce-bearing URL for write_installer_state() to
+    preserve or reconcile. Every write always uses the plain, fixed
+    OPERATOR_CONSOLE_URL constant."""
     source = TAURI_MAIN.read_text(encoding="utf-8")
-    assert "fn preserved_operator_console_url" in source
-    assert "fn nonce_operator_url_from_state" in source
+    assert "fn preserved_operator_console_url" not in source
+    assert "fn nonce_operator_url_from_state" not in source
     plain_writer = source[
         source.index("fn write_installer_state(") : source.index(
             "fn write_installer_state_with_operator_url("
         )
     ]
-    assert "preserved_operator_console_url()" in plain_writer
+    assert "OPERATOR_CONSOLE_URL" in plain_writer
+    assert "write_installer_state_with_operator_url(" in plain_writer

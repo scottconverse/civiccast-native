@@ -896,7 +896,25 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # twenty-seven collect into both lanes. Re-derived by an actual
     # `--collect-only` run on this tree, not by arithmetic:
     # (1657, 1849) -> (1684, 1876).
-    assert (collect("not windows_only"), collect()) == (1684, 1876)
+    #
+    # fix/setup-nonce-handoff (2026-08-29, owner decision): -18 pure, -18
+    # windows_only -- the installer-handoff setup nonce is retired. The
+    # control plane binds 127.0.0.1 only (verified live via netstat), so
+    # first setup is unreachable from the network by construction and the
+    # nonce was a redundant, failure-prone gate (nonce unreadable across the
+    # elevated-installer/normal-user split, the recovery code file never
+    # written, "Get a new code" silently no-op'ing, the elevated CLI restore
+    # printing nothing -- 4 field failures in 2 days). First setup is now
+    # admitted by loopback alone (civiccast.installer.router.
+    # _require_local_setup_request). tests/native/test_setup_handoff_
+    # recovery.py (the CLI recovery-URL report tests, 11) is deleted
+    # entirely; tests/native/test_provision_cli.py loses 6 setup-nonce
+    # generation/marker-line tests; tests/native/test_station_runtime.py's 4
+    # setup-nonce env-var tests collapse to 3 (proving the env var is never
+    # set at all). None were marked windows_only, so both lanes move by the
+    # same -18. Re-derived by an actual `--collect-only` run on this tree,
+    # not by arithmetic: (1684, 1876) -> (1666, 1858).
+    assert (collect("not windows_only"), collect()) == (1666, 1858)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

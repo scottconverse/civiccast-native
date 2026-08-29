@@ -13,7 +13,6 @@ declare global {
   }
 }
 
-const SETUP_NONCE = 'setup-real-boundary-nonce'
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(E2E_DIR, '../../../..')
 const PUBLIC_PORTAL_DIST = path.join(REPO_ROOT, 'civiccast/apps/portal-public/dist')
@@ -150,7 +149,6 @@ test.beforeAll(async () => {
         CIVICCAST_RESIDENT_PORTAL_URL: backendUrl,
         CIVICCAST_SUPPORT_BUNDLE_DIR: path.join(storageDir, 'support-bundles'),
         CIVICCAST_STATION_STATE_PATH: path.join(storageDir, 'station-state.json'),
-        CIVICCAST_SETUP_NONCE: SETUP_NONCE,
         CIVICCAST_SUBSCRIBER_WEBHOOK_SECRET: E2E_WEBHOOK_SECRET,
         CIVICCAST_YOUTUBE_CLIENT_SECRET: E2E_YOUTUBE_SECRET,
         DATABASE_URL: '',
@@ -180,7 +178,7 @@ test.beforeEach(async ({ page }) => {
   }, backendUrl)
 })
 
-test('@fullstack @realboundary setup nonce prepares storage and creates first admin', async ({
+test('@fullstack @realboundary loopback-only setup prepares storage and creates first admin', async ({
   page,
 }) => {
   test.setTimeout(180_000)
@@ -188,14 +186,15 @@ test('@fullstack @realboundary setup nonce prepares storage and creates first ad
     window.__CIVICCAST_STAFF_TOKEN__ = 'CIVICCAST_STAFF_TOKENS'
     window.sessionStorage.setItem('civiccast.staffToken', 'operator-token-a')
   })
-  const forbidden = await fetch(`${backendUrl}/api/setup/storage`, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+  // No nonce, no header, no query string: the Node test process and the
+  // backend it spawned are both on loopback, so this plain request is
+  // admitted on peer IP alone (`_require_local_setup_request`).
+  const admitted = await fetch(`${backendUrl}/api/setup/storage`, {
+    headers: { Accept: 'application/json' },
   })
-  expect(forbidden.status).toBe(403)
+  expect(admitted.status).toBe(200)
 
-  await page.goto(`/setup?nonce=${SETUP_NONCE}`)
+  await page.goto('/setup')
   await expect(page.getByRole('heading', { name: 'First setup' })).toBeVisible()
   const prepareButton = page.getByRole('button', { name: 'Prepare storage' })
   const readyBadge = page.getByText('Storage ready')
@@ -240,10 +239,7 @@ test('@fullstack @realboundary setup nonce prepares storage and creates first ad
   expect(staffToken).toMatch(/^ccst_/)
 
   const status = await fetch(`${backendUrl}/api/setup/storage`, {
-    headers: {
-      Accept: 'application/json',
-      'X-CivicCast-Setup-Nonce': SETUP_NONCE,
-    },
+    headers: { Accept: 'application/json' },
   })
   expect(status.status).toBe(200)
   const body = (await status.json()) as { upload_dir?: string; database_path?: string }

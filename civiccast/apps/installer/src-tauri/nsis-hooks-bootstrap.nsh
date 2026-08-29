@@ -1360,12 +1360,13 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; setup, it does not open the console.
   ;
   ; URLs are the SAME fixed literals `main.rs` hardcodes
-  ; (`OPERATOR_CONSOLE_URL`, `RESIDENT_PORTAL_URL`) -- NSIS has no access to
-  ; installer-state.json's (possibly nonce-bearing) operatorConsoleUrl at
-  ; this point in the chain: that file is written by the GUI's OWN first
-  ; run, which has not happened yet when POSTINSTALL executes. A future nonce
-  ; scheme would need a first-run rewrite of these shortcuts from inside the
-  ; app, not a POSTINSTALL-time value that cannot exist yet.
+  ; (`OPERATOR_CONSOLE_URL`, `RESIDENT_PORTAL_URL`). First setup is admitted
+  ; purely by the control plane checking the request's peer IP is loopback
+  ; (`civiccast/installer/router.py`'s `_require_local_setup_request`), so
+  ; there is no query-string handoff scheme to reconcile with
+  ; installer-state.json's operatorConsoleUrl at this point in the chain --
+  ; the URL these shortcuts point at is always this same fixed literal, full
+  ; stop.
   ; tests/policy/test_native_installer_identity.py pins both literals against
   ; `main.rs`'s own constants so the two can never silently drift apart.
   ;
