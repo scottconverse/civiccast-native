@@ -93,10 +93,11 @@ Ask your IT person for this computer's name or address to use in place of
   stuck. Click **Stop downloading**, then **Open operator console** and carry
   on with Step 5.
 
-- **You see a page that says "This station hasn't been set up yet."** You
-  reached the console without going through the installer's **Open operator
-  console** button. Go back to the CivicCast Installer window and click that
-  button. If you already closed it, call your IT person.
+- **You see "First setup can only be done from the station computer itself."**
+  You're looking at the console from a different computer. First setup has to be
+  done sitting at the station computer — open the **CivicCast Operator Console**
+  shortcut on that machine and start again from Step 5. (Once setup is finished,
+  the public page can be viewed from anywhere on the network.)
 
 - **Anything shows up red, or an error you don't understand.** Stop and call
   your IT person. Don't guess. In the installer window, click **Open installer
