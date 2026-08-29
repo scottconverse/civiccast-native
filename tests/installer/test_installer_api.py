@@ -31,6 +31,7 @@ from civiccast.installer.service import (
 from civiccast.installer.tsduck_install import TsduckInstallReport
 from civiccast.schedule.ingest import FfprobeResult
 
+
 def _external_database_reports_current(monkeypatch) -> None:
     """Make the stand-in ``DATABASE_URL`` answer like a healthy database.
 
@@ -854,7 +855,10 @@ def test_public_first_admin_setup_rejects_spoofed_host_header() -> None:
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "First setup can only be done from the station computer itself."
+    assert (
+        response.json()["detail"]
+        == "First setup can only be done from the station computer itself."
+    )
 
 
 def test_public_setup_station_state_allowed_from_loopback_with_no_token() -> None:

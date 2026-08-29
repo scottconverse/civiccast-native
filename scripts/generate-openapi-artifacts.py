@@ -287,8 +287,8 @@ def render_reference(openapi: dict[str, Any]) -> str:
             "own peer address must be `127.0.0.1`/`::1`. There is no handoff "
             "token to send. Do not expose setup routes through a public reverse "
             "proxy; a non-loopback caller gets CivicCast's own policy `403` "
-            "(\"First setup can only be done from the station computer "
-            "itself.\"), and a station that already completed first setup "
+            '("First setup can only be done from the station computer '
+            'itself."), and a station that already completed first setup '
             "refuses a second attempt with `409` regardless of where the "
             "caller connects from."
         ),

@@ -30,7 +30,6 @@ from civiccast.schedule.models import ASSET_STATE_VALIDATED, StaffAssetRow, Uplo
 from civiccast.schedule.store import AssetNotFoundError
 from civiccast.stream.packager import VodPackageResult
 
-
 _FFPROBE_SAMPLE = FfprobeResult(
     duration_seconds=20,
     codec_video="h264",
@@ -187,9 +186,7 @@ def test_first_admin_setup_seeds_sample_content_and_starter_schedule(monkeypatch
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         assert setup_response.status_code == 200
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
@@ -291,9 +288,7 @@ def test_first_run_seed_failure_is_persisted_visible_and_retryable(monkeypatch, 
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         assert setup_response.status_code == 200  # first-admin never blocks on seeding
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
@@ -332,9 +327,7 @@ def test_first_run_seed_fails_loudly_without_upload_storage(monkeypatch, tmp_pat
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         status_response = client.get(
             "/api/staff/installer/sample-seed-status",
@@ -359,9 +352,7 @@ def test_first_run_seed_schedule_step_failure_keeps_the_seeded_asset_id(
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         status_response = client.get(
             "/api/staff/installer/sample-seed-status",
@@ -392,9 +383,7 @@ def test_retry_after_schedule_step_failure_resumes_instead_of_reseeding(
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
 
@@ -432,9 +421,7 @@ def test_retry_after_ingest_failure_still_reseeds_from_scratch(monkeypatch, tmp_
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
 
@@ -468,9 +455,7 @@ def test_abandoned_pending_seed_is_reconciled_to_failed_on_read(monkeypatch, tmp
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         assert setup_response.status_code == 200
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
@@ -512,9 +497,7 @@ def test_pending_seed_within_the_staleness_window_is_left_alone(monkeypatch, tmp
     publish_store = InMemoryPublishStore()
 
     with _client(asset_store, schedule_store, publish_store) as client, _seed_patches():
-        setup_response = client.post(
-            "/api/setup/first-admin", json=_setup_payload()
-        )
+        setup_response = client.post("/api/setup/first-admin", json=_setup_payload())
         token = setup_response.json()["operator_console_token"]
         auth = {"Authorization": f"Bearer {token}"}
 

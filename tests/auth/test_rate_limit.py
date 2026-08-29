@@ -91,9 +91,7 @@ def test_setup_login_trips_429_with_retry_after(monkeypatch) -> None:
     client = TestClient(create_app())
 
     login_body = {"admin_username": "avery", "admin_password": "wrong password entirely"}
-    responses = [
-        client.post("/api/setup/login", json=login_body) for _ in range(4)
-    ]
+    responses = [client.post("/api/setup/login", json=login_body) for _ in range(4)]
 
     # First 3 are real auth attempts (401, no such admin yet); the 4th is
     # rate-limited before it ever reaches login logic.

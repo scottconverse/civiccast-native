@@ -72,12 +72,8 @@ def run_attestation(*, artifact_root: Path, profile_root: Path) -> dict[str, Any
             "environment": _environment_evidence(profile_root),
         }
         storage_before = _json_response(client.get("/api/setup/storage"))
-        station_before = _json_response(
-            client.get("/api/setup/station-state")
-        )
-        storage_ready = _json_response(
-            client.post("/api/setup/storage", json={})
-        )
+        station_before = _json_response(client.get("/api/setup/station-state"))
+        storage_ready = _json_response(client.post("/api/setup/storage", json={}))
         first_admin_raw = _json_response(
             client.post(
                 "/api/setup/first-admin",
@@ -104,9 +100,7 @@ def run_attestation(*, artifact_root: Path, profile_root: Path) -> dict[str, Any
                 json={"admin_username": "setup-admin", "admin_password": _PASSWORD},
             )
         )
-        station_after = _json_response(
-            client.get("/api/setup/station-state")
-        )
+        station_after = _json_response(client.get("/api/setup/station-state"))
         public_schedule = _json_response(client.get("/api/public/schedule/coming-up"))
 
         managed_root = profile_root / "managed-storage"
