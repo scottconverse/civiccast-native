@@ -116,7 +116,7 @@ describe("the download plan claims no ETA until something has actually been meas
 
   it("shows sizes but no time claim, even long after the old 1400ms fallback would have fired", async () => {
     await reachThePlanScreen();
-    expect(container.textContent).toContain("What We'll Download");
+    expect(container.textContent).toContain("What CivicCast Needs");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
