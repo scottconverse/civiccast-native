@@ -1017,7 +1017,13 @@ def test_first_admin_setup_persists_first_station_commissioning_defaults(
     assert raw["station"]["operation_mode"] == "test"
 
 
-def test_station_login_and_recovery_rotate_browser_tokens(monkeypatch, tmp_path) -> None:
+def test_station_login_replaces_token_but_recovery_appends_it(monkeypatch, tmp_path) -> None:
+    """Login still signs out this browser's own prior token (unchanged), but
+    recovery must NOT sign out other already-open sessions (field bug: the
+    operator's own second tab got 'Invalid staff bearer token' the instant
+    someone else recovered access -- see the OWNER DECISION comment on
+    civiccast.installer.station_state._MAX_OPERATOR_SESSIONS)."""
+
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
     client = TestClient(create_app())
     setup = client.post(
@@ -1062,6 +1068,15 @@ def test_station_login_and_recovery_rotate_browser_tokens(monkeypatch, tmp_path)
     assert recovery.status_code == 200
     assert recovery.json()["status"] == "recovered"
 
+    # The field bug, fixed: recovering the account must NOT sign the admin's
+    # own other still-open browser tab back out. login_token was issued
+    # before this recovery ran and must still work after it.
+    login_token_client = TestClient(
+        create_app(),
+        headers={"Authorization": f"Bearer {login_token}"},
+    )
+    assert login_token_client.get("/api/staff/installer/station-state").status_code == 200
+
     reused = client.post(
         "/api/setup/recover",
         json={
@@ -1087,6 +1102,96 @@ def test_station_login_and_recovery_rotate_browser_tokens(monkeypatch, tmp_path)
     )
     assert old_password.status_code == 401
     assert new_password.status_code == 200
+
+
+def test_legacy_single_operator_token_shape_still_verifies(monkeypatch, tmp_path) -> None:
+    """A station commissioned before the multi-session fix persisted a bare
+    ``token_salt``/``token_hash`` pair on ``operator_console`` (no ``tokens``
+    list). An in-place upgrade must keep that already-issued token valid
+    instead of silently signing the operator out on update."""
+
+    state_path = tmp_path / "station-state.json"
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(state_path))
+    client = TestClient(create_app())
+
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    assert setup.status_code == 200
+    token = setup.json()["operator_console_token"]
+
+    # Rewrite the freshly-written list-shape state back into the pre-fix
+    # single-token shape, simulating a station that was commissioned by an
+    # older build and never logged in again since the upgrade.
+    raw = json.loads(state_path.read_text(encoding="utf-8"))
+    (entry,) = raw["operator_console"]["tokens"]
+    raw["operator_console"] = {"token_salt": entry["token_salt"], "token_hash": entry["token_hash"]}
+    state_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    legacy_client = TestClient(create_app(), headers={"Authorization": f"Bearer {token}"})
+    assert legacy_client.get("/api/staff/installer/station-state").status_code == 200
+
+
+def test_repeated_recovery_caps_concurrent_sessions_instead_of_growing_forever(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Recovery appends rather than replaces (field fix), so state must stay
+    bounded: the oldest session is evicted once the cap is exceeded rather
+    than growing the state file forever. The real cap (20) is bigger than
+    the 8 recovery codes a station ever has, so it's monkeypatched down to
+    make eviction reachable within one kit's 8 codes."""
+
+    import civiccast.installer.station_state as station_state
+
+    monkeypatch.setattr(station_state, "_MAX_OPERATOR_SESSIONS", 3)
+    state_path = tmp_path / "station-state.json"
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(state_path))
+    client = TestClient(create_app())
+
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    codes = list(setup.json()["recovery_kit"]["recovery_codes"])
+    first_token = setup.json()["operator_console_token"]
+
+    latest_token = first_token
+    for index, code in enumerate(codes[:4]):
+        recovery = client.post(
+            "/api/setup/recover",
+            json={
+                "admin_username": "avery",
+                "recovery_code": code,
+                "new_admin_password": f"rotation password number {index}",
+            },
+        )
+        assert recovery.status_code == 200
+        latest_token = recovery.json()["operator_console_token"]
+
+    raw = json.loads(state_path.read_text(encoding="utf-8"))
+    assert len(raw["operator_console"]["tokens"]) == 3
+
+    # The very first token (issued at setup, before any of the 4 recoveries
+    # above pushed the list past the cap of 3) was evicted...
+    evicted_client = TestClient(create_app(), headers={"Authorization": f"Bearer {first_token}"})
+    assert evicted_client.get("/api/staff/installer/station-state").status_code == 401
+    # ...but the most recent recovery's own token is still live.
+    latest_client = TestClient(create_app(), headers={"Authorization": f"Bearer {latest_token}"})
+    assert latest_client.get("/api/staff/installer/station-state").status_code == 200
 
 
 def test_first_admin_setup_is_one_time_unless_reset_is_explicit(
