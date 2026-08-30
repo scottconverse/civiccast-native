@@ -171,13 +171,25 @@ def default_program_data_root() -> Path:
     return Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
 
 
+def default_civiccast_data_root(program_data_root: Path | str | None = None) -> Path:
+    """``<PROGRAMDATA>\\CivicCast`` -- resolved at CALL time so the env var is
+    honored, the SAME root ``install-progress.log`` lands in
+    (``main.rs::acquisition_download_root``) and every other
+    ``civiccast_data_root`` deriver in this module already computes inline.
+    A single public name so a caller that just needs this one root (e.g. the
+    supervisor's start-failure marker) does not have to reach for the full
+    ``InstallLayout`` or re-hardcode ``"CivicCast"`` a second time."""
+
+    root = Path(program_data_root) if program_data_root is not None else default_program_data_root()
+    return root / _CIVICCAST_SUBDIR
+
+
 def default_log_root(program_data_root: Path | str | None = None) -> Path:
     """``<PROGRAMDATA>\\CivicCast\\logs`` -- resolved at CALL time so the env
     var is honored (audit A1: ``service.DEFAULT_LOG_ROOT`` hardcoded the
     drive-letter path)."""
 
-    root = Path(program_data_root) if program_data_root is not None else default_program_data_root()
-    return root / _CIVICCAST_SUBDIR / "logs"
+    return default_civiccast_data_root(program_data_root) / "logs"
 
 
 @dataclass(frozen=True)

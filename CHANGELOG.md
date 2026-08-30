@@ -694,6 +694,74 @@ came across and what deliberately did not.
   proves an already-satisfied component is recognized regardless of an
   earlier, unsatisfied component's state.
 
+- **A station activated on the mandatory floor caption tier crash-looped
+  forever after the operator acquired the OPTIONAL large-v3 tier through the
+  post-install acquisition wizard, and the supervisor's own log never said
+  why (field evidence, candidate 4eca729, 2026-08-29).** GUI install
+  completed clean (health checks 200, `install-progress.log` SUCCESS); the
+  coordinator then left the post-install acquisition wizard open and it
+  genuinely downloaded the optional `captions-large-v3` component into
+  `%PROGRAMDATA%\CivicCast\components\captions-large-v3`. From that point on,
+  `CivicCastSupervisor` crash-restarted every ~33s ("terminated unexpectedly.
+  It has done this 371 time(s)"); the Windows Event Log carried the real
+  reason, `NativeStationConfigurationError: Native station activation
+  self-test receipt does not match this distribution`, but `supervisor.log`
+  held only the unconditional "supervisor logging initialized" line and
+  nothing else. Root cause, traced end to end:
+  `station_runtime._resolve_caption_tier` searches BOTH the install root and
+  the non-elevated acquisition root for a staged caption tier and always
+  prefers the HIGHEST one found (by design — large-v3 is the better engine);
+  once the wizard staged large-v3 in the acquisition root, the runtime
+  correctly resolved `tier_id="large-v3"` on the station's next start, but
+  `activation-self-test.json` is written EXACTLY ONCE, by the elevated
+  `d4-activate-station` NSIS step, and describes whichever tier was staged at
+  THAT moment — almost always the floor tier alone, since large-v3 is an
+  OPTIONAL component the non-elevated GUI can acquire later into a
+  completely different root the elevated installer never touches (chain H1).
+  `_validate_activation_receipt` was therefore, correctly, refusing a
+  floor-tier receipt against a large-v3 identity every single time — the
+  check itself was never wrong; nothing in the codebase ever produced a
+  receipt for the tier the operator had just legitimately added. (No
+  component was ever wiped or overwritten: `%PROGRAMDATA%\CivicCast\
+  components` has never held anything besides `captions-large-v3` by
+  design — nothing else is ever written there.) Fixed on both sides of the
+  contract, without weakening the check: (1) `main.rs` gained
+  `finalize_captions_large_acquisition`, run once the wizard's per-file
+  pinned-hash verification for `captions_large` completes — it re-verifies
+  the mandatory floor tier's own staged jfk.wav self-test fixture against
+  its pinned identity, runs a REAL faster-whisper inference against the
+  just-downloaded large-v3 model with the station's own embedded
+  interpreter (the same live proof the elevated install path already gives
+  the mandatory tiers), and on success writes a large-v3-only addendum
+  receipt into the acquisition root (never touching `station-set.json` or
+  the primary `activation-self-test.json` at the install root, so every
+  already-activated component stays exactly as it was); an idempotency
+  fast-path skips the ~300s inference re-run when a matching receipt is
+  already on disk. (2) `station_runtime.load_native_station_environment`
+  now reads the activation receipt from the SAME root the resolved tier's
+  own model was actually found in (reusing the existing `_tier_base_root`
+  two-root search that already resolves the model itself), instead of
+  unconditionally reading it from the install root — a floor-only station is
+  completely unaffected (its receipt root is always the install root, exactly
+  as before). Separately, `service_host.SvcDoRun` now logs the real exception
+  type and detail to `supervisor.log` via the new
+  `civiccast.native.supervisor.start_failure_marker` BEFORE re-raising
+  (behavior is otherwise unchanged: still fails loud, still exits, still lets
+  the SCM's own restart policy decide what happens next), and once the SAME
+  condition has recurred 3 times in a row it writes an operator-readable
+  `STATION-START-FAILED.md` marker alongside `install-progress.log`, cleared
+  automatically the moment a start actually succeeds again — so a crash loop
+  is never silent even to an operator who never checks the Windows Event Log.
+  11 new tests: 2 in `test_station_runtime.py` (the fail-closed floor with no
+  addendum receipt present anywhere, and the regression proof once one is),
+  7 in the new `test_start_failure_marker.py` (pure counter/marker decision
+  logic), 2 in `test_supervisor_service_win.py` (the real `SvcDoRun`-driven
+  crash-loop-then-marker sequence, and marker/counter clearing on a clean
+  start); plus 5 new Rust tests driving the real addendum receipt writer
+  directly (byte-for-byte identity match against the runtime's own pinned
+  expectations, and proof that writing it never touches the primary receipt
+  or any other already-activated component).
+
 - **Setup-handoff recovery: an unhandled write failure after the challenge
   directory was already hardened could crash the request instead of ever
   reaching the "no 200 without a real file" contract, and "Get a new code"
