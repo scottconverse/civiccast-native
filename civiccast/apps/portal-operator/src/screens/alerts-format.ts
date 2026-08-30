@@ -27,7 +27,14 @@ const CONDITION_LABEL: Record<string, string> = {
   'clock-skew': 'Computer clock out of sync',
   'db-unreachable': 'Database unreachable',
   'service-down': 'CivicCast service is down',
-  'self-test-fail': 'Automatic self-check failed',
+  // F-RC3-5 (civiccast/alerting/self_test.py): the backend deliberately
+  // avoids the word "failed" here -- on a brand-new station, a required
+  // check like readiness or backup legitimately has not been met yet, and
+  // "failed" reads as a crash rather than an unfinished setup step. This
+  // condition title used to say "Automatic self-check failed" directly
+  // above that softer sentence, contradicting it. Match the backend's own
+  // wording instead of reintroducing "failed" one layer up.
+  'self-test-fail': 'Automatic self-check did not pass',
 }
 
 export function formatCondition(condition: string): string {

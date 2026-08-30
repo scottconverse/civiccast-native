@@ -17,8 +17,13 @@ import { HomeScreen } from './screens/HomeScreen'
 import { RecordingsScreen } from './screens/RecordingsScreen'
 import { WatchScreen } from './screens/WatchScreen'
 
-const BETA_FEEDBACK_URL =
-  'https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20'
+// Points at the station's own in-product manual (served by the operator
+// console at /operator/help, no staff sign-in required -- see
+// civiccast/docsite/router.py) rather than straight at a GitHub issue
+// template, so reporting a problem never requires a GitHub account. The
+// manual's own "Don't Have A GitHub Account?" section still offers the
+// GitHub path for whoever wants it.
+const BETA_FEEDBACK_URL = '/operator/help#report-without-github'
 
 function getManifestOverride(): string | null {
   return new URLSearchParams(window.location.search).get('manifest')

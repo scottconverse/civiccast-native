@@ -63,6 +63,16 @@ export interface ActivityPubFollowersResponse {
   followers: Array<FollowerRecord>
 }
 
+export interface ActivityPubKeygenResponse {
+  private_key_path: string
+  public_key_pem: string
+  handle: string
+  base_url: string
+  already_existed: boolean
+  env_settings: Record<string, string>
+  next_step: string
+}
+
 export interface ActivityPubModerationResponse {
   follower: FollowerRecord
 }
@@ -83,6 +93,7 @@ export interface ActivityPubStatusResponse {
   followers: ActivityPubFollowerCounts
   outbox_items: number
   delivery_attempts: number
+  has_station_key?: boolean
 }
 
 export interface AffidavitAiring {
@@ -2481,11 +2492,25 @@ export interface ManualAlertInput {
   expires?: string | null
 }
 
+export interface ManualDocument {
+  source: string
+  source_sha256: string
+  generated_at: string
+  toc: Array<ManualTocEntry>
+  html: string
+}
+
 export interface ManualRouteState {
   channel_id: string
   active_session?: TakeoverSession | null
   can_takeover: boolean
   can_return: boolean
+}
+
+export interface ManualTocEntry {
+  id: string
+  level: number
+  title: string
 }
 
 export interface MaterializeResult {
@@ -3133,6 +3158,7 @@ export interface ProviderReadinessItem {
   redaction_reviewed?: boolean
   credential_fields?: Array<ProviderCredentialField>
   credential_handle?: string | null
+  manual_section?: string | null
 }
 
 export interface ProviderReadinessReport {

@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router'
 
 import type { StaffIdentityResponse, StationBoxProfile, StationProfile } from '../types/api.generated'
 
@@ -137,7 +138,9 @@ function renderScreen() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <StationProfileScreen />
+      <MemoryRouter>
+        <StationProfileScreen />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -204,6 +207,32 @@ describe('StationProfileScreen', () => {
       ),
     )
     expect(await findByText(/station profile saved/i)).toBeTruthy()
+  })
+
+  it('copies the recordings path and explains why Explorer may not find it', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    const { findByLabelText, findByText, findAllByText } = renderScreen()
+    await findByLabelText('Recordings path')
+
+    expect(await findByText(/you do not need file access to find a recording/i)).toBeTruthy()
+    expect(await findByText(/not your personal/i)).toBeTruthy()
+
+    const copyButtons = await findAllByText('Copy path')
+    fireEvent.click(copyButtons[1]) // Recordings is the second storage-root field
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('C:/CivicCast/recordings'))
+    expect(await findByText('Copied')).toBeTruthy()
+  })
+
+  it('links the storage-roots note to the manual\'s recordings-location section', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    const { findByRole } = renderScreen()
+    const link = await findByRole('link', { name: /read more in the manual/i })
+    expect(link.getAttribute('href')).toBe('/help#where-recordings-live')
   })
 
   it('shows a save-error banner when the PUT fails', async () => {

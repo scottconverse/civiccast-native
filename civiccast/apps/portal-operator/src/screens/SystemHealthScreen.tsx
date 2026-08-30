@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import {
   ApiError,
   type EgressCommandAction,
@@ -278,10 +278,14 @@ function selfTestTone(status: SystemSelfTest['status']): 'ok' | 'warn' | 'err' {
   return status === 'pass' ? 'ok' : status === 'fail' ? 'err' : 'warn'
 }
 
+// Matches the backend's own deliberately-soft wording
+// (civiccast/alerting/self_test.py's F-RC3-5: "did not pass" rather than
+// "failed", because a brand-new station legitimately hasn't finished
+// Setup yet -- "failed" reads as a crash, not an unfinished step).
 const SELF_TEST_STATUS_LABEL: Record<SystemSelfTest['status'], string> = {
   pass: 'Passed',
   warn: 'Passed with warnings',
-  fail: 'Found a problem',
+  fail: 'Did not pass yet',
 }
 
 // Plain-English names for the machine probe keys (non-technical operator).
@@ -349,7 +353,7 @@ export function SelfTestPanel({
               {checks.map(([name, ok]) => (
                 <StatusPill
                   key={name}
-                  label={`${selfTestCheckLabel(name)}: ${ok ? 'ok' : 'failed'}`}
+                  label={`${selfTestCheckLabel(name)}: ${ok ? 'ok' : 'not yet'}`}
                   tone={ok ? 'ok' : 'err'}
                 />
               ))}
@@ -360,6 +364,17 @@ export function SelfTestPanel({
               Checks whose tools aren&apos;t installed (e.g. cable verification, SRT) are skipped here, not failed.
             </p>
           )}
+          {checks.length > 0 &&
+            checks.some(([name, ok]) => !ok && (name === 'readiness' || name === 'backup_probe')) && (
+              <p className="m-0 text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+                Station readiness and Backup usually turn green once Setup and Backup destination
+                are finished &mdash; see{' '}
+                <Link to="/setup" style={{ color: 'var(--cc-brand)' }}>
+                  Setup
+                </Link>
+                .
+              </p>
+            )}
         </>
       )}
       {(onRun || onRunWeekly) && (

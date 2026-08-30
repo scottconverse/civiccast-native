@@ -138,6 +138,7 @@ from civiccast.control_room.store import ControlRoomStore
 from civiccast.control_room.tsr_client import HttpTsrClient, NullTsrClient, TsrClient
 from civiccast.db import bind_engine, connect_options, get_session
 from civiccast.db.url import normalize_database_url
+from civiccast.docsite.router import router as manual_router
 from civiccast.eas.models import EasCapSource
 from civiccast.eas.router import get_eas_service, get_eas_store
 from civiccast.eas.router import staff_router as eas_staff_router
@@ -1803,6 +1804,7 @@ def create_app() -> FastAPI:
         return public_hardware_probe()
 
     app.include_router(vod_router)
+    app.include_router(manual_router)
     app.include_router(auth_staff_router)
     app.include_router(schedule_public_router)
     # S7 media lifecycle: MUST be registered before schedule_staff_router --

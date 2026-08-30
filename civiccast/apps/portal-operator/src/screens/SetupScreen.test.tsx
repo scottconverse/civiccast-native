@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
 
-import { BackupSetupPanel, R2ConciergeCard, SetupScreen } from './SetupScreen'
+import { BackupSetupPanel, CostForecastPanel, R2ConciergeCard, SetupScreen } from './SetupScreen'
 
 afterEach(() => {
   cleanup()
@@ -24,7 +25,9 @@ function renderSetupScreen() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <SetupScreen />
+      <MemoryRouter>
+        <SetupScreen />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -78,7 +81,9 @@ function renderR2ConciergeCard(canManageProviders = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <R2ConciergeCard canManageProviders={canManageProviders} />
+      <MemoryRouter>
+        <R2ConciergeCard canManageProviders={canManageProviders} />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -87,10 +92,57 @@ function renderBackupSetupPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <BackupSetupPanel />
+      <MemoryRouter>
+        <BackupSetupPanel />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }
+
+function renderCostForecastPanel() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <CostForecastPanel />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe('CostForecastPanel', () => {
+  it('never prints an invented dollar figure for CDN bandwidth cost', () => {
+    renderCostForecastPanel()
+    // The old behavior computed hours * meetings * viewers * an unsourced
+    // $0.005/GB constant and printed it as "$20.00". No "$<number>" tile
+    // should exist anywhere in this panel any more.
+    expect(screen.queryByText(/^\$\d/)).toBeNull()
+    expect(screen.getByText('Varies by provider')).toBeTruthy()
+    expect(screen.getByText(/cloudflare r2 is free/i)).toBeTruthy()
+  })
+
+  it('names Cloudflare R2 as the $0-egress provider, sourced, not estimated', () => {
+    renderCostForecastPanel()
+    expect(
+      screen.getByText(/charges \$0 for egress.*not a civiccast estimate/i),
+    ).toBeTruthy()
+  })
+
+  it('links to the manual\'s CDN cost estimate section', () => {
+    renderCostForecastPanel()
+    const link = screen.getByRole('link', { name: /read more in the manual/i })
+    expect(link.getAttribute('href')).toBe('/help#cdn-cost-estimate')
+  })
+
+  it('still computes storage and bandwidth GB from the entered numbers', () => {
+    renderCostForecastPanel()
+    fireEvent.change(screen.getByLabelText(/hours per meeting/i), { target: { value: '2' } })
+    fireEvent.change(screen.getByLabelText(/meetings per month/i), { target: { value: '4' } })
+    fireEvent.change(screen.getByLabelText(/average viewers/i), { target: { value: '250' } })
+    expect(screen.getByText('16 GB')).toBeTruthy()
+    expect(screen.getByText('4000 GB')).toBeTruthy()
+  })
+})
 
 describe('BackupSetupPanel', () => {
   it('prepopulates the configured default so verification needs no path retyping', async () => {

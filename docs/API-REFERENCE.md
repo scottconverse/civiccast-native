@@ -486,6 +486,15 @@ Return the current on-air live session for residents.
 - Request body: none
 - Responses: 200 `PublicLiveStatus`; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `GET /api/public/manual`
+
+Get the in-product operator manual.
+
+- Access: public
+- Parameters: none
+- Request body: none
+- Responses: 200 `ManualDocument`
+
 ### `GET /api/public/paywall/access`
 
 Public read: does this email have access to this asset/series?.
@@ -737,6 +746,15 @@ Reject a pending ActivityPub follower and deliver signed Reject.
 - Parameters: none
 - Request body: `FollowerModerationRequest`
 - Responses: 200 `ActivityPubModerationResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/activitypub/keygen`
+
+Generate the station's ActivityPub federation key.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `ActivityPubKeygenResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `GET /api/staff/activitypub/outbox`
 
@@ -4393,6 +4411,16 @@ Read CivicCast local federation metadata.
 
 - `followers` (required): `Array<FollowerRecord>`
 
+### `ActivityPubKeygenResponse`
+
+- `already_existed` (required): `boolean`
+- `base_url` (required): `string`
+- `env_settings` (required): `Record<string, string>`
+- `handle` (required): `string`
+- `next_step` (required): `string`
+- `private_key_path` (required): `string`
+- `public_key_pem` (required): `string`
+
 ### `ActivityPubModerationResponse`
 
 - `follower` (required): `FollowerRecord`
@@ -4412,6 +4440,7 @@ Read CivicCast local federation metadata.
 - `enabled` (required): `boolean`
 - `followers` (required): `ActivityPubFollowerCounts`
 - `handle` (required): `string`
+- `has_station_key` (optional): `boolean`
 - `mode` (required): `string`
 - `outbox_items` (required): `number`
 
@@ -6815,12 +6844,26 @@ rule (S13 §5.1).
 - `severity` (required): `'unknown' | 'minor' | 'moderate' | 'severe' | 'extreme'`
 - `source_id` (required): `string`
 
+### `ManualDocument`
+
+- `generated_at` (required): `string`
+- `html` (required): `string`
+- `source` (required): `string`
+- `source_sha256` (required): `string`
+- `toc` (required): `Array<ManualTocEntry>`
+
 ### `ManualRouteState`
 
 - `active_session` (optional): `TakeoverSession | null`
 - `can_return` (required): `boolean`
 - `can_takeover` (required): `boolean`
 - `channel_id` (required): `string`
+
+### `ManualTocEntry`
+
+- `id` (required): `string`
+- `level` (required): `number`
+- `title` (required): `string`
 
 ### `MaterializeResult`
 
@@ -7457,6 +7500,7 @@ rule (S13 §5.1).
 - `evidence_reference` (optional): `string | null`
 - `id` (required): `string`
 - `label` (required): `string`
+- `manual_section` (optional): `string | null`
 - `message` (required): `string`
 - `next_step` (required): `string`
 - `proof_recorded_at` (optional): `string | null`

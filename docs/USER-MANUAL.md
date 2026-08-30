@@ -129,6 +129,78 @@ a username and password for the operator console.
 8. **Confirm resident playback.** Open the resident portal in a second browser
    and play the approved recording. Unapproved media must remain private.
 
+### Where Recordings And Backups Live {#where-recordings-live}
+
+CivicCast's Windows service stores media, recordings, and backups under its
+own Windows account (the account the background service runs as), not under
+your own `C:\Users\<you>` folders. That is why "recordings are saved
+locally" does not mean they show up if you browse your own Documents or
+Desktop — the real folder is a system location a normal Windows account
+often cannot open directly, even by pasting the path into File Explorer.
+
+**You do not need filesystem access to find a recording.** The **Assets**
+screen lists every recording CivicCast has, with its title, date, duration,
+and publish status — that is the supported way to find a recording, review
+it, and republish it, with no folder-browsing required.
+
+If you do need the actual files (for a legal hold, a manual copy, or
+troubleshooting with IT), open **Setup → Station Profile**. The **Storage
+roots** section shows the exact Media library, Recordings, and Backups paths
+this station is using right now, each with a **Copy path** button. Paste the
+copied path into File Explorer's address bar; if Explorer reports access is
+denied, an administrator on this Windows computer can grant read access, or
+can run CivicCast's **Open folder** action from the station itself (it only
+works when you are physically at, or remoted into, the station computer —
+not from a different computer on the network).
+
+The **Backup destination** field on the **Setup** screen is different: it is
+a folder or drive *you* choose (a local drive, an external drive, or a
+network share), and CivicCast verifies CivicCast can write to, read from,
+and clean up after itself there. A backup destination should always be a
+real Windows path, such as `C:\CivicCastBackups` or `D:\CivicCastBackups` —
+CivicCast rejects a WSL/Linux-style path (anything containing `\mnt\c\...`
+or `/mnt/c/...`) because that path format does not exist on a Windows
+station and would silently mean nothing was actually being backed up.
+
+### What Each Publish Surface Means {#publish-surfaces}
+
+The **Publish** dashboard shows one row per surface a recording can reach.
+Each row's dot color and word describe that one surface, not the whole
+recording:
+
+- **Portal** (required) — the station's own resident-facing website. This is
+  the canonical, citable public record; nothing else on the dashboard is
+  required for a recording to be public.
+- **Internet Archive**, **YouTube**, **Local archive folder**, **Subscriber
+  notices**, **Podcast feed** — optional reach and archive surfaces (see
+  [Setting Up Providers, Plain Language](#provider-setup-plain-language)).
+  Each fans out independently on its own timeline.
+- **Cable file package** — an optional local ZIP of media, captions,
+  metadata, and hashes for handoff to a cable/PEG headend. Most stations
+  never configure a cable-package output folder, and that is fine: this
+  surface reads **Not set up (optional)** rather than a red failure when it
+  was never configured. A red **Failed** on this row means CivicCast
+  actually tried to build the package (because an output folder is
+  configured) and hit a real problem — a missing source file or a missing
+  caption sidecar — which the row's message names directly.
+
+A red or unset optional surface never blocks or undoes a successful Portal
+publish. Check the dashboard's overall status, not any single optional row,
+to know whether a recording is public.
+
+### The CDN Cost Estimate Is A Guess, Not A Quote {#cdn-cost-estimate}
+
+The **Storage and viewing estimate** panel on **Setup** turns hours,
+meetings, and viewers into a storage figure (a straightforward
+multiplication) and an honest note about bandwidth cost: it does not print a
+single invented dollar figure, because CivicCast does not know which CDN
+provider a station will use or what that provider charges. Cost genuinely
+**varies by provider** — **Cloudflare R2 charges nothing for sending video
+out to viewers**, which is a real, current, published price (not a
+CivicCast estimate); BunnyCDN, Fastly, and Akamai each set and change their
+own rates, so check their pricing pages directly before budgeting a paid
+CDN.
+
 ### Common Operator Questions
 
 **What happens if Wi-Fi drops mid-meeting?** The stock build does not claim automatic
@@ -189,6 +261,124 @@ broadcasting?** Yes. On **Run Meeting**, choose **Record only**
 instead of **Live**. The recording is stored privately until staff
 publish it.
 
+### Setting Up Providers, Plain Language {#provider-setup-plain-language}
+
+**Setup** has a **Provider setup** card for each optional service CivicCast
+can use. Every card is either **Required** (needed for the local tester path)
+or **Optional** (the station can skip it and everything else keeps working).
+Only **Local resident portal** and **Backup destination** are required. Every
+provider below is optional — read its card, decide if the station wants it,
+and skip it otherwise. Nothing else on this list blocks a broadcast.
+
+You do not need a "technical admin" for any of these. If you can create a
+free account on a website and paste a code into a box, you can set these up
+yourself. Each card also has a **Setup guide** you can open for the exact
+steps, and a link back to the matching part of this manual.
+
+#### Cloudflare R2 (recommended, usually free) {#provider-cloudflare-r2}
+
+Cloudflare R2 is CDN storage (see [Glossary](#glossary)) that CivicCast can
+set up for you automatically. On the **Cloudflare R2** card, use the
+**CDN concierge** box: create a free Cloudflare account, create one API
+token, paste it in, and click **Provision for me**. CivicCast creates the
+bucket and turns on public access for you — you never have to know what a
+bucket, an object store, or a CDN pull-zone is. Cloudflare R2 does not charge
+for sending video out to viewers ("egress"), which is why it is CivicCast's
+recommended first choice. If you would rather enter the account ID, access
+key, secret key, bucket, and public URL by hand, the same card has a manual
+fallback below the concierge box.
+
+#### Internet Archive (optional, permanent public copy) {#provider-internet-archive}
+
+Internet Archive keeps a second, independent public copy of every published
+recording, hosted by a nonprofit library and outside CivicCast's control —
+useful if the station wants an archival copy that survives even if the
+station's own server ever goes away. To set it up: create a free account at
+archive.org, open its **S3 keys** page (Internet Archive names its keys
+after Amazon S3 because it uses the same style of key, not because Amazon is
+involved), copy the access key and secret key it shows you, and paste both
+into the Internet Archive card. There is no "technical admin" step — paste
+your own keys in yourself.
+
+#### YouTube (optional, extra reach) {#provider-youtube}
+
+Turn this on only if the station wants an extra copy of meetings on its own
+YouTube channel. You will need a Google **OAuth client ID and secret** — a
+matched pair of codes, created for free at
+[Google Cloud Console](https://console.cloud.google.com/apis/credentials),
+that let CivicCast upload to the channel without ever seeing the channel's
+password. Create them, paste both into the YouTube card, and run a private
+upload proof before using YouTube for residents.
+
+#### Subscriber notices (optional) {#provider-subscriber-notifications}
+
+Turn this on to email or webhook-notify subscribers when a new meeting is
+published. A **webhook secret** is a password-like string shared between
+CivicCast and the notification service, so each side can prove a
+notification really came from the other — CivicCast can generate one for you,
+or you can paste one from your notification provider.
+
+#### Local archive folder (optional, second local copy) {#provider-local-archive-folder}
+
+Point this at a second drive, external drive, or network share if the
+station wants an extra local copy beyond the built-in Recordings folder (see
+[Where Recordings And Backups Live](#where-recordings-live)). Enter the
+folder path; CivicCast proves it can write to, read from, and clean up after
+itself in that folder before marking this ready.
+
+#### BunnyCDN, Fastly, and Akamai (optional, alternative CDNs) {#provider-alternative-cdns}
+
+These are alternative CDN/object-storage providers for a station that
+already has an account with one of them, or wants a paid alternative to
+Cloudflare R2. Unlike R2, these providers typically charge for sending video
+out to viewers — check their own pricing pages before choosing one; CivicCast
+does not know or estimate what they will charge (see
+[The CDN Cost Estimate Is A Guess, Not A Quote](#cdn-cost-estimate)).
+BunnyCDN calls its address for viewers a **pull-zone** (something like
+`your-zone.b-cdn.net`) and its file storage a **storage zone**; Fastly and
+Akamai use the more generic **bucket** and **region** terms from
+[the glossary](#glossary). All three cards need an account, a
+storage/object area, an access key, and (for Fastly/Akamai) a region — the
+card's Setup guide lists the exact fields.
+
+#### Federation / ActivityPub (optional, advanced, off by default) {#provider-federation}
+
+Federation lets other services that speak the ActivityPub protocol — the
+network behind Mastodon and similar sites, sometimes called "the fediverse"
+— follow the station and see when a new meeting is published, the same way
+someone might follow a page on a social network. Most stations do not need
+this and can leave it off. If the station wants it, open **ActivityPub** in
+the console and choose **Generate station key** — CivicCast creates the
+station's federation identity for you; no command line is required. See the
+station's ActivityPub screen for the current on/off switch and approval
+queue.
+
+#### Podcast feed (optional) {#provider-podcast-feed}
+
+The podcast feed republishes a meeting's audio as a podcast episode once
+that meeting has already gone through the normal flow: recorded, packaged,
+and approved on the **Portal** publish surface (see
+[What Each Publish Surface Means](#publish-surfaces)). "Publish a local
+portal recording first" on this card's Setup guide means exactly that — there
+is nothing extra to configure before the first Portal-published recording
+appears here for review.
+
+### Glossary {#glossary}
+
+Plain-language definitions for the technical terms that show up on provider
+setup cards. If a term you need is not here, its provider's card also links
+back to this section.
+
+| Term | What it actually means |
+| --- | --- |
+| S3 access key / secret key | A username-and-password-style pair (the "access key" is the username, the "secret key" is the password) that proves to a storage provider it is really the station's account making a request. "S3" was Amazon's name for this style of storage API; other providers (Internet Archive, Cloudflare R2, BunnyCDN, Fastly, Akamai) reuse the same key style even though they are not Amazon. |
+| Object store / bucket | A place to store files in the cloud, organized differently from a Windows folder. A "bucket" is the named container inside that store — think of it as the top-level folder CivicCast's videos live in once they leave the station. |
+| CDN (content delivery network) | A network of computers around the world that keeps a copy of the station's video near each viewer, so a meeting with hundreds of viewers loads quickly instead of overloading the station's own internet connection. |
+| Pull-zone | BunnyCDN's name for the web address a CDN gives a station's video once it is set up (for example `your-zone.b-cdn.net`). Other CDNs call the same idea a "distribution" or "custom domain." |
+| OAuth client ID / client secret | A pair of codes a service (like Google/YouTube) issues so CivicCast can act on the station's behalf — for example, upload videos — without CivicCast ever seeing or storing the station's actual account password. |
+| Webhook secret | A shared password-like string that lets CivicCast and another service each prove a notification message really came from the other, instead of from someone pretending to be them. |
+| Egress | The data sent **out** to viewers when they watch a video, as opposed to the data **stored**. Most CDN and storage providers charge separately for egress; Cloudflare R2 is the one CivicCast recommends first because it charges nothing for it. |
+
 ### When to Ask for Help
 
 Send this to your IT lead, station admin, or open a GitHub issue at
@@ -201,6 +391,27 @@ the project's repository:
 - Captions are blank, garbled, or stuck on one line.
 - A recording is missing from the **Assets** list after a meeting.
 - CivicCast asks for a recovery code and the kit cannot be found.
+
+### Don't Have A GitHub Account? {#report-without-github}
+
+Every **Report a beta issue** link opens a GitHub bug template, which needs a
+free GitHub account to submit. If you do not have one and do not want to
+make one:
+
+1. In **System Health**, add a short note describing what happened, then
+   choose **Create support bundle** and **Download support bundle**. This
+   saves one redacted JSON file with the station's version, setup state, and
+   recent activity — CivicCast strips passwords, tokens, private keys, and
+   subscriber data from it automatically before it is saved.
+2. Ask your IT lead, station admin, or anyone else at the station with a
+   GitHub account to paste your description and attach the downloaded file
+   to a new issue at the project's repository.
+3. If nobody at the station has a GitHub account, email the file and a short
+   description straight to the project maintainer at the address listed in
+   [SECURITY.md](https://github.com/scottconverse/civiccast-native/blob/main/SECURITY.md)
+   (that address exists for exactly this: reports from people who cannot use
+   GitHub). Never post passwords, recovery codes, staff tokens, or private
+   meeting material anywhere, including in an email.
 
 For routine workflow questions, use the role-specific guides:
 

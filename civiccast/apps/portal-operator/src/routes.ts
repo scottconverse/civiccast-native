@@ -2,6 +2,7 @@ import type { RouteId } from './components/shell/Sidebar'
 import { matchPath } from 'react-router'
 
 export const ROUTE_PATHS: Record<RouteId, string> = {
+  help: '/help',
   setup: '/setup',
   live: '/live',
   facility: '/facility',
@@ -44,6 +45,11 @@ export const ROUTE_PATHS: Record<RouteId, string> = {
 }
 
 export const ROUTE_ALIASES: Record<string, string> = {
+  // Field evidence: testers guessed /docs, /help, /manual, and /guide
+  // looking for an in-product manual. /help is canonical; /guide is
+  // already Program Guide (EPG) and stays that way.
+  '/docs': '/help',
+  '/manual': '/help',
   '/cg-designer': '/cg-board',
   '/program-guide': '/guide',
   '/contributors': '/contribute',

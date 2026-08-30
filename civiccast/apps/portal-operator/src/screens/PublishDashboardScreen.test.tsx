@@ -236,4 +236,72 @@ describe('PublishDashboardScreen state vocabulary', () => {
       await findByRole('tab', { name: 'Reaching fewer places than planned' }),
     ).toBeTruthy()
   })
+
+  function neverConfiguredCableDashboard(): PublishDashboardResponse {
+    return {
+      summary: {
+        total_assets: 1,
+        draft: 0,
+        portal_live: 1,
+        archive_verified: 0,
+        degraded: 0,
+        needs_operator_action: 0,
+      },
+      assets: [
+        {
+          asset_id: 'portal-only-asset',
+          title: 'Council - portal only',
+          dashboard_state: 'portal_live',
+          dashboard_label: 'Live on the portal',
+          canonical_public: true,
+          archive_verified: false,
+          reach_degraded: false,
+          needs_operator_action: false,
+          public_record_required: true,
+          published_at: '2026-06-01T12:00:00Z',
+          surfaces: [
+            {
+              id: 'portal',
+              label: 'Portal',
+              kind: 'canonical',
+              state: 'succeeded',
+              approval: 'approved',
+              required: true,
+              url: 'https://portal.example/c',
+              last_attempt_at: null,
+              completed_at: '2026-06-01T12:00:00Z',
+              health: 'ok',
+              message: 'Published.',
+              next_step: 'None.',
+            },
+            {
+              id: 'cable-file-package',
+              label: 'Cable file package',
+              kind: 'record',
+              // Field evidence (candidate #17): this surface used to be
+              // "failed" (red) even when it was simply never configured.
+              state: 'not_configured',
+              approval: 'approved',
+              required: false,
+              url: null,
+              last_attempt_at: null,
+              completed_at: '2026-06-01T12:00:00Z',
+              health: 'unknown',
+              message: 'Cable file package is not set up (optional).',
+              next_step: 'Cable file package was never set up for this station.',
+            },
+          ],
+        },
+      ],
+    }
+  }
+
+  it('shows a never-configured optional surface as "Not set up yet", never "Failed"', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(neverConfiguredCableDashboard())
+    const { findByText, queryByText } = renderScreen()
+
+    expect(await findByText(/record.*Not set up yet/i)).toBeTruthy()
+    expect(queryByText(/record.*Failed/i)).toBeNull()
+    expect(await findByText('Cable file package is not set up (optional).')).toBeTruthy()
+  })
 })

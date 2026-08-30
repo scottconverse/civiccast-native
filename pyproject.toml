@@ -187,6 +187,13 @@ artifacts = [
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
+# In-product operator manual (civiccast/docsite/) -- pre-rendered HTML/TOC
+# built from docs/USER-MANUAL.md by scripts/render_docsite_manual.py and
+# committed like the PDF/DOCX manual artifacts, not generated at install
+# time. Ships in the payload so /api/public/manual works with no internet
+# connection, matching how the fixtures below already ride along.
+"civiccast/docsite/manual.json" = "civiccast/docsite/manual.json"
+"civiccast/docsite/manual.render.json" = "civiccast/docsite/manual.render.json"
 "civiccast/records/fixtures/DejaVuSans.ttf" = "civiccast/records/fixtures/DejaVuSans.ttf"
 "civiccast/records/fixtures/DejaVuSans-LICENSE.txt" = "civiccast/records/fixtures/DejaVuSans-LICENSE.txt"
 "civiccast/records/fixtures/sRGB.icc" = "civiccast/records/fixtures/sRGB.icc"

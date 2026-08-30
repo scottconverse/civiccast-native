@@ -18,6 +18,7 @@ import { isTrimEditorRoute, routeForPath, routePath } from './routes'
 import { SetupScreen } from './screens/SetupScreen'
 import { TrimEditorScreen } from './screens/TrimEditorScreen'
 
+const ManualScreen = lazy(() => import('./screens/ManualScreen').then((module) => ({ default: module.ManualScreen })))
 const AgendasScreen = lazy(() => import('./screens/AgendasScreen').then((module) => ({ default: module.AgendasScreen })))
 const AssetsScreen = lazy(() => import('./screens/AssetsScreen').then((module) => ({ default: module.AssetsScreen })))
 const MissingMediaScreen = lazy(() => import('./screens/MissingMediaScreen').then((module) => ({ default: module.MissingMediaScreen })))
@@ -105,6 +106,7 @@ function NotFoundRoute() {
       </div>
       <div className="flex flex-wrap gap-2">
         {[
+          ['Manual', '/help'],
           ['First Setup', '/setup'],
           ['Recording', '/recording'],
           ['Reports', '/reports'],
@@ -234,6 +236,9 @@ function AppContent() {
       >
         <Routes>
         <Route path="/" element={<Navigate to="/setup" replace />} />
+        <Route path="/help" element={<ManualScreen />} />
+        <Route path="/docs" element={<Navigate to="/help" replace />} />
+        <Route path="/manual" element={<Navigate to="/help" replace />} />
         <Route path="/setup" element={<SetupRoute />} />
         {/* First Setup hosts the returning-operator Admin sign-in card, so a
             guessed /login (or /sign-in) lands there instead of Page not found. */}

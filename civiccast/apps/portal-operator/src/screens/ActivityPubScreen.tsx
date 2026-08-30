@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router'
 import {
   ApiError,
   approveActivityPubFollower,
   blockActivityPubFollower,
+  generateActivityPubStationKey,
   getActivityPubStatus,
   listActivityPubDeliveries,
   listActivityPubDeliveryRetries,
@@ -12,6 +14,7 @@ import {
   rejectActivityPubFollower,
   replayActivityPubDeliveryRetry,
 } from '../api/client'
+import { manualLink } from './manual-link'
 import type {
   ActivityPubStatusResponse,
   DeliveryRecord,
@@ -101,7 +104,27 @@ function LoadingState() {
   )
 }
 
-function DisabledPanel({ status }: { status: ActivityPubStatusResponse }) {
+export function DisabledPanel({ status }: { status: ActivityPubStatusResponse }) {
+  const [copied, setCopied] = useState(false)
+  const mutation = useMutation({
+    mutationFn: generateActivityPubStationKey,
+    onSuccess: () => setCopied(false),
+  })
+  const result = mutation.data
+
+  const copyEnvSettings = async () => {
+    if (!result) return
+    const text = Object.entries(result.env_settings)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+
   return (
     <section
       aria-label="Federation disabled"
@@ -122,24 +145,72 @@ function DisabledPanel({ status }: { status: ActivityPubStatusResponse }) {
           Default-safe
         </span>
       </div>
-      <div className="grid gap-2 text-xs sm:grid-cols-3" style={{ color: 'var(--cc-ink-2)' }}>
-        <div>
-          <div className="font-semibold" style={{ color: 'var(--cc-ink)' }}>Key</div>
-          Generate a station key before changing mode.
-        </div>
-        <div>
-          <div className="font-semibold" style={{ color: 'var(--cc-ink)' }}>Mode</div>
-          Start with approval-only and authorized fetch.
-        </div>
-        <div>
-          <div className="font-semibold" style={{ color: 'var(--cc-ink)' }}>Operator flow</div>
-          Return here after restart to approve or reject follows.
-        </div>
+      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+        Federation lets other services that speak the ActivityPub protocol &mdash; the network
+        behind Mastodon and similar sites, sometimes called &quot;the fediverse&quot; &mdash;
+        follow this station and see when a new meeting is published, the same way someone
+        might follow a page on a social network. <strong>Most stations do not need this</strong>{' '}
+        and can leave it off.{' '}
+        <Link to={manualLink('provider-federation')} style={{ color: 'var(--cc-brand)' }}>
+          Read more in the manual
+        </Link>
+        .
+      </p>
+      {status.has_station_key && !result && (
+        <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          A station key already exists on disk. Generating again reuses it &mdash; it will not
+          create a second, different identity.
+        </p>
+      )}
+      <div>
+        <button
+          type="button"
+          disabled={mutation.isPending}
+          onClick={() => mutation.mutate()}
+          className="rounded-md px-4 py-2 text-sm font-semibold"
+          style={{
+            background: mutation.isPending ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
+            color: mutation.isPending ? 'var(--cc-ink-3)' : 'var(--cc-brand-ink)',
+          }}
+        >
+          {mutation.isPending ? 'Generating...' : 'Generate station key'}
+        </button>
       </div>
-      <pre
-        className="cc-mono overflow-x-auto rounded-md p-3 text-[11px]"
-        style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink)' }}
-      >{`civiccast activitypub keygen --private-key-path <station-key.pem> --base-url https://station.example.gov --handle ${status.handle || 'council'} --mode approval-only`}</pre>
+      {mutation.error && (
+        <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+          {mutation.error instanceof ApiError
+            ? mutation.error.detail ?? mutation.error.message
+            : 'The station key could not be generated.'}
+        </div>
+      )}
+      {result && (
+        <div className="grid gap-2 rounded-md p-3 text-xs" style={{ background: 'var(--cc-surface-2)' }}>
+          <p className="m-0 font-semibold" style={{ color: 'var(--cc-ink)' }}>
+            {result.already_existed ? 'Station key found.' : 'Station key generated.'}
+          </p>
+          <p className="m-0" style={{ color: 'var(--cc-ink-2)' }}>
+            {result.next_step}
+          </p>
+          <dl className="m-0 grid gap-1" style={{ color: 'var(--cc-ink-2)' }}>
+            {Object.entries(result.env_settings).map(([key, value]) => (
+              <div key={key} className="grid gap-0.5">
+                <dt className="cc-mono text-[10px] font-semibold" style={{ color: 'var(--cc-ink-3)' }}>
+                  {key}
+                </dt>
+                <dd className="cc-mono m-0 break-all">{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <button
+            type="button"
+            onClick={copyEnvSettings}
+            className="justify-self-start rounded-md px-3 py-2 text-xs font-semibold"
+            style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
+          >
+            {copied ? 'Copied' : 'Copy settings'}
+          </button>
+        </div>
+      )}
     </section>
   )
 }

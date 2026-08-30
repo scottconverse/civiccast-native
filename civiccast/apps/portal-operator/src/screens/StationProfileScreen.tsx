@@ -13,6 +13,7 @@
 
 import { type ReactNode, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router'
 import { AuthRequiredState } from '../components/AuthRequiredState'
 import {
   ApiError,
@@ -21,6 +22,7 @@ import {
   getStationProfile,
   updateStationProfile,
 } from '../api/client'
+import { manualLink } from './manual-link'
 import type {
   PegReadinessDimension,
   StaffIdentityResponse,
@@ -57,6 +59,42 @@ function Banner({ tone, children }: { tone: Tone; children: ReactNode }) {
     <div role="alert" className="rounded-md p-3 text-sm" style={{ background: c.bg, border: `1px solid ${c.bd}` }}>
       {children}
     </div>
+  )
+}
+
+/**
+ * Copies a storage-root path to the clipboard.
+ *
+ * Field evidence (candidate #17): a station's Media/Recordings/Backups
+ * default paths live under the Windows service account's own profile
+ * (`C:\Windows\System32\config\systemprofile\AppData\Local\CivicCast\...`),
+ * which "told recordings are saved locally" does not prepare an operator to
+ * find by browsing their own account. There is no reliable way to pop a
+ * File Explorer window open from this backend (it runs as a Windows
+ * service in Session 0, which cannot show UI on any interactive desktop --
+ * see docs/USER-MANUAL.md's "Where Recordings And Backups Live"), so the
+ * one thing this control can honestly promise is copying the exact path so
+ * it can be pasted into Explorer's address bar or handed to an admin.
+ */
+function CopyPathButton({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(path)
+          setCopied(true)
+          window.setTimeout(() => setCopied(false), 2000)
+        } catch {
+          setCopied(false)
+        }
+      }}
+      className="justify-self-start rounded-md px-2 py-1 text-[11px] font-semibold"
+      style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
+    >
+      {copied ? 'Copied' : 'Copy path'}
+    </button>
   )
 }
 
@@ -276,7 +314,7 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
         <legend className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
           Storage roots
         </legend>
-        <label className="grid gap-1 text-xs">
+        <div className="grid gap-1 text-xs">
           <span style={{ color: 'var(--cc-ink-3)' }}>Media library</span>
           <input
             aria-label="Media library path"
@@ -285,8 +323,9 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
             className="rounded-md px-2 py-1.5"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
           />
-        </label>
-        <label className="grid gap-1 text-xs">
+          <CopyPathButton path={fields.media_library} />
+        </div>
+        <div className="grid gap-1 text-xs">
           <span style={{ color: 'var(--cc-ink-3)' }}>Recordings</span>
           <input
             aria-label="Recordings path"
@@ -295,8 +334,9 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
             className="rounded-md px-2 py-1.5"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
           />
-        </label>
-        <label className="grid gap-1 text-xs">
+          <CopyPathButton path={fields.recordings} />
+        </div>
+        <div className="grid gap-1 text-xs">
           <span style={{ color: 'var(--cc-ink-3)' }}>Backups</span>
           <input
             aria-label="Backups path"
@@ -305,11 +345,20 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
             className="rounded-md px-2 py-1.5"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
           />
-        </label>
+          <CopyPathButton path={fields.backups} />
+        </div>
       </fieldset>
 
       <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-        An env-var override (CIVICCAST_STATION_TZ, CIVICCAST_STATION_NAME,
+        These are the Windows service account&apos;s own paths, not your personal
+        <span className="cc-mono"> C:\Users\...</span> folders &mdash; that is why browsing to them
+        yourself may not work. You do not need file access to find a recording: use{' '}
+        <strong>Assets</strong> instead. If you do need the files, use Copy path above, then paste
+        into File Explorer&apos;s address bar; ask an administrator if it says access is denied.{' '}
+        <Link to={manualLink('where-recordings-live')} style={{ color: 'var(--cc-brand)' }}>
+          Read more in the manual
+        </Link>
+        . An env-var override (CIVICCAST_STATION_TZ, CIVICCAST_STATION_NAME,
         CIVICCAST_STATION_MEDIA_LIBRARY / _RECORDINGS / _BACKUPS) always wins over what is saved
         here — this form shows the value currently in effect.
       </p>

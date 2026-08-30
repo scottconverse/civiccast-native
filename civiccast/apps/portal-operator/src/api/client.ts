@@ -14,6 +14,7 @@ import type {
   ActivityPubDeliveriesResponse,
   ActivityPubDeliveryRetriesResponse,
   ActivityPubFollowersResponse,
+  ActivityPubKeygenResponse,
   ActivityPubModerationResponse,
   ActivityPubOutboxResponse,
   ActivityPubStatusResponse,
@@ -91,6 +92,7 @@ import type {
   FollowerRecord,
   LiveFinalizationStatusResponse,
   ManagedStorageStatus,
+  ManualDocument,
   OverlayCompositorPlan,
   OverlayCompositorRequest,
   PlaybackPolicyAuditLog,
@@ -501,6 +503,10 @@ export function listStaffAssets(): Promise<AssetRow[]> {
 
 export function getCivicCastVersion(): Promise<{ version: string }> {
   return request<{ version: string }>('/api/version')
+}
+
+export function getManual(): Promise<ManualDocument> {
+  return request<ManualDocument>('/api/public/manual')
 }
 
 export function getStationSetupState(): Promise<StationSetupState> {
@@ -1880,6 +1886,10 @@ export function exportSignedRecord(
 
 export function getActivityPubStatus(): Promise<ActivityPubStatusResponse> {
   return request<ActivityPubStatusResponse>('/api/staff/activitypub/status')
+}
+
+export function generateActivityPubStationKey(): Promise<ActivityPubKeygenResponse> {
+  return request<ActivityPubKeygenResponse>('/api/staff/activitypub/keygen', { method: 'POST' })
 }
 
 export function listActivityPubFollowers(
