@@ -17,8 +17,22 @@ import { HomeScreen } from './screens/HomeScreen'
 import { RecordingsScreen } from './screens/RecordingsScreen'
 import { WatchScreen } from './screens/WatchScreen'
 
-const BETA_FEEDBACK_URL =
-  'https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20'
+// Points at the station's own in-product manual (served by the operator
+// console at /operator/#/help, no staff sign-in required -- see
+// civiccast/docsite/router.py) rather than straight at a GitHub issue
+// template, so reporting a problem never requires a GitHub account. The
+// manual's own "Don't Have A GitHub Account?" section still offers the
+// GitHub path for whoever wants it.
+//
+// The operator console is a HashRouter app (civiccast/apps/portal-
+// operator/src/main.tsx), so the route lives entirely after the FIRST '#'
+// -- '/operator/help#...' would load the SPA shell but hand HashRouter the
+// raw fragment '#report-without-github' as its route, landing on Page not
+// found instead of the manual (caught in PR #74 review). The route itself
+// is '/operator/#/help', and the manual's own in-page anchor is a second
+// '#' nested inside that route string, which react-router's HashRouter
+// parses back out as ManualScreen's own location.hash.
+const BETA_FEEDBACK_URL = '/operator/#/help#report-without-github'
 
 function getManifestOverride(): string | null {
   return new URLSearchParams(window.location.search).get('manifest')

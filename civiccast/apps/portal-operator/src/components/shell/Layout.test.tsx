@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router'
 
 import { Layout } from './Layout'
 
@@ -25,9 +26,11 @@ function renderLayout() {
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <Layout route="live" onNavigate={vi.fn()} roles={['setup_admin']}>
-        <button type="button">Main content action</button>
-      </Layout>
+      <MemoryRouter>
+        <Layout route="live" onNavigate={vi.fn()} roles={['setup_admin']}>
+          <button type="button">Main content action</button>
+        </Layout>
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -86,7 +89,10 @@ describe('Layout mobile navigation', () => {
     fireEvent.click(menuButton)
 
     getByRole('dialog', { name: 'Primary navigation' })
-    const first = getByLabelText('Show Setup navigation')
+    // The Help section (the in-product manual) is now the first nav
+    // section, collapsed by default like Setup was -- same toggle
+    // behavior, new label.
+    const first = getByLabelText('Show Help navigation')
     const last = getByRole('link', { name: 'Report a beta issue' })
     expect(document.activeElement).toBe(first)
 

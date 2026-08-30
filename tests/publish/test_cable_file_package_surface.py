@@ -64,7 +64,46 @@ def test_cable_file_package_surface_succeeds_when_media_and_caption_exist(
     assert surface.verification_hash.startswith("sha256:")
 
 
-def test_cable_file_package_surface_fails_actionably_without_configuration() -> None:
+def test_cable_file_package_surface_reads_not_configured_not_failed_when_never_set_up() -> None:
+    """Field evidence (candidate #17): an operator saw a red "failed: Cable
+    file package was not created" on an otherwise-successful publish, for a
+    PEG/headend handoff surface most stations never turn on. This surface
+    was never attempted for real -- it must read "not set up (optional)",
+    not "failed", and must never look red on the publish dashboard (see
+    apps/portal-operator/src/screens/PublishDashboardScreen.tsx's
+    SurfaceDot, which only turns red for "failed"/"blocked")."""
+
+    record = approve_publish(
+        asset=_asset(None),
+        request=PublishApprovalRequest(
+            operator_id="staff-1",
+            operator_display_name="Avery Operator",
+            approved_surface_ids=["cable-file-package"],
+        ),
+        store=InMemoryPublishStore(),
+    )
+
+    surface = next(surface for surface in record.surfaces if surface.id == "cable-file-package")
+    assert surface.state == "not_configured"
+    assert surface.state != "failed"
+    assert surface.required is False
+    assert surface.message is not None and "optional" in surface.message.lower()
+    assert "CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR" in surface.next_step
+
+
+def test_cable_file_package_surface_still_fails_for_a_real_configured_problem(
+    tmp_path, monkeypatch
+) -> None:
+    """A station that DID configure cable packaging, but is missing the
+    source media file, is a genuine failure -- distinct from "never set
+    up" -- and must keep reading as "failed"."""
+
+    captions_dir = tmp_path / "captions"
+    output_dir = tmp_path / "packages"
+    captions_dir.mkdir()
+    monkeypatch.setenv("CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR", str(output_dir))
+    monkeypatch.setenv("CIVICCAST_CABLE_CAPTIONS_DIR", str(captions_dir))
+
     record = approve_publish(
         asset=_asset(None),
         request=PublishApprovalRequest(
@@ -77,5 +116,5 @@ def test_cable_file_package_surface_fails_actionably_without_configuration() -> 
 
     surface = next(surface for surface in record.surfaces if surface.id == "cable-file-package")
     assert surface.state == "failed"
-    assert surface.required is False
-    assert "CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR" in surface.next_step
+    assert surface.message == "Cable file package was not created."
+    assert "local source media path" in surface.next_step

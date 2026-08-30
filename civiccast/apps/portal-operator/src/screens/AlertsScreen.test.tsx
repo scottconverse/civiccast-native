@@ -28,7 +28,11 @@ describe('formatCondition', () => {
   it('maps machine condition codes to plain English', () => {
     expect(formatCondition('off-air')).toBe('Channel off air')
     expect(formatCondition('schema-drift')).toBe('Data format out of date')
-    expect(formatCondition('self-test-fail')).toBe('Automatic self-check failed')
+    // Not "...failed": the backend's self-test summary deliberately avoids
+    // that word on a fresh station where readiness/backup legitimately
+    // aren't finished yet (civiccast/alerting/self_test.py's F-RC3-5). The
+    // condition title must not contradict that softer wording.
+    expect(formatCondition('self-test-fail')).toBe('Automatic self-check did not pass')
   })
 
   it('falls back to a humanized form for an unknown code', () => {

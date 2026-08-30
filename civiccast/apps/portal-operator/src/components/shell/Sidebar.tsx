@@ -5,12 +5,14 @@
 // who navigates by URL still sees the gate. See UX-1 (S26 gauntletgate).
 
 import { useState } from 'react'
+import { Link } from 'react-router'
 
 import type { StaffIdentityResponse } from '../../types/api.generated'
 
 export type RoleName = NonNullable<StaffIdentityResponse['roles']>[number]
 
 export type RouteId =
+  | 'help'
   | 'setup'
   | 'live'
   | 'facility'
@@ -78,6 +80,12 @@ const PROFILE = {
 }
 
 const NAV_SECTIONS: NavSection[] = [
+  {
+    label: 'Help',
+    summary: 'Operator manual, glossary, and provider setup guides',
+    collapsedByDefault: true,
+    items: [{ id: 'help', label: 'Manual' }],
+  },
   {
     label: 'Setup',
     summary: 'Admin setup and station configuration',
@@ -361,16 +369,17 @@ export function Sidebar({ route, onNavigate, roles }: SidebarProps) {
         className="grid gap-2 px-4 py-3 text-[10px]"
         style={{ borderTop: '1px solid var(--cc-line)', color: 'var(--cc-ink-3)' }}
       >
-        <a
-          href="https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20"
-          target="_blank"
-          rel="noreferrer"
+        <Link
+          to="/help#report-without-github"
           className="text-xs font-semibold underline underline-offset-2"
           style={{ color: 'var(--cc-brand)' }}
         >
           Report a beta issue
-        </a>
-        <span>Do not include passwords, recovery codes, staff tokens, or private meeting material.</span>
+        </Link>
+        <span>
+          No GitHub account? That&apos;s fine &mdash; the link above covers that too. Do not
+          include passwords, recovery codes, staff tokens, or private meeting material.
+        </span>
         <span className="cc-mono">Operator-first beta</span>
       </div>
     </aside>

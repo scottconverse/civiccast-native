@@ -1,10 +1,15 @@
 import { fireEvent, render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router'
 
 import { Sidebar, type RoleName } from './Sidebar'
 
 function renderSidebar(roles?: RoleName[], route: Parameters<typeof Sidebar>[0]['route'] = 'live') {
-  return render(<Sidebar route={route} onNavigate={vi.fn()} roles={roles} />)
+  return render(
+    <MemoryRouter>
+      <Sidebar route={route} onNavigate={vi.fn()} roles={roles} />
+    </MemoryRouter>,
+  )
 }
 
 describe('Sidebar role and complexity controls', () => {
