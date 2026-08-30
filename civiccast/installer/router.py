@@ -12,7 +12,7 @@ from typing import Any, cast
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from civiccast.alerting.router import get_alerting_session_factory
 from civiccast.auth.rate_limit import AuthRateLimiter, auth_rate_limit_config, client_ip
@@ -130,6 +130,8 @@ from civiccast.installer.station_state import (
     StationAuthError,
     StationSetupAlreadyCompleteError,
     StationSetupNotCompleteError,
+    login_credentials_correct,
+    recovery_code_correct,
 )
 from civiccast.installer.storage import (
     ManagedStorageError,
@@ -1073,7 +1075,40 @@ def _raise_setup_rate_limited(
     )
 
 
-def _enforce_setup_rate_limit(request: Request) -> None:
+async def _setup_credential_in_body_is_correct(request: Request) -> bool:
+    """Cheaply peek the request body to see whether its credential is right.
+
+    Mirrors ``civiccast.auth.tokens.token_matches_exactly`` for the staff-auth
+    pattern (audit finding #4, OWNER DECISION 2026-08-30): before rejecting a
+    saturated login/recover request with 429, check whether the credential it
+    actually carries is correct, so a caller who genuinely knows the password
+    or recovery code is never locked out by someone else's -- or their own
+    earlier -- wrong guesses. ``Request.json()``/``.body()`` cache the raw
+    ASGI body after the first read, so this peek does not interfere with
+    FastAPI's own body parsing for the route handler's ``payload`` parameter,
+    regardless of which reads first. An unparseable or malformed body is
+    treated as "not correct" (falls through to the normal rate-limit check;
+    the handler will still return its own 422 for a malformed body once it
+    runs).
+    """
+
+    try:
+        body = await request.json()
+    except Exception:
+        return False
+    if not isinstance(body, dict):
+        return False
+    try:
+        if request.url.path == "/api/setup/login":
+            return login_credentials_correct(StationLoginRequest.model_validate(body))
+        if request.url.path == "/api/setup/recover":
+            return recovery_code_correct(StationRecoveryRequest.model_validate(body))
+    except ValidationError:
+        return False
+    return False
+
+
+async def _enforce_setup_rate_limit(request: Request) -> None:
     """Rate-limit every pre-staff-auth setup/login/recovery route.
 
     A single choke point (called from ``_require_local_setup_request``,
@@ -1102,13 +1137,31 @@ def _enforce_setup_rate_limit(request: Request) -> None:
     -- this closes the self-lockout dead end without loosening the guard
     against real guessing. Every other setup route keeps the original
     per-request accounting (they carry no credential to fail).
+
+    OWNER DECISION 2026-08-30 (audit finding #4): the peek above was NOT
+    sufficient on its own. It let a saturated budget reject the CORRECT
+    password too, because ``saturated()`` only asks "has this key spent its
+    budget", never "is this particular guess right" -- unlike the staff
+    pattern's ``token_matches_exactly`` bypass, which login/recover did not
+    have despite the commit message that introduced them claiming parity.
+    A saturated login/recover request is now also checked against
+    :func:`_setup_credential_in_body_is_correct` before being rejected --
+    the exact-match bypass the staff pattern already has. Wrong guesses
+    still saturate and stay blocked; the one guess that is actually correct
+    always gets through, exactly like an exact staff bearer-token match
+    does. This is process-local, in-memory state -- see
+    ``civiccast.auth.rate_limit.AuthRateLimiter`` -- so a multi-worker
+    deployment would reset this budget per worker; out of scope for a
+    single-box station, noted here for the record.
     """
 
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     limit, window_seconds = auth_rate_limit_config()
     key = _setup_rate_limit_key(request)
     if request.url.path in _CREDENTIAL_GUESSING_SETUP_PATHS:
-        if limiter.saturated(key, limit=limit, window_seconds=window_seconds):
+        if limiter.saturated(
+            key, limit=limit, window_seconds=window_seconds
+        ) and not await _setup_credential_in_body_is_correct(request):
             _raise_setup_rate_limited(limiter, key=key, window_seconds=window_seconds)
         return
     if limiter.allow(key, limit=limit, window_seconds=window_seconds):
@@ -1133,7 +1186,7 @@ def _record_setup_auth_failure(request: Request) -> None:
         _raise_setup_rate_limited(limiter, key=key, window_seconds=window_seconds)
 
 
-def _require_local_setup_request(request: Request) -> None:
+async def _require_local_setup_request(request: Request) -> None:
     """Allow unauthenticated first setup only from the station's own loopback.
 
     OWNER DECISION 2026-08-29: the installer-handoff nonce this gate used to
@@ -1165,7 +1218,7 @@ def _require_local_setup_request(request: Request) -> None:
     header today, so there is nothing for a remote caller to forge.
     """
 
-    _enforce_setup_rate_limit(request)
+    await _enforce_setup_rate_limit(request)
     if _is_local_client(request):
         return
     if request.app.debug or request.scope.get("client") is None:
@@ -1194,8 +1247,8 @@ def _is_local_client(request: Request) -> bool:
     summary="Read local setup state before staff auth exists",
     responses=_LOCAL_SETUP_ACCESS_RESPONSES,
 )
-def public_station_state(request: Request) -> StationSetupState:
-    _require_local_setup_request(request)
+async def public_station_state(request: Request) -> StationSetupState:
+    await _require_local_setup_request(request)
     return read_station_setup()
 
 
@@ -1205,8 +1258,8 @@ def public_station_state(request: Request) -> StationSetupState:
     summary="Read local durable storage setup state before staff auth exists",
     responses=_LOCAL_SETUP_ACCESS_RESPONSES,
 )
-def public_storage_state(request: Request) -> ManagedStorageStatus:
-    _require_local_setup_request(request)
+async def public_storage_state(request: Request) -> ManagedStorageStatus:
+    await _require_local_setup_request(request)
     return durable_storage_status()
 
 

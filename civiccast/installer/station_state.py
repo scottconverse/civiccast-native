@@ -751,6 +751,49 @@ def recover_station_admin(
     )
 
 
+def login_credentials_correct(request: StationLoginRequest) -> bool:
+    """Non-mutating peek: would this password currently be accepted?
+
+    OWNER DECISION 2026-08-30 (audit finding #4, day-one-lockout fix): lets
+    ``civiccast.installer.router._enforce_setup_rate_limit`` give the setup
+    login path the same correct-credential bypass the staff-auth pattern
+    already has via ``civiccast.auth.tokens.token_matches_exactly`` -- a
+    caller who actually knows the password must never be turned away by a
+    budget someone else's (or their own earlier) wrong guesses saturated.
+    Reads state fresh and performs no mutation and issues no token, so
+    calling it does not consume or interfere with the real, token-issuing
+    :func:`login_station_admin` call the handler makes afterward.
+    """
+
+    raw = _load_raw_state()
+    profile = _profile_from_state(raw)
+    if profile is None:
+        return False
+    return _verify_admin_password(
+        raw,
+        username=request.admin_username,
+        password=request.admin_password,
+    )
+
+
+def recovery_code_correct(request: StationRecoveryRequest) -> bool:
+    """Non-mutating peek: would this recovery code currently be accepted?
+
+    Same OWNER DECISION as :func:`login_credentials_correct`, for the
+    ``/api/setup/recover`` path. Loads its own throwaway copy of station
+    state and never calls :func:`_save_raw_state`, so this peek does not
+    consume the one-time recovery code -- the handler's real
+    :func:`recover_station_admin` call still performs the consuming
+    verification and persists that result.
+    """
+
+    raw = _load_raw_state()
+    profile = _profile_from_state(raw)
+    if profile is None or request.admin_username.strip() != profile.admin_username:
+        return False
+    return _consume_recovery_code(raw, request.recovery_code)
+
+
 def _load_raw_state() -> dict[str, Any]:
     path = station_state_path()
     try:

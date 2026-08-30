@@ -62,7 +62,7 @@ describe('staff authentication throttling', () => {
     await expect(getControlRoomReadiness()).rejects.toMatchObject({
       status: 429,
       retryAfterSeconds: 37,
-      detail: 'Too many unsuccessful sign-in attempts from this network. Wait 37 seconds, then try again.',
+      detail: 'Too many failed attempts to authenticate with the staff API. Wait 37 seconds, then try again.',
     } satisfies Partial<ApiError>)
   })
 
@@ -76,8 +76,29 @@ describe('staff authentication throttling', () => {
     )
 
     expect(error.detail).toBe(
-      'Too many unsuccessful sign-in attempts from this network. Wait 1 second, then try again.',
+      'Too many failed attempts to authenticate with the staff API. Wait 1 second, then try again.',
     )
+  })
+
+  it('never claims a sign-in was attempted or blames a shared network', () => {
+    // Day-one-lockout audit finding #3: the old copy ("Too many unsuccessful
+    // sign-in attempts from this network") asserted a cause -- deliberate
+    // sign-in attempts, plural, from an entire shared network -- that a
+    // visitor who never typed a password never took, and blamed everyone on
+    // a shared NAT/building for one connection's failed requests. The new
+    // copy must describe only what is verifiably true and never invoke
+    // "sign-in" or "network" framing.
+    const error = new ApiError(
+      'request failed',
+      429,
+      'Too many failed staff authentication attempts. Wait and retry.',
+      undefined,
+      5,
+    )
+
+    expect(error.detail).not.toMatch(/sign-in attempt/i)
+    expect(error.detail).not.toMatch(/network/i)
+    expect(error.detail).toContain('Wait 5 seconds')
   })
 })
 

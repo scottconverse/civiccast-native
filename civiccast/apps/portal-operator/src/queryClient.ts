@@ -22,6 +22,21 @@ import { ApiError } from './api/client'
  * prompt instead of a broken screen. It skips the identity query itself so
  * a genuine identity-check failure doesn't invalidate-and-refetch itself in
  * a loop.
+ *
+ * OWNER DECISION 2026-08-30 (audit finding #2, day-one-lockout fix): it
+ * also skips re-invalidating identity once identity ALREADY reflects the
+ * dead token (status 'error') or is already mid-refetch (fetchStatus
+ * 'fetching'). Before this guard, every sibling query on a signed-out
+ * console called invalidateQueries on every single 401 -- and TanStack
+ * Query v5's invalidateQueries refetches active observers by default, so a
+ * console with several failing queries on one screen (the ordinary state
+ * of a browser that was never signed in) fired a REAL extra network call
+ * to /api/staff/auth/me for every one of them, roughly doubling the
+ * staff-auth failure-budget cost of an ordinary signed-out page load on
+ * top of each screen's own real query. Identity only needs to be re-
+ * checked once per transition from "looked valid" to "looks dead" -- once
+ * it is already known dead, further sibling 401s carry no new information
+ * for it to learn.
  */
 export function createAppQueryClient(): QueryClient {
   const queryClient: QueryClient = new QueryClient({
@@ -34,9 +49,15 @@ export function createAppQueryClient(): QueryClient {
     queryCache: new QueryCache({
       onError: (error, query) => {
         if (query.queryKey[0] === 'staff-identity') return
-        if (error instanceof ApiError && error.status === 401) {
-          void queryClient.invalidateQueries({ queryKey: ['staff-identity'] })
+        if (!(error instanceof ApiError) || error.status !== 401) return
+        const identityQuery = queryClient.getQueryCache().find({ queryKey: ['staff-identity'] })
+        if (
+          identityQuery?.state.status === 'error' ||
+          identityQuery?.state.fetchStatus === 'fetching'
+        ) {
+          return
         }
+        void queryClient.invalidateQueries({ queryKey: ['staff-identity'] })
       },
     }),
   })

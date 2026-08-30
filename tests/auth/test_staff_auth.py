@@ -13,6 +13,7 @@ from civiccast.auth.roles import roles_for_identity
 from civiccast.auth.store import StaffTokenInvalidError, StaffTokenRevokedError
 from civiccast.auth.tokens import (
     StaffAuthError,
+    StaffAuthMissingCredentialError,
     generate_configured_staff_token,
     verify_bearer_token,
 )
@@ -68,6 +69,36 @@ def test_missing_bearer_token_returns_401_for_registered_staff_routes(
         f"{method} {path} must be blocked by central /api/staff/* bearer auth "
         "before route validation or handler execution."
     )
+
+
+def test_missing_bearer_token_raises_the_missing_credential_subclass() -> None:
+    """Day-one-lockout audit finding #1: a missing Authorization header is a
+    distinct condition from a present-but-wrong token. verify_bearer_token(None)
+    must raise the StaffAuthMissingCredentialError subclass specifically (not
+    just any StaffAuthError) so civiccast.auth.middleware.staff_auth_middleware
+    -- and any future caller -- can tell "no credential offered" apart from
+    "a credential was offered and it was wrong" without re-parsing the
+    exception message."""
+
+    with pytest.raises(StaffAuthMissingCredentialError):
+        verify_bearer_token(None)
+    with pytest.raises(StaffAuthMissingCredentialError):
+        verify_bearer_token("")
+
+
+def test_present_but_malformed_token_raises_the_base_class_not_the_subclass() -> None:
+    """A header that IS present, just malformed (wrong scheme, empty token
+    after 'Bearer '), is a failed credential guess like any other -- it must
+    NOT be classified as "missing" or it would silently escape the
+    brute-force budget too."""
+
+    with pytest.raises(StaffAuthError) as excinfo:
+        verify_bearer_token("Bearer")
+    assert not isinstance(excinfo.value, StaffAuthMissingCredentialError)
+
+    with pytest.raises(StaffAuthError) as excinfo:
+        verify_bearer_token("Basic dXNlcjpwYXNz")
+    assert not isinstance(excinfo.value, StaffAuthMissingCredentialError)
 
 
 def test_default_deterministic_token_requires_explicit_opt_in(

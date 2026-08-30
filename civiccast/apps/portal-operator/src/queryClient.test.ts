@@ -1,3 +1,4 @@
+import { QueryObserver } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from './api/client'
@@ -58,5 +59,98 @@ describe('createAppQueryClient 401 handling', () => {
     }).catch(() => undefined)
 
     expect(invalidateSpy).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Day-one-lockout audit finding #2: TanStack Query v5's invalidateQueries
+   * refetches active observers by default, so the ORIGINAL handler above
+   * invalidated (and therefore re-fetched) staff-identity on EVERY sibling
+   * 401 -- even once identity itself already reflected the exact same dead
+   * token. On a signed-out console with several failing queries on one
+   * screen (its ordinary state, never having signed in), that meant one
+   * real extra network call to /api/staff/auth/me per sibling failure,
+   * roughly doubling the staff-auth failure budget an ordinary page load
+   * spent. These tests pin the fix: re-check identity once per session
+   * (the first sibling 401 after identity looked valid or unfetched), never
+   * again while identity already reflects the failure.
+   */
+  it('does not re-invalidate identity once identity already reflects the dead token', async () => {
+    const queryClient = createAppQueryClient()
+
+    // Identity itself fails with 401 the ordinary way first (as it does on
+    // a signed-out console), so its own query state is already 'error'.
+    await queryClient
+      .fetchQuery({
+        queryKey: ['staff-identity'],
+        queryFn: () => {
+          throw new ApiError(
+            'Request failed: 401 Unauthorized',
+            401,
+            'Missing Authorization header. Use Bearer <staff-token>.',
+          )
+        },
+        retry: false,
+      })
+      .catch(() => undefined)
+
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    // A sibling query on the same dead session also 401s -- this carries no
+    // new information for identity, which already knows the token is dead.
+    await queryClient
+      .fetchQuery({
+        queryKey: ['some-other-staff-screen-data'],
+        queryFn: () => {
+          throw new ApiError('Request failed: 401 Unauthorized', 401, 'Invalid staff bearer token.')
+        },
+        retry: false,
+      })
+      .catch(() => undefined)
+
+    expect(invalidateSpy).not.toHaveBeenCalled()
+  })
+
+  it('fetches staff identity at most once across several sibling 401s on a dead session', async () => {
+    // Mirrors the live repro: loading the console, then #/help, then
+    // #/assets -- three ordinary page loads on a browser that was never
+    // signed in -- each mounting its own screen queries that all 401.
+    const queryClient = createAppQueryClient()
+    const identityFetch = vi.fn(async () => {
+      throw new ApiError(
+        'Request failed: 401 Unauthorized',
+        401,
+        'Missing Authorization header. Use Bearer <staff-token>.',
+      )
+    })
+
+    // A mounted QueryObserver, matching how App.tsx's shell-level
+    // useQuery(['staff-identity']) actually keeps the query active.
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ['staff-identity'],
+      queryFn: identityFetch,
+      retry: false,
+    })
+    const unsubscribe = observer.subscribe(() => {})
+
+    await vi.waitFor(() => expect(identityFetch).toHaveBeenCalledTimes(1))
+
+    for (let screen = 0; screen < 3; screen += 1) {
+      await queryClient
+        .fetchQuery({
+          queryKey: ['sibling-screen-data', screen],
+          queryFn: () => {
+            throw new ApiError(
+              'Request failed: 401 Unauthorized',
+              401,
+              'Invalid staff bearer token.',
+            )
+          },
+          retry: false,
+        })
+        .catch(() => undefined)
+    }
+
+    unsubscribe()
+    expect(identityFetch).toHaveBeenCalledTimes(1)
   })
 })
