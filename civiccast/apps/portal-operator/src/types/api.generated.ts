@@ -185,7 +185,7 @@ export interface AlertChannelInput {
 export interface AlertEvent {
   event_id: string
   rule_id: string
-  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded'
+  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure'
   severity: 'critical' | 'warning' | 'info'
   state: 'firing' | 'resolved'
   resource_ref: string
@@ -202,7 +202,7 @@ export interface AlertEvent {
 
 export interface AlertRule {
   rule_id: string
-  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded'
+  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure'
   enabled?: boolean
   severity: 'critical' | 'warning' | 'info'
   channel_ids?: Array<string>

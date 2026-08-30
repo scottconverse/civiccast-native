@@ -177,9 +177,7 @@ class TestChannelAutomationAlertsUnit:
 class TestRunOnceIntegration:
     """ChannelAutomationService.run_once wired to a real alerts instance."""
 
-    def test_a_failed_pass_is_visible_and_clears_on_recovery(
-        self, session_factory: object
-    ) -> None:
+    def test_a_failed_pass_is_visible_and_clears_on_recovery(self, session_factory: object) -> None:
         store = InMemoryEgressStore()
         store.upsert_config(_config())
         daemon = _FakeDaemon()

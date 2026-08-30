@@ -146,7 +146,9 @@ class _ChannelAutomationAlerts:
     def begin_tick(self, channel_id: str) -> None:
         self._failed_this_tick.discard(channel_id)
 
-    def on_command_failure(self, channel_id: str, command: EgressCommand, exc: BaseException) -> None:
+    def on_command_failure(
+        self, channel_id: str, command: EgressCommand, exc: BaseException
+    ) -> None:
         self._failed_this_tick.add(channel_id)
         self._raise(
             channel_id,

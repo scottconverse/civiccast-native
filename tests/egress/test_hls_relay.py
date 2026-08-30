@@ -20,7 +20,9 @@ from civiccast.stream._ffmpeg import FfmpegNotFoundError
 
 
 def _config(*sinks: EgressSinkSpec, channel_id: str = "gov") -> EgressConfig:
-    return EgressConfig(channel_id=channel_id, enabled=True, slate_message="slate", sinks=list(sinks))
+    return EgressConfig(
+        channel_id=channel_id, enabled=True, slate_message="slate", sinks=list(sinks)
+    )
 
 
 def _hls_sink(uri: str = "C:/CivicCast/live/gov", label: str = "Web") -> EgressSinkSpec:
