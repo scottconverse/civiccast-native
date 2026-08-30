@@ -6219,6 +6219,7 @@ Read CivicCast local federation metadata.
 - `next_step` (optional): `string`
 - `opengl_45` (required): `boolean`
 - `required_plugins_present` (required): `boolean`
+- `runtime_source` (optional): `'bundled' | 'system-path' | 'unavailable'`
 
 ### `EngineTierVerdict`
 

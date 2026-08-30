@@ -42032,6 +42032,16 @@
             "type": "string",
             "title": "Next Step",
             "default": ""
+          },
+          "runtime_source": {
+            "type": "string",
+            "enum": [
+              "bundled",
+              "system-path",
+              "unavailable"
+            ],
+            "title": "Runtime Source",
+            "default": "unavailable"
           }
         },
         "additionalProperties": false,
