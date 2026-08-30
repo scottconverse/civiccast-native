@@ -90,6 +90,59 @@ def test_staff_egress_config_round_trip(client: TestClient) -> None:
     assert r.json()["channel_id"] == "gov"
 
 
+def test_staff_egress_config_accepts_hls_sink(client: TestClient) -> None:
+    """DEFECT A: this exact repro (PUT an hls sink, 200 OK) used to crash the
+    channel on the following ``start``. It still returns 200 — hls is now a
+    genuinely supported sink kind for the default GStreamer engine — but see
+    ``test_hls_relay.py``/``test_gst_bridge.py`` for proof it no longer
+    crashes the channel, not just that the API accepts it."""
+    payload = _config_payload() | {
+        "sinks": [{"kind": "hls", "label": "Web", "uri": "C:/CivicCast/live/gov"}]
+    }
+    r = client.put("/api/staff/egress/channels/gov/config", json=payload)
+    assert r.status_code == 200, r.text
+    assert r.json()["sinks"][0]["kind"] == "hls"
+
+
+def test_staff_egress_config_rejects_unsupported_sink_kind_at_save_time(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DEFECT B: an accept-then-crash gap is the actual root defect — a
+    sink kind the active engine cannot run must be refused HERE, at config
+    save, with a clear reason, not accepted with 200 OK and left to explode
+    deep inside a later ``start`` pass. rtmp is genuinely unsupported by the
+    default (GStreamer) engine in Stage 1."""
+    monkeypatch.delenv("CIVICCAST_EGRESS_ENGINE", raising=False)  # ensure GStreamer default
+    payload = _config_payload() | {
+        "sinks": [{"kind": "rtmp", "label": "Restream", "uri": "rtmp://example.com/live"}]
+    }
+    r = client.put("/api/staff/egress/channels/gov/config", json=payload)
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert "rtmp" in detail
+    # The message must name what IS supported, not just what wasn't.
+    for kind in ("srt", "local-ts", "udp-ts", "file", "sdi", "hls"):
+        assert kind in detail
+
+    # And the config must NOT have been persisted (a 422 that still wrote the
+    # row would be the same accept-then-crash gap with extra steps).
+    r = client.get("/api/staff/egress/channels/gov/config")
+    assert r.status_code == 404
+
+
+def test_staff_egress_config_rtmp_allowed_on_ffmpeg_concat_engine(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The validation is engine-aware: rtmp is fully implemented by the
+    ffmpeg-concat engine's RtmpSink, so it must not be rejected there."""
+    monkeypatch.setenv("CIVICCAST_EGRESS_ENGINE", "ffmpeg-concat")
+    payload = _config_payload() | {
+        "sinks": [{"kind": "rtmp", "label": "Restream", "uri": "rtmp://example.com/live"}]
+    }
+    r = client.put("/api/staff/egress/channels/gov/config", json=payload)
+    assert r.status_code == 200, r.text
+
+
 def test_staff_egress_channel_list_and_detail(
     client: TestClient,
     store: PostgresEgressStore,

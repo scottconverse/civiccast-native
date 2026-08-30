@@ -89,6 +89,15 @@ AlertConditionKind = Literal[
     # migration — the operator raises its severity from the "warning"
     # fallback in Alert Settings if a station wants it to page.
     "asrun-outbox-degraded",
+    # DEFECT C (found live alongside DEFECT A): a channel-automation poll
+    # pass — or one queued command inside it — raised, and the ONLY trace
+    # was a log line ("Channel automation pass failed for %s") no operator
+    # would ever see. civiccast.egress.automation.ChannelAutomationService
+    # raises this (resource_ref=f"egress-channel:{channel_id}") on a failed
+    # pass or command, and resolves it on the channel's next clean pass —
+    # same fire/dedupe/auto-clear contract as every other condition here.
+    # Unseeded, same posture as asrun-outbox-degraded above.
+    "channel-automation-failure",
 ]
 
 AlertChannelKind = Literal["email", "sms", "webhook"]

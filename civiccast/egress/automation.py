@@ -82,8 +82,16 @@ def _raise_egress_degraded_alert(session_factory: Any, *, reason: str) -> None:
     try:
         from civiccast.alerting.store import record_alert_condition
 
-        session = session_factory()
-        try:
+        # session_factory is a @contextmanager callable (see
+        # civiccast.app._wire_stage_f_workers's _session_factory, the real
+        # caller) -- calling it and reaching for .commit()/.close() directly
+        # (the shape this used to have) raises AttributeError on the
+        # _GeneratorContextManager it actually returns, so this alert has
+        # never actually been recorded; caught here only because DEFECT C's
+        # _ChannelAutomationAlerts._record copied the identical shape and a
+        # new test for THAT code exercised the failure path for the first
+        # time. Fixed alongside it, same file, same bug shape.
+        with session_factory() as session:
             record_alert_condition(
                 session,
                 kind=_EGRESS_DEGRADED_ALERT_KIND,
@@ -97,13 +105,110 @@ def _raise_egress_degraded_alert(session_factory: Any, *, reason: str) -> None:
                 detail=reason,
             )
             session.commit()
-        finally:
-            session.close()
     except Exception:
         _LOG.exception(
             "raising the GStreamer egress-degraded alert failed; continuing -- "
             "alerting must never block control-plane startup."
         )
+
+
+#: DEFECT C: a failed channel-automation pass (or one command inside it) used to
+#: be visible ONLY as a log line -- "Channel automation pass failed for %s" --
+#: which no operator would ever see. Wired to the same alerting hub every other
+#: operational condition in this file already uses (no new UI surface).
+_CHANNEL_AUTOMATION_FAILURE_KIND: AlertConditionKind = "channel-automation-failure"
+
+
+class _ChannelAutomationAlerts:
+    """Fires/clears the ``channel-automation-failure`` condition (DEFECT C).
+
+    One instance is shared between the daemon's per-command failure hook
+    (``EgressDaemon(command_failure_hook=...)``, fires mid-pass, inside
+    ``process_once`` -- see the DEFECT D fix there) and
+    ``ChannelAutomationService.run_once``'s per-channel exception handler
+    (fires for failures OUTSIDE ``process_once``, e.g. a source-plan/relay/
+    replan exception in ``_run_channel_pass``), so both routes land the same
+    alert kind/resource_ref under one auto-clear contract: the alert for a
+    channel stays firing until that channel completes one poll pass with NO
+    failure recorded during it -- ``begin_tick``/``end_tick`` bracket every
+    pass so a mid-pass command failure and a whole-pass failure both count,
+    and a clean pass clears exactly once (not spammed every ~2s poll tick;
+    ``record_alert_condition`` would happily create a fresh pre-resolved
+    audit row on every call with nothing firing, so ``_firing`` gates that).
+    Never propagates -- same posture as ``_raise_egress_degraded_alert``.
+    """
+
+    def __init__(self, session_factory: Any) -> None:
+        self._session_factory = session_factory
+        self._firing: set[str] = set()
+        self._failed_this_tick: set[str] = set()
+
+    def begin_tick(self, channel_id: str) -> None:
+        self._failed_this_tick.discard(channel_id)
+
+    def on_command_failure(
+        self, channel_id: str, command: EgressCommand, exc: BaseException
+    ) -> None:
+        self._failed_this_tick.add(channel_id)
+        self._raise(
+            channel_id,
+            summary=f"Egress command {command.action!r} failed for channel {channel_id!r}.",
+            detail=(
+                f"command_id={command.command_id} issued_by={command.issued_by}: "
+                f"{exc.__class__.__name__}: {exc}"
+            ),
+        )
+
+    def on_pass_failure(self, channel_id: str, *, detail: str) -> None:
+        self._failed_this_tick.add(channel_id)
+        self._raise(
+            channel_id,
+            summary=f"Channel automation pass failed for channel {channel_id!r}.",
+            detail=detail,
+        )
+
+    def end_tick(self, channel_id: str) -> None:
+        """Call once a channel's pass has completed without raising."""
+        if channel_id in self._failed_this_tick:
+            return  # a command failed THIS tick even though the pass itself didn't raise
+        if channel_id not in self._firing:
+            return  # nothing to clear -- do not spam a resolved event every poll
+        self._firing.discard(channel_id)
+        self._record(
+            channel_id,
+            summary=f"Channel automation for {channel_id!r} recovered.",
+            detail="The channel completed a poll pass with no failure.",
+            resolved=True,
+        )
+
+    def _raise(self, channel_id: str, *, summary: str, detail: str) -> None:
+        self._firing.add(channel_id)
+        self._record(channel_id, summary=summary, detail=detail, resolved=False)
+
+    def _record(self, channel_id: str, *, summary: str, detail: str, resolved: bool) -> None:
+        try:
+            from civiccast.alerting.store import record_alert_condition
+
+            # session_factory is a @contextmanager callable -- see the note
+            # in _raise_egress_degraded_alert above (same file) for why this
+            # must be a ``with`` block, not a raw session.commit()/.close().
+            with self._session_factory() as session:
+                record_alert_condition(
+                    session,
+                    kind=_CHANNEL_AUTOMATION_FAILURE_KIND,
+                    resource_ref=f"egress-channel:{channel_id}",
+                    source_section="egress",
+                    summary=summary[:300],
+                    detail=detail[:2000],
+                    resolved=resolved,
+                )
+                session.commit()
+        except Exception:
+            _LOG.exception(
+                "recording the channel-automation-failure alert failed for %s; "
+                "continuing -- alerting must never block channel automation.",
+                channel_id,
+            )
 
 
 AUTOMATION_MODE_INLINE = "inline"
@@ -178,12 +283,19 @@ class ChannelAutomationService:
         sdi_supervisor_factory: Any = None,
         monotonic: Any = None,
         as_run_outbox: AsRunOutbox | None = None,
+        automation_alerts: _ChannelAutomationAlerts | None = None,
     ) -> None:
         self._store = store
         self._daemon = daemon
         self._source_plan_provider = source_plan_provider
         self._settings = settings
         self._monotonic = monotonic or time.monotonic
+        # DEFECT C: shared with the daemon's command_failure_hook (see
+        # build_channel_automation) so a mid-pass command failure and a
+        # whole-pass failure land the SAME alert, with ONE auto-clear
+        # contract. None (tests / the bare CLI daemon loop) is a no-op --
+        # a failed pass is still logged, just not alerted.
+        self._alerts = automation_alerts
         # BUG C2 fix: periodic drain of the as-run durable outbox
         # (civiccast.reporting.asrun_outbox). The recorder already drains
         # opportunistically on every write; this tick is what retries a
@@ -248,19 +360,29 @@ class ChannelAutomationService:
                 continue
             channel_id = config.channel_id
             seen.append(channel_id)
+            if self._alerts is not None:
+                self._alerts.begin_tick(channel_id)
             # Audit Critical (TEST-001): one channel's failure - a poisoned
             # relay config, a supervisor crash - must never starve the other
             # channels' supervision. Isolate per channel; the loop's outer
             # handler in run_forever still covers scan-level failures.
             try:
                 self._run_channel_pass(config, channel_id, resolved_now)
-            except Exception:
+            except Exception as exc:
                 _LOG.exception(
                     "Channel automation pass failed for %s; other channels "
                     "continue. Fix this channel's configuration or inspect "
                     "the error above.",
                     channel_id,
                 )
+                # DEFECT C: this used to be visible ONLY as the log line above.
+                if self._alerts is not None:
+                    self._alerts.on_pass_failure(
+                        channel_id, detail=f"{exc.__class__.__name__}: {exc}"
+                    )
+                continue
+            if self._alerts is not None:
+                self._alerts.end_tick(channel_id)
         return seen
 
     def _drain_as_run_outbox(self) -> None:
@@ -609,6 +731,7 @@ def build_channel_automation(
     from civiccast.egress.audio_tracks import AudioTrackStore
     from civiccast.egress.bulletin_filler import build_filler_source_provider
     from civiccast.egress.caption_proof import build_caption_status_provider
+    from civiccast.egress.hls_relay import HlsRelaySupervisor
     from civiccast.egress.preparer import SourcePreparer
     from civiccast.egress.source_plan import ScheduleSourcePlanProvider
     from civiccast.egress.store import PostgresEgressStore
@@ -653,6 +776,11 @@ def build_channel_automation(
         db_path=default_asrun_outbox_path(),
         alert_session_factory=session_factory,
     )
+    # DEFECT C: one alert-firing/clearing instance shared between the daemon's
+    # per-command failure hook (fires mid-pass) and the service's whole-pass
+    # exception handler (fires for a raise outside process_once) -- see
+    # _ChannelAutomationAlerts's docstring for why they must share state.
+    automation_alerts = _ChannelAutomationAlerts(session_factory)
     asset_store = PostgresAssetStore(session_factory)
     schedule_store = PostgresScheduleStore(session_factory)
     source_plan_provider = ScheduleSourcePlanProvider(
@@ -704,6 +832,15 @@ def build_channel_automation(
         # so encoder relaunches never reset the mux session at a udp-ts
         # headend. auto mode: active only when tsp is available.
         ts_relay_supervisor=TsRelaySupervisor(),
+        # DEFECT A: the GStreamer engine's hls sinks are delivered by a
+        # supervised ffmpeg relay (real segments + a real manifest) -- see
+        # civiccast.egress.hls_relay's module docstring for why no native
+        # GStreamer element can do this with the shipped runtime's plugins.
+        hls_relay_supervisor=HlsRelaySupervisor(),
+        # DEFECT D/C: a command that fails inside process_once no longer
+        # aborts the rest of its batch (see EgressDaemon.process_once); this
+        # hook is how that failure still reaches the operator alert surface.
+        command_failure_hook=automation_alerts.on_command_failure,
         # S11a: caption_status reflects the latest caption decode-back proof
         # (fail-closed — not-verified until a fresh PASS is persisted by the
         # caption proof loop), instead of a hardcoded posture.
@@ -742,4 +879,7 @@ def build_channel_automation(
         # left by a DB outage once the DB comes back (see run_once's
         # _drain_as_run_outbox).
         as_run_outbox=as_run_outbox,
+        # DEFECT C: whole-pass failures raise/clear through the same
+        # instance the daemon's command_failure_hook above uses.
+        automation_alerts=automation_alerts,
     )

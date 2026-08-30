@@ -21,6 +21,30 @@ class _FakeSession:
         self.closed = True
 
 
+class _FakeSessionFactory:
+    """Mirrors the REAL production session_factory shape: a ``@contextmanager``
+    callable (``civiccast.app._wire_stage_f_workers``'s ``_session_factory``),
+    not a raw sessionmaker call. A prior version of this fake returned a bare
+    session directly, which made ``_raise_egress_degraded_alert``'s own
+    matching bug (``session_factory().commit()``/``.close()`` on what is
+    really a ``_GeneratorContextManager`` in production) invisible here — the
+    fake and the bug agreed with each other while production silently never
+    recorded this alert. See ``civiccast.egress.automation._raise_egress_degraded_alert``'s
+    comment for the fix."""
+
+    def __init__(self) -> None:
+        self.session = _FakeSession()
+
+    def __call__(self) -> _FakeSessionFactory:
+        return self
+
+    def __enter__(self) -> _FakeSession:
+        return self.session
+
+    def __exit__(self, *exc_info: object) -> None:
+        pass
+
+
 def test_degraded_env_raises_a_loud_critical_operator_alert(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -43,15 +67,15 @@ def test_degraded_env_raises_a_loud_critical_operator_alert(
 
     monkeypatch.setattr(alert_store, "record_alert_condition", _spy_record)
 
-    session = _FakeSession()
-    automation._raise_egress_degraded_alert(lambda: session, reason="closure at C:/x is corrupt")
+    factory = _FakeSessionFactory()
+    automation._raise_egress_degraded_alert(factory, reason="closure at C:/x is corrupt")
 
     assert captured["kind"] == "encoder-death"
     assert captured["detail"] == "closure at C:/x is corrupt"
     assert captured["resource_ref"] == "station:egress-engine"
     assert "FFmpeg" in str(captured["summary"])
-    assert session.committed is True
-    assert session.closed is True
+    assert captured["session"] is factory.session
+    assert factory.session.committed is True
 
 
 def test_degraded_alert_never_propagates_a_db_failure(

@@ -31466,7 +31466,8 @@
               "eas-source-unavailable",
               "scheduled-recording-failure",
               "scheduled-recording-dropout",
-              "asrun-outbox-degraded"
+              "asrun-outbox-degraded",
+              "channel-automation-failure"
             ],
             "title": "Condition"
           },
@@ -31613,7 +31614,8 @@
               "eas-source-unavailable",
               "scheduled-recording-failure",
               "scheduled-recording-dropout",
-              "asrun-outbox-degraded"
+              "asrun-outbox-degraded",
+              "channel-automation-failure"
             ],
             "title": "Condition"
           },
