@@ -154,6 +154,26 @@ def _seed_producer(account_id: str) -> None:
             ],
         )
     )
+    # civiccast.contribute.store._apply_review now requires a real
+    # ingested_asset_id before "accept" and a real created_schedule_item_id
+    # before "schedule" (TASK A: acceptance must produce a real library
+    # asset, and send-to-schedule must produce a real, non-null
+    # schedule_item_id -- see civiccast.contribute.router._ingest_accepted_media
+    # / _create_real_schedule_item, which actually perform those side
+    # effects for a live HTTP request). This helper only needs the
+    # submission OUT of the pending review queue, so it supplies
+    # deterministic placeholder ids directly rather than exercising the
+    # real ffprobe/schedule-store pipeline.
+    store.review_submission(
+        receipt.submission_id,
+        ContributorReviewRequest(
+            action="accept",
+            broken_media_gate=BrokenMediaGateResult(
+                state="passed", checked_at=now, summary="probes passed"
+            ),
+        ),
+        ingested_asset_id=f"contributor-{account_id}-seeded",
+    )
     store.review_submission(
         receipt.submission_id,
         ContributorReviewRequest(
@@ -165,6 +185,7 @@ def _seed_producer(account_id: str) -> None:
                 channel_id="public", requested_start=now, duration_seconds=1800
             ),
         ),
+        created_schedule_item_id="00000000-0000-0000-0000-000000000000",
     )
 
 
