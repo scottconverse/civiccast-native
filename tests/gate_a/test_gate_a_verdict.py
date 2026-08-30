@@ -668,3 +668,134 @@ def test_cli_exit_code_2_on_sandbox_busy(tmp_path: Path) -> None:
     written = json.loads(out_path.read_text(encoding="utf-8"))
     assert written["verdict"] == "BUSY"
     assert written["reason"] == "sandbox-busy-other-user"
+
+
+# --------------------------------------------------------------------------
+# Dirty-box remnant lane <gate-a-dirty-lane>
+# --------------------------------------------------------------------------
+
+DIRTY_CHECKS = ("dirty_prep", "dirty_survival", "dirty_orphaned_tier")
+
+
+def _write_dirty_evidence(
+    run_dir: Path,
+    *,
+    prep_overrides: dict[str, str] | None = None,
+    seeded: str = "1",
+    warning: str = "1",
+) -> None:
+    prep = {
+        "PHASE1_INSTALL_EXIT": "0",
+        "UNINSTALL_EXIT": "0",
+        "PGDATA_PRESERVED_AFTER_UNINSTALL": "1",
+        "UPLOADS_PRESERVED_AFTER_UNINSTALL": "1",
+        "INSTALL_TREE_REMOVED_AFTER_UNINSTALL": "1",
+    }
+    prep.update(prep_overrides or {})
+    (run_dir / "DIRTY-PREP-RESULT.txt").write_text(
+        "\n".join(f"{k}={v}" for k, v in prep.items()) + "\n", encoding="utf-8"
+    )
+    lines = [
+        "DIRTY_PGDATA_PRESERVED=1 detail=same cluster",
+        "DIRTY_UPLOADS_PRESERVED=1",
+        f"DIRTY_ORPHAN_SEEDED={seeded}",
+        f"DIRTY_ORPHAN_WARNING={warning}",
+    ]
+    (run_dir / "DIRTY-RESULT.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_clean_lane_judge_is_unchanged_by_default(tmp_path: Path) -> None:
+    """No --lane / lane='clean' produces the pre-dirty-lane document: no lane
+    field, no dirty checks -- even when dirty evidence files are present."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_dirty_evidence(run_dir)
+    result = gav.judge(run_dir, source_sha="deadbeef", run_id="123")
+    assert "lane" not in result
+    assert set(result["checks"].keys()) == set(REQUIRED_CHECKS)
+    assert result["verdict"] == "PASS"
+
+
+def test_dirty_lane_all_pass(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_dirty_evidence(run_dir)
+    result = gav.judge(run_dir, source_sha="deadbeef", run_id="123", lane="dirty")
+    assert result["lane"] == "dirty"
+    assert set(result["checks"].keys()) == set(REQUIRED_CHECKS) | set(DIRTY_CHECKS)
+    for name in DIRTY_CHECKS:
+        assert result["checks"][name]["status"] == "PASS", result["checks"][name]["detail"]
+    assert result["verdict"] == "PASS"
+
+
+def test_dirty_lane_missing_evidence_fails_closed(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    result = gav.judge(run_dir, source_sha="deadbeef", run_id="123", lane="dirty")
+    assert result["checks"]["dirty_prep"]["status"] == "FAIL"
+    assert result["checks"]["dirty_survival"]["status"] == "FAIL"
+    assert result["checks"]["dirty_orphaned_tier"]["status"] == "FAIL"
+    assert result["verdict"] == "FAIL"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "PHASE1_INSTALL_EXIT",
+        "UNINSTALL_EXIT",
+        "PGDATA_PRESERVED_AFTER_UNINSTALL",
+        "UPLOADS_PRESERVED_AFTER_UNINSTALL",
+        "INSTALL_TREE_REMOVED_AFTER_UNINSTALL",
+    ],
+)
+def test_dirty_prep_fails_on_each_broken_expectation(tmp_path: Path, key: str) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_dirty_evidence(run_dir, prep_overrides={key: "7"})
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+    assert result["checks"]["dirty_prep"]["status"] == "FAIL"
+    assert key in result["checks"]["dirty_prep"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_dirty_orphan_seeded_without_warning_fails(tmp_path: Path) -> None:
+    """The seeded orphaned tier MUST produce PR #80's fallback WARNING in the
+    supervisor log -- silence means the remnant was never detected."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_dirty_evidence(run_dir, seeded="1", warning="0")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+    assert result["checks"]["dirty_orphaned_tier"]["status"] == "FAIL"
+    assert result["verdict"] == "FAIL"
+
+
+def test_dirty_orphan_not_seeded_is_a_loud_skip_not_a_fail(tmp_path: Path) -> None:
+    """No hash-valid model staged on the runner -> the orphaned-tier shape was
+    not covered. That is a SKIP that keeps the lane green (the OTHER remnant
+    shapes still passed) but must say NOT covered, never quietly pass."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_dirty_evidence(run_dir, seeded="0", warning="NA")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+    check = result["checks"]["dirty_orphaned_tier"]
+    assert check["status"] == "SKIP"
+    assert "NOT covered" in check["detail"]
+    assert result["verdict"] == "PASS"
+
+
+def test_dirty_lane_cli_lane_flag(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_dirty_evidence(run_dir)
+    proc = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), str(run_dir), "--lane", "dirty"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    written = json.loads((run_dir / "gate-a-verdict.json").read_text(encoding="utf-8"))
+    assert written["lane"] == "dirty"
+    assert written["verdict"] == "PASS"
+
+
+def test_dirty_busy_short_circuit_still_carries_the_lane(tmp_path: Path) -> None:
+    run_dir = tmp_path / "busy"
+    run_dir.mkdir()
+    (run_dir / "SANDBOX-BUSY.txt").write_text("busy", encoding="utf-8")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+    assert result["verdict"] == "BUSY"
+    assert result["lane"] == "dirty"

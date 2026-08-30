@@ -108,6 +108,18 @@ param(
     # Poll interval, in seconds, for the teardown drain above.
     [int]$TeardownDrainPollSeconds = 5,
 
+    # DIRTY-BOX LANE <gate-a-dirty-lane>: writes DIRTY_MODE.txt into output\
+    # (the same host-to-guest input channel as SOAK_MINUTES.txt), opting the
+    # in-sandbox harness into its remnant prologue (install -> plant operator
+    # data -> real uninstall -> optional orphan seed -> reinstall). A dirty
+    # run performs TWO install cycles, so In-Sandbox-Report.ps1 raises its own
+    # watchdog to 210 minutes when it sees the flag -- the CALLER must
+    # therefore pass -TimeoutMinutes of at least 230 alongside this switch
+    # (dirty contract 210 < 230, the analogue of the clean lane's 150 < 170;
+    # asserted by tests/gate_a/test_gate_a_harness_contract.py). Default off:
+    # without the switch nothing about the clean lane changes.
+    [switch]$DirtyMode,
+
     # HARDENED <gate-a-orphan-guard> 2026-08-26: minutes a WindowsSandbox
     # server/client process may sit with NO vmmemWindowsSandbox (the actual
     # VM) before the pre-launch busy guard stops treating it as someone
@@ -239,7 +251,16 @@ if (Test-Path $OutDir) {
 $launchStamp = Get-Date
 Set-Content -Path (Join-Path $OutDir '_HOST_LAUNCHED.marker') -Value $launchStamp.ToString('o') -Encoding UTF8
 Set-Content -Path (Join-Path $OutDir 'SOAK_MINUTES.txt') -Value "$SoakMinutes" -Encoding UTF8
-Write-Host "Output dir stamped clean: $OutDir (SOAK_MINUTES=$SoakMinutes)"
+if ($DirtyMode) {
+    # See the -DirtyMode parameter comment: this file is what opts the
+    # in-sandbox harness into the remnant prologue and its 210-minute bound.
+    Set-Content -Path (Join-Path $OutDir 'DIRTY_MODE.txt') -Value "dirty_mode=1 requested_utc=$((Get-Date).ToUniversalTime().ToString('o'))" -Encoding UTF8
+    if ($TimeoutMinutes -lt 230) {
+        Write-Warning "-DirtyMode with -TimeoutMinutes ${TimeoutMinutes}: the in-sandbox dirty watchdog runs to 210 minutes, so the host poll must be at least 230 or it gives up before the watchdog it depends on. Raising to 230."
+        $TimeoutMinutes = 230
+    }
+}
+Write-Host "Output dir stamped clean: $OutDir (SOAK_MINUTES=$SoakMinutes, DirtyMode=$([bool]$DirtyMode))"
 
 # 1b. Guard: wait for a free sandbox. Windows Sandbox only ever runs ONE
 #     instance system-wide -- if any of $SandboxProcessNames is already
