@@ -204,6 +204,19 @@ class ContributorSubmission(BaseModel):
     notifications: list[SubmissionNotificationPreference]
     state: ContributorSubmissionState
     broken_media_gate: BrokenMediaGateResult = Field(default_factory=BrokenMediaGateResult)
+    asset_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            max_length=64,
+            pattern=r"^[a-z0-9][a-z0-9-]{2,63}$",
+            description=(
+                "Library asset created by ffprobe ingest when this submission was "
+                "accepted. None until acceptance completes a real ingest; a submission "
+                "cannot be scheduled while this is None."
+            ),
+        ),
+    ] = None
     operator_notes: Annotated[str | None, Field(default=None, max_length=2000)] = None
     decline_reason: Annotated[str | None, Field(default=None, max_length=1000)] = None
     schedule_handoff: ScheduleHandoff | None = None

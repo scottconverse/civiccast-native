@@ -238,12 +238,30 @@ class ContributorSubmissionStore:
         self,
         submission_id: str,
         request: ContributorReviewRequest,
+        *,
+        ingested_asset_id: str | None = None,
+        created_schedule_item_id: str | None = None,
     ) -> ContributorSubmission:
+        """Apply an operator review decision.
+
+        ``ingested_asset_id`` / ``created_schedule_item_id`` are supplied by
+        the router AFTER it has actually performed the corresponding side
+        effect (ffprobe ingest into the asset library / creation of a real
+        schedule item) -- this method never fabricates either. ``accept``
+        requires ``ingested_asset_id``; ``schedule`` requires the submission
+        to already carry an ``asset_id`` (from a prior accept) plus
+        ``created_schedule_item_id``. See :func:`_apply_review`.
+        """
         with self._lock:
             submission = self._submissions.get(submission_id)
             if submission is None:
                 raise ContributorSubmissionNotFoundError(submission_id)
-            updated = _apply_review(submission, request)
+            updated = _apply_review(
+                submission,
+                request,
+                ingested_asset_id=ingested_asset_id,
+                created_schedule_item_id=created_schedule_item_id,
+            )
             self._submissions[submission_id] = updated
             self._persist_locked()
             return updated.model_copy(deep=True)
@@ -535,6 +553,9 @@ def _verified_media_reference(
 def _apply_review(
     submission: ContributorSubmission,
     request: ContributorReviewRequest,
+    *,
+    ingested_asset_id: str | None = None,
+    created_schedule_item_id: str | None = None,
 ) -> ContributorSubmission:
     values = submission.model_dump()
     if request.metadata_patch is not None:
@@ -562,17 +583,46 @@ def _apply_review(
             raise ValueError(
                 "accepted submissions require a passed or operator-overridden media gate"
             )
+        # TASK A: acceptance is only real once the contributor's file has
+        # actually been ingested into the asset library -- the router runs
+        # that ingest (reusing the same ffprobe pipeline the staff upload
+        # and watch-folder paths use) BEFORE calling here and passes the
+        # resulting asset_id. Without a real asset_id, "accepted" would be
+        # exactly the false promise the field evidence flagged: a state
+        # flip with no airable media behind it.
+        if ingested_asset_id is None:
+            raise ValueError(
+                "accepted submissions require the contributor's media to be ingested "
+                "into the asset library first (no asset_id was produced)"
+            )
         values["state"] = "accepted"
+        values["asset_id"] = ingested_asset_id
     elif request.action == "schedule":
         gate = request.broken_media_gate or submission.broken_media_gate
         if gate.state not in {"passed", "override_accepted"}:
             raise ValueError(
                 "scheduled submissions require a passed or operator-overridden media gate"
             )
+        if submission.asset_id is None:
+            raise ValueError(
+                "submissions must be accepted (ingested into the asset library) before "
+                "they can be sent to the schedule"
+            )
+        # TASK A: schedule_item_id must never come back null on a success
+        # response -- the router creates a real civiccast.schedule_items row
+        # BEFORE calling here and passes back its id. A missing id is a bug,
+        # not a valid "scheduled" outcome, so this refuses to fabricate one.
+        if created_schedule_item_id is None:
+            raise ValueError(
+                "send-to-schedule requires a real schedule item to be created first "
+                "(no schedule_item_id was produced)"
+            )
+        assert request.schedule_handoff is not None  # enforced by the request validator
         values["state"] = "scheduled"
-        values["schedule_handoff"] = (
-            request.schedule_handoff.model_dump() if request.schedule_handoff else None
-        )
+        values["schedule_handoff"] = {
+            **request.schedule_handoff.model_dump(),
+            "schedule_item_id": created_schedule_item_id,
+        }
 
     next_state = cast(ContributorSubmissionState, values["state"])
     if next_state != submission.state:
@@ -609,7 +659,15 @@ def _status_message(state: str) -> str:
         "needs_changes": "The operator needs changes before this program can move forward.",
         "accepted": "Your program has been accepted and is waiting for scheduling.",
         "declined": "Your program was declined by the operator.",
-        "scheduled": "Your program has been handed off to the schedule.",
+        # TASK B: "handed off to the schedule" used to be shown while
+        # schedule_item_id was null and no civiccast.schedule_items row
+        # existed -- an outright false promise (field evidence candidate
+        # #17). By the time this state is ever reached now, the router has
+        # already created a real schedule item (see
+        # civiccast.contribute.router._create_real_schedule_item), so this
+        # message describes something that is actually true: the program is
+        # a real, airable entry on the schedule, not a placeholder.
+        "scheduled": "Your program has a real spot on the schedule and will air automatically.",
         "published": "Your program has been published.",
     }
     return messages.get(state, "Submission status updated.")
