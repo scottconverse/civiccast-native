@@ -842,9 +842,12 @@ class TestMigration0056AndMerge:
         # net-new S7 tables + asset_archive_proofs + media_lifecycle_audit_log,
         # plus assets.legal_hold/legal_hold_reason) is rechained after
         # 0078_agenda_item_confidence (rather than the original 0076) so it
-        # lands after the already-merged 0078, and is the current head.
-        assert list(heads) == ["0080_watch_folder_daemon"], (
-            f"Expected single head 0080_watch_folder_daemon, got {heads!r}"
+        # lands after the already-merged 0078. Updated to
+        # 0081_summary_generation_jobs (async summary generation job -- field
+        # evidence, candidate #17: civiccast/summary/job.py), chained after
+        # 0080_watch_folder_daemon and is the current head.
+        assert list(heads) == ["0081_summary_generation_jobs"], (
+            f"Expected single head 0081_summary_generation_jobs, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:
