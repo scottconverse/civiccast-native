@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useLocation } from 'react-router'
+import { Link, useLocation } from 'react-router'
 import { ApiError, getManual } from '../api/client'
 import { manualLink } from './manual-link'
 import type { ManualTocEntry } from '../types/api.generated'
@@ -11,25 +11,21 @@ function apiMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
-function TocList({
-  entries,
-  activeId,
-  onSelect,
-}: {
-  entries: ManualTocEntry[]
-  activeId: string | null
-  onSelect: (id: string) => void
-}) {
+function TocList({ entries, activeId }: { entries: ManualTocEntry[]; activeId: string | null }) {
   return (
     <ol className="m-0 grid gap-0.5 p-0 text-sm" style={{ listStyle: 'none' }}>
       {entries.map((entry) => (
         <li key={entry.id} style={{ paddingLeft: `${Math.max(0, entry.level - 1) * 0.85}rem` }}>
-          <a
-            href={manualLink(entry.id)}
-            onClick={(event) => {
-              event.preventDefault()
-              onSelect(entry.id)
-            }}
+          {/* A real react-router Link (not a raw <a> + preventDefault): its
+              `to` resolves correctly whether the app is mounted under
+              BrowserRouter or HashRouter (the packaged operator console
+              uses HashRouter at /operator/#/...), and native browser
+              affordances -- middle-click/ctrl-click to open in a new tab,
+              "Copy link" -- work exactly the way they do for any other
+              in-app link. Clicking it changes location.hash, which the
+              effect below reacts to. */}
+          <Link
+            to={manualLink(entry.id)}
             aria-current={activeId === entry.id ? 'location' : undefined}
             className="block truncate rounded-md px-2 py-1"
             style={{
@@ -40,7 +36,7 @@ function TocList({
             }}
           >
             {entry.title}
-          </a>
+          </Link>
         </li>
       ))}
     </ol>
@@ -67,29 +63,28 @@ export function ManualScreen() {
     return entries.filter((entry) => entry.title.toLowerCase().includes(needle))
   }, [toc, filter])
 
-  const scrollToSection = (id: string) => {
-    // getElementById (not a CSS-selector query) so this needs no CSS.escape
-    // polyfill and works for any id pandoc's slugger produces.
-    const target = contentRef.current && document.getElementById(id)
-    if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      setActiveId(id)
-      window.history.replaceState(null, '', manualLink(id))
-    }
-  }
-
   // Deep-link support: /help#<section-id>, e.g. a "Read more in the manual"
-  // link from a provider setup card. Runs once the manual HTML is actually
-  // in the DOM, since scrollIntoView needs the target element to exist.
+  // link from a provider setup card, or a TocList click (which navigates
+  // through react-router's own <Link>, changing location.hash -- never a
+  // direct window.history call, which would rewrite the real browser URL
+  // out from under HashRouter's own '/operator/#/...' scheme). Runs once
+  // the manual HTML is actually in the DOM, since scrollIntoView needs the
+  // target element to exist.
   useEffect(() => {
     if (!manualQuery.isSuccess) return
     const hash = location.hash.replace(/^#/, '')
-    if (hash) {
-      // Let the injected HTML paint first.
-      const raf = window.requestAnimationFrame(() => scrollToSection(hash))
-      return () => window.cancelAnimationFrame(raf)
-    }
-    return undefined
+    if (!hash) return undefined
+    // getElementById (not a CSS-selector query) so this needs no CSS.escape
+    // polyfill and works for any id pandoc's slugger produces. Let the
+    // injected HTML paint first.
+    const raf = window.requestAnimationFrame(() => {
+      const target = contentRef.current && document.getElementById(hash)
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        setActiveId(hash)
+      }
+    })
+    return () => window.cancelAnimationFrame(raf)
   }, [manualQuery.isSuccess, location.hash])
 
   return (
@@ -143,7 +138,7 @@ export function ManualScreen() {
                 No section title matches &quot;{filter}&quot;.
               </p>
             ) : (
-              <TocList entries={filteredToc} activeId={activeId} onSelect={scrollToSection} />
+              <TocList entries={filteredToc} activeId={activeId} />
             )}
           </nav>
 

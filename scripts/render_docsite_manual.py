@@ -38,7 +38,7 @@ MANUAL_JSON = OUT_DIR / "manual.json"
 MANIFEST_NAME = "manual.render.json"
 
 sys.path.insert(0, str(ROOT))
-from civiccast.docsite.render import extract_toc, sanitize_html  # noqa: E402
+from civiccast.docsite.render import embed_local_images, extract_toc, sanitize_html  # noqa: E402
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -74,6 +74,12 @@ def render_docsite_manual() -> Path:
         encoding="utf-8",
     ).stdout
 
+    # Embed local images (e.g. the two architecture diagrams) as data: URIs
+    # BEFORE sanitizing: sanitize_html's allowlist only ever accepts an
+    # already-absolute/data/http(s) src, by design (relative paths don't
+    # resolve to anything once this HTML is served from manual.json with no
+    # filesystem underneath it) -- see embed_local_images's own docstring.
+    raw_html = embed_local_images(raw_html, base_dir=ROOT / "docs")
     html = sanitize_html(raw_html)
     if not html.strip():
         raise RuntimeError("Rendered docsite manual HTML is empty")

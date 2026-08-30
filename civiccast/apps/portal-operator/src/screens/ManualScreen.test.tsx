@@ -112,4 +112,32 @@ describe('ManualScreen', () => {
     const activeLink = within(nav).getByText('Glossary').closest('a')
     expect(activeLink?.getAttribute('aria-current')).toBe('location')
   })
+
+  it('every TOC entry is a real link with an href, not a JS-only click handler', async () => {
+    vi.mocked(getManual).mockResolvedValue(manual())
+    renderScreen()
+
+    const nav = await screen.findByRole('navigation', { name: /manual contents/i })
+    const glossaryLink = within(nav).getByText('Glossary').closest('a')
+    // A real href (not "#" or javascript:) so ctrl/middle-click "open in a
+    // new tab" and "Copy link" work like any other link -- PR #74 review:
+    // the previous version used a raw <a> whose href resolved from the
+    // component's own manualLink() helper but was intercepted with
+    // preventDefault(), so those native affordances silently broke.
+    expect(glossaryLink?.getAttribute('href')).toBe('/help#glossary')
+  })
+
+  it('clicking a TOC entry navigates and scrolls to the matching section', async () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    vi.mocked(getManual).mockResolvedValue(manual())
+    renderScreen()
+
+    const nav = await screen.findByRole('navigation', { name: /manual contents/i })
+    fireEvent.click(within(nav).getByText('Glossary'))
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    const activeLink = within(nav).getByText('Glossary').closest('a')
+    expect(activeLink?.getAttribute('aria-current')).toBe('location')
+  })
 })

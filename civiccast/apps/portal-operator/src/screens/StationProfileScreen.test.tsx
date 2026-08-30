@@ -179,6 +179,23 @@ describe('StationProfileScreen', () => {
     expect(nameField.disabled).toBe(true)
   })
 
+  it('still lets a read-only meeting operator copy a storage-root path (not trapped in a disabled fieldset)', async () => {
+    // PR #74 review: the Copy path buttons used to live inside a
+    // <fieldset disabled={!canWrite}>, so a meeting_operator/support_admin
+    // -- READ_ROLES, but not WRITE_ROLES -- could see the recordings path
+    // but not click Copy path to actually use it. Recordings path fields
+    // stay disabled for this role; the buttons must not.
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+    const { findByLabelText, findAllByText } = renderScreen()
+    const recordingsField = (await findByLabelText('Recordings path')) as HTMLInputElement
+    expect(recordingsField.disabled).toBe(true)
+
+    const copyButtons = await findAllByText('Copy path')
+    for (const button of copyButtons) {
+      expect((button as HTMLButtonElement).disabled).toBe(false)
+    }
+  })
+
   it('shows the empty/not-set-up state when no profile exists yet (404)', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
     vi.mocked(getStationProfile).mockRejectedValue(new ApiError('not found', 404))

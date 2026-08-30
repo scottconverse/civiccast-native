@@ -48,6 +48,19 @@ class TestManualEndpoint:
     def test_html_never_carries_a_script_tag(self, client: TestClient) -> None:
         assert "<script" not in client.get("/api/public/manual").json()["html"]
 
+    def test_architecture_diagrams_are_embedded_not_broken_relative_links(
+        self, client: TestClient
+    ) -> None:
+        # Regression (PR #74 review): the sanitizer used to drop pandoc's
+        # <figure> wrapper entirely (figure/figcaption were not
+        # allowlisted), and even a surviving <img> would have pointed at an
+        # unresolvable relative "assets/..." path once served from this
+        # JSON endpoint with no filesystem underneath it.
+        html = client.get("/api/public/manual").json()["html"]
+        assert "<figure>" in html
+        assert "data:image/png;base64," in html
+        assert 'src="assets/' not in html
+
     def test_no_staff_token_required(self, client: TestClient) -> None:
         # Regression guard: this must stay reachable from the un-authenticated
         # First Setup screen, so it must never start with /api/staff/ (see

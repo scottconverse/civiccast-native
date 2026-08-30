@@ -310,15 +310,24 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
         </label>
       </div>
 
-      <fieldset className="grid gap-3 sm:grid-cols-3" disabled={!canWrite || saveMut.isPending}>
-        <legend className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+      {/* Not a <fieldset disabled>: that would also disable the Copy path
+          buttons below for a read-only meeting_operator/support_admin
+          viewer (READ_ROLES), who can read this panel but not write it --
+          exactly the audience most likely to be hunting for a recording,
+          not editing the station profile (PR #74 review). Each editable
+          <input> is disabled individually instead; Copy path stays a
+          read-only action, always enabled for anyone who can see this
+          panel at all. */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="text-xs sm:col-span-3" style={{ color: 'var(--cc-ink-3)' }}>
           Storage roots
-        </legend>
+        </div>
         <div className="grid gap-1 text-xs">
           <span style={{ color: 'var(--cc-ink-3)' }}>Media library</span>
           <input
             aria-label="Media library path"
             value={fields.media_library}
+            disabled={!canWrite || saveMut.isPending}
             onChange={(e) => update('media_library', e.target.value)}
             className="rounded-md px-2 py-1.5"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
@@ -330,6 +339,7 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
           <input
             aria-label="Recordings path"
             value={fields.recordings}
+            disabled={!canWrite || saveMut.isPending}
             onChange={(e) => update('recordings', e.target.value)}
             className="rounded-md px-2 py-1.5"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
@@ -341,13 +351,14 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
           <input
             aria-label="Backups path"
             value={fields.backups}
+            disabled={!canWrite || saveMut.isPending}
             onChange={(e) => update('backups', e.target.value)}
             className="rounded-md px-2 py-1.5"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
           />
           <CopyPathButton path={fields.backups} />
         </div>
-      </fieldset>
+      </div>
 
       <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
         These are the Windows service account&apos;s own paths, not your personal

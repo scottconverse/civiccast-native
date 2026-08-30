@@ -11,8 +11,63 @@ HTML by pandoc at build time (see ``scripts/render_docsite_manual.py``).
 
 from __future__ import annotations
 
+import base64
+import re
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any
+
+_MIME_BY_SUFFIX = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+}
+
+_IMG_SRC_RE = re.compile(r'(<img\b[^>]*\bsrc=")([^"]+)(")')
+
+
+def embed_local_images(html: str, base_dir: Path) -> str:
+    """Inline every relative ``<img src="...">`` in ``html`` as a base64
+    ``data:`` URI, resolved against ``base_dir`` (``docs/`` for the manual).
+
+    Pandoc leaves an image reference exactly as written in the Markdown
+    source (``docs/USER-MANUAL.md``'s two architecture diagrams use
+    ``assets/architecture/....png``, relative to ``docs/``) -- there is no
+    server-relative path that would resolve once this HTML is embedded in
+    ``civiccast/docsite/manual.json`` and served from ``/api/public/manual``
+    with no filesystem underneath it, and ``render.py``'s own sanitizer
+    (deliberately) refuses any ``src`` that isn't ``http(s)``, ``#``,
+    ``mailto:``, ``/``, or already a ``data:image/`` URI -- so an
+    unresolved relative path would silently render as a broken image (PR
+    #74 review). Embedding once here, at commit-render time, keeps the
+    manual fully self-contained and working with no internet connection,
+    matching the rest of this pipeline's offline-first posture.
+
+    An image this can't resolve (missing file, remote URL, already a data
+    URI) is left exactly as-is -- sanitize_html's existing allowlist is the
+    backstop that decides whether an untouched src ultimately survives.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        prefix, src, suffix = match.group(1), match.group(2), match.group(3)
+        if re.match(r"^(https?://|data:|#|mailto:|/)", src, re.IGNORECASE):
+            return match.group(0)
+        candidate = (base_dir / src).resolve()
+        try:
+            candidate.relative_to(base_dir.resolve())
+        except ValueError:
+            return match.group(0)  # refuse to embed anything outside base_dir
+        mime = _MIME_BY_SUFFIX.get(candidate.suffix.lower())
+        if mime is None or not candidate.is_file():
+            return match.group(0)
+        encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+        return f"{prefix}data:{mime};base64,{encoded}{suffix}"
+
+    return _IMG_SRC_RE.sub(_replace, html)
+
 
 #: Allowlisted tags. Pandoc's HTML5 writer for this manual only ever emits
 #: prose/table/list markup (plus the odd inline image) -- no forms, no
@@ -44,6 +99,15 @@ _ALLOWED_TAGS = frozenset(
         "pre",
         "blockquote",
         "img",
+        # Pandoc wraps every standalone Markdown image (docs/USER-MANUAL.md
+        # has two: the system and egress-proof architecture diagrams) in
+        # <figure>/<figcaption>. An earlier version of this allowlist did
+        # not include them, and _SanitizingParser drops a disallowed tag
+        # together with all of its content -- so both diagrams AND their
+        # caption text silently vanished from the in-product manual (PR
+        # #74 review).
+        "figure",
+        "figcaption",
         "span",
         "div",
         "sup",
@@ -58,7 +122,7 @@ _ALLOWED_TAGS = frozenset(
 _ALLOWED_ATTRS: dict[str, frozenset[str]] = {
     "a": frozenset({"href", "id", "title"}),
     "img": frozenset({"src", "alt", "title", "width", "height"}),
-    "*": frozenset({"id", "class"}),
+    "*": frozenset({"id", "class", "aria-hidden"}),
 }
 
 #: Schemes an ``href``/``src`` may use. Blocks ``javascript:``, ``data:``

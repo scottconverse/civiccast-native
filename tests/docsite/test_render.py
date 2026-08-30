@@ -1,10 +1,69 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Tests for the docsite HTML sanitizer and table-of-contents extractor."""
+"""Tests for the docsite HTML sanitizer, image embedder, and TOC extractor."""
 
 from __future__ import annotations
 
-from civiccast.docsite.render import extract_toc, sanitize_html
+from pathlib import Path
+
+from civiccast.docsite.render import embed_local_images, extract_toc, sanitize_html
+
+
+class TestEmbedLocalImages:
+    def test_embeds_a_relative_image_as_a_data_uri(self, tmp_path: Path) -> None:
+        (tmp_path / "assets").mkdir()
+        image_path = tmp_path / "assets" / "diagram.png"
+        # Smallest possible valid PNG byte sequence is unnecessary here --
+        # embed_local_images only needs *a file it can read*, not a real
+        # decodable image.
+        image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+
+        html = '<img src="assets/diagram.png" alt="Diagram" />'
+        out = embed_local_images(html, base_dir=tmp_path)
+
+        assert 'src="assets/diagram.png"' not in out
+        assert "data:image/png;base64," in out
+        assert 'alt="Diagram"' in out
+
+    def test_leaves_an_already_absolute_or_data_src_untouched(self, tmp_path: Path) -> None:
+        for src in (
+            "https://example.org/x.png",
+            "http://example.org/x.png",
+            "data:image/png;base64,AAAA",
+            "/already/absolute.png",
+            "#anchor-not-an-image",
+            "mailto:someone@example.org",
+        ):
+            html = f'<img src="{src}" alt="x" />'
+            assert embed_local_images(html, base_dir=tmp_path) == html
+
+    def test_leaves_a_missing_file_untouched(self, tmp_path: Path) -> None:
+        html = '<img src="assets/does-not-exist.png" alt="Missing" />'
+        assert embed_local_images(html, base_dir=tmp_path) == html
+
+    def test_refuses_to_embed_a_path_traversal_outside_base_dir(self, tmp_path: Path) -> None:
+        outside = tmp_path.parent / "outside-secret.png"
+        outside.write_bytes(b"secret-bytes")
+        html = '<img src="../outside-secret.png" alt="x" />'
+        out = embed_local_images(html, base_dir=tmp_path)
+        assert out == html
+        assert "base64" not in out
+
+    def test_leaves_an_unsupported_file_type_untouched(self, tmp_path: Path) -> None:
+        (tmp_path / "readme.txt").write_text("not an image", encoding="utf-8")
+        html = '<img src="readme.txt" alt="x" />'
+        assert embed_local_images(html, base_dir=tmp_path) == html
+
+    def test_embeds_multiple_images_independently(self, tmp_path: Path) -> None:
+        (tmp_path / "one.png").write_bytes(b"one-bytes")
+        (tmp_path / "two.png").write_bytes(b"two-bytes")
+        html = '<img src="one.png" alt="One" /><p>text</p><img src="two.png" alt="Two" />'
+
+        out = embed_local_images(html, base_dir=tmp_path)
+
+        assert out.count("data:image/png;base64,") == 2
+        assert 'alt="One"' in out
+        assert 'alt="Two"' in out
 
 
 class TestSanitizeHtml:
@@ -32,6 +91,24 @@ class TestSanitizeHtml:
         out = sanitize_html('<a href="javascript:alert(1)">click</a>')
         assert "javascript:" not in out
         assert "click" in out
+
+    def test_keeps_figure_and_figcaption_and_the_image_inside_them(self) -> None:
+        # Regression (PR #74 review): figure/figcaption were not on the
+        # allowlist, and a disallowed tag is dropped along with everything
+        # nested inside it -- so pandoc's <figure><img/><figcaption>...
+        # wrapper around docs/USER-MANUAL.md's two architecture diagrams
+        # silently deleted the images AND their captions from the manual.
+        out = sanitize_html(
+            "<figure>"
+            '<img src="data:image/png;base64,AAAA" alt="CivicCast system architecture" />'
+            '<figcaption aria-hidden="true">CivicCast system architecture</figcaption>'
+            "</figure>"
+        )
+        assert "<figure>" in out
+        assert "</figure>" in out
+        assert "<figcaption" in out
+        assert "CivicCast system architecture" in out
+        assert 'src="data:image/png;base64,AAAA"' in out
 
     def test_keeps_relative_hash_and_https_links(self) -> None:
         out = sanitize_html(

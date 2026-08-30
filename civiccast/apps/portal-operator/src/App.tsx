@@ -14,7 +14,7 @@ import { SampleSeedNotice } from './components/SampleSeedNotice'
 import { ApiError, getStaffIdentity } from './api/client'
 import type { StaffIdentityResponse } from './types/api.generated'
 import { ToastProvider } from './components/Toast'
-import { isTrimEditorRoute, routeForPath, routePath } from './routes'
+import { isPublicRoute, isTrimEditorRoute, routeForPath, routePath } from './routes'
 import { SetupScreen } from './screens/SetupScreen'
 import { TrimEditorScreen } from './screens/TrimEditorScreen'
 
@@ -156,7 +156,7 @@ function AppContent() {
   const identityQuery = useQuery<StaffIdentityResponse>({
     queryKey: ['staff-identity'],
     queryFn: getStaffIdentity,
-    enabled: !trimEditorRoute && location.pathname !== '/setup',
+    enabled: !trimEditorRoute && !isPublicRoute(location.pathname),
     retry: false,
   })
   const roles: readonly RoleName[] | undefined = identityQuery.data?.roles
@@ -220,7 +220,7 @@ function AppContent() {
 
   const missingStaffSession =
     identityQuery.error instanceof ApiError && identityQuery.error.status === 401
-  if (missingStaffSession && !['/setup', '/login', '/sign-in'].includes(location.pathname)) {
+  if (missingStaffSession && !isPublicRoute(location.pathname)) {
     return <Navigate to="/setup" replace state={{ returnTo: location.pathname }} />
   }
 
