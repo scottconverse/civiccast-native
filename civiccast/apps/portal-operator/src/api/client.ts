@@ -321,11 +321,24 @@ export class ApiError extends Error {
     this.name = 'ApiError'
     this.status = status
     const userDetail = userFacingApiDetail(detail)
+    // OWNER DECISION 2026-08-30 (audit finding #3, day-one-lockout fix): the
+    // old copy ("Too many unsuccessful sign-in attempts from this network")
+    // asserted a cause -- deliberate sign-in attempts, plural, from an
+    // entire shared network -- that a signed-out visitor never took. It also
+    // blamed everyone on a shared NAT/building for one connection's failed
+    // requests. This 429 only fires from real, present-but-wrong bearer
+    // tokens now (see civiccast.auth.middleware.staff_auth_middleware's
+    // missing-credential fix), but the wrong token could just as easily be
+    // an automatically-resent stale/expired one as a deliberately-typed
+    // wrong password, and the rate-limit key is this connection, not "the
+    // network". State only what's verifiably true -- failed attempts to
+    // authenticate with the staff API happened, from here -- and the one
+    // actionable next step, without inventing a cause or scope.
     this.detail =
       status === 429 &&
       retryAfterSeconds != null &&
       userDetail?.toLowerCase().includes('staff authentication')
-        ? `Too many unsuccessful sign-in attempts from this network. Wait ${retryAfterSeconds} ${retryAfterSeconds === 1 ? 'second' : 'seconds'}, then try again.`
+        ? `Too many failed attempts to authenticate with the staff API. Wait ${retryAfterSeconds} ${retryAfterSeconds === 1 ? 'second' : 'seconds'}, then try again.`
         : userDetail
     this.conflict = conflict
     this.retryAfterSeconds = retryAfterSeconds

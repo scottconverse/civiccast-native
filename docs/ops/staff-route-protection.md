@@ -161,6 +161,16 @@ with `Retry-After` without expensive verification and without entering a queue.
 Exact full-token matches bypass the failed-guess control, so valid tokens remain
 accepted even when an operator shares a proxy or NAT with a noisy client.
 
+A request that carries NO `Authorization` header at all -- the ordinary state
+of a signed-out browser loading any `/api/staff/*` page -- is never counted as
+a failed verification and can never be blocked by this budget, however many
+such requests arrive. Only a *present* bearer credential that fails to verify
+(wrong, malformed, revoked, or expired) counts as a failure. This distinction
+closed a day-one lockout where a brand-new operator who had never signed in
+could exhaust the budget, and then be denied by it, purely by loading the
+console (fixed 2026-08-30; see `civiccast.auth.tokens.StaffAuthMissingCredentialError`
+and `civiccast.auth.middleware.staff_auth_middleware`).
+
 Tune the budget with `CIVICCAST_AUTH_RATE_LIMIT` and the window with
 `CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS`.
 The key covers all `/api/staff/*` routes for one direct peer; changing token

@@ -262,6 +262,235 @@ def test_default_limit_survives_the_existing_full_setup_flow(monkeypatch, tmp_pa
         assert login.status_code == 200
 
 
+def test_signed_out_browsers_normal_page_loads_never_trip_the_staff_budget(
+    monkeypatch,
+) -> None:
+    """Day-one-lockout audit finding #1, live repro: loading the console then
+    #/help then #/assets -- three ordinary page loads, never signed in, no
+    password ever typed -- sent a run of /api/staff/* GETs with NO
+    Authorization header at all and tripped 429 within seconds. A missing
+    credential is the routine state of a signed-out browser, not a failed
+    guess, so it must never consume the failure budget or ever be blocked by
+    it -- however many requests arrive."""
+
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "3")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    client = TestClient(create_app())
+
+    # Far more than the (already-low) configured budget of 3.
+    responses = [client.get("/api/staff/installer/summary") for _ in range(12)]
+
+    assert all(r.status_code == 401 for r in responses), [r.status_code for r in responses]
+    assert all("Retry-After" not in r.headers for r in responses)
+
+
+def test_missing_header_is_never_blocked_by_a_budget_wrong_tokens_saturated(
+    monkeypatch,
+) -> None:
+    """The saturation pre-check must not treat "no credential offered" as
+    "an unmatched guess". Saturate the budget with real wrong-token guesses
+    first (429), then confirm a plain signed-out request -- no Authorization
+    header at all -- still gets an ordinary 401, never swept up into the
+    429 the wrong-token guesses earned."""
+
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "1")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    client = TestClient(create_app())
+
+    first_guess = client.get(
+        "/api/staff/installer/summary",
+        headers={"Authorization": "Bearer wrong-guess"},
+    )
+    assert first_guess.status_code == 401
+    second_guess = client.get(
+        "/api/staff/installer/summary",
+        headers={"Authorization": "Bearer another-wrong-guess"},
+    )
+    assert second_guess.status_code == 429  # budget of 1 is now saturated
+
+    signed_out = client.get("/api/staff/installer/summary")
+    assert signed_out.status_code == 401
+    assert "Retry-After" not in signed_out.headers
+
+
+def test_present_but_wrong_token_still_counts_toward_the_budget(monkeypatch) -> None:
+    """The other half of finding #1: relaxing the missing-credential case
+    must not accidentally relax real brute-force protection. A handful of
+    ordinary credential-free page loads interleaved with wrong-token guesses
+    must still let the wrong guesses alone saturate the budget."""
+
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "2")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    client = TestClient(create_app())
+
+    assert client.get("/api/staff/installer/summary").status_code == 401  # no header
+    assert (
+        client.get(
+            "/api/staff/installer/summary",
+            headers={"Authorization": "Bearer wrong-1"},
+        ).status_code
+        == 401
+    )
+    assert client.get("/api/staff/installer/summary").status_code == 401  # no header
+    assert (
+        client.get(
+            "/api/staff/installer/summary",
+            headers={"Authorization": "Bearer wrong-2"},
+        ).status_code
+        == 401
+    )
+    # Two real wrong guesses have now spent the budget of 2, regardless of
+    # how many credential-free requests were interleaved between them.
+    limited = client.get(
+        "/api/staff/installer/summary",
+        headers={"Authorization": "Bearer wrong-3"},
+    )
+    assert limited.status_code == 429
+
+
+def test_setup_login_correct_password_survives_a_saturated_budget(monkeypatch, tmp_path) -> None:
+    """Day-one-lockout audit finding #4: PR #67's setup-rate-limit accounting
+    called limiter.saturated() unconditionally before the handler ever saw
+    the password, so a saturated budget rejected the CORRECT password too --
+    unlike the staff-auth pattern's token_matches_exactly bypass it claimed
+    parity with. The correct password must always get through, exactly the
+    way an exact staff bearer-token match does."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "2")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    client = TestClient(create_app())
+
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    assert setup.status_code == 200
+
+    # Saturate the 2-guess budget with wrong passwords.
+    for _ in range(2):
+        wrong = client.post(
+            "/api/setup/login",
+            json={"admin_username": "avery", "admin_password": "not it"},
+        )
+        assert wrong.status_code == 401
+
+    # A THIRD wrong guess, while saturated, still gets 429 -- the bypass
+    # must not have opened the gate for everyone, only for the right one.
+    still_wrong = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "still not it"},
+    )
+    assert still_wrong.status_code == 429
+
+    # The correct password, submitted while the budget is saturated, must
+    # succeed anyway.
+    right = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "correct horse battery staple"},
+    )
+    assert right.status_code == 200
+
+
+def test_setup_recover_correct_code_survives_a_saturated_budget(monkeypatch, tmp_path) -> None:
+    """Same audit finding #4, for /api/setup/recover: a real recovery code
+    must succeed even after wrong-code guesses saturated that route's own
+    budget (/login and /recover have independent budgets per
+    _setup_rate_limit_key, so each is reachable with zero credentials by
+    anyone on the box and each needed its own bypass)."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "2")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    client = TestClient(create_app())
+
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    assert setup.status_code == 200
+    recovery_code = setup.json()["recovery_kit"]["recovery_codes"][0]
+
+    # Saturate the 2-guess /recover budget with bogus codes.
+    for _ in range(2):
+        wrong = client.post(
+            "/api/setup/recover",
+            json={
+                "admin_username": "avery",
+                "recovery_code": "not-a-real-code",
+                "new_admin_password": "irrelevant password here",
+            },
+        )
+        assert wrong.status_code == 401
+
+    # The real, still-unused recovery code must succeed anyway.
+    recovered = client.post(
+        "/api/setup/recover",
+        json={
+            "admin_username": "avery",
+            "recovery_code": recovery_code,
+            "new_admin_password": "fresh horse battery staple",
+        },
+    )
+    assert recovered.status_code == 200
+
+    # The bypass peek must not have consumed the one-time code itself --
+    # only the real, saving call should. Confirm the new password actually
+    # took effect and the account is not left in a half-recovered state.
+    login = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "fresh horse battery staple"},
+    )
+    assert login.status_code == 200
+
+
+def test_setup_login_wrong_password_body_does_not_bypass_saturation(monkeypatch, tmp_path) -> None:
+    """The bypass peek must only ever open the gate for the credential that
+    is ACTUALLY correct -- an unparseable or merely well-formed-but-wrong
+    body must fall through to the ordinary saturated-budget 429."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "1")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    client = TestClient(create_app())
+
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    assert setup.status_code == 200
+
+    wrong = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "nope"},
+    )
+    assert wrong.status_code == 401  # budget of 1 now saturated
+
+    still_wrong = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "still nope"},
+    )
+    assert still_wrong.status_code == 429
+
+
 def test_staff_bearer_brute_force_trips_429_with_retry_after(monkeypatch) -> None:
     """Audit item #27 review: /api/staff/* was an unthrottled bearer-token
     oracle. Failed verifications from one IP must trip 429 regardless of

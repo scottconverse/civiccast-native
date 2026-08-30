@@ -25,6 +25,20 @@ class StaffAuthError(RuntimeError):
     """Raised when a staff bearer token cannot be verified."""
 
 
+class StaffAuthMissingCredentialError(StaffAuthError):
+    """Raised when the request carried no Authorization header at all.
+
+    OWNER DECISION 2026-08-30 (audit finding #1, day-one-lockout fix): this
+    is a distinct condition from every other :class:`StaffAuthError`. A
+    present-but-wrong, malformed, revoked, or expired token is a failed
+    credential guess -- brute-force protection must count it. No credential
+    at all is simply the normal state of a signed-out browser loading any
+    ``/api/staff/*`` page; it is not a guess, and must never be treated as
+    one. See ``civiccast.auth.middleware.staff_auth_middleware``, which
+    catches this subclass separately and never spends failure-budget on it.
+    """
+
+
 _CONFIGURED_TOKEN_PREFIX = "ccenv1_"  # noqa: S105 - public format marker, not a secret.
 _CONFIGURED_TOKEN_PATTERN = re.compile(r"^ccenv1_[A-Za-z0-9_-]{43}$")
 
@@ -200,7 +214,9 @@ def token_matches_exactly(
 
 def _bearer_token(authorization: str | None) -> str:
     if not authorization:
-        raise StaffAuthError("Missing Authorization header. Use Bearer <staff-token>.")
+        raise StaffAuthMissingCredentialError(
+            "Missing Authorization header. Use Bearer <staff-token>."
+        )
     scheme, sep, token = authorization.partition(" ")
     if not sep or scheme.lower() != "bearer" or not token.strip():
         raise StaffAuthError("Invalid Authorization header. Use Bearer <staff-token>.")
