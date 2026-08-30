@@ -45,12 +45,24 @@ export function ReadinessBadge({
   state,
   inFlightJobsCount,
   progressPercent,
+  reason,
 }: {
   state: ReadinessState
   /** Count of pending/running transcode jobs, when known (dashboard row). */
   inFlightJobsCount?: number
   /** Progress of the furthest-along in-flight job, when known (detail view). */
   progressPercent?: number
+  /**
+   * Server-provided explanation of the current state (e.g. "Readiness has
+   * not been computed yet"), when known. Candidate #17 tester finding 6:
+   * the dashboard already returns this reason on every row, but nothing
+   * rendered it -- an operator staring at a bare "Not ready" dot had no way
+   * to tell "the worker hasn't run yet" from "something is actually wrong."
+   * Shown as a native title tooltip for a sighted mouse user AND as
+   * always-present text for screen readers (a hover-only tooltip is
+   * inaccessible to keyboard/touch/screen-reader use).
+   */
+  reason?: string | null
 }) {
   const meta = READINESS_META[state] ?? READINESS_META.not_ready
   const tone = TONE_STYLES[meta.tone]
@@ -67,10 +79,12 @@ export function ReadinessBadge({
     <span
       className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
       style={{ background: tone.bg, color: tone.fg }}
+      title={reason ?? undefined}
     >
       <span aria-hidden="true">{meta.dot}</span>
       {meta.label}
       {suffix}
+      {reason && <span className="sr-only">{` — ${reason}`}</span>}
     </span>
   )
 }

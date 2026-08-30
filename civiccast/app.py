@@ -192,6 +192,7 @@ from civiccast.live.finalization_worker import (
     build_worker,
 )
 from civiccast.live.models import LiveIngestPlan, RecordingTargetCreate
+from civiccast.live.network_probe import build_network_probe
 from civiccast.live.preflight import PreflightEvaluator
 from civiccast.live.recording_paths import (
     DEFAULT_RECORDING_TARGET_DIR_NAME,
@@ -212,6 +213,7 @@ from civiccast.live.router import (
 from civiccast.live.router import public_router as live_public_router
 from civiccast.live.router import staff_router as live_staff_router
 from civiccast.live.source_probe import build_source_probe
+from civiccast.live.storage_probe import build_storage_probe
 from civiccast.live.store import (
     LiveRelayConfigStore,
     LiveSessionStore,
@@ -313,6 +315,7 @@ from civiccast.schedule.media_integrity_worker import (
 from civiccast.schedule.media_lifecycle_router import (
     get_media_lifecycle_store,
     get_missing_media_reader,
+    get_watch_folder_worker,
 )
 from civiccast.schedule.media_lifecycle_router import staff_router as media_lifecycle_staff_router
 from civiccast.schedule.media_lifecycle_store import MediaLifecycleStore
@@ -373,6 +376,12 @@ from civiccast.subscribe.router import staff_router as subscribe_staff_router
 from civiccast.subscribe.secrets import load_subscription_secrets
 from civiccast.subscribe.store import InMemorySubscribeStore, PostgresSubscribeStore
 from civiccast.summary.generate import SummaryModel
+from civiccast.summary.job import (
+    InMemorySummaryGenerationJobStore,
+    SummaryGenerationJobSettings,
+    SummaryGenerationJobWorker,
+)
+from civiccast.summary.persistence import PostgresSummaryGenerationJobStore
 from civiccast.summary.router import OLLAMA_NOT_CONFIGURED_MESSAGE, get_summary_model
 from civiccast.summary.router import staff_router as summary_staff_router
 from civiccast.summary.store import InMemorySummaryStore, PostgresSummaryStore
@@ -779,13 +788,22 @@ def _build_contribution_alert_hook(session_factory: Any) -> Callable[[str, str],
 def _build_ai_model_service(session_factory: Any) -> AiModelService:
     """The S13 service that resolves each feature's operator-selected model.
 
-    Seeds ``system_ram_total_gb`` from the live hardware probe so summary's adaptive
-    default (12B on >=16GB, e4b below) matches the box. With no operator selection,
-    the service returns each feature's catalog default — i.e. today's exact runtime
-    tags — so wiring the feature runtimes through it is behavior-preserving.
+    Seeds ``system_ram_total_gb`` AND ``has_gpu`` from the live hardware probe so
+    summary's adaptive default (12B only with a real GPU present and >=16GB RAM;
+    e4b on every CPU-only box regardless of RAM) matches the box. Field evidence
+    (candidate #17, 32GB CPU-only reference station) retired the old RAM-only rule:
+    it picked 12B on that box, which took 366s to complete a summary once and then
+    failed twice more under realistic memory pressure, while e4b completed every
+    attempt. With no operator selection, the service returns each feature's catalog
+    default; a station with no NVIDIA GPU (``probe().gpu is None`` -- ADR 0005, NVML
+    only) now gets the model that actually finishes there.
     """
-    ram_total_gb = int(probe().ram.total_gb)
-    return AiModelService(AiModelStore(session_factory), system_ram_total_gb=ram_total_gb)
+    hardware = probe()
+    ram_total_gb = int(hardware.ram.total_gb)
+    has_gpu = hardware.gpu is not None
+    return AiModelService(
+        AiModelStore(session_factory), system_ram_total_gb=ram_total_gb, has_gpu=has_gpu
+    )
 
 
 def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
@@ -1141,6 +1159,33 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             run_forever=offline_caption_worker.run_forever,
             poll_seconds=offline_caption_settings.poll_seconds,
             enabled=offline_caption_settings.mode == "inline",
+        )
+    )
+    # Async summary generation job: field evidence 2026-08-29 (candidate #17) --
+    # POST /api/staff/summaries/generate 503'd at ~120s even on a warm model,
+    # because a legitimate CPU-only summary generation (measured 94-366s+ on the
+    # same hardware class) cannot survive one HTTP request/response cycle, and
+    # discarded a completion Ollama had already finished computing. On by
+    # default, idle until an operator queues a meeting -- see
+    # civiccast/summary/job.py. Settings validate fail-fast here either way.
+    summary_job_settings = SummaryGenerationJobSettings.from_env()
+    summary_job_worker = SummaryGenerationJobWorker(
+        PostgresSummaryGenerationJobStore(session_factory),
+        PostgresSummaryStore(session_factory),
+        # Lazy per-attempt, same reason as the caption runtime_factory above:
+        # each attempt picks up the operator's CURRENT model selection rather
+        # than one captured at worker-construction time, and a station with
+        # nothing queued never loads a multi-gigabyte local model.
+        model_factory=lambda: build_summary_model(_build_ai_model_service(session_factory)),
+        settings=summary_job_settings,
+    )
+    app.state.summary_job_worker = summary_job_worker
+    app.state.background_supervisors.append(
+        ThreadSupervisor(
+            name="civiccast-summary-job-worker",
+            run_forever=summary_job_worker.run_forever,
+            poll_seconds=summary_job_settings.poll_seconds,
+            enabled=summary_job_settings.mode == "inline",
         )
     )
     # S11a caption decode-back proof loop. Only runs when CEA-708 embedding is on
@@ -1634,6 +1679,7 @@ def create_app() -> FastAPI:
     caption_review_store = InMemoryCaptionReviewStore()
     caption_job_store = InMemoryOfflineCaptionJobStore()
     summary_store = InMemorySummaryStore()
+    summary_job_store = InMemorySummaryGenerationJobStore()
     record_store = InMemoryRecordStore()
     publish_store = InMemoryPublishStore()
     subscribe_store = InMemorySubscribeStore()
@@ -1662,6 +1708,7 @@ def create_app() -> FastAPI:
         caption_review_store=lambda: caption_review_store,
         caption_job_store=lambda: caption_job_store,
         summary_store=lambda: summary_store,
+        summary_job_store=lambda: summary_job_store,
         record_store=lambda: record_store,
         publish_store=lambda: publish_store,
         subscribe_store=lambda: subscribe_store,
@@ -2090,7 +2137,37 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # rehearsal path still overrides this per-call with its own sample-file
         # probe via `source_probe_override` (civiccast/installer/service.py);
         # this is the probe every other caller -- i.e. a real station -- gets.
-        return PreflightEvaluator(_session_factory, source_probe=build_source_probe())
+        #
+        # B1 fix: route the one source id CivicCast itself creates (the
+        # bundled sample-rehearsal source) to the same validated-local-file
+        # probe the installer's rehearsal already uses, instead of the real
+        # network probe -- the sample's placeholder RTMP endpoint has no
+        # listener anywhere in this product, so the network probe could
+        # never pass for it (field evidence, native beta candidate #17).
+        # Every other, real source still gets the genuine network probe.
+        #
+        # B3 fix: network + storage probes run here too, so "Run pre-flight"
+        # answers its own "not probed" questions instead of depending on a
+        # caller (the operator UI) that never actually probed.
+        from civiccast.installer.service import (
+            SAMPLE_REHEARSAL_SOURCE_ID,
+            build_sample_rehearsal_source_probe,
+        )
+
+        network_source_probe = build_source_probe()
+        sample_source_probe = build_sample_rehearsal_source_probe()
+
+        def _live_source_probe(source: Any) -> tuple[bool, str | None]:
+            if getattr(source, "live_source_id", None) == SAMPLE_REHEARSAL_SOURCE_ID:
+                return sample_source_probe(source)
+            return network_source_probe(source)
+
+        return PreflightEvaluator(
+            _session_factory,
+            source_probe=_live_source_probe,
+            network_probe=build_network_probe(),
+            storage_probe=build_storage_probe(),
+        )
 
     def _resolve_live_source_store() -> LiveSourceStore:
         return LiveSourceStore(_session_factory)
@@ -2116,6 +2193,12 @@ def _wire_durable_stores(app: FastAPI) -> None:
 
     def _resolve_summary_store() -> PostgresSummaryStore:
         return PostgresSummaryStore(_session_factory)
+
+    def _resolve_summary_job_store() -> PostgresSummaryGenerationJobStore:
+        # A summary generation job outlives the request that queued it -- a
+        # CPU-only generation can legitimately run for minutes (field evidence
+        # 2026-08-29, see civiccast/summary/job.py).
+        return PostgresSummaryGenerationJobStore(_session_factory)
 
     def _resolve_summary_model() -> SummaryModel:
         # S13: the summary adapter loads the operator-selected model (adaptive local
@@ -2223,6 +2306,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
         caption_review_store=_resolve_caption_review_store,
         caption_job_store=_resolve_caption_job_store,
         summary_store=_resolve_summary_store,
+        summary_job_store=_resolve_summary_job_store,
         record_store=_resolve_record_store,
         publish_store=_resolve_publish_store,
         subscribe_store=_resolve_subscribe_store,
@@ -2240,6 +2324,14 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.dependency_overrides[get_summary_model] = _resolve_summary_model
     app.dependency_overrides[get_schedule_store] = _resolve_schedule_store
     app.dependency_overrides[get_media_lifecycle_store] = _resolve_media_lifecycle_store
+    # Finding 4 (candidate #17): the "Scan now" staff action needs the SAME
+    # WatchFolderWorker instance the background ThreadSupervisor drives
+    # (app.state.watch_folder_worker, wired above), never a second one --
+    # a second instance would have its own in-memory nothing-durable state
+    # but more importantly would double the settle-window/ingest work.
+    app.dependency_overrides[get_watch_folder_worker] = lambda: getattr(
+        app.state, "watch_folder_worker", None
+    )
     app.dependency_overrides[get_live_session_store] = _resolve_live_session_store
     app.dependency_overrides[get_preflight_evaluator] = _resolve_preflight_evaluator
     app.dependency_overrides[get_live_source_store] = _resolve_live_source_store

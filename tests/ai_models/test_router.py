@@ -34,6 +34,7 @@ def _build(
     *,
     wire: bool = True,
     system_ram_total_gb: int = 8,
+    has_gpu: bool = False,
     first_run_overrides: dict[str, str | None] | None = None,
     keyring: dict[str, str] | None = None,
     save_provider_secret: Callable[[str, str], None] | None = None,
@@ -80,6 +81,7 @@ def _build(
     service = AiModelService(
         store,
         system_ram_total_gb=system_ram_total_gb,
+        has_gpu=has_gpu,
         read_first_run_override=_read_override,
         write_first_run_override=_write_override,
         save_provider_secret=save_provider_secret
@@ -193,9 +195,21 @@ def test_adaptive_default_below_16gb_is_e4b() -> None:
     assert body["effective_model_key"] == "gemma4-e4b-ollama"
 
 
-def test_adaptive_default_at_16gb_is_12b() -> None:
+def test_adaptive_default_at_16gb_cpu_only_is_e4b() -> None:
+    """Field evidence 2026-08-29: a CPU-only box (has_gpu default False) never gets
+    12B, regardless of RAM -- see detect_summary_model_default."""
     body = (
         _client(scopes=("setup_admin",), system_ram_total_gb=16)
+        .get("/api/staff/ai-models/summary")
+        .json()
+    )
+    assert body["default_key"] == "gemma4-e4b-ollama"
+    assert body["effective_model_key"] == "gemma4-e4b-ollama"
+
+
+def test_adaptive_default_at_16gb_with_gpu_is_12b() -> None:
+    body = (
+        _client(scopes=("setup_admin",), system_ram_total_gb=16, has_gpu=True)
         .get("/api/staff/ai-models/summary")
         .json()
     )

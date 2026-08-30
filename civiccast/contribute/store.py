@@ -105,13 +105,12 @@ class ContributorSubmissionStore:
             # restart without new state, and the check + insert share one lock so
             # two concurrent creates cannot both claim the same upload.
             try:
-                resolved_ref = str(Path(media.upload_ref).resolve())
+                resolved_ref = str(resolve_contributor_upload_path(media.upload_ref))
             except (
                 OSError
             ) as exc:  # pragma: no cover - _verified_media_reference resolved it already
-                raise ValueError(
-                    f"submission media upload_ref is not a usable path: {exc}"
-                ) from exc
+                _LOG.warning("could not re-resolve a just-verified upload_ref: %s", exc)
+                raise ValueError("submission media upload_ref is not a usable reference") from exc
             if resolved_ref in self._referenced_upload_paths_locked():
                 raise ContributorUploadAlreadyUsedError(
                     "This uploaded file is already attached to another submission. "
@@ -222,7 +221,7 @@ class ContributorSubmissionStore:
         paths: set[str] = set()
         for submission in self._submissions.values():
             try:
-                paths.add(str(Path(submission.media.upload_ref).resolve()))
+                paths.add(str(resolve_contributor_upload_path(submission.media.upload_ref)))
             except OSError:
                 continue
         return paths
@@ -368,6 +367,44 @@ def default_contributor_upload_dir() -> Path:
     if os.environ.get("CIVICCAST_ALLOW_EPHEMERAL_STORES") == "1":
         return Path(tempfile.gettempdir()) / "civiccast-contributor-uploads"
     return (default_storage_dir() / "contributor-uploads").expanduser().resolve()
+
+
+def resolve_contributor_upload_path(upload_ref: str, *, upload_dir: Path | None = None) -> Path:
+    """Resolve a public ``upload_ref`` to the real file it names.
+
+    Field evidence / GauntletGate finding: ``upload_ref`` used to BE the
+    server's absolute filesystem path, returned verbatim to an anonymous
+    public caller of ``POST /api/public/contribute/uploads`` -- a privacy
+    leak (reveals the service account's profile layout) that also, more
+    seriously, meant the "reference" a submission attaches to was just the
+    contributor's own sanitized filename plus a numeric collision suffix
+    (see ``router._unique_upload_path``): guessable for anything with a
+    predictable name ("june-council-meeting.mp4"), and ``sha256`` is
+    optional in the public payload, so a second anonymous caller who
+    guessed it could attach someone else's pending upload to their own
+    submission with no proof of anything.
+
+    The fix issues an opaque, unguessable filename at upload time (a
+    ``uuid4`` hex token) and returns ONLY that filename -- no directory
+    component -- as ``upload_ref``. This is the single place every other
+    module resolves that filename back to a real path, joined onto the
+    contributor upload directory: no second storage/lookup mechanism, the
+    filesystem directory this module already owns via
+    :func:`default_contributor_upload_dir` IS the store.
+
+    ``Path.__truediv__`` leaves an anchored (absolute) right-hand operand
+    unchanged, so a submission recorded before this fix -- when
+    ``upload_ref`` was still a full absolute path -- resolves to the exact
+    same file it always did; no data migration needed for a station's
+    existing ``contributor-submissions.json``.
+
+    Does NOT itself enforce that the result stays inside ``upload_dir`` --
+    callers that treat ``upload_ref`` as an untrusted, freshly-submitted
+    client claim (see :func:`_verified_media_reference`) still check with
+    ``relative_to`` after calling this.
+    """
+    base = upload_dir if upload_dir is not None else default_contributor_upload_dir()
+    return (base / upload_ref).resolve()
 
 
 def default_contributor_upload_reap_max_age_hours() -> float:
@@ -523,9 +560,13 @@ def _verified_media_reference(
     """
     upload_dir = default_contributor_upload_dir().resolve()
     try:
-        resolved = Path(media.upload_ref).resolve()
+        resolved = resolve_contributor_upload_path(media.upload_ref, upload_dir=upload_dir)
     except OSError as exc:
-        raise ValueError(f"submission media upload_ref is not a usable path: {exc}") from exc
+        # The raw OSError text can carry a filesystem path -- never echo it to
+        # the anonymous public caller (same class of leak this function
+        # exists to close). Detail server-side only.
+        _LOG.warning("submission media upload_ref did not resolve: %s", exc)
+        raise ValueError("submission media upload_ref is not a usable reference") from exc
     try:
         resolved.relative_to(upload_dir)
     except ValueError as exc:
@@ -543,7 +584,8 @@ def _verified_media_reference(
                 size_bytes += len(chunk)
                 digest.update(chunk)
     except OSError as exc:
-        raise ValueError(f"submission media upload_ref could not be read: {exc}") from exc
+        _LOG.warning("submission media upload_ref could not be read: %s", exc)
+        raise ValueError("submission media upload_ref could not be read") from exc
     recomputed_sha256 = digest.hexdigest()
     if media.sha256 is not None and media.sha256.lower() != recomputed_sha256:
         raise ValueError("submission media sha256 does not match the uploaded file's real digest")

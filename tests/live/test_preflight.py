@@ -656,3 +656,161 @@ class TestReasonCodesAreActionable:
         for c in pass_checks:
             # No reason_code required for pass; this is the contract.
             assert c.reason_code is None
+
+
+# ---------------------------------------------------------------------------
+# Bug B3: the evaluator runs its own network/storage probes when the caller
+# (in production, the operator's Run Meeting screen) submits None instead of
+# depending on a caller that never actually probed. Field evidence, native
+# beta candidate #17: both checks showed "not probed" forever because no
+# real caller ever ran one.
+# ---------------------------------------------------------------------------
+
+
+class TestNetworkStorageSelfProbing:
+    def _evaluator_with_probes(
+        self,
+        engine: Engine,
+        *,
+        network_probe=None,
+        storage_probe=None,
+    ) -> PreflightEvaluator:
+        @contextmanager
+        def factory() -> Iterator[Session]:
+            with Session(bind=engine) as session:
+                yield session
+
+        return PreflightEvaluator(
+            session_factory=factory,
+            source_probe=lambda source: (
+                True,
+                f"Source {source.live_source_id!r} delivered media.",
+            ),
+            network_probe=network_probe,
+            storage_probe=storage_probe,
+        )
+
+    def test_network_probe_configured_property(self, engine: Engine) -> None:
+        evaluator = self._evaluator_with_probes(engine, network_probe=lambda: (True, None))
+        assert evaluator.network_probe_configured is True
+        assert evaluator.storage_probe_configured is False
+
+    def test_storage_probe_configured_property(self, engine: Engine) -> None:
+        evaluator = self._evaluator_with_probes(engine, storage_probe=lambda: (1, None))
+        assert evaluator.storage_probe_configured is True
+        assert evaluator.network_probe_configured is False
+
+    def test_network_probe_fills_in_when_input_is_none(self, engine: Engine) -> None:
+        _seed_session_and_source_and_target(engine)
+        evaluator = self._evaluator_with_probes(
+            engine, network_probe=lambda: (True, "Reached 1.1.1.1:443 over the internet.")
+        )
+        inputs = _all_pass_inputs().model_copy(update={"network_reachable": None})
+        result = evaluator.evaluate(inputs)
+        check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_NETWORK]
+        assert check.status == PREFLIGHT_STATUS_PASS
+        assert check.message == "Reached 1.1.1.1:443 over the internet."
+        assert result.ready is True
+
+    def test_network_probe_negative_result_fails_with_probe_message(self, engine: Engine) -> None:
+        _seed_session_and_source_and_target(engine)
+        evaluator = self._evaluator_with_probes(
+            engine,
+            network_probe=lambda: (False, "Could not reach the internet (tried 1.1.1.1:443)."),
+        )
+        inputs = _all_pass_inputs().model_copy(update={"network_reachable": None})
+        result = evaluator.evaluate(inputs)
+        check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_NETWORK]
+        assert check.status == PREFLIGHT_STATUS_FAIL
+        assert check.reason_code == REASON_NETWORK_UNREACHABLE
+        assert check.message == "Could not reach the internet (tried 1.1.1.1:443)."
+
+    def test_network_probe_exception_falls_back_to_not_probed(self, engine: Engine) -> None:
+        _seed_session_and_source_and_target(engine)
+
+        def _boom() -> tuple[bool, str | None]:
+            raise RuntimeError("socket exploded")
+
+        evaluator = self._evaluator_with_probes(engine, network_probe=_boom)
+        inputs = _all_pass_inputs().model_copy(update={"network_reachable": None})
+        result = evaluator.evaluate(inputs)
+        check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_NETWORK]
+        assert check.status == PREFLIGHT_STATUS_FAIL
+        assert check.reason_code == REASON_NETWORK_NOT_PROBED
+
+    def test_explicit_network_input_wins_over_probe(self, engine: Engine) -> None:
+        _seed_session_and_source_and_target(engine)
+        calls: list[None] = []
+
+        def _tracking_probe() -> tuple[bool, str | None]:
+            calls.append(None)
+            return False, "should never be used"
+
+        evaluator = self._evaluator_with_probes(engine, network_probe=_tracking_probe)
+        # network_reachable=True is explicit (from _all_pass_inputs); the probe must not run.
+        result = evaluator.evaluate(_all_pass_inputs())
+        check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_NETWORK]
+        assert check.status == PREFLIGHT_STATUS_PASS
+        assert calls == []
+
+    def test_storage_probe_fills_in_when_input_is_none(self, engine: Engine) -> None:
+        _seed_session_and_source_and_target(engine)
+        evaluator = self._evaluator_with_probes(
+            engine, storage_probe=lambda: (200 * (1024**3), None)
+        )
+        inputs = _all_pass_inputs().model_copy(update={"storage_free_bytes": None})
+        result = evaluator.evaluate(inputs)
+        check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_STORAGE]
+        assert check.status == PREFLIGHT_STATUS_PASS
+        assert result.ready is True
+
+    def test_storage_probe_insufficient_space_fails(self, engine: Engine) -> None:
+        _seed_session_and_source_and_target(engine)
+        evaluator = self._evaluator_with_probes(engine, storage_probe=lambda: (1024, None))
+        inputs = _all_pass_inputs().model_copy(update={"storage_free_bytes": None})
+        result = evaluator.evaluate(inputs)
+        check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_STORAGE]
+        assert check.status == PREFLIGHT_STATUS_FAIL
+        assert check.reason_code == REASON_STORAGE_INSUFFICIENT
+
+    def test_storage_probe_none_result_falls_back_to_not_probed(self, engine: Engine) -> None:
+        _seed_session_and_source_and_target(engine)
+        evaluator = self._evaluator_with_probes(
+            engine, storage_probe=lambda: (None, "disk unreadable")
+        )
+        inputs = _all_pass_inputs().model_copy(update={"storage_free_bytes": None})
+        result = evaluator.evaluate(inputs)
+        check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_STORAGE]
+        assert check.status == PREFLIGHT_STATUS_FAIL
+        assert check.reason_code == REASON_STORAGE_NOT_PROBED
+        assert check.message == "disk unreadable"
+
+    def test_explicit_storage_input_wins_over_probe(self, engine: Engine) -> None:
+        _seed_session_and_source_and_target(engine)
+        calls: list[None] = []
+
+        def _tracking_probe() -> tuple[int | None, str | None]:
+            calls.append(None)
+            return None, "should never be used"
+
+        evaluator = self._evaluator_with_probes(engine, storage_probe=_tracking_probe)
+        result = evaluator.evaluate(_all_pass_inputs())
+        check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_STORAGE]
+        assert check.status == PREFLIGHT_STATUS_PASS
+        assert calls == []
+
+    def test_override_probes_at_evaluate_time(self, engine: Engine) -> None:
+        _seed_session_and_source_and_target(engine)
+        evaluator = self._evaluator_with_probes(engine)
+        inputs = _all_pass_inputs().model_copy(
+            update={"network_reachable": None, "storage_free_bytes": None}
+        )
+        result = evaluator.evaluate(
+            inputs,
+            network_probe_override=lambda: (True, "override reached"),
+            storage_probe_override=lambda: (200 * (1024**3), None),
+        )
+        checks = {c.name: c for c in result.checks}
+        assert checks[PREFLIGHT_CHECK_NETWORK].status == PREFLIGHT_STATUS_PASS
+        assert checks[PREFLIGHT_CHECK_STORAGE].status == PREFLIGHT_STATUS_PASS
+        assert result.ready is True

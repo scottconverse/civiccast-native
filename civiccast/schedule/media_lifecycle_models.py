@@ -745,6 +745,55 @@ class WatchFolderConfigResponse(BaseModel):
         return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+class WatchFolderScanNowResponse(BaseModel):
+    """Result of one operator-triggered immediate scan (finding 4, candidate #17).
+
+    Carries both the scan's own counters (what just happened) and the
+    config's fresh state (``config``) so the staff UI can update the row's
+    "Last poll"/"Last ingest" display from a single response instead of a
+    second round trip.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    config: WatchFolderConfigResponse
+    healthy: bool
+    files_seen: int
+    files_ingested: int
+    files_reprocessed: int
+    files_failed: int
+    error: str | None = None
+
+
+class FolderBrowseEntry(BaseModel):
+    """One subdirectory offered by the watch-folder browse-folders endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    path: str
+
+
+class FolderBrowseResponse(BaseModel):
+    """Directory listing for the non-technical "Browse..." watch-folder picker
+    (finding 3, candidate #17): the operator's browser cannot hand back a
+    filesystem path (the File System Access API and ``<input webkitdirectory>``
+    both withhold the absolute path for security), but this app's frontend and
+    backend always run on the SAME station machine, so the backend can safely
+    list local directories for the operator to navigate instead.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: ``None`` at the top level (drive roots on Windows, "/" on POSIX).
+    current_path: str | None
+    parent_path: str | None
+    separator: str
+    entries: list[FolderBrowseEntry]
+    readable: bool
+    error: str | None = None
+
+
 class AssetRetentionPolicyInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

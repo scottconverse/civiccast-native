@@ -2,7 +2,10 @@
 # Copyright (c) The CivicCast Authors
 """S13 E2/T2/Q1/W1 — the provisioning surfaces must install the adaptive summary default.
 
-The summary default is adaptive: ``gemma4:12b`` on >=16GB boxes, ``gemma4:e4b`` below.
+The summary default is adaptive: ``gemma4:12b`` on >=16GB boxes WITH a real GPU,
+``gemma4:e4b`` everywhere else -- including every CPU-only box regardless of RAM
+(field evidence 2026-08-29, candidate #17: RAM alone does not predict whether 12B
+can complete a CPU-only summary; see ``detect_summary_model_default``).
 Pre-fix, both provisioning surfaces (online ``download_release_models`` and the offline
 ``model_bundle`` / ``build_model_bundle_manifest``) shipped e4b-only, so the seeded 12B
 default was never present on the majority (>=16GB) hardware class and the first summary
@@ -29,15 +32,21 @@ from civiccast.installer.model_download import (
 from civiccast.installer.models import ModelBundleRequest
 
 
-def _adaptive_default_tag(ram: int) -> str:
-    """The runtime tag of the adaptive summary default for ``ram`` GB."""
-    return catalog_tier(detect_summary_model_default(ram)).model_id
+def _adaptive_default_tag(ram: int, *, has_gpu: bool = True) -> str:
+    """The runtime tag of the adaptive summary default for ``ram`` GB.
+
+    ``has_gpu`` defaults True here (unlike the production default) because
+    this module's whole point is proving the provisioning surfaces install
+    the 12B tag on the boxes that are actually eligible for it (>=16GB RAM
+    AND a real GPU); the CPU-only path has its own dedicated test below.
+    """
+    return catalog_tier(detect_summary_model_default(ram, has_gpu=has_gpu)).model_id
 
 
 @pytest.mark.parametrize("ram", [8, 16, 25])
 def test_online_pull_plan_includes_the_adaptive_default_tag(ram: int) -> None:
     # The suggested gate test: for ram in {8,16,25} the provisioning plan must include
-    # catalog_tier(detect_summary_model_default(ram)).model_id.
+    # catalog_tier(detect_summary_model_default(ram, has_gpu=True)).model_id.
     report = download_release_models(dry_run=True, system_ram_total_gb=ram)
     planned_sources = {item.source for item in report.items}
 
@@ -45,6 +54,15 @@ def test_online_pull_plan_includes_the_adaptive_default_tag(ram: int) -> None:
     # The conservative e4b fallback is always present too (so an override is local-ready).
     assert "gemma4:e4b" in planned_sources
     assert "translategemma:4b" in planned_sources
+
+
+def test_cpu_only_adaptive_default_is_always_e4b() -> None:
+    # Field evidence 2026-08-29: a CPU-only box never gets 12B as the default,
+    # regardless of RAM -- the provisioning surfaces still stage both tags
+    # (asserted elsewhere in this module) so an operator CAN select 12B
+    # manually, but the *default* the box would actually run is e4b.
+    for ram in (8, 16, 25, 64):
+        assert _adaptive_default_tag(ram, has_gpu=False) == "gemma4:e4b"
 
 
 def test_online_pull_plan_default_provisions_both_summary_tags() -> None:
@@ -118,8 +136,9 @@ def test_service_air_gap_manifest_ships_both_summary_tags() -> None:
 
 def test_first_run_models_step_names_a_provisioned_default() -> None:
     # W1: the installer "models" step must name a default that is actually provisioned.
-    # On a >=16GB box the named default is gemma4-12b-ollama, which the plan now installs.
-    default_key = detect_summary_model_default(25)
+    # On a >=16GB box WITH a real GPU the named default is gemma4-12b-ollama, which
+    # the plan now installs.
+    default_key = detect_summary_model_default(25, has_gpu=True)
     plan = service.build_first_run_plan(
         profile="public-meetings",
         recommended_tier="tier-1",

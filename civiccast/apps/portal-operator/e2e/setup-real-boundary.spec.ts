@@ -282,7 +282,7 @@ test('@fullstack @realboundary loopback-only setup prepares storage and creates 
       response.request().method() === 'POST',
     { timeout: 90_000 },
   )
-  await page.getByRole('button', { name: 'Run private rehearsal' }).click()
+  await page.getByRole('button', { name: 'Check broadcast readiness' }).click()
   const rehearsalResponse = await rehearsalResponsePromise
   expect(rehearsalResponse.status()).toBe(200)
   const rehearsalPayload = (await rehearsalResponse.json()) as {
@@ -307,7 +307,7 @@ test('@fullstack @realboundary loopback-only setup prepares storage and creates 
       expect.stringContaining('Live preflight passed'),
     ]),
   )
-  await expect(page.getByRole('heading', { name: 'Rehearsal result' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Broadcast readiness check result' })).toBeVisible()
   await expect(page.getByText(/private rehearsal passed required checks/i)).toBeVisible()
   await expect(page.getByText('Recording proof')).toBeVisible()
   await expect(page.getByText('Resident preview', { exact: true })).toBeVisible()

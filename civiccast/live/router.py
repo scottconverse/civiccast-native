@@ -804,11 +804,23 @@ def create_relay_config(
 def get_ingest_plan(
     channel_id: str,
     live_relay_config_store: Any = Depends(get_live_relay_config_store),
+    live_source_store: Any = Depends(get_live_source_store),
 ) -> LiveIngestPlan:
-    """Return local default plus optional relay/direct paths for a channel."""
-    store = _require_store(live_relay_config_store, surface="live ingest plan")
-    rows: list[LiveRelayConfigResponse] = store.list(channel_id=channel_id, enabled=True)
-    return build_ingest_plan(channel_id, rows)
+    """Return the operator's configured sources plus optional relay/direct paths.
+
+    Bug B5: this used to return only ``local_default`` (a hardcoded, never-
+    listening RTMP placeholder) plus relay rows -- the channel's actual
+    ``LiveSource`` rows (what Run Meeting and pre-flight already treat as
+    the station's real inputs) were never consulted, so live-takeover could
+    never select what an operator had actually configured.
+    """
+    relay_store = _require_store(live_relay_config_store, surface="live ingest plan")
+    relay_rows: list[LiveRelayConfigResponse] = relay_store.list(
+        channel_id=channel_id, enabled=True
+    )
+    source_store = _require_store(live_source_store, surface="live ingest plan")
+    source_rows = source_store.list(channel_id=channel_id)
+    return build_ingest_plan(channel_id, relay_rows, live_sources=source_rows)
 
 
 @staff_router.get(

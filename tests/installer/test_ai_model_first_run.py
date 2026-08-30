@@ -29,8 +29,8 @@ def _isolated_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
 
 
-def test_seed_uses_12b_on_a_16gb_box() -> None:
-    seed = seed_ai_model_default(system_ram_total_gb=16)
+def test_seed_uses_12b_on_a_16gb_box_with_a_real_gpu() -> None:
+    seed = seed_ai_model_default(system_ram_total_gb=16, has_gpu=True)
 
     assert seed.summary.adaptive_default_key == "gemma4-12b-ollama"
     assert seed.summary.operator_override_key is None
@@ -47,12 +47,25 @@ def test_seed_falls_back_to_e4b_below_16gb() -> None:
 
 def test_boundary_just_under_16gb_picks_e4b() -> None:
     # A float just under 16 (15.9 GB box) must coerce DOWN to 15 -> e4b, never 12B.
-    seed = seed_ai_model_default(system_ram_total_gb=15)
+    seed = seed_ai_model_default(system_ram_total_gb=15, has_gpu=True)
     assert seed.summary.adaptive_default_key == "gemma4-e4b-ollama"
 
 
+def test_seed_uses_e4b_on_a_cpu_only_32gb_box() -> None:
+    """Field evidence 2026-08-29 (candidate #17): a 32GB CPU-only reference station
+    must seed e4b, not 12B -- 12B took 366s to complete a summary there once and
+    then failed twice more under realistic memory pressure; e4b completed every
+    attempt (94-128s). ``has_gpu`` defaults False, so this is the default call shape
+    for any RAM figure absent a detected GPU."""
+    seed = seed_ai_model_default(system_ram_total_gb=32)
+
+    assert seed.summary.adaptive_default_key == "gemma4-e4b-ollama"
+    assert seed.summary.detected_ram_gb == 32
+    assert seed.summary.effective_key == "gemma4-e4b-ollama"
+
+
 def test_seed_is_persisted_to_station_state_json() -> None:
-    seed_ai_model_default(system_ram_total_gb=16)
+    seed_ai_model_default(system_ram_total_gb=16, has_gpu=True)
 
     raw = json.loads(station_state_path().read_text(encoding="utf-8"))
     assert raw["ai_models"]["summary"]["adaptive_default_key"] == "gemma4-12b-ollama"
@@ -78,7 +91,7 @@ def test_seed_preserves_existing_state_blocks() -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"setup_complete": True, "station": {"x": 1}}), encoding="utf-8")
 
-    seed_ai_model_default(system_ram_total_gb=16)
+    seed_ai_model_default(system_ram_total_gb=16, has_gpu=True)
 
     raw = json.loads(path.read_text(encoding="utf-8"))
     assert raw["setup_complete"] is True
@@ -87,7 +100,7 @@ def test_seed_preserves_existing_state_blocks() -> None:
 
 
 def test_override_takes_precedence_in_effective_key() -> None:
-    seed_ai_model_default(system_ram_total_gb=16)
+    seed_ai_model_default(system_ram_total_gb=16, has_gpu=True)
     updated = set_ai_model_override("summary", "gemma4-31b-cloud")
 
     assert updated.summary.operator_override_key == "gemma4-31b-cloud"
@@ -101,7 +114,7 @@ def test_override_takes_precedence_in_effective_key() -> None:
 
 
 def test_clearing_override_returns_to_adaptive_default() -> None:
-    seed_ai_model_default(system_ram_total_gb=16)
+    seed_ai_model_default(system_ram_total_gb=16, has_gpu=True)
     set_ai_model_override("summary", "gemma4-31b-cloud")
     cleared = set_ai_model_override("summary", None)
 
@@ -115,7 +128,7 @@ def test_override_before_seed_is_an_error() -> None:
 
 
 def test_override_rejects_unknown_feature() -> None:
-    seed_ai_model_default(system_ram_total_gb=16)
+    seed_ai_model_default(system_ram_total_gb=16, has_gpu=True)
     with pytest.raises(ValueError, match="feature"):
         set_ai_model_override("captions", "whisper-large-v3-faster")
 

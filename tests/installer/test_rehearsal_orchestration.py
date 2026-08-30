@@ -32,6 +32,8 @@ from civiccast.installer.router import (
     get_recording_target_store,
 )
 from civiccast.installer.service import (
+    SAMPLE_REHEARSAL_SOURCE_ID,
+    build_sample_rehearsal_source_probe,
     build_system_health_report,
     complete_first_admin_setup,
     create_sample_rehearsal_upload,
@@ -281,6 +283,106 @@ def test_bundled_sample_rehearsal_proves_and_packages_the_exact_uploaded_media(
     recording_path = local_recording_path(report.recording_uri)
     assert recording_path is not None
     assert recording_path.read_bytes() == sample_bytes
+
+
+def test_sample_rehearsal_source_probe_validates_the_local_file_not_the_network(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    session_factory: Any,
+    resident_preview_url: str,
+) -> None:
+    """Bug B1 (field evidence, native beta candidate #17).
+
+    The shipped sample source's endpoint is a placeholder RTMP URL
+    (``rtmp://127.0.0.1/live/civiccast-sample-rehearsal``) that no process
+    in CivicCast ever listens on. A probe that dialed it over the network
+    -- the real-source path -- could therefore never pass, making the
+    bundled "no-camera rehearsal" impossible from the real Run Meeting
+    pre-flight screen (only the installer's own private-rehearsal call
+    site had ever wired a working probe for it). This is the same
+    probe civiccast.app._resolve_preflight_evaluator now routes every
+    caller through for this one recognized source id: it must pass by
+    validating the local file, with zero network I/O.
+    """
+
+    _complete_station_setup(monkeypatch, tmp_path, resident_preview_url)
+    live_source_store = LiveSourceStore(session_factory)
+    postgres_store = PostgresAssetStore(session_factory)
+
+    sample_bytes = b"validated-bundled-sample-media"
+
+    def write_bundled_sample(path: Path) -> None:
+        path.write_bytes(sample_bytes)
+
+    with (
+        patch("civiccast.installer.service._write_sample_video", side_effect=write_bundled_sample),
+        patch("civiccast.installer.service.shutil.disk_usage", return_value=_READY_DISK_USAGE),
+        patch("civiccast.installer.service.run_ffprobe", return_value=_FFPROBE_SAMPLE),
+        patch("civiccast.installer.service.validate_ingest"),
+    ):
+        create_sample_rehearsal_upload(
+            postgres_store=postgres_store,
+            live_source_store=live_source_store,
+        )
+
+        sample_source = live_source_store.get(SAMPLE_REHEARSAL_SOURCE_ID)
+        assert sample_source is not None
+        # The endpoint is still the placeholder RTMP URL -- nothing dials it.
+        assert sample_source.endpoint_url.startswith("rtmp://127.0.0.1/")
+
+        probe = build_sample_rehearsal_source_probe()
+        ready, message = probe(sample_source)
+    assert ready is True
+    assert message is not None and "probe" in message.lower()
+
+
+def test_sample_rehearsal_source_probe_rejects_a_different_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    session_factory: Any,
+    resident_preview_url: str,
+) -> None:
+    """Only the one source id CivicCast itself creates gets the file-backed
+    check -- a real, operator-configured source must still go through the
+    genuine network probe."""
+
+    _complete_station_setup(monkeypatch, tmp_path, resident_preview_url)
+    live_source_store = LiveSourceStore(session_factory)
+    _create_live_source(live_source_store)
+    real_source = live_source_store.get("council-room-camera")
+    assert real_source is not None
+
+    probe = build_sample_rehearsal_source_probe()
+    ready, message = probe(real_source)
+    assert ready is False
+    assert message is not None and "bundled sample-rehearsal source" in message
+
+
+def test_sample_rehearsal_source_probe_fails_closed_without_upload_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CIVICCAST_UPLOAD_DIR", raising=False)
+    fake_source = SimpleNamespace(live_source_id=SAMPLE_REHEARSAL_SOURCE_ID)
+
+    probe = build_sample_rehearsal_source_probe()
+    ready, message = probe(fake_source)
+    assert ready is False
+    assert message is not None and "storage is not ready" in message.lower()
+
+
+def test_sample_rehearsal_source_probe_fails_closed_without_a_created_sample(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(upload_dir))
+    fake_source = SimpleNamespace(live_source_id=SAMPLE_REHEARSAL_SOURCE_ID)
+
+    probe = build_sample_rehearsal_source_probe()
+    ready, message = probe(fake_source)
+    assert ready is False
+    assert message is not None and "No validated sample rehearsal video" in message
 
 
 def test_private_rehearsal_reports_a_corrupt_selected_sample_without_http_500(

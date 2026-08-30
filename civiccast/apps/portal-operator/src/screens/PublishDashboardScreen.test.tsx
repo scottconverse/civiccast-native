@@ -164,6 +164,24 @@ describe('PublishDashboardScreen safety feedback', () => {
     await findByText('Sample asset')
     expect(queryByText(/nothing was actually archived/i)).toBeNull()
   })
+
+  it('tells the operator, before they click, that approving the portal surface starts caption transcription (candidate #17 finding 5)', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(dashboard('pending'))
+    const { findByText } = renderScreen()
+
+    expect(
+      await findByText(/also starts offline caption transcription for this recording automatically/i),
+    ).toBeTruthy()
+    expect(await findByText(/Offline caption jobs panel/i)).toBeTruthy()
+  })
+
+  it('does not show the caption-trigger note once nothing is left to approve', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(dashboard('succeeded'))
+    const { findByText, queryByText } = renderScreen()
+
+    await findByText('Sample asset')
+    expect(queryByText(/starts offline caption transcription/i)).toBeNull()
+  })
 })
 
 describe('PublishDashboardScreen state vocabulary', () => {

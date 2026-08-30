@@ -31,6 +31,7 @@ from civiccast.schedule.ingest import FfprobeResult
 from civiccast.schedule.media_lifecycle_router import (
     get_media_lifecycle_store,
     get_missing_media_reader,
+    get_watch_folder_worker,
     staff_router,
 )
 from civiccast.schedule.media_lifecycle_store import MediaLifecycleStore
@@ -40,6 +41,7 @@ from civiccast.schedule.media_lifecycle_worker import (
     StubTranscodeExecutor,
 )
 from civiccast.schedule.models import Asset
+from civiccast.schedule.watch_folder_worker import WatchFolderWorker, WatchFolderWorkerSettings
 
 _VALID_FFPROBE_RESULT = FfprobeResult(
     duration_seconds=60,
@@ -92,7 +94,13 @@ def _seed_asset(factory, **overrides: object) -> None:  # type: ignore[no-untype
         session.commit()
 
 
-def _build_app(factory, *, scopes=("publish", "records"), wire: bool = True):  # type: ignore[no-untyped-def]
+def _build_app(  # type: ignore[no-untyped-def]
+    factory,
+    *,
+    scopes=("publish", "records"),
+    wire: bool = True,
+    watch_folder_upload_dir: str | None = None,
+):
     app = FastAPI()
 
     @app.middleware("http")
@@ -115,6 +123,17 @@ def _build_app(factory, *, scopes=("publish", "records"), wire: bool = True):  #
         )
         app.dependency_overrides[get_media_lifecycle_store] = lambda: store
         app.dependency_overrides[get_missing_media_reader] = lambda: worker
+        # get_watch_folder_worker stays unwired (None -> 503) unless a test
+        # explicitly asks for it, mirroring how every other DI seam in this
+        # file defaults off so unrelated tests never need to care about it.
+        if watch_folder_upload_dir is not None:
+            watch_folder_worker = WatchFolderWorker(
+                factory,
+                settings=WatchFolderWorkerSettings(
+                    mode="inline", upload_dir=watch_folder_upload_dir
+                ),
+            )
+            app.dependency_overrides[get_watch_folder_worker] = lambda: watch_folder_worker
     return app
 
 
@@ -207,13 +226,17 @@ class TestLegalHold:
 
 
 class TestWatchFolderConfigApi:
-    def test_crud_round_trip(self, factory) -> None:  # type: ignore[no-untyped-def]
+    def test_crud_round_trip(self, factory, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        dir1 = tmp_path / "incoming"
+        dir1.mkdir()
+        dir2 = tmp_path / "incoming2"
+        dir2.mkdir()
         client = _client(factory, scopes=("publish",))
         created = client.post(
             "/api/staff/media-lifecycle/watch-folder-configs",
-            json={"monitor_path": "/mnt/nas/incoming", "settle_window_seconds": 12},
+            json={"monitor_path": str(dir1), "settle_window_seconds": 12},
         )
-        assert created.status_code == 201
+        assert created.status_code == 201, created.text
         config_id = created.json()["config_id"]
 
         listed = client.get("/api/staff/media-lifecycle/watch-folder-configs")
@@ -222,9 +245,9 @@ class TestWatchFolderConfigApi:
 
         updated = client.put(
             f"/api/staff/media-lifecycle/watch-folder-configs/{config_id}",
-            json={"monitor_path": "/mnt/nas/incoming2", "settle_window_seconds": 30},
+            json={"monitor_path": str(dir2), "settle_window_seconds": 30},
         )
-        assert updated.status_code == 200
+        assert updated.status_code == 200, updated.text
         assert updated.json()["settle_window_seconds"] == 30
 
         deleted = client.delete(f"/api/staff/media-lifecycle/watch-folder-configs/{config_id}")
@@ -233,11 +256,11 @@ class TestWatchFolderConfigApi:
         listed_after = client.get("/api/staff/media-lifecycle/watch-folder-configs")
         assert listed_after.json() == []
 
-    def test_update_unknown_config_404s(self, factory) -> None:  # type: ignore[no-untyped-def]
+    def test_update_unknown_config_404s(self, factory, tmp_path) -> None:  # type: ignore[no-untyped-def]
         client = _client(factory, scopes=("publish",))
         resp = client.put(
             "/api/staff/media-lifecycle/watch-folder-configs/nope",
-            json={"monitor_path": "/x"},
+            json={"monitor_path": str(tmp_path)},
         )
         assert resp.status_code == 404
 
@@ -248,6 +271,138 @@ class TestWatchFolderConfigApi:
             json={"monitor_path": "/x", "retention_policy_default": "not-a-real-policy"},
         )
         assert resp.status_code == 422
+
+    def test_create_rejects_a_path_that_does_not_exist(self, factory) -> None:  # type: ignore[no-untyped-def]
+        # Finding 3 (candidate #17): a non-technical operator gets a plain-
+        # language 422 here instead of a config silently accepted and only
+        # discovered broken on the daemon's next poll.
+        client = _client(factory, scopes=("publish",))
+        resp = client.post(
+            "/api/staff/media-lifecycle/watch-folder-configs",
+            json={"monitor_path": "/definitely/does/not/exist/anywhere"},
+        )
+        assert resp.status_code == 422
+        assert "does not exist" in resp.json()["detail"] or "cannot read" in resp.json()["detail"]
+
+    def test_create_rejects_a_path_that_is_a_file_not_a_directory(  # type: ignore[no-untyped-def]
+        self, factory, tmp_path
+    ) -> None:
+        a_file = tmp_path / "not-a-folder.txt"
+        a_file.write_text("x")
+        client = _client(factory, scopes=("publish",))
+        resp = client.post(
+            "/api/staff/media-lifecycle/watch-folder-configs",
+            json={"monitor_path": str(a_file)},
+        )
+        assert resp.status_code == 422
+
+    def test_update_rejects_an_unreadable_path_too(self, factory, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        valid_dir = tmp_path / "incoming"
+        valid_dir.mkdir()
+        client = _client(factory, scopes=("publish",))
+        created = client.post(
+            "/api/staff/media-lifecycle/watch-folder-configs",
+            json={"monitor_path": str(valid_dir)},
+        )
+        config_id = created.json()["config_id"]
+        resp = client.put(
+            f"/api/staff/media-lifecycle/watch-folder-configs/{config_id}",
+            json={"monitor_path": "/definitely/does/not/exist/anywhere"},
+        )
+        assert resp.status_code == 422
+
+
+class TestWatchFolderScanNowApi:
+    def test_404s_for_an_unknown_config(self, factory, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        client = _client(factory, scopes=("publish",), watch_folder_upload_dir=str(tmp_path))
+        resp = client.post("/api/staff/media-lifecycle/watch-folder-configs/nope/scan-now")
+        assert resp.status_code == 404
+
+    def test_503s_when_the_daemon_is_not_wired(self, factory, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # watch_folder_upload_dir omitted -> get_watch_folder_worker resolves
+        # to None, same "not wired yet" shape every other DI seam in this
+        # router uses.
+        watch_dir = tmp_path / "incoming"
+        watch_dir.mkdir()
+        client = _client(factory, scopes=("publish",))
+        created = client.post(
+            "/api/staff/media-lifecycle/watch-folder-configs",
+            json={"monitor_path": str(watch_dir)},
+        )
+        config_id = created.json()["config_id"]
+        resp = client.post(f"/api/staff/media-lifecycle/watch-folder-configs/{config_id}/scan-now")
+        assert resp.status_code == 503
+
+    def test_scans_immediately_and_reports_what_it_found(self, factory, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        watch_dir = tmp_path / "incoming"
+        watch_dir.mkdir()
+        client = _client(
+            factory, scopes=("publish",), watch_folder_upload_dir=str(tmp_path / "uploads")
+        )
+        created = client.post(
+            "/api/staff/media-lifecycle/watch-folder-configs",
+            # A huge poll_interval_seconds proves "Scan now" bypasses the
+            # due-check rather than happening to land on a due poll.
+            json={"monitor_path": str(watch_dir), "poll_interval_seconds": 3600},
+        )
+        config_id = created.json()["config_id"]
+        assert created.json()["last_poll_at"] is None
+
+        resp = client.post(f"/api/staff/media-lifecycle/watch-folder-configs/{config_id}/scan-now")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["healthy"] is True
+        assert body["files_seen"] == 0
+        # An empty folder still counts as "we checked": last_poll_at moves
+        # off None immediately, unlike the pre-fix "Last poll: never" state.
+        assert body["config"]["last_poll_at"] is not None
+        assert body["config"]["health_status"] == "ok"
+
+
+class TestBrowseFoldersApi:
+    """Finding 3 (candidate #17): the non-technical "Browse..." picker's
+    backend. No file-content access -- directories only."""
+
+    def test_no_path_lists_roots(self, factory) -> None:  # type: ignore[no-untyped-def]
+        client = _client(factory, scopes=("publish",))
+        resp = client.get("/api/staff/media-lifecycle/browse-folders")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["current_path"] is None
+        assert body["readable"] is True
+        assert len(body["entries"]) >= 1
+
+    def test_lists_subdirectories_of_a_real_path(self, factory, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        (tmp_path / "b-folder").mkdir()
+        (tmp_path / "a-folder").mkdir()
+        (tmp_path / "a-file.txt").write_text("not a folder")
+        client = _client(factory, scopes=("publish",))
+        resp = client.get(
+            "/api/staff/media-lifecycle/browse-folders", params={"path": str(tmp_path)}
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["readable"] is True
+        names = [e["name"] for e in body["entries"]]
+        # Files are never listed, and entries sort case-insensitively.
+        assert names == ["a-folder", "b-folder"]
+        assert body["parent_path"] is not None
+
+    def test_unreadable_path_reports_readable_false_not_a_500(self, factory) -> None:  # type: ignore[no-untyped-def]
+        client = _client(factory, scopes=("publish",))
+        resp = client.get(
+            "/api/staff/media-lifecycle/browse-folders",
+            params={"path": "/definitely/does/not/exist/anywhere"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["readable"] is False
+        assert body["error"]
+
+    def test_requires_a_write_role(self, factory) -> None:  # type: ignore[no-untyped-def]
+        client = _client(factory, scopes=("support",))
+        resp = client.get("/api/staff/media-lifecycle/browse-folders")
+        assert resp.status_code == 403
 
 
 class TestRetentionPolicyApi:

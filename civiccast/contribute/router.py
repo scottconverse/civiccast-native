@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import os
 import re
 import shutil
@@ -41,6 +42,7 @@ from civiccast.contribute.store import (
     ContributorUploadAlreadyUsedError,
     default_contributor_store_path,
     default_contributor_upload_dir,
+    resolve_contributor_upload_path,
 )
 from civiccast.schedule.ingest import (
     FfmpegNotFoundError,
@@ -62,6 +64,8 @@ from civiccast.schedule.paths import resolve_upload_root
 # already overrides these for both durable (Postgres) and ephemeral/dev mode.
 from civiccast.schedule.router import get_postgres_store, get_schedule_store
 from civiccast.vod.store import AssetAlreadyExistsError
+
+_LOG = logging.getLogger(__name__)
 
 public_router = APIRouter(prefix="/api/public/contribute", tags=["public", "contribute"])
 staff_router = APIRouter(prefix="/api/staff/contribute", tags=["staff", "contribute"])
@@ -404,9 +408,16 @@ def get_contributor_store(request: Request) -> ContributorSubmissionStore:
     try:
         store = ContributorSubmissionStore(default_contributor_store_path())
     except ContributorStoreError as exc:
+        # ContributorStoreError wraps a JSON store read/write OSError, whose
+        # text commonly names the store's absolute path (same class of leak
+        # as the upload_ref finding this router was fixed for). This
+        # dependency backs both the public and staff routers, so the
+        # generic detail matters for the public ones; log the real cause
+        # server-side either way.
+        _LOG.error("contributor submission store is not available: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail="Contributor submission storage is not ready. Please contact the station.",
         ) from exc
     request.app.state.contributor_submission_store = store
     return store
@@ -447,9 +458,14 @@ def upload_contributor_media(
     except OSError as exc:
         # A misconfigured / unwritable upload directory must return the same
         # actionable 503 the streaming path already gives, not a bare 500.
+        # The raw OSError text is logged only -- it names the server's
+        # absolute storage path (same class of leak as the upload_ref
+        # finding this router was fixed for) and must never reach an
+        # anonymous public caller in the response body.
+        _LOG.error("contributor upload directory is not writable: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Contributor upload storage is not ready: {exc}",
+            detail="Contributor upload storage is not ready. Please contact the station.",
         ) from exc
     # QA-2 part 3: a per-IP cumulative budget so one un-rotated address cannot
     # alone consume the whole directory budget and lock out every contributor.
@@ -538,9 +554,13 @@ def upload_contributor_media(
         with contextlib.suppress(OSError):
             byte_budget.record_committed(str(destination.resolve()), ip_key, size_bytes)
     except OSError as exc:
+        # Same rationale as the mkdir failure above: log the real (possibly
+        # path-bearing) error server-side, return a safe generic detail.
+        _LOG.error("could not store contributor media: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Could not store contributor media: {exc}",
+            detail="Could not store contributor media due to a server storage error. "
+            "Nothing you sent was kept; please try again.",
         ) from exc
     finally:
         # Release the reservations BEFORE closing the source handle. An OSError
@@ -560,8 +580,17 @@ def upload_contributor_media(
         # read, and its failure must not undo the releases above.
         with contextlib.suppress(OSError):
             file.file.close()
+    # Field evidence / GauntletGate finding: this used to be `str(destination)`
+    # -- the absolute server filesystem path -- returned to an anonymous
+    # public caller (reveals the service account's profile layout, e.g.
+    # C:\Windows\System32\config\systemprofile\...). `destination.name` is
+    # the opaque, unguessable filename `_unique_upload_path` generated (a
+    # uuid4 token, not the contributor's own filename), with no directory
+    # component. `store.resolve_contributor_upload_path` is the one place
+    # that ever turns it back into a real path, joined onto the contributor
+    # upload directory the server already knows -- see its docstring.
     return SubmissionMediaReference(
-        upload_ref=str(destination),
+        upload_ref=destination.name,
         filename=filename,
         content_type=file.content_type or "application/octet-stream",
         size_bytes=size_bytes,
@@ -588,9 +617,13 @@ def create_contributor_submission(
     try:
         return store.create_submission(payload)
     except ContributorStoreError as exc:
+        # Same rationale as get_contributor_store above: never echo the raw
+        # (possibly path-bearing) persistence error to the anonymous caller.
+        _LOG.error("could not persist contributor submission: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail="Could not save your submission due to a server storage error. "
+            "Please try again.",
         ) from exc
     except ContributorUploadAlreadyUsedError as exc:
         # PE-1: the body is well-formed; the referenced upload is already spent,
@@ -722,7 +755,13 @@ def _ingest_accepted_media(
 
     Returns the real gate result to persist and the new asset's id.
     """
-    source_path = Path(submission.media.upload_ref)
+    # media.upload_ref is the opaque token issued at upload time (or, for a
+    # submission recorded before this fix, a legacy absolute path) -- always
+    # resolve it through the shared helper rather than treating it as a
+    # path on its own. This submission was already validated by
+    # store._verified_media_reference at creation time, so no additional
+    # containment check is needed here.
+    source_path = resolve_contributor_upload_path(submission.media.upload_ref)
     if not source_path.is_file():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1086,11 +1125,26 @@ def _safe_filename(filename: str) -> str:
 
 
 def _unique_upload_path(upload_dir: Path, filename: str) -> Path:
-    stem = Path(filename).stem or "submission-media"
+    """Pick a fresh on-disk destination for an uploaded file.
+
+    Field evidence / GauntletGate finding: the returned path's *filename*
+    doubles as the public ``upload_ref`` handed back to the caller (see
+    ``upload_contributor_media`` below), so it must be unguessable, not
+    merely collision-free. The old behaviour named the file after the
+    contributor's own sanitized filename plus a numeric collision counter
+    ("council-speech.mp4", "council-speech-2.mp4") -- predictable for
+    anything with an obvious name, which matters here because
+    ``_verified_media_reference`` treats "a file that exists inside the
+    contributor upload directory" as sufficient proof of a real upload:
+    ``sha256`` is only checked when the client bothers to send one. A
+    second anonymous caller who guessed the filename could attach a
+    stranger's pending upload to their own submission with no proof of
+    anything. A random token closes that off. The contributor's original
+    filename is preserved separately in ``SubmissionMediaReference.filename``
+    for display; only the extension is kept in the stored name.
+    """
     suffix = Path(filename).suffix
-    candidate = upload_dir / f"{stem}{suffix}"
-    counter = 2
-    while candidate.exists():
-        candidate = upload_dir / f"{stem}-{counter}{suffix}"
-        counter += 1
+    candidate = upload_dir / f"{uuid.uuid4().hex}{suffix}"
+    while candidate.exists():  # pragma: no cover - a uuid4 collision is not reachable in tests
+        candidate = upload_dir / f"{uuid.uuid4().hex}{suffix}"
     return candidate

@@ -97,7 +97,19 @@ class SubmissionMediaReference(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    upload_ref: Annotated[str, Field(min_length=1, max_length=500)]
+    upload_ref: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=500,
+            description=(
+                "Opaque handle for the uploaded file, issued by "
+                "POST /api/public/contribute/uploads. NOT a filesystem path -- "
+                "resolve it server-side via "
+                "civiccast.contribute.store.resolve_contributor_upload_path."
+            ),
+        ),
+    ]
     filename: Annotated[str, Field(min_length=1, max_length=260)]
     content_type: Annotated[str, Field(min_length=1, max_length=120)]
     size_bytes: Annotated[int, Field(gt=0)]

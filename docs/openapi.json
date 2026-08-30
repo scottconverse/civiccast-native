@@ -636,14 +636,7 @@
             }
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "monitor_path does not exist or is not readable"
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -711,14 +704,7 @@
             "description": "Watch folder config not found"
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "monitor_path does not exist or is not readable"
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -765,6 +751,145 @@
           },
           "404": {
             "description": "Watch folder config not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/watch-folder-configs/{config_id}/scan-now": {
+      "post": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Scan one watch folder immediately, bypassing its poll interval",
+        "description": "Finding 4 (candidate #17): \"Last poll: never\" with no way to force a\ncheck reads as broken even when the daemon is working -- this runs the\nSAME per-folder scan (`WatchFolderWorker._scan_one_folder`) the daemon's\nown poll loop uses, immediately, and returns what it found so the\noperator gets real feedback instead of waiting out the poll interval.",
+        "operationId": "scan_watch_folder_now_api_staff_media_lifecycle_watch_folder_configs__config_id__scan_now_post",
+        "parameters": [
+          {
+            "name": "config_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Config Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchFolderScanNowResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Watch folder config not found"
+          },
+          "503": {
+            "description": "Watch-folder daemon not wired, or CIVICCAST_UPLOAD_DIR unset"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/browse-folders": {
+      "get": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "List subdirectories of a path, for the non-technical watch-folder picker",
+        "description": "Finding 3 (candidate #17): a non-technical operator cannot be expected\nto type an exact filesystem path. A browser cannot hand back an absolute\npath itself (the File System Access API and ``<input webkitdirectory>``\nboth withhold it for security), but this app's frontend and backend\nalways run on the SAME station machine -- so the backend lists local\ndirectories for a picker UI to navigate instead of asking the operator\nto type one.\n\nNo ``path`` (or an empty one) lists drive roots on Windows / ``/`` on\nPOSIX. Files are never listed, only directories -- this endpoint picks a\nfolder, it does not browse file content.",
+        "operationId": "browse_folders_api_staff_media_lifecycle_browse_folders_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderBrowseResponse"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -5283,7 +5408,7 @@
           "live"
         ],
         "summary": "Build the current live ingest plan for a channel",
-        "description": "Return local default plus optional relay/direct paths for a channel.",
+        "description": "Return the operator's configured sources plus optional relay/direct paths.\n\nBug B5: this used to return only ``local_default`` (a hardcoded, never-\nlistening RTMP placeholder) plus relay rows -- the channel's actual\n``LiveSource`` rows (what Run Meeting and pre-flight already treat as\nthe station's real inputs) were never consulted, so live-takeover could\nnever select what an operator had actually configured.",
         "operationId": "get_ingest_plan_api_staff_live_ingest_plan_get",
         "parameters": [
           {
@@ -18446,6 +18571,306 @@
         ]
       }
     },
+    "/api/staff/summaries/jobs": {
+      "post": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "Queue async summary generation from committed transcript cues",
+        "operationId": "create_summary_job_api_staff_summaries_jobs_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SummaryGenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryGenerationJobRecord"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "List summary generation jobs for operator visibility",
+        "operationId": "list_summary_jobs_api_staff_summaries_jobs_get",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Meeting Id"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "running",
+                    "complete",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SummaryGenerationJobRecord"
+                  },
+                  "title": "Response List Summary Jobs Api Staff Summaries Jobs Get"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/summaries/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "Get one summary generation job's status/progress",
+        "operationId": "get_summary_job_api_staff_summaries_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryGenerationJobRecord"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Summary generation job not found"
+          },
+          "503": {
+            "description": "Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/summaries/jobs/{job_id}/retry": {
+      "post": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "Manually retry a failed summary generation job",
+        "description": "Reset a failed job to pending with a fresh attempt budget.\n\nMirrors ``captions.router.retry_offline_caption_job``: pre-checks\n``active_for_meeting`` so a retry never creates a second active job for a\nmeeting that picked up a new job in the meantime (a second operator's retry,\nor a fresh generate), and catches the same conflict error the durable store's\n``save`` raises if that check loses a TOCTOU race, so a race never surfaces as\na raw 500.",
+        "operationId": "retry_summary_job_api_staff_summaries_jobs__job_id__retry_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryGenerationJobRecord"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Summary generation job not found"
+          },
+          "409": {
+            "description": "Only a failed job can be manually retried"
+          },
+          "503": {
+            "description": "Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/ai-models": {
       "get": {
         "tags": [
@@ -30610,7 +31035,8 @@
             "enum": [
               "ram-12b",
               "ram-e4b",
-              "forced-cpu"
+              "forced-cpu",
+              "cpu-only"
             ],
             "title": "Basis"
           },
@@ -43379,6 +43805,89 @@
         "title": "FirstRunPlan",
         "description": "Deterministic first-run plan for the selected deployment profile."
       },
+      "FolderBrowseEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "FolderBrowseEntry",
+        "description": "One subdirectory offered by the watch-folder browse-folders endpoint."
+      },
+      "FolderBrowseResponse": {
+        "properties": {
+          "current_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Path"
+          },
+          "parent_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Path"
+          },
+          "separator": {
+            "type": "string",
+            "title": "Separator"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/FolderBrowseEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          },
+          "readable": {
+            "type": "boolean",
+            "title": "Readable"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "current_path",
+          "parent_path",
+          "separator",
+          "entries",
+          "readable"
+        ],
+        "title": "FolderBrowseResponse",
+        "description": "Directory listing for the non-technical \"Browse...\" watch-folder picker\n(finding 3, candidate #17): the operator's browser cannot hand back a\nfilesystem path (the File System Access API and ``<input webkitdirectory>``\nboth withhold the absolute path for security), but this app's frontend and\nbackend always run on the SAME station machine, so the backend can safely\nlist local directories for the operator to navigate instead."
+      },
       "FollowerModerationRequest": {
         "properties": {
           "actor": {
@@ -48671,7 +49180,7 @@
           "live_source_id"
         ],
         "title": "PreflightInputs",
-        "description": "Caller-supplied probe results and operator-confirm flag.\n\nTreating probe results as inputs keeps the evaluator pure. A\nnetwork/storage/AI probe is a side-effecting concern that lives in\nthe future staff API layer; the evaluator only consumes the\nstructured probe outcome.\n\n``network_reachable`` / ``storage_free_bytes`` / ``ai_runtime_ready``\ndefault to ``None`` meaning \"not probed by the caller.\" For the\nrequired network + storage checks, ``None`` is treated as ``fail``\nwith a ``not_probed`` reason code; for the optional AI runtime\ncheck, ``None`` is treated as ``not_configured``."
+        "description": "Caller-supplied probe results and operator-confirm flag.\n\nTreating probe results as inputs keeps the evaluator pure. A\nnetwork/storage/AI probe is a side-effecting concern that lives in\nthe staff API layer -- the evaluator only consumes the structured\nprobe outcome, whether that outcome was supplied by the caller\n(e.g. an explicit rehearsal fixture) or filled in by the\nevaluator's own :data:`NetworkProbe` / :data:`StorageProbe`\n(bug B3: every real caller submitted ``None`` for both, so the\nevaluator now runs its own probe by default instead of depending\non a caller that never probed).\n\n``network_reachable`` / ``storage_free_bytes`` / ``ai_runtime_ready``\ndefault to ``None`` meaning \"not yet known.\" For the required\nnetwork + storage checks, ``None`` that a configured probe also\ncould not resolve is treated as ``fail`` with a ``not_probed``\nreason code; for the optional AI runtime check, ``None`` is\ntreated as ``not_configured``."
       },
       "PrepareCommitRequest": {
         "properties": {
@@ -57966,7 +58475,8 @@
             "type": "string",
             "maxLength": 500,
             "minLength": 1,
-            "title": "Upload Ref"
+            "title": "Upload Ref",
+            "description": "Opaque handle for the uploaded file, issued by POST /api/public/contribute/uploads. NOT a filesystem path -- resolve it server-side via civiccast.contribute.store.resolve_contributor_upload_path."
           },
           "filename": {
             "type": "string",
@@ -58444,6 +58954,93 @@
           "meeting_id"
         ],
         "title": "SummaryGenerateRequest"
+      },
+      "SummaryGenerationJobRecord": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Job Id"
+          },
+          "meeting_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Meeting Id"
+          },
+          "cues": {
+            "items": {
+              "$ref": "#/components/schemas/CaptionCue"
+            },
+            "type": "array",
+            "title": "Cues"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "complete",
+              "failed"
+            ],
+            "title": "State"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts",
+            "default": 0
+          },
+          "next_attempt_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Attempt At"
+          },
+          "summary_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary Id"
+          },
+          "last_error": {
+            "type": "string",
+            "title": "Last Error",
+            "default": ""
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "meeting_id",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SummaryGenerationJobRecord",
+        "description": "One meeting's summary generation job."
       },
       "SummaryReviewQueueResponse": {
         "properties": {
@@ -61182,6 +61779,56 @@
           "updated_at"
         ],
         "title": "WatchFolderConfigResponse"
+      },
+      "WatchFolderScanNowResponse": {
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/WatchFolderConfigResponse"
+          },
+          "healthy": {
+            "type": "boolean",
+            "title": "Healthy"
+          },
+          "files_seen": {
+            "type": "integer",
+            "title": "Files Seen"
+          },
+          "files_ingested": {
+            "type": "integer",
+            "title": "Files Ingested"
+          },
+          "files_reprocessed": {
+            "type": "integer",
+            "title": "Files Reprocessed"
+          },
+          "files_failed": {
+            "type": "integer",
+            "title": "Files Failed"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "config",
+          "healthy",
+          "files_seen",
+          "files_ingested",
+          "files_reprocessed",
+          "files_failed"
+        ],
+        "title": "WatchFolderScanNowResponse",
+        "description": "Result of one operator-triggered immediate scan (finding 4, candidate #17).\n\nCarries both the scan's own counters (what just happened) and the\nconfig's fresh state (``config``) so the staff UI can update the row's\n\"Last poll\"/\"Last ingest\" display from a single response instead of a\nsecond round trip."
       },
       "YearOverYearPoint": {
         "properties": {

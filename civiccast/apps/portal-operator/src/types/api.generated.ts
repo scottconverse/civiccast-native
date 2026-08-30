@@ -142,7 +142,7 @@ export interface AiDefaultSelection {
   summary_model: string
   translate_model: string
   caption_model: string
-  basis: 'ram-12b' | 'ram-e4b' | 'forced-cpu'
+  basis: 'ram-12b' | 'ram-e4b' | 'forced-cpu' | 'cpu-only'
   detected_ram_gb: number
   rationale: string
 }
@@ -2096,6 +2096,20 @@ export interface FirstRunPlan {
   time_to_first_broadcast_minutes: number
   cloud_fallback_default?: string
   steps: Array<InstallerStep>
+}
+
+export interface FolderBrowseEntry {
+  name: string
+  path: string
+}
+
+export interface FolderBrowseResponse {
+  current_path: string | null
+  parent_path: string | null
+  separator: string
+  entries: Array<FolderBrowseEntry>
+  readable: boolean
+  error?: string | null
 }
 
 export interface FollowerModerationRequest {
@@ -4429,6 +4443,19 @@ export interface SummaryGenerateRequest {
   cues?: Array<CaptionCue>
 }
 
+export interface SummaryGenerationJobRecord {
+  job_id: string
+  meeting_id: string
+  cues?: Array<CaptionCue>
+  state: 'pending' | 'running' | 'complete' | 'failed'
+  attempts?: number
+  next_attempt_at?: string | null
+  summary_id?: string | null
+  last_error?: string
+  created_at: string
+  updated_at: string
+}
+
 export interface SummaryReviewQueueResponse {
   items: Array<SummaryDraft>
   next_cursor?: string | null
@@ -4840,6 +4867,16 @@ export interface WatchFolderConfigResponse {
   last_ingest_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface WatchFolderScanNowResponse {
+  config: WatchFolderConfigResponse
+  healthy: boolean
+  files_seen: number
+  files_ingested: number
+  files_reprocessed: number
+  files_failed: number
+  error?: string | null
 }
 
 export interface YearOverYearPoint {
