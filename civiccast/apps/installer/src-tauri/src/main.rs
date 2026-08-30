@@ -1094,6 +1094,226 @@ try {{
         std::fs::remove_dir_all(&staging).expect("clean caption self-test root");
     }
 
+    // ------------------------------------------------------------------
+    // Field evidence regression: acquiring the optional captions_large
+    // component after activation must ADD a valid addendum receipt without
+    // touching anything the elevated installer already wrote, and a station
+    // that later resolves large-v3 must find a receipt that validates.
+    // ------------------------------------------------------------------
+
+    fn captions_large_addendum_temp_roots(label: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "civiccast-captions-large-addendum-{label}-{}",
+            std::process::id()
+        ));
+        let install_root = base.join("install");
+        let acquisition_root = base.join("acquisition");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&install_root).expect("create install root fixture");
+        std::fs::create_dir_all(&acquisition_root).expect("create acquisition root fixture");
+        (install_root, acquisition_root)
+    }
+
+    fn write_fixture_station_set(install_root: &Path, version: &str, index_sha256: &str) {
+        let value = serde_json::json!({
+            "schema_version": 2,
+            "product": "civiccast-native",
+            "product_version": version,
+            "compatible_core": version,
+            "distribution_index_sha256": index_sha256,
+            "signing_key_id": "test-key",
+            "packs": [],
+            "runtime": {},
+        });
+        std::fs::write(
+            install_root.join("station-set.json"),
+            serde_json::to_vec_pretty(&value).expect("encode fixture station-set"),
+        )
+        .expect("write fixture station-set");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn write_captions_large_addendum_receipt_matches_the_pinned_large_v3_identity_and_this_stations_own_version(
+    ) {
+        let (install_root, acquisition_root) =
+            captions_large_addendum_temp_roots("writer-matches-identity");
+        write_fixture_station_set(&install_root, "1.0.0-rcTEST", "deadbeef".repeat(8).as_str());
+
+        write_captions_large_addendum_receipt(&install_root, &acquisition_root)
+            .expect("write addendum receipt");
+
+        let written: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(captions_large_addendum_receipt_path(&acquisition_root))
+                .expect("read addendum receipt"),
+        )
+        .expect("addendum receipt is valid JSON");
+
+        // Every field here is checked byte-for-byte against
+        // `civiccast.native.station_runtime._expected_caption_receipt`'s
+        // large-v3 branch and `_validate_activation_receipt`'s identity
+        // checks -- this is the exact contract the runtime enforces.
+        assert_eq!(written["schema_version"], serde_json::json!(1));
+        assert_eq!(written["product"], serde_json::json!("civiccast-native"));
+        assert_eq!(written["product_version"], serde_json::json!("1.0.0-rcTEST"));
+        assert_eq!(
+            written["distribution_index_sha256"],
+            serde_json::json!("deadbeef".repeat(8))
+        );
+        let caption = &written["caption_inference"];
+        assert_eq!(caption["runtime"], serde_json::json!("faster-whisper 1.2.1"));
+        assert_eq!(caption["ctranslate2"], serde_json::json!("4.8.1"));
+        assert_eq!(
+            caption["model"],
+            serde_json::json!(
+                "Systran/faster-whisper-large-v3@edaa852ec7e145841d8ffdb056a99866b5f0a478"
+            )
+        );
+        assert_eq!(
+            caption["model_path"],
+            serde_json::json!("components/captions-large-v3/models/faster-whisper-large-v3")
+        );
+        assert_eq!(caption["model_bin_bytes"], serde_json::json!(3_087_284_237_u64));
+        assert_eq!(
+            caption["model_bin_sha256"],
+            serde_json::json!(
+                "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1"
+            )
+        );
+        assert_eq!(caption["device"], serde_json::json!("cpu"));
+        assert_eq!(caption["compute_type"], serde_json::json!("int8"));
+        assert_eq!(caption["local_files_only"], serde_json::json!(true));
+        assert_eq!(caption["result"], serde_json::json!("passed"));
+
+        std::fs::remove_dir_all(install_root.parent().expect("fixture base"))
+            .expect("clean addendum fixture");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn writing_the_addendum_receipt_never_touches_install_roots_own_station_set_or_receipt_or_any_other_acquired_component(
+    ) {
+        // The field-evidence defect: acquiring the optional large-v3 tier
+        // must ADD to the station, never remove or rewrite what the
+        // elevated installer already activated. This test proves the
+        // negative directly against the REAL writer, not a re-implementation
+        // of it.
+        let (install_root, acquisition_root) =
+            captions_large_addendum_temp_roots("writer-is-additive-only");
+        write_fixture_station_set(&install_root, "1.0.0-rcTEST", "cafebabe".repeat(8).as_str());
+        let primary_receipt = install_root.join("activation-self-test.json");
+        std::fs::write(&primary_receipt, b"{\"floor\":\"receipt\",\"untouched\":true}")
+            .expect("seed primary receipt fixture");
+        let other_component = install_root.join("components").join("summary-gemma4-12b");
+        std::fs::create_dir_all(&other_component).expect("seed other activated component");
+        std::fs::write(other_component.join("marker.bin"), b"already-activated")
+            .expect("seed other activated component marker");
+        let floor_component = install_root.join("packs").join("captions-floor");
+        std::fs::create_dir_all(&floor_component).expect("seed floor tier fixture");
+        std::fs::write(floor_component.join("marker.bin"), b"floor-tier-untouched")
+            .expect("seed floor tier marker");
+
+        write_captions_large_addendum_receipt(&install_root, &acquisition_root)
+            .expect("write addendum receipt");
+
+        assert_eq!(
+            std::fs::read(&primary_receipt).expect("re-read primary receipt"),
+            b"{\"floor\":\"receipt\",\"untouched\":true}",
+            "acquiring an optional component must never rewrite the primary activation receipt"
+        );
+        assert_eq!(
+            std::fs::read(other_component.join("marker.bin"))
+                .expect("re-read other component marker"),
+            b"already-activated",
+            "acquiring an optional component must never touch an already-activated component"
+        );
+        assert_eq!(
+            std::fs::read(floor_component.join("marker.bin"))
+                .expect("re-read floor tier marker"),
+            b"floor-tier-untouched",
+            "acquiring an optional component must never touch the mandatory floor tier"
+        );
+        assert!(
+            captions_large_addendum_receipt_path(&acquisition_root).exists(),
+            "the addendum receipt must be written into the acquisition root"
+        );
+
+        std::fs::remove_dir_all(install_root.parent().expect("fixture base"))
+            .expect("clean addendum fixture");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn addendum_already_matches_is_true_only_for_a_receipt_bound_to_this_exact_station() {
+        let (install_root, acquisition_root) =
+            captions_large_addendum_temp_roots("idempotency-fast-path");
+        write_fixture_station_set(&install_root, "1.0.0-rcTEST", "01234567".repeat(8).as_str());
+
+        assert!(
+            !captions_large_addendum_already_matches(&install_root, &acquisition_root),
+            "no receipt on disk yet must never be treated as already satisfied"
+        );
+
+        write_captions_large_addendum_receipt(&install_root, &acquisition_root)
+            .expect("write addendum receipt");
+        assert!(
+            captions_large_addendum_already_matches(&install_root, &acquisition_root),
+            "a receipt this function itself just wrote for THIS station must match"
+        );
+
+        // A station-set that moved on to a different distribution must
+        // invalidate the fast path -- never trust a receipt against a
+        // station identity it was not written for.
+        write_fixture_station_set(&install_root, "1.0.0-rcTEST", "76543210".repeat(8).as_str());
+        assert!(
+            !captions_large_addendum_already_matches(&install_root, &acquisition_root),
+            "a receipt bound to a different distribution_index_sha256 must not be reused"
+        );
+
+        std::fs::remove_dir_all(install_root.parent().expect("fixture base"))
+            .expect("clean addendum fixture");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn verify_self_test_audio_fixture_rejects_wrong_bytes_and_accepts_the_pinned_fixture() {
+        let (install_root, _acquisition_root) =
+            captions_large_addendum_temp_roots("audio-fixture-verification");
+        let audio_path = install_root.join("jfk.wav");
+
+        let missing = verify_self_test_audio_fixture(&audio_path);
+        assert!(missing.is_err(), "a missing audio fixture must fail closed");
+
+        std::fs::write(&audio_path, vec![0_u8; 128]).expect("write wrong-size fixture");
+        let wrong_size = verify_self_test_audio_fixture(&audio_path);
+        assert!(
+            wrong_size.is_err(),
+            "an audio fixture with the wrong byte count must fail closed"
+        );
+        assert!(wrong_size.unwrap_err().contains("bytes, expected"));
+
+        std::fs::remove_dir_all(install_root.parent().expect("fixture base"))
+            .expect("clean addendum fixture");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn captions_large_addendum_model_root_and_receipt_path_use_the_pinned_layout() {
+        let acquisition_root = PathBuf::from(r"C:\ProgramData\CivicCast");
+        assert_eq!(
+            captions_large_addendum_model_root(&acquisition_root),
+            acquisition_root
+                .join("components")
+                .join("captions-large-v3")
+                .join("models")
+                .join("faster-whisper-large-v3")
+        );
+        assert_eq!(
+            captions_large_addendum_receipt_path(&acquisition_root),
+            acquisition_root.join("activation-self-test.json")
+        );
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn runtime_host_guard_waits_out_previous_owner_shutdown() {
@@ -3184,6 +3404,33 @@ fn run_single_acquisition_component_with_persist(
         }
     }
 
+    // The large-v3 tier's bytes are now downloaded and per-file hash
+    // verified -- but a station that later STAGES this tier will only be
+    // allowed to USE it once a receipt exists that
+    // `station_runtime._validate_activation_receipt` accepts (see the
+    // `finalize_captions_large_acquisition` doc for the full field-evidence
+    // chain: without this step, acquiring this optional component silently
+    // primes the runtime to crash-loop on its next start). Every other
+    // catalog component's bytes are self-sufficient once verified, so this
+    // finalize step is deliberately scoped to just this one id.
+    if component.id == "captions_large" {
+        if let Err(detail) = finalize_captions_large_acquisition(&acquisition_download_root()) {
+            acquisition_state::upsert(acquisition_state::AcquisitionComponentProgress {
+                id: component.id.clone(),
+                state: acquisition_state::AcquisitionComponentState::Error,
+                bytes_done: bytes_total_hint.unwrap_or(bytes_offset),
+                bytes_total: bytes_total_hint,
+                elapsed_seconds: started.elapsed().as_secs(),
+                error: Some(acquisition_state::AcquisitionComponentError {
+                    kind: acquisition_state::AcquisitionErrorKind::WriteFailed,
+                    detail,
+                }),
+            });
+            persist();
+            return;
+        }
+    }
+
     let state = acquisition_success_state(invoked.load(std::sync::atomic::Ordering::SeqCst));
     acquisition_state::upsert(acquisition_state::AcquisitionComponentProgress {
         id: component.id.clone(),
@@ -4776,6 +5023,290 @@ fn write_native_activation_self_test_receipt(
         .and_then(|_| output.write_all(b"\n"))
         .and_then(|_| output.sync_all())
         .map_err(|error| format!("Could not persist native activation receipt: {error}"))
+}
+
+// ---------------------------------------------------------------------------
+// Post-activation optional-tier receipt addendum (field evidence, candidate
+// 4eca729, 2026-08-29)
+// ---------------------------------------------------------------------------
+//
+// `activation-self-test.json` is written EXACTLY ONCE, by the elevated
+// `d4-activate-station` NSIS step (`write_native_activation_self_test_receipt`
+// above), and describes whichever caption tier was staged at THAT moment --
+// almost always the mandatory floor tier alone, since `captions_large` is an
+// OPTIONAL component the non-elevated post-install GUI downloads later, into
+// the acquisition root (`acquisition_download_root`), never into
+// `install_root` (chain H1: this process cannot write there at all).
+// `station_runtime.py::_resolve_caption_tier` then finds large-v3 staged
+// there and unconditionally PREFERS it over the floor tier (the "highest
+// staged tier" policy) -- but the only receipt on disk still describes the
+// floor tier, so `_validate_activation_receipt` correctly refuses it and the
+// station cannot start (`NativeStationConfigurationError: ... receipt does
+// not match this distribution`). The check is right -- a receipt naming the
+// wrong tier IS untrustworthy -- the gap is that nothing ever produces a
+// receipt for the newly-available tier.
+//
+// This closes that gap the same way the elevated activation flow proves a
+// tier is real: by actually loading the just-downloaded large-v3 model with
+// the SAME embedded interpreter (`<install_root>\runtime\python.exe` --
+// read+execute only, this process never writes under `install_root`) and
+// transcribing the SAME jfk.wav self-test fixture the MANDATORY floor tier
+// already has staged at `<install_root>\packs\captions-floor\self-test\
+// jfk.wav` (required, therefore always present on an activated station --
+// re-verified below against `native_packs::CAPTION_SELF_TEST_BYTES`/
+// `_SHA256` before use, never assumed). On success, it writes a receipt for
+// JUST this tier -- schema-identical to
+// `native_activation_self_test_receipt_value`'s large-v3 branch, built from
+// the SAME `native_packs` constants, never a second hand-copied literal --
+// into the acquisition root (`<acquisition_root>\activation-self-test.json`),
+// the one place this non-elevated process CAN write. It never touches
+// `install_root`'s own `station-set.json` or `activation-self-test.json`:
+// the mandatory component set and its receipt stay exactly as the elevated
+// installer left them, so every previously-activated component is left
+// completely alone -- this only ADDS a second, tier-scoped receipt the
+// runtime's own two-root search (`caption_tier_search_roots`) now also
+// checks (see `station_runtime.load_native_station_environment`).
+
+/// Where the just-downloaded large-v3 model directory lives under the
+/// acquisition root, mirroring `caption_large_tier_destination`'s own
+/// `components/captions-large-v3/<CAPTION_MODEL_ROOT>` convention.
+#[cfg(target_os = "windows")]
+fn captions_large_addendum_model_root(acquisition_root: &Path) -> PathBuf {
+    acquisition_root
+        .join("components")
+        .join("captions-large-v3")
+        .join(native_packs::CAPTION_MODEL_ROOT)
+}
+
+/// Where this addendum receipt is written -- the acquisition root itself,
+/// the SAME root `station_runtime.py`'s `caption_tier_search_roots` already
+/// searches for a GUI-downloaded tier's model files.
+#[cfg(target_os = "windows")]
+fn captions_large_addendum_receipt_path(acquisition_root: &Path) -> PathBuf {
+    acquisition_root.join("activation-self-test.json")
+}
+
+/// Re-verifies the shared jfk.wav self-test fixture (borrowed read-only from
+/// the mandatory floor tier's own staged pack) against its pinned identity
+/// before it is fed to a live inference run -- never assume a file this
+/// process did not itself just download is what its name claims.
+#[cfg(target_os = "windows")]
+fn verify_self_test_audio_fixture(audio_path: &Path) -> Result<(), String> {
+    let mut file = fs::File::open(audio_path).map_err(|error| {
+        format!(
+            "Mandatory caption self-test audio fixture is missing at {}: {error}. A station \
+             missing its REQUIRED floor caption tier cannot verify an optional large-v3 upgrade.",
+            audio_path.display()
+        )
+    })?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not read self-test audio fixture metadata: {error}"))?;
+    if metadata.len() != native_packs::CAPTION_SELF_TEST_BYTES {
+        return Err(format!(
+            "Self-test audio fixture at {} is {} bytes, expected {}",
+            audio_path.display(),
+            metadata.len(),
+            native_packs::CAPTION_SELF_TEST_BYTES
+        ));
+    }
+    let observed = native_packs::sha256_reader(&mut file, "caption self-test audio fixture")?;
+    if observed != native_packs::CAPTION_SELF_TEST_SHA256 {
+        return Err(format!(
+            "Self-test audio fixture at {} does not match its pinned sha256 (expected {}, got \
+             {observed})",
+            audio_path.display(),
+            native_packs::CAPTION_SELF_TEST_SHA256
+        ));
+    }
+    Ok(())
+}
+
+/// Runs a REAL faster-whisper inference against the just-downloaded large-v3
+/// model -- the same live proof `run_native_caption_inference_self_test`
+/// gives the mandatory tiers at elevated activation time, retargeted at the
+/// two different roots this non-elevated call site actually has (the
+/// installed runtime, the acquisition-root-staged model).
+#[cfg(target_os = "windows")]
+fn run_captions_large_addendum_self_test(
+    install_root: &Path,
+    acquisition_root: &Path,
+) -> Result<(), String> {
+    let python = install_root.join("runtime").join("python.exe");
+    let model = captions_large_addendum_model_root(acquisition_root);
+    let audio = install_root
+        .join("packs")
+        .join("captions-floor")
+        .join("self-test")
+        .join("jfk.wav");
+    verify_self_test_audio_fixture(&audio)?;
+    let python_text = python
+        .to_str()
+        .ok_or_else(|| "Staged caption runtime path is not Unicode.".to_string())?;
+    let model_text = model
+        .to_str()
+        .ok_or_else(|| "Downloaded large-v3 model path is not Unicode.".to_string())?;
+    let audio_text = audio
+        .to_str()
+        .ok_or_else(|| "Self-test audio fixture path is not Unicode.".to_string())?;
+    // Byte-for-byte the same self-test script `native_caption_inference_command`
+    // uses -- never a second, drifting copy of the inference invocation.
+    let script = concat!(
+        "from faster_whisper import WhisperModel\n",
+        "import sys\n",
+        "model = WhisperModel(sys.argv[1], device=\"cpu\", ",
+        "compute_type=\"int8\", local_files_only=True)\n",
+        "segments, _ = model.transcribe(sys.argv[2], language=\"en\", ",
+        "beam_size=5, vad_filter=False)\n",
+        "print(\" \".join(segment.text.strip() for segment in segments))\n"
+    );
+    let arguments = ["-I", "-B", "-c", script, model_text, audio_text];
+    let (exit_code, output) = run_bounded_command(
+        python_text,
+        "captions-large-addendum-self-test",
+        &arguments,
+        300,
+    )?;
+    validate_native_caption_output(exit_code, &output)
+}
+
+/// Builds and atomically writes the large-v3 addendum receipt, reusing the
+/// installed station's OWN `product_version`/`distribution_index_sha256`
+/// identity (read from `install_root\station-set.json`, never re-derived) so
+/// `station_runtime._validate_activation_receipt`'s identity checks bind this
+/// receipt to THIS station exactly as tightly as the primary one. Every
+/// per-tier field comes from the SAME `native_packs` constants
+/// `native_activation_self_test_receipt_value`'s large-v3 branch uses --
+/// never a second, hand-copied literal that could drift from it.
+#[cfg(target_os = "windows")]
+fn write_captions_large_addendum_receipt(
+    install_root: &Path,
+    acquisition_root: &Path,
+) -> Result<(), String> {
+    let station_set_path = install_root.join("station-set.json");
+    let station_set_bytes = fs::read(&station_set_path).map_err(|error| {
+        format!(
+            "Could not read native station-set to build the large-v3 addendum receipt: {error}"
+        )
+    })?;
+    let station_set: serde_json::Value = serde_json::from_slice(&station_set_bytes)
+        .map_err(|error| format!("Native station-set is not valid JSON: {error}"))?;
+    let product_version = station_set
+        .get("product_version")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Native station-set is missing product_version".to_string())?;
+    let distribution_index_sha256 = station_set
+        .get("distribution_index_sha256")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Native station-set is missing distribution_index_sha256".to_string())?;
+    let (_, model_bin_bytes, model_bin_sha256) = native_packs::CAPTION_MODEL_FILES
+        .iter()
+        .find(|(name, _, _)| *name == "model.bin")
+        .copied()
+        .ok_or_else(|| "large-v3 model.bin identity is not pinned".to_string())?;
+    let receipt = serde_json::json!({
+        "schema_version": 1,
+        "product": "civiccast-native",
+        "product_version": product_version,
+        "distribution_index_sha256": distribution_index_sha256,
+        "caption_inference": {
+            "runtime": "faster-whisper 1.2.1",
+            "ctranslate2": "4.8.1",
+            "model": format!(
+                "{}@{}",
+                native_packs::CAPTION_LARGE_TIER_MODEL_REPOSITORY,
+                native_packs::CAPTION_LARGE_TIER_MODEL_REVISION,
+            ),
+            "model_path":
+                format!("components/captions-large-v3/{}", native_packs::CAPTION_MODEL_ROOT),
+            "model_bin_bytes": model_bin_bytes,
+            "model_bin_sha256": model_bin_sha256,
+            "device": "cpu",
+            "compute_type": "int8",
+            "local_files_only": true,
+            "audio": "self-test/jfk.wav",
+            "result": "passed"
+        }
+    });
+    native_activation::write_json_atomically(
+        &captions_large_addendum_receipt_path(acquisition_root),
+        &receipt,
+        "large-v3 acquisition addendum receipt",
+    )
+}
+
+/// Idempotency fast-path: `true` only when an addendum receipt ALREADY on
+/// disk is bound to this exact station (`product_version` +
+/// `distribution_index_sha256`, read from `install_root\station-set.json`,
+/// matched against the receipt's own claim) and names the pinned large-v3
+/// `model.bin` identity -- mirroring the structural-completeness posture
+/// `flat_activation_already_matches` already uses for the primary receipt.
+/// Any read/parse failure (absent, corrupt, foreign content, station-set
+/// unreadable) returns `false` and falls through to a full re-run -- never
+/// a cache that can go stale silently. Real bar is the runtime's own
+/// `_validate_activation_receipt`; this probe only avoids repeating an
+/// expensive 300s live inference run when nothing has changed.
+#[cfg(target_os = "windows")]
+fn captions_large_addendum_already_matches(install_root: &Path, acquisition_root: &Path) -> bool {
+    let Ok(station_set_bytes) = fs::read(install_root.join("station-set.json")) else {
+        return false;
+    };
+    let Ok(station_set) = serde_json::from_slice::<serde_json::Value>(&station_set_bytes) else {
+        return false;
+    };
+    let Some(expected_version) = station_set.get("product_version").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    let Some(expected_index_sha256) =
+        station_set.get("distribution_index_sha256").and_then(serde_json::Value::as_str)
+    else {
+        return false;
+    };
+    let Ok(receipt_bytes) = fs::read(captions_large_addendum_receipt_path(acquisition_root))
+    else {
+        return false;
+    };
+    let Ok(receipt) = serde_json::from_slice::<serde_json::Value>(&receipt_bytes) else {
+        return false;
+    };
+    let Some((_, _, expected_model_bin_sha256)) = native_packs::CAPTION_MODEL_FILES
+        .iter()
+        .find(|(name, _, _)| *name == "model.bin")
+    else {
+        return false;
+    };
+    receipt.get("schema_version") == Some(&serde_json::json!(1))
+        && receipt.get("product") == Some(&serde_json::json!("civiccast-native"))
+        && receipt.get("product_version") == Some(&serde_json::json!(expected_version))
+        && receipt.get("distribution_index_sha256") == Some(&serde_json::json!(expected_index_sha256))
+        && receipt
+            .get("caption_inference")
+            .and_then(|value| value.get("model_bin_sha256"))
+            == Some(&serde_json::json!(expected_model_bin_sha256))
+}
+
+/// The full post-download step for the `captions_large` catalog component:
+/// runs the live self-test then writes the addendum receipt. Called ONLY
+/// after every item in that component has already downloaded and verified
+/// (its per-file pinned SHA-256 checks) successfully -- see
+/// `run_single_acquisition_component_with_persist`. A failure here means the
+/// downloaded bytes are fine but the station still cannot safely use them
+/// yet, so the caller reports the component as errored rather than
+/// "complete", instead of leaving an operator with a green checkmark over a
+/// tier that will crash the station on next start.
+#[cfg(target_os = "windows")]
+fn finalize_captions_large_acquisition(acquisition_root: &Path) -> Result<(), String> {
+    let install_root = acquisition_installer_directory();
+    if captions_large_addendum_already_matches(&install_root, acquisition_root) {
+        return Ok(());
+    }
+    run_captions_large_addendum_self_test(&install_root, acquisition_root)?;
+    write_captions_large_addendum_receipt(&install_root, acquisition_root)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn finalize_captions_large_acquisition(_acquisition_root: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 /// The pre-activation runtime/caption/AI self-test CHECKS -- everything

@@ -68,8 +68,13 @@ pub(crate) const CAPTION_MODEL_FILES: [(&str, u64, &str); 6] = [
     ),
 ];
 const CAPTION_SELF_TEST_PATH: &str = "self-test/jfk.wav";
-const CAPTION_SELF_TEST_BYTES: u64 = 352_078;
-const CAPTION_SELF_TEST_SHA256: &str =
+// `pub(crate)`: also read directly by `main.rs`'s post-acquisition large-v3
+// addendum self-test (`verify_self_test_audio_fixture`), which re-verifies
+// the mandatory floor tier's already-staged jfk.wav fixture against this
+// SAME pinned identity before reusing it read-only -- never a second,
+// hand-copied literal.
+pub(crate) const CAPTION_SELF_TEST_BYTES: u64 = 352_078;
+pub(crate) const CAPTION_SELF_TEST_SHA256: &str =
     "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e";
 // Mirrors `civiccast.native.caption_tiers`: each caption model tier owns its
 // OWN complete, pinned file inventory. large-v3 re-uses the existing pinned
