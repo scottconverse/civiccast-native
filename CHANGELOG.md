@@ -15,6 +15,95 @@ came across and what deliberately did not.
 
 ### Added
 
+- **Assets/Library upload control, watch-folder Scan now + folder picker, and
+  caption-trigger discoverability — field evidence from a non-technical
+  tester (candidate #17), findings 1-6.** A tester walkthrough found the
+  Assets ("Library") screen had no upload button or file input at all (only
+  the six-card First Setup rehearsal picker had one, unlabeled as an
+  upload); watch folders required typing an exact filesystem path with no
+  "Browse..." picker and no way to force an immediate check (a fresh
+  config's "Last poll: never" read as broken even when the daemon HAD
+  ingested within about a minute); and nothing told an operator that
+  approving publish is what starts offline caption transcription, nor that
+  a running job was actually running.
+  - **Assets screen upload** (`AssetUploadControl`,
+    `civiccast/apps/portal-operator/src/components/assets/`): reuses the
+    exact `/api/staff/assets/upload` endpoint the First Setup card already
+    calls (never a second pipeline) via a new XHR-based client function,
+    `uploadAssetFileWithProgress`, added alongside (not replacing) the
+    existing `fetch`-based `uploadAssetFile`. Every state designed: idle
+    (collapsed behind one "Upload video" button), choosing, client-side
+    unsupported-type rejection naming the accepted formats before any
+    network call, uploading with a real percent progress bar + a
+    screen-reader `aria-live` announcement + cancel, success (asset
+    appears in the table via query invalidation), and failure surfacing
+    the server's plain-language reason with a "Try again" retry. Gated on
+    the SAME roles the backend requires (`records_clerk`,
+    `meeting_operator`, `support_admin`) — never hidden for a role that
+    lacks it, only disabled with the reason stated, matching this app's
+    existing "Package for playback" pattern.
+  - **Watch folders** (`civiccast/schedule/media_lifecycle_router.py` +
+    `MediaLifecycleSettingsScreen.tsx`): new
+    `POST .../watch-folder-configs/{id}/scan-now` runs the SAME per-folder
+    scan the poll daemon's own pass uses
+    (`WatchFolderWorker.scan_now`, bypassing the due-check), returning what
+    it found so a "Scan now" button gives real, immediate feedback instead
+    of waiting out `poll_interval_seconds`. A fresh, never-polled config's
+    status now reads "Not scanned yet — the next automatic check runs
+    within Ns, or use Scan now" instead of a bare "Last poll: never" /
+    "Last ingest: never." New `GET .../browse-folders` lists local
+    directories (drive roots on Windows / `/` on POSIX when no path is
+    given) for a non-technical operator to navigate instead of typing a
+    path from memory — the browser cannot hand back an absolute path
+    itself (the File System Access API and `<input webkitdirectory>` both
+    withhold it for security), but this app's frontend and backend always
+    run on the same station machine, so the backend lists directories for
+    a new `FolderBrowser` modal picker instead. `monitor_path` is now
+    validated server-side on create/update: a missing or unreadable
+    directory 422s with a plain-language reason instead of being accepted
+    and only discovered broken on the next poll.
+  - **Caption-trigger discoverability** (`OfflineCaptionJobsPanel.tsx`,
+    `PublishDashboardScreen.tsx`): the offline-captions panel now states
+    plainly, up front, that approving a recording's portal surface on the
+    Publish dashboard is what starts transcription — there is no separate
+    "generate captions" control anywhere in the console, by design. The
+    Publish dashboard itself now carries the same note next to "Approve and
+    Publish selected" so an operator learns this before clicking, not only
+    after, on the asset detail page. A running job now reads
+    "Transcribing… (Xm)" with elapsed time instead of a bare "Pending"
+    label indistinguishable from stalled, and sets a real-world time
+    expectation (measured ~37s for 11s of audio on a 32 GB CPU-only
+    reference machine — several minutes for a full meeting recording, not
+    seconds). The caption engine itself is unchanged; this is copy and
+    affordance only, per the tester's own note that captions already work
+    end-to-end. (The AI Models screen's separately-tracked inaccurate
+    "≈500 ms typical" latency claim was not touched — different screen,
+    different owner.)
+  - **Readiness dot vs. publish status** (`AssetsScreen.tsx`,
+    `ReadinessBadge.tsx`): a tester found a packaged-and-published asset
+    still showing "⚪ Not ready" and read it as broken. Investigation:
+    `readiness_state` is computed purely from ingest-time transcode/proxy
+    pipeline status (`civiccast/schedule/media_lifecycle_worker.py`) and
+    was never meant to track publish state — `published_at`/`manifest_url`
+    are a separate, already-visible column. Rather than silently
+    redefining readiness semantics, the dashboard's existing (previously
+    unrendered) `readiness_reason` is now shown as a tooltip +
+    screen-reader text on every badge, and a published-but-not-`ready`
+    asset gets an explicit note: "Already live on the portal — this dot
+    tracks the optimized playback proxy, not publish status."
+  - Accessibility (WCAG 2.2 AA): every new control is keyboard-operable
+    with a labeled input, and upload/scan/caption progress is announced via
+    `role="status" aria-live="polite"`, not conveyed by a spinner alone.
+  - Tests: 3 new backend pytest classes (path validation, scan-now,
+    browse-folders) in `tests/schedule/test_media_lifecycle_router.py`; new
+    `AssetUploadControl.test.tsx` and `FolderBrowser.test.tsx`
+    (vitest); extended `AssetsScreen.test.tsx`,
+    `MediaLifecycleSettingsScreen.test.tsx`,
+    `OfflineCaptionJobsPanel.test.tsx`, `PublishDashboardScreen.test.tsx`;
+    new Playwright specs `e2e/assets-upload.spec.ts` and
+    `e2e/media-lifecycle-watch-folders.spec.ts`, plus caption-discoverability
+    coverage added to `e2e/asset-detail.spec.ts` (each with its own axe-core
+    WCAG scan).
 - **S7 watch-folder poll daemon (the piece PR #19 explicitly deferred).**
   PR #19 built `WatchFolderConfig`'s data model, CRUD API, and settings UI
   but shipped no daemon — nothing polled `monitor_path`, detected files, or

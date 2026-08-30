@@ -2097,6 +2097,20 @@ export interface FirstRunPlan {
   steps: Array<InstallerStep>
 }
 
+export interface FolderBrowseEntry {
+  name: string
+  path: string
+}
+
+export interface FolderBrowseResponse {
+  current_path: string | null
+  parent_path: string | null
+  separator: string
+  entries: Array<FolderBrowseEntry>
+  readable: boolean
+  error?: string | null
+}
+
 export interface FollowerModerationRequest {
   actor: string
 }
@@ -4839,6 +4853,16 @@ export interface WatchFolderConfigResponse {
   last_ingest_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface WatchFolderScanNowResponse {
+  config: WatchFolderConfigResponse
+  healthy: boolean
+  files_seen: number
+  files_ingested: number
+  files_reprocessed: number
+  files_failed: number
+  error?: string | null
 }
 
 export interface YearOverYearPoint {

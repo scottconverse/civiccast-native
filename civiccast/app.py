@@ -313,6 +313,7 @@ from civiccast.schedule.media_integrity_worker import (
 from civiccast.schedule.media_lifecycle_router import (
     get_media_lifecycle_store,
     get_missing_media_reader,
+    get_watch_folder_worker,
 )
 from civiccast.schedule.media_lifecycle_router import staff_router as media_lifecycle_staff_router
 from civiccast.schedule.media_lifecycle_store import MediaLifecycleStore
@@ -2240,6 +2241,14 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.dependency_overrides[get_summary_model] = _resolve_summary_model
     app.dependency_overrides[get_schedule_store] = _resolve_schedule_store
     app.dependency_overrides[get_media_lifecycle_store] = _resolve_media_lifecycle_store
+    # Finding 4 (candidate #17): the "Scan now" staff action needs the SAME
+    # WatchFolderWorker instance the background ThreadSupervisor drives
+    # (app.state.watch_folder_worker, wired above), never a second one --
+    # a second instance would have its own in-memory nothing-durable state
+    # but more importantly would double the settle-window/ingest work.
+    app.dependency_overrides[get_watch_folder_worker] = lambda: getattr(
+        app.state, "watch_folder_worker", None
+    )
     app.dependency_overrides[get_live_session_store] = _resolve_live_session_store
     app.dependency_overrides[get_preflight_evaluator] = _resolve_preflight_evaluator
     app.dependency_overrides[get_live_source_store] = _resolve_live_source_store

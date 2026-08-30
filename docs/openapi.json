@@ -636,14 +636,7 @@
             }
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "monitor_path does not exist or is not readable"
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -711,14 +704,7 @@
             "description": "Watch folder config not found"
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "monitor_path does not exist or is not readable"
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -765,6 +751,145 @@
           },
           "404": {
             "description": "Watch folder config not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/watch-folder-configs/{config_id}/scan-now": {
+      "post": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "Scan one watch folder immediately, bypassing its poll interval",
+        "description": "Finding 4 (candidate #17): \"Last poll: never\" with no way to force a\ncheck reads as broken even when the daemon is working -- this runs the\nSAME per-folder scan (`WatchFolderWorker._scan_one_folder`) the daemon's\nown poll loop uses, immediately, and returns what it found so the\noperator gets real feedback instead of waiting out the poll interval.",
+        "operationId": "scan_watch_folder_now_api_staff_media_lifecycle_watch_folder_configs__config_id__scan_now_post",
+        "parameters": [
+          {
+            "name": "config_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Config Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchFolderScanNowResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Watch folder config not found"
+          },
+          "503": {
+            "description": "Watch-folder daemon not wired, or CIVICCAST_UPLOAD_DIR unset"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/media-lifecycle/browse-folders": {
+      "get": {
+        "tags": [
+          "media-lifecycle",
+          "media-lifecycle"
+        ],
+        "summary": "List subdirectories of a path, for the non-technical watch-folder picker",
+        "description": "Finding 3 (candidate #17): a non-technical operator cannot be expected\nto type an exact filesystem path. A browser cannot hand back an absolute\npath itself (the File System Access API and ``<input webkitdirectory>``\nboth withhold it for security), but this app's frontend and backend\nalways run on the SAME station machine -- so the backend lists local\ndirectories for a picker UI to navigate instead of asking the operator\nto type one.\n\nNo ``path`` (or an empty one) lists drive roots on Windows / ``/`` on\nPOSIX. Files are never listed, only directories -- this endpoint picks a\nfolder, it does not browse file content.",
+        "operationId": "browse_folders_api_staff_media_lifecycle_browse_folders_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderBrowseResponse"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -43367,6 +43492,89 @@
         "title": "FirstRunPlan",
         "description": "Deterministic first-run plan for the selected deployment profile."
       },
+      "FolderBrowseEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "FolderBrowseEntry",
+        "description": "One subdirectory offered by the watch-folder browse-folders endpoint."
+      },
+      "FolderBrowseResponse": {
+        "properties": {
+          "current_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Path"
+          },
+          "parent_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Path"
+          },
+          "separator": {
+            "type": "string",
+            "title": "Separator"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/FolderBrowseEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          },
+          "readable": {
+            "type": "boolean",
+            "title": "Readable"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "current_path",
+          "parent_path",
+          "separator",
+          "entries",
+          "readable"
+        ],
+        "title": "FolderBrowseResponse",
+        "description": "Directory listing for the non-technical \"Browse...\" watch-folder picker\n(finding 3, candidate #17): the operator's browser cannot hand back a\nfilesystem path (the File System Access API and ``<input webkitdirectory>``\nboth withhold the absolute path for security), but this app's frontend and\nbackend always run on the SAME station machine, so the backend can safely\nlist local directories for the operator to navigate instead."
+      },
       "FollowerModerationRequest": {
         "properties": {
           "actor": {
@@ -61170,6 +61378,56 @@
           "updated_at"
         ],
         "title": "WatchFolderConfigResponse"
+      },
+      "WatchFolderScanNowResponse": {
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/WatchFolderConfigResponse"
+          },
+          "healthy": {
+            "type": "boolean",
+            "title": "Healthy"
+          },
+          "files_seen": {
+            "type": "integer",
+            "title": "Files Seen"
+          },
+          "files_ingested": {
+            "type": "integer",
+            "title": "Files Ingested"
+          },
+          "files_reprocessed": {
+            "type": "integer",
+            "title": "Files Reprocessed"
+          },
+          "files_failed": {
+            "type": "integer",
+            "title": "Files Failed"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "config",
+          "healthy",
+          "files_seen",
+          "files_ingested",
+          "files_reprocessed",
+          "files_failed"
+        ],
+        "title": "WatchFolderScanNowResponse",
+        "description": "Result of one operator-triggered immediate scan (finding 4, candidate #17).\n\nCarries both the scan's own counters (what just happened) and the\nconfig's fresh state (``config``) so the staff UI can update the row's\n\"Last poll\"/\"Last ingest\" display from a single response instead of a\nsecond round trip."
       },
       "YearOverYearPoint": {
         "properties": {

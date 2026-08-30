@@ -121,6 +121,37 @@ describe('OfflineCaptionJobsView (presentational)', () => {
     )
     expect(getByRole('alert').textContent).toContain('boom')
   })
+
+  it('states plainly, up front, that approving publish is what starts this job (candidate #17 finding 5)', () => {
+    const { getByText } = render(
+      <OfflineCaptionJobsView jobs={[]} canRetry onRetry={vi.fn()} />,
+    )
+    expect(
+      getByText("Approving this recording's portal surface on the Publish dashboard is what starts it"),
+    ).toBeTruthy()
+  })
+
+  it('shows a running job as "Transcribing..." with elapsed time and a wait-time expectation, not a bare Pending label', () => {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString()
+    const { getByText } = render(
+      <OfflineCaptionJobsView
+        jobs={[job({ state: 'pending', updated_at: twoMinutesAgo, last_error: '' })]}
+        canRetry
+        onRetry={vi.fn()}
+      />,
+    )
+    expect(getByText('Transcribing… (2m)', { selector: 'span' })).toBeTruthy()
+    expect(
+      getByText(/several minutes for a full meeting recording, not seconds/),
+    ).toBeTruthy()
+  })
+
+  it('explains an awaiting-review job points to the review queue, not a stall', () => {
+    const { getByText } = render(
+      <OfflineCaptionJobsView jobs={[job({ state: 'awaiting_review' })]} canRetry onRetry={vi.fn()} />,
+    )
+    expect(getByText(/waiting in the caption review queue/)).toBeTruthy()
+  })
 })
 
 describe('OfflineCaptionJobsPanel (container)', () => {
