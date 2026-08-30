@@ -157,10 +157,25 @@ _INGEST_FILE_ERRORS = (
 
 __all__ = [
     "WatchFolderFolderResult",
+    "WatchFolderScanInProgressError",
     "WatchFolderScanResult",
     "WatchFolderWorker",
     "WatchFolderWorkerSettings",
 ]
+
+
+class WatchFolderScanInProgressError(RuntimeError):
+    """Raised by :meth:`WatchFolderWorker.scan_now` when the same config is
+    already mid-scan -- either another concurrent ``scan_now`` call, or the
+    daemon's own :meth:`WatchFolderWorker.run_once` poll loop picking up the
+    same config. Finding 4 (adversarial audit of PR #69): the pre-fix
+    ``scan_now`` had no lock, no idempotency guard, and no rate limit --
+    five concurrent calls against one config produced unhandled database
+    errors under the SQLite test harness. A subclass of :class:`RuntimeError`
+    so any caller that only knows to catch the pre-existing "daemon not
+    usable" contract still fails closed (503) rather than crashing; the
+    router now catches this specifically and returns 409 instead.
+    """
 
 
 @dataclass(frozen=True)
@@ -268,6 +283,31 @@ class WatchFolderWorker:
         self._asset_store = asset_store or PostgresAssetStore(session_factory)
         self._lifecycle_store = lifecycle_store or MediaLifecycleStore(session_factory)
         self._clock = clock or (lambda: datetime.now(UTC))
+        # Finding 4: per-config scan serialization. Guards ONE config's scan
+        # against itself -- a concurrent scan_now, or the daemon's own
+        # run_once picking up the same config -- never against different
+        # configs, which remain free to scan concurrently (bounded by
+        # max_concurrent_folders, unchanged). ``_scan_locks_guard`` protects
+        # only the dict's own get-or-create; the per-config ``Lock`` objects
+        # it hands out are held for the duration of one scan.
+        self._scan_locks: dict[str, threading.Lock] = {}
+        self._scan_locks_guard = threading.Lock()
+
+    def _acquire_scan_lock(self, config_id: str) -> bool:
+        """Non-blocking. Returns ``True`` iff this call now owns the
+        per-config scan lock; the caller MUST release it via
+        :meth:`_release_scan_lock` in a ``finally`` block when it does.
+        """
+
+        with self._scan_locks_guard:
+            lock = self._scan_locks.setdefault(config_id, threading.Lock())
+        return lock.acquire(blocking=False)
+
+    def _release_scan_lock(self, config_id: str) -> None:
+        with self._scan_locks_guard:
+            lock = self._scan_locks.get(config_id)
+        if lock is not None:
+            lock.release()
 
     def run_forever(
         self,
@@ -301,6 +341,11 @@ class WatchFolderWorker:
 
         Raises :class:`ValueError` if ``config_id`` names no watch folder, so
         the router can turn that into a 404 rather than a silent no-op.
+        Raises :class:`WatchFolderScanInProgressError` (Finding 4) if this
+        same config is already being scanned -- by another concurrent
+        ``scan_now`` call, or by the daemon's own ``run_once`` -- rather
+        than racing a second pass against it; the router turns that into a
+        409.
         """
 
         resolved_now = now or self._clock()
@@ -313,7 +358,14 @@ class WatchFolderWorker:
             exists = session.get(WatchFolderConfig, config_id) is not None
         if not exists:
             raise ValueError(config_id)
-        return self._scan_one_folder(config_id, resolved_now)
+        if not self._acquire_scan_lock(config_id):
+            raise WatchFolderScanInProgressError(
+                f"A scan for watch folder {config_id} is already in progress."
+            )
+        try:
+            return self._scan_one_folder(config_id, resolved_now)
+        finally:
+            self._release_scan_lock(config_id)
 
     # -- Top-level pass ------------------------------------------------------
 
@@ -357,7 +409,7 @@ class WatchFolderWorker:
         workers = max(1, min(self._settings.max_concurrent_folders, len(due_ids)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
-                pool.submit(self._scan_one_folder, config_id, resolved_now): config_id
+                pool.submit(self._scan_one_folder_guarded, config_id, resolved_now): config_id
                 for config_id in due_ids
             }
             for future in as_completed(futures):
@@ -373,6 +425,29 @@ class WatchFolderWorker:
         )
 
     # -- Per-folder pass (fully serialized within one config) ---------------
+
+    def _scan_one_folder_guarded(self, config_id: str, now: datetime) -> WatchFolderFolderResult:
+        """Finding 4: ``run_once``'s own entry point into a per-config scan,
+        so a ``run_once`` pass can never race a concurrent ``scan_now`` (or,
+        in principle, an overlapping ``run_once`` pass) against the SAME
+        config. Unlike :meth:`scan_now`, this coalesces rather than rejects:
+        a config that's already mid-scan is silently skipped for this pass
+        (not an error -- nothing here is operator-facing) and picked up
+        again on the next due poll, since its ``last_poll_at`` was never
+        advanced.
+        """
+
+        if not self._acquire_scan_lock(config_id):
+            _LOG.info(
+                "Skipping this pass's scan of %s: a scan (scan-now or another pass) is "
+                "already in progress for it.",
+                config_id,
+            )
+            return WatchFolderFolderResult(config_id=config_id, monitor_path="", healthy=True)
+        try:
+            return self._scan_one_folder(config_id, now)
+        finally:
+            self._release_scan_lock(config_id)
 
     def _scan_one_folder(self, config_id: str, now: datetime) -> WatchFolderFolderResult:
         # Deliberately short-lived sessions throughout this method: nothing

@@ -3391,7 +3391,7 @@ Scan one watch folder immediately, bypassing its poll interval.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `config_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `WatchFolderScanNowResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Watch-folder daemon not wired, or CIVICCAST_UPLOAD_DIR unset
+- Responses: 200 `WatchFolderScanNowResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 409 A scan for this watch folder is already in progress; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Watch-folder daemon not wired, or CIVICCAST_UPLOAD_DIR unset
 
 ### `POST /api/staff/migrate/apply`
 

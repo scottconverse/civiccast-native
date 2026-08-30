@@ -839,6 +839,9 @@
           "404": {
             "description": "Watch folder config not found"
           },
+          "409": {
+            "description": "A scan for this watch folder is already in progress"
+          },
           "503": {
             "description": "Watch-folder daemon not wired, or CIVICCAST_UPLOAD_DIR unset"
           },
