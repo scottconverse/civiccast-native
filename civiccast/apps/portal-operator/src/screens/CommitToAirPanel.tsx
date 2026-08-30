@@ -82,12 +82,23 @@ export function DryRunReview({
   committing,
   onApprove,
   onCancel,
+  approveLabel = 'Approve & put on air',
+  committingLabel = 'Putting on air…',
+  roleGateLabel = 'Airing requires the publish operator or setup admin role.',
 }: {
   plan: CommitToAirPlan
   canManage: boolean
   committing: boolean
   onApprove: () => void
   onCancel: () => void
+  /** Override the approve button's label — callers outside Channel Ops
+   * (e.g. the Schedule screen's "Publish to residents" action) speak to a
+   * different audience than the broadcast-engineer "put on air" phrasing. */
+  approveLabel?: string
+  /** Override the approve button's in-flight label. */
+  committingLabel?: string
+  /** Override the non-manager explanation shown below the actions. */
+  roleGateLabel?: string
 }) {
   const approvable = canApprove(plan, canManage)
   const conflicts = plan.conflicts_detected ?? []
@@ -143,7 +154,7 @@ export function DryRunReview({
           className="rounded-md px-3 py-2 text-sm font-semibold"
           style={primaryButtonStyle(!approvable || committing)}
         >
-          {committing ? 'Putting on air…' : 'Approve & put on air'}
+          {committing ? committingLabel : approveLabel}
         </button>
         <button
           type="button"
@@ -155,7 +166,7 @@ export function DryRunReview({
         </button>
         {!canManage && (
           <span className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-            Airing requires the publish operator or setup admin role.
+            {roleGateLabel}
           </span>
         )}
       </div>

@@ -4,12 +4,18 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+import civiccast.native.supervisor.install_layout as install_layout
+import civiccast.platform.station_box_profile as station_box_profile
 from civiccast.egress.compliance import TsduckStatus
 from civiccast.egress.sdi_relay import SdiReadiness
 from civiccast.platform.hardware import (
@@ -27,6 +33,8 @@ from civiccast.platform.station_box_profile import (
     DeckLinkEngineRef,
     EngineReadiness,
     NdiSdkRef,
+    _detect_gst_runtime_source,
+    _resolve_bundled_gst_tool,
     compute_cable_os_verdict,
     compute_engine_tier_verdict,
     compute_peg_readiness,
@@ -35,6 +43,23 @@ from civiccast.platform.station_box_profile import (
     select_ai_defaults,
 )
 from civiccast.stream._ffmpeg import FfmpegResult
+
+
+def _build_bundled_gst_closure(install_root: Path) -> None:
+    """Fabricate a minimal but STRUCTURALLY VALID bundled GStreamer closure
+    under ``<install_root>/runtime/dependencies/gstreamer`` -- the exact tree
+    shape ``gstreamer_runtime.installed_gstreamer_environment`` requires
+    (``_REQUIRED_DIRS``/``_REQUIRED_FILES``), so the resolver under test
+    exercises real validation, not a stub."""
+
+    gst = install_root / "runtime" / "dependencies" / "gstreamer"
+    (gst / "bin").mkdir(parents=True)
+    (gst / "lib" / "gstreamer-1.0").mkdir(parents=True)
+    (gst / "lib" / "girepository-1.0").mkdir(parents=True)
+    (gst / "python" / "gi").mkdir(parents=True)
+    (gst / "lib" / "girepository-1.0" / "Gst-1.0.typelib").write_bytes(b"x")
+    (gst / "bin" / "gst-discoverer-1.0.exe").write_bytes(b"x")
+    (gst / "bin" / "gst-inspect-1.0.exe").write_bytes(b"x")
 
 
 def _hw(ram_gb: float, gpu: GPUInfo | None = None) -> HardwareProbe:
@@ -180,6 +205,215 @@ class TestEngineReadiness:
             native_os=True, gpu=None, runner=runner, device_runner=raising_device_runner
         )
         assert readiness.decklink.card_present is False
+
+    def test_injected_runner_reports_source_unavailable(self) -> None:
+        """`runtime_source` is only meaningful for the DEFAULT (non-injected)
+        probe path -- an injected test runner bypasses the bundled/PATH
+        resolution entirely, so the model's honest default stands rather
+        than claiming a source that was never actually resolved."""
+        runner = _gst_runner(missing=frozenset())
+        readiness = probe_engine_readiness(
+            native_os=True, gpu=None, runner=runner, device_runner=_no_device_runner
+        )
+        assert readiness.runtime_source == "unavailable"
+
+
+class TestBundledGstResolution:
+    """S3/field-evidence regression coverage (candidate #17): the Screen 8
+    GStreamer probe must resolve the product's own SHIPPED runtime by
+    absolute path -- never a bare PATH lookup, which a LocalSystem service's
+    stock, installer-untouched PATH can never satisfy even when the runtime
+    is fully installed on disk, and which can resolve to the WRONG install
+    (a developer's own system-wide GStreamer) on a dev machine."""
+
+    def test_resolves_bundled_tool_by_absolute_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        install_root = tmp_path / "install"
+        _build_bundled_gst_closure(install_root)
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+
+        result = _resolve_bundled_gst_tool("gst-inspect-1.0.exe")
+
+        assert result is not None
+        exe, env = result
+        gst_dir = install_root / "runtime" / "dependencies" / "gstreamer"
+        assert exe == gst_dir / "bin" / "gst-inspect-1.0.exe"
+        assert env["GST_PLUGIN_PATH"] == str(gst_dir / "lib" / "gstreamer-1.0")
+        assert env["PATH"].startswith(str(gst_dir / "bin"))
+
+    def test_no_bundled_closure_directory_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The dev/CI-sandbox case: no ``dependencies/gstreamer`` at all under
+        the resolved install root. Must degrade to None (PATH fallback), not
+        raise -- this is the everyday shape of every non-installed dev box."""
+        install_root = tmp_path / "install-empty"
+        install_root.mkdir()
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+
+        assert _resolve_bundled_gst_tool("gst-inspect-1.0.exe") is None
+
+    def test_partial_closure_fails_closed_to_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A corrupt/partial closure (e.g. AV-quarantined during boot) must
+        never be reported as resolvable -- it degrades to None exactly like
+        the real egress engine's own closure validation does, so callers
+        fall back to PATH rather than trusting a broken install."""
+        install_root = tmp_path / "install-partial"
+        _build_bundled_gst_closure(install_root)
+        (
+            install_root
+            / "runtime"
+            / "dependencies"
+            / "gstreamer"
+            / "bin"
+            / "gst-discoverer-1.0.exe"
+        ).unlink()
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+
+        assert _resolve_bundled_gst_tool("gst-inspect-1.0.exe") is None
+
+    def test_tool_not_staged_in_closure_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``gst-device-monitor-1.0.exe`` does not currently ship in the
+        bundled closure (verified against a real installed station's
+        ``bin/`` directory: only ``gst-inspect-1.0.exe`` and
+        ``gst-discoverer-1.0.exe`` are staged) -- resolving a tool the
+        closure never promised must fail closed to None, not raise."""
+        install_root = tmp_path / "install-no-monitor"
+        _build_bundled_gst_closure(install_root)
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+
+        assert _resolve_bundled_gst_tool("gst-device-monitor-1.0.exe") is None
+
+    def test_detect_source_bundled(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        install_root = tmp_path / "install-bundled"
+        _build_bundled_gst_closure(install_root)
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+
+        assert _detect_gst_runtime_source() == "bundled"
+
+    def test_detect_source_system_path_when_no_bundle(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        install_root = tmp_path / "install-empty"
+        install_root.mkdir()
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+        monkeypatch.setattr(
+            shutil, "which", lambda name: r"C:\dev\gstreamer\bin\gst-inspect-1.0.exe"
+        )
+
+        assert _detect_gst_runtime_source() == "system-path"
+
+    def test_detect_source_unavailable_when_neither(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        install_root = tmp_path / "install-empty"
+        install_root.mkdir()
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+
+        assert _detect_gst_runtime_source() == "unavailable"
+
+
+class TestDefaultRunnerResolutionOrder:
+    """Exercises the DEFAULT (production) probe path end-to-end -- the exact
+    code the control-plane service runs -- with a fabricated closure and a
+    stubbed subprocess boundary, so no real gst-inspect binary is needed."""
+
+    def _fake_run(self, calls: list[list[str]], *, stdout: str) -> Callable[..., SimpleNamespace]:
+        def fake(argv: list[str], **kwargs: Any) -> SimpleNamespace:
+            calls.append(argv)
+            return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+        return fake
+
+    def test_bundled_runtime_is_preferred_over_a_path_install(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The false-pass-on-a-dev-machine scenario, proven live on Halo: a
+        separate system-wide GStreamer sits on PATH AND the bundled runtime
+        is present. The probe must resolve the bundled one, never the PATH
+        one -- so a passing check names the product's own shipped runtime."""
+        install_root = tmp_path / "install"
+        _build_bundled_gst_closure(install_root)
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+        monkeypatch.setattr(
+            shutil, "which", lambda name: r"C:\Users\dev\gstreamer\bin\gst-inspect-1.0.exe"
+        )
+        calls: list[list[str]] = []
+        monkeypatch.setattr(subprocess, "run", self._fake_run(calls, stdout="GStreamer 1.28.5\n"))
+
+        readiness = station_box_profile.probe_engine_readiness(native_os=True, gpu=None)
+
+        assert readiness.gstreamer_present is True
+        assert readiness.runtime_source == "bundled"
+        bundled_exe = str(
+            install_root / "runtime" / "dependencies" / "gstreamer" / "bin" / "gst-inspect-1.0.exe"
+        )
+        assert calls[0][0] == bundled_exe
+
+    def test_falls_back_to_path_when_no_bundle_present(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        install_root = tmp_path / "install-empty"
+        install_root.mkdir()
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+        monkeypatch.setattr(
+            shutil, "which", lambda name: r"C:\Users\dev\gstreamer\bin\gst-inspect-1.0.exe"
+        )
+        calls: list[list[str]] = []
+        monkeypatch.setattr(subprocess, "run", self._fake_run(calls, stdout="GStreamer 1.24.0\n"))
+
+        readiness = station_box_profile.probe_engine_readiness(native_os=True, gpu=None)
+
+        assert readiness.gstreamer_present is True
+        assert readiness.runtime_source == "system-path"
+        assert calls[0][0] == r"C:\Users\dev\gstreamer\bin\gst-inspect-1.0.exe"
+
+    def test_service_like_environment_without_runtime_on_path_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The exact field-evidence scenario (candidate #17, LocalSystem
+        service): the resolved install root has no bundled closure, AND the
+        service's own PATH carries no GStreamer at all. Before this fix a
+        PATH-only probe reported "not detected" even with a healthy install
+        on disk; this test only proves the honest, genuinely-absent case
+        still fails closed -- it never fakes presence."""
+        install_root = tmp_path / "install-empty"
+        install_root.mkdir()
+        monkeypatch.setattr(
+            install_layout, "resolve_install_root", lambda executable=None: install_root
+        )
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+
+        readiness = station_box_profile.probe_engine_readiness(native_os=True, gpu=None)
+
+        assert readiness.gstreamer_present is False
+        assert readiness.runtime_source == "unavailable"
+        assert readiness.required_plugins_present is False
+        assert set(_BASE_REQUIRED_PLUGINS).issubset(set(readiness.missing_plugins))
 
 
 class TestClockReport:

@@ -21,7 +21,6 @@ import {
   testProviderConnection,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
-import { AuthRequiredState } from '../components/AuthRequiredState'
 import { SourceUploadWizard } from '../components/setup/SourceUploadWizard'
 import { manualLink } from './manual-link'
 import { readinessLabel, stateLabel, toneForReadiness } from './status-language'
@@ -167,11 +166,28 @@ function Field({
 
 function RecoveryKitPanel({
   setup,
+  adminPassword,
   onAcknowledge,
   ackPending,
   ackError,
 }: {
   setup: FirstAdminSetupResponse
+  /**
+   * The password the operator just chose on the previous step. CivicCast's
+   * server never stores or returns this in readable form (it is hashed
+   * before the response the wizard receives even exists) -- it lives only
+   * in this browser's React state for the length of this one screen. It is
+   * included on the printed/saved kit deliberately: field evidence
+   * (candidate #17, board-meeting test) showed operators who only got the
+   * username + 8 emergency recovery codes had no routine way to sign in,
+   * and were burning an irreplaceable recovery code just to get past first
+   * login. OWNER DECISION 2026-08-29: for a single-box station in a locked,
+   * cleared-personnel room, a physical break-glass card carrying the
+   * routine password it was already generated to protect is the honest
+   * fix, not a UX dead end -- see the CivicCast auth-recovery-lockout PR
+   * body for the full threat-model note.
+   */
+  adminPassword: string
   onAcknowledge: () => void
   ackPending: boolean
   ackError: unknown
@@ -182,15 +198,17 @@ function RecoveryKitPanel({
     () =>
       [
         `CivicCast recovery kit: ${setup.profile.station_name}`,
-        `Admin: ${setup.profile.admin_username}`,
+        `Admin username: ${setup.profile.admin_username}`,
+        `Admin password (routine sign-in): ${adminPassword}`,
         `Kit: ${setup.recovery_kit.kit_id}`,
         '',
-        'Recovery codes:',
+        'Emergency recovery codes (use ONLY if the password above is lost --',
+        'each code works once and immediately sets a new password):',
         ...setup.recovery_kit.recovery_codes.map((code) => `- ${code}`),
         '',
         ...setup.recovery_kit.instructions,
       ].join('\n'),
-    [setup],
+    [setup, adminPassword],
   )
 
   const download = () => {
@@ -217,20 +235,49 @@ function RecoveryKitPanel({
       <div>
         <h2 className="m-0 text-base font-semibold">Recovery kit ready</h2>
         <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-          These codes are shown once and CivicCast cannot show them again. If the admin password
-          is ever lost, these codes are the only way back in. Save or print them now.
+          This screen and the saved/printed copy are the only place your admin password and these
+          codes are ever shown together. CivicCast cannot show them again after you leave this
+          screen. Save or print now, before doing anything else.
         </p>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {setup.recovery_kit.recovery_codes.map((code) => (
-          <div
-            key={code}
-            className="cc-mono rounded-md px-3 py-2 text-sm font-semibold"
-            style={{ background: 'var(--cc-surface)' }}
-          >
-            {code}
+      <div className="grid gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--cc-ink-3)' }}>
+          Routine sign-in — use every time
+        </span>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="rounded-md px-3 py-2 text-sm" style={{ background: 'var(--cc-surface)' }}>
+            <span className="block text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+              Admin username
+            </span>
+            <span className="cc-mono font-semibold">{setup.profile.admin_username}</span>
           </div>
-        ))}
+          <div className="rounded-md px-3 py-2 text-sm" style={{ background: 'var(--cc-surface)' }}>
+            <span className="block text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+              Admin password
+            </span>
+            <span className="cc-mono font-semibold">{adminPassword}</span>
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--cc-ink-3)' }}>
+          Emergency recovery codes — use only if the password above is lost
+        </span>
+        <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          Each code works once and immediately sets a new admin password. There are 8; using one
+          for a routine sign-in wastes it.
+        </p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {setup.recovery_kit.recovery_codes.map((code) => (
+            <div
+              key={code}
+              className="cc-mono rounded-md px-3 py-2 text-sm font-semibold"
+              style={{ background: 'var(--cc-surface)' }}
+            >
+              {code}
+            </div>
+          ))}
+        </div>
       </div>
       <div className="flex flex-wrap gap-2">
         <button
@@ -251,9 +298,10 @@ function RecoveryKitPanel({
         </button>
       </div>
       <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-        Save kit downloads a plain-text file to this browser&apos;s Downloads folder. Print kit
-        opens your system print dialog. CivicCast keeps only scrambled verification copies of
-        these codes and can never show them again.
+        Save kit downloads a plain-text file (including the admin password above) to this
+        browser&apos;s Downloads folder. Print kit opens your system print dialog. CivicCast keeps
+        only scrambled verification copies of the password and codes on the server and can never
+        show either again.
       </p>
       <label className="flex items-start gap-2 text-sm">
         <input
@@ -263,7 +311,8 @@ function RecoveryKitPanel({
           onChange={(event) => setConfirmed(event.target.checked)}
         />
         <span>
-          I have saved or printed these recovery codes and stored them away from this computer.
+          I have saved or printed this kit — the admin password and the recovery codes — and
+          stored it away from this computer.
           {!kitActionTaken && (
             <span className="block text-xs" style={{ color: 'var(--cc-ink-3)' }}>
               Use Print kit or Save kit first.
@@ -1446,7 +1495,9 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             <div>
               <h2 className="m-0 text-base font-semibold">Admin sign-in</h2>
               <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-                Creates a fresh console token for this browser.
+                Routine sign-in — use this every time, with the username and password from your
+                printed or saved recovery kit. Creates a fresh console token for this browser
+                without touching any other browser or device already signed in.
               </p>
             </div>
             <label className="grid gap-1 text-sm" htmlFor="login-admin-username">
@@ -1496,7 +1547,9 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             <div>
               <h2 className="m-0 text-base font-semibold">Use recovery code</h2>
               <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-                Consumes one printed code and sets a new admin password.
+                Emergency only — if you have the admin password, use Admin sign-in instead. This
+                permanently consumes one of your 8 printed codes and immediately sets a new admin
+                password. Every other browser or device already signed in stays signed in.
               </p>
             </div>
             <label className="grid gap-1 text-sm" htmlFor="recover-admin-username">
@@ -1544,7 +1597,9 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               Recover account
             </button>
             {recoveryMutation.error && (
-              <AuthRequiredState error={recoveryMutation.error} context="recovery authority" />
+              <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+                {apiMessage(recoveryMutation.error, 'Recovery failed.')}
+              </div>
             )}
           </form>
         </div>
@@ -1671,6 +1726,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
       {completed && kitGateActive && (
         <RecoveryKitPanel
           setup={completed}
+          adminPassword={form.admin_password}
           onAcknowledge={() => ackMutation.mutate()}
           ackPending={ackMutation.isPending}
           ackError={ackMutation.error}

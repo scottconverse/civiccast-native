@@ -1,6 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { cancelSchedule, listSchedule, ApiError } from '../api/client'
+import {
+  ApiError,
+  cancelSchedule,
+  commitToAir,
+  getStaffIdentity,
+  listSchedule,
+  prepareCommit,
+} from '../api/client'
+import { hasOperatorRole } from '../auth/roles'
 import { ScheduleDrawer } from '../components/schedule/ScheduleDrawer'
 import { useToast } from '../components/toast-context'
 import {
@@ -10,7 +18,15 @@ import {
   type ScheduleMode,
   type ScheduleState,
 } from '../types/schedule'
+import type { CommitToAirPlan } from '../types/api.generated'
+import { DryRunReview } from './CommitToAirPanel'
 import { groupByDay } from './scheduleGrouping'
+
+function apiMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) return error.detail ?? fallback
+  if (error instanceof Error) return error.message
+  return fallback
+}
 
 type ViewMode = 'week' | 'list'
 
@@ -176,6 +192,37 @@ function StateChip({ state }: { state: ScheduleState }) {
       {meta.label}
     </span>
   )
+}
+
+// Commit-to-Air only applies to premiere items (embargo entries release
+// through a separate single-moment mechanism and are never committed — see
+// civiccast/schedule/commit_service.py's "no air duration" rejection). Only
+// a premiere item's `scheduled` vs `published` state maps to "not yet
+// visible" vs "visible to residents"; embargo's `scheduled` state means
+// something else entirely, so this stays scoped to premiere.
+//
+// Field evidence (2026-08): "Schedule premiere" succeeded (item state
+// `scheduled`) but the item never appeared on the portal's Coming Up widget
+// — a separate playout commit was required and the console had no button
+// for it. This note tells the operator the truth before they tell a
+// resident to tune in.
+function VisibilityNote({ item }: { item: ScheduleItem }) {
+  if (item.mode !== 'premiere') return null
+  if (item.state === 'scheduled') {
+    return (
+      <span className="text-[11px]" style={{ color: 'var(--cc-warn, var(--cc-ink-2))' }}>
+        Not yet visible to residents
+      </span>
+    )
+  }
+  if (item.state === 'published') {
+    return (
+      <span className="text-[11px]" style={{ color: 'var(--cc-ok, var(--cc-ink-2))' }}>
+        Visible to residents
+      </span>
+    )
+  }
+  return null
 }
 
 function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
@@ -475,11 +522,87 @@ interface ScheduleListProps {
   onCancel: (item: ScheduleItem) => void
 }
 
-function ScheduleList({ items, onCancel }: ScheduleListProps) {
+// Exported for ScheduleList.publish.test.tsx (the "Publish to residents"
+// container test), mirroring how CommitToAirPanel.tsx exports DryRunReview /
+// CommitReportRow for the same reason.
+export function ScheduleList({ items, onCancel }: ScheduleListProps) {
   const { groups, unreadable } = useMemo(() => groupByDay(items), [items])
   const today = new Date()
+  const queryClient = useQueryClient()
+  const toast = useToast()
+
+  // Publish to residents = the Commit-to-Air gate (civiccast/schedule/
+  // playout_router.py's prepare-commit + commit), surfaced per-item right
+  // where the operator scheduled it, instead of requiring a trip to the
+  // separate Channel Ops screen the field evidence showed volunteers never
+  // find. Role-gated the same way Channel Ops gates it.
+  const staffIdentityQuery = useQuery({
+    queryKey: ['staff-identity'],
+    queryFn: getStaffIdentity,
+  })
+  const canPublish =
+    staffIdentityQuery.isSuccess &&
+    (hasOperatorRole(staffIdentityQuery.data, 'publish_operator') ||
+      hasOperatorRole(staffIdentityQuery.data, 'setup_admin'))
+
+  const [reviewItemId, setReviewItemId] = useState<string | null>(null)
+
+  const prepareMutation = useMutation<CommitToAirPlan, Error, ScheduleItem>({
+    mutationFn: (item) =>
+      prepareCommit({
+        channel_id: item.channel_id,
+        // Manually-scheduled premieres never materialize a SlotOccurrence
+        // (that link only ever runs slot -> item), so they have no "real"
+        // occurrence id. occurrence_id is opaque provenance the commit path
+        // never looks up (playout_router.py / commit_service.py) — this
+        // reuses the exact `manual:<schedule_item_id>` convention
+        // civiccast/programlog/router.py already established (F-RC4-2) for
+        // surfacing these same items to Channel Ops.
+        occurrence_id: `manual:${item.id}`,
+        schedule_item_id: item.id,
+      }),
+  })
+
+  const commitMutation = useMutation({
+    mutationFn: (plan: CommitToAirPlan) =>
+      commitToAir({
+        channel_id: plan.channel_id,
+        occurrence_id: plan.occurrence_id,
+        schedule_item_id: plan.schedule_item_id,
+        plan_id: plan.plan_id,
+      }),
+    onSuccess: (_report, plan) => {
+      setReviewItemId(null)
+      prepareMutation.reset()
+      void queryClient.invalidateQueries({ queryKey: ['staff-schedule'] })
+      toast.push({
+        tone: 'success',
+        message: 'Visible to residents.',
+        detail: plan.title,
+      })
+    },
+  })
+
+  function startPublish(item: ScheduleItem) {
+    setReviewItemId(item.id)
+    prepareMutation.mutate(item)
+  }
+  function cancelPublishReview() {
+    setReviewItemId(null)
+    prepareMutation.reset()
+  }
+
   return (
     <div className="px-6 py-4">
+      {staffIdentityQuery.isSuccess && !canPublish && (
+        <div
+          className="mb-4 rounded-md px-3 py-2 text-xs"
+          style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
+        >
+          You can view the schedule here. Publishing a premiere to residents requires the
+          publish operator or setup admin role.
+        </div>
+      )}
       {unreadable.length > 0 && (
         <div
           role="status"
@@ -531,50 +654,116 @@ function ScheduleList({ items, onCancel }: ScheduleListProps) {
               {g.items.map((it, idx) => {
                 // UX-003: human title primary, asset_id meta below.
                 const display = it.asset_title?.trim() || it.asset_id
+                const reviewing = reviewItemId === it.id
+                const checking = reviewing && prepareMutation.isPending
+                const plan =
+                  reviewing && prepareMutation.data?.schedule_item_id === it.id
+                    ? prepareMutation.data
+                    : null
                 return (
                   <div
                     key={it.id}
-                    className="flex flex-wrap items-center gap-3 px-3 py-3 text-xs"
                     style={{ borderTop: idx > 0 ? '1px solid var(--cc-line)' : undefined }}
                   >
-                    <span
-                      className="cc-mono cc-tabular w-32 shrink-0"
-                      style={{ color: 'var(--cc-ink-2)' }}
-                    >
-                      {fmtRangeLabel(it)}
-                    </span>
-                    <ModeChip mode={it.mode} />
-                    <StateChip state={it.state} />
-                    <div className="min-w-0 flex-1">
-                      <div className="cc-truncate font-medium">{display}</div>
-                      {it.asset_title && (
-                        <div
-                          className="cc-mono cc-truncate text-[10px]"
-                          style={{ color: 'var(--cc-ink-3)' }}
+                    <div className="flex flex-wrap items-center gap-3 px-3 py-3 text-xs">
+                      <span
+                        className="cc-mono cc-tabular w-32 shrink-0"
+                        style={{ color: 'var(--cc-ink-2)' }}
+                      >
+                        {fmtRangeLabel(it)}
+                      </span>
+                      <ModeChip mode={it.mode} />
+                      <StateChip state={it.state} />
+                      <div className="min-w-0 flex-1">
+                        <div className="cc-truncate font-medium">{display}</div>
+                        {it.asset_title && (
+                          <div
+                            className="cc-mono cc-truncate text-[10px]"
+                            style={{ color: 'var(--cc-ink-3)' }}
+                          >
+                            {it.asset_id}
+                          </div>
+                        )}
+                      </div>
+                      <VisibilityNote item={it} />
+                      <span
+                        className="cc-mono text-[11px]"
+                        style={{ color: 'var(--cc-ink-3)' }}
+                      >
+                        {it.channel_id}
+                      </span>
+                      {it.mode === 'premiere' && it.state === 'scheduled' && !reviewing && (
+                        <button
+                          type="button"
+                          disabled={!canPublish}
+                          onClick={() => startPublish(it)}
+                          className="rounded-md px-2.5 py-1 text-[11px] font-semibold"
+                          style={{
+                            background: !canPublish ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
+                            color: !canPublish ? 'var(--cc-ink-3)' : 'var(--cc-brand-ink)',
+                            cursor: !canPublish ? 'not-allowed' : 'pointer',
+                          }}
                         >
-                          {it.asset_id}
-                        </div>
+                          Publish to residents
+                        </button>
+                      )}
+                      {checking && (
+                        <span className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+                          Checking…
+                        </span>
+                      )}
+                      {it.state === 'scheduled' && (
+                        <button
+                          type="button"
+                          onClick={() => onCancel(it)}
+                          className="rounded-md px-2.5 py-1 text-[11px] font-medium"
+                          style={{
+                            border: '1px solid var(--cc-line)',
+                            color: 'var(--cc-ink-2)',
+                            background: 'var(--cc-surface)',
+                          }}
+                        >
+                          Cancel
+                        </button>
                       )}
                     </div>
-                    <span
-                      className="cc-mono text-[11px]"
-                      style={{ color: 'var(--cc-ink-3)' }}
-                    >
-                      {it.channel_id}
-                    </span>
-                    {it.state === 'scheduled' && (
-                      <button
-                        type="button"
-                        onClick={() => onCancel(it)}
-                        className="rounded-md px-2.5 py-1 text-[11px] font-medium"
-                        style={{
-                          border: '1px solid var(--cc-line)',
-                          color: 'var(--cc-ink-2)',
-                          background: 'var(--cc-surface)',
-                        }}
+                    {reviewing && prepareMutation.isError && (
+                      <div
+                        role="alert"
+                        className="mx-3 mb-3 rounded-md p-2 text-xs"
+                        style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
                       >
-                        Cancel
-                      </button>
+                        {apiMessage(
+                          prepareMutation.error,
+                          'Could not check whether this is ready to publish.',
+                        )}
+                      </div>
+                    )}
+                    {plan && (
+                      <div className="px-3 pb-3">
+                        <DryRunReview
+                          plan={plan}
+                          canManage={canPublish}
+                          committing={commitMutation.isPending}
+                          onApprove={() => commitMutation.mutate(plan)}
+                          onCancel={cancelPublishReview}
+                          approveLabel="Publish to residents"
+                          committingLabel="Publishing…"
+                          roleGateLabel="Publishing to residents requires the publish operator or setup admin role."
+                        />
+                        {commitMutation.isError && (
+                          <div
+                            role="alert"
+                            className="mt-2 rounded-md p-2 text-xs"
+                            style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+                          >
+                            {apiMessage(
+                              commitMutation.error,
+                              'Could not publish this to residents.',
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )

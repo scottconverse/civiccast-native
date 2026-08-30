@@ -434,14 +434,21 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       if (typeof raw === 'string') {
         detailString = raw
       } else if (raw && typeof raw === 'object') {
-        // Conflict shape: { detail: { message, conflicting_item } }
-        const obj = raw as Partial<ScheduleConflictDetail>
+        // Conflict shape: { detail: { message, conflicting_item } } (schedule
+        // create) or { detail: { message, conflicts } } (playout commit —
+        // civiccast/schedule/playout_router.py's 409). Either way, prefer the
+        // human-readable `message` over dumping the raw object at the
+        // operator; only the schedule-create shape also carries a single
+        // `conflicting_item` the UI renders specially.
+        const obj = raw as Partial<ScheduleConflictDetail> & { message?: unknown }
         if (
           typeof obj.message === 'string' &&
           obj.conflicting_item &&
           typeof obj.conflicting_item === 'object'
         ) {
           conflict = obj as ScheduleConflictDetail
+          detailString = obj.message
+        } else if (typeof obj.message === 'string') {
           detailString = obj.message
         } else {
           detailString = JSON.stringify(raw)

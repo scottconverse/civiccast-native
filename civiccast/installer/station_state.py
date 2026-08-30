@@ -53,6 +53,21 @@ _PASSWORD_ITERATIONS = 210_000
 _RECOVERY_CODE_COUNT = 8
 _DEFAULT_ROLES = ["setup_admin", "publish_operator", "support_admin", "viewer"]
 
+# OWNER DECISION 2026-08-29 (field evidence, candidate #17 board-meeting test):
+# the station used to keep exactly one operator-console token, so ANY new
+# token issuance -- including one issued by the emergency recovery flow --
+# silently invalidated every other already-open browser tab's session. The
+# operator who set the station up watched their own console die mid-session
+# the moment someone else recovered access. A lost password is not evidence
+# that other live sessions are compromised, so recovery has no security
+# reason to end them. `operator_console.tokens` now holds a bounded list of
+# concurrently valid sessions instead of a single slot; recovery APPENDS a
+# fresh token, ordinary login still REPLACES (unchanged, still covered by
+# test_station_login_replaces_token_but_recovery_appends_it). The cap below only
+# bounds unbounded growth from repeated recoveries/logins that are never
+# explicitly signed out -- it is not a security control.
+_MAX_OPERATOR_SESSIONS = 20
+
 # The station's seed channels MUST match the real playout/egress channel
 # lineup. A manually-maintained second list here (a numbered channel set)
 # once diverged from the real public/education/government channels and severed
@@ -521,9 +536,8 @@ def complete_first_admin_setup(
     generated_at = datetime.now(UTC)
     kit_id = "rk_" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")[:18]
     recovery_codes = [_new_recovery_code() for _ in range(_RECOVERY_CODE_COUNT)]
-    operator_token = "ccst_" + secrets.token_urlsafe(32)
+    operator_token, token_entry = _new_operator_token_entry(source="setup")
     password_salt = secrets.token_hex(16)
-    token_salt = secrets.token_hex(16)
 
     profile = StationProfile(
         station_name=request.station_name.strip(),
@@ -552,7 +566,19 @@ def complete_first_admin_setup(
         instructions=[
             "Print or save this kit before the first public meeting.",
             "Keep it somewhere separate from the CivicCast computer.",
-            "Use one recovery code at a time if the admin password is lost.",
+            (
+                "Routine sign-in: use 'Admin sign-in' with the username above and "
+                "the admin password you just chose. The operator console's print/"
+                "save actions include that password on the copy YOU save, so write "
+                "it down now if you have not already -- CivicCast never stores it "
+                "in a readable form and cannot show it again after this screen."
+            ),
+            (
+                "Recovery codes are for emergencies ONLY -- use one only if the "
+                "admin password is truly lost. Each code works once, immediately "
+                "sets a new admin password, and should not be spent on routine "
+                "sign-in."
+            ),
             "If this kit is exposed, rotate the admin password and generate a new kit.",
         ],
         excludes=[
@@ -601,8 +627,7 @@ def complete_first_admin_setup(
             "code_hashes": [_hash_secret(code, salt=kit_id) for code in recovery_codes],
         },
         "operator_console": {
-            "token_salt": token_salt,
-            "token_hash": _hash_token(operator_token, salt=token_salt),
+            "tokens": [token_entry],
         },
     }
     _save_raw_state(raw_state)
@@ -633,19 +658,22 @@ def acknowledge_recovery_kit(*, operator_console_url: str) -> StationSetupState:
 
 
 def verify_station_operator_token(token: str) -> OperatorIdentity | None:
-    """Return the first-admin operator identity when token matches local state."""
+    """Return the first-admin operator identity when token matches local state.
+
+    Checks every concurrently valid session in ``operator_console.tokens``,
+    not just the most recently issued one -- see ``_MAX_OPERATOR_SESSIONS``
+    for why more than one can be valid at once.
+    """
 
     raw = _load_raw_state()
     admin = raw.get("admin")
     console = raw.get("operator_console")
     if not isinstance(admin, dict) or not isinstance(console, dict):
         return None
-    salt = console.get("token_salt")
-    expected = console.get("token_hash")
-    if not isinstance(salt, str) or not isinstance(expected, str):
-        return None
-    observed = _hash_token(token, salt=salt)
-    if not hmac.compare_digest(observed, expected):
+    if not any(
+        hmac.compare_digest(_hash_token(token, salt=entry["token_salt"]), entry["token_hash"])
+        for entry in _operator_token_entries(console)
+    ):
         return None
     username = str(admin.get("username") or "first-admin")
     display_name = str(admin.get("display_name") or username)
@@ -672,7 +700,10 @@ def login_station_admin(
         password=request.admin_password,
     ):
         raise StationAuthError("Invalid admin username or password.")
-    operator_token = _rotate_operator_token(raw)
+    # Ordinary login REPLACES the session list (unchanged behavior, covered by
+    # test_station_login_replaces_token_but_recovery_appends_it): a fresh sign-in
+    # with the known-correct password is a deliberate "just this browser" act.
+    operator_token = _issue_operator_token(raw, source="login", replace=True)
     _save_raw_state(raw)
     return StationAuthResponse(
         status="authenticated",
@@ -697,7 +728,11 @@ def recover_station_admin(
     if not _consume_recovery_code(raw, request.recovery_code):
         raise StationAuthError("Invalid recovery code or admin username.")
     _replace_admin_password(raw, request.new_admin_password)
-    operator_token = _rotate_operator_token(raw)
+    # APPEND rather than replace: a forgotten password is not evidence that
+    # any other already-open session is compromised, so recovering does not
+    # get to silently sign out the admin's own other tabs/devices (see the
+    # OWNER DECISION comment on _MAX_OPERATOR_SESSIONS above).
+    operator_token = _issue_operator_token(raw, source="recovery", replace=False)
     _save_raw_state(raw)
     return StationAuthResponse(
         status="recovered",
@@ -921,12 +956,63 @@ def _replace_admin_password(raw: dict[str, Any], new_password: str) -> None:
     admin["password_rotated_at"] = datetime.now(UTC).isoformat()
 
 
-def _rotate_operator_token(raw: dict[str, Any]) -> str:
+def _new_operator_token_entry(*, source: str) -> tuple[str, dict[str, Any]]:
+    """Mint one fresh operator token and its storable (salted-hash) entry."""
+
     operator_token = "ccst_" + secrets.token_urlsafe(32)
     token_salt = secrets.token_hex(16)
-    raw["operator_console"] = {
+    entry = {
         "token_salt": token_salt,
         "token_hash": _hash_token(operator_token, salt=token_salt),
+        "issued_at": datetime.now(UTC).isoformat(),
+        "source": source,
+    }
+    return operator_token, entry
+
+
+def _operator_token_entries(console: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the console's valid-token entries, healing the pre-multi-session shape.
+
+    A station commissioned before this fix persisted a single
+    ``token_salt``/``token_hash`` pair directly on ``operator_console``
+    instead of a ``tokens`` list. Read that legacy shape as a one-entry list
+    so an already-issued token from an older build keeps working across the
+    upgrade, until the next login/recovery migrates it to the list shape.
+    """
+
+    tokens = console.get("tokens")
+    if isinstance(tokens, list):
+        return [
+            entry
+            for entry in tokens
+            if isinstance(entry, dict)
+            and isinstance(entry.get("token_salt"), str)
+            and isinstance(entry.get("token_hash"), str)
+        ]
+    legacy_salt = console.get("token_salt")
+    legacy_hash = console.get("token_hash")
+    if isinstance(legacy_salt, str) and isinstance(legacy_hash, str):
+        return [{"token_salt": legacy_salt, "token_hash": legacy_hash}]
+    return []
+
+
+def _issue_operator_token(raw: dict[str, Any], *, source: str, replace: bool) -> str:
+    """Mint a fresh operator token, either replacing or appending to the session list.
+
+    ``replace=True`` (ordinary login) keeps this browser's token as the only
+    valid one, matching the long-standing "signing in here signs you in
+    here" behavior. ``replace=False`` (recovery) keeps every other
+    currently-valid session alive and just adds this one, bounded to
+    ``_MAX_OPERATOR_SESSIONS`` by dropping the oldest-issued entries first so
+    the state file cannot grow without limit.
+    """
+
+    console = raw.get("operator_console")
+    existing = _operator_token_entries(console) if isinstance(console, dict) else []
+    operator_token, entry = _new_operator_token_entry(source=source)
+    tokens = [entry] if replace else [*existing, entry][-_MAX_OPERATOR_SESSIONS:]
+    raw["operator_console"] = {
+        "tokens": tokens,
         "rotated_at": datetime.now(UTC).isoformat(),
     }
     return operator_token

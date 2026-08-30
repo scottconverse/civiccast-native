@@ -341,6 +341,19 @@ describe('SetupScreen first-admin recovery kit gate', () => {
     })
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     vi.spyOn(window, 'print').mockImplementation(() => {})
+    // Capture what the "Save kit" download actually contains -- reading a
+    // Blob's content back out is unreliable across jsdom/undici realms in
+    // this test environment, so record the parts a Blob was built from
+    // instead of round-tripping through the Blob object itself.
+    const savedBlobParts: string[] = []
+    const RealBlob = window.Blob
+    class RecordingBlob extends RealBlob {
+      constructor(parts: BlobPart[], options?: BlobPropertyBag) {
+        savedBlobParts.push(String(parts[0]))
+        super(parts, options)
+      }
+    }
+    vi.stubGlobal('Blob', RecordingBlob)
 
     let setupComplete = false
     let recoveryKitAcknowledged = false
@@ -440,8 +453,14 @@ describe('SetupScreen first-admin recovery kit gate', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create first admin' }))
     expect(await screen.findByText('Recovery kit ready')).toBeTruthy()
 
+    // Field bug fix (candidate #17): the kit must show the routine admin
+    // password, not just the emergency recovery codes -- otherwise the
+    // holder has a username and 8 codes but no way to sign in normally.
+    expect(screen.getByText('correct horse battery staple')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Save kit' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: /I have saved or printed these recovery codes/ }))
+    expect(savedBlobParts.join('\n')).toContain('correct horse battery staple')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /I have saved or printed this kit/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Continue to the console' }))
 
     await waitFor(() => {
@@ -457,5 +476,84 @@ describe('SetupScreen first-admin recovery kit gate', () => {
     expect(screen.getByText('Community Channel 14')).toBeTruthy()
     expect(screen.getByText(/CivicCast\\media/)).toBeTruthy()
     expect(window.localStorage.getItem('civiccast.staffToken')).toBe('ccst_test_operator_console_token')
+  })
+})
+
+describe('SetupScreen returning-operator sign-in', () => {
+  function stubReturningOperatorFetch(overrides: {
+    onRecover?: (body: unknown) => Promise<Response>
+  } = {}) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url === '/api/setup/station-state') {
+        return jsonResponse({
+          status: 'complete',
+          setup_complete: true,
+          profile,
+          recovery_kit_created: true,
+          recovery_kit_id: 'rk_test',
+          recovery_kit_acknowledged: true,
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
+          next_step: 'Open System Health.',
+        })
+      }
+      if (url === '/api/setup/storage') {
+        return jsonResponse({
+          status: 'ready',
+          database_url: 'sqlite:///tmp/civiccast.db',
+          database_path: '/tmp/civiccast.db',
+          upload_dir: '/tmp/uploads',
+          storage_dir: '/tmp',
+          migrations_applied: true,
+          configured_at: '2026-06-28T00:00:00Z',
+          operator_message: 'Storage ready',
+          next_step: 'Create the first admin.',
+        })
+      }
+      if (url === '/api/staff/auth/me') {
+        return jsonResponse({ detail: 'Missing Authorization header. Use Bearer <staff-token>.' }, 401)
+      }
+      if (url === '/api/setup/recover' && method === 'POST') {
+        if (overrides.onRecover) return overrides.onRecover(JSON.parse(String(init?.body)))
+        return jsonResponse({ detail: 'Invalid recovery code or admin username.' }, 401)
+      }
+      return jsonResponse({ detail: `Unhandled ${method} ${url}` }, 404)
+    })
+  }
+
+  it('shows the actual server message on a failed recovery attempt, not a generic sign-in-elsewhere prompt', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    vi.stubGlobal('fetch', stubReturningOperatorFetch())
+
+    renderSetupScreen()
+
+    await screen.findByText('Use recovery code')
+    // Field bug fix (candidate #17): a wrong/expired recovery code used to
+    // render the generic "Could not verify your recovery authority... ask a
+    // setup admin for a fresh operator-console link" message, which makes no
+    // sense when recovery IS the last-resort path because there is no other
+    // admin to ask. It must show the real server reason instead.
+    fireEvent.change(inputById('recover-admin-username'), { target: { value: 'testadmin' } })
+    fireEvent.change(inputById('recover-code'), { target: { value: 'CC-WRONGCODE' } })
+    fireEvent.change(inputById('recover-new-password'), {
+      target: { value: 'brand new password twelve' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Recover account' }))
+
+    expect(await screen.findByText('Invalid recovery code or admin username.')).toBeTruthy()
+    expect(screen.queryByText(/ask a setup admin/)).toBeNull()
+  })
+
+  it('warns that recovery is an emergency-only path that spends a limited code', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    vi.stubGlobal('fetch', stubReturningOperatorFetch())
+
+    renderSetupScreen()
+
+    await screen.findByText('Use recovery code')
+    expect(screen.getByText(/Emergency only/)).toBeTruthy()
+    expect(screen.getByText(/permanently consumes one of your 8 printed codes/)).toBeTruthy()
+    expect(screen.getByText(/Every other browser or device already signed in stays signed in/)).toBeTruthy()
   })
 })
