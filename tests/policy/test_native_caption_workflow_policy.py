@@ -914,7 +914,43 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # set at all). None were marked windows_only, so both lanes move by the
     # same -18. Re-derived by an actual `--collect-only` run on this tree,
     # not by arithmetic: (1684, 1876) -> (1666, 1858).
-    assert (collect("not windows_only"), collect()) == (1666, 1858)
+    #
+    # fix/component-acquisition-receipt-wipe (2026-08-29): +11 total, +2
+    # windows_only -- field evidence (candidate 4eca729): a station activated
+    # on the mandatory floor caption tier crashed on every restart after the
+    # operator acquired the OPTIONAL large-v3 tier through the post-install
+    # GUI, because `_resolve_caption_tier` auto-promotes to the highest
+    # STAGED tier across both search roots while the activation receipt was
+    # only ever written, once, for whichever tier was staged at ELEVATED
+    # install time -- so the runtime resolved large-v3 but validated it
+    # against a receipt that could only ever describe the floor tier
+    # (`NativeStationConfigurationError: ... receipt does not match this
+    # distribution`). Fixed by reading the receipt from the SAME root the
+    # resolved tier's own model came from (`load_native_station_environment`,
+    # reusing the existing `_tier_base_root` two-root search rather than
+    # hardcoding the version root), paired with a new Rust-side addendum
+    # writer (`main.rs::finalize_captions_large_acquisition`) that proves the
+    # newly acquired tier with a real inference self-test and writes ITS OWN
+    # receipt into the acquisition root -- never touching the primary
+    # receipt, station-set.json, or any other already-activated component.
+    # Separately, the supervisor's own crash was invisible in its own log
+    # (only the "logging initialized" canary; the real exception reached only
+    # the Windows Event Log) -- `service_host.SvcDoRun` now logs the real
+    # reason via the new `civiccast.native.supervisor.start_failure_marker`
+    # and, after 3 consecutive failed starts with the SAME condition, writes
+    # an operator-readable `STATION-START-FAILED.md` marker alongside
+    # install-progress.log. 11 new tests: 2 in test_station_runtime.py (the
+    # fail-closed floor with no addendum receipt, and the regression proof
+    # with one), 7 in the new test_start_failure_marker.py (pure counter/
+    # marker decision logic, no OS dependency, no windows_only marker), and 2
+    # in test_supervisor_service_win.py (`windows_only`: the real
+    # SvcDoRun-driven crash-loop-then-marker sequence, and the marker/counter
+    # clearing on a clean start). The 9 non-windows_only tests collect into
+    # both lanes; the 2 windows_only tests collect only into the full lane.
+    # Rebased onto fix/setup-nonce-handoff's own floor (1666, 1858) after
+    # that PR landed first; re-derived by an actual `--collect-only` run on
+    # this POST-REBASE tree, not by arithmetic: (1666, 1858) -> (1675, 1869).
+    assert (collect("not windows_only"), collect()) == (1675, 1869)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

@@ -1036,6 +1036,43 @@ def staff_storage_setup(request: Request, payload: StorageSetupRequest) -> Manag
         ) from exc
 
 
+_CREDENTIAL_GUESSING_SETUP_PATHS = frozenset({"/api/setup/login", "/api/setup/recover"})
+
+
+def _setup_rate_limit_key(request: Request) -> str:
+    return f"{client_ip(request)}:{request.url.path}"
+
+
+def _raise_setup_rate_limited(
+    limiter: AuthRateLimiter,
+    *,
+    key: str,
+    window_seconds: int,
+) -> None:
+    """Raise the single-box "wait, then here's your way back in" 429.
+
+    OWNER DECISION 2026-08-29 (field evidence, candidate #17): the old
+    generic detail text ("Too many setup requests. Wait before trying
+    again.") never said how long or what to do next, so a locked-out
+    single-admin station read as a dead end instead of a timer. The wait
+    time and the concrete next step are baked directly into ``detail`` (not
+    left to the frontend to reconstruct from the Retry-After header) so
+    every caller of this API -- console, CLI, a future client -- shows the
+    operator the same actionable message.
+    """
+
+    retry_after = limiter.retry_after_seconds(key, window_seconds=window_seconds)
+    unit = "second" if retry_after == 1 else "seconds"
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=(
+            f"Too many sign-in attempts from this station. Wait {retry_after} {unit}, "
+            "then try again with the correct password, or use a printed recovery code."
+        ),
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 def _enforce_setup_rate_limit(request: Request) -> None:
     """Rate-limit every pre-staff-auth setup/login/recovery route.
 
@@ -1047,19 +1084,53 @@ def _enforce_setup_rate_limit(request: Request) -> None:
     exempted: a local attacker on a shared or LAN-exposed box is real.
     Keyed by (client IP, path) so one noisy route can't burn another's
     budget and one client can't burn another's.
+
+    OWNER DECISION 2026-08-29 (field evidence, candidate #17): on a
+    single-box station every legitimate caller is also 127.0.0.1, so the
+    old scheme -- every REQUEST to a path burns its budget, success or not
+    -- meant the sole admin could lock themselves out just by reading setup
+    state a few times or retyping a stale password after a recovery reset
+    it. login/recover now use the SAME "only failures count" accounting
+    already audited and shipped for ``/api/staff/*``
+    (civiccast.auth.middleware.staff_auth_middleware): this function only
+    *peeks* at whether that route is already saturated (never consumes a
+    hit for those two paths), and the route handlers themselves call
+    ``_record_setup_auth_failure`` from their except-blocks so only a wrong
+    password or an invalid/expired recovery code spends the budget. The
+    total number of wrong guesses allowed per window is unchanged (still
+    ``CIVICCAST_AUTH_RATE_LIMIT`` per ``CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS``)
+    -- this closes the self-lockout dead end without loosening the guard
+    against real guessing. Every other setup route keeps the original
+    per-request accounting (they carry no credential to fail).
     """
 
     limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
     limit, window_seconds = auth_rate_limit_config()
-    key = f"{client_ip(request)}:{request.url.path}"
+    key = _setup_rate_limit_key(request)
+    if request.url.path in _CREDENTIAL_GUESSING_SETUP_PATHS:
+        if limiter.saturated(key, limit=limit, window_seconds=window_seconds):
+            _raise_setup_rate_limited(limiter, key=key, window_seconds=window_seconds)
+        return
     if limiter.allow(key, limit=limit, window_seconds=window_seconds):
         return
-    retry_after = limiter.retry_after_seconds(key, window_seconds=window_seconds)
-    raise HTTPException(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        detail="Too many setup requests. Wait before trying again.",
-        headers={"Retry-After": str(retry_after)},
-    )
+    _raise_setup_rate_limited(limiter, key=key, window_seconds=window_seconds)
+
+
+def _record_setup_auth_failure(request: Request) -> None:
+    """Record one failed login/recovery attempt against the per-IP-and-path budget.
+
+    Call only from the ``/api/setup/login`` and ``/api/setup/recover``
+    handlers' except-blocks -- see ``_enforce_setup_rate_limit`` for why
+    only failures burn this budget. If this failure saturates the budget,
+    raises 429 in place of the caller's 401 (matching the staff-auth
+    middleware's behavior for the same situation).
+    """
+
+    limiter = cast(AuthRateLimiter, request.app.state.auth_rate_limiter)
+    limit, window_seconds = auth_rate_limit_config()
+    key = _setup_rate_limit_key(request)
+    if not limiter.allow(key, limit=limit, window_seconds=window_seconds):
+        _raise_setup_rate_limited(limiter, key=key, window_seconds=window_seconds)
 
 
 def _require_local_setup_request(request: Request) -> None:
@@ -1228,6 +1299,7 @@ def public_station_login(
     try:
         return login_station_admin(payload)
     except StationAuthError as exc:
+        _record_setup_auth_failure(request)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
 
@@ -1245,6 +1317,7 @@ def public_station_recovery(
     try:
         return recover_station_admin(payload)
     except StationAuthError as exc:
+        _record_setup_auth_failure(request)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
 

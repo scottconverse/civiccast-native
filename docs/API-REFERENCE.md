@@ -1879,7 +1879,7 @@ Apply operator review decision to contributor submission.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `submission_id` (path, required): `string`
 - Request body: `ContributorReviewRequest`
-- Responses: 200 `ContributorSubmission`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Submission not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+- Responses: 200 `ContributorSubmission`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Submission not found; 409 Not yet ingested / not yet accepted / schedule conflict / asset id collision; 422 Invalid review request, or the contributor's media failed the broken-media probe; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 ffprobe or asset/schedule storage not ready
 
 ### `GET /api/staff/contribution/diagnostics`
 
@@ -5645,6 +5645,7 @@ Read CivicCast local federation metadata.
 ### `ContributorSubmission`
 
 - `agreements` (required): `Array<SubmissionAgreementAcceptance>`
+- `asset_id` (optional): `string | null` -- Library asset created by ffprobe ingest when this submission was accepted. None until acceptance completes a real ingest; a submission cannot be scheduled while this is None.
 - `broken_media_gate` (optional): `BrokenMediaGateResult`
 - `channel_id` (required): `string`
 - `contributor` (required): `ContributorAccount`
@@ -6200,6 +6201,7 @@ Read CivicCast local federation metadata.
 - `next_step` (optional): `string`
 - `opengl_45` (required): `boolean`
 - `required_plugins_present` (required): `boolean`
+- `runtime_source` (optional): `'bundled' | 'system-path' | 'unavailable'`
 
 ### `EngineTierVerdict`
 

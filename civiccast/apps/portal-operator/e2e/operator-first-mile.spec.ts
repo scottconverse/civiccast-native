@@ -669,11 +669,14 @@ test.describe('operator first mile', () => {
 
     await expect(page.getByText('Recovery kit ready')).toBeVisible()
     await expect(page.getByText('CC-111111111111')).toBeVisible()
+    // Field fix (candidate #17): the kit must show the routine admin
+    // password, not just the emergency recovery codes.
+    await expect(page.getByText('correct horse battery staple')).toBeVisible()
 
     // Lockout gate: nothing past the kit until save/print is confirmed.
     await expect(page.getByRole('heading', { name: 'Camera or test media' })).toHaveCount(0)
     const confirmBox = page.getByRole('checkbox', {
-      name: /I have saved or printed these recovery codes/,
+      name: /I have saved or printed this kit/,
     })
     await expect(confirmBox).toBeDisabled()
     const downloadPromise = page.waitForEvent('download')

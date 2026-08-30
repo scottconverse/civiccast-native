@@ -135,15 +135,146 @@ def test_store_review_accepts_only_after_media_gate_passes(upload_dir: Path) -> 
             ),
             metadata_patch={"title": "Edited Community Arts Magazine"},  # type: ignore[arg-type]
         ),
+        ingested_asset_id="contributor-arts-center-abcd1234",
     )
 
     assert accepted.state == "accepted"
     assert accepted.title == "Edited Community Arts Magazine"
+    assert accepted.asset_id == "contributor-arts-center-abcd1234"
     assert [notice.state for notice in accepted.notifications_sent] == ["submitted", "accepted"]
     assert [notice.state for notice in store.notification_outbox().notifications] == [
         "submitted",
         "accepted",
     ]
+
+
+# ---------------------------------------------------------------------------
+# TASK A: acceptance must produce a real library asset, and send-to-schedule
+# must produce a real, non-null schedule_item_id. store.review_submission
+# never fabricates either -- it takes them as evidence the ROUTER already
+# produced by actually running the ffprobe ingest / creating the schedule
+# item (see civiccast.contribute.router._ingest_accepted_media /
+# _create_real_schedule_item) and refuses the transition otherwise.
+# ---------------------------------------------------------------------------
+
+
+def test_accept_without_a_real_ingested_asset_id_is_refused(upload_dir: Path) -> None:
+    store = ContributorSubmissionStore()
+    receipt = store.create_submission(_submission_payload(upload_dir))
+
+    with pytest.raises(ValueError, match="ingested into the asset library"):
+        store.review_submission(
+            receipt.submission_id,
+            ContributorReviewRequest(
+                action="accept",
+                broken_media_gate=BrokenMediaGateResult(
+                    state="passed", checked_at=_now(), summary="probes passed"
+                ),
+            ),
+            # ingested_asset_id deliberately omitted -- this is the exact
+            # "accept flips state but nothing was ingested" bug the field
+            # evidence reported (candidate #17).
+        )
+
+
+def test_schedule_before_accept_is_refused(upload_dir: Path) -> None:
+    """A submission with no library asset yet (never accepted, or accept
+    never completed a real ingest) cannot be sent to the schedule -- this is
+    what stops schedule_item_id from ever coming back null on a reported
+    success."""
+    store = ContributorSubmissionStore()
+    receipt = store.create_submission(_submission_payload(upload_dir))
+
+    with pytest.raises(ValueError, match="must be accepted"):
+        store.review_submission(
+            receipt.submission_id,
+            ContributorReviewRequest(
+                action="schedule",
+                broken_media_gate=BrokenMediaGateResult(
+                    state="passed", checked_at=_now(), summary="probes passed"
+                ),
+                schedule_handoff=ScheduleHandoff(
+                    channel_id="public",
+                    requested_start=_now(),
+                    duration_seconds=1800,
+                ),
+            ),
+            created_schedule_item_id="11111111-1111-1111-1111-111111111111",
+        )
+
+
+def test_schedule_without_a_real_schedule_item_id_is_refused(upload_dir: Path) -> None:
+    store = ContributorSubmissionStore()
+    receipt = store.create_submission(_submission_payload(upload_dir))
+    store.review_submission(
+        receipt.submission_id,
+        ContributorReviewRequest(
+            action="accept",
+            broken_media_gate=BrokenMediaGateResult(
+                state="passed", checked_at=_now(), summary="probes passed"
+            ),
+        ),
+        ingested_asset_id="contributor-arts-center-abcd1234",
+    )
+
+    with pytest.raises(ValueError, match="real schedule item"):
+        store.review_submission(
+            receipt.submission_id,
+            ContributorReviewRequest(
+                action="schedule",
+                broken_media_gate=BrokenMediaGateResult(
+                    state="passed", checked_at=_now(), summary="probes passed"
+                ),
+                schedule_handoff=ScheduleHandoff(
+                    channel_id="public",
+                    requested_start=_now(),
+                    duration_seconds=1800,
+                ),
+            ),
+            # created_schedule_item_id deliberately omitted -- this is the
+            # exact "scheduled with schedule_item_id: null" bug reported.
+        )
+
+
+def test_schedule_persists_the_real_schedule_item_id_on_the_handoff(upload_dir: Path) -> None:
+    store = ContributorSubmissionStore()
+    receipt = store.create_submission(_submission_payload(upload_dir))
+    store.review_submission(
+        receipt.submission_id,
+        ContributorReviewRequest(
+            action="accept",
+            broken_media_gate=BrokenMediaGateResult(
+                state="passed", checked_at=_now(), summary="probes passed"
+            ),
+        ),
+        ingested_asset_id="contributor-arts-center-abcd1234",
+    )
+
+    scheduled = store.review_submission(
+        receipt.submission_id,
+        ContributorReviewRequest(
+            action="schedule",
+            broken_media_gate=BrokenMediaGateResult(
+                state="passed", checked_at=_now(), summary="probes passed"
+            ),
+            schedule_handoff=ScheduleHandoff(
+                channel_id="public",
+                requested_start=_now(),
+                duration_seconds=1800,
+            ),
+        ),
+        created_schedule_item_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    assert scheduled.state == "scheduled"
+    assert scheduled.schedule_handoff is not None
+    assert scheduled.schedule_handoff.schedule_item_id == "11111111-1111-1111-1111-111111111111"
+    status = store.public_status(receipt.submission_id, receipt.receipt_token)
+    assert status.status_message == (
+        "Your program has a real spot on the schedule and will air automatically."
+    )
+    assert status.schedule_handoff is not None
+    assert status.schedule_handoff.schedule_item_id == "11111111-1111-1111-1111-111111111111"
 
 
 def test_known_producer_ids_includes_durable_identity_regardless_of_state(
@@ -155,6 +286,16 @@ def test_known_producer_ids_includes_durable_identity_regardless_of_state(
     # (no longer needing operator action) still resolves.
     store = ContributorSubmissionStore()
     receipt = store.create_submission(_submission_payload(upload_dir, "Already Aired"))
+    store.review_submission(
+        receipt.submission_id,
+        ContributorReviewRequest(
+            action="accept",
+            broken_media_gate=BrokenMediaGateResult(
+                state="passed", checked_at=_now(), summary="probes passed"
+            ),
+        ),
+        ingested_asset_id="contributor-already-aired-abcd1234",
+    )
     store.review_submission(
         receipt.submission_id,
         ContributorReviewRequest(
@@ -170,6 +311,7 @@ def test_known_producer_ids_includes_durable_identity_regardless_of_state(
                 duration_seconds=1800,
             ),
         ),
+        created_schedule_item_id="11111111-1111-1111-1111-111111111111",
     )
 
     # The submission is now "scheduled" (out of the needs-action set) but the producer
@@ -192,6 +334,16 @@ def test_store_decline_and_schedule_feed_producer_report(upload_dir: Path) -> No
     store.review_submission(
         accepted.submission_id,
         ContributorReviewRequest(
+            action="accept",
+            broken_media_gate=BrokenMediaGateResult(
+                state="passed", checked_at=_now(), summary="Video and audio probes passed."
+            ),
+        ),
+        ingested_asset_id="contributor-community-arts-magazine-abcd1234",
+    )
+    store.review_submission(
+        accepted.submission_id,
+        ContributorReviewRequest(
             action="schedule",
             broken_media_gate=BrokenMediaGateResult(
                 state="passed",
@@ -204,6 +356,7 @@ def test_store_decline_and_schedule_feed_producer_report(upload_dir: Path) -> No
                 duration_seconds=1800,
             ),
         ),
+        created_schedule_item_id="22222222-2222-2222-2222-222222222222",
     )
     store.review_submission(
         declined.submission_id,

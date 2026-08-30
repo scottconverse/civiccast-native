@@ -102,6 +102,118 @@ def test_setup_login_trips_429_with_retry_after(monkeypatch) -> None:
     assert int(limited.headers["Retry-After"]) > 0
 
 
+def test_setup_login_lockout_message_states_wait_and_way_forward(monkeypatch) -> None:
+    """Field bug (candidate #17): the old detail text ('Too many setup
+    requests. Wait before trying again.') named neither how long nor what to
+    do, so a locked-out single-box admin read it as a dead end. The message
+    must name the wait AND a concrete next step."""
+
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "1")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    client = TestClient(create_app())
+
+    login_body = {"admin_username": "avery", "admin_password": "wrong"}
+    client.post("/api/setup/login", json=login_body)
+    limited = client.post("/api/setup/login", json=login_body)
+
+    assert limited.status_code == 429
+    detail = limited.json()["detail"]
+    assert "wait" in detail.lower()
+    assert "60 seconds" in detail or "second" in detail.lower()
+    assert "recovery code" in detail.lower() or "password" in detail.lower()
+
+
+def test_setup_login_only_counts_failed_attempts_against_the_budget(monkeypatch, tmp_path) -> None:
+    """Field bug (candidate #17): a few wrong-password retries used to burn
+    the SAME budget as every other request to the route, so the correct
+    password submitted right after could itself get 429'd. Only the wrong
+    attempts should count; a correct password always gets through as long
+    as the failure budget itself was not exhausted first."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "2")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    client = TestClient(create_app())
+
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    assert setup.status_code == 200
+
+    # One wrong guess (within the failure budget of 2), then the correct
+    # password: the correct attempt must never be penalized for having read
+    # setup state or having tried once before.
+    wrong = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "not it"},
+    )
+    assert wrong.status_code == 401
+    right = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "correct horse battery staple"},
+    )
+    assert right.status_code == 200
+
+
+def test_recovery_then_stale_password_retry_never_locks_out_the_correct_one(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Reproduces field report #3 end-to-end: after a recovery changes the
+    password, a couple of retries against the now-stale OLD password must
+    not burn through the budget so badly that the actual NEW password also
+    gets rejected with 429."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "3")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    client = TestClient(create_app())
+
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    recovery_code = setup.json()["recovery_kit"]["recovery_codes"][0]
+
+    recovery = client.post(
+        "/api/setup/recover",
+        json={
+            "admin_username": "avery",
+            "recovery_code": recovery_code,
+            "new_admin_password": "fresh horse battery staple",
+        },
+    )
+    assert recovery.status_code == 200
+
+    # Two retries against the now-stale old password (a realistic amount of
+    # confusion, still under the failure budget of 3).
+    for _ in range(2):
+        stale = client.post(
+            "/api/setup/login",
+            json={"admin_username": "avery", "admin_password": "correct horse battery staple"},
+        )
+        assert stale.status_code == 401
+
+    correct = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "fresh horse battery staple"},
+    )
+    assert correct.status_code == 200
+
+
 def test_setup_rate_limit_keys_are_independent_per_route(monkeypatch) -> None:
     monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "1")
     monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")

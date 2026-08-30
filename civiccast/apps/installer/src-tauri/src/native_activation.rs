@@ -621,7 +621,7 @@ fn station_manifest_value(distribution: &AcquiredDistribution) -> Value {
 /// wholesale by `StagingGuard`), a flat activation writes directly into the
 /// live install root, so a leftover partial must never permanently block a
 /// retry.
-fn write_json_atomically(destination: &Path, value: &Value, label: &str) -> Result<(), String> {
+pub(crate) fn write_json_atomically(destination: &Path, value: &Value, label: &str) -> Result<(), String> {
     let bytes = native_distribution::canonical_json(value)?.into_bytes();
     let partial = destination.with_extension("json.partial");
     let _ = fs::remove_file(&partial);

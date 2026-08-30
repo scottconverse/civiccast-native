@@ -1238,8 +1238,33 @@ def load_native_station_environment(
     tier_id, tier_event, model_root, model_hash_receipt = _resolve_caption_tier(
         root, acquisition_root=civiccast_data_root
     )
+    # Field evidence (candidate 4eca729, 2026-08-29): `activation-self-test.json`
+    # is written EXACTLY ONCE, by the elevated installer, at `root` -- and
+    # describes whichever caption tier was staged at THAT moment (almost
+    # always the mandatory floor tier alone; `captions-large-v3` is an
+    # OPTIONAL component the non-elevated post-install GUI can acquire LATER,
+    # into `civiccast_data_root` only, chain H1). The tier resolution above
+    # already prefers the highest tier actually staged on disk, searching
+    # BOTH roots -- so once an operator acquires large-v3 post-activation,
+    # this function would otherwise keep reading the STALE floor-tier receipt
+    # at `root` and validating it against the large-v3 identity, which can
+    # never match (`NativeStationConfigurationError: ... receipt does not
+    # match this distribution`, crash-looping an already-working station).
+    #
+    # The receipt is therefore read from the SAME root the resolved tier's
+    # model was actually found in -- the identical two-root search
+    # (`_tier_base_root` over `caption_tier_search_roots`) `_resolve_caption_tier`
+    # already used to find the model itself, so the two can never point at
+    # different stations. `main.rs`'s post-acquisition addendum writer
+    # (`finalize_captions_large_acquisition`) is the ONE thing that populates
+    # `civiccast_data_root/activation-self-test.json`, proving that specific
+    # tier with a real inference self-test before this function will ever
+    # trust it. A floor-only station is completely unaffected: its tier's
+    # base root is always `root`, exactly as before.
+    roots = caption_tier_search_roots(root, acquisition_root=civiccast_data_root)
+    receipt_root = _tier_base_root(roots, caption_tier_model_relative_root(tier_id)) or root
     receipt = _read_json_object(
-        root / "activation-self-test.json",
+        receipt_root / "activation-self-test.json",
         label="Native station activation self-test receipt",
     )
     _validate_activation_receipt(

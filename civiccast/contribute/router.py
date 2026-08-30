@@ -7,14 +7,20 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
+import re
+import shutil
 import threading
+import uuid
 from pathlib import Path
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from pydantic import ValidationError
 
 from civiccast.auth.rate_limit import AuthRateLimiter
 from civiccast.auth.roles import require_any_role
 from civiccast.contribute.models import (
+    BrokenMediaGateResult,
     ContributorNotificationOutbox,
     ContributorReviewQueue,
     ContributorReviewRequest,
@@ -25,6 +31,7 @@ from civiccast.contribute.models import (
     PublicSubmissionStatus,
     SubmissionAgreementCatalog,
     SubmissionMediaReference,
+    utc_now,
 )
 from civiccast.contribute.store import (
     ContributorReceiptTokenError,
@@ -35,9 +42,34 @@ from civiccast.contribute.store import (
     default_contributor_store_path,
     default_contributor_upload_dir,
 )
+from civiccast.schedule.ingest import (
+    FfmpegNotFoundError,
+    FfprobeError,
+    FfprobeNotFoundError,
+    FfprobeResult,
+    UnsupportedFormatError,
+    extract_thumbnail,
+    hash_file,
+    run_ffprobe,
+    validate_ingest,
+)
+from civiccast.schedule.models import SCHEDULE_MODE_PREMIERE, ScheduleItemCreate, ScheduleModeValue
+from civiccast.schedule.paths import resolve_upload_root
+
+# TASK A: reusing the schedule module's own dependency callables (not
+# reinventing store lookup) so accept/schedule bind to the SAME asset store
+# and schedule store every other staff route uses -- civiccast.app.create_app
+# already overrides these for both durable (Postgres) and ephemeral/dev mode.
+from civiccast.schedule.router import get_postgres_store, get_schedule_store
+from civiccast.vod.store import AssetAlreadyExistsError
 
 public_router = APIRouter(prefix="/api/public/contribute", tags=["public", "contribute"])
 staff_router = APIRouter(prefix="/api/staff/contribute", tags=["staff", "contribute"])
+
+_ASSET_STORE_NOT_READY_DETAIL = (
+    "Durable storage is not ready. Open Setup and choose Prepare storage, "
+    "or set DATABASE_URL for a technical deployment."
+)
 
 # Audit item #27: the public status route verifies a receipt secret
 # (secrets.compare_digest in the store) and had no rate limit anywhere on
@@ -639,20 +671,346 @@ def read_contributor_submission(
         raise _submission_not_found(submission_id) from exc
 
 
+_ASSET_ID_INVALID_CHARS = re.compile(r"[^a-z0-9-]")
+
+
+def _derive_asset_id(submission_id: str) -> str:
+    """Deterministic-ish library asset_id for an accepted contributor submission.
+
+    Mirrors ``civiccast.schedule.watch_folder_worker.WatchFolderWorker.
+    _derive_asset_id`` -- an id-derived slug plus a random suffix, matching
+    the asset_id regex (``^[a-z0-9][a-z0-9-]{2,63}$``) -- rather than a
+    collision-checked counter, so acceptance never needs an extra
+    round-trip to the asset store just to pick a free id.
+    """
+    base = _ASSET_ID_INVALID_CHARS.sub("-", submission_id.lower()).strip("-")
+    base = (base or "contributor-submission")[:40]
+    if not base[0].isalnum():
+        base = f"a{base}"
+    return f"contributor-{base}-{uuid.uuid4().hex[:8]}"[:64].rstrip("-")
+
+
+def _ingest_accepted_media(
+    submission: ContributorSubmission,
+    request: ContributorReviewRequest,
+    *,
+    asset_store: Any,
+) -> tuple[BrokenMediaGateResult, str]:
+    """Run the real broken-media probe and ingest an accepted submission's file.
+
+    TASK A (field evidence candidate #17): "accepted" used to be a bare
+    state flip -- the file stayed in ``contributor-uploads`` and was never
+    ingested, so nothing existed for an operator to trim/package/publish.
+    This runs the EXACT ffprobe -> validate -> hash -> thumbnail ->
+    ``AssetStore.ingest_upload`` sequence
+    ``civiccast.schedule.router.upload_asset`` (staff upload) and
+    ``civiccast.schedule.watch_folder_worker.WatchFolderWorker.
+    _run_ingest_pipeline`` (watch folder) both already use -- never a
+    parallel pipeline -- so an accepted submission becomes a real,
+    trimmable, packageable library asset.
+
+    TASK C: by default this is a REAL automated probe, not an attestation.
+    ffprobe genuinely reads the file and ``validate_ingest`` genuinely
+    rejects an unsupported or corrupt one (raised as HTTP 422 before any
+    state change -- a corrupt file cannot be accepted). The one exception is
+    an explicit operator OVERRIDE
+    (``broken_media_gate.state == "override_accepted"``): the file is still
+    ingested (a schedulable asset always needs one), but the pass/fail
+    verdict is the operator's own attestation -- honestly labeled as such by
+    the pre-existing ``override_accepted`` state name, never silently
+    replaced with a fabricated "passed".
+
+    Returns the real gate result to persist and the new asset's id.
+    """
+    source_path = Path(submission.media.upload_ref)
+    if not source_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "The contributor's uploaded file is no longer on disk and cannot be "
+                "accepted. Ask the contributor to resubmit."
+            ),
+        )
+
+    upload_dir = resolve_upload_root()
+    if upload_dir is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Asset upload storage is not configured. Set CIVICCAST_UPLOAD_DIR.",
+        )
+
+    override = (
+        request.broken_media_gate is not None
+        and request.broken_media_gate.state == "override_accepted"
+    )
+
+    try:
+        ffprobe_result = run_ffprobe(source_path)
+    except FfprobeNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except FfprobeError as exc:
+        if not override:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "The broken-media probe could not read this file -- it is likely "
+                    f"corrupt or truncated: {exc}"
+                ),
+            ) from exc
+        # Explicit operator override past a probe failure: still ingest with
+        # whatever ffprobe could not tell us left blank, same as any other
+        # optional ffprobe-derived field elsewhere in this codebase.
+        ffprobe_result = FfprobeResult(
+            duration_seconds=None,
+            codec_video=None,
+            codec_audio=None,
+            width_px=None,
+            height_px=None,
+            bitrate_bps=None,
+            format_name=None,
+        )
+
+    if override:
+        gate = request.broken_media_gate
+        assert gate is not None  # `override` is only True when this is set
+    else:
+        try:
+            validate_ingest(ffprobe_result)
+        except UnsupportedFormatError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.reason
+            ) from exc
+        gate = BrokenMediaGateResult(
+            state="passed",
+            checked_at=utc_now(),
+            summary=(
+                f"Automated ffprobe probe passed: {ffprobe_result.codec_video} video, "
+                f"{ffprobe_result.codec_audio or 'no'} audio, "
+                f"{ffprobe_result.duration_seconds or 0}s duration, "
+                f"container {ffprobe_result.format_name or 'unknown'}."
+            ),
+        )
+
+    asset_id = _derive_asset_id(submission.submission_id)
+    get_staff_row = getattr(asset_store, "get_staff_row", None)
+    if callable(get_staff_row):
+        for _ in range(5):
+            if get_staff_row(asset_id) is None:
+                break
+            asset_id = _derive_asset_id(submission.submission_id)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Could not allocate a free library asset id. Try accepting again.",
+            )
+
+    asset_dir = (upload_dir / asset_id).resolve()
+    if not asset_dir.is_relative_to(upload_dir):
+        raise HTTPException(  # pragma: no cover - asset_id is regex-derived, defense-in-depth
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Derived asset id resolves outside the upload directory.",
+        )
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", submission.media.filename) or "contributor-media"
+    dest_path = (asset_dir / safe_name).resolve()
+    if not dest_path.is_relative_to(asset_dir):  # pragma: no cover - defense-in-depth
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Invalid derived filename."
+        )
+
+    # Copy, never move: the contributor's original stays in contributor-uploads
+    # (the reaper already treats it as referenced -- see
+    # ContributorSubmissionStore.referenced_upload_paths -- for as long as
+    # this submission exists in any state) exactly like the watch-folder
+    # ingest never deletes its source (ADR 0024, delete-safety posture).
+    try:
+        shutil.copy2(source_path, dest_path)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not copy contributor media into the asset library: {exc}",
+        ) from exc
+
+    source_size = source_path.stat().st_size
+    dest_size = dest_path.stat().st_size
+    if source_size != dest_size:
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Copying the contributor's file into the asset library was "
+                "incomplete. Try accepting again."
+            ),
+        )
+
+    try:
+        content_hash: str | None = hash_file(dest_path)
+    except OSError:
+        content_hash = None
+
+    thumbnail_target = asset_dir / "thumbnail.jpg"
+    thumbnail_path: Path | None
+    try:
+        extract_thumbnail(dest_path, thumbnail_target)
+        thumbnail_path = thumbnail_target
+    except (FfmpegNotFoundError, FfprobeError, OSError):
+        thumbnail_path = None
+
+    try:
+        response = asset_store.ingest_upload(
+            asset_id=asset_id,
+            title=submission.title,
+            description=submission.description,
+            file_path=str(dest_path),
+            file_size_bytes=dest_size,
+            ffprobe_result=ffprobe_result,
+            content_hash=content_hash,
+            thumbnail_path=str(thumbnail_path) if thumbnail_path is not None else None,
+        )
+    except AssetAlreadyExistsError as exc:
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A library asset already exists at {exc.asset_id!r}.",
+        ) from exc
+
+    return gate, response.asset_id
+
+
+def _create_real_schedule_item(
+    submission: ContributorSubmission,
+    request: ContributorReviewRequest,
+    *,
+    schedule_store: Any,
+) -> str:
+    """Create a real ``civiccast.schedule_items`` row and return its id.
+
+    TASK A: this is what makes ``schedule_item_id`` non-null on a success
+    response. Calls the exact ``PostgresScheduleStore.create`` that
+    ``POST /api/staff/schedule`` uses -- never a parallel scheduling path --
+    so a schedule conflict or a since-deleted asset surfaces as the same
+    real HTTP error that endpoint would give, instead of a silently-accepted
+    phantom booking.
+    """
+    handoff = request.schedule_handoff
+    assert handoff is not None  # enforced by ContributorReviewRequest's validator
+    assert submission.asset_id is not None  # enforced by the router before calling this
+
+    try:
+        payload = ScheduleItemCreate(
+            asset_id=submission.asset_id,
+            channel_id=handoff.channel_id,
+            mode=cast(ScheduleModeValue, SCHEDULE_MODE_PREMIERE),
+            scheduled_at=handoff.requested_start,
+            duration_seconds=handoff.duration_seconds,
+            notes=handoff.notes,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Could not build a schedule item from this handoff: {exc}",
+        ) from exc
+
+    from civiccast.schedule.store import AssetNotFoundError, ScheduleConflictError
+
+    try:
+        response = schedule_store.create(payload)
+    except AssetNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"The library asset for this submission ({submission.asset_id!r}) no "
+                "longer exists, so it cannot be scheduled."
+            ),
+        ) from exc
+    except ScheduleConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Schedule conflict on channel {handoff.channel_id!r}: {exc}",
+        ) from exc
+
+    return str(response.id)
+
+
 @staff_router.post(
     "/submissions/{submission_id}/review",
     response_model=ContributorSubmission,
     summary="Apply operator review decision to contributor submission",
-    responses={404: {"description": "Submission not found"}},
+    responses={
+        404: {"description": "Submission not found"},
+        409: {
+            "description": (
+                "Not yet ingested / not yet accepted / schedule conflict / asset id collision"
+            )
+        },
+        422: {
+            "description": (
+                "Invalid review request, or the contributor's media failed the broken-media probe"
+            )
+        },
+        503: {"description": "ffprobe or asset/schedule storage not ready"},
+    },
     dependencies=[Depends(require_any_role("publish_operator", "meeting_operator"))],
 )
 def review_contributor_submission(
     submission_id: str,
     request: ContributorReviewRequest,
     store: ContributorSubmissionStore = Depends(get_contributor_store),
+    asset_store: Any = Depends(get_postgres_store),
+    schedule_store: Any = Depends(get_schedule_store),
 ) -> ContributorSubmission:
     try:
-        return store.review_submission(submission_id, request)
+        current = store.get_submission(submission_id)
+    except ContributorSubmissionNotFoundError as exc:
+        raise _submission_not_found(submission_id) from exc
+
+    effective_request = request
+    ingested_asset_id: str | None = None
+    created_schedule_item_id: str | None = None
+
+    if request.action == "accept":
+        if current.state not in {"submitted", "under_review", "needs_changes"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot accept a submission in state {current.state!r}.",
+            )
+        if asset_store is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=_ASSET_STORE_NOT_READY_DETAIL,
+            )
+        gate, ingested_asset_id = _ingest_accepted_media(current, request, asset_store=asset_store)
+        effective_request = request.model_copy(update={"broken_media_gate": gate})
+    elif request.action == "schedule":
+        if current.asset_id is None:
+            # TASK B: refuse rather than report success -- this is exactly
+            # the operator action that field evidence candidate #17 found
+            # missing from both the response and the resident-facing message.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This submission has not been ingested into the asset library "
+                    "yet. Accept it before sending it to the schedule."
+                ),
+            )
+        if schedule_store is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=_ASSET_STORE_NOT_READY_DETAIL,
+            )
+        created_schedule_item_id = _create_real_schedule_item(
+            current, request, schedule_store=schedule_store
+        )
+
+    try:
+        return store.review_submission(
+            submission_id,
+            effective_request,
+            ingested_asset_id=ingested_asset_id,
+            created_schedule_item_id=created_schedule_item_id,
+        )
     except ContributorSubmissionNotFoundError as exc:
         raise _submission_not_found(submission_id) from exc
     except ContributorStoreError as exc:

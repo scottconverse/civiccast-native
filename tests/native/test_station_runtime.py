@@ -1886,6 +1886,149 @@ def test_the_acquisition_root_is_never_searched_unless_it_is_supplied(
 
 
 # ---------------------------------------------------------------------------
+# Field evidence regression (candidate 4eca729, 2026-08-29): a station
+# activated against the mandatory floor tier alone, whose operator later
+# acquires the OPTIONAL large-v3 tier through the non-elevated post-install
+# GUI (chain H1's acquisition root, never the install root), must not
+# crash-loop on its next start. `_resolve_caption_tier` already prefers the
+# highest staged tier across both roots; the receipt lookup must follow that
+# SAME resolved tier to whichever root it actually came from, so a tier this
+# station can prove (via `main.rs`'s addendum receipt) validates, while a
+# tier it CANNOT prove still fails exactly as loudly as before.
+# ---------------------------------------------------------------------------
+
+
+def _stage_large_v3_under(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, tuple[int, str]]:
+    """Stages the large-v3 caption model at the acquisition-flow's own
+    `components/captions-large-v3/models/faster-whisper-large-v3` layout
+    (`component_acquisition.rs::caption_large_tier_destination`) with small
+    fixture bytes -- mirrors `_write_station`'s own `write_large_v3=True`
+    branch: `_validate_model_root` verifies against these FAKE bytes (via the
+    monkeypatched `WHISPER_MODEL_FILES`), while `_validate_activation_receipt`
+    separately checks the receipt against the REAL, never-monkeypatched
+    `CAPTION_TIER_REGISTRY[LARGE_V3_TIER_ID]` identity -- the two checks are
+    intentionally independent, exactly as the existing large-v3 tests already
+    rely on."""
+
+    model_root = root / "components" / "captions-large-v3" / "models" / "faster-whisper-large-v3"
+    model_root.mkdir(parents=True)
+    files: dict[str, tuple[int, str]] = {}
+    for name, body in {
+        "README.md": b"readme",
+        "config.json": b"config",
+        "model.bin": b"model",
+        "preprocessor_config.json": b"preprocessor",
+        "tokenizer.json": b"tokenizer",
+        "vocabulary.json": b"vocabulary",
+    }.items():
+        (model_root / name).write_bytes(body)
+        files[name] = (len(body), hashlib.sha256(body).hexdigest())
+
+    from civiccast.native import station_runtime
+
+    monkeypatch.setattr(station_runtime, "WHISPER_MODEL_FILES", files)
+    return files
+
+
+def test_large_v3_acquired_after_floor_activation_without_an_addendum_receipt_still_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check itself must stay right: a station that resolves to large-v3
+    (because it is now staged in the acquisition root) but has NO receipt
+    proving that tier anywhere must keep failing exactly as loudly as before
+    -- this is the fail-closed floor `_validate_activation_receipt` must
+    never lose, field evidence or not."""
+
+    from civiccast.native import station_runtime
+    from civiccast.native.caption_tiers import FLOOR_TIER_ID
+
+    version_root, _ = _write_station(tmp_path, write_large_v3=False)
+    floor_files = _write_floor_tier_files(version_root)
+    fake_registry = _fake_floor_registry(floor_files)
+    monkeypatch.setattr(station_runtime, "CAPTION_TIER_REGISTRY", fake_registry)
+    _replace_receipt_caption_inference(
+        version_root, _receipt_caption_inference_for_tier(FLOOR_TIER_ID, fake_registry)
+    )
+    acquisition_root = tmp_path / "ProgramData" / "CivicCast"
+    _stage_large_v3_under(acquisition_root, monkeypatch)
+    monkeypatch.setattr(station_runtime, "_probe_nvidia_vram_gb", lambda: None)
+    monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
+    monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
+
+    # No addendum receipt exists anywhere the resolved large-v3 tier's own
+    # base root is searched, so this fails at "no receipt to check" rather
+    # than "a receipt that disagrees" -- either way, fail-closed: a station
+    # that resolves a tier it cannot prove must never start.
+    with pytest.raises(
+        station_runtime.NativeStationConfigurationError,
+        match="activation self-test receipt is missing or unreadable",
+    ):
+        station_runtime.load_native_station_environment(
+            version_root, program_data_root=acquisition_root
+        )
+
+
+def test_large_v3_acquired_after_floor_activation_with_a_valid_addendum_receipt_starts_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression proof: exactly the field-evidence sequence (activate
+    on the floor tier, THEN acquire large-v3 into the acquisition root) must
+    now start cleanly once `main.rs`'s addendum receipt
+    (`finalize_captions_large_acquisition`) is present there -- and doing so
+    must leave the PRIMARY receipt and every other already-activated
+    component at the install root completely untouched."""
+
+    from civiccast.native import station_runtime
+    from civiccast.native.caption_tiers import FLOOR_TIER_ID, LARGE_V3_TIER_ID
+
+    version_root, _ = _write_station(tmp_path, write_large_v3=False)
+    floor_files = _write_floor_tier_files(version_root)
+    fake_registry = _fake_floor_registry(floor_files)
+    monkeypatch.setattr(station_runtime, "CAPTION_TIER_REGISTRY", fake_registry)
+    _replace_receipt_caption_inference(
+        version_root, _receipt_caption_inference_for_tier(FLOOR_TIER_ID, fake_registry)
+    )
+    primary_receipt_before = (version_root / "activation-self-test.json").read_text(
+        encoding="utf-8"
+    )
+    other_component = version_root / "components" / "summary-gemma4-12b"
+    other_component.mkdir(parents=True)
+    (other_component / "marker.bin").write_bytes(b"already-activated")
+
+    acquisition_root = tmp_path / "ProgramData" / "CivicCast"
+    _stage_large_v3_under(acquisition_root, monkeypatch)
+    station = json.loads((version_root / "station-set.json").read_text(encoding="utf-8"))
+    addendum_receipt = {
+        "schema_version": 1,
+        "product": "civiccast-native",
+        "product_version": station["product_version"],
+        "distribution_index_sha256": station["distribution_index_sha256"],
+        "caption_inference": _receipt_caption_inference_for_tier(LARGE_V3_TIER_ID, fake_registry),
+    }
+    (acquisition_root / "activation-self-test.json").write_text(
+        json.dumps(addendum_receipt), encoding="utf-8"
+    )
+    monkeypatch.setattr(station_runtime, "_probe_nvidia_vram_gb", lambda: None)
+    monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
+    monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
+
+    env = station_runtime.load_native_station_environment(
+        version_root, program_data_root=acquisition_root
+    )
+
+    assert env["CIVICCAST_CAPTION_TIER"] == LARGE_V3_TIER_ID
+    # Additive, not destructive: the primary receipt and every previously
+    # activated component are byte-for-byte untouched by acquiring the
+    # optional tier.
+    assert (version_root / "activation-self-test.json").read_text(
+        encoding="utf-8"
+    ) == primary_receipt_before
+    assert (other_component / "marker.bin").read_bytes() == b"already-activated"
+
+
+# ---------------------------------------------------------------------------
 # resolve_whisper_device (owner ruling 2026-08-15: hardware-adaptive captions;
 # option B same day: capability = VERIFIED PRESENCE of the CUDA runtime DLLs,
 # not VRAM alone -- see resolve_whisper_device's docstring for why VRAM-only

@@ -258,7 +258,7 @@ def test_service_host_class_has_ratified_identity_and_lifecycle_methods() -> Non
     assert callable(cls.SvcStop)
 
 
-def test_svc_do_run_builds_dependencies_in_the_host_process() -> None:
+def test_svc_do_run_builds_dependencies_in_the_host_process(tmp_path: Path) -> None:
     """CC-WS5-007: ``SvcDoRun`` assembles the production service IN THIS (host)
     process via the module-level provider -- NOT from an installer closure that
     cannot cross the process boundary. Proven with a fake provider: the singleton
@@ -296,13 +296,18 @@ def test_svc_do_run_builds_dependencies_in_the_host_process() -> None:
         mp.setattr(service_host, "_service_factory", fake_factory)
         mp.setattr(service_host, "build_singleton_mutex", lambda: _FakeSingleton())
         mp.setattr(service_host, "configure_logging", lambda: logging.getLogger("test.host"))
+        # Field-evidence isolation: the start-failure marker seam must never
+        # touch this machine's REAL %PROGRAMDATA%\CivicCast during a test run.
+        mp.setattr(service_host, "_civiccast_data_root_provider", lambda: tmp_path)
         svc.SvcDoRun()
 
     assert recorded == {"acquired": True, "built": True, "ran": True, "released": True}
     assert svc._service is not None  # assembled in-process, not a missing closure
 
 
-def test_svc_do_run_fails_loudly_in_the_host_process_when_the_provider_raises() -> None:
+def test_svc_do_run_fails_loudly_in_the_host_process_when_the_provider_raises(
+    tmp_path: Path,
+) -> None:
     """CC-WS5-007: the disclosed VM provider raises ``NotImplementedError``; because
     ``SvcDoRun`` calls it IN-PROCESS, that failure surfaces loudly HERE (not as a
     silent missing cross-process closure) and the singleton is still released."""
@@ -328,10 +333,125 @@ def test_svc_do_run_fails_loudly_in_the_host_process_when_the_provider_raises() 
         mp.setattr(service_host, "_service_factory", raising_factory)
         mp.setattr(service_host, "build_singleton_mutex", lambda: _FakeSingleton())
         mp.setattr(service_host, "configure_logging", lambda: logging.getLogger("test.host"))
+        mp.setattr(service_host, "_civiccast_data_root_provider", lambda: tmp_path)
         with pytest.raises(NotImplementedError, match="VM-bound"):
             svc.SvcDoRun()
 
     assert released.get("released") is True  # released even when the build fails
+
+
+def test_svc_do_run_logs_the_real_reason_and_marks_a_repeated_crash_loop(
+    tmp_path: Path,
+) -> None:
+    """Field evidence (candidate 4eca729, 2026-08-29): before this fix,
+    ``supervisor.log`` held only the "logging initialized" canary line and
+    NOTHING about why a raising provider crashed the host -- the operator's
+    only source was the Windows Event Log. Three consecutive ``SvcDoRun``
+    failures with the SAME error must now (1) log the real reason every time
+    and (2) leave the operator-readable marker document behind once the loop
+    is confirmed, never on the first (possibly transient) failure."""
+
+    from civiccast.native import station_runtime
+    from civiccast.native.supervisor import start_failure_marker
+
+    def raising_factory(_logger: logging.Logger) -> object:
+        raise station_runtime.NativeStationConfigurationError(
+            "Native station activation self-test receipt does not match this distribution"
+        )
+
+    class _FakeSingleton:
+        def acquire(self) -> SimpleNamespace:
+            return SimpleNamespace(status="acquired", detail="ok")
+
+        def release(self) -> None:
+            pass
+
+    logger = logging.getLogger("test.host.crash-loop")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
+    marker = start_failure_marker.marker_path(tmp_path)
+
+    for attempt in range(1, 4):
+        svc = service_host.CivicCastSupervisorService.__new__(
+            service_host.CivicCastSupervisorService
+        )
+        svc._service = None
+        svc._singleton = None
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(service_host, "ensure_database_url_env", lambda: None)
+            mp.setattr(service_host, "_service_factory", raising_factory)
+            mp.setattr(service_host, "build_singleton_mutex", lambda: _FakeSingleton())
+            mp.setattr(service_host, "configure_logging", lambda: logger)
+            mp.setattr(service_host, "_civiccast_data_root_provider", lambda: tmp_path)
+            with pytest.raises(station_runtime.NativeStationConfigurationError):
+                svc.SvcDoRun()
+
+        if attempt < start_failure_marker.CONSECUTIVE_FAILURE_THRESHOLD:
+            assert not marker.exists(), f"marker must not exist yet after attempt {attempt}"
+        else:
+            assert marker.exists(), "marker must exist once the threshold is reached"
+
+    logged_reasons = [
+        record.getMessage()
+        for record in records
+        if "does not match this distribution" in record.getMessage()
+    ]
+    assert logged_reasons, (
+        "the real exception reason must reach supervisor.log, not just the Event Log"
+    )
+
+    marker_text = marker.read_text(encoding="utf-8")
+    assert "Station Cannot Start" in marker_text
+    assert "does not match this distribution" in marker_text
+    assert "NativeStationConfigurationError" in marker_text
+
+
+def test_svc_do_run_success_clears_a_prior_crash_loop_marker(tmp_path: Path) -> None:
+    """A station that starts cleanly again is no longer crash-looping -- the
+    marker (and its counter) left by a prior failed run must not linger and
+    mislead the next operator who looks."""
+
+    from civiccast.native.supervisor import start_failure_marker
+
+    start_failure_marker.record_start_failure(
+        tmp_path, logging.getLogger("seed"), RuntimeError("x")
+    )
+    start_failure_marker.record_start_failure(
+        tmp_path, logging.getLogger("seed"), RuntimeError("x")
+    )
+    start_failure_marker.record_start_failure(
+        tmp_path, logging.getLogger("seed"), RuntimeError("x")
+    )
+    assert start_failure_marker.marker_path(tmp_path).exists()
+
+    class _FakeService:
+        def run(self) -> None:
+            pass
+
+    class _FakeSingleton:
+        def acquire(self) -> SimpleNamespace:
+            return SimpleNamespace(status="acquired", detail="ok")
+
+        def release(self) -> None:
+            pass
+
+    svc = service_host.CivicCastSupervisorService.__new__(service_host.CivicCastSupervisorService)
+    svc._service = None
+    svc._singleton = None
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(service_host, "ensure_database_url_env", lambda: None)
+        mp.setattr(service_host, "_service_factory", lambda _logger: _FakeService())
+        mp.setattr(service_host, "build_singleton_mutex", lambda: _FakeSingleton())
+        mp.setattr(service_host, "configure_logging", lambda: logging.getLogger("test.host"))
+        mp.setattr(service_host, "_civiccast_data_root_provider", lambda: tmp_path)
+        svc.SvcDoRun()
+
+    assert not start_failure_marker.marker_path(tmp_path).exists()
 
 
 def test_svc_stop_requests_a_graceful_stop_without_touching_the_scm() -> None:
@@ -452,7 +572,7 @@ def test_svc_stop_arming_twice_does_not_stack_watchdogs() -> None:
     assert svc._stop_watchdog is None
 
 
-def test_svc_do_run_disarms_the_watchdog_last_on_every_exit_path() -> None:
+def test_svc_do_run_disarms_the_watchdog_last_on_every_exit_path(tmp_path: Path) -> None:
     """The watchdog must be disarmed by SvcDoRun's OUTERMOST finally: after the
     singleton release, and on the raising path and the singleton-refusal path
     too. A disarm that only runs on the happy path would leave a live
@@ -492,6 +612,7 @@ def test_svc_do_run_disarms_the_watchdog_last_on_every_exit_path() -> None:
         mp.setattr(service_host, "_service_factory", lambda _logger: _FakeService())
         mp.setattr(service_host, "build_singleton_mutex", lambda: _RecordingSingleton())
         mp.setattr(service_host, "configure_logging", lambda: logging.getLogger("test.host"))
+        mp.setattr(service_host, "_civiccast_data_root_provider", lambda: tmp_path)
         svc._stop_watchdog = _RecordingWatchdog(disarm_order)  # type: ignore[assignment]
         svc.SvcDoRun()
 
@@ -512,6 +633,7 @@ def test_svc_do_run_disarms_the_watchdog_last_on_every_exit_path() -> None:
         mp.setattr(service_host, "_service_factory", raising_factory)
         mp.setattr(service_host, "build_singleton_mutex", lambda: _RecordingSingleton())
         mp.setattr(service_host, "configure_logging", lambda: logging.getLogger("test.host"))
+        mp.setattr(service_host, "_civiccast_data_root_provider", lambda: tmp_path)
         svc._stop_watchdog = _RecordingWatchdog(disarm_order)  # type: ignore[assignment]
         with pytest.raises(NotImplementedError):
             svc.SvcDoRun()

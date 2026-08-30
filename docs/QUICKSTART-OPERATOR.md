@@ -16,12 +16,11 @@ Plug the CivicCast USB stick into the station computer.
 
 It has a CivicCast icon and a name like `CivicCast (Native)_1.0.0-beta.1_x64-setup.exe`.
 
-Two Windows screens may appear before setup starts:
+Windows asks one question before setup starts:
 
-- A blue **"Windows protected your PC"** screen — click **More info**, then
-  **Run anyway**.
-- A **"Do you want to allow this app to make changes to your device?"** box —
-  click **Yes**. (Setup needs this to install the station.)
+- **"Do you want to allow this app to make changes to your device?"** — click
+  **Yes**. (Setup needs this to install the station.) The box names
+  **Scott Converse** as the verified publisher; CivicCast is signed software.
 
 ## 3. Step through the first three setup screens
 
@@ -83,6 +82,12 @@ Ask your IT person for this computer's name or address to use in place of
 ---
 
 ## If something looks wrong
+
+- **A blue "Windows protected your PC" screen appears.** Uncommon — CivicCast
+  is signed, but a computer that has never seen this publisher before can still
+  show it once. Click **More info**, then **Run anyway**. Check that it names
+  **Scott Converse** as the publisher; if it names anyone else, stop and call
+  your IT person.
 
 - **A step is taking a long time.** Installing takes about 30 minutes and the
   final setup a few more. As long as the window is on screen, it's working.
