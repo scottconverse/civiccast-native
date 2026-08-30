@@ -14,6 +14,13 @@ demand.
 2. `scripts/render_docsite_manual.py` renders it to HTML with the same
    `pandoc` binary `scripts/render_user_manual.py` already requires for the
    PDF/DOCX artifacts (one rendering engine, not two), then:
+   - embeds every local image (currently the two architecture diagrams,
+     referenced relative to `docs/`) as a base64 `data:` URI
+     (`civiccast/docsite/render.py::embed_local_images`) — a relative path
+     doesn't resolve to anything once this HTML is served from
+     `manual.json` with no filesystem underneath it, so embedding once at
+     render time keeps the manual fully self-contained and working with no
+     internet connection,
    - sanitizes the HTML through an allowlist parser
      (`civiccast/docsite/render.py::sanitize_html`) so no raw-HTML block in
      the source and no future pandoc extension can smuggle a `<script>` or
@@ -49,10 +56,17 @@ demand.
 - `docs/USER-MANUAL.md` changed since `civiccast/docsite/manual.json` was
   last rendered (source hash mismatch), or
 - `civiccast/docsite/manual.json` was hand-edited or only partially
-  regenerated (its own recorded hash mismatch), or
-- a fresh re-render of `docs/USER-MANUAL.md` no longer byte-matches the
-  tracked artifact's `html` field (catches a pandoc/toolchain change that
-  alters output without touching the source file at all).
+  regenerated (its own recorded hash mismatch).
+
+This deliberately does **not** re-render `docs/USER-MANUAL.md` and
+byte-compare the result against the tracked artifact — an earlier version
+of this check did, and it was removed: `pandoc`'s HTML output can
+legitimately differ by patch version (attribute ordering, slug edge cases),
+and `ci-docs.yml`'s `apt-get install pandoc` pins no version, so a CI
+runner's `pandoc` need not match a contributor's local one byte for byte.
+The two hash checks above are the same drift guarantee
+`scripts/render_user_manual.py`'s own `check_current()` already relies on
+for the PDF/DOCX artifacts — hash the tracked file, hash the source, done.
 
 So a PR that edits `docs/USER-MANUAL.md` without re-running the render
 script fails CI in the same job, the same way an un-rendered PDF/DOCX
