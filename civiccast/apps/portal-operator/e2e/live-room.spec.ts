@@ -628,8 +628,14 @@ test.describe('operator live room', () => {
 
     await expect(page.getByText('Pre-flight blocked')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Start Live Stream' })).toBeDisabled()
-    await expect(page.getByText(/Resolve network.unreachable/)).toBeVisible()
-    await expect(page.getByText(/Resolve operator.unconfirmed/)).toBeVisible()
+    // Field evidence (native beta candidate #17): the raw backend reason code must
+    // never reach the screen -- only the plain-English next step it maps to.
+    await expect(page.getByText(/network\.unreachable/)).not.toBeVisible()
+    await expect(page.getByText(/operator\.unconfirmed/)).not.toBeVisible()
+    await expect(
+      page.getByText(/Check the station's network cable or Wi-Fi connection/),
+    ).toBeVisible()
+    await expect(page.getByText(/Resolve the item above, then select Run pre-flight again/)).toBeVisible()
   })
 
   test('axe scan has no serious or critical violations', async ({ page }) => {

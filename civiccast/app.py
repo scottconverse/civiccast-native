@@ -192,6 +192,7 @@ from civiccast.live.finalization_worker import (
     build_worker,
 )
 from civiccast.live.models import LiveIngestPlan, RecordingTargetCreate
+from civiccast.live.network_probe import build_network_probe
 from civiccast.live.preflight import PreflightEvaluator
 from civiccast.live.recording_paths import (
     DEFAULT_RECORDING_TARGET_DIR_NAME,
@@ -212,6 +213,7 @@ from civiccast.live.router import (
 from civiccast.live.router import public_router as live_public_router
 from civiccast.live.router import staff_router as live_staff_router
 from civiccast.live.source_probe import build_source_probe
+from civiccast.live.storage_probe import build_storage_probe
 from civiccast.live.store import (
     LiveRelayConfigStore,
     LiveSessionStore,
@@ -2135,7 +2137,37 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # rehearsal path still overrides this per-call with its own sample-file
         # probe via `source_probe_override` (civiccast/installer/service.py);
         # this is the probe every other caller -- i.e. a real station -- gets.
-        return PreflightEvaluator(_session_factory, source_probe=build_source_probe())
+        #
+        # B1 fix: route the one source id CivicCast itself creates (the
+        # bundled sample-rehearsal source) to the same validated-local-file
+        # probe the installer's rehearsal already uses, instead of the real
+        # network probe -- the sample's placeholder RTMP endpoint has no
+        # listener anywhere in this product, so the network probe could
+        # never pass for it (field evidence, native beta candidate #17).
+        # Every other, real source still gets the genuine network probe.
+        #
+        # B3 fix: network + storage probes run here too, so "Run pre-flight"
+        # answers its own "not probed" questions instead of depending on a
+        # caller (the operator UI) that never actually probed.
+        from civiccast.installer.service import (
+            SAMPLE_REHEARSAL_SOURCE_ID,
+            build_sample_rehearsal_source_probe,
+        )
+
+        network_source_probe = build_source_probe()
+        sample_source_probe = build_sample_rehearsal_source_probe()
+
+        def _live_source_probe(source: Any) -> tuple[bool, str | None]:
+            if getattr(source, "live_source_id", None) == SAMPLE_REHEARSAL_SOURCE_ID:
+                return sample_source_probe(source)
+            return network_source_probe(source)
+
+        return PreflightEvaluator(
+            _session_factory,
+            source_probe=_live_source_probe,
+            network_probe=build_network_probe(),
+            storage_probe=build_storage_probe(),
+        )
 
     def _resolve_live_source_store() -> LiveSourceStore:
         return LiveSourceStore(_session_factory)

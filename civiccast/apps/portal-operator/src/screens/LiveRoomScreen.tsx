@@ -25,6 +25,7 @@ import { readinessLabel, toneForReadiness } from './status-language'
 import {
   LIVE_STATE_META,
   PREFLIGHT_LABELS,
+  preflightNextStep,
   RELAY_HEALTH_LABEL,
   RELAY_MODE_LABEL,
   SOURCE_TYPE_LABEL,
@@ -587,8 +588,7 @@ export function PreflightList({ evaluation }: { evaluation: PreflightEvaluation 
               )}
               {check.status === 'fail' && (
                 <div className="mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-                  <strong>Next step.</strong> Resolve {check.reason_code ?? check.name} and
-                  re-run pre-flight.
+                  <strong>Next step.</strong> {preflightNextStep(check.reason_code)}
                 </div>
               )}
             </li>
