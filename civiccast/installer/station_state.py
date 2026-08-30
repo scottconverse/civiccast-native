@@ -156,13 +156,21 @@ class AiModelSeed(BaseModel):
     summary: SummaryModelSeed
 
 
-def seed_ai_model_default(*, system_ram_total_gb: int) -> AiModelSeed:
+def seed_ai_model_default(*, system_ram_total_gb: int, has_gpu: bool = False) -> AiModelSeed:
     """Compute and persist the adaptive summary default into station-state.
 
     Idempotent on the override: re-seeding refreshes the adaptive default / detected
     RAM but preserves any operator override the wizard already recorded. The detected
     RAM should be the integer floor of the probed value (e.g. ``int(probe().ram.total_gb)``)
     so a 15.9 GB box rounds DOWN to 15 -> e4b, never up to a 12B it cannot run.
+
+    ``has_gpu`` (default False, i.e. CPU-only) gates 12B the same way the runtime
+    default does (:func:`~civiccast.ai_models.models.detect_summary_model_default`):
+    field evidence on a 32GB CPU-only reference station showed 12B taking 366s to
+    complete a summary once and then failing twice more, while e4b completed every
+    attempt. A commissioning caller that cannot detect the GPU should pass the
+    conservative default (False) rather than omit it -- omitting it here would
+    silently reintroduce the RAM-only rule this signature exists to retire.
     """
 
     raw = _load_raw_state()
@@ -174,7 +182,7 @@ def seed_ai_model_default(*, system_ram_total_gb: int) -> AiModelSeed:
             prior_override = prior_summary.get("operator_override_key")
 
     summary = SummaryModelSeed(
-        adaptive_default_key=detect_summary_model_default(system_ram_total_gb),
+        adaptive_default_key=detect_summary_model_default(system_ram_total_gb, has_gpu=has_gpu),
         operator_override_key=prior_override,
         detected_ram_gb=system_ram_total_gb,
         seeded_at=datetime.now(UTC),

@@ -100,14 +100,19 @@ def test_expected_head_matches_the_single_migration_head() -> None:
     # health_status/degraded_*/last_poll_at/last_ingest_at columns on
     # watch_folder_configs + the new watch_folder_file_state ledger table)
     # chains after 0079_media_lifecycle and is the current head.
-    assert expected_migration_head() == "0080_watch_folder_daemon"
+    # 0081_summary_generation_jobs (async summary generation job -- field
+    # evidence, candidate #17: a legitimate multi-minute CPU-only summary
+    # generation must not block or discard an HTTP request; see
+    # civiccast/summary/job.py) chains after 0080_watch_folder_daemon and is
+    # the current head.
+    assert expected_migration_head() == "0081_summary_generation_jobs"
 
 
 def test_expected_head_does_not_depend_on_current_working_directory(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     expected_migration_head.cache_clear()
     monkeypatch.chdir(tmp_path)
     try:
-        assert expected_migration_head() == "0080_watch_folder_daemon"
+        assert expected_migration_head() == "0081_summary_generation_jobs"
     finally:
         expected_migration_head.cache_clear()
 
@@ -122,7 +127,7 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
         conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL)")
         conn.execute(
             "INSERT INTO alembic_version (version_num) VALUES (?)",
-            ("0080_watch_folder_daemon",),
+            ("0081_summary_generation_jobs",),
         )
         conn.commit()
 
@@ -135,8 +140,8 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
 
     assert status == SchemaStatus(
         state="current",
-        db_revision="0080_watch_folder_daemon",
-        expected_head="0080_watch_folder_daemon",
+        db_revision="0081_summary_generation_jobs",
+        expected_head="0081_summary_generation_jobs",
     )
 
 

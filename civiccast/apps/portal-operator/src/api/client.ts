@@ -139,6 +139,8 @@ import type {
   StationSetupState,
   SummaryApprovalRequest,
   SummaryDraft,
+  SummaryGenerateRequest,
+  SummaryGenerationJobRecord,
   SummaryReviewQueueResponse,
   SystemHealthReport,
   SystemResourceSample,
@@ -2130,6 +2132,56 @@ export function listOfflineCaptionJobs(
 export function retryOfflineCaptionJob(jobId: string): Promise<OfflineCaptionJobRecord> {
   return request<OfflineCaptionJobRecord>(
     `/api/staff/captions/offline-jobs/${encodeURIComponent(jobId)}/retry`,
+    { method: 'POST' },
+  )
+}
+
+/**
+ * POST /api/staff/summaries/jobs — queue async summary generation from committed
+ * transcript cues (records_clerk/support_admin gated). Field evidence 2026-08-29:
+ * a legitimate CPU-only generation can take minutes (measured 94-366s+), so this
+ * is the async path an operator's console polls instead of holding open the
+ * synchronous POST /generate request. Idempotent per meeting: queuing twice for
+ * the same meeting while a job is pending/running returns the existing job.
+ */
+export function createSummaryJob(
+  payload: SummaryGenerateRequest,
+): Promise<SummaryGenerationJobRecord> {
+  return request<SummaryGenerationJobRecord>('/api/staff/summaries/jobs', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+/**
+ * GET /api/staff/summaries/jobs — list summary generation jobs, for operator
+ * visibility. Optionally narrowed to one meeting and/or one state.
+ */
+export function listSummaryJobs(
+  params: { meetingId?: string; state?: SummaryGenerationJobRecord['state'] } = {},
+): Promise<SummaryGenerationJobRecord[]> {
+  const qs = new URLSearchParams()
+  if (params.meetingId) qs.set('meeting_id', params.meetingId)
+  if (params.state) qs.set('state', params.state)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return request<SummaryGenerationJobRecord[]>(`/api/staff/summaries/jobs${suffix}`)
+}
+
+/** GET /api/staff/summaries/jobs/{job_id} — one job's current state/progress. */
+export function getSummaryJob(jobId: string): Promise<SummaryGenerationJobRecord> {
+  return request<SummaryGenerationJobRecord>(
+    `/api/staff/summaries/jobs/${encodeURIComponent(jobId)}`,
+  )
+}
+
+/**
+ * POST /api/staff/summaries/jobs/{job_id}/retry — manually retry a failed summary
+ * generation job (records_clerk gated). 409 if a different job is already active
+ * for the same meeting; the caller surfaces that message.
+ */
+export function retrySummaryJob(jobId: string): Promise<SummaryGenerationJobRecord> {
+  return request<SummaryGenerationJobRecord>(
+    `/api/staff/summaries/jobs/${encodeURIComponent(jobId)}/retry`,
     { method: 'POST' },
   )
 }

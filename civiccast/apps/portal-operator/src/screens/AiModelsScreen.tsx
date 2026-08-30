@@ -194,6 +194,24 @@ export function FeatureModelCard({
       {/* U4/Q2/M3: spec §6.3 degraded-state surface — TEXT, not color-only. */}
       {availMessage && <AvailabilityHint message={availMessage} />}
 
+      {/* Audit finding 2026-08-29: translation has a model picker, a cost, and a
+          latency figure, but no caller ever supplies a translation target — no
+          translated caption track is ever published. Say so plainly here rather
+          than implying a working capability the build cannot deliver. Remove
+          this banner only once an operator-facing target-language control
+          actually invokes the pipeline end to end. */}
+      {registry.feature === 'translation' && (
+        <div
+          role="status"
+          className="rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}
+        >
+          <strong>Not connected yet.</strong> Selecting a model here has no visible
+          effect: no published caption track uses a translated language today.
+          This picker reserves the setting for when that output ships.
+        </div>
+      )}
+
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         <dt style={{ color: 'var(--cc-ink-3)' }}>Current model</dt>
         <dd className="cc-mono">{effectiveKey}</dd>

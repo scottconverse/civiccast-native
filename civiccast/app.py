@@ -373,6 +373,12 @@ from civiccast.subscribe.router import staff_router as subscribe_staff_router
 from civiccast.subscribe.secrets import load_subscription_secrets
 from civiccast.subscribe.store import InMemorySubscribeStore, PostgresSubscribeStore
 from civiccast.summary.generate import SummaryModel
+from civiccast.summary.job import (
+    InMemorySummaryGenerationJobStore,
+    SummaryGenerationJobSettings,
+    SummaryGenerationJobWorker,
+)
+from civiccast.summary.persistence import PostgresSummaryGenerationJobStore
 from civiccast.summary.router import OLLAMA_NOT_CONFIGURED_MESSAGE, get_summary_model
 from civiccast.summary.router import staff_router as summary_staff_router
 from civiccast.summary.store import InMemorySummaryStore, PostgresSummaryStore
@@ -779,13 +785,22 @@ def _build_contribution_alert_hook(session_factory: Any) -> Callable[[str, str],
 def _build_ai_model_service(session_factory: Any) -> AiModelService:
     """The S13 service that resolves each feature's operator-selected model.
 
-    Seeds ``system_ram_total_gb`` from the live hardware probe so summary's adaptive
-    default (12B on >=16GB, e4b below) matches the box. With no operator selection,
-    the service returns each feature's catalog default — i.e. today's exact runtime
-    tags — so wiring the feature runtimes through it is behavior-preserving.
+    Seeds ``system_ram_total_gb`` AND ``has_gpu`` from the live hardware probe so
+    summary's adaptive default (12B only with a real GPU present and >=16GB RAM;
+    e4b on every CPU-only box regardless of RAM) matches the box. Field evidence
+    (candidate #17, 32GB CPU-only reference station) retired the old RAM-only rule:
+    it picked 12B on that box, which took 366s to complete a summary once and then
+    failed twice more under realistic memory pressure, while e4b completed every
+    attempt. With no operator selection, the service returns each feature's catalog
+    default; a station with no NVIDIA GPU (``probe().gpu is None`` -- ADR 0005, NVML
+    only) now gets the model that actually finishes there.
     """
-    ram_total_gb = int(probe().ram.total_gb)
-    return AiModelService(AiModelStore(session_factory), system_ram_total_gb=ram_total_gb)
+    hardware = probe()
+    ram_total_gb = int(hardware.ram.total_gb)
+    has_gpu = hardware.gpu is not None
+    return AiModelService(
+        AiModelStore(session_factory), system_ram_total_gb=ram_total_gb, has_gpu=has_gpu
+    )
 
 
 def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
@@ -1141,6 +1156,33 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             run_forever=offline_caption_worker.run_forever,
             poll_seconds=offline_caption_settings.poll_seconds,
             enabled=offline_caption_settings.mode == "inline",
+        )
+    )
+    # Async summary generation job: field evidence 2026-08-29 (candidate #17) --
+    # POST /api/staff/summaries/generate 503'd at ~120s even on a warm model,
+    # because a legitimate CPU-only summary generation (measured 94-366s+ on the
+    # same hardware class) cannot survive one HTTP request/response cycle, and
+    # discarded a completion Ollama had already finished computing. On by
+    # default, idle until an operator queues a meeting -- see
+    # civiccast/summary/job.py. Settings validate fail-fast here either way.
+    summary_job_settings = SummaryGenerationJobSettings.from_env()
+    summary_job_worker = SummaryGenerationJobWorker(
+        PostgresSummaryGenerationJobStore(session_factory),
+        PostgresSummaryStore(session_factory),
+        # Lazy per-attempt, same reason as the caption runtime_factory above:
+        # each attempt picks up the operator's CURRENT model selection rather
+        # than one captured at worker-construction time, and a station with
+        # nothing queued never loads a multi-gigabyte local model.
+        model_factory=lambda: build_summary_model(_build_ai_model_service(session_factory)),
+        settings=summary_job_settings,
+    )
+    app.state.summary_job_worker = summary_job_worker
+    app.state.background_supervisors.append(
+        ThreadSupervisor(
+            name="civiccast-summary-job-worker",
+            run_forever=summary_job_worker.run_forever,
+            poll_seconds=summary_job_settings.poll_seconds,
+            enabled=summary_job_settings.mode == "inline",
         )
     )
     # S11a caption decode-back proof loop. Only runs when CEA-708 embedding is on
@@ -1634,6 +1676,7 @@ def create_app() -> FastAPI:
     caption_review_store = InMemoryCaptionReviewStore()
     caption_job_store = InMemoryOfflineCaptionJobStore()
     summary_store = InMemorySummaryStore()
+    summary_job_store = InMemorySummaryGenerationJobStore()
     record_store = InMemoryRecordStore()
     publish_store = InMemoryPublishStore()
     subscribe_store = InMemorySubscribeStore()
@@ -1662,6 +1705,7 @@ def create_app() -> FastAPI:
         caption_review_store=lambda: caption_review_store,
         caption_job_store=lambda: caption_job_store,
         summary_store=lambda: summary_store,
+        summary_job_store=lambda: summary_job_store,
         record_store=lambda: record_store,
         publish_store=lambda: publish_store,
         subscribe_store=lambda: subscribe_store,
@@ -2117,6 +2161,12 @@ def _wire_durable_stores(app: FastAPI) -> None:
     def _resolve_summary_store() -> PostgresSummaryStore:
         return PostgresSummaryStore(_session_factory)
 
+    def _resolve_summary_job_store() -> PostgresSummaryGenerationJobStore:
+        # A summary generation job outlives the request that queued it -- a
+        # CPU-only generation can legitimately run for minutes (field evidence
+        # 2026-08-29, see civiccast/summary/job.py).
+        return PostgresSummaryGenerationJobStore(_session_factory)
+
     def _resolve_summary_model() -> SummaryModel:
         # S13: the summary adapter loads the operator-selected model (adaptive local
         # default — gemma4:12b on >=16GB, gemma4:e4b below — when unselected).
@@ -2223,6 +2273,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
         caption_review_store=_resolve_caption_review_store,
         caption_job_store=_resolve_caption_job_store,
         summary_store=_resolve_summary_store,
+        summary_job_store=_resolve_summary_job_store,
         record_store=_resolve_record_store,
         publish_store=_resolve_publish_store,
         subscribe_store=_resolve_subscribe_store,

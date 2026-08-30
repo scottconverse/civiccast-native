@@ -13,6 +13,25 @@ from urllib.parse import urlparse
 
 DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 
+# The control-plane socket budget for a live generate call, distinct from the
+# short budget used for cheap /api/tags and /api/version calls (DEFAULT_TIMEOUT_
+# SECONDS below). Field evidence (candidate #17, CPU-only 32GB reference
+# hardware): the old blanket 120s timeout killed the HTTP client's socket read
+# while ollama was still generating -- ollama itself went on to return 200 to a
+# client that had already disconnected (POST /completion succeeded server-side;
+# the control plane 503'd at ~120s regardless). Measured on the same hardware
+# class: gemma4:e4b completed in 94-128s (already tight against 120s);
+# gemma4:12b took up to 366s. 600s gives real local CPU generation room to
+# finish and return its result rather than being discarded after the model did
+# the work. This is the socket-level fix; SummaryGenerationJob (summary/job.py)
+# is the product-level fix -- it runs generation off the request/response cycle
+# entirely, the same durable-job pattern the offline caption worker uses, so an
+# operator is never blocked on a live HTTP request for minutes either way.
+DEFAULT_GENERATE_TIMEOUT_SECONDS = 600
+# The short budget for cheap, fast metadata calls (/api/tags, /api/version,
+# /api/ps) that must fail fast when Ollama is genuinely down rather than hang.
+DEFAULT_TIMEOUT_SECONDS = 120
+
 
 class OllamaRuntimeUnavailableError(RuntimeError):
     """Raised when a required local Ollama model or daemon is unavailable."""
@@ -91,8 +110,15 @@ def generate_with_ollama(
     model: str,
     prompt: str,
     base_url: str = DEFAULT_OLLAMA_BASE_URL,
+    timeout: float = DEFAULT_GENERATE_TIMEOUT_SECONDS,
 ) -> str:
-    """Generate a non-streaming completion from local Ollama."""
+    """Generate a non-streaming completion from local Ollama.
+
+    ``timeout`` defaults to :data:`DEFAULT_GENERATE_TIMEOUT_SECONDS` (600s), not
+    the short metadata-call budget -- see that constant's docstring for the field
+    evidence a 120s socket timeout here used to discard a completion Ollama had
+    already finished computing.
+    """
 
     payload = {
         "model": model,
@@ -100,14 +126,22 @@ def generate_with_ollama(
         "stream": False,
         "options": {"temperature": 0},
     }
-    response = _request_json("POST", f"{base_url.rstrip('/')}/api/generate", payload)
+    response = _request_json(
+        "POST", f"{base_url.rstrip('/')}/api/generate", payload, timeout=timeout
+    )
     text = response.get("response")
     if not isinstance(text, str):
         raise OllamaRuntimeUnavailableError("Ollama /api/generate returned no response text.")
     return text
 
 
-def _request_json(method: str, url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _request_json(
+    method: str,
+    url: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     _require_local_http(url)
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(  # noqa: S310 - _require_local_http restricts URL to loopback HTTP(S).
@@ -117,7 +151,7 @@ def _request_json(method: str, url: str, payload: dict[str, Any] | None = None) 
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310 - request URL is loopback-only.  # nosec B310
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - request URL is loopback-only.  # nosec B310
             result = json.loads(response.read().decode("utf-8"))
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         raise OllamaRuntimeUnavailableError(

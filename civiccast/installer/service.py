@@ -922,6 +922,25 @@ def _probed_summary_ram_gb() -> int:
         return 8
 
 
+def _probed_summary_has_gpu() -> bool:
+    """Whether the box has a real (NVML-detected) GPU, or False if probing fails.
+
+    False is the conservative/CPU-only assumption -- gates the 12B adaptive
+    summary default off rather than risking it on a box the probe could not
+    read. See ``seed_ai_model_default`` / ``detect_summary_model_default``
+    for why this matters: a false positive here would reintroduce the
+    RAM-only rule field evidence retired (12B failing on a 32GB CPU-only
+    reference station).
+    """
+
+    try:
+        from civiccast.platform import hardware
+
+        return hardware.probe().gpu is not None
+    except Exception:
+        return False
+
+
 def complete_first_admin_setup(
     request: FirstAdminSetupRequest,
     *,
@@ -940,7 +959,10 @@ def complete_first_admin_setup(
         operator_console_url=console_url or operator_console_url(),
     )
     with suppress(Exception):
-        seed_ai_model_default(system_ram_total_gb=_probed_summary_ram_gb())
+        seed_ai_model_default(
+            system_ram_total_gb=_probed_summary_ram_gb(),
+            has_gpu=_probed_summary_has_gpu(),
+        )
     return response
 
 

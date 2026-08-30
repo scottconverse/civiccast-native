@@ -4113,6 +4113,42 @@ Generate a sourced summary draft from committed transcript cues.
 - Request body: `SummaryGenerateRequest`
 - Responses: 201 `SummaryDraft`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Local Ollama AI runtime is not reachable. Start Ollama and retry, or configure a different summary model in AI model settings.
 
+### `GET /api/staff/summaries/jobs`
+
+List summary generation jobs for operator visibility.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `meeting_id` (query, optional): `string | null`; `state` (query, optional): `'pending' | 'running' | 'complete' | 'failed' | null`
+- Request body: none
+- Responses: 200 `Array<SummaryGenerationJobRecord>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle.
+
+### `POST /api/staff/summaries/jobs`
+
+Queue async summary generation from committed transcript cues.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `SummaryGenerateRequest`
+- Responses: 201 `SummaryGenerationJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle.
+
+### `GET /api/staff/summaries/jobs/{job_id}`
+
+Get one summary generation job's status/progress.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `job_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `SummaryGenerationJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Summary generation job not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle.
+
+### `POST /api/staff/summaries/jobs/{job_id}/retry`
+
+Manually retry a failed summary generation job.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `job_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `SummaryGenerationJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Summary generation job not found; 409 Only a failed job can be manually retried; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle.
+
 ### `GET /api/staff/summaries/review-items`
 
 List sourced summaries awaiting operator review.
@@ -4470,7 +4506,7 @@ Read CivicCast local federation metadata.
 
 ### `AiDefaultSelection`
 
-- `basis` (required): `'ram-12b' | 'ram-e4b' | 'forced-cpu'`
+- `basis` (required): `'ram-12b' | 'ram-e4b' | 'forced-cpu' | 'cpu-only'`
 - `caption_model` (required): `string`
 - `detected_ram_gb` (required): `number`
 - `rationale` (required): `string`
@@ -8764,6 +8800,19 @@ rule (S13 §5.1).
 
 - `cues` (optional): `Array<CaptionCue>`
 - `meeting_id` (required): `string`
+
+### `SummaryGenerationJobRecord`
+
+- `attempts` (optional): `number`
+- `created_at` (required): `string`
+- `cues` (optional): `Array<CaptionCue>`
+- `job_id` (required): `string`
+- `last_error` (optional): `string`
+- `meeting_id` (required): `string`
+- `next_attempt_at` (optional): `string | null`
+- `state` (required): `'pending' | 'running' | 'complete' | 'failed'`
+- `summary_id` (optional): `string | null`
+- `updated_at` (required): `string`
 
 ### `SummaryReviewQueueResponse`
 

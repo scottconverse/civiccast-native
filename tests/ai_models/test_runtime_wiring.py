@@ -7,8 +7,10 @@ instead of their hard-coded tags. When no operator selection exists, the resolve
 runtime tag MUST equal each feature's *current* catalog default (behavior-preserving
 w.r.t. whatever the catalog names as the default at any given time):
 
-* summary (>=16GB RAM)  -> ``gemma4:12b``     (adaptive default)
-* summary (<16GB RAM)   -> ``gemma4:e4b``     (adaptive default)
+* summary (>=16GB RAM + a real GPU) -> ``gemma4:12b``  (adaptive default)
+* summary (CPU-only, any RAM)       -> ``gemma4:e4b``  (adaptive default; field
+  evidence 2026-08-29 retired the old RAM-only rule -- see
+  ``detect_summary_model_default``)
 * translation           -> ``translategemma:4b``
 * captions              -> ``medium``         (faster-whisper id; ``whisper-`` stripped)
 
@@ -35,7 +37,9 @@ from civiccast.ai_models.store import AiModelStore
 from civiccast.db import Base
 
 
-def _service(tmp_path: Path, *, system_ram_total_gb: int = 8) -> AiModelService:
+def _service(
+    tmp_path: Path, *, system_ram_total_gb: int = 8, has_gpu: bool = False
+) -> AiModelService:
     eng = create_engine(f"sqlite:///{tmp_path / 'wiring.sqlite'}", future=True)
     Base.metadata.create_all(eng)
 
@@ -44,7 +48,9 @@ def _service(tmp_path: Path, *, system_ram_total_gb: int = 8) -> AiModelService:
         with Session(bind=eng) as session:
             yield session
 
-    return AiModelService(AiModelStore(factory), system_ram_total_gb=system_ram_total_gb)
+    return AiModelService(
+        AiModelStore(factory), system_ram_total_gb=system_ram_total_gb, has_gpu=has_gpu
+    )
 
 
 # --- runtime-tag resolution (the wiring boundary) ----------------------------
@@ -57,10 +63,18 @@ class TestResolveRuntimeTag:
         service = _service(tmp_path, system_ram_total_gb=8)
         assert resolve_runtime_tag(service, "summary") == "gemma4:e4b"
 
-    def test_summary_default_16gb_is_12b(self, tmp_path: Path) -> None:
+    def test_summary_default_16gb_cpu_only_is_still_e4b(self, tmp_path: Path) -> None:
+        # Field evidence 2026-08-29: no GPU signal means CPU-only, and CPU-only
+        # never resolves to 12B by default, regardless of RAM.
         from civiccast.ai_models.runtime import resolve_runtime_tag
 
         service = _service(tmp_path, system_ram_total_gb=16)
+        assert resolve_runtime_tag(service, "summary") == "gemma4:e4b"
+
+    def test_summary_default_16gb_with_gpu_is_12b(self, tmp_path: Path) -> None:
+        from civiccast.ai_models.runtime import resolve_runtime_tag
+
+        service = _service(tmp_path, system_ram_total_gb=16, has_gpu=True)
         assert resolve_runtime_tag(service, "summary") == "gemma4:12b"
 
     def test_translation_default_is_translategemma_4b(self, tmp_path: Path) -> None:
@@ -163,7 +177,7 @@ class TestSummaryAdapterSeam:
 
         monkeypatch.setattr(summary_module, "get_ollama_model_manifest", fake_manifest)
 
-        service = _service(tmp_path, system_ram_total_gb=16)
+        service = _service(tmp_path, system_ram_total_gb=16, has_gpu=True)
         adapter = build_summary_model(service)
         assert adapter.model_tag == "gemma4:12b"
         assert captured["model"] == "gemma4:12b"
