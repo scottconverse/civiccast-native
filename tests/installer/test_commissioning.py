@@ -46,6 +46,7 @@ from civiccast.platform.station_box_profile import (
     DeckLinkEngineRef,
     EngineReadiness,
     FfmpegFeatureReport,
+    GstRuntimeSource,
     NdiSdkRef,
     NetworkReport,
     ReleaseIdentityRef,
@@ -60,7 +61,13 @@ def _isolated_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
 
 
-def _box_profile(*, engine_ok: bool, sdi_ok: bool, tsduck_ok: bool) -> StationBoxProfile:
+def _box_profile(
+    *,
+    engine_ok: bool,
+    sdi_ok: bool,
+    tsduck_ok: bool,
+    runtime_source: GstRuntimeSource = "bundled",
+) -> StationBoxProfile:
     hw = HardwareProbe(
         cpu=CPUInfo(cores_physical=8, cores_logical=16, brand="Fixture CPU"),
         ram=RAMInfo(total_gb=32.0, available_gb=16.0),
@@ -83,6 +90,7 @@ def _box_profile(*, engine_ok: bool, sdi_ok: bool, tsduck_ok: bool) -> StationBo
         ndi_sdk=NdiSdkRef(sdk_present=sdi_ok, sdk_version=None),
         native_os=True,
         next_step="" if engine_ok else "install gstreamer",
+        runtime_source=runtime_source,
     )
     qualified_tier = compute_engine_tier_verdict(engine)
     clock = ClockReport(
@@ -231,6 +239,96 @@ class TestFirstRunCableChecks:
             event_bus_ready=True,
         )
         assert len(report.checks) == 11
+
+    def test_decklink_absent_on_peg_cable_is_warning_not_fail(self) -> None:
+        """DeckLink/BMD SDK is optional hardware (S3 §6: 'SDI tier only',
+        and validate_channel_commissioning_setup already treats an SDI
+        device as a per-channel opt-in, not a station-wide requirement).
+        A peg-cable station that will only ever deliver IP/ASI (no capture
+        card) must not have its whole wizard bricked by a hard "fail" here
+        -- confirmed live by the tester on a no-capture-card station: Screen
+        8 offered no "Continue anyway" for a fail, so Screens 9-11 were
+        completely unreachable."""
+        box = _box_profile(engine_ok=True, sdi_ok=False, tsduck_ok=True)
+        report = run_first_run_cable_checks(
+            deployment_profile="peg-cable",
+            box_profile=box,
+            storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
+            event_bus_ready=True,
+        )
+        by_id = {c.id: c for c in report.checks}
+        assert by_id["decklink_sdi"].status == "warning"
+        assert "optional" in by_id["decklink_sdi"].detail.lower()
+
+    def test_decklink_absent_never_blocks_commissioning_readiness(self) -> None:
+        """The consequence of the above: a station with no capture card can
+        still reach `ready=True` and unlock Screen 9 (channel output setup),
+        which the operator console gates purely on `first_run_checks.ready`
+        -- streaming-only/IP-only channels must have a path forward."""
+        box = _box_profile(engine_ok=True, sdi_ok=False, tsduck_ok=True)
+        report = run_first_run_cable_checks(
+            deployment_profile="peg-cable",
+            box_profile=box,
+            storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
+            event_bus_ready=True,
+        )
+        assert report.ready is True
+        assert report.blockers == []
+
+    def test_tsduck_absent_is_labeled_optional(self) -> None:
+        box = _box_profile(engine_ok=True, sdi_ok=True, tsduck_ok=False)
+        report = run_first_run_cable_checks(
+            deployment_profile="peg-cable",
+            box_profile=box,
+            storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
+            event_bus_ready=True,
+        )
+        by_id = {c.id: c for c in report.checks}
+        assert by_id["tsduck"].status == "warning"
+        assert by_id["tsduck"].detail == "Not installed (optional)"
+
+    def test_gstreamer_engine_detail_names_bundled_runtime_when_that_resolved(self) -> None:
+        """A passing probe must say WHICH install it found (S3: honest
+        reporting) -- a "bundled" resolution names the shipped runtime."""
+        box = _box_profile(engine_ok=True, sdi_ok=True, tsduck_ok=True, runtime_source="bundled")
+        report = run_first_run_cable_checks(
+            box_profile=box,
+            storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
+            event_bus_ready=True,
+        )
+        by_id = {c.id: c for c in report.checks}
+        assert "installed CivicCast runtime" in by_id["gstreamer_engine"].detail
+
+    def test_gstreamer_engine_detail_flags_system_path_as_not_the_shipped_runtime(self) -> None:
+        """A probe that resolves to a system/dev GStreamer on PATH (e.g. a
+        developer's own machine, not the product's bundled runtime) must say
+        so explicitly -- this is exactly the false-pass class the field
+        evidence warned about: a passing probe on a dev box that actually
+        found the WRONG install."""
+        box = _box_profile(
+            engine_ok=True, sdi_ok=True, tsduck_ok=True, runtime_source="system-path"
+        )
+        report = run_first_run_cable_checks(
+            box_profile=box,
+            storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
+            event_bus_ready=True,
+        )
+        by_id = {c.id: c for c in report.checks}
+        detail = by_id["gstreamer_engine"].detail
+        assert "not the CivicCast-shipped runtime" in detail
+
+    def test_gstreamer_engine_absent_detail_names_both_locations_checked(self) -> None:
+        box = _box_profile(engine_ok=False, sdi_ok=False, tsduck_ok=False)
+        report = run_first_run_cable_checks(
+            box_profile=box,
+            storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
+            event_bus_ready=True,
+        )
+        by_id = {c.id: c for c in report.checks}
+        detail = by_id["gstreamer_engine"].detail
+        assert "installed CivicCast runtime" in detail
+        assert "PATH" in detail
+        assert by_id["gstreamer_engine"].next_step
 
 
 class TestChannelSetupValidation:
