@@ -3485,7 +3485,9 @@ def build_resident_preview() -> ResidentPreview:
 
     explicit_url = os.getenv("CIVICCAST_RESIDENT_PORTAL_URL")
     packaged = bool(os.getenv("CIVICCAST_PUBLIC_PORTAL_DIST"))
-    packaged_default_url = os.getenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", "http://127.0.0.1:8000") + "/"
+    packaged_default_url = (
+        os.getenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", "http://127.0.0.1:8000") + "/"
+    )
     default_url = packaged_default_url if packaged else _RESIDENT_PORTAL_DEV_FALLBACK_URL
     public_url = explicit_url or default_url
     available = bool(explicit_url) or packaged

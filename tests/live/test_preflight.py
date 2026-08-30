@@ -682,7 +682,10 @@ class TestNetworkStorageSelfProbing:
 
         return PreflightEvaluator(
             session_factory=factory,
-            source_probe=lambda source: (True, f"Source {source.live_source_id!r} delivered media."),
+            source_probe=lambda source: (
+                True,
+                f"Source {source.live_source_id!r} delivered media.",
+            ),
             network_probe=network_probe,
             storage_probe=storage_probe,
         )
@@ -712,7 +715,8 @@ class TestNetworkStorageSelfProbing:
     def test_network_probe_negative_result_fails_with_probe_message(self, engine: Engine) -> None:
         _seed_session_and_source_and_target(engine)
         evaluator = self._evaluator_with_probes(
-            engine, network_probe=lambda: (False, "Could not reach the internet (tried 1.1.1.1:443).")
+            engine,
+            network_probe=lambda: (False, "Could not reach the internet (tried 1.1.1.1:443)."),
         )
         inputs = _all_pass_inputs().model_copy(update={"network_reachable": None})
         result = evaluator.evaluate(inputs)

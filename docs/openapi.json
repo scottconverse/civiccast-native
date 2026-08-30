@@ -48646,7 +48646,7 @@
           "live_source_id"
         ],
         "title": "PreflightInputs",
-        "description": "Caller-supplied probe results and operator-confirm flag.\n\nTreating probe results as inputs keeps the evaluator pure. A\nnetwork/storage/AI probe is a side-effecting concern that lives in\nthe future staff API layer; the evaluator only consumes the\nstructured probe outcome.\n\n``network_reachable`` / ``storage_free_bytes`` / ``ai_runtime_ready``\ndefault to ``None`` meaning \"not probed by the caller.\" For the\nrequired network + storage checks, ``None`` is treated as ``fail``\nwith a ``not_probed`` reason code; for the optional AI runtime\ncheck, ``None`` is treated as ``not_configured``."
+        "description": "Caller-supplied probe results and operator-confirm flag.\n\nTreating probe results as inputs keeps the evaluator pure. A\nnetwork/storage/AI probe is a side-effecting concern that lives in\nthe staff API layer -- the evaluator only consumes the structured\nprobe outcome, whether that outcome was supplied by the caller\n(e.g. an explicit rehearsal fixture) or filled in by the\nevaluator's own :data:`NetworkProbe` / :data:`StorageProbe`\n(bug B3: every real caller submitted ``None`` for both, so the\nevaluator now runs its own probe by default instead of depending\non a caller that never probed).\n\n``network_reachable`` / ``storage_free_bytes`` / ``ai_runtime_ready``\ndefault to ``None`` meaning \"not yet known.\" For the required\nnetwork + storage checks, ``None`` that a configured probe also\ncould not resolve is treated as ``fail`` with a ``not_probed``\nreason code; for the optional AI runtime check, ``None`` is\ntreated as ``not_configured``."
       },
       "PrepareCommitRequest": {
         "properties": {
