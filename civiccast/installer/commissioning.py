@@ -42,13 +42,29 @@ from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.sdi_relay import SdiReadiness
 from civiccast.installer.cea708_verification import Cea708VerificationResult
 from civiccast.installer.models import DeploymentProfile
-from civiccast.platform.station_box_profile import StationBoxProfile, probe_station_box_profile
+from civiccast.platform.station_box_profile import (
+    GstRuntimeSource,
+    StationBoxProfile,
+    probe_station_box_profile,
+)
 
 CommissioningCheckStatus = Literal["pass", "fail", "warning", "skipped"]
 OutputFormat = Literal["720p30", "1080i60", "1080p30", "SD480i60"]
 FillPolicy = Literal["slate", "loop", "silence"]
 TestPattern = Literal["bars", "live", "slate"]
 ProofVerdict = Literal["pass", "fail", "partial", "not-run"]
+
+#: Human-readable label for ``EngineReadiness.runtime_source`` (S1
+#: ``station_box_profile``) so Screen 8's detail text tells the operator
+#: WHICH install a passing (or failing) probe actually found -- "bundled"
+#: (the CivicCast-shipped runtime) vs "system-path" (a developer/CI/system
+#: GStreamer that happens to be on PATH, not the shipped runtime) vs
+#: "unavailable" (found nowhere).
+_RUNTIME_SOURCE_LABEL: dict[GstRuntimeSource, str] = {
+    "bundled": "the installed CivicCast runtime",
+    "system-path": "a system PATH install, not the CivicCast-shipped runtime",
+    "unavailable": "found in neither the installed CivicCast runtime nor system PATH",
+}
 
 _NOT_CLAIMED_BOUNDARY = (
     "The output proof drives a bounded ffmpeg SMPTE-bars+tone generator at the "
@@ -239,15 +255,22 @@ def run_first_run_cable_checks(
             label="GStreamer playout engine",
             status="pass" if engine_ok else "fail",
             detail=(
-                f"GStreamer {engine.gstreamer_version}, tier {profile.qualified_engine_tier.qualifies_for}"
+                f"GStreamer {engine.gstreamer_version} ({_RUNTIME_SOURCE_LABEL[engine.runtime_source]}), "
+                f"tier {profile.qualified_engine_tier.qualifies_for}"
                 if engine.gstreamer_present
-                else "GStreamer runtime not detected"
+                else "GStreamer runtime not detected: checked the installed CivicCast "
+                "runtime and system PATH, found neither."
             ),
             next_step="" if engine_ok else engine.next_step,
         )
     )
 
-    # 4. decklink_sdi (SDI tier only)
+    # 4. decklink_sdi (SDI tier only) -- optional hardware: a peg-cable
+    # station commonly delivers IP/ASI to the headend rather than physical
+    # SDI (validate_channel_commissioning_setup already treats an SDI device
+    # as a per-channel opt-in, not a station-wide requirement), so its
+    # absence is a WARNING, never a "fail" that locks Screen 9 for every
+    # channel type on a station that will never plug in a capture card.
     if not cable_tier_targeted:
         checks.append(
             CommissioningCheckItem(
@@ -263,20 +286,27 @@ def run_first_run_cable_checks(
             CommissioningCheckItem(
                 id="decklink_sdi",
                 label="DeckLink / BMD Desktop Video SDK",
-                status="pass" if sdi_ok else "fail",
-                detail="decklinkvideosink + BMD SDK detected" if sdi_ok else "Not detected",
+                status="pass" if sdi_ok else "warning",
+                detail=(
+                    "decklinkvideosink + BMD SDK detected"
+                    if sdi_ok
+                    else "Not installed (optional — only required for a channel that outputs via SDI)"
+                ),
                 next_step="" if sdi_ok else engine.next_step,
             )
         )
 
-    # 5. tsduck
+    # 5. tsduck (optional: a TSDuck compliance probe is a nice-to-have on
+    # commissioning, not required to configure or air a channel)
     tsduck_ok = profile.tsduck.installed
     checks.append(
         CommissioningCheckItem(
             id="tsduck",
             label="TSDuck",
             status="pass" if tsduck_ok else "warning",
-            detail=(profile.tsduck.version or "installed") if tsduck_ok else "Not installed",
+            detail=(profile.tsduck.version or "installed")
+            if tsduck_ok
+            else "Not installed (optional)",
             next_step="" if tsduck_ok else profile.tsduck.install_hint,
         )
     )

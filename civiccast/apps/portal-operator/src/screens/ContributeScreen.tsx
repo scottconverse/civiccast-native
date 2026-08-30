@@ -433,15 +433,16 @@ export function ContributeScreen() {
         })
       }
       if (action === 'accept') {
+        // The station's ffprobe probe runs automatically on the server when
+        // this is sent -- it reads the contributor's actual file and decides
+        // pass/fail itself, so the client no longer sends a canned "passed"
+        // attestation the server would have to either trust blindly or
+        // silently discard. A corrupt/unsupported file is rejected here with
+        // a real error instead of being accepted on a fabricated claim.
         return reviewContributorSubmission(item.submission_id, {
           action,
           metadata_patch: metadataPatch,
           operator_notes: operatorNotes || undefined,
-          broken_media_gate: {
-            state: 'passed',
-            checked_at: new Date().toISOString(),
-            summary: 'Operator accepted the media gate from the review queue.',
-          },
         })
       }
       if (action === 'schedule') {

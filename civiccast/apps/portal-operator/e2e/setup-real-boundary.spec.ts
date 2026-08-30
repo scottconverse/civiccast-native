@@ -217,11 +217,14 @@ test('@fullstack @realboundary loopback-only setup prepares storage and creates 
   await page.getByRole('button', { name: 'Create first admin' }).click()
 
   await expect(page.getByText('Recovery kit ready')).toBeVisible()
+  // Field fix (candidate #17): the kit must show the routine admin
+  // password, not just the emergency recovery codes.
+  await expect(page.getByText('correct horse battery staple')).toBeVisible()
 
   // Lockout gate: nothing past the kit until save/print is confirmed.
   await expect(page.getByLabel('Backup folder')).toHaveCount(0)
   const confirmBox = page.getByRole('checkbox', {
-    name: /I have saved or printed these recovery codes/,
+    name: /I have saved or printed this kit/,
   })
   await expect(confirmBox).toBeDisabled()
   const downloadPromise = page.waitForEvent('download')
