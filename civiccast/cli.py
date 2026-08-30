@@ -2410,6 +2410,7 @@ def _doctor_check_captions() -> None:
     import subprocess
 
     from civiccast.egress.caption_proof import GST_CC_ELEMENTS, caption_lane_report
+    from civiccast.platform.station_box_profile import _resolve_bundled_gst_tool
     from civiccast.stream._ffmpeg import run_ffmpeg
 
     try:
@@ -2418,12 +2419,27 @@ def _doctor_check_captions() -> None:
         filters = ""
 
     present: set[str] = set()
-    gst_inspect = shutil.which("gst-inspect-1.0")
+    # Resolve the bundled runtime's gst-inspect-1.0.exe by absolute path
+    # FIRST (never a bare PATH lookup) -- the same resolution S1's engine
+    # readiness probe uses, so `civiccast doctor` agrees with Screen 8
+    # instead of reporting a false "not on PATH" under LocalSystem, where
+    # the installer never puts the bundled runtime's bin dir on PATH.
+    bundled = _resolve_bundled_gst_tool("gst-inspect-1.0.exe")
+    if bundled is not None:
+        gst_inspect_path, gst_env = bundled
+        gst_inspect: str | None = str(gst_inspect_path)
+    else:
+        gst_inspect = shutil.which("gst-inspect-1.0")
+        gst_env = None
     if gst_inspect:
         for element in GST_CC_ELEMENTS:
             with contextlib.suppress(Exception):  # pragma: no cover — gst-inspect transient
                 proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
-                    [gst_inspect, element], capture_output=True, timeout=10, check=False
+                    [gst_inspect, element],
+                    capture_output=True,
+                    timeout=10,
+                    check=False,
+                    env=gst_env,
                 )
                 if proc.returncode == 0:
                     present.add(element)
@@ -2455,7 +2471,8 @@ def _doctor_check_captions() -> None:
     else:
         typer.echo(
             "  GStreamer embed:   native CEA-608/708 on the gst engine "
-            "(gst-inspect-1.0 not on PATH here; verified on the gst-engine host)"
+            "(gst-inspect-1.0 not found in the installed CivicCast runtime or on "
+            "PATH here; verified on the gst-engine host)"
         )
 
 

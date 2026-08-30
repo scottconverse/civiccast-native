@@ -5,22 +5,80 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
+import subprocess as sp
 import threading
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
 from civiccast.app import create_app
+from civiccast.stream._ffmpeg import resolve_h264_encoder
 
 _STAFF_HEADERS = {"Authorization": "Bearer operator-token-a"}
 
+_FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+_FFMPEG_SKIP = pytest.mark.skipif(
+    not _FFMPEG_AVAILABLE, reason="ffmpeg/ffprobe not on PATH; real-ingest test skipped"
+)
 
-def _client(monkeypatch: MonkeyPatch, upload_dir: Path) -> TestClient:
+
+def _client(
+    monkeypatch: MonkeyPatch, upload_dir: Path, *, asset_upload_dir: Path | None = None
+) -> TestClient:
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
     monkeypatch.setenv("CIVICCAST_CONTRIBUTOR_UPLOAD_DIR", str(upload_dir))
+    # TASK A: accept/schedule ingest into the SAME asset-library upload root
+    # the staff /assets/upload and watch-folder paths use (resolved via
+    # civiccast.schedule.paths.resolve_upload_root -> CIVICCAST_UPLOAD_DIR).
+    # A dedicated directory (never the contributor intake dir) mirrors how a
+    # real station configures these as two distinct locations.
+    monkeypatch.setenv(
+        "CIVICCAST_UPLOAD_DIR", str(asset_upload_dir or (upload_dir / "asset-library"))
+    )
     return TestClient(create_app())
+
+
+def _real_video(
+    upload_dir: Path, *, name: str = "show-one.mp4", duration: int = 2
+) -> dict[str, object]:
+    """Generate a REAL small H.264 mp4 via ffmpeg lavfi and describe it accurately.
+
+    Used by the accept/schedule end-to-end tests so the broken-media probe
+    and the asset ingest both run against genuine media, not a placeholder
+    byte string -- exercising the real ffprobe pipeline the field evidence
+    found was never being run at all.
+    """
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    path = upload_dir / name
+    sp.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=duration={duration}:size=320x240:rate=10",
+            "-c:v",
+            resolve_h264_encoder(),
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        capture_output=True,
+        check=True,
+    )
+    content = path.read_bytes()
+    return {
+        "upload_ref": str(path),
+        "filename": name,
+        "content_type": "video/mp4",
+        "size_bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
 
 
 def _real_media(
@@ -136,12 +194,19 @@ def test_public_status_requires_receipt_token(monkeypatch: MonkeyPatch, tmp_path
     assert response.status_code == 403
 
 
+@_FFMPEG_SKIP
 def test_staff_review_can_edit_accept_schedule_and_report(
     monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
+    """TASK A/D end-to-end: accept ingests a REAL library asset (retrievable
+    via the staff asset library) and send-to-schedule creates a REAL,
+    non-null schedule item (retrievable on the schedule) -- reusing the
+    exact staff-upload/watch-folder ffprobe ingest and schedule-item-create
+    paths, never a parallel pipeline.
+    """
     client = _client(monkeypatch, tmp_path)
     created = client.post(
-        "/api/public/contribute/submissions", json=_payload(_real_media(tmp_path))
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
     ).json()
 
     accepted = client.post(
@@ -150,13 +215,26 @@ def test_staff_review_can_edit_accept_schedule_and_report(
         json={
             "action": "accept",
             "metadata_patch": {"title": "Edited Community Arts Magazine"},
-            "broken_media_gate": {
-                "state": "passed",
-                "checked_at": "2026-05-31T18:05:00Z",
-                "summary": "Video and audio probes passed.",
-            },
         },
     )
+    assert accepted.status_code == 200, accepted.text
+    accepted_body = accepted.json()
+    assert accepted_body["title"] == "Edited Community Arts Magazine"
+    assert accepted_body["state"] == "accepted"
+    # TASK C: the gate is now a REAL automated ffprobe verdict, not a
+    # client-supplied attestation -- summary names real probe evidence.
+    assert accepted_body["broken_media_gate"]["state"] == "passed"
+    assert "ffprobe" in accepted_body["broken_media_gate"]["summary"].lower()
+
+    # TASK A: acceptance must produce a REAL, retrievable library asset.
+    asset_id = accepted_body["asset_id"]
+    assert asset_id, "accepted submission must carry a real library asset_id"
+    asset = client.get(f"/api/staff/assets/{asset_id}", headers=_STAFF_HEADERS)
+    assert asset.status_code == 200, asset.text
+    assert asset.json()["codec_video"] == "h264"
+    assert asset.json()["duration_seconds"] == 2
+    assert asset.json()["state"] == "validated"
+
     scheduled = client.post(
         f"/api/staff/contribute/submissions/{created['submission_id']}/review",
         headers=_STAFF_HEADERS,
@@ -169,14 +247,35 @@ def test_staff_review_can_edit_accept_schedule_and_report(
             },
         },
     )
+    assert scheduled.status_code == 200, scheduled.text
+    scheduled_body = scheduled.json()
+    assert scheduled_body["state"] == "scheduled"
+    assert scheduled_body["schedule_handoff"]["channel_id"] == "public"
+
+    # TASK A: schedule_item_id must never be null on a success response, and
+    # the item must actually exist on the schedule.
+    schedule_item_id = scheduled_body["schedule_handoff"]["schedule_item_id"]
+    assert schedule_item_id, "scheduled submission must carry a real schedule_item_id"
+    schedule_item = client.get(f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS)
+    assert schedule_item.status_code == 200, schedule_item.text
+    assert schedule_item.json()["asset_id"] == asset_id
+    assert schedule_item.json()["channel_id"] == "public"
+    schedule_list = client.get("/api/staff/schedule", headers=_STAFF_HEADERS)
+    assert schedule_item_id in {item["id"] for item in schedule_list.json()}
+
+    # TASK B: the resident-facing status message is only shown once it is
+    # actually true.
+    public_status = client.get(
+        f"/api/public/contribute/submissions/{created['submission_id']}/status",
+        params={"receipt_token": created["receipt_token"]},
+    )
+    assert public_status.status_code == 200
+    assert public_status.json()["schedule_handoff"]["schedule_item_id"] == schedule_item_id
+    assert "real spot on the schedule" in public_status.json()["status_message"]
+
     report = client.get("/api/staff/contribute/reports/producers", headers=_STAFF_HEADERS)
     outbox = client.get("/api/staff/contribute/notifications/outbox", headers=_STAFF_HEADERS)
 
-    assert accepted.status_code == 200
-    assert accepted.json()["title"] == "Edited Community Arts Magazine"
-    assert scheduled.status_code == 200
-    assert scheduled.json()["state"] == "scheduled"
-    assert scheduled.json()["schedule_handoff"]["channel_id"] == "public"
     assert report.status_code == 200
     assert report.json()["rows"][0]["scheduled_count"] == 1
     assert outbox.status_code == 200
@@ -185,6 +284,108 @@ def test_staff_review_can_edit_accept_schedule_and_report(
         "accepted",
         "scheduled",
     ]
+
+
+@_FFMPEG_SKIP
+def test_send_to_schedule_before_accept_is_refused_not_silently_broken(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK A/B: scheduling a submission that was never accepted (no library
+    asset exists yet) must fail loudly and say what operator action remains
+    -- not report a fake success with a null schedule_item_id."""
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
+    ).json()
+
+    response = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={
+            "action": "schedule",
+            "schedule_handoff": {
+                "channel_id": "public",
+                "requested_start": "2026-06-01T18:00:00Z",
+                "duration_seconds": 1800,
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    assert "Accept it" in response.json()["detail"]
+
+
+@_FFMPEG_SKIP
+def test_accept_rejects_a_corrupt_file_via_the_real_probe(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK C/D: a deliberately corrupt/unreadable file must be caught by the
+    REAL ffprobe probe -- accept fails with 422 and the submission is left
+    unaccepted, never silently flipped to "accepted" on a media-less claim."""
+    client = _client(monkeypatch, tmp_path)
+    upload_dir = tmp_path
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    corrupt_path = upload_dir / "corrupt-show.mp4"
+    corrupt_path.write_bytes(b"this is not a real video file, just garbage bytes" * 20)
+    corrupt_media = {
+        "upload_ref": str(corrupt_path),
+        "filename": "corrupt-show.mp4",
+        "content_type": "video/mp4",
+        "size_bytes": corrupt_path.stat().st_size,
+        "sha256": hashlib.sha256(corrupt_path.read_bytes()).hexdigest(),
+    }
+    created = client.post("/api/public/contribute/submissions", json=_payload(corrupt_media)).json()
+
+    response = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={"action": "accept"},
+    )
+
+    assert response.status_code == 422, response.text
+    queue = client.get("/api/staff/contribute/submissions", headers=_STAFF_HEADERS)
+    row = next(
+        item
+        for item in queue.json()["submissions"]
+        if item["submission_id"] == created["submission_id"]
+    )
+    assert row["state"] == "submitted"
+    assert row["asset_id"] is None
+
+
+@_FFMPEG_SKIP
+def test_accept_operator_override_ingests_without_a_fabricated_pass(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK C: an explicit operator override still ingests the file (so it
+    can be scheduled) but the gate persists the operator's own
+    ``override_accepted`` attestation -- never silently rewritten to a
+    fabricated automated "passed" verdict."""
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
+    ).json()
+
+    response = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={
+            "action": "accept",
+            "broken_media_gate": {
+                "state": "override_accepted",
+                "checked_at": "2026-05-31T18:05:00Z",
+                "summary": "Operator manually reviewed and approved despite the probe.",
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["asset_id"], "override must still ingest a real library asset"
+    assert body["broken_media_gate"]["state"] == "override_accepted"
+    assert body["broken_media_gate"]["summary"] == (
+        "Operator manually reviewed and approved despite the probe."
+    )
 
 
 def test_contributor_openapi_exports_contracts(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:

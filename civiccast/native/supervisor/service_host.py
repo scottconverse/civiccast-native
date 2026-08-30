@@ -58,6 +58,8 @@ registering or running under the real SCM.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import servicemanager  # type: ignore[import-untyped]
@@ -65,6 +67,7 @@ import win32event
 import win32service  # type: ignore[import-untyped]
 import win32serviceutil  # type: ignore[import-untyped]
 
+from civiccast.native.supervisor import install_layout, start_failure_marker
 from civiccast.native.supervisor.config import DISPLAY_NAME, SERVICE_NAME
 from civiccast.native.supervisor.service import (
     SERVICE_DESCRIPTION,
@@ -88,6 +91,14 @@ if TYPE_CHECKING:
 # assembled where the service actually runs, never as a cross-process closure.
 # A module-level name so a win-only test can monkeypatch it with a fake provider.
 _service_factory: ServiceFactory = build_production_service_factory()
+
+# Where `record_start_failure`/`record_start_success` (start_failure_marker)
+# read and write their counter/marker -- a module-level SEAM, the SAME shape
+# as `_service_factory` above, so a win-only test can monkeypatch it to an
+# isolated tmp_path root instead of ever touching this machine's REAL
+# `%PROGRAMDATA%\CivicCast` (which, on a station that is actually
+# crash-looping, is live state a test run must never write into).
+_civiccast_data_root_provider: Callable[[], Path] = install_layout.default_civiccast_data_root
 
 
 class CivicCastSupervisorService(win32serviceutil.ServiceFramework):  # type: ignore[misc]
@@ -212,7 +223,28 @@ class CivicCastSupervisorService(win32serviceutil.ServiceFramework):  # type: ig
                 # Build the production dependencies IN THIS host process (not from a
                 # cross-process closure): a raising provider therefore fails LOUDLY
                 # here rather than silently short-circuiting a missing closure.
-                self._service = _service_factory(logger)
+                #
+                # Field evidence (candidate 4eca729, 2026-08-29): a raising
+                # provider crashed the host with NOTHING recorded beyond the
+                # "logging initialized" canary above -- the exception propagated
+                # straight past this frame to the SCM, which only the Windows
+                # Event Log ever saw. `record_start_failure` logs the REAL
+                # reason to supervisor.log before this re-raises (behavior is
+                # otherwise byte-for-byte unchanged: still fails loud, still
+                # exits, still lets the SCM's own restart policy decide what
+                # happens next), and once the SAME failure has recurred
+                # `CONSECUTIVE_FAILURE_THRESHOLD` times running, it also
+                # writes an operator-readable marker document so a crash loop
+                # is never silent even to someone who never checks the Event
+                # Log at all. `record_start_success` clears both the instant a
+                # start actually works again.
+                civiccast_data_root = _civiccast_data_root_provider()
+                try:
+                    self._service = _service_factory(logger)
+                except Exception as error:
+                    start_failure_marker.record_start_failure(civiccast_data_root, logger, error)
+                    raise
+                start_failure_marker.record_start_success(civiccast_data_root)
                 self._service.run()
             finally:
                 singleton.release()

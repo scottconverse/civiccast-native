@@ -1327,6 +1327,7 @@ export interface ContributorSubmission {
   notifications: Array<SubmissionNotificationPreference>
   state: 'submitted' | 'under_review' | 'needs_changes' | 'accepted' | 'declined' | 'scheduled' | 'published'
   broken_media_gate?: BrokenMediaGateResult
+  asset_id?: string | null
   operator_notes?: string | null
   decline_reason?: string | null
   schedule_handoff?: ScheduleHandoff | null
@@ -1869,6 +1870,7 @@ export interface EngineReadiness {
   ndi_sdk: NdiSdkRef
   native_os: boolean
   next_step?: string
+  runtime_source?: 'bundled' | 'system-path' | 'unavailable'
 }
 
 export interface EngineTierVerdict {

@@ -38,6 +38,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -54,6 +55,7 @@ SCHEMA_VERSION = 1
 EngineTier = Literal["base", "sdi-broadcast", "premium-cg"]
 HardwareEncoder = Literal["nvenc", "vaapi", "qsv", "none"]
 NtpSyncState = Literal["synced", "unsynced", "unknown"]
+GstRuntimeSource = Literal["bundled", "system-path", "unavailable"]
 CableOsVerdictKind = Literal["single-windows-pc-ok", "native-linux-recommended", "soak-pending"]
 PegReadinessColor = Literal["green", "yellow", "red"]
 AiDefaultBasis = Literal["ram-12b", "ram-e4b", "forced-cpu", "cpu-only"]
@@ -99,6 +101,14 @@ class EngineReadiness(BaseModel):
     ndi_sdk: NdiSdkRef
     native_os: bool
     next_step: str = ""
+    #: Which install a default (non-injected) probe run actually resolved to
+    #: -- "bundled" (the CivicCast-shipped runtime, resolved by absolute path,
+    #: never PATH), "system-path" (a PATH-found dev/CI/system-wide GStreamer,
+    #: NOT the shipped runtime -- a false pass on a developer's own machine
+    #: would report this), or "unavailable" (found nowhere). Defaults to
+    #: "unavailable" for callers/tests that construct this model directly
+    #: with an injected runner, where the concept doesn't apply.
+    runtime_source: GstRuntimeSource = "unavailable"
 
 
 class EngineBlocker(BaseModel):
@@ -351,23 +361,102 @@ _HW_ENCODER_ELEMENTS: dict[HardwareEncoder, str] = {
 }
 
 _GST_INSPECT_HINT = (
-    "Install GStreamer (the CivicCast turnkey installer provisions this per S15); "
-    "a manual box needs gst-inspect-1.0 on PATH."
+    "GStreamer runtime not found at the installed CivicCast runtime location or "
+    "on PATH. Re-run the CivicCast installer's repair (native-app-payload "
+    "component) to re-stage it, or for a manual/dev box, put gst-inspect-1.0 on "
+    "PATH."
 )
+
+_GSTREAMER_DEPENDENCIES_SUBDIR = ("dependencies", "gstreamer")
+
+
+def _resolve_bundled_gst_tool(tool_filename: str) -> tuple[Path, dict[str, str]] | None:
+    """Resolve one bundled GStreamer CLI tool by ABSOLUTE path -- the same
+    resolution the real playout engine uses to find its own runtime
+    (``civiccast.native.station_runtime.load_native_station_environment`` /
+    ``civiccast.native.gstreamer_runtime.installed_gstreamer_environment``),
+    never a PATH lookup.
+
+    Why this matters: the control-plane service runs as LocalSystem with the
+    stock, installer-untouched PATH (see
+    ``civiccast.native.supervisor.install_layout``'s module docstring) -- it
+    never carries the bundled runtime's ``bin`` directory. A PATH-only probe
+    (``shutil.which``) therefore reports "not detected" under the service even
+    when a fully installed runtime is sitting on disk (field evidence,
+    candidate #17: Screen 8 FAILed "GStreamer runtime not detected" against a
+    clean station whose install tree was later confirmed complete). The same
+    PATH-only probe also produces a FALSE PASS on a developer's own machine
+    that happens to have a separate, user-installed GStreamer on PATH -- this
+    resolver is tried FIRST specifically so a passing probe reports the
+    product's own shipped runtime, not whatever else happens to be on PATH.
+
+    Returns ``(executable_path, child_environment)`` when the bundled closure
+    verifies at this install location AND the named tool is actually staged
+    in it (not every GStreamer CLI tool ships in the closure -- e.g.
+    ``gst-device-monitor-1.0.exe`` currently does not), else ``None`` so
+    callers fall back to PATH themselves (dev boxes, CI, system-wide
+    installs). Never raises: a missing/corrupt/partial bundled closure is a
+    legitimate "not here, try PATH", not an error.
+    """
+
+    from civiccast.native.gstreamer_runtime import (
+        GstreamerRuntimeError,
+        installed_gstreamer_environment,
+    )
+    from civiccast.native.supervisor.install_layout import resolve_install_root
+
+    try:
+        install_root = resolve_install_root()
+    except Exception:
+        return None
+    runtime_root = install_root / "runtime"
+    if not runtime_root.joinpath(*_GSTREAMER_DEPENDENCIES_SUBDIR).is_dir():
+        return None
+    try:
+        env = installed_gstreamer_environment(runtime_root, base_environment=os.environ)
+    except (GstreamerRuntimeError, OSError):
+        return None
+    exe = runtime_root.joinpath(*_GSTREAMER_DEPENDENCIES_SUBDIR, "bin", tool_filename)
+    if not exe.is_file():
+        return None
+    return exe, env
+
+
+def _detect_gst_runtime_source() -> GstRuntimeSource:
+    """Which install a default (non-injected) probe run would actually find,
+    for honest Screen 8 reporting (S3 §6) -- distinguishes the product's own
+    bundled runtime from a developer's/CI's own system GStreamer so an
+    operator is never told "detected" without knowing which install that
+    means. Pure path arithmetic, same cost profile as the resolvers it calls;
+    safe to compute unconditionally."""
+
+    if _resolve_bundled_gst_tool("gst-inspect-1.0.exe") is not None:
+        return "bundled"
+    if shutil.which("gst-inspect-1.0"):
+        return "system-path"
+    return "unavailable"
 
 
 def _default_gst_inspect_runner(args: list[str]) -> FfmpegResult:
-    gst_inspect = shutil.which("gst-inspect-1.0")
-    if not gst_inspect:
-        raise FileNotFoundError("gst-inspect-1.0 not found on PATH")
+    bundled = _resolve_bundled_gst_tool("gst-inspect-1.0.exe")
+    if bundled is not None:
+        gst_inspect, env = bundled
+    else:
+        which = shutil.which("gst-inspect-1.0")
+        if not which:
+            raise FileNotFoundError(
+                "gst-inspect-1.0 not found in the bundled CivicCast runtime or on PATH"
+            )
+        gst_inspect, env = Path(which), None
     completed = subprocess.run(  # noqa: S603 -- fixed args, no shell
-        [gst_inspect, *args],
+        [str(gst_inspect), *args],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         timeout=10,
         check=False,
+        env=env,
     )
     return FfmpegResult(
         returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr
@@ -393,17 +482,25 @@ def _parse_gst_version(output: str) -> str | None:
 
 
 def _default_device_monitor_runner(args: list[str]) -> FfmpegResult:
-    monitor = shutil.which("gst-device-monitor-1.0")
-    if not monitor:
-        raise FileNotFoundError("gst-device-monitor-1.0 not found on PATH")
+    bundled = _resolve_bundled_gst_tool("gst-device-monitor-1.0.exe")
+    if bundled is not None:
+        monitor, env = bundled
+    else:
+        which = shutil.which("gst-device-monitor-1.0")
+        if not which:
+            raise FileNotFoundError(
+                "gst-device-monitor-1.0 not found in the bundled CivicCast runtime or on PATH"
+            )
+        monitor, env = Path(which), None
     completed = subprocess.run(  # noqa: S603 -- fixed args, no shell
-        [monitor, *args],
+        [str(monitor), *args],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         timeout=10,
         check=False,
+        env=env,
     )
     return FfmpegResult(
         returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr
@@ -486,6 +583,14 @@ def probe_engine_readiness(
         native_os=native_os,
     )
 
+    # Only meaningful when the DEFAULT runner actually ran (production path,
+    # or a test exercising the default runner directly); an injected `runner`
+    # bypasses `_default_gst_inspect_runner` entirely, so the source concept
+    # doesn't apply there and the model's "unavailable" default stands.
+    runtime_source: GstRuntimeSource = (
+        _detect_gst_runtime_source() if runner is None else "unavailable"
+    )
+
     return EngineReadiness(
         gstreamer_present=gstreamer_present,
         gstreamer_version=gstreamer_version,
@@ -499,6 +604,7 @@ def probe_engine_readiness(
         ndi_sdk=NdiSdkRef(sdk_present=ndi_sdk_present, sdk_version=None),
         native_os=native_os,
         next_step=next_step,
+        runtime_source=runtime_source,
     )
 
 
