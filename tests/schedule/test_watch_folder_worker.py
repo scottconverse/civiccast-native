@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess as sp
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -40,7 +41,12 @@ from civiccast.schedule.media_lifecycle_models import (
     WatchFolderFileState,
 )
 from civiccast.schedule.models import Asset
-from civiccast.schedule.watch_folder_worker import WatchFolderWorker, WatchFolderWorkerSettings
+from civiccast.schedule.watch_folder_worker import (
+    WatchFolderFolderResult,
+    WatchFolderScanInProgressError,
+    WatchFolderWorker,
+    WatchFolderWorkerSettings,
+)
 from civiccast.stream._ffmpeg import resolve_h264_encoder
 
 _FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
@@ -576,3 +582,190 @@ class TestPollDueCheck:
         third = worker.run_once(now=well_after)
         assert third.folders_scanned == 1
         assert config.config_id  # sanity: fixture still valid
+
+
+# ---------------------------------------------------------------------------
+# Finding 4 (adversarial audit of PR #69): scan_now had no lock, no
+# idempotency guard, no rate limit. Five concurrent scan-now calls on one
+# config produced 2 clean 200s and 3 unhandled database errors under this
+# same SQLite harness. WatchFolderWorker now serializes per-config scans --
+# against itself, against other scan_now calls, and against run_once's own
+# poll loop picking up the same config.
+# ---------------------------------------------------------------------------
+
+
+class TestScanNowSerialization:
+    def test_scan_now_raises_in_progress_when_the_same_config_is_already_locked(
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
+    ) -> None:
+        watch_dir = tmp_path / "watch"
+        watch_dir.mkdir()
+        config = _make_config(engine, monitor_path=str(watch_dir))
+        worker = _worker(session_factory, tmp_path)
+
+        assert worker._acquire_scan_lock(config.config_id)
+        try:
+            with pytest.raises(WatchFolderScanInProgressError):
+                worker.scan_now(config.config_id)
+        finally:
+            worker._release_scan_lock(config.config_id)
+
+        # Lock released -- a normal scan_now works again right after.
+        result = worker.scan_now(config.config_id)
+        assert result.healthy is True
+
+    def test_run_once_skips_rather_than_races_a_config_whose_scan_is_in_flight(
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
+    ) -> None:
+        watch_dir = tmp_path / "watch"
+        watch_dir.mkdir()
+        config = _make_config(engine, monitor_path=str(watch_dir), poll_interval_seconds=1)
+        worker = _worker(session_factory, tmp_path)
+
+        # Simulate an in-flight scan_now (or another overlapping run_once
+        # pass) holding this config's lock, then run a pass that's due to
+        # pick up the same config.
+        assert worker._acquire_scan_lock(config.config_id)
+        try:
+            result = worker.run_once(force_all=True)
+        finally:
+            worker._release_scan_lock(config.config_id)
+
+        assert result.folders_degraded == 0
+        assert len(result.folder_results) == 1
+        # A skip is reported the same shape as "config vanished mid-scan"
+        # (monitor_path=="" -- this module's existing convention for
+        # "nothing to report"), never a raised/propagated exception out of
+        # the ThreadPoolExecutor future.
+        assert result.folder_results[0].monitor_path == ""
+        assert result.folder_results[0].healthy is True
+
+        # Skipped, not scanned: the config's poll bookkeeping is untouched,
+        # so the very next pass will pick it straight back up.
+        refreshed = _refresh_config(engine, config.config_id)
+        assert refreshed.last_poll_at is None
+
+        # And now that the lock is free, a real pass actually scans it.
+        second = worker.run_once(force_all=True)
+        assert second.folders_scanned == 1
+        assert second.folder_results[0].monitor_path == str(watch_dir)
+
+    def test_different_configs_scan_independently_despite_one_being_locked(
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
+    ) -> None:
+        dir1 = tmp_path / "watch1"
+        dir1.mkdir()
+        dir2 = tmp_path / "watch2"
+        dir2.mkdir()
+        config1 = _make_config(engine, monitor_path=str(dir1))
+        config2 = _make_config(engine, monitor_path=str(dir2))
+        worker = _worker(session_factory, tmp_path)
+
+        assert worker._acquire_scan_lock(config1.config_id)
+        try:
+            result = worker.scan_now(config2.config_id)  # unrelated config -- must not block
+        finally:
+            worker._release_scan_lock(config1.config_id)
+
+        assert result.healthy is True
+        assert result.monitor_path == str(dir2)
+
+    def test_five_concurrent_scan_now_calls_never_race(
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,  # type: ignore[no-untyped-def]
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The audit's own reproduction, as a real multi-threaded test:
+        five real OS threads all call ``scan_now`` on the SAME config at
+        (as close as Python threading allows to) the same instant. Before
+        the fix this produced 2 clean 200s and 3 unhandled database errors.
+
+        The property that actually matters is mutual exclusion -- no two
+        scans of the same config ever run AT THE SAME TIME -- not "exactly
+        one caller succeeds": a call that arrives after an earlier one has
+        already finished and released the lock is legitimately allowed to
+        run its own scan (first attempt caught this: an over-strict
+        "exactly 1 success" assertion failed with 2, both genuinely
+        sequential, zero overlap). So this instruments
+        ``_scan_one_folder`` itself with a shared concurrency counter (and
+        a small artificial delay, to widen the window enough that a broken
+        lock would reliably get caught rather than passing by luck) and
+        asserts the observed concurrency never exceeded 1 -- plus that
+        every one of the 5 calls resolved to a clean success or a clean
+        ``WatchFolderScanInProgressError``, never an unhandled exception of
+        any other kind (what the audit actually saw).
+        """
+
+        watch_dir = tmp_path / "watch"
+        watch_dir.mkdir()
+        config = _make_config(engine, monitor_path=str(watch_dir), poll_interval_seconds=3600)
+        worker = _worker(session_factory, tmp_path)
+
+        concurrency_guard = threading.Lock()
+        concurrency = {"current": 0, "max_seen": 0}
+        original_scan_one_folder = WatchFolderWorker._scan_one_folder
+
+        def _tracked_scan_one_folder(
+            self: WatchFolderWorker, config_id: str, now: datetime
+        ) -> WatchFolderFolderResult:
+            with concurrency_guard:
+                concurrency["current"] += 1
+                concurrency["max_seen"] = max(concurrency["max_seen"], concurrency["current"])
+            try:
+                time.sleep(0.05)  # widen the window a broken lock would fail inside
+                return original_scan_one_folder(self, config_id, now)
+            finally:
+                with concurrency_guard:
+                    concurrency["current"] -= 1
+
+        monkeypatch.setattr(WatchFolderWorker, "_scan_one_folder", _tracked_scan_one_folder)
+
+        n = 5
+        barrier = threading.Barrier(n)
+        results: list[object] = [None] * n
+
+        def _call(i: int) -> None:
+            barrier.wait()
+            try:
+                results[i] = worker.scan_now(config.config_id)
+            except BaseException as exc:  # capture whatever the audit saw, of any kind
+                results[i] = exc
+
+        threads = [threading.Thread(target=_call, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+            assert not t.is_alive(), "a scan_now call hung instead of returning/raising"
+
+        assert concurrency["max_seen"] == 1, (
+            "two scan_now calls executed _scan_one_folder for the same config at the same "
+            f"time -- the lock did not serialize them (observed concurrency: "
+            f"{concurrency['max_seen']})"
+        )
+
+        successes = [r for r in results if isinstance(r, WatchFolderFolderResult)]
+        rejections = [r for r in results if isinstance(r, WatchFolderScanInProgressError)]
+        unexpected = [
+            r
+            for r in results
+            if not isinstance(r, (WatchFolderFolderResult, WatchFolderScanInProgressError))
+        ]
+
+        assert unexpected == [], (
+            f"scan_now raised something other than WatchFolderScanInProgressError under "
+            f"concurrency: {unexpected!r}"
+        )
+        assert len(successes) + len(rejections) == n
+        assert len(successes) >= 1, "not even the first caller got a real scan through"

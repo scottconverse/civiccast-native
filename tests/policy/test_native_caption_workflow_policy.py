@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,53 @@ WORKFLOWS = (
     ROOT / ".github" / "workflows" / "ci-test.yml",
     ROOT / ".github" / "workflows" / "deterministic-detectors.yml",
 )
+
+# How far ci-test.yml's `--floor` values are allowed to sit below the ACTUAL,
+# freshly-collected tests/native count before this policy suite fails the
+# build. Chosen 2026-08-30 after an audit found the floors unmoved since the
+# repo's first commit while the real collection grew to (1675, 1869) -- 246
+# and 304 tests of undetected slack. Every real batch in this file's own
+# history comment trail below adds low tens of tests at a time (the largest
+# single jump on record is +19); 50 comfortably absorbs a normal PR or two of
+# legitimate test consolidation without a floor-bump commit, while still
+# catching anything on the order of a whole test module going missing from a
+# run. This is intentionally NOT zero slack (a literal exact-pin, like
+# `test_native_marker_collections_match_the_workflow_floors` below keeps for
+# the collection count itself) because ci-test.yml's floor is meant to
+# survive routine test churn between the discipline-enforced updates to that
+# exact count -- it is a tripwire, not a duplicate of the exact assertion.
+NATIVE_JUNIT_FLOOR_MARGIN = 50
+
+
+def _collect_native_tests(marker: str | None = None) -> int:
+    """Real `pytest --collect-only` count for tests/native, optionally marker-filtered.
+
+    Shared by both floor-policy tests below so neither one ever trusts a
+    hardcoded number instead of an actual collection run.
+    """
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "--collect-only",
+        "-q",
+        "--disable-warnings",
+    ]
+    if marker is not None:
+        command.extend(["-m", marker])
+    command.append("tests/native")
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    return sum(
+        line.startswith("tests/native/") and "::" in line for line in result.stdout.splitlines()
+    )
 
 
 def _workflow(path: Path) -> tuple[str, dict[str, object]]:
@@ -78,6 +126,19 @@ def test_global_gates_remain_valid_under_the_actions_budget_policy() -> None:
 
 
 def test_native_junit_workflow_floors_match_current_exact_collections() -> None:
+    """ci-test.yml's `--floor` values must track a REAL collection, not drift silently.
+
+    This does not hardcode an expected floor (that was the bug: two magic
+    numbers -- 1429/1565 -- sat unmoved since the repo's first commit while
+    the real tests/native count grew to 1675/1869, leaving 246 and 304 tests
+    of undetected slack). Instead it re-derives the current truth the exact
+    same way `test_native_marker_collections_match_the_workflow_floors` does
+    (a live `pytest --collect-only` run) and checks the workflow's floor sits
+    within NATIVE_JUNIT_FLOOR_MARGIN of it -- never above it (a floor higher
+    than the real count would fail every run) and never more than the margin
+    below it (a floor that far below the real count stops guarding
+    anything).
+    """
     _text, workflow = _workflow(WORKFLOWS[1])
     steps = {
         step["name"]: step["run"]
@@ -86,21 +147,41 @@ def test_native_junit_workflow_floors_match_current_exact_collections() -> None:
         if "name" in step and "run" in step
     }
 
-    assert (
-        "--junit junit-native-pure.xml"
-        in steps["Assert tests/native's platform-independent (pure) suite actually ran"]
+    pure_step = steps["Assert tests/native's platform-independent (pure) suite actually ran"]
+    win_step = steps["Assert the full tests/native suite ran on Windows -- nothing may skip"]
+
+    assert "--junit junit-native-pure.xml" in pure_step
+    assert "--junit junit-native-win.xml" in win_step
+
+    pure_floor_match = re.search(r"--floor (\d+)", pure_step)
+    win_floor_match = re.search(r"--floor (\d+)", win_step)
+    assert pure_floor_match, f"no --floor N found in the pure-suite step:\n{pure_step}"
+    assert win_floor_match, f"no --floor N found in the Windows-suite step:\n{win_step}"
+    pure_floor = int(pure_floor_match.group(1))
+    win_floor = int(win_floor_match.group(1))
+
+    pure_count = _collect_native_tests("not windows_only")
+    win_count = _collect_native_tests()
+
+    assert pure_floor <= pure_count, (
+        f"ci-test.yml's pure-suite --floor {pure_floor} exceeds the real "
+        f"current collection ({pure_count}) -- every run would fail closed."
     )
-    assert (
-        "--floor 1429"
-        in steps["Assert tests/native's platform-independent (pure) suite actually ran"]
+    assert pure_count - pure_floor <= NATIVE_JUNIT_FLOOR_MARGIN, (
+        f"ci-test.yml's pure-suite --floor {pure_floor} is {pure_count - pure_floor} "
+        f"tests below the real current collection ({pure_count}), past the "
+        f"documented NATIVE_JUNIT_FLOOR_MARGIN of {NATIVE_JUNIT_FLOOR_MARGIN}. "
+        "Bump --floor in ci-test.yml (see the margin comment above this test)."
     )
-    assert (
-        "--junit junit-native-win.xml"
-        in steps["Assert the full tests/native suite ran on Windows -- nothing may skip"]
+    assert win_floor <= win_count, (
+        f"ci-test.yml's Windows-suite --floor {win_floor} exceeds the real "
+        f"current collection ({win_count}) -- every run would fail closed."
     )
-    assert (
-        "--floor 1565"
-        in steps["Assert the full tests/native suite ran on Windows -- nothing may skip"]
+    assert win_count - win_floor <= NATIVE_JUNIT_FLOOR_MARGIN, (
+        f"ci-test.yml's Windows-suite --floor {win_floor} is {win_count - win_floor} "
+        f"tests below the real current collection ({win_count}), past the "
+        f"documented NATIVE_JUNIT_FLOOR_MARGIN of {NATIVE_JUNIT_FLOOR_MARGIN}. "
+        "Bump --floor in ci-test.yml (see the margin comment above this test)."
     )
 
 
@@ -117,30 +198,7 @@ def test_linux_pure_native_lane_uses_the_explicit_platform_marker() -> None:
 
 
 def test_native_marker_collections_match_the_workflow_floors() -> None:
-    def collect(marker: str | None = None) -> int:
-        command = [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
-            "--disable-warnings",
-        ]
-        if marker is not None:
-            command.extend(["-m", marker])
-        command.append("tests/native")
-        result = subprocess.run(
-            command,
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-        assert result.returncode == 0, result.stdout + result.stderr
-        return sum(
-            line.startswith("tests/native/") and "::" in line for line in result.stdout.splitlines()
-        )
+    collect = _collect_native_tests
 
     # 2026-07-31 stop-path fix batch: +9 pure (StopWatchdog + stop-position
     # breadcrumb, test_supervisor_service.py) and +6 windows_only (3 SvcStop

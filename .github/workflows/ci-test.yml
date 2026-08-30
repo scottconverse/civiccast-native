@@ -396,15 +396,33 @@ jobs:
         # here on ubuntu; every OTHER tests/native module (the D3 decision
         # table, GuardMonitor, models, and the CLI orchestration -- all
         # fully fake/injected, no OS dependency) must actually PASS, not just
-        # collect. Floor = the exact current collection count of
-        # `pytest tests/native -m "not windows_only"`. This WP1 repair
-        # replaces the old name-substring selector; regenerate and bind the
-        # final JUnit identity receipt after candidate freeze.
+        # collect. This WP1 repair replaces the old name-substring selector;
+        # regenerate and bind the final JUnit identity receipt after
+        # candidate freeze.
+        #
+        # 2026-08-30 floor audit: this pin had sat at 1429 unmoved since the
+        # repo's first commit while the real collection grew to 1675 -- 246
+        # tests of undetected slack, found by `git log -S` showing the
+        # literal never changed. Floor = the real current collection count
+        # (1675, verified live via `pytest --collect-only tests/native -m
+        # "not windows_only"` immediately before this change) minus a fixed
+        # 50-test margin, not the exact count itself: an exact pin fails the
+        # build the moment anyone legitimately consolidates or removes even
+        # one test, and this suite's own maintained history (see
+        # NATIVE_JUNIT_FLOOR_MARGIN and the comment trail in
+        # tests/policy/test_native_caption_workflow_policy.py) shows normal
+        # PRs add low tens of tests at a time -- 50 survives a PR or two of
+        # that churn while still catching anything on the order of a whole
+        # module silently failing to run. tests/policy's
+        # test_native_junit_workflow_floors_match_current_exact_collections
+        # enforces this floor stays within that margin of a FRESH collection
+        # on every run (not a second hardcoded number), so this pin cannot
+        # go stale again the way 1429 did without failing that test first.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1429 \
+            --floor 1625 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -498,23 +516,38 @@ jobs:
         # skip. If wsl.exe is missing entirely, probe_indistro_services'
         # FileNotFoundError handling must still classify the same way --
         # verified locally with a PATH-stripped runner stub in
-        # test_win_probes.py's FALSIFICATION test. Floor = the FULL
-        # tests/native collection count (1273 pure + 118 explicitly marked Windows-only)
-        # as of the install-only-refusal fix (2026-07-30); regenerate and
-        # bind the final JUnit identity receipt after candidate freeze. NOTE: this
-        # floor assumes a CLEAN windows-latest
-        # runner with no pre-existing CivicCast WSL install/keeper process --
-        # 3 real-fire tests (test_probe_keeper_positive_for_real_spawned_flag_process_then_negative_after_kill,
+        # test_win_probes.py's FALSIFICATION test. NOTE: this floor assumes
+        # a CLEAN windows-latest runner with no pre-existing CivicCast WSL
+        # install/keeper process -- 3 real-fire tests
+        # (test_probe_keeper_positive_for_real_spawned_flag_process_then_negative_after_kill,
         # test_detect_wsl_install_false_on_this_distro_less_box,
         # test_probe_indistro_services_real_fire_negative_no_distro_registered)
         # assert a distro-less/keeper-less box, which CI's ephemeral runner is
         # but a shared dev box that ALSO runs the live product would not be.
+        #
+        # 2026-08-30 floor audit: this pin had sat at 1565 unmoved since the
+        # repo's first commit (the 1273 pure + 118 windows-only note below it
+        # was stale too, dated 2026-07-30) while the real collection grew to
+        # 1869 -- 304 tests of undetected slack, found by `git log -S`
+        # showing the literal never changed. Floor = the real current full
+        # collection count (1869, verified live via `pytest --collect-only
+        # tests/native` immediately before this change) minus the same fixed
+        # 50-test margin used for the pure-suite floor above, not the exact
+        # count itself -- see that floor's comment for the full rationale
+        # (NATIVE_JUNIT_FLOOR_MARGIN in
+        # tests/policy/test_native_caption_workflow_policy.py) and for why an
+        # exact pin is the wrong shape here. The same policy test
+        # (test_native_junit_workflow_floors_match_current_exact_collections)
+        # re-derives the current count from a fresh collection on every run
+        # and fails if this floor drifts more than the margin below it, so
+        # this pin cannot go stale again the way 1565 did without failing
+        # that test first.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 1565 \
+            --floor 1819 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit

@@ -78,9 +78,22 @@ from civiccast.schedule.media_lifecycle_store import (
     MediaLifecycleStore,
     WatchFolderConfigNotFoundError,
 )
+from civiccast.schedule.watch_folder_worker import WatchFolderScanInProgressError
 
 _WRITE_ROLES = ("publish_operator", "setup_admin")
 _READ_ROLES = ("meeting_operator", "publish_operator", "support_admin")
+
+# Finding 2 (adversarial audit of PR #69): every OTHER _WRITE_ROLES route in
+# this file manipulates watch-folder/retention RECORDS (a publish_operator's
+# normal job). ``browse-folders`` and ``scan-now`` instead reach raw OS
+# filesystem APIs (``os.scandir`` over an arbitrary path, and an immediate
+# unthrottled disk scan) -- a content-publishing role has no operational need
+# for either, and granting it one hands a lower-trust role an OS-level
+# enumeration primitive. Both routes are folder-picker/diagnostic actions a
+# station admin performs during setup or troubleshooting (S3 "Configure
+# watch folder" step, spec S7 §10), not part of day-to-day publish work, so
+# they are restricted to setup_admin only.
+_FS_ROLES = ("setup_admin",)
 
 _DB_NOT_READY_DETAIL = (
     "Durable storage is not ready. Open Setup and choose Prepare storage, "
@@ -123,6 +136,242 @@ _UNREADABLE_PATH_DETAIL = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Path-shape safety (adversarial audit of PR #69, findings 1 and 3)
+#
+# The audit ran real requests against the real (unmerged-fix) router and
+# proved ``browse_folders``/``_validate_monitor_path`` had NO confinement
+# at all -- ``GET browse-folders?path=C:\Users`` (200, real usernames),
+# ``...?path=C:\Windows\System32`` (200, full listing), and
+# ``...?path=\\localhost\C$`` (200, the admin share OVER UNC) all worked,
+# and ``POST watch-folder-configs`` accepted ``C:\Windows\System32`` and
+# bare ``C:\`` as 201-Created monitor paths.
+#
+# These checks are deliberately RAW-STRING parsers, not something built on
+# ``pathlib``: verified empirically against this repo's own Python
+# (3.13.5) that ``PureWindowsPath(r"\\host\share").is_absolute()`` is
+# ``False`` and ``.drive`` is empty -- pathlib's own UNC/absolute detection
+# cannot be trusted to reject a UNC path, on any Python version, and this
+# suite's actual CI gate (``ci-test.yml``'s "Unit tests" job) runs on
+# ``ubuntu-latest``, where a Windows-shaped string like ``C:\Windows``
+# isn't a path pathlib recognizes as absolute AT ALL (backslash isn't a
+# POSIX separator) -- a ``resolve()``-based check would silently no-op
+# there. String-shape rejection behaves identically regardless of host OS,
+# so it is what actually gets proven by CI; real ``Path.resolve()``
+# containment against the station's fixed local drives is layered on top
+# in ``browse_folders`` itself as Windows-real defense-in-depth (catches a
+# junction/symlink escape), but that layer is inherently unverifiable on a
+# Linux CI runner and is not where the regression coverage lives.
+_WINDOWS_SYSTEM_DIR_NAMES = frozenset(
+    {
+        "windows",
+        "program files",
+        "program files (x86)",
+        "programdata",
+        "system volume information",
+        "$recycle.bin",
+        "recovery",
+        "perflogs",
+        "boot",
+        "msocache",
+        "documents and settings",
+        "config.msi",
+        "recycler",
+    }
+)
+
+_UNSAFE_PATH_DETAIL = (
+    "That path is not allowed. CivicCast will not browse or watch Windows system "
+    "directories, an entire drive, or a raw device-namespace path."
+)
+
+_DRIVE_RELATIVE_RE = re.compile(r"^[A-Za-z]:(?![\\/])")
+_WINDOWS_LOCAL_RE = re.compile(r"^([A-Za-z]):[\\/](.*)$")
+
+
+def _normalize_windows_slashes(raw: str) -> str:
+    return raw.replace("/", "\\")
+
+
+def _is_unc_or_device_path(raw: str) -> bool:
+    r"""True for a UNC network path (``\\host\share``) or the Win32
+    extended-length / device-namespace prefix (``\\?\...``, ``\\.\...`` --
+    both of which can themselves hide a UNC target, e.g. ``\\?\UNC\host\share``).
+    A single leading-two-backslash check catches all of these at once.
+    """
+
+    return _normalize_windows_slashes(raw).startswith("\\\\")
+
+
+def _is_device_prefix(raw: str) -> bool:
+    normalized = _normalize_windows_slashes(raw)
+    return normalized.startswith("\\\\?\\") or normalized.startswith("\\\\.\\")
+
+
+def _unc_share_is_admin_or_hidden(raw: str) -> bool:
+    r"""True if a UNC path's share name ends in ``$`` -- the built-in Windows
+    administrative/hidden shares (``C$``, ``D$``, ``ADMIN$``, ``IPC$``, ...)
+    that expose an entire drive or OS control surface over SMB, as opposed
+    to an operator-created named share (``\\nas\Videos``) that spec S7 open
+    decision 5 (D13) explicitly supports as a watch-folder source.
+    """
+
+    normalized = _normalize_windows_slashes(raw)
+    if not normalized.startswith("\\\\"):
+        return False
+    segments = [s for s in normalized[2:].split("\\") if s]
+    return len(segments) >= 2 and segments[1].endswith("$")
+
+
+def _is_drive_relative(raw: str) -> bool:
+    """True for ``C:Windows`` -- a drive letter with NO following separator,
+    which Windows resolves against that drive's *current directory*
+    (process-global, unpredictable for a web server) rather than an
+    absolute location. Auditor-flagged edge case.
+    """
+
+    return bool(_DRIVE_RELATIVE_RE.match(raw))
+
+
+def _has_traversal_segment(raw: str) -> bool:
+    return any(seg == ".." for seg in _normalize_windows_slashes(raw).split("\\"))
+
+
+def _windows_local_segments(raw: str) -> list[str] | None:
+    r"""For a Windows-shaped absolute local path (``X:\...``), the path
+    segments below the drive root (``.`` dropped). ``None`` for anything
+    else (a POSIX path, a bare relative name, UNC, ...) so callers only
+    apply this policy to Windows-local-drive-shaped input.
+    """
+
+    match = _WINDOWS_LOCAL_RE.match(_normalize_windows_slashes(raw))
+    if match is None:
+        return None
+    return [seg for seg in match.group(2).split("\\") if seg not in ("", ".")]
+
+
+def _reject_unsafe_watch_folder_path(raw: str) -> None:
+    """Finding 3: a watch-folder ``monitor_path`` must not be a Windows
+    device-namespace path, a Windows administrative/hidden UNC share, a
+    drive-relative path, an entire drive, or a well-known system directory.
+    NAS/SMB paths in general remain fully supported (D13) -- only the
+    dangerous shapes above are rejected, not UNC as a class.
+    """
+
+    if _is_device_prefix(raw):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=r"Device-namespace paths (\\?\... or \\.\...) are not accepted. "
+            "Use a normal drive letter or network share path.",
+        )
+    if _unc_share_is_admin_or_hidden(raw):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=r"Windows administrative shares (e.g. \\host\C$) are not accepted as "
+            r"watch folders. Point at a named share instead (e.g. \\host\Videos).",
+        )
+    if _is_drive_relative(raw):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=r"Enter a full path like C:\Videos\Incoming, not a drive-relative path.",
+        )
+    if _has_traversal_segment(raw):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_UNSAFE_PATH_DETAIL
+        )
+    segments = _windows_local_segments(raw)
+    if segments is None:
+        return
+    if not segments:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=r"An entire drive (e.g. C:\) cannot be a watch folder. Choose a specific "
+            "subfolder.",
+        )
+    if segments[0].casefold() in _WINDOWS_SYSTEM_DIR_NAMES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_UNSAFE_PATH_DETAIL
+        )
+
+
+def _reject_unsafe_browse_path(raw: str) -> None:
+    r"""Finding 1: the folder PICKER is local-disk-only by design (its own
+    docstring: frontend and backend always run on the SAME station
+    machine) -- unlike a typed-in watch-folder ``monitor_path``, UNC/network
+    paths are rejected here outright, not just the admin-share subset, and
+    browsing the bare ``Users`` directory is refused (it would enumerate
+    every local account name on the station -- exactly what the audit's
+    live ``GET browse-folders?path=C:\Users`` demonstration exposed). A
+    subfolder already known to be UNDER ``Users`` (e.g. via an existing
+    config's path) is unaffected -- only the exact ``C:\Users`` listing is
+    refused, not the whole subtree, so editing an existing local-profile
+    watch folder still works.
+    """
+
+    if _is_unc_or_device_path(raw):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Network paths and device-namespace paths are not browsable here. This "
+            "picker only lists local station drives.",
+        )
+    if _is_drive_relative(raw):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=r"Enter a full path like C:\Videos\Incoming, not a drive-relative path.",
+        )
+    if _has_traversal_segment(raw):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_UNSAFE_PATH_DETAIL
+        )
+    segments = _windows_local_segments(raw)
+    if segments is None:
+        return
+    if not segments:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=r"An entire drive (e.g. C:\) cannot be browsed as one listing. Pick a "
+            "subfolder.",
+        )
+    top = segments[0].casefold()
+    if top in _WINDOWS_SYSTEM_DIR_NAMES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_UNSAFE_PATH_DETAIL
+        )
+    if top == "users" and len(segments) == 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=r"Browsing C:\Users directly is not allowed (it would list every local "
+            "account name on this station).",
+        )
+
+
+def _enforce_local_drive_containment(resolved: Path) -> None:
+    r"""Windows-real defense-in-depth on top of the string-shape checks
+    above: after ``Path.resolve()`` follows any symlink/junction, require
+    the REAL target to still be under one of the station's fixed local
+    drive roots, and re-run the system-directory denylist against the
+    RESOLVED parts -- so a junction inside an otherwise-allowed folder that
+    secretly points at ``C:\Windows`` is caught even though the literal
+    input string looked innocent. Only meaningful when ``os.name == "nt"``
+    (the only OS this product ships on); a no-op everywhere ``Path.resolve``
+    can't reason about Windows drives, which is also why this layer isn't
+    where this fix's regression coverage lives (see the module comment
+    above) -- CI's "Unit tests" job runs on ``ubuntu-latest``.
+    """
+
+    if os.name != "nt":
+        return
+    roots = {Path(root).resolve() for root in _list_drive_roots()}
+    if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_UNSAFE_PATH_DETAIL
+        )
+    if any(part.casefold() in _WINDOWS_SYSTEM_DIR_NAMES for part in resolved.parts):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_UNSAFE_PATH_DETAIL
+        )
+
+
 def _validate_monitor_path(monitor_path: str) -> None:
     """Fail closed with an operator-readable 422 rather than silently accepting
     a path the daemon will only discover is broken on its next poll (finding 3,
@@ -133,6 +382,7 @@ def _validate_monitor_path(monitor_path: str) -> None:
     silently degrading on the first poll.
     """
 
+    _reject_unsafe_watch_folder_path(monitor_path)
     try:
         path = Path(monitor_path)
         is_dir = path.is_dir()
@@ -427,9 +677,10 @@ def update_watch_folder_config(
     "/watch-folder-configs/{config_id}/scan-now",
     response_model=WatchFolderScanNowResponse,
     summary="Scan one watch folder immediately, bypassing its poll interval",
-    dependencies=[Depends(require_any_role(*_WRITE_ROLES))],
+    dependencies=[Depends(require_any_role(*_FS_ROLES))],
     responses={
         404: {"description": "Watch folder config not found"},
+        409: {"description": "A scan for this watch folder is already in progress"},
         503: {"description": "Watch-folder daemon not wired, or CIVICCAST_UPLOAD_DIR unset"},
     },
 )
@@ -458,6 +709,16 @@ def scan_watch_folder_now(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Watch folder config not found: {config_id}",
         ) from exc
+    except WatchFolderScanInProgressError as exc:
+        # Finding 4 (adversarial audit of PR #69): scan_now had no lock, no
+        # idempotency guard, no rate limit -- 5 concurrent scan-now calls on
+        # one config produced unhandled database errors under the SQLite
+        # test harness. WatchFolderWorker now serializes per-config scans
+        # (against itself, other scan-now calls, and the daemon's own
+        # run_once picking up the same config) and raises this when a scan
+        # is already in flight; the operator gets an actionable 409 instead
+        # of a raced or duplicated scan.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
@@ -493,7 +754,7 @@ def _list_drive_roots() -> list[str]:
     "/browse-folders",
     response_model=FolderBrowseResponse,
     summary="List subdirectories of a path, for the non-technical watch-folder picker",
-    dependencies=[Depends(require_any_role(*_WRITE_ROLES))],
+    dependencies=[Depends(require_any_role(*_FS_ROLES))],
 )
 def browse_folders(path: str | None = None) -> FolderBrowseResponse:
     """Finding 3 (candidate #17): a non-technical operator cannot be expected
@@ -520,7 +781,16 @@ def browse_folders(path: str | None = None) -> FolderBrowseResponse:
             readable=True,
         )
 
+    _reject_unsafe_browse_path(path)
+
     resolved = Path(path)
+    if os.name == "nt":
+        try:
+            real = resolved.resolve(strict=False)
+        except OSError:
+            real = resolved
+        _enforce_local_drive_containment(real)
+
     parent = str(resolved.parent) if resolved.parent != resolved else None
     try:
         with os.scandir(path) as it:
