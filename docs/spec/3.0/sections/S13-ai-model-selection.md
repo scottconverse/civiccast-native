@@ -25,7 +25,7 @@ The incumbent PEG workflow hard-wires model choices: cloud cloud telemetry for c
    - **Tier 1 (LOCAL):** Ollama (e4b/12b/26b + Apache alternates MADLAD-400/Mistral).
    - **Tier 2 (HOSTED):** Ollama Cloud (`gemma4:31b-cloud`).
    - **Tier 3 (FRONTIER):** OpenRouter mid-tier (Gemini 2.5 Flash / Haiku 4.5 / GPT-5 mini).
-2. Adaptive DEFAULT: `gemma4:12b` QAT for summary on ≥16GB RAM; `gemma4:e4b` on 8GB (MRCR: 25.4 → 43.4, ~2× long-context gain).
+2. Adaptive DEFAULT: `gemma4:12b` QAT for summary on ≥16GB RAM **with a real GPU present**; `gemma4:e4b` everywhere else, including every CPU-only box regardless of RAM (MRCR: 25.4 → 43.4, ~2× long-context gain when 12B is actually reachable — see §3.2's amendment note for the CPU-only field evidence that added the GPU gate).
 3. Operator selection surface (console + API) with cost/latency/privacy tradeoff UI.
 4. DEFAULT stays local (zero cloud fee); hosted tiers (Ollama Cloud + OpenRouter) ship **functional** (D13) — default OFF, operator opts in and accepts per-token cost — not stubbed.
 5. Release-gate wiring respects operator choice (not pinned).
@@ -64,6 +64,7 @@ The incumbent PEG workflow hard-wires model choices: cloud cloud telemetry for c
 ```python
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, Annotated
+
 
 class ModelTier(BaseModel):
     key: Annotated[str, Field(min_length=1, max_length=120)]
@@ -114,7 +115,22 @@ canonical mapping S13 carries:
 
 ### 3.2 Adaptive default logic
 
+> **AMENDED 2026-08-29 (field evidence, candidate #17):** the RAM-only rule
+> below is superseded. On a 32GB CPU-only reference station it picked 12B
+> (32 >= 16), which took 366s to complete one summary generation and then
+> failed twice more under realistic memory pressure (CPU buffer allocation
+> failure; a crashed `llama-server` process); `gemma4:e4b` completed every
+> attempt in 94-128s on the same box. RAM headroom does not predict CPU
+> token-generation throughput — a discrete GPU does. The as-implemented rule
+> (`civiccast/ai_models/models.py::detect_summary_model_default`) adds a
+> `has_gpu` gate: 12B is only the default with a real (NVML-detected) GPU
+> present AND >=16GB RAM; every CPU-only box gets e4b regardless of RAM. The
+> RAM-only table below is kept for historical context, not as the current
+> behavior.
+
 ```python
+# HISTORICAL (pre-2026-08-29) — see the amendment note above for the
+# as-implemented, GPU-aware rule.
 def detect_summary_model_default(system_ram_total_gb: int) -> str:
     if system_ram_total_gb >= 16:
         return "gemma4-12b-ollama"
@@ -146,11 +162,17 @@ earlier draft naming `0045` on `0044_loudness_and_eas` was stale before S11 land
 **Router:** `/api/staff/ai-models` (staff-gated)
 
 ```python
-@staff_models_router.get("/{feature}", dependencies=[Depends(require_any_role("setup_admin", "meeting_operator"))])
+@staff_models_router.get(
+    "/{feature}", dependencies=[Depends(require_any_role("setup_admin", "meeting_operator"))]
+)
 def get_feature_model_registry(feature: str) -> FeatureModelRegistry: ...
 
-@staff_models_router.post("/{feature}/select", dependencies=[Depends(require_any_role("setup_admin"))])
+
+@staff_models_router.post(
+    "/{feature}/select", dependencies=[Depends(require_any_role("setup_admin"))]
+)
 def select_feature_model(feature: str, payload: ModelSelectionRequest) -> FeatureModelRegistry: ...
+
 
 @staff_models_router.get("")
 def list_all_models() -> AiModelConfiguration: ...

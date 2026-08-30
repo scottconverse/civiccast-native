@@ -18447,6 +18447,306 @@
         ]
       }
     },
+    "/api/staff/summaries/jobs": {
+      "post": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "Queue async summary generation from committed transcript cues",
+        "operationId": "create_summary_job_api_staff_summaries_jobs_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SummaryGenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryGenerationJobRecord"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "List summary generation jobs for operator visibility",
+        "operationId": "list_summary_jobs_api_staff_summaries_jobs_get",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Meeting Id"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "running",
+                    "complete",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SummaryGenerationJobRecord"
+                  },
+                  "title": "Response List Summary Jobs Api Staff Summaries Jobs Get"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/summaries/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "Get one summary generation job's status/progress",
+        "operationId": "get_summary_job_api_staff_summaries_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryGenerationJobRecord"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Summary generation job not found"
+          },
+          "503": {
+            "description": "Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/summaries/jobs/{job_id}/retry": {
+      "post": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "Manually retry a failed summary generation job",
+        "description": "Reset a failed job to pending with a fresh attempt budget.\n\nMirrors ``captions.router.retry_offline_caption_job``: pre-checks\n``active_for_meeting`` so a retry never creates a second active job for a\nmeeting that picked up a new job in the meantime (a second operator's retry,\nor a fresh generate), and catches the same conflict error the durable store's\n``save`` raises if that check loses a TOCTOU race, so a race never surfaces as\na raw 500.",
+        "operationId": "retry_summary_job_api_staff_summaries_jobs__job_id__retry_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryGenerationJobRecord"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Summary generation job not found"
+          },
+          "409": {
+            "description": "Only a failed job can be manually retried"
+          },
+          "503": {
+            "description": "Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/ai-models": {
       "get": {
         "tags": [
@@ -30611,7 +30911,8 @@
             "enum": [
               "ram-12b",
               "ram-e4b",
-              "forced-cpu"
+              "forced-cpu",
+              "cpu-only"
             ],
             "title": "Basis"
           },
@@ -58419,6 +58720,93 @@
           "meeting_id"
         ],
         "title": "SummaryGenerateRequest"
+      },
+      "SummaryGenerationJobRecord": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Job Id"
+          },
+          "meeting_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Meeting Id"
+          },
+          "cues": {
+            "items": {
+              "$ref": "#/components/schemas/CaptionCue"
+            },
+            "type": "array",
+            "title": "Cues"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "complete",
+              "failed"
+            ],
+            "title": "State"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts",
+            "default": 0
+          },
+          "next_attempt_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Attempt At"
+          },
+          "summary_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary Id"
+          },
+          "last_error": {
+            "type": "string",
+            "title": "Last Error",
+            "default": ""
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "meeting_id",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SummaryGenerationJobRecord",
+        "description": "One meeting's summary generation job."
       },
       "SummaryReviewQueueResponse": {
         "properties": {

@@ -191,9 +191,11 @@ describe('FeatureModelCard', () => {
       <FeatureModelCard registry={registry()} canWrite={false} onSelect={() => {}} />,
     )
     const text = container.textContent ?? ''
-    // 4200 ms p95 → "≈4.2 s typical"
+    // The effective tier is on-box (provider: 'ollama'), so the card renders the
+    // CPU-only-caveated form (tierLatencyLabel, field evidence 2026-08-29), not a
+    // bare "≈X s typical" number a real CPU generation cannot reliably hit.
     expect(text).toContain('Latency')
-    expect(text).toContain('4.2 s')
+    expect(text).toContain('CPU-only')
   })
 
   it('U1: staging a non-effective tier renders that tier\'s latency/privacy BEFORE commit', () => {

@@ -149,6 +149,25 @@ def _client_with_role(monkeypatch: pytest.MonkeyPatch, role: str) -> TestClient:
             "meeting_operator",
             "records_clerk",
         ),
+        (
+            # Field evidence 2026-08-29: the async job endpoints (queue/retry) carry
+            # the same role gates as /generate -- records_clerk (or support_admin
+            # for the queue-only action) required, meeting_operator refused.
+            "AI summaries job queue",
+            "POST",
+            "/api/staff/summaries/jobs",
+            {},
+            "meeting_operator",
+            "records_clerk",
+        ),
+        (
+            "AI summaries job retry",
+            "POST",
+            "/api/staff/summaries/jobs/sgj_doesnotexist/retry",
+            {},
+            "meeting_operator",
+            "records_clerk",
+        ),
     ],
 )
 def test_wrong_role_gets_403(

@@ -56,11 +56,39 @@ def _hw(ram_gb: float, gpu: GPUInfo | None = None) -> HardwareProbe:
 # ---------------------------------------------------------------------------
 
 
+_GPU = GPUInfo(name="Test GPU", vram_total_gb=24.0, vram_free_gb=20.0, driver_version="000.00")
+
+
 class TestSelectAiDefaults:
     @pytest.mark.parametrize(
         ("ram_gb", "expected_basis", "expected_summary"),
         [
+            # No GPU: field evidence 2026-08-29 (candidate #17) -- 12B is never the
+            # default on a CPU-only box, regardless of RAM. 6/32/128 GB CPU-only all
+            # land on "cpu-only"; only the <8GB "forced-cpu" wording differs, and
+            # only because it predates GPU-awareness -- both mean "no GPU, use e4b".
             (6, "forced-cpu", "gemma4:e4b"),
+            (8, "cpu-only", "gemma4:e4b"),
+            (15.9, "cpu-only", "gemma4:e4b"),
+            (16, "cpu-only", "gemma4:e4b"),
+            (32, "cpu-only", "gemma4:e4b"),
+            (128, "cpu-only", "gemma4:e4b"),
+        ],
+    )
+    def test_ram_truth_table_cpu_only(
+        self, ram_gb: float, expected_basis: str, expected_summary: str
+    ) -> None:
+        result = select_ai_defaults(_hw(ram_gb))
+        assert result.basis == expected_basis
+        assert result.summary_model == expected_summary
+
+    @pytest.mark.parametrize(
+        ("ram_gb", "expected_basis", "expected_summary"),
+        [
+            # "forced-cpu" now means "no GPU AND <8GB RAM" specifically -- with a
+            # GPU present, even a <8GB box just isn't big enough for 12B yet
+            # ("ram-e4b"), it isn't the doubly-constrained CPU-only case.
+            (6, "ram-e4b", "gemma4:e4b"),
             (8, "ram-e4b", "gemma4:e4b"),
             (15.9, "ram-e4b", "gemma4:e4b"),
             (16, "ram-12b", "gemma4:12b"),
@@ -68,16 +96,22 @@ class TestSelectAiDefaults:
             (128, "ram-12b", "gemma4:12b"),
         ],
     )
-    def test_ram_truth_table(
+    def test_ram_truth_table_with_gpu(
         self, ram_gb: float, expected_basis: str, expected_summary: str
     ) -> None:
-        result = select_ai_defaults(_hw(ram_gb))
+        # A real GPU restores the old RAM-only table -- 12B is only ever the
+        # default with a GPU present (still gated by RAM below 16GB).
+        result = select_ai_defaults(_hw(ram_gb, gpu=_GPU))
         assert result.basis == expected_basis
         assert result.summary_model == expected_summary
 
-    def test_flips_at_exactly_16gb(self) -> None:
-        assert select_ai_defaults(_hw(15.999)).basis == "ram-e4b"
-        assert select_ai_defaults(_hw(16.0)).basis == "ram-12b"
+    def test_flips_at_exactly_16gb_with_gpu(self) -> None:
+        assert select_ai_defaults(_hw(15.999, gpu=_GPU)).basis == "ram-e4b"
+        assert select_ai_defaults(_hw(16.0, gpu=_GPU)).basis == "ram-12b"
+
+    def test_no_gpu_never_recommends_12b_even_at_16gb(self) -> None:
+        assert select_ai_defaults(_hw(16.0)).basis == "cpu-only"
+        assert select_ai_defaults(_hw(16.0)).summary_model == "gemma4:e4b"
 
     def test_translate_and_caption_always_locked(self) -> None:
         for ram in (4, 8, 16, 64):

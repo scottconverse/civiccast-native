@@ -17,6 +17,7 @@ import type { StaffIdentityResponse } from '../types/api.generated'
 import { RadioCardGroup } from '../components/RadioCardGroup'
 import { AssetCustomFieldsEditor } from './AssetCustomFieldsEditor'
 import { OfflineCaptionJobsPanel } from './OfflineCaptionJobsPanel'
+import { GenerateSummaryPanel } from './GenerateSummaryPanel'
 import { MediaLifecyclePanel } from './MediaLifecyclePanel'
 import { hasRole } from './contribution-format'
 
@@ -742,8 +743,9 @@ function DetailEditor({ asset, onClose, onEditTrim }: DetailEditorProps) {
         </aside>
       </div>
 
-      <div className="px-4 pb-6 sm:px-6">
+      <div className="grid gap-4 px-4 pb-6 sm:px-6">
         <OfflineCaptionJobsPanel assetId={asset.asset_id} />
+        <GenerateSummaryPanel assetId={asset.asset_id} />
       </div>
     </div>
   )

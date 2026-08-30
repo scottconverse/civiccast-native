@@ -140,12 +140,38 @@ describe('ai-models-format', () => {
   })
 
   // --- U1: latency label ------------------------------------------------------
-  it('U1: renders sub-second latency in ms and >=1s in seconds', () => {
-    expect(tierLatencyLabel(tier({ latency_p95_ms: 900 }))).toBe('≈900 ms typical')
-    expect(tierLatencyLabel(tier({ latency_p95_ms: 1500 }))).toBe('≈1.5 s typical')
-    expect(tierLatencyLabel(tier({ latency_p95_ms: 4200 }))).toBe('≈4.2 s typical')
-    expect(tierLatencyLabel(tier({ latency_p95_ms: 0 }))).toBe('—')
+  it('U1: cloud/frontier tiers render sub-second latency in ms and >=1s in seconds', () => {
+    expect(
+      tierLatencyLabel(tier({ provider: 'openrouter', latency_p95_ms: 900 })),
+    ).toBe('≈900 ms typical')
+    expect(
+      tierLatencyLabel(tier({ provider: 'openrouter', latency_p95_ms: 1500 })),
+    ).toBe('≈1.5 s typical')
+    expect(
+      tierLatencyLabel(tier({ provider: 'ollama-cloud', latency_p95_ms: 4200 })),
+    ).toBe('≈4.2 s typical')
+    expect(tierLatencyLabel(tier({ provider: 'openrouter', latency_p95_ms: 0 }))).toBe('—')
     expect(tierLatencyLabel(undefined)).toBe('—')
+  })
+
+  it('U1 (field evidence 2026-08-29): on-box ollama tiers never render a bare precise number', () => {
+    // The old fixed "≈4.2 s typical" for gemma4-12b was ~30x wrong on the
+    // 32GB CPU-only reference station (measured 366s). A local LLM tier
+    // renders a floor + CPU-only caveat instead of false precision.
+    const label = tierLatencyLabel(tier({ provider: 'ollama', latency_p95_ms: 366_000 }))
+    expect(label).toContain('366 s+')
+    expect(label).toContain('CPU-only')
+    expect(label).not.toBe('≈366.0 s typical')
+  })
+
+  it('U1 (field evidence 2026-08-29): external (faster-whisper) tiers render a realtime multiple', () => {
+    // The old fixed "≈500 ms typical" for whisper-medium was ~70x wrong in
+    // the field (measured ~3.3x real time for an 11s clip). Transcription
+    // time scales with recording length, so it is never a fixed duration.
+    const label = tierLatencyLabel(tier({ provider: 'external', latency_p95_ms: 3_300 }))
+    expect(label).toContain('3.3x')
+    expect(label).toContain("recording's length")
+    expect(label).toContain('CPU-only')
   })
 
   // --- U3: RAM requirement + fit ---------------------------------------------

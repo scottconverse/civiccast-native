@@ -86,8 +86,10 @@ function EmptyState() {
     >
       <div className="text-sm font-semibold">No summaries need review.</div>
       <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-        Next step: generate a summary from committed transcript cues. New pending
-        summaries and evidence refusals will appear here.
+        Next step: open a recording's asset detail page and use the "Generate
+        summary" action there (next to its offline caption jobs) to start one
+        from its committed transcript cues. New pending summaries and evidence
+        refusals will appear here once generation completes.
       </div>
     </div>
   )

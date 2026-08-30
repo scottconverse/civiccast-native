@@ -142,7 +142,7 @@ export interface AiDefaultSelection {
   summary_model: string
   translate_model: string
   caption_model: string
-  basis: 'ram-12b' | 'ram-e4b' | 'forced-cpu'
+  basis: 'ram-12b' | 'ram-e4b' | 'forced-cpu' | 'cpu-only'
   detected_ram_gb: number
   rationale: string
 }
@@ -4425,6 +4425,19 @@ export interface SummaryDraft {
 export interface SummaryGenerateRequest {
   meeting_id: string
   cues?: Array<CaptionCue>
+}
+
+export interface SummaryGenerationJobRecord {
+  job_id: string
+  meeting_id: string
+  cues?: Array<CaptionCue>
+  state: 'pending' | 'running' | 'complete' | 'failed'
+  attempts?: number
+  next_attempt_at?: string | null
+  summary_id?: string | null
+  last_error?: string
+  created_at: string
+  updated_at: string
 }
 
 export interface SummaryReviewQueueResponse {

@@ -296,6 +296,7 @@ ignore = [
 # playout_router.py). Scoped to the package so tests still get B008.
 "civiccast/**/*router.py" = ["B008"]
 "civiccast/summary/store.py" = ["S608"]
+"civiccast/summary/persistence.py" = ["S608"]
 "civiccast/records/store.py" = ["S608"]
 "civiccast/subscribe/store.py" = ["S608"]
 "civiccast/podcast/store.py" = ["S608"]

@@ -175,6 +175,7 @@ class AiModelService:
         store: AiModelStore,
         *,
         system_ram_total_gb: int = 8,
+        has_gpu: bool = False,
         read_first_run_override: FirstRunOverrideReader = _default_first_run_override,
         write_first_run_override: FirstRunOverrideWriter = _default_set_first_run_override,
         save_provider_secret: ProviderSecretSaver = _default_save_provider_secret,
@@ -183,6 +184,10 @@ class AiModelService:
     ) -> None:
         self._store = store
         self._ram_gb = system_ram_total_gb
+        # Gates the summary adaptive default (detect_summary_model_default):
+        # a CPU-only box gets gemma4-e4b regardless of RAM -- see catalog.py
+        # and models.py for the field evidence a RAM-only rule missed.
+        self._has_gpu = has_gpu
         self._read_first_run_override = read_first_run_override
         self._write_first_run_override = write_first_run_override
         self._save_provider_secret = save_provider_secret
@@ -222,6 +227,7 @@ class AiModelService:
         return build_feature_registry(
             resolved,
             system_ram_total_gb=self._ram_gb,
+            has_gpu=self._has_gpu,
             operator_selected_key=selection,
         )
 
@@ -373,7 +379,7 @@ class AiModelService:
 
         list_models = list_local_models or list_local_model_names
         load_secret = resolve_secret or self._load_provider_secret
-        local_models: set[str] | None | _Unset = _UNSET  # probed lazily, at most once
+        local_models: set[str] | _Unset | None = _UNSET  # probed lazily, at most once
 
         features: dict[str, FeatureModelAvailability] = {}
         for feature in CATALOG_FEATURES:
