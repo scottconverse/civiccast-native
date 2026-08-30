@@ -4,7 +4,7 @@
 
 :class:`PostgresSummaryGenerationJobStore` implements
 :class:`~civiccast.summary.job.SummaryGenerationJobStore` over
-``summary_generation_jobs`` (migration ``0012_summary_generation_jobs``), the same
+``summary_generation_jobs`` (migration ``0081_summary_generation_jobs``), the same
 raw-SQL-plus-schema-prefix idiom :class:`~civiccast.summary.store.PostgresSummaryStore`
 already uses for the summaries/sourced_claims tables — kept as raw SQL text rather than
 an ORM model so this module matches the rest of ``civiccast.summary`` (whose migration
@@ -59,7 +59,7 @@ class PostgresSummaryGenerationJobStore:
             except IntegrityError as exc:
                 # The DB-level one-active-job-per-meeting partial-unique index
                 # (ix_summary_generation_jobs_one_active_per_meeting,
-                # 0012_summary_generation_jobs) lost the race against a concurrent
+                # 0081_summary_generation_jobs) lost the race against a concurrent
                 # enqueue for this meeting: roll back and surface a clean,
                 # catchable conflict instead of a raw IntegrityError.
                 session.rollback()

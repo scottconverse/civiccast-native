@@ -9,7 +9,7 @@
   metadata calls and live generation. Live generation now gets a 600s budget
   (`DEFAULT_GENERATE_TIMEOUT_SECONDS`).
 - Added: async summary generation job (`civiccast/summary/job.py`,
-  `civiccast/summary/persistence.py`, migration `0012_summary_generation_jobs`) —
+  `civiccast/summary/persistence.py`, migration `0081_summary_generation_jobs`) —
   the same durable-queue-plus-worker pattern the offline caption job (K3)
   established, so a legitimate multi-minute CPU-only generation survives instead
   of blocking (or discarding) an HTTP request. New endpoints:

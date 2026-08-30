@@ -10,7 +10,7 @@ the async summary generation job (``civiccast/summary/job.py``) -- the same dura
 background-job pattern the offline caption job (``0075_offline_caption_jobs``, K3)
 already established for "AI work that can legitimately take minutes."
 
-Revision ID: 0012_summary_generation_jobs
+Revision ID: 0081_summary_generation_jobs
 Revises: 0080_watch_folder_daemon
 Create Date: 2026-08-29
 """
@@ -20,7 +20,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0012_summary_generation_jobs"
+revision = "0081_summary_generation_jobs"
 down_revision: str | None = "0080_watch_folder_daemon"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
