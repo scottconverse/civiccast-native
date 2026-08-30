@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import FastAPI, Request, Response
@@ -29,7 +30,24 @@ from civiccast.egress.router import get_takeover_service, staff_router
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.takeover_service import TakeoverService
 from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
+from civiccast.live.models import LiveSourceResponse
 from civiccast.live.relay import build_ingest_plan
+
+
+def _ready_source(channel_id: str) -> LiveSourceResponse:
+    """A configured LiveSource, standing in for what an operator would add
+    via Run Meeting. Bug B5: build_ingest_plan's local_default no longer
+    claims ready for an address nothing serves, so takeover tests need a
+    real configured source in the plan the same way production does."""
+    return LiveSourceResponse(
+        live_source_id=f"{channel_id}-encoder",
+        channel_id=channel_id,
+        name="Council Room Encoder",
+        source_type="srt",
+        endpoint_url="srt://0.0.0.0:9000?mode=listener",
+        credentials_handle=None,
+        created_at=datetime(2026, 6, 20, 18, 0, 0, tzinfo=UTC),
+    )
 
 
 @pytest.fixture
@@ -59,7 +77,9 @@ def _make_service(engine: Engine) -> tuple[TakeoverService, InMemoryEgressStore]
     service = TakeoverService(
         PostgresTakeoverAuditStore(factory),
         egress,
-        lambda channel_id: build_ingest_plan(channel_id, []),
+        lambda channel_id: build_ingest_plan(
+            channel_id, [], live_sources=[_ready_source(channel_id)]
+        ),
         id_factory=lambda: "tok",
     )
     return service, egress

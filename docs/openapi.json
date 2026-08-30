@@ -5283,7 +5283,7 @@
           "live"
         ],
         "summary": "Build the current live ingest plan for a channel",
-        "description": "Return local default plus optional relay/direct paths for a channel.",
+        "description": "Return the operator's configured sources plus optional relay/direct paths.\n\nBug B5: this used to return only ``local_default`` (a hardcoded, never-\nlistening RTMP placeholder) plus relay rows -- the channel's actual\n``LiveSource`` rows (what Run Meeting and pre-flight already treat as\nthe station's real inputs) were never consulted, so live-takeover could\nnever select what an operator had actually configured.",
         "operationId": "get_ingest_plan_api_staff_live_ingest_plan_get",
         "parameters": [
           {

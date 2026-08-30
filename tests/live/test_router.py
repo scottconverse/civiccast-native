@@ -885,6 +885,33 @@ class TestGetIngestPlan:
         assert body["local_default"]["requires_inbound_firewall"] is False
         assert body["relay_paths"] == []
 
+    def test_configured_source_appears_and_becomes_recommended(self, client: TestClient) -> None:
+        """Bug B5 (field evidence, native beta candidate #17): the ingest
+        plan used to be the hardcoded RTMP placeholder plus relay rows only
+        -- an operator's real LiveSource (added via Run Meeting / source
+        setup) was invisible to live-takeover. GET /ingest-plan must now
+        surface it as a real, selectable, recommended path."""
+        client.post(
+            "/api/staff/live/sources",
+            json=_source_payload(
+                "council-encoder",
+                source_type="srt",
+                endpoint_url="srt://0.0.0.0:9000?mode=listener",
+            ),
+        )
+
+        r = client.get("/api/staff/live/ingest-plan", params={"channel_id": "gov-ch12"})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["recommended_path_id"] == "council-encoder"
+        assert len(body["relay_paths"]) == 1
+        assert body["relay_paths"][0]["endpoint_url"] == "srt://0.0.0.0:9000?mode=listener"
+        assert body["relay_paths"][0]["health_state"] == "ready"
+        # The legacy placeholder stays present but honestly unusable.
+        assert body["local_default"]["enabled"] is False
+        assert body["local_default"]["health_state"] == "not_configured"
+
     def test_ready_relay_appears_as_outbound_only_path(self, client: TestClient) -> None:
         client.post("/api/staff/live/relay-configs", json=_relay_payload())
         client.post(
