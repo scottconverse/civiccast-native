@@ -1263,13 +1263,77 @@ def load_native_station_environment(
     # base root is always `root`, exactly as before.
     roots = caption_tier_search_roots(root, acquisition_root=civiccast_data_root)
     receipt_root = _tier_base_root(roots, caption_tier_model_relative_root(tier_id)) or root
-    receipt = _read_json_object(
-        receipt_root / "activation-self-test.json",
-        label="Native station activation self-test receipt",
-    )
-    _validate_activation_receipt(
-        receipt, version=version, index_sha256=index_sha256, tier_id=tier_id
-    )
+    # Field failure (DESKTOP-2BR3SJR, UPGRADE-18-REPORT.md, 2026-08-30): on an
+    # uninstall-old -> reinstall-new upgrade, `components/captions-large-v3`
+    # under ProgramData SURVIVES uninstall (operator data is preserved by
+    # design), so the tier resolution above legitimately picks large-v3 with
+    # `receipt_root = civiccast_data_root` -- but the NEW install never wrote
+    # an addendum receipt there (`finalize_captions_large_acquisition` runs
+    # only when the GUI itself downloads the tier), and the elevated installer
+    # writes its receipt only at `root`. Model present, receipt absent, on
+    # EVERY start: raising here crash-looped the whole station. The product
+    # non-negotiable is a working station, so an ORPHANED optional tier
+    # degrades to the mandatory floor tier (whose receipt the fresh install
+    # DID write at `root`) instead of raising -- the pre-4eca729 selection,
+    # taken only when the resolved tier cannot be proven. A large-v3 tier
+    # WITH its valid addendum receipt is still preferred and validated
+    # exactly as before (the 4eca729 fix is untouched), and a station with
+    # no provable tier at all still fails closed.
+    try:
+        receipt = _read_json_object(
+            receipt_root / "activation-self-test.json",
+            label="Native station activation self-test receipt",
+        )
+        _validate_activation_receipt(
+            receipt, version=version, index_sha256=index_sha256, tier_id=tier_id
+        )
+    except NativeStationConfigurationError:
+        if (
+            tier_id == FLOOR_TIER_ID
+            or _tier_base_root(roots, FLOOR_CAPTION_MODEL_RELATIVE_ROOT) is None
+        ):
+            # Either the floor tier itself is what failed to prove, or there
+            # is no floor tier staged to fall back to: fail closed exactly as
+            # before -- never start a station whose only tier is unproven.
+            raise
+        orphaned_tier_id = tier_id
+        orphaned_dir = receipt_root / Path(caption_tier_model_relative_root(orphaned_tier_id))
+        # The fallback must itself be fully proven: same verification walk and
+        # same receipt validation the floor tier has always had. If THIS
+        # raises, the station has no provable tier and stays loudly down.
+        model_root, model_hash_receipt = validate_floor_caption_model_root(
+            root, acquisition_root=civiccast_data_root
+        )
+        floor_receipt_root = _tier_base_root(roots, FLOOR_CAPTION_MODEL_RELATIVE_ROOT) or root
+        receipt = _read_json_object(
+            floor_receipt_root / "activation-self-test.json",
+            label="Native station activation self-test receipt",
+        )
+        _validate_activation_receipt(
+            receipt, version=version, index_sha256=index_sha256, tier_id=FLOOR_TIER_ID
+        )
+        tier_id = FLOOR_TIER_ID
+        tier_event = {
+            "event": TIER_SELECTED_EVENT,
+            "tier": FLOOR_TIER_ID,
+            "requested": orphaned_tier_id,
+            "fallback": True,
+            "reason": (
+                f"caption tier {orphaned_tier_id} is staged but has no valid "
+                "activation self-test receipt at its base root (orphaned by an "
+                "uninstall/reinstall upgrade); degraded to the proven floor tier"
+            ),
+        }
+        _LOG.warning(
+            "Caption tier %s at %s is staged but has no valid activation "
+            "self-test receipt at %s -- it was likely preserved from a previous "
+            "install by an uninstall/reinstall upgrade. Starting on the proven "
+            "floor caption tier instead; the higher caption tier will be "
+            "re-validated/re-acquired from the operator console.",
+            orphaned_tier_id,
+            orphaned_dir,
+            receipt_root / "activation-self-test.json",
+        )
     tap_root = civiccast_data_root / "data" / "caption-tap"
     # The front door. `civiccast/app.py`'s `_mount_packaged_portals` serves
     # /operator/ and / ONLY when these are set, and nothing on a native station
