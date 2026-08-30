@@ -1869,6 +1869,7 @@ export interface EngineReadiness {
   ndi_sdk: NdiSdkRef
   native_os: boolean
   next_step?: string
+  runtime_source?: 'bundled' | 'system-path' | 'unavailable'
 }
 
 export interface EngineTierVerdict {
