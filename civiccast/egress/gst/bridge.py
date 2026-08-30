@@ -34,6 +34,7 @@ from civiccast.egress.gst.graph import (
     encode_chain_specs,
 )
 from civiccast.egress.gst.pipeline import _is_multicast
+from civiccast.egress.hls_relay import hls_relay_uri_for
 from civiccast.egress.models import (
     CanonicalProfile,
     EgressConfig,
@@ -42,6 +43,21 @@ from civiccast.egress.models import (
     EgressSourceSegment,
 )
 from civiccast.egress.sinks import SecretResolver
+
+#: Sink kinds the GStreamer engine can actually deliver (Task B: an unsupported
+#: kind must be refused at config time, not accepted-then-crash at start time —
+#: see ``civiccast.egress.router.upsert_config``, which enforces this set
+#: whenever ``civiccast.egress.engine_select.gstreamer_engine_selected()`` is
+#: true). ``sdi`` sinks never reach ``sink_element_spec`` (skipped in
+#: ``sink_branches_from_config``, delivered by the supervised BYO relay
+#: instead); ``hls`` sinks are delivered by ``HlsRelaySupervisor`` — real
+#: segments + a real manifest via a supervised ffmpeg child, not a native
+#: GStreamer HLS element (none ships in the runtime; see
+#: ``civiccast.egress.hls_relay``'s module docstring for the empirical proof).
+#: ``rtmp`` is the one kind genuinely unimplemented here — Stage 1 ships TS
+#: sinks only for this engine (the ffmpeg-concat engine's ``RtmpSink`` already
+#: supports it).
+SUPPORTED_SINK_KINDS = frozenset({"srt", "local-ts", "udp-ts", "file", "sdi", "hls"})
 
 # CanonicalProfile.video_codec carries an ffmpeg encoder name (the prior pipeline was
 # ffmpeg+libx264). The public beta installer ships a bundled GStreamer runtime with
@@ -240,13 +256,36 @@ def sink_element_spec(
                 )
             uri = _append_query_param(uri, "passphrase", passphrase)
         return ElementSpec("srtsink", props={"uri": uri})
+    if spec.kind == "hls":
+        # DEFECT A: no native GStreamer element in the shipped runtime can
+        # actually write HLS segments + a manifest (verified empirically —
+        # see civiccast.egress.hls_relay's module docstring: no hlssink/
+        # hlssink2/hlssink3/splitmuxsink ships, and gst-libav's avmux_hls
+        # writes zero files through a filesink). ``HlsRelaySupervisor.apply``
+        # runs before graph assembly (civiccast.egress.daemon._start /
+        # _try_content_reload, mirroring civiccast.egress.ts_relay) and
+        # rewrites a configured ``hls`` sink to an ordinary ``local-ts`` udp
+        # sink aimed at its relay's loopback port, so THIS branch is a
+        # fallback safety net (a direct call, or a deployment where the relay
+        # could not start) rather than the hot path. It maps to the exact
+        # same deterministic loopback port the relay listens on, so even
+        # reached directly it produces a genuinely wired udpsink, never a
+        # crash — the relay just may not be receiving on the other end yet.
+        host_port = urlsplit(hls_relay_uri_for(spec.uri)).netloc
+        host, _, port = host_port.partition(":")
+        return ElementSpec("udpsink", props={"host": host, "port": int(port)})
     if spec.kind == "rtmp":
         raise ValueError(
-            "rtmp sink needs an flvmux branch, not the TS mux — Stage 1 ships TS sinks"
+            "rtmp sink needs an flvmux branch, not the TS mux — the GStreamer engine ships "
+            f"TS sinks only in Stage 1. Supported sink kinds here: {sorted(SUPPORTED_SINK_KINDS)} "
+            "(use the ffmpeg-concat engine, CIVICCAST_EGRESS_ENGINE=ffmpeg-concat, for rtmp)."
         )
     if spec.kind == "sdi":
         raise ValueError("sdi output is a pre-mux decklinkvideosink branch, not a TS sink")
-    raise ValueError(f"unknown sink kind: {spec.kind}")
+    raise ValueError(
+        f"unknown sink kind: {spec.kind!r}. Supported sink kinds for the GStreamer engine: "
+        f"{sorted(SUPPORTED_SINK_KINDS)}."
+    )
 
 
 def sink_branches_from_config(
