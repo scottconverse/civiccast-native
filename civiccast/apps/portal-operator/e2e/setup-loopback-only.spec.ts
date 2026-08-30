@@ -113,6 +113,7 @@ test('a non-local request gets the honest station-only refusal, never advice to 
   await expect(page.getByText(/--civiccast-restore-setup-handoff/i)).toHaveCount(0)
   await expect(page.getByText(/for it staff/i)).toHaveCount(0)
 
-  // Points to support instead of a dead-end.
-  await expect(page.getByRole('link', { name: /open a support issue/i })).toBeVisible()
+  // Points to support instead of a dead-end -- and to the in-product manual's
+  // no-GitHub-account reporting path, not straight to a GitHub issue form.
+  await expect(page.getByRole('link', { name: /report it/i })).toBeVisible()
 })

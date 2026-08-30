@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Ref } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router'
 import {
   acknowledgeRecoveryKit,
   ApiError,
@@ -21,6 +22,7 @@ import {
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
 import { SourceUploadWizard } from '../components/setup/SourceUploadWizard'
+import { manualLink } from './manual-link'
 import { readinessLabel, stateLabel, toneForReadiness } from './status-language'
 import type {
   BackupStatus,
@@ -770,7 +772,7 @@ export function R2ConciergeCard({ canManageProviders }: { canManageProviders: bo
   )
 }
 
-function ProviderReadinessPanel({ canManageProviders }: { canManageProviders: boolean }) {
+export function ProviderReadinessPanel({ canManageProviders }: { canManageProviders: boolean }) {
   const queryClient = useQueryClient()
   const [providerValues, setProviderValues] = useState<Record<string, Record<string, string>>>({})
   const [proofValues, setProofValues] = useState<Record<string, string>>({})
@@ -905,7 +907,7 @@ function ProviderReadinessPanel({ canManageProviders }: { canManageProviders: bo
               <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
                 <strong>{item.required ? 'Required' : 'Optional'}.</strong> {item.next_step}
               </p>
-              {(whatYouNeed.length > 0 || setupSteps.length > 0 || item.proof_requirement) && (
+              {(whatYouNeed.length > 0 || setupSteps.length > 0 || item.proof_requirement || item.manual_section) && (
               <details className="mt-3 rounded-md p-3 text-xs" style={{ background: 'var(--cc-surface)' }}>
                 <summary className="cursor-pointer font-semibold">Setup guide</summary>
                 {whatYouNeed.length > 0 && (
@@ -937,6 +939,15 @@ function ProviderReadinessPanel({ canManageProviders }: { canManageProviders: bo
                   >
                     Open provider setup
                   </a>
+                )}
+                {item.manual_section && (
+                  <Link
+                    to={manualLink(item.manual_section)}
+                    className="mt-2 block font-semibold"
+                    style={{ color: 'var(--cc-brand)' }}
+                  >
+                    Read more in the manual
+                  </Link>
                 )}
                 {item.proof_requirement && (
                   <p className="m-0 mt-2" style={{ color: 'var(--cc-ink-3)' }}>
@@ -1128,14 +1139,24 @@ function ProviderReadinessPanel({ canManageProviders }: { canManageProviders: bo
   )
 }
 
-function CostForecastPanel() {
+export function CostForecastPanel() {
   const [hours, setHours] = useState(2)
   const [meetings, setMeetings] = useState(4)
   const [viewers, setViewers] = useState(250)
+  // Storage and bandwidth in GB are plain arithmetic from the numbers the
+  // operator just entered -- gbPerHour is a reasonable HD-video planning
+  // figure, not a provider quote, and is labeled as an estimate below.
+  // There is deliberately NO dollar-per-GB rate here: CDN egress pricing
+  // varies by provider (Cloudflare R2 charges nothing for it; BunnyCDN,
+  // Fastly, and Akamai each set and change their own rates), and CivicCast
+  // does not have a live price feed for any of them. An earlier version of
+  // this panel multiplied bandwidth by an unsourced $0.005/GB constant and
+  // printed it as a specific dollar figure -- that looked authoritative but
+  // was not backed by anything. See docs/USER-MANUAL.md's "The CDN Cost
+  // Estimate Is A Guess, Not A Quote" section.
   const gbPerHour = 2
   const storedGb = hours * meetings * gbPerHour
   const watchedGb = storedGb * viewers
-  const estimatedBandwidth = watchedGb * 0.005
 
   return (
     <section
@@ -1199,10 +1220,23 @@ function CostForecastPanel() {
           <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>viewer bandwidth</div>
         </div>
         <div className="rounded-md p-3" style={{ background: 'var(--cc-surface-2)' }}>
-          <div className="cc-mono text-lg font-semibold">${estimatedBandwidth.toFixed(2)}</div>
-          <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>rough CDN estimate</div>
+          <div className="cc-mono text-base font-semibold">Varies by provider</div>
+          <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+            bandwidth cost &mdash; Cloudflare R2 is free
+          </div>
         </div>
       </div>
+      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+        CivicCast does not print a dollar figure here because it does not know which CDN
+        provider a station will use, and providers charge very different rates for sending
+        video out to viewers (&quot;egress&quot;). Cloudflare R2, CivicCast&apos;s recommended
+        default, charges $0 for egress &mdash; a real, current, published price, not a
+        CivicCast estimate.{' '}
+        <Link to={manualLink('cdn-cost-estimate')} className="font-semibold" style={{ color: 'var(--cc-brand)' }}>
+          Read more in the manual
+        </Link>
+        .
+      </p>
     </section>
   )
 }
@@ -1222,17 +1256,14 @@ function StationAdminTools({ canManageProviders }: { canManageProviders: boolean
   )
 }
 
-const SUPPORT_ISSUE_URL =
-  'https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20'
-
 function SupportLink() {
   return (
     <>
       See <span className="cc-mono">SUPPORT.md</span> or{' '}
-      <a href={SUPPORT_ISSUE_URL} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-        open a support issue
-      </a>
-      .
+      <Link to={manualLink('report-without-github')} className="underline underline-offset-2">
+        report it
+      </Link>{' '}
+      &mdash; no GitHub account needed.
     </>
   )
 }

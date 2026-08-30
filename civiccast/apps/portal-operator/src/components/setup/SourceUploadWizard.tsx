@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router'
 import {
   ApiError,
   createSampleRehearsalUpload,
@@ -7,6 +8,7 @@ import {
   getSourceSetup,
   uploadAssetFile,
 } from '../../api/client'
+import { manualLink } from '../../screens/manual-link'
 import type {
   SourceSetupCreateRequest,
   SourceSetupOption,
@@ -206,7 +208,11 @@ export function SourceUploadWizard() {
         <div>
           <h2 className="m-0 text-base font-semibold">Camera or test media</h2>
           <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-            Choose the equipment in the room, or upload a short clip for a no-camera rehearsal.
+            Choose the equipment in the room, or upload a short clip for a no-camera rehearsal.{' '}
+            <Link to={manualLink('your-first-beta-workflow')} style={{ color: 'var(--cc-brand)' }}>
+              Read the full walkthrough in the manual
+            </Link>
+            .
           </p>
         </div>
         <span

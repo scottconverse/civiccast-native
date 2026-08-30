@@ -12,6 +12,7 @@ from typing import Any, Literal
 from civiccast.cable.package import (
     CABLE_PACKAGE_SURFACE_ID,
     CablePackageError,
+    CablePackageNotConfiguredError,
     build_cable_file_package_for_asset,
 )
 from civiccast.platform.broker import BrokerEvent
@@ -543,6 +544,26 @@ def approve_publish(
         elif surface.id == CABLE_PACKAGE_SURFACE_ID:
             try:
                 cable_package = build_cable_file_package_for_asset(asset)
+            except CablePackageNotConfiguredError as exc:
+                # Field evidence (candidate #17): an operator saw a red
+                # "failed: Cable file package was not created" on an
+                # otherwise-successful publish, for a PEG/headend handoff
+                # surface most stations never configure at all -- "not set
+                # up" and "we tried and it broke" were indistinguishable.
+                # This surface was never attempted for real, so it is not a
+                # failure: "not_configured" (already a valid
+                # PublishSurfaceStateValue) plus a neutral "info" health
+                # keeps the row from reading as red/broken.
+                updated = surface.model_copy(
+                    update={
+                        "state": "not_configured",
+                        "approval": "approved",
+                        "health": "unknown",
+                        "completed_at": at,
+                        "message": "Cable file package is not set up (optional).",
+                        "next_step": str(exc),
+                    }
+                )
             except CablePackageError as exc:
                 updated = surface.model_copy(
                     update={

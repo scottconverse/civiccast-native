@@ -237,10 +237,12 @@ test.describe('operator portal accessibility (mobile)', () => {
     await page.getByRole('button', { name: 'Live', exact: true }).click()
 
     await page.getByRole('button', { name: 'Open navigation' }).click()
-    const setup = page.getByLabel('Show Setup navigation')
-    await expect(setup).toBeFocused()
+    // Help (the in-product manual) is now the first nav section, collapsed
+    // by default -- same focus-trap shape this test exercises, new label.
+    const help = page.getByLabel('Show Help navigation')
+    await expect(help).toBeFocused()
     await page.keyboard.press('Enter')
-    await expect(page.getByLabel('Hide Setup navigation')).toBeFocused()
+    await expect(page.getByLabel('Hide Help navigation')).toBeFocused()
 
     await page.keyboard.press('Shift+Tab')
     await expect(page.getByRole('link', { name: 'Report a beta issue' })).toBeFocused()

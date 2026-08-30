@@ -152,6 +152,17 @@ if TYPE_CHECKING:
 
 _WINDOWS_DRIVE_RELATIVE_RE = re.compile(r"^[A-Za-z]:(?![\\/])")
 
+# Field evidence (candidate #17): a backup destination showed READY for
+# C:\mnt\c\CivicCastBackups, a WSL-style mounted-drive path that does not
+# exist on this native-Windows product's own control plane (which always
+# runs directly on Windows, never inside a WSL2 guest -- see
+# _backup_destination_path's docstring). Nothing in this codebase sets that
+# path as a default; it can only reach here as operator-typed or
+# environment-configured input carried over from the retired WSL product
+# line. Reject it outright rather than silently accepting a path that would
+# make "backup verified" a lie.
+_WSL_STYLE_PATH_RE = re.compile(r"(?i)^(?:[a-z]:)?[\\/]mnt[\\/][a-z](?:[\\/]|$)")
+
 _PROFILE_LABELS: dict[DeploymentProfile, str] = {
     "public-meetings": "Public Meetings",
     "streaming-only": "Streaming Only",
@@ -1071,6 +1082,13 @@ def _backup_destination_path(destination: str) -> Path:
     candidate = destination.strip()
     if not candidate:
         raise ValueError("Choose a backup destination.")
+    if _WSL_STYLE_PATH_RE.match(candidate):
+        raise ValueError(
+            "This looks like a WSL/Linux-style path (...\\mnt\\c\\... or /mnt/c/...), which "
+            "does not exist on this Windows station and would mean nothing is actually being "
+            "backed up. Use a real Windows path instead, for example C:\\CivicCastBackups or "
+            "D:\\CivicCastBackups."
+        )
     if _WINDOWS_DRIVE_RELATIVE_RE.match(candidate):
         raise ValueError(
             "Use an absolute Windows path such as C:\\CivicCastBackups, not a drive-relative path."
@@ -2039,6 +2057,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Confirm the resident page shows the expected station and meeting state.",
             ],
             proof_requirement="Resident preview must open from the same URL residents will use.",
+            manual_section="publish-surfaces",
         ),
         ProviderReadinessItem(
             id="backup",
@@ -2050,136 +2069,156 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
             what_you_need=["A folder or drive CivicCast can write to during and after meetings."],
             setup_steps=[
                 "Choose Backup destination in Setup.",
-                "Enter a folder on a local drive, removable drive, or trusted share.",
+                "Enter a real Windows folder path, e.g. C:\\CivicCastBackups or D:\\CivicCastBackups.",
                 "Run Verify backup and keep the destination connected before meetings.",
             ],
             proof_requirement="CivicCast writes, reads, verifies, and deletes a probe file.",
+            manual_section="where-recordings-live",
         ),
         _provider_item(
             provider_id="internet-archive",
             label="Internet Archive",
-            next_step="Paste approved Internet Archive credentials, then run a live proof.",
+            next_step="Optional. Paste your own Internet Archive keys, then run a live proof.",
             setup_url="https://archive.org/account/s3.php",
-            what_you_need=["Internet Archive account", "S3 access key and secret"],
+            what_you_need=[
+                "A free Internet Archive account",
+                "Your own S3-style access key and secret key",
+            ],
             setup_steps=[
-                "Create or sign in to the station Internet Archive account.",
-                "Open the S3 keys page and copy the access key and secret.",
-                "Ask the technical admin to enter the keys in the CivicCast provider config.",
-                "Run live proof before claiming Internet Archive publishing is ready.",
+                "Create or sign in to the station's Internet Archive account (free).",
+                "Open its S3 keys page and copy the access key and secret key it shows you.",
+                "Paste both into the fields below yourself -- no admin needed.",
+                "Run live proof before this shows as ready.",
             ],
             proof_requirement="A real upload proof is required before CivicCast marks this provider ready.",
+            manual_section="provider-internet-archive",
         ),
         _provider_item(
             provider_id="youtube",
             label="YouTube",
-            next_step="Connect YouTube only if the station wants an optional YouTube copy.",
+            next_step="Optional. Connect YouTube only if the station wants an extra copy there.",
             setup_url="https://console.cloud.google.com/apis/credentials",
-            what_you_need=["Station YouTube channel", "Google OAuth client ID and secret"],
+            what_you_need=[
+                "The station's YouTube channel",
+                "A Google OAuth client ID and secret (free to create)",
+            ],
             setup_steps=[
                 "Confirm the station owns or manages the YouTube channel.",
-                "Create an OAuth client in Google Cloud.",
-                "Ask the technical admin to enter the client ID and secret.",
+                "Create a free OAuth client in Google Cloud Console.",
+                "Paste the client ID and secret into the fields below yourself.",
                 "Run a private upload or stream proof before using YouTube for residents.",
             ],
             proof_requirement="A private YouTube proof is required before public claims.",
+            manual_section="provider-youtube",
         ),
         _provider_item(
             provider_id="subscriber-notifications",
             label="Subscriber notices",
-            next_step="Set up notices after the first successful local publish.",
+            next_step="Optional. Set up notices after the first successful local publish.",
             what_you_need=[
-                "Notification webhook secret",
-                "Approved subscriber notification policy",
+                "A webhook secret (CivicCast can generate one, or paste your own)",
+                "A decision on the station's notification policy",
             ],
             setup_steps=[
-                "Choose whether this station will send meeting notifications.",
-                "Configure the webhook secret through the technical provider config.",
+                "Choose whether this station will email or webhook-notify subscribers.",
+                "Paste a webhook secret below yourself, or generate one here.",
                 "Send a test notification to a non-public test subscriber list.",
             ],
             proof_requirement="A redacted delivery proof is required before sending public notices.",
+            manual_section="provider-subscriber-notifications",
         ),
         _provider_item(
             provider_id="local-nas",
             label="Local archive folder",
-            next_step="Choose an archive folder if station policy requires a second copy.",
-            what_you_need=["A writable archive folder or NAS share"],
+            next_step="Optional. Choose an archive folder if the station wants a second local copy.",
+            what_you_need=[
+                "A second drive, external drive, or network share the station already has"
+            ],
             setup_steps=[
-                "Confirm the archive folder is mounted before the meeting.",
-                "Ask the technical admin to set the archive path.",
+                "Confirm the folder or drive is connected before the meeting.",
+                "Enter its path below yourself.",
                 "Run the Local NAS proof so CivicCast writes and removes a probe file.",
             ],
             proof_requirement="CivicCast must prove write/read/delete access to the archive folder.",
+            manual_section="provider-local-archive-folder",
         ),
         _provider_item(
             provider_id="cloudflare-r2",
             label="Cloudflare R2",
-            next_step="Configure R2 only if the station wants Cloudflare-hosted media.",
+            next_step=(
+                "Recommended and usually free. Use the CDN concierge below: one Cloudflare "
+                "API token and CivicCast sets everything else up for you."
+            ),
             setup_url="https://dash.cloudflare.com/",
-            what_you_need=["Cloudflare account", "R2 bucket", "R2 access key", "Public media URL"],
+            what_you_need=["A free Cloudflare account", "One Cloudflare API token"],
             setup_steps=[
-                "Create or choose the station R2 bucket.",
-                "Create an R2 API token scoped to that bucket.",
-                "Ask the technical admin to enter account, bucket, key, and public URL values.",
-                "Run an upload proof before advertising R2 playback.",
+                "Use the CDN concierge box on this card: create a free Cloudflare account.",
+                "Create one API token scoped to R2 Edit, then paste it in and click Provision for me.",
+                "CivicCast creates the bucket and turns on public access automatically.",
+                "Prefer to do it by hand? Use the manual fields below the concierge box instead.",
             ],
             proof_requirement="A real object upload and public URL proof is required.",
+            manual_section="provider-cloudflare-r2",
         ),
         _provider_item(
             provider_id="bunny",
             label="BunnyCDN",
-            next_step="Configure BunnyCDN if the station wants CDN-hosted media (the v1 default CDN).",
+            next_step="Optional, and not free -- check BunnyCDN's own pricing before choosing it over Cloudflare R2.",
             setup_url="https://dash.bunny.net/",
             what_you_need=[
-                "BunnyCDN account",
-                "Storage zone",
-                "Storage Zone API key",
-                "Pull-zone hostname",
+                "A BunnyCDN account",
+                "A storage zone (where the original files live)",
+                "A Storage Zone API key",
+                "The pull-zone hostname BunnyCDN gives you (its address for viewers)",
             ],
             setup_steps=[
-                "Create or choose the station storage zone and its pull-zone.",
+                "Create or choose the station's storage zone and its pull-zone.",
                 "Copy the Storage Zone API key and the pull-zone hostname.",
-                "Enter the zone name, API key, and hostname here.",
+                "Paste the zone name, API key, and hostname into the fields below yourself.",
                 "Run Test connection before advertising CDN playback.",
             ],
             proof_requirement="A real object upload and public URL proof is required.",
+            manual_section="provider-alternative-cdns",
         ),
         _provider_item(
             provider_id="fastly",
             label="Fastly Object Storage",
-            next_step="Configure Fastly only if the station wants Fastly-hosted media.",
+            next_step="Optional, and not free -- for a station that already has a Fastly account.",
             setup_url="https://manage.fastly.com/",
             what_you_need=[
-                "Fastly account with Object Storage",
-                "Bucket and region",
-                "Object Storage access key",
-                "Public media URL",
+                "A Fastly account with Object Storage",
+                "A bucket and its region",
+                "An Object Storage access key",
+                "The public URL Fastly gives the station's media",
             ],
             setup_steps=[
-                "Create or choose the station Object Storage bucket and note its region.",
+                "Create or choose the station's Object Storage bucket and note its region.",
                 "Create an Object Storage access key with read and write access.",
-                "Enter region, key, secret, bucket, and public URL here.",
+                "Paste region, key, secret, bucket, and public URL into the fields below yourself.",
                 "Run Test connection before advertising CDN playback.",
             ],
             proof_requirement="A real object upload and public URL proof is required.",
+            manual_section="provider-alternative-cdns",
         ),
         _provider_item(
             provider_id="akamai",
             label="Akamai Object Storage",
-            next_step="Configure Akamai only if the station wants Akamai-hosted media.",
+            next_step="Optional, and not free -- for a station that already has an Akamai/Linode account.",
             setup_url="https://cloud.linode.com/object-storage",
             what_you_need=[
-                "Akamai/Linode account",
-                "Object Storage bucket and region",
-                "Object Storage access key",
-                "Public media URL",
+                "An Akamai/Linode account",
+                "An Object Storage bucket and its region",
+                "An Object Storage access key",
+                "The public URL Akamai gives the station's media",
             ],
             setup_steps=[
-                "Create or choose the station Object Storage bucket and note its region.",
+                "Create or choose the station's Object Storage bucket and note its region.",
                 "Create an Object Storage access key with read and write access.",
-                "Enter region, key, secret, bucket, and public URL here.",
+                "Paste region, key, secret, bucket, and public URL into the fields below yourself.",
                 "Run Test connection before advertising CDN playback.",
             ],
             proof_requirement="A real object upload and public URL proof is required.",
+            manual_section="provider-alternative-cdns",
         ),
         ProviderReadinessItem(
             id="podcast",
@@ -2187,13 +2226,15 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
             required=False,
             status="ready",
             message="Podcast feed generation is available locally.",
-            next_step="Review podcast metadata before turning this on for residents.",
+            next_step="Optional. Review podcast metadata before turning this on for residents.",
             setup_steps=[
-                "Publish a local portal recording first.",
+                "Record, package, and approve a meeting on the Portal publish surface first --",
+                "the podcast feed republishes audio from an already-published recording, nothing extra to configure before that.",
                 "Review title, description, artwork, and category metadata.",
                 "Open the feed preview before sharing the feed URL.",
             ],
             proof_requirement="Local feed generation is available; public distribution depends on station policy.",
+            manual_section="provider-podcast-feed",
         ),
         ProviderReadinessItem(
             id="activitypub",
@@ -2203,13 +2244,16 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
             message=activitypub_message,
             next_step=activitypub_next_step,
             advanced=True,
-            what_you_need=["A federation policy decision", "Domain allow/block review"],
+            what_you_need=[
+                "A decision on whether the station wants federation (most don't need it)"
+            ],
             setup_steps=[
-                "Leave federation off unless this tester station intentionally opts in.",
-                "Review domain allow/block policy with the technical admin.",
+                "Read what federation is in the manual -- most stations leave it off.",
+                "If the station wants it, open Federation and choose Generate station key.",
                 "Run local and live interop proof before public federation claims.",
             ],
             proof_requirement="Federation must stay off until the station records an explicit proof.",
+            manual_section="provider-federation",
         ),
     ]
     return ProviderReadinessReport(
@@ -4251,6 +4295,7 @@ def _provider_item(
     what_you_need: list[str] | None = None,
     setup_steps: list[str] | None = None,
     proof_requirement: str | None = None,
+    manual_section: str | None = None,
 ) -> ProviderReadinessItem:
     env_names = _INSTALLER_PROVIDER_ENV_NAMES.get(provider_id, ())
     fields = list(_PROVIDER_CREDENTIAL_FIELDS.get(provider_id, ()))
@@ -4282,6 +4327,7 @@ def _provider_item(
             redaction_reviewed=readiness["redaction_reviewed"],
             credential_fields=fields,
             credential_handle=credential_handle,
+            manual_section=manual_section,
         )
     if configured or stored_fields:
         # rc17 D4: when the real settings loader rejected what's configured,
@@ -4310,13 +4356,14 @@ def _provider_item(
             proof_status="not_configured",
             credential_fields=fields,
             credential_handle=credential_handle,
+            manual_section=manual_section,
         )
     return ProviderReadinessItem(
         id=provider_id,
         label=label,
         required=False,
         status="not_set_up",
-        message=f"{label} is optional and not set up yet.",
+        message=f"{label} is optional. Skip it for now if the station doesn't need it yet.",
         next_step=next_step,
         what_you_need=what_you_need or [],
         setup_steps=setup_steps or [],
@@ -4325,6 +4372,7 @@ def _provider_item(
         proof_status="not_configured",
         credential_fields=fields,
         credential_handle=None,
+        manual_section=manual_section,
     )
 
 

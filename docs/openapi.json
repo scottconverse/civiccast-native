@@ -136,6 +136,27 @@
         }
       }
     },
+    "/api/public/manual": {
+      "get": {
+        "tags": [
+          "manual"
+        ],
+        "summary": "Get the in-product operator manual",
+        "operationId": "get_manual_api_public_manual_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualDocument"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/staff/auth/me": {
       "get": {
         "tags": [
@@ -27921,6 +27942,48 @@
         ]
       }
     },
+    "/api/staff/activitypub/keygen": {
+      "post": {
+        "tags": [
+          "public",
+          "activitypub"
+        ],
+        "summary": "Generate the station's ActivityPub federation key",
+        "description": "Generate a station federation key with a real button, not a CLI command.\n\nField evidence (candidate #17): the only way to turn federation on was a\nraw `civiccast activitypub keygen ...` shell command shown on-screen --\n\"a non-technical volunteer cannot run a CLI.\" This is the same key\nmaterial `civiccast activitypub keygen` produces\n(civiccast/activitypub/keys.py::generate_activitypub_private_key,\n2048-bit RSA, PKCS8, file permissions locked down), generated\nserver-side instead.\n\nWhat this endpoint does NOT do: apply the setting or restart CivicCast.\nciviccast.activitypub.config.load_activitypub_config reads federation\nposture strictly from process environment variables today (no\nfile-based override merge), so turning federation fully on still needs\nthose env_settings applied and the station restarted -- the same\ntwo-step \"generate, then apply+restart\" shape\nciviccast/installer/handoff.py's own beta-handoff check already expects\nand tests against (test_beta_handoff.py's\ntest_incomplete_activitypub_handoff_stays_blocked_without_beginner_cli).\nRemoving the CLI step is real progress on its own: it's the one an\noperator with no terminal access could never complete at all.",
+        "operationId": "staff_activitypub_keygen_api_staff_activitypub_keygen_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityPubKeygenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/activitypub/followers": {
       "get": {
         "tags": [
@@ -30485,6 +30548,54 @@
         "title": "ActivityPubFollowersResponse",
         "description": "Staff list of ActivityPub followers for moderation."
       },
+      "ActivityPubKeygenResponse": {
+        "properties": {
+          "private_key_path": {
+            "type": "string",
+            "title": "Private Key Path"
+          },
+          "public_key_pem": {
+            "type": "string",
+            "title": "Public Key Pem"
+          },
+          "handle": {
+            "type": "string",
+            "title": "Handle"
+          },
+          "base_url": {
+            "type": "string",
+            "title": "Base Url"
+          },
+          "already_existed": {
+            "type": "boolean",
+            "title": "Already Existed"
+          },
+          "env_settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Env Settings"
+          },
+          "next_step": {
+            "type": "string",
+            "title": "Next Step"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "private_key_path",
+          "public_key_pem",
+          "handle",
+          "base_url",
+          "already_existed",
+          "env_settings",
+          "next_step"
+        ],
+        "title": "ActivityPubKeygenResponse",
+        "description": "Result of generating (or reusing) the station's federation key pair."
+      },
       "ActivityPubModerationResponse": {
         "properties": {
           "follower": {
@@ -30574,6 +30685,11 @@
           "delivery_attempts": {
             "type": "integer",
             "title": "Delivery Attempts"
+          },
+          "has_station_key": {
+            "type": "boolean",
+            "title": "Has Station Key",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -46380,6 +46496,50 @@
         "title": "ManualAlertInput",
         "description": "An operator-entered alert (source kind ``manual``)."
       },
+      "ManualDocument": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Source"
+          },
+          "source_sha256": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Source Sha256"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "toc": {
+            "items": {
+              "$ref": "#/components/schemas/ManualTocEntry"
+            },
+            "type": "array",
+            "title": "Toc"
+          },
+          "html": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Html"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source",
+          "source_sha256",
+          "generated_at",
+          "toc",
+          "html"
+        ],
+        "title": "ManualDocument",
+        "description": "The whole rendered operator manual, ready to display."
+      },
       "ManualRouteState": {
         "properties": {
           "channel_id": {
@@ -46416,6 +46576,37 @@
         ],
         "title": "ManualRouteState",
         "description": "Current takeover state for one channel (runtime only \u2014 not persisted)."
+      },
+      "ManualTocEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "level": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Level"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Title"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "level",
+          "title"
+        ],
+        "title": "ManualTocEntry",
+        "description": "One heading in the manual's table of contents."
       },
       "MaterializeResult": {
         "properties": {
@@ -50411,6 +50602,19 @@
               }
             ],
             "title": "Credential Handle"
+          },
+          "manual_section": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual Section"
           }
         },
         "additionalProperties": false,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -86,6 +87,28 @@ def get_activitypub_store(request: Request) -> ActivityPubStore:
         ActivityPubStore,
         resolve_app_store(request, "activitypub_store", surface="ActivityPub store"),
     )
+
+
+def _default_station_key_path() -> Path:
+    """Where a station key lands when the operator never set
+    CIVICCAST_ACTIVITYPUB_PRIVATE_KEY_PATH by hand.
+
+    Local import (matches civiccast.alerting.self_test's own pattern for
+    reaching into civiccast.installer): the installer module already owns
+    "where does this station's durable local state live", and reusing that
+    root keeps the key file alongside every other sibling state file
+    (ops-state.json, station-state.json) instead of inventing a second
+    location.
+    """
+
+    from civiccast.installer.station_state import station_state_path
+
+    return station_state_path().with_name("activitypub-station-key.pem")
+
+
+def _station_key_path(config: ActivityPubConfig) -> Path:
+    configured = config.private_key_path.strip()
+    return Path(configured) if configured else _default_station_key_path()
 
 
 def get_activitypub_rate_limiter(request: Request) -> InboxRateLimiter:
@@ -285,6 +308,24 @@ class ActivityPubStatusResponse(BaseModel):
     followers: ActivityPubFollowerCounts
     outbox_items: int
     delivery_attempts: int
+    has_station_key: bool = False
+    """True when a station private key file already exists at the default
+    (or configured) path -- lets the console show "Generate a new station
+    key" instead of the first-time "Generate station key" CTA."""
+
+
+class ActivityPubKeygenResponse(BaseModel):
+    """Result of generating (or reusing) the station's federation key pair."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    private_key_path: str
+    public_key_pem: str
+    handle: str
+    base_url: str
+    already_existed: bool
+    env_settings: dict[str, str]
+    next_step: str
 
 
 class ActivityPubFollowersResponse(BaseModel):
@@ -346,6 +387,74 @@ def staff_activitypub_status(request: Request) -> ActivityPubStatusResponse:
         ),
         outbox_items=len(store.list_outbox()),
         delivery_attempts=len(store.list_deliveries()),
+        has_station_key=_station_key_path(config).exists(),
+    )
+
+
+@router.post(
+    "/api/staff/activitypub/keygen",
+    response_model=ActivityPubKeygenResponse,
+    summary="Generate the station's ActivityPub federation key",
+    dependencies=[Depends(require_any_role("setup_admin"))],
+)
+def staff_activitypub_keygen(request: Request) -> ActivityPubKeygenResponse:
+    """Generate a station federation key with a real button, not a CLI command.
+
+    Field evidence (candidate #17): the only way to turn federation on was a
+    raw `civiccast activitypub keygen ...` shell command shown on-screen --
+    "a non-technical volunteer cannot run a CLI." This is the same key
+    material `civiccast activitypub keygen` produces
+    (civiccast/activitypub/keys.py::generate_activitypub_private_key,
+    2048-bit RSA, PKCS8, file permissions locked down), generated
+    server-side instead.
+
+    What this endpoint does NOT do: apply the setting or restart CivicCast.
+    civiccast.activitypub.config.load_activitypub_config reads federation
+    posture strictly from process environment variables today (no
+    file-based override merge), so turning federation fully on still needs
+    those env_settings applied and the station restarted -- the same
+    two-step "generate, then apply+restart" shape
+    civiccast/installer/handoff.py's own beta-handoff check already expects
+    and tests against (test_beta_handoff.py's
+    test_incomplete_activitypub_handoff_stays_blocked_without_beginner_cli).
+    Removing the CLI step is real progress on its own: it's the one an
+    operator with no terminal access could never complete at all.
+    """
+
+    from civiccast.activitypub.keys import (
+        generate_activitypub_private_key,
+        public_key_pem_from_private_key_path,
+    )
+
+    config = get_activitypub_config(request)
+    key_path = _station_key_path(config)
+    already_existed = key_path.exists()
+    if already_existed:
+        public_key_pem = public_key_pem_from_private_key_path(key_path)
+    else:
+        public_key_pem = generate_activitypub_private_key(key_path)
+
+    base_url = config.base_url or str(request.base_url).rstrip("/")
+    handle = config.handle or "council"
+    env_settings = {
+        "CIVICCAST_ACTIVITYPUB_MODE": "approval-only",
+        "CIVICCAST_ACTIVITYPUB_BASE_URL": base_url,
+        "CIVICCAST_ACTIVITYPUB_HANDLE": handle,
+        "CIVICCAST_ACTIVITYPUB_PRIVATE_KEY_PATH": str(key_path),
+        "CIVICCAST_ACTIVITYPUB_AUTHORIZED_FETCH": "1",
+    }
+    return ActivityPubKeygenResponse(
+        private_key_path=str(key_path),
+        public_key_pem=public_key_pem,
+        handle=handle,
+        base_url=base_url,
+        already_existed=already_existed,
+        env_settings=env_settings,
+        next_step=(
+            "The station key is ready. Give these settings to whoever manages this "
+            "station's CivicCast environment file, then restart CivicCast to turn "
+            "federation on."
+        ),
     )
 
 

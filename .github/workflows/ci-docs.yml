@@ -71,6 +71,9 @@ jobs:
       - name: Check tracked USER-MANUAL release artifacts
         run: uv run python scripts/render_user_manual.py --out-dir docs --check-current
 
+      - name: Check tracked in-product manual artifact (civiccast/docsite)
+        run: uv run python scripts/render_docsite_manual.py --check-current
+
       - name: Check generated API artifacts
         run: uv run python scripts/generate-openapi-artifacts.py --check
 

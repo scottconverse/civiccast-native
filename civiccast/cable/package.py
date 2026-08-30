@@ -23,6 +23,20 @@ class CablePackageError(RuntimeError):
     """Raised when a cable file package cannot be produced safely."""
 
 
+class CablePackageNotConfiguredError(CablePackageError):
+    """Raised when the cable package output was never set up at all.
+
+    Distinct from CablePackageError's other causes (missing source media,
+    missing caption sidecar, a copy failure) on purpose: those are real
+    problems with a package CivicCast actually tried to build. This one
+    means the station never turned cable packaging on in the first place --
+    most stations never will, since it is an optional PEG/headend handoff
+    surface -- and the publish dashboard renders it as "Not set up
+    (optional)" rather than a red "Failed" (see civiccast/publish/service.py
+    and docs/USER-MANUAL.md's "What Each Publish Surface Means").
+    """
+
+
 @dataclass(frozen=True)
 class CablePackageResult:
     """Result of producing a cable file package."""
@@ -159,8 +173,9 @@ def build_cable_file_package_for_asset(asset: StaffAssetRow) -> CablePackageResu
     output_dir = os.environ.get("CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR")
     captions_dir = os.environ.get("CIVICCAST_CABLE_CAPTIONS_DIR")
     if not output_dir or not captions_dir:
-        raise CablePackageError(
-            "Cable file package output is not configured. Set "
+        raise CablePackageNotConfiguredError(
+            "Cable file package was never set up for this station -- it's an optional PEG/"
+            "headend handoff surface most stations don't need. To turn it on, set "
             "CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR and CIVICCAST_CABLE_CAPTIONS_DIR, then retry."
         )
     if not asset.file_path:

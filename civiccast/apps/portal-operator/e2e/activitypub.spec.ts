@@ -230,12 +230,43 @@ test.describe('activitypub federation dashboard', () => {
       followers: { pending: 0, accepted: 0, blocked: 0, rejected: 0, removed: 0 },
       outbox_items: 0,
       delivery_attempts: 0,
+      has_station_key: false,
+    })
+    await page.route('**/api/staff/activitypub/keygen', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          private_key_path: 'C:\\CivicCast\\activitypub-station-key.pem',
+          public_key_pem: '-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n',
+          handle: 'council',
+          base_url: 'https://station.example.gov',
+          already_existed: false,
+          env_settings: {
+            CIVICCAST_ACTIVITYPUB_MODE: 'approval-only',
+            CIVICCAST_ACTIVITYPUB_BASE_URL: 'https://station.example.gov',
+            CIVICCAST_ACTIVITYPUB_HANDLE: 'council',
+            CIVICCAST_ACTIVITYPUB_PRIVATE_KEY_PATH: 'C:\\CivicCast\\activitypub-station-key.pem',
+            CIVICCAST_ACTIVITYPUB_AUTHORIZED_FETCH: '1',
+          },
+          next_step: 'The station key is ready. Restart CivicCast to turn federation on.',
+        }),
+      })
     })
     await openFederation(page)
 
     await expect(page.getByRole('heading', { name: 'Federation is off' })).toBeVisible()
     await expect(page.getByText('Default-safe')).toBeVisible()
-    await expect(page.getByText('civiccast activitypub keygen')).toBeVisible()
+    // No raw CLI command shown -- field evidence (candidate #17): a
+    // non-technical volunteer cannot run a terminal command. A real
+    // button replaces it (PR #74).
+    await expect(page.getByText('civiccast activitypub keygen')).toHaveCount(0)
+    await expect(page.getByText(/most stations do not need this/i)).toBeVisible()
+
+    await page.getByRole('button', { name: 'Generate station key' }).click()
+    await expect(page.getByText('Station key generated.')).toBeVisible()
+    await expect(page.getByText('CIVICCAST_ACTIVITYPUB_MODE')).toBeVisible()
+    await expect(page.getByText(/restart CivicCast to turn federation on/i)).toBeVisible()
   })
 
   test('error state gives a retry path', async ({ page }) => {

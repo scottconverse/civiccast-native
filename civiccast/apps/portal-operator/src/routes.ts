@@ -2,6 +2,7 @@ import type { RouteId } from './components/shell/Sidebar'
 import { matchPath } from 'react-router'
 
 export const ROUTE_PATHS: Record<RouteId, string> = {
+  help: '/help',
   setup: '/setup',
   live: '/live',
   facility: '/facility',
@@ -44,6 +45,11 @@ export const ROUTE_PATHS: Record<RouteId, string> = {
 }
 
 export const ROUTE_ALIASES: Record<string, string> = {
+  // Field evidence: testers guessed /docs, /help, /manual, and /guide
+  // looking for an in-product manual. /help is canonical; /guide is
+  // already Program Guide (EPG) and stays that way.
+  '/docs': '/help',
+  '/manual': '/help',
   '/cg-designer': '/cg-board',
   '/program-guide': '/guide',
   '/contributors': '/contribute',
@@ -77,4 +83,17 @@ export function routePath(route: RouteId): string {
 
 export function isTrimEditorRoute(pathname: string): boolean {
   return Boolean(matchPath('/assets/:assetId/trim', pathname))
+}
+
+// Routes that must render for a signed-out or first-time operator, i.e.
+// AppContent's missing-staff-session gate must never bounce them to
+// /setup. /setup itself hosts First Setup and the returning-operator
+// sign-in; /help is the in-product manual (civiccast/docsite/router.py's
+// GET /api/public/manual takes no staff token on purpose, precisely so a
+// "Read more in the manual" link works before the operator has signed in
+// -- see PR #74's review, which caught this route being redirected away
+// before ManualScreen ever rendered).
+export function isPublicRoute(pathname: string): boolean {
+  const canonical = canonicalRoutePath(pathname)
+  return canonical === '/setup' || canonical === '/help'
 }

@@ -27,6 +27,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
 
 import { SetupScreen } from './SetupScreen'
 
@@ -108,7 +109,9 @@ function renderSetupScreen() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <SetupScreen />
+      <MemoryRouter>
+        <SetupScreen />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -173,7 +176,9 @@ describe('First setup when the loopback check denies the request', () => {
       name: 'First setup can only be done from the station computer itself',
     })
     expect(screen.getByText(/support.md/i)).toBeTruthy()
-    expect(screen.getByRole('link', { name: /open a support issue/i })).toBeTruthy()
+    const reportLink = screen.getByRole('link', { name: /report it/i })
+    expect(reportLink).toBeTruthy()
+    expect(reportLink.getAttribute('href')).toBe('/help#report-without-github')
   })
 
   it('never renders a Prepare storage control when the loopback check denied the read', async () => {

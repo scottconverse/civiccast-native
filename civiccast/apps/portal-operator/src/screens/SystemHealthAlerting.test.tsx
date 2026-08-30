@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render } from '@testing-library/react'
+import { MemoryRouter } from 'react-router'
 
 import type { ChannelProfile, RuntimeSafeToAirStatus, SystemResourceSample, SystemSelfTest } from '../types/api.generated'
 import type { EgressStateRow } from '../api/client'
@@ -150,7 +151,7 @@ describe('SelfTestPanel', () => {
     const { container } = render(<SelfTestPanel selfTest={selfTest} />)
     expect(container.textContent).toContain('Daily self-check found a problem.')
     expect(container.textContent).toContain('Station readiness: ok')
-    expect(container.textContent).toContain('Recording continuity: failed')
+    expect(container.textContent).toContain('Recording continuity: not yet')
     // Skipped checks are honestly noted, not faked.
     expect(container.textContent).toContain('skipped here, not failed')
   })
@@ -160,7 +161,7 @@ describe('SelfTestPanel', () => {
     const { container, getByText } = render(
       <SelfTestPanel selfTest={selfTest} onRunWeekly={onRunWeekly} canRun />,
     )
-    expect(container.textContent).toContain('Found a problem')  // friendly status pill, not "fail"
+    expect(container.textContent).toContain('Did not pass yet')  // friendly status pill, not "fail"
     fireEvent.click(getByText('Run weekly self-check now'))
     expect(onRunWeekly).toHaveBeenCalled()
   })
@@ -178,6 +179,26 @@ describe('SelfTestPanel', () => {
     )
     expect((getByText('Run daily self-check now') as HTMLButtonElement).disabled).toBe(true)
     expect(container.textContent).toContain('requires setup admin or support admin')
+  })
+
+  it('points a fresh station at Setup when readiness/backup are what is unmet', () => {
+    const freshInstall: SystemSelfTest = {
+      ...selfTest,
+      checks: { readiness: false, backup_probe: false },
+    }
+    const { container } = render(
+      <MemoryRouter>
+        <SelfTestPanel selfTest={freshInstall} />
+      </MemoryRouter>,
+    )
+    expect(container.textContent).toContain(
+      'Station readiness and Backup usually turn green once Setup and Backup destination are finished',
+    )
+  })
+
+  it('does not show the Setup hint for an unrelated failing check', () => {
+    const { container } = render(<SelfTestPanel selfTest={selfTest} />)
+    expect(container.textContent).not.toContain('usually turn green once Setup')
   })
 })
 
