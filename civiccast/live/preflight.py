@@ -78,6 +78,20 @@ from civiccast.live.recording_paths import (
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
 SourceProbe = Callable[[LiveSource], tuple[bool, str | None]]
+# Bug B3 (field evidence, v0.4 beta candidate #17): ``network_reachable`` /
+# ``storage_free_bytes`` were documented as "probe-injected by caller," but
+# the only caller wired up (the operator's Run Meeting screen) never ran a
+# probe -- it always submitted ``None``, so every pre-flight run showed
+# "not probed" with no way to clear it (network.not_probed /
+# storage.not_probed, forever). These two callables let the evaluator run
+# its own probe when the caller doesn't supply a result, exactly like
+# ``SourceProbe`` already does for ``live_source`` -- the check exists to
+# answer the question, so it should ask it. A caller that already has a
+# fresher probe result (or wants to force a specific outcome, e.g. the
+# installer's private rehearsal) still wins: these only fire when the
+# corresponding ``PreflightInputs`` field is ``None``.
+NetworkProbe = Callable[[], "tuple[bool, str | None]"]
+StorageProbe = Callable[[], "tuple[int | None, str | None]"]
 
 # ---------------------------------------------------------------------------
 # Status + check-name constants
@@ -186,14 +200,20 @@ class PreflightInputs(BaseModel):
 
     Treating probe results as inputs keeps the evaluator pure. A
     network/storage/AI probe is a side-effecting concern that lives in
-    the future staff API layer; the evaluator only consumes the
-    structured probe outcome.
+    the staff API layer -- the evaluator only consumes the structured
+    probe outcome, whether that outcome was supplied by the caller
+    (e.g. an explicit rehearsal fixture) or filled in by the
+    evaluator's own :data:`NetworkProbe` / :data:`StorageProbe`
+    (bug B3: every real caller submitted ``None`` for both, so the
+    evaluator now runs its own probe by default instead of depending
+    on a caller that never probed).
 
     ``network_reachable`` / ``storage_free_bytes`` / ``ai_runtime_ready``
-    default to ``None`` meaning "not probed by the caller." For the
-    required network + storage checks, ``None`` is treated as ``fail``
-    with a ``not_probed`` reason code; for the optional AI runtime
-    check, ``None`` is treated as ``not_configured``.
+    default to ``None`` meaning "not yet known." For the required
+    network + storage checks, ``None`` that a configured probe also
+    could not resolve is treated as ``fail`` with a ``not_probed``
+    reason code; for the optional AI runtime check, ``None`` is
+    treated as ``not_configured``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -260,62 +280,108 @@ class PreflightEvaluator:
         self,
         session_factory: SessionFactory,
         source_probe: SourceProbe | None = None,
+        network_probe: NetworkProbe | None = None,
+        storage_probe: StorageProbe | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._source_probe = source_probe
+        self._network_probe = network_probe
+        self._storage_probe = storage_probe
 
     @property
     def source_probe_configured(self) -> bool:
         """Whether this evaluator can verify that media is actually arriving."""
         return self._source_probe is not None
 
+    @property
+    def network_probe_configured(self) -> bool:
+        """Whether this evaluator can check network reachability itself."""
+        return self._network_probe is not None
+
+    @property
+    def storage_probe_configured(self) -> bool:
+        """Whether this evaluator can check free recording storage itself."""
+        return self._storage_probe is not None
+
     def evaluate(
         self,
         inputs: PreflightInputs,
         *,
         source_probe_override: SourceProbe | None = None,
+        network_probe_override: NetworkProbe | None = None,
+        storage_probe_override: StorageProbe | None = None,
     ) -> PreflightEvaluation:
         source_probe = source_probe_override or self._source_probe
+        network_probe = network_probe_override or self._network_probe
+        storage_probe = storage_probe_override or self._storage_probe
         results_by_name: dict[str, PreflightCheckResult] = {}
 
         # Network -------------------------------------------------------------
-        if inputs.network_reachable is None:
+        network_reachable = inputs.network_reachable
+        network_probe_message: str | None = None
+        if network_reachable is None and network_probe is not None:
+            try:
+                network_reachable, network_probe_message = network_probe()
+            except Exception:
+                network_reachable, network_probe_message = None, None
+
+        if network_reachable is None:
             results_by_name[PREFLIGHT_CHECK_NETWORK] = PreflightCheckResult(
                 name=PREFLIGHT_CHECK_NETWORK,
                 status=PREFLIGHT_STATUS_FAIL,
                 reason_code=REASON_NETWORK_NOT_PROBED,
-                message="Network reachability not probed; caller must run a probe before pre-flight.",
+                message=(
+                    network_probe_message
+                    or "CivicCast could not run its own network probe. Confirm the station "
+                    "has a network connection, then select Run pre-flight again."
+                ),
             )
-        elif inputs.network_reachable:
+        elif network_reachable:
             results_by_name[PREFLIGHT_CHECK_NETWORK] = PreflightCheckResult(
                 name=PREFLIGHT_CHECK_NETWORK,
                 status=PREFLIGHT_STATUS_PASS,
+                message=network_probe_message,
             )
         else:
             results_by_name[PREFLIGHT_CHECK_NETWORK] = PreflightCheckResult(
                 name=PREFLIGHT_CHECK_NETWORK,
                 status=PREFLIGHT_STATUS_FAIL,
                 reason_code=REASON_NETWORK_UNREACHABLE,
-                message="Network unreachable; check WAN connectivity and re-run pre-flight.",
+                message=(
+                    network_probe_message
+                    or "Network unreachable; check WAN connectivity and re-run pre-flight."
+                ),
             )
 
         # Storage -------------------------------------------------------------
-        if inputs.storage_free_bytes is None:
+        storage_free_bytes = inputs.storage_free_bytes
+        storage_probe_message: str | None = None
+        if storage_free_bytes is None and storage_probe is not None:
+            try:
+                storage_free_bytes, storage_probe_message = storage_probe()
+            except Exception:
+                storage_free_bytes, storage_probe_message = None, None
+
+        if storage_free_bytes is None:
             results_by_name[PREFLIGHT_CHECK_STORAGE] = PreflightCheckResult(
                 name=PREFLIGHT_CHECK_STORAGE,
                 status=PREFLIGHT_STATUS_FAIL,
                 reason_code=REASON_STORAGE_NOT_PROBED,
-                message="Storage free space not probed; caller must run a probe before pre-flight.",
+                message=(
+                    storage_probe_message
+                    or "CivicCast could not run its own storage probe. Confirm the recording "
+                    "drive is connected, then select Run pre-flight again."
+                ),
             )
-        elif inputs.storage_free_bytes >= inputs.storage_min_free_bytes:
-            free_gib = inputs.storage_free_bytes / (1024**3)
+        elif storage_free_bytes >= inputs.storage_min_free_bytes:
+            free_gib = storage_free_bytes / (1024**3)
             results_by_name[PREFLIGHT_CHECK_STORAGE] = PreflightCheckResult(
                 name=PREFLIGHT_CHECK_STORAGE,
                 status=PREFLIGHT_STATUS_PASS,
                 message=f"{free_gib:.1f} GiB free.",
             )
         else:
-            free_gib = inputs.storage_free_bytes / (1024**3)
+            free_gib = storage_free_bytes / (1024**3)
             min_gib = inputs.storage_min_free_bytes / (1024**3)
             results_by_name[PREFLIGHT_CHECK_STORAGE] = PreflightCheckResult(
                 name=PREFLIGHT_CHECK_STORAGE,

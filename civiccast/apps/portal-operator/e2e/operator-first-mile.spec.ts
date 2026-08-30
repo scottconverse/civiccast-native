@@ -192,7 +192,7 @@ const SOURCE_SETUP = {
       label: 'Bundled sample video',
       best_for: 'A no-camera private rehearsal.',
       source_type: null,
-      operator_steps: ['Create the sample.', 'Run private rehearsal.'],
+      operator_steps: ['Create the sample.', 'Check broadcast readiness.'],
       needs_it_help: false,
     },
   ],
@@ -205,7 +205,7 @@ const SAMPLE_UPLOAD = {
   title: 'CivicCast sample rehearsal',
   file_path: 'C:/CivicCast/uploads/sample-rehearsal-test/civiccast-sample-rehearsal.mp4',
   message: 'CivicCast created a short sample video for rehearsal.',
-  next_step: 'Run private rehearsal and confirm the resident preview.',
+  next_step: 'Open System Health and select Check broadcast readiness, then confirm the resident preview.',
 }
 
 const CABLE_CHANNELS = [
@@ -741,8 +741,8 @@ test.describe('operator first mile', () => {
     await expect(page.getByText('Post-update Safe to broadcast proof passed', { exact: false })).toBeVisible()
     await page.getByRole('button', { name: 'Check backup storage' }).click()
     await expect(page.getByText('Backup storage passed its round-trip check')).toBeVisible()
-    await page.getByRole('button', { name: 'Run private rehearsal' }).click()
-    await expect(page.getByText('Rehearsal result')).toBeVisible()
+    await page.getByRole('button', { name: 'Check broadcast readiness' }).click()
+    await expect(page.getByText('Broadcast readiness check result')).toBeVisible()
     await expect(page.getByText('Private session')).toBeVisible()
     await expect(page.getByText('Recording proof')).toBeVisible()
     await expect(page.getByText('Finalized private recording as asset rehearsal-test.')).toBeVisible()
@@ -771,8 +771,8 @@ test.describe('operator first mile', () => {
     await mockHealth(page, { roles: ['records_clerk'] })
     await page.goto('/#/health')
 
-    await expect(page.getByText(/Private broadcast rehearsal requires the meeting operator role/)).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Run private rehearsal' })).toBeDisabled()
+    await expect(page.getByText(/Checking broadcast readiness requires the meeting operator role/)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Check broadcast readiness' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Check backup storage' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Run update preflight' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Open maintenance window' })).toBeDisabled()
