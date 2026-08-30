@@ -8690,7 +8690,7 @@ rule (S13 §5.1).
 - `filename` (required): `string`
 - `sha256` (optional): `string | null`
 - `size_bytes` (required): `number`
-- `upload_ref` (required): `string`
+- `upload_ref` (required): `string` -- Opaque handle for the uploaded file, issued by POST /api/public/contribute/uploads. NOT a filesystem path -- resolve it server-side via civiccast.contribute.store.resolve_contributor_upload_path.
 
 ### `SubmissionMetadataPatch`
 

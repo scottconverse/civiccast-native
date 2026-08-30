@@ -94,7 +94,11 @@ def test_a_normal_upload_still_succeeds_under_the_ceiling(upload_env: Path) -> N
     response = _upload(client, "programme.mp4", 2048)
 
     assert response.status_code == 201, response.text
-    assert (upload_env / "programme.mp4").exists()
+    # The stored filename is now an opaque uuid4 token, not the contributor's
+    # own filename (field evidence / GauntletGate finding) -- assert via the
+    # returned upload_ref rather than the original name.
+    assert (upload_env / response.json()["upload_ref"]).exists()
+    assert not (upload_env / "programme.mp4").exists()
 
 
 def test_the_ceiling_counts_what_is_already_on_disk_not_just_this_request(
