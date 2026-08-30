@@ -739,7 +739,7 @@ dev = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.6.0" },
     { name = "sacrebleu", specifier = ">=2.6.0" },
-    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.7" },
+    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.7,<4.15" },
     { name = "types-defusedxml", specifier = ">=0.7.0.20260504" },
     { name = "types-psutil", specifier = ">=6.1.0.20240901" },
     { name = "types-reportlab", specifier = ">=4.5.0.20260509" },
