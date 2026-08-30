@@ -23,9 +23,26 @@ from civiccast.egress.takeover_service import (
     TakeoverService,
 )
 from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
+from civiccast.live.models import LiveSourceResponse
 from civiccast.live.relay import build_ingest_plan
 
 _NOW = datetime(2026, 6, 20, 18, 0, 0, tzinfo=UTC)
+
+
+def _ready_source(channel_id: str) -> LiveSourceResponse:
+    """A configured LiveSource, standing in for what an operator would add
+    via Run Meeting. Bug B5: build_ingest_plan's local_default no longer
+    claims ready for an address nothing serves, so takeover tests need a
+    real configured source in the plan the same way production does."""
+    return LiveSourceResponse(
+        live_source_id=f"{channel_id}-encoder",
+        channel_id=channel_id,
+        name="Council Room Encoder",
+        source_type="srt",
+        endpoint_url="srt://0.0.0.0:9000?mode=listener",
+        credentials_handle=None,
+        created_at=_NOW,
+    )
 
 
 @pytest.fixture
@@ -55,12 +72,16 @@ def _build(
     factory = _factory(engine)
     audit = PostgresTakeoverAuditStore(factory)
     egress = InMemoryEgressStore()
-    # A real ready ingest plan: build_ingest_plan always yields a READY local
-    # default, so no relay configs are needed for the happy path.
+    # A real ready ingest plan: one configured LiveSource makes
+    # build_ingest_plan yield a READY path (bug B5 -- the legacy
+    # local_default no longer claims ready with nothing configured), so no
+    # relay configs are needed for the happy path.
     service = TakeoverService(
         audit,
         egress,
-        lambda channel_id: build_ingest_plan(channel_id, []),
+        lambda channel_id: build_ingest_plan(
+            channel_id, [], live_sources=[_ready_source(channel_id)]
+        ),
         clock=lambda: _NOW,
         id_factory=lambda: "tok",
     )

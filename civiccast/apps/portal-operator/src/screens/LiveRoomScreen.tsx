@@ -340,7 +340,8 @@ function RelayStatusPanel({
   const pathDescription = (path: LiveIngestPath) => {
     if (path.outbound_only) return 'Outbound only; no inbound firewall opening is required.'
     if (path.requires_inbound_firewall) return 'Requires an inbound route from the encoder.'
-    return 'Local encoder path remains available.'
+    if (!path.enabled) return 'Not usable -- add a real source below instead.'
+    return 'Configured meeting source.'
   }
   if (error) {
     return (
@@ -364,13 +365,15 @@ function RelayStatusPanel({
     allPaths.find((path) => path.path_id === plan.recommended_path_id) ?? plan.local_default
   if (plan.relay_paths.length === 0) {
     return (
-      <section className="rounded-md p-4" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}>
+      <section className="rounded-md p-4" style={{ background: 'var(--cc-warn-soft)', border: '1px solid var(--cc-warn)' }}>
         <div className="flex items-center justify-between gap-2">
           <h2 className="m-0 text-sm font-semibold">Remote ingest</h2>
-          <StatusPill label="Local default" tone="neutral" />
+          <StatusPill label="No source configured" tone="warn" />
         </div>
         <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-          No cloud relay is configured. Meetings use the local encoder path.
+          No meeting source is configured for this channel yet. Add a camera, encoder, or
+          sample source above before running pre-flight -- CivicCast has no listener at any
+          default address until you do.
         </p>
       </section>
     )

@@ -6,8 +6,25 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from civiccast.live.models import LiveRelayConfigResponse
+from civiccast.live.models import LiveRelayConfigResponse, LiveSourceResponse
 from civiccast.live.relay import build_ingest_plan
+
+
+def _source(
+    live_source_id: str = "council-room-encoder",
+    *,
+    source_type: str = "srt",
+    endpoint_url: str = "srt://0.0.0.0:9000?mode=listener",
+) -> LiveSourceResponse:
+    return LiveSourceResponse(
+        live_source_id=live_source_id,
+        channel_id="gov-ch12",
+        name="Council Room Encoder",
+        source_type=source_type,  # type: ignore[arg-type]
+        endpoint_url=endpoint_url,
+        credentials_handle=None,
+        created_at=datetime(2026, 5, 31, 17, 0, tzinfo=UTC),
+    )
 
 
 def _relay(
@@ -34,7 +51,11 @@ def _relay(
     )
 
 
-def test_ingest_plan_preserves_local_default_when_no_relays() -> None:
+def test_ingest_plan_falls_back_to_local_default_when_nothing_is_configured() -> None:
+    """Bug B5: with zero configured LiveSource rows and zero relays, the
+    plan still needs a recommended_path_id -- but the legacy placeholder
+    must not lie about being usable. CivicCast ships no RTMP broker; this
+    address has never had a listener."""
     plan = build_ingest_plan(
         "gov-ch12",
         [],
@@ -45,7 +66,60 @@ def test_ingest_plan_preserves_local_default_when_no_relays() -> None:
     assert plan.local_default.mode == "local_rtmp"
     assert plan.local_default.outbound_only is False
     assert plan.local_default.requires_inbound_firewall is False
+    assert plan.local_default.enabled is False
+    assert plan.local_default.health_state == "not_configured"
     assert plan.relay_paths == []
+
+
+def test_configured_live_source_becomes_the_recommended_path() -> None:
+    """Bug B5 (the fix): a real, operator-configured LiveSource -- the
+    same row Run Meeting and pre-flight already use -- must be a
+    selectable, ready takeover path, and must outrank the legacy
+    placeholder as the recommendation. This is the split-brain fix: before
+    this, live-takeover could never see what an operator configured."""
+    plan = build_ingest_plan(
+        "gov-ch12",
+        [],
+        live_sources=[_source()],
+        generated_at=datetime(2026, 5, 31, 19, 0, tzinfo=UTC),
+    )
+
+    assert plan.recommended_path_id == "council-room-encoder"
+    assert len(plan.relay_paths) == 1
+    source_path = plan.relay_paths[0]
+    assert source_path.path_id == "council-room-encoder"
+    assert source_path.endpoint_url == "srt://0.0.0.0:9000?mode=listener"
+    assert source_path.enabled is True
+    assert source_path.health_state == "ready"
+    assert source_path.mode == "local_rtmp"
+    # The disabled legacy placeholder is still present (a caller may still
+    # explicitly select it by id) but is no longer recommended.
+    assert plan.local_default.enabled is False
+
+
+def test_multiple_configured_sources_all_appear_and_first_is_recommended() -> None:
+    plan = build_ingest_plan(
+        "gov-ch12",
+        [],
+        live_sources=[
+            _source("camera-a", source_type="rtsp", endpoint_url="rtsp://192.168.1.10/stream"),
+            _source("camera-b"),
+        ],
+    )
+
+    assert {path.path_id for path in plan.relay_paths} == {"camera-a", "camera-b"}
+    assert plan.recommended_path_id == "camera-a"
+
+
+def test_configured_source_outranks_a_degraded_relay() -> None:
+    plan = build_ingest_plan(
+        "gov-ch12",
+        [_relay("project-relay", health_state="degraded")],
+        live_sources=[_source()],
+    )
+
+    assert plan.recommended_path_id == "council-room-encoder"
+    assert plan.degraded_count == 1
 
 
 def test_ready_cloud_relay_becomes_recommended_outbound_path() -> None:
