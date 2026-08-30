@@ -17,6 +17,8 @@ vi.mock('../api/client', () => ({
   listWatchFolderConfigs: vi.fn(),
   createWatchFolderConfig: vi.fn(),
   deleteWatchFolderConfig: vi.fn(),
+  scanWatchFolderNow: vi.fn(),
+  browseFolders: vi.fn(),
   listRetentionPolicies: vi.fn(),
   createRetentionPolicy: vi.fn(),
   deleteRetentionPolicy: vi.fn(),
@@ -25,10 +27,13 @@ vi.mock('../api/client', () => ({
 }))
 
 import {
+  ApiError,
+  browseFolders,
   createWatchFolderConfig,
   getStorageBudget,
   listRetentionPolicies,
   listWatchFolderConfigs,
+  scanWatchFolderNow,
 } from '../api/client'
 import type { WatchFolderConfigResponse } from '../types/api.generated'
 import { MediaLifecycleSettingsScreen } from './MediaLifecycleSettingsScreen'
@@ -134,13 +139,24 @@ describe('MediaLifecycleSettingsScreen', () => {
     )
   })
 
-  it('shows "not polled yet" status with no last poll/ingest history for a fresh config', async () => {
-    vi.mocked(listWatchFolderConfigs).mockResolvedValue([watchFolderConfigFixture()])
-    const { findByText } = renderScreen()
+  it('shows "not scanned yet" status with a friendly explanation for a fresh config, not a bare "never"', async () => {
+    // Candidate #17 tester finding 4: "Last poll: never" with no other
+    // feedback read as broken, even though the daemon HAD auto-ingested
+    // within about a minute. The fresh-config state must say something an
+    // operator can act on (when the next automatic check runs, and that
+    // Scan now exists) instead of a bare "never."
+    vi.mocked(listWatchFolderConfigs).mockResolvedValue([
+      watchFolderConfigFixture({ poll_interval_seconds: 5 }),
+    ])
+    const { findByText, queryByText } = renderScreen()
 
-    expect(await findByText('Not polled yet')).toBeTruthy()
-    expect(await findByText('Last poll: never')).toBeTruthy()
-    expect(await findByText('Last ingest: never')).toBeTruthy()
+    expect(await findByText('Not scanned yet')).toBeTruthy()
+    expect(
+      await findByText(
+        'No automatic check has run yet — the next one runs within 5s, or use Scan now.',
+      ),
+    ).toBeTruthy()
+    expect(queryByText('Last poll: never')).toBeNull()
   })
 
   it('shows a healthy status with relative last-poll/ingest times once the daemon has run', async () => {
@@ -179,5 +195,121 @@ describe('MediaLifecycleSettingsScreen', () => {
     const alertEl = await findByRole('alert')
     expect(alertEl.textContent).toContain('Degraded')
     expect(await findByText('[WinError 53] The network path was not found')).toBeTruthy()
+  })
+
+  describe('Scan now (candidate #17 finding 4)', () => {
+    it('scans a folder on demand and reports what it found', async () => {
+      const config = watchFolderConfigFixture()
+      vi.mocked(listWatchFolderConfigs).mockResolvedValue([config])
+      vi.mocked(scanWatchFolderNow).mockResolvedValue({
+        config: { ...config, health_status: 'ok', last_poll_at: new Date().toISOString() },
+        healthy: true,
+        files_seen: 2,
+        files_ingested: 1,
+        files_reprocessed: 0,
+        files_failed: 0,
+        error: null,
+      })
+      const { findByRole, push } = renderScreen()
+
+      fireEvent.click(await findByRole('button', { name: 'Scan now' }))
+
+      await waitFor(() => expect(scanWatchFolderNow).toHaveBeenCalledWith('wf-1'))
+      await waitFor(() =>
+        expect(push).toHaveBeenCalledWith(
+          expect.objectContaining({ tone: 'success', message: expect.stringContaining('1 file(s) ingested') }),
+        ),
+      )
+    })
+
+    it('reports an empty scan without claiming anything is broken', async () => {
+      const config = watchFolderConfigFixture()
+      vi.mocked(listWatchFolderConfigs).mockResolvedValue([config])
+      vi.mocked(scanWatchFolderNow).mockResolvedValue({
+        config,
+        healthy: true,
+        files_seen: 0,
+        files_ingested: 0,
+        files_reprocessed: 0,
+        files_failed: 0,
+        error: null,
+      })
+      const { findByRole, push } = renderScreen()
+
+      fireEvent.click(await findByRole('button', { name: 'Scan now' }))
+
+      await waitFor(() =>
+        expect(push).toHaveBeenCalledWith(
+          expect.objectContaining({ tone: 'info', message: expect.stringContaining('no files found') }),
+        ),
+      )
+    })
+
+    it('shows a plain-language error inline when the scan request itself fails', async () => {
+      const config = watchFolderConfigFixture()
+      vi.mocked(listWatchFolderConfigs).mockResolvedValue([config])
+      vi.mocked(scanWatchFolderNow).mockRejectedValue(
+        new ApiError(
+          'Request failed: 503',
+          503,
+          'The watch-folder daemon is not running in this deployment.',
+        ),
+      )
+      const { findByRole, findByText } = renderScreen()
+
+      fireEvent.click(await findByRole('button', { name: 'Scan now' }))
+
+      expect(
+        await findByText('The watch-folder daemon is not running in this deployment.'),
+      ).toBeTruthy()
+    })
+  })
+
+  describe('Folder browser (candidate #17 finding 3)', () => {
+    it('opens the browser, navigates into a folder, and fills the path on selection', async () => {
+      vi.mocked(browseFolders).mockImplementation((path) =>
+        Promise.resolve(
+          path
+            ? {
+                current_path: path,
+                parent_path: null,
+                separator: '\\',
+                entries: [],
+                readable: true,
+              }
+            : {
+                current_path: null,
+                parent_path: null,
+                separator: '\\',
+                entries: [{ name: 'D:\\', path: 'D:\\' }],
+                readable: true,
+              },
+        ),
+      )
+      const { findByRole, findByLabelText } = renderScreen()
+
+      fireEvent.click(await findByRole('button', { name: 'Browse…' }))
+      fireEvent.click(await findByRole('button', { name: /D:\\/ }))
+      fireEvent.click(await findByRole('button', { name: 'Use this folder' }))
+
+      const input = await findByLabelText('Watch folder path')
+      await waitFor(() => expect((input as HTMLInputElement).value).toBe('D:\\'))
+    })
+
+    it('shows an unreadable-folder message instead of a blank list', async () => {
+      vi.mocked(browseFolders).mockResolvedValue({
+        current_path: null,
+        parent_path: null,
+        separator: '\\',
+        entries: [],
+        readable: false,
+        error: 'Permission denied',
+      })
+      const { findByRole, findByText } = renderScreen()
+
+      fireEvent.click(await findByRole('button', { name: 'Browse…' }))
+
+      expect(await findByText(/Permission denied/)).toBeTruthy()
+    })
   })
 })

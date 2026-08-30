@@ -303,6 +303,58 @@ test.describe('asset detail + metadata edit', () => {
     await expect(page.getByRole('button', { name: 'Remove from portal' })).toBeVisible()
   })
 
+  // Candidate #17 tester finding 5: "nothing tells the volunteer that
+  // publishing is what starts transcription" and no progress beyond a bare
+  // Retry-only panel. Two things to prove end-to-end: the trigger is
+  // discoverable on the panel itself, and a running job reads as running.
+  test('offline caption panel states plainly that publish approval starts it', async ({
+    page,
+  }) => {
+    await mockBackend(page)
+    await openDetail(page)
+    await expect(
+      page.getByText(
+        "Approving this recording's portal surface on the Publish dashboard is what starts it",
+      ),
+    ).toBeVisible()
+  })
+
+  test('a running caption job reads as "Transcribing..." with elapsed time, not a bare Pending label', async ({
+    page,
+  }) => {
+    await mockBackend(page)
+    // Registered after mockBackend() -- Playwright matches the
+    // most-recently-registered route first, so this overrides
+    // mockBackend()'s own "no jobs" default for this test only.
+    await page.route('**/api/staff/captions/offline-jobs**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            job_id: 'job-running-1',
+            asset_id: 'council-2026-05-08',
+            source_path: 'C:/media/council.mp4',
+            package_dir: 'C:/media/council-captions',
+            state: 'pending',
+            attempts: 1,
+            cue_count: 0,
+            published_cue_count: 0,
+            last_error: '',
+            created_at: new Date(Date.now() - 60_000).toISOString(),
+            updated_at: new Date(Date.now() - 60_000).toISOString(),
+          },
+        ]),
+      })
+    })
+    await openDetail(page)
+
+    await expect(page.getByText(/Transcribing…/)).toBeVisible()
+    await expect(
+      page.getByText(/several minutes for a full meeting recording, not seconds/),
+    ).toBeVisible()
+  })
+
   test('axe scan: detail screen has no serious/critical violations', async ({
     page,
   }) => {

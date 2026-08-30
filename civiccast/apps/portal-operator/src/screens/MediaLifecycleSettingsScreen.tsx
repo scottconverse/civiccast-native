@@ -15,7 +15,9 @@ import {
   getStorageBudget,
   listRetentionPolicies,
   listWatchFolderConfigs,
+  scanWatchFolderNow,
 } from '../api/client'
+import { FolderBrowser } from '../components/media-lifecycle/FolderBrowser'
 import { useToast } from '../components/toast-context'
 import type {
   AssetRetentionPolicyResponse,
@@ -85,19 +87,45 @@ function InlineError({ error }: { error: Error }) {
 // NAS/SMB share down) must be a visible state on the config, never a
 // silent failure the operator only discovers when a meeting recording
 // never shows up.
-function WatchFolderStatus({ config }: { config: WatchFolderConfigResponse }) {
+//
+// Candidate #17 tester finding 4: "Last poll: never" with zero other
+// feedback read as broken even though the daemon HAD auto-ingested within
+// about a minute. A fresh, never-polled config now says so in words (with
+// the actual poll cadence) instead of a bare "never," and a "Scan now"
+// button gives the operator a way to force an immediate check + a real
+// result instead of waiting out the interval.
+function WatchFolderStatus({
+  config,
+  onScanNow,
+  scanning,
+  scanError,
+}: {
+  config: WatchFolderConfigResponse
+  onScanNow: () => void
+  scanning: boolean
+  scanError: string | null
+}) {
   const isDegraded = config.health_status === 'degraded'
   const isUnknown = config.health_status === 'unknown'
   const statusColor = isDegraded ? 'var(--cc-err)' : isUnknown ? 'var(--cc-ink-3)' : 'var(--cc-ink-2)'
-  const statusLabel = isDegraded ? 'Degraded' : isUnknown ? 'Not polled yet' : 'OK'
+  const statusLabel = isDegraded ? 'Degraded' : isUnknown ? 'Not scanned yet' : 'OK'
 
   return (
     <div className="flex flex-col items-end gap-0.5 text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
       <span className="font-medium" style={{ color: statusColor }} role={isDegraded ? 'alert' : undefined}>
         {statusLabel}
       </span>
-      <span>Last poll: {fmtRelativeTime(config.last_poll_at)}</span>
-      <span>Last ingest: {fmtRelativeTime(config.last_ingest_at)}</span>
+      {isUnknown ? (
+        <span className="max-w-[220px] text-right">
+          No automatic check has run yet — the next one runs within{' '}
+          {config.poll_interval_seconds}s, or use Scan now.
+        </span>
+      ) : (
+        <>
+          <span>Last poll: {fmtRelativeTime(config.last_poll_at)}</span>
+          <span>Last ingest: {fmtRelativeTime(config.last_ingest_at)}</span>
+        </>
+      )}
       {isDegraded && config.degraded_reason && (
         <span
           className="max-w-[220px] text-right"
@@ -105,6 +133,23 @@ function WatchFolderStatus({ config }: { config: WatchFolderConfigResponse }) {
           title={config.degraded_reason}
         >
           {config.degraded_reason}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onScanNow}
+        disabled={scanning || !config.enabled}
+        className="mt-1 rounded-md px-2 py-1 text-[11px] font-medium"
+        style={{ border: '1px solid var(--cc-line)', background: 'var(--cc-surface)' }}
+      >
+        {scanning ? 'Scanning…' : 'Scan now'}
+      </button>
+      <span role="status" aria-live="polite" className="sr-only">
+        {scanning ? `Scanning ${config.monitor_path} now.` : ''}
+      </span>
+      {scanError && (
+        <span role="alert" className="max-w-[220px] text-right" style={{ color: 'var(--cc-err)' }}>
+          {scanError}
         </span>
       )}
     </div>
@@ -115,6 +160,9 @@ function WatchFolderSection() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const [monitorPath, setMonitorPath] = useState('')
+  const [browsing, setBrowsing] = useState(false)
+  const [scanningId, setScanningId] = useState<string | null>(null)
+  const [scanError, setScanError] = useState<{ configId: string; message: string } | null>(null)
   const query = useQuery<WatchFolderConfigResponse[], Error>({
     queryKey: ['watch-folder-configs'],
     queryFn: listWatchFolderConfigs,
@@ -139,6 +187,46 @@ function WatchFolderSection() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['watch-folder-configs'] }),
   })
 
+  async function handleScanNow(configId: string) {
+    setScanningId(configId)
+    setScanError(null)
+    try {
+      const result = await scanWatchFolderNow(configId)
+      queryClient.setQueryData<WatchFolderConfigResponse[]>(['watch-folder-configs'], (current) =>
+        (current ?? []).map((c) => (c.config_id === configId ? result.config : c)),
+      )
+      if (result.files_ingested > 0 || result.files_reprocessed > 0) {
+        toast.push({
+          tone: 'success',
+          message: `Scanned ${result.config.monitor_path}: ${result.files_ingested + result.files_reprocessed} file(s) ingested.`,
+        })
+        queryClient.invalidateQueries({ queryKey: ['staff-assets'] })
+        queryClient.invalidateQueries({ queryKey: ['readiness-dashboard'] })
+      } else if (!result.healthy) {
+        toast.push({
+          tone: 'error',
+          message: `Could not scan ${result.config.monitor_path}.`,
+          detail: result.error ?? undefined,
+        })
+      } else {
+        toast.push({
+          tone: 'info',
+          message:
+            result.files_seen === 0
+              ? `Scanned ${result.config.monitor_path}: no files found.`
+              : `Scanned ${result.config.monitor_path}: ${result.files_seen} file(s) seen, nothing new to ingest.`,
+        })
+      }
+    } catch (error) {
+      setScanError({
+        configId,
+        message: error instanceof ApiError ? (error.detail ?? error.message) : 'Scan failed.',
+      })
+    } finally {
+      setScanningId(null)
+    }
+  }
+
   return (
     <SectionCard
       title="Watch folders"
@@ -160,6 +248,14 @@ function WatchFolderSection() {
           style={{ minWidth: 240, border: '1px solid var(--cc-line)', background: 'var(--cc-surface)' }}
         />
         <button
+          type="button"
+          onClick={() => setBrowsing(true)}
+          className="rounded-md px-3 py-1.5 text-xs font-medium"
+          style={{ border: '1px solid var(--cc-line)', background: 'var(--cc-surface)' }}
+        >
+          Browse…
+        </button>
+        <button
           type="submit"
           disabled={!monitorPath.trim() || createMutation.isPending}
           className="rounded-md px-3 py-1.5 text-xs font-medium"
@@ -168,6 +264,17 @@ function WatchFolderSection() {
           {createMutation.isPending ? 'Adding…' : 'Add watch folder'}
         </button>
       </form>
+
+      {browsing && (
+        <FolderBrowser
+          initialPath={monitorPath}
+          onClose={() => setBrowsing(false)}
+          onSelect={(path) => {
+            setMonitorPath(path)
+            setBrowsing(false)
+          }}
+        />
+      )}
 
       {query.isLoading && <div className="h-10 w-full animate-pulse rounded-md" style={{ background: 'var(--cc-surface-2)' }} />}
       {query.isError && <InlineError error={query.error} />}
@@ -189,7 +296,12 @@ function WatchFolderSection() {
                 <span style={{ color: config.enabled ? 'var(--cc-ink)' : 'var(--cc-ink-3)' }}>
                   {config.enabled ? 'Enabled' : 'Disabled'}
                 </span>
-                <WatchFolderStatus config={config} />
+                <WatchFolderStatus
+                  config={config}
+                  onScanNow={() => handleScanNow(config.config_id)}
+                  scanning={scanningId === config.config_id}
+                  scanError={scanError?.configId === config.config_id ? scanError.message : null}
+                />
                 <button
                   type="button"
                   onClick={() => deleteMutation.mutate(config.config_id)}

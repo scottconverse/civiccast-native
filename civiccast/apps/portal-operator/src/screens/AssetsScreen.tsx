@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   listStaffAssets,
   packageStaffAsset,
@@ -11,6 +11,7 @@ import { hasOperatorRole } from '../auth/roles'
 import { StateBadge } from '../components/StateBadge'
 import { ReadinessBadge } from '../components/ReadinessBadge'
 import type { ReadinessState } from '../components/ReadinessBadge'
+import { AssetUploadControl } from '../components/assets/AssetUploadControl'
 import type { AssetRow, AssetState } from '../types/asset'
 
 type FilterId = 'all' | AssetState
@@ -131,8 +132,8 @@ function EmptyState() {
     >
       <div className="text-sm font-semibold">No assets yet.</div>
       <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-        Add a bundled sample or upload a short test video from Setup, then return
-        here after ingest completes.
+        Use Upload video above, add a watch folder under Media Lifecycle Settings, or
+        add a bundled sample from Setup.
       </div>
     </div>
   )
@@ -185,11 +186,15 @@ export function AssetsScreen({
     retry: false,
   })
   const readinessByAssetId = useMemo(() => {
-    const map = new Map<string, { readiness_state: ReadinessState; in_flight_jobs_count: number }>()
+    const map = new Map<
+      string,
+      { readiness_state: ReadinessState; in_flight_jobs_count: number; readiness_reason: string | null }
+    >()
     for (const row of readinessQuery.data?.by_asset ?? []) {
       map.set(row.asset_id, {
         readiness_state: row.readiness_state as ReadinessState,
         in_flight_jobs_count: row.in_flight_jobs_count,
+        readiness_reason: row.readiness_reason,
       })
     }
     return map
@@ -198,10 +203,20 @@ export function AssetsScreen({
     identityQuery.isSuccess &&
     (hasOperatorRole(identityQuery.data, 'publish_operator') ||
       hasOperatorRole(identityQuery.data, 'setup_admin'))
+  // Matches the upload endpoint's own role gate
+  // (require_any_role("records_clerk", "meeting_operator", "support_admin")
+  // in civiccast/schedule/router.py) so the control's disabled state is
+  // never a surprise the server disagrees with.
+  const canUpload =
+    identityQuery.isSuccess &&
+    (hasOperatorRole(identityQuery.data, 'records_clerk') ||
+      hasOperatorRole(identityQuery.data, 'meeting_operator') ||
+      hasOperatorRole(identityQuery.data, 'support_admin'))
   const packageMutation = useMutation<AssetRow, Error, string>({
     mutationFn: (assetId) => packageStaffAsset(assetId),
     onSuccess: () => query.refetch(),
   })
+  const queryClient = useQueryClient()
 
   const visible = useMemo<AssetRow[]>(() => {
     const rows = query.data ?? []
@@ -234,6 +249,15 @@ export function AssetsScreen({
           untouched; trim and chapter edits are non-destructive.
         </p>
       </header>
+
+      <AssetUploadControl
+        canUpload={canUpload}
+        roleCheckReady={identityQuery.isSuccess}
+        onUploaded={() => {
+          void queryClient.invalidateQueries({ queryKey: ['staff-assets'] })
+          void queryClient.invalidateQueries({ queryKey: ['readiness-dashboard'] })
+        }}
+      />
 
       <div
         className="flex flex-wrap items-center gap-3 px-6 py-3"
@@ -359,10 +383,28 @@ export function AssetsScreen({
                   </td>
                   <td className="px-3 py-3 align-top">
                     {readinessByAssetId.has(row.asset_id) ? (
-                      <ReadinessBadge
-                        state={readinessByAssetId.get(row.asset_id)!.readiness_state}
-                        inFlightJobsCount={readinessByAssetId.get(row.asset_id)!.in_flight_jobs_count}
-                      />
+                      <>
+                        <ReadinessBadge
+                          state={readinessByAssetId.get(row.asset_id)!.readiness_state}
+                          inFlightJobsCount={readinessByAssetId.get(row.asset_id)!.in_flight_jobs_count}
+                          reason={readinessByAssetId.get(row.asset_id)!.readiness_reason}
+                        />
+                        {/* Candidate #17 tester finding 6: "council-test-clip still
+                            shows Not ready even after it was successfully packaged
+                            AND published." Readiness tracks the ingest-time playback
+                            proxy pipeline, not publish status -- asset.published_at
+                            can be set well before (or after) that pipeline settles,
+                            and a stale/not-yet-computed readiness row reads as
+                            "broken" next to a live Published date otherwise. Say
+                            plainly what the dot does and does not mean rather than
+                            silently redefining readiness to track publish state. */}
+                        {row.published_at && readinessByAssetId.get(row.asset_id)!.readiness_state !== 'ready' && (
+                          <div className="mt-1 max-w-40 text-[10px] leading-tight" style={{ color: 'var(--cc-ink-3)' }}>
+                            Already live on the portal — this dot tracks the optimized
+                            playback proxy, not publish status.
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <span className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
                         —

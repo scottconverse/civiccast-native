@@ -3258,6 +3258,15 @@ Media lifecycle worker audit trail (dry-run entries included).
 - Request body: none
 - Responses: 200 `Array<LifecycleAuditEntryResponse>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/media-lifecycle/browse-folders`
+
+List subdirectories of a path, for the non-technical watch-folder picker.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `path` (query, optional): `string | null`
+- Request body: none
+- Responses: 200 `FolderBrowseResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/media-lifecycle/missing-media`
 
 Scheduled items whose backing asset is not ready within the horizon.
@@ -3337,7 +3346,7 @@ Add a watch folder (local disk, USB, or NAS/SMB path).
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: none
 - Request body: `WatchFolderConfigInput`
-- Responses: 201 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+- Responses: 201 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 monitor_path does not exist or is not readable; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `DELETE /api/staff/media-lifecycle/watch-folder-configs/{config_id}`
 
@@ -3355,7 +3364,16 @@ Update a watch folder config.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `config_id` (path, required): `string`
 - Request body: `WatchFolderConfigInput`
-- Responses: 200 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+- Responses: 200 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 422 monitor_path does not exist or is not readable; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/media-lifecycle/watch-folder-configs/{config_id}/scan-now`
+
+Scan one watch folder immediately, bypassing its poll interval.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `config_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `WatchFolderScanNowResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Watch-folder daemon not wired, or CIVICCAST_UPLOAD_DIR unset
 
 ### `POST /api/staff/migrate/apply`
 
@@ -6468,6 +6486,20 @@ rule (S13 §5.1).
 - `steps` (required): `Array<InstallerStep>`
 - `time_to_first_broadcast_minutes` (required): `number`
 
+### `FolderBrowseEntry`
+
+- `name` (required): `string`
+- `path` (required): `string`
+
+### `FolderBrowseResponse`
+
+- `current_path` (required): `string | null`
+- `entries` (required): `Array<FolderBrowseEntry>`
+- `error` (optional): `string | null`
+- `parent_path` (required): `string | null`
+- `readable` (required): `boolean`
+- `separator` (required): `string`
+
 ### `FollowerModerationRequest`
 
 - `actor` (required): `string`
@@ -9228,6 +9260,16 @@ rule (S13 §5.1).
 - `retention_policy_default` (required): `string | null`
 - `settle_window_seconds` (required): `number`
 - `updated_at` (required): `string`
+
+### `WatchFolderScanNowResponse`
+
+- `config` (required): `WatchFolderConfigResponse`
+- `error` (optional): `string | null`
+- `files_failed` (required): `number`
+- `files_ingested` (required): `number`
+- `files_reprocessed` (required): `number`
+- `files_seen` (required): `number`
+- `healthy` (required): `boolean`
 
 ### `YearOverYearPoint`
 

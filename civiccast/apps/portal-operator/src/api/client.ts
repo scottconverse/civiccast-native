@@ -86,6 +86,7 @@ import type {
   DiagnosticBundleResponse,
   FirstAdminSetupRequest,
   FirstAdminSetupResponse,
+  FolderBrowseResponse,
   FollowerModerationRequest,
   DeliveryRetryRecord,
   FollowerRecord,
@@ -236,6 +237,7 @@ import type {
   StorageBudgetResponse,
   WatchFolderConfigInput,
   WatchFolderConfigResponse,
+  WatchFolderScanNowResponse,
 } from '../types/api.generated'
 import type {
   CaptionReviewDecision,
@@ -681,6 +683,110 @@ export function uploadAssetFile({
   return requestForm<UploadedAssetResponse>('/api/staff/assets/upload', body)
 }
 
+/** Parsed detail from a non-2xx JSON error body, matching request()/requestForm()'s
+ *  own detail-extraction shape (see ApiError above) -- kept in one place so a
+ *  progress-tracked upload surfaces the exact same plain-language reason a
+ *  non-progress-tracked one would. */
+function parseErrorDetail(responseText: string): string | undefined {
+  if (!responseText) return undefined
+  try {
+    const parsed = JSON.parse(responseText) as { detail?: unknown }
+    const raw = parsed?.detail
+    if (typeof raw === 'string') return raw
+    if (raw != null) return JSON.stringify(raw)
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Same upload endpoint and form contract as {@link uploadAssetFile} --
+ * Assets/Library's own upload control (task A, candidate #17 finding 1/2)
+ * reuses the endpoint the First Setup "Upload a short test video" card
+ * already calls, never a second pipeline. This variant exists ONLY because
+ * `fetch`'s Request/Response streams give no upload-progress signal;
+ * `XMLHttpRequest.upload.onprogress` does. `uploadAssetFile` stays on plain
+ * `fetch` (and its existing test coverage) since the First Setup card never
+ * needed progress.
+ */
+export function uploadAssetFileWithProgress(
+  {
+    assetId,
+    title,
+    description,
+    file,
+    selectForRehearsal = false,
+  }: {
+    assetId: string
+    title: string
+    description?: string
+    file: File
+    selectForRehearsal?: boolean
+  },
+  onProgress?: (percent: number) => void,
+  signal?: AbortSignal,
+): Promise<UploadedAssetResponse> {
+  const body = new FormData()
+  body.set('asset_id', assetId)
+  body.set('title', title)
+  if (description) body.set('description', description)
+  if (selectForRehearsal) body.set('select_for_rehearsal', 'true')
+  body.set('file', file)
+
+  const staffToken = runtimeStaffToken()
+
+  return new Promise<UploadedAssetResponse>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${runtimeApiBase()}/api/staff/assets/upload`)
+    xhr.responseType = 'text'
+    xhr.setRequestHeader('Accept', 'application/json')
+    if (staffToken) xhr.setRequestHeader('Authorization', `Bearer ${staffToken}`)
+
+    if (signal) {
+      if (signal.aborted) {
+        xhr.abort()
+      } else {
+        signal.addEventListener('abort', () => xhr.abort(), { once: true })
+      }
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (!onProgress || !event.lengthComputable || event.total <= 0) return
+      onProgress(Math.round((event.loaded / event.total) * 100))
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as UploadedAssetResponse)
+        } catch {
+          reject(new ApiError('Upload succeeded but the response could not be read.', xhr.status))
+        }
+        return
+      }
+      reject(
+        new ApiError(
+          `Request failed: ${xhr.status} ${xhr.statusText}`,
+          xhr.status,
+          parseErrorDetail(xhr.responseText),
+        ),
+      )
+    }
+    xhr.onabort = () => reject(new ApiError('Upload cancelled.', 0))
+    xhr.onerror = () =>
+      reject(
+        new ApiError(
+          'Could not reach the server. Check the connection and try again.',
+          0,
+        ),
+      )
+    xhr.ontimeout = () => reject(new ApiError('The upload timed out. Try again.', 408))
+
+    xhr.send(body)
+  })
+}
+
 export function getBackupStatus(): Promise<BackupStatus> {
   return request<BackupStatus>('/api/staff/installer/backup')
 }
@@ -960,6 +1066,27 @@ export function deleteWatchFolderConfig(configId: string): Promise<void> {
     `/api/staff/media-lifecycle/watch-folder-configs/${encodeURIComponent(configId)}`,
     { method: 'DELETE' },
   )
+}
+
+// S7 finding 4 (candidate #17 field evidence): "Last poll: never" with no
+// way to force a check reads as broken even when the daemon is working.
+// Runs the SAME per-folder scan the poll daemon uses, immediately.
+export function scanWatchFolderNow(configId: string): Promise<WatchFolderScanNowResponse> {
+  return request<WatchFolderScanNowResponse>(
+    `/api/staff/media-lifecycle/watch-folder-configs/${encodeURIComponent(configId)}/scan-now`,
+    { method: 'POST' },
+  )
+}
+
+// S7 finding 3 (candidate #17 field evidence): a non-technical operator
+// cannot type an exact filesystem path from memory, and the browser cannot
+// hand one back itself (File System Access API / <input webkitdirectory>
+// both withhold the absolute path). The frontend and backend always run on
+// the same station machine, so the backend lists local directories for a
+// picker UI instead. Omit `path` to list drive roots (Windows) / "/" (POSIX).
+export function browseFolders(path?: string): Promise<FolderBrowseResponse> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : ''
+  return request<FolderBrowseResponse>(`/api/staff/media-lifecycle/browse-folders${query}`)
 }
 
 export function listRetentionPolicies(): Promise<AssetRetentionPolicyResponse[]> {
