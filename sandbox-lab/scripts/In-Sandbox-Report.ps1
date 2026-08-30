@@ -1284,7 +1284,7 @@ try {
 #          and only falls back to the synthetic-ffmpeg proof, labeled
 #          PASS_FFMPEG_FALLBACK (never plain PASS), if the API path is
 #          genuinely blocked.
-#   T3:    a real authenticated content loop -- installer nonce -> staff
+#   T3:    a real authenticated content loop -- loopback first-admin -> staff
 #          bearer token -> generate/upload/package/publish an asset ->
 #          prove it on the public surface -> prove offline captions land.
 #
@@ -2214,7 +2214,7 @@ try {
         Save-Summary -Step 't3-surfaces'
 
         # --- T3 REAL LOOP: authenticated content loop, end to end -----------------
-        # nonce (HKLM) -> POST first-admin -> bearer token -> generate a 30s test
+        # POST first-admin (loopback-admitted) -> bearer token -> 30s test
         # MP4 with the bundled ffmpeg -> upload -> package -> approve/publish ->
         # assert on /api/public/assets -> poll for offline captions. Bounded and
         # fail-honest: every HTTP step logs method/url/status to T3-LOOP.txt, and
@@ -2256,14 +2256,14 @@ try {
                     if (-not $token) { $t3LoopState = 'PARTIAL(login-token)'; throw "no operator_console_token in setup/login response" }
                     "token_acquired=true (via reused-credential login) token_length=$($token.Length)" | Add-Content -Path $t3loop -Encoding UTF8
                 } else {
-                    # Step 1: read the installer's setup nonce from HKLM (admin-readable).
-                    $nonceRegPath = 'HKLM:\SOFTWARE\CivicCast\Native'
-                    $nonce = $null
-                    try { $nonce = (Get-ItemProperty -Path $nonceRegPath -Name 'SetupNonce' -ErrorAction Stop).SetupNonce } catch {
-                        "nonce read failed at $nonceRegPath\SetupNonce : $_" | Add-Content -Path $t3loop -Encoding UTF8
-                    }
-                    if (-not $nonce) { $t3LoopState = 'PARTIAL(nonce)'; throw "setup nonce not found at $nonceRegPath\SetupNonce" }
-                    "nonce_present=true nonce_length=$($nonce.Length)" | Add-Content -Path $t3loop -Encoding UTF8
+                    # Step 1: nothing to fetch. The installer-handoff setup nonce was
+                    # RETIRED (PR #60, 2026-08-29): first setup is admitted by loopback peer
+                    # address alone, and this harness runs ON the station, so it already is
+                    # the trusted caller. Reading the retired registry value here is exactly
+                    # what broke T3/captions/T4 on candidate #17: the key no longer exists,
+                    # so the harness could never authenticate and every downstream content
+                    # check failed while the product itself was healthy.
+                    "nonce_not_required=true (loopback-admitted first setup, PR #60)" | Add-Content -Path $t3loop -Encoding UTF8
 
                     # Step 2: POST first-admin -> bearer token. Password is generated
                     # here (never hardcoded) and written to T3-CREDENTIALS.txt only --
@@ -2282,7 +2282,7 @@ try {
                         admin_password           = $genPw
                         recovery_kit_destination = 'sandbox automated test run -- not physically stored'
                     }
-                    $r1 = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/setup/first-admin" -LogFile $t3loop -BodyObj $firstAdminBody -SetupNonce $nonce
+                    $r1 = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/setup/first-admin" -LogFile $t3loop -BodyObj $firstAdminBody
                     if ($r1.status -ne 200 -or -not $r1.body_json) { $t3LoopState = 'PARTIAL(first-admin)'; throw "first-admin failed: status=$($r1.status)" }
                     $token = $r1.body_json.operator_console_token
                     if (-not $token) { $t3LoopState = 'PARTIAL(first-admin-token)'; throw "no operator_console_token in first-admin response" }
