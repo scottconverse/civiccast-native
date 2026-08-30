@@ -58,7 +58,7 @@ NtpSyncState = Literal["synced", "unsynced", "unknown"]
 GstRuntimeSource = Literal["bundled", "system-path", "unavailable"]
 CableOsVerdictKind = Literal["single-windows-pc-ok", "native-linux-recommended", "soak-pending"]
 PegReadinessColor = Literal["green", "yellow", "red"]
-AiDefaultBasis = Literal["ram-12b", "ram-e4b", "forced-cpu"]
+AiDefaultBasis = Literal["ram-12b", "ram-e4b", "forced-cpu", "cpu-only"]
 
 ProcRunner = Callable[[list[str]], FfmpegResult]
 
@@ -268,11 +268,10 @@ class StationBoxProfile(BaseModel):
 
 
 def select_ai_defaults(hardware_probe: HardwareProbe) -> AiDefaultSelection:
-    """RAM-keyed AI default table (S1 §6.1).
+    """RAM-and-GPU-keyed AI default table (S1 §6.1).
 
-    Keys off **system RAM** (``hardware_probe.ram.total_gb``), not VRAM —
-    a box can be ``tier-0`` on VRAM yet still get the 12B summary default
-    on 16GB+ system RAM. This is the *recommended default only*; S13 owns
+    Keys off **system RAM** (``hardware_probe.ram.total_gb``) AND GPU presence
+    (``hardware_probe.gpu``). This is the *recommended default only*; S13 owns
     the operator's per-feature registry and pinned-selection surface, and
     this function must never overwrite an operator's pin (callers apply
     the override, not this function). Uses the exact shipped pull tags
@@ -283,28 +282,51 @@ def select_ai_defaults(hardware_probe: HardwareProbe) -> AiDefaultSelection:
     does not reuse: that function returns operator-selectable registry
     keys (``gemma4-12b-ollama``); this one reports the raw model tag for
     doctor/profile display.
+
+    FIXED 2026-08-29 (field evidence, candidate #17): this table used to key
+    12B purely off ``ram >= 16``, independent of GPU. That is the same bug
+    S13's ``detect_summary_model_default`` had and was fixed for: on a 32GB
+    CPU-only reference station, ``gemma4:12b`` took 366s to complete one
+    summary generation and then failed twice more under realistic memory
+    pressure, while ``gemma4:e4b`` completed every attempt (94-128s). This
+    function now requires a real GPU before recommending 12B, matching S13's
+    rule, so ``civiccast doctor``/profile output never recommends a model the
+    box cannot reliably run — and never disagrees with what S13 actually
+    resolves as the runtime default on the same hardware.
     """
 
     ram = hardware_probe.ram.total_gb
+    has_gpu = hardware_probe.gpu is not None
     basis: AiDefaultBasis
-    if ram >= 16:
+    if has_gpu and ram >= 16:
         summary_model = "gemma4:12b"
         basis = "ram-12b"
         rationale = (
-            "16GB+ system RAM detected; 12B summary default "
+            "16GB+ system RAM and a detected GPU; 12B summary default "
             "(better long-context, MRCR 43.4 vs 25.4)."
         )
-    elif ram >= 8:
-        summary_model = "gemma4:e4b"
-        basis = "ram-e4b"
-        rationale = "8-16GB system RAM; e4b summary default to stay within memory budget."
-    else:
+    elif not has_gpu and ram < 8:
         summary_model = "gemma4:e4b"
         basis = "forced-cpu"
         rationale = (
-            "<8GB system RAM; e4b on CPU, expect slow background summaries; "
-            "box is under-provisioned."
+            "No GPU detected and <8GB system RAM; e4b on CPU, expect slow "
+            "background summaries; box is under-provisioned."
         )
+    elif not has_gpu:
+        summary_model = "gemma4:e4b"
+        basis = "cpu-only"
+        rationale = (
+            "No GPU detected; e4b summary default regardless of system RAM. "
+            "Measured on a 32GB CPU-only reference station: 12B took 366s to "
+            "complete a summary once and then failed twice more under "
+            "realistic memory pressure, while e4b completed every attempt "
+            "(94-128s). CPU-only inference throughput does not scale with "
+            "RAM capacity."
+        )
+    else:
+        summary_model = "gemma4:e4b"
+        basis = "ram-e4b"
+        rationale = "8-16GB system RAM; e4b summary default to stay within memory budget."
     return AiDefaultSelection(
         summary_model=summary_model,
         translate_model="translategemma:4b",

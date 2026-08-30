@@ -222,7 +222,20 @@ dev = [
   # Type stubs for strict mypy.
   "types-psutil>=6.1.0.20240901",
   # Sprint 0.3 — real-Postgres test parity per ADR 0008 §Compliance.
-  "testcontainers[postgres]>=4.7",
+  # Upper bound is load-bearing, not tidiness. testcontainers 4.15 moved
+  # `testcontainers.postgres` to `testcontainers.community.postgres` and made
+  # the old path emit a DeprecationWarning AT IMPORT TIME. This project sets
+  # `filterwarnings = ["error", ...]`, so on 4.15 that import-time warning
+  # becomes a COLLECTION error in the six modules that import it
+  # (tests/auth/test_staff_token_lifecycle.py, tests/db, tests/dr's two
+  # postgres tests, tests/live and tests/schedule's test_real_postgres.py).
+  # uv.lock pins 4.14.2 and CI installs with `uv sync`, so CI is unaffected --
+  # but the unbounded `>=4.7` meant a single `uv lock --upgrade`, or any
+  # contributor running `uv pip install -e .` (which bypasses the lock),
+  # silently walked into it. Bound it here so the constraint is honest.
+  # Removing the bound requires migrating those imports to
+  # `testcontainers.community.postgres` first.
+  "testcontainers[postgres]>=4.7,<4.15",
   # CloudflareR2Adapter test coverage (mocked S3) per ADR 0006.
   "boto3>=1.35",
   "botocore>=1.35",
@@ -303,6 +316,7 @@ ignore = [
 # playout_router.py). Scoped to the package so tests still get B008.
 "civiccast/**/*router.py" = ["B008"]
 "civiccast/summary/store.py" = ["S608"]
+"civiccast/summary/persistence.py" = ["S608"]
 "civiccast/records/store.py" = ["S608"]
 "civiccast/subscribe/store.py" = ["S608"]
 "civiccast/podcast/store.py" = ["S608"]

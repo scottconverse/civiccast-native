@@ -105,7 +105,7 @@ function ResultPanel({
   const nextStep =
     source?.next_step ??
     sample?.next_step ??
-    'Run private rehearsal and confirm the resident preview.'
+    'Open System Health and select Check broadcast readiness, then confirm the resident preview.'
   if (!title) return null
   return (
     <div

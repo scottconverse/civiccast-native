@@ -87,18 +87,41 @@ The defaults a fresh install ships with are:
 
 1. **Captions** use faster-whisper `whisper-large-v3` (INT8). Local, private,
    no per-token cost.
-2. **Summary** uses an *adaptive* local default. On a box with **16 GB or more
-   of system RAM**, the default is Ollama `gemma4:12b` (the long-context 12B
-   QAT model, registry slug `gemma4-12b-ollama`). On a box with **less than
-   16 GB**, the default is Ollama `gemma4:e4b` (slug `gemma4-e4b-ollama`). The
-   first-run wizard reports which default the detected hardware gets, and
-   commissioning provisions **both** summary tags (`gemma4:12b` and
-   `gemma4:e4b`) so the named adaptive default is present after install
-   regardless of detected RAM. Provenance records the model tag, model digest,
-   Ollama runtime version, and manifest source.
-3. **Spanish translation** uses local Ollama `translategemma:4b` (slug
-   `translategemma-4b-ollama`) with the same digest and runtime provenance
-   posture.
+2. **Summary** uses an *adaptive* local default gated on GPU presence AND RAM,
+   not RAM alone. On a box with **a real (NVIDIA/NVML-detected) GPU and 16 GB
+   or more of system RAM**, the default is Ollama `gemma4:12b` (the
+   long-context 12B QAT model, registry slug `gemma4-12b-ollama`). On any
+   **CPU-only box — regardless of how much RAM it reports** — the default is
+   Ollama `gemma4:e4b` (slug `gemma4-e4b-ollama`). Field evidence (2026-08-29,
+   a 32 GB CPU-only reference station): the old RAM-only rule picked 12B on
+   that box, which took 366s to complete one summary and then failed twice
+   more under realistic memory pressure, while e4b completed every attempt
+   (94-128s) — RAM headroom does not predict CPU token-generation throughput,
+   a discrete GPU does. The first-run wizard reports which default the
+   detected hardware gets, and commissioning provisions **both** summary tags
+   (`gemma4:12b` and `gemma4:e4b`) so an operator can still select 12B
+   manually on a CPU-only box if they choose to accept the slower, less
+   reliable path. Provenance records the model tag, model digest, Ollama
+   runtime version, and manifest source.
+3. **Summary generation runs as an async job**, not a blocking request:
+   `POST /api/staff/summaries/jobs` queues generation from committed
+   transcript cues and returns immediately; the operator console (Asset
+   detail, next to the offline caption job panel) polls
+   `GET /api/staff/summaries/jobs/{job_id}` for `pending` -> `running` ->
+   `complete`/`failed` state. A CPU-only local generation legitimately takes
+   1-6+ minutes depending on meeting length and station load — this was a
+   blocking `POST /api/staff/summaries/generate` request before 2026-08-29,
+   which 503'd at the control plane's ~120s socket budget even when Ollama
+   itself had already produced a completion. `POST /generate` still exists
+   (a longer 600s socket budget now backs it) for a fast tier or a script
+   that wants to wait synchronously.
+4. **Spanish translation** picker offers local Ollama `translategemma:4b`
+   (slug `translategemma-4b-ollama`) with the same digest and runtime
+   provenance posture, but selecting it has **no visible effect today**: no
+   caller supplies a target language, so the model is never actually invoked
+   and no translated caption track is published. The AI Models console says
+   so plainly rather than implying a working capability the build does not
+   yet have.
 
 Deterministic adapters remain available for tests, but an operator release
 proof fails if a deterministic runtime appears on the release proof path.

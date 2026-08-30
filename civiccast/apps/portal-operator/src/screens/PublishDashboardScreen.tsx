@@ -413,6 +413,21 @@ function AssetPanel({
           />
         ))}
       </div>
+      {approvableSurfaceIds.length > 0 && asset.surfaces.some((s) => s.kind === 'canonical') && (
+        // Candidate #17 tester finding 5: "nothing tells the volunteer that
+        // publishing is what starts transcription." This is the one action
+        // in the whole console that triggers offline caption transcription
+        // (civiccast.publish.router._queue_offline_captions runs the moment
+        // the portal surface first goes public) -- say so before the click,
+        // not just on the asset detail page after the fact, and set a
+        // realistic time expectation up front.
+        <p className="mt-3 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Approving the portal surface also starts offline caption transcription for this
+          recording automatically. Expect several minutes for a full meeting recording (measured
+          ~37s for 11s of audio on a 32 GB CPU-only reference machine) — check progress on the
+          asset&apos;s Offline caption jobs panel.
+        </p>
+      )}
       {approvableSurfaceIds.length > 0 && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button

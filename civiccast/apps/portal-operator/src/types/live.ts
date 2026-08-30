@@ -74,3 +74,30 @@ export const PREFLIGHT_LABELS: Record<string, string> = {
   internet_archive: 'Internet Archive',
   nas: 'NAS handoff',
 }
+
+// Field evidence (native beta candidate #17): the live room used to show
+// the backend's internal reason code verbatim ("Resolve network.not_probed
+// and re-run pre-flight") -- an operator has no way to act on a code like
+// that. Every failed check's `message` from the backend is already a full
+// plain-English sentence with the action embedded, so this map only needs
+// to cover the short "Next step" callout beneath it, and it must never
+// fall back to printing `reason_code` itself.
+export const PREFLIGHT_NEXT_STEP: Record<string, string> = {
+  'network.not_probed': 'Confirm this station has a network connection, then select Run pre-flight again.',
+  'network.unreachable': "Check the station's network cable or Wi-Fi connection, then select Run pre-flight again.",
+  'storage.not_probed': 'Confirm the recording drive is connected, then select Run pre-flight again.',
+  'storage.insufficient_free_space': 'Free up space on the recording drive or attach more storage, then select Run pre-flight again.',
+  'ai_runtime.not_ready': 'Check the AI runtime status in Setup, then select Run pre-flight again.',
+  'live_session.not_found': 'Create the live session again before running pre-flight.',
+  'live_source.none_configured_for_channel': 'Open Setup and add a source for this channel.',
+  'live_source.selected_source_invalid': 'Choose a source that is configured for this channel above.',
+  'live_source.not_probed': 'Select a source above so CivicCast can check it before going on air.',
+  'live_source.unavailable': 'Confirm the encoder is powered on and sending video, then select Run pre-flight again.',
+  'recording_target.none_configured': 'Open Setup and choose where CivicCast should save recordings.',
+  'operator_confirm.not_confirmed': 'Check the confirmation box below, then select Run pre-flight again.',
+}
+
+export function preflightNextStep(reasonCode: string | null | undefined): string {
+  if (!reasonCode) return 'Select Run pre-flight again after resolving the item above.'
+  return PREFLIGHT_NEXT_STEP[reasonCode] ?? 'Resolve the item above, then select Run pre-flight again.'
+}

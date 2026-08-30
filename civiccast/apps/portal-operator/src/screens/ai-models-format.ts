@@ -120,15 +120,43 @@ export function tierCostLabel(tier: ModelTier | undefined): string {
 }
 
 /** Latency label from a tier's p95 (U1): the operator trades latency, so show it.
- *  Sub-second renders as "≈900 ms", a second or more as "≈1.5 s typical". */
+ *
+ *  Cloud/frontier tiers (network-bound, not local-hardware-bound) render a plain
+ *  single number: sub-second as "≈900 ms typical", a second or more as "≈1.5 s
+ *  typical".
+ *
+ *  On-box tiers (``ollama``/``external`` — real CPU-bound local inference) never
+ *  render a single precise number here. Field measurement on the 32GB CPU-only
+ *  reference station found the old fixed p95 figures wrong by ~30x (summary) and
+ *  ~70x (captions) versus real hardware, because CPU inference time varies heavily
+ *  with input length and concurrent load on the box — a false precision the
+ *  operator would plan a live meeting against. Two on-box shapes need different
+ *  honest phrasing:
+ *   - ``external`` (faster-whisper): transcription time scales with the
+ *     recording's own length, so ``latency_p95_ms`` is read as a x1000-scaled
+ *     realtime multiplier (3300 -> "~3.3x") rather than a duration.
+ *   - ``ollama`` (local LLM, e.g. summary): a roughly bounded per-request time
+ *     that still varies a lot; rendered as a floor ("X s+") with the CPU-only
+ *     caveat rather than an exact figure.
+ */
 export function tierLatencyLabel(tier: ModelTier | undefined): string {
   if (!tier || tier.latency_p95_ms == null) return '—'
   const ms = tier.latency_p95_ms
   if (ms <= 0) return '—'
-  if (ms < 1000) return `≈${Math.round(ms)} ms typical`
-  const seconds = ms / 1000
-  const rendered = seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1)
-  return `≈${rendered} s typical`
+  const isCpuBoundLocal = tier.provider === 'ollama' || tier.provider === 'external'
+  if (!isCpuBoundLocal) {
+    if (ms < 1000) return `≈${Math.round(ms)} ms typical`
+    const seconds = ms / 1000
+    const rendered = seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1)
+    return `≈${rendered} s typical`
+  }
+  if (tier.provider === 'external') {
+    const multiple = ms / 1000
+    const rendered = multiple >= 10 ? multiple.toFixed(0) : multiple.toFixed(1)
+    return `~${rendered}x the recording's length, CPU-only (varies with station load)`
+  }
+  const seconds = Math.round(ms / 1000)
+  return `${seconds} s+ on a typical CPU-only station (varies with input length)`
 }
 
 /** RAM-requirement label from a tier's `min_ram_gb` (U3). Empty string when the

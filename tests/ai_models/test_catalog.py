@@ -69,14 +69,23 @@ def test_summary_offers_local_and_cloud_tiers() -> None:
     assert any(t.provider == "openrouter" for t in catalog_tiers_for("summary"))
 
 
-def test_summary_default_is_adaptive_12b_at_16gb() -> None:
-    reg = build_feature_registry("summary", system_ram_total_gb=16)
+def test_summary_default_is_adaptive_12b_at_16gb_with_a_real_gpu() -> None:
+    reg = build_feature_registry("summary", system_ram_total_gb=16, has_gpu=True)
     assert reg.default_key == "gemma4-12b-ollama"
     assert reg.adaptive_default is True
 
 
 def test_summary_default_degrades_to_e4b_below_16gb() -> None:
     reg = build_feature_registry("summary", system_ram_total_gb=8)
+    assert reg.default_key == "gemma4-e4b-ollama"
+    assert reg.adaptive_default is True
+
+
+def test_summary_default_is_e4b_on_a_cpu_only_32gb_box() -> None:
+    """Field evidence 2026-08-29: a 32GB CPU-only box (has_gpu defaults False)
+    must default to e4b, not 12B -- see detect_summary_model_default for the
+    measured timings (12B: 366s then two failures; e4b: 94-128s, every attempt)."""
+    reg = build_feature_registry("summary", system_ram_total_gb=32)
     assert reg.default_key == "gemma4-e4b-ollama"
     assert reg.adaptive_default is True
 

@@ -310,7 +310,13 @@ def test_bookkeeping_resolve_failure_does_not_fail_a_committed_upload(
     real_resolve = Path.resolve
 
     def failing_resolve(self: Path, *args: object, **kwargs: object) -> Path:
-        if self.name == marker:
+        # The stored file is now an opaque uuid4 token (field evidence /
+        # GauntletGate finding: the on-disk name doubles as the public
+        # upload_ref and must be unguessable), so this can no longer match
+        # by the contributor's original filename -- match the just-written
+        # file by location instead: it is the only thing this test resolves
+        # directly inside the (otherwise-empty at request time) upload dir.
+        if self.parent == tmp_path and self.suffix == ".mov":
             raise OSError("simulated stat/AV-lock race on the just-written file")
         return real_resolve(self, *args, **kwargs)  # type: ignore[arg-type]
 
@@ -323,7 +329,9 @@ def test_bookkeeping_resolve_failure_does_not_fail_a_committed_upload(
     )
 
     assert response.status_code == 201, response.text
-    assert (tmp_path / marker).exists(), "the upload should be committed to disk"
+    committed = list(tmp_path.glob("*.mov"))
+    assert len(committed) == 1, "the upload should be committed to disk"
+    assert response.json()["upload_ref"] == committed[0].name
 
 
 def test_reap_worker_forwards_its_byte_budget_to_the_reap(tmp_path: Path) -> None:

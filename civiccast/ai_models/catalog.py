@@ -8,10 +8,26 @@ tag) -> provider`` mapping plus the cost / latency / privacy / network flags tha
 operator console renders and the service enforces.
 
 The DEFAULT for every feature is the LOCAL (zero cloud fee, on-device, private) tier.
-Summary's default is adaptive (12B QAT on >=16GB, e4b on smaller boxes). The CLOUD tiers
-(Ollama Cloud ``gemma4:31b-cloud`` + the OpenRouter mid-tier) ship FUNCTIONAL (D13):
-they appear as real, selectable options, are priced per token, require network, and are
-off until the operator selects one and accepts the cost — they are not stubs.
+Summary's default is adaptive (12B QAT when a real GPU is present AND RAM >=16GB;
+e4b otherwise, including every CPU-only box regardless of RAM -- see
+``detect_summary_model_default``, which field evidence on a 32GB CPU-only reference
+station retired the old RAM-only rule for: 12B took 366s+ to complete a summary there
+and then failed twice more under realistic memory pressure, while e4b completed every
+attempt in 94-128s). The CLOUD tiers (Ollama Cloud ``gemma4:31b-cloud`` + the
+OpenRouter mid-tier) ship FUNCTIONAL (D13): they appear as real, selectable options,
+are priced per token, require network, and are off until the operator selects one and
+accepts the cost — they are not stubs.
+
+Latency figures below (``latency_p95_ms``) are measured, not estimated, for every
+on-box (``ollama``/``external``) tier that has been benchmarked on the CPU-only 32GB
+reference station -- see each tier's ``notes`` for the measurement. The operator
+console (``tierLatencyLabel`` in ``apps/portal-operator/src/screens/ai-models-format
+.ts``) renders local CPU-bound tiers as a range with the CPU-only caveat rather than a
+single misleadingly-precise number, because real CPU inference latency varies heavily
+with transcript/recording length and concurrent load on the box -- a single p95
+number was previously wrong by ~30x for summary and ~70x for captions on real
+hardware. Cloud/frontier tiers keep a plain single-number label; their latency is
+network-bound, not CPU-bound, and does not have that same variance.
 """
 
 from __future__ import annotations
@@ -57,24 +73,47 @@ _CATALOG: dict[AiFeature, list[ModelTier]] = {
             provider="ollama",
             model_id="gemma4:12b",
             cost_per_token_usd=0.0,
-            latency_p95_ms=4200,
+            # MEASURED 2026-08-29, CPU-only 32GB reference station (Ryzen-class,
+            # 16c/32t, gpu=None): 366s wall to complete one summary generation
+            # cold, then two more attempts failed outright under realistic
+            # memory pressure (CPU buffer allocation failure; a crashed
+            # llama-server subprocess). Not just slow -- unreliable CPU-only.
+            # The number here is the one completed measurement; the operator
+            # console never renders it as a plain seconds figure for an
+            # on-box tier (see ai-models-format.ts tierLatencyLabel) because
+            # a single number cannot honestly represent "sometimes crashes."
+            latency_p95_ms=366_000,
             private=True,
             requires_network=False,
             min_ram_gb=16,
             license_url=_GEMMA4_LICENSE,
-            notes="Local Gemma 4 12B QAT — long-context summary default on >=16GB boxes.",
+            notes=(
+                "Local Gemma 4 12B QAT — long-context summary option. Selectable on any "
+                "box, but the adaptive DEFAULT only offers it with a real GPU present "
+                "(detect_summary_model_default): measured CPU-only on the 32GB reference "
+                "station it took 366s to complete once and then failed twice more "
+                "(memory allocation failure; a crashed llama-server process). A GPU is "
+                "recommended before selecting this tier manually."
+            ),
         ),
         ModelTier(
             key="gemma4-e4b-ollama",
             provider="ollama",
             model_id="gemma4:e4b",
             cost_per_token_usd=0.0,
-            latency_p95_ms=2600,
+            # MEASURED 2026-08-29, same CPU-only 32GB reference station: 128s
+            # cold, 94s warm, both completed successfully every attempt.
+            latency_p95_ms=128_000,
             private=True,
             requires_network=False,
             min_ram_gb=8,
             license_url=_GEMMA4_LICENSE,
-            notes="Local Gemma 4 e4b — summary fallback for 8GB boxes.",
+            notes=(
+                "Local Gemma 4 e4b — the summary DEFAULT on any box without a real GPU, "
+                "regardless of system RAM (32GB CPU-only is the reference target, not an "
+                "edge case). Measured 94-128s per summary, CPU-only, and completed every "
+                "attempt where 12B did not."
+            ),
         ),
         _GEMMA4_31B_CLOUD,
         ModelTier(
@@ -101,7 +140,13 @@ _CATALOG: dict[AiFeature, list[ModelTier]] = {
             requires_network=False,
             min_ram_gb=8,
             license_url=_GEMMA4_LICENSE,
-            notes="Local TranslateGemma 4B — Spanish translation default (never gemma4:4b).",
+            notes=(
+                "Local TranslateGemma 4B — Spanish translation default (never gemma4:4b). "
+                "NOT YET CONNECTED (audit finding, 2026-08-29): no caller supplies a "
+                "translation target, so this model is never actually invoked and no "
+                "translated caption track is published. Selecting it has no visible "
+                "effect yet; see AiModelsScreen's translation banner."
+            ),
         ),
         _GEMMA4_31B_CLOUD,
     ],
@@ -117,14 +162,24 @@ _CATALOG: dict[AiFeature, list[ModelTier]] = {
             provider="external",
             model_id="whisper-medium",
             cost_per_token_usd=0.0,
-            latency_p95_ms=500,
+            # MEASURED 2026-08-29, CPU-only 32GB reference station: ~37s to
+            # transcribe 11s of audio, ~3.3x real time. Transcription time
+            # scales with recording length, so a fixed ms figure cannot
+            # honestly stand for "typical latency" the way it can for a
+            # bounded LLM request; the console renders this tier as a
+            # realtime multiple, not a raw ms count (tierLatencyLabel,
+            # ai-models-format.ts). This field is kept as a rough same-order
+            # reference for any non-UI caller, not a promise to the operator.
+            latency_p95_ms=3_300,
             private=True,
             requires_network=False,
             min_ram_gb=4,
             license_url=_WHISPER_LICENSE,
             notes=(
                 "faster-whisper medium (int8) on-box — CPU-only caption FLOOR tier "
-                "(mandatory baseline), captions default."
+                "(mandatory baseline), captions default. Measured on the 32GB CPU-only "
+                "reference station: ~3.3x real time (37s to transcribe 11s of audio) — "
+                "not a fixed per-request latency, since it scales with recording length."
             ),
         ),
         ModelTier(
@@ -132,14 +187,20 @@ _CATALOG: dict[AiFeature, list[ModelTier]] = {
             provider="external",
             model_id="whisper-large-v3",
             cost_per_token_usd=0.0,
-            latency_p95_ms=900,
+            # NOT independently measured (only the floor tier above was
+            # benchmarked in the field); kept conservatively above the
+            # measured floor-tier multiplier rather than the old flat 900ms,
+            # which was wrong for the same reason the floor tier's 500ms was.
+            latency_p95_ms=5_000,
             private=True,
             requires_network=False,
             min_ram_gb=8,
             license_url=_WHISPER_LICENSE,
             notes=(
                 "faster-whisper large-v3 (int8) on-box — captions QUALITY tier, "
-                "auto-selected only when measured hardware allows."
+                "auto-selected only when measured hardware allows. Not independently "
+                "measured; expect slower than the medium floor tier's measured ~3.3x "
+                "real time, CPU-only."
             ),
         ),
     ],
@@ -179,10 +240,18 @@ def catalog_tier_for_feature(feature: AiFeature, key: str) -> ModelTier | None:
     return None
 
 
-def default_key_for(feature: AiFeature, *, system_ram_total_gb: int = 8) -> str:
-    """The (possibly adaptive) local default slug for ``feature``."""
+def default_key_for(
+    feature: AiFeature, *, system_ram_total_gb: int = 8, has_gpu: bool = False
+) -> str:
+    """The (possibly adaptive) local default slug for ``feature``.
+
+    ``has_gpu`` matters only for ``summary`` (see
+    :func:`~civiccast.ai_models.models.detect_summary_model_default`): CPU-only
+    boxes -- the common case at the 32GB reference target -- get the model
+    that actually completes there regardless of RAM headroom.
+    """
     if feature == "summary":
-        return detect_summary_model_default(system_ram_total_gb)
+        return detect_summary_model_default(system_ram_total_gb, has_gpu=has_gpu)
     return _DEFAULT_KEY[feature]
 
 
@@ -190,12 +259,15 @@ def build_feature_registry(
     feature: AiFeature,
     *,
     system_ram_total_gb: int = 8,
+    has_gpu: bool = False,
     operator_selected_key: str | None = None,
 ) -> FeatureModelRegistry:
     """Assemble a :class:`FeatureModelRegistry` from the catalog + an optional selection."""
     return FeatureModelRegistry(
         feature=feature,
-        default_key=default_key_for(feature, system_ram_total_gb=system_ram_total_gb),
+        default_key=default_key_for(
+            feature, system_ram_total_gb=system_ram_total_gb, has_gpu=has_gpu
+        ),
         adaptive_default=(feature == "summary"),
         available_tiers=catalog_tiers_for(feature),
         operator_selected_key=operator_selected_key,

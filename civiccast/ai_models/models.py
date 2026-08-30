@@ -171,9 +171,30 @@ class FirstRunOverrideRequest(BaseModel):
     model_key: Annotated[str | None, Field(max_length=120)] = None
 
 
-def detect_summary_model_default(system_ram_total_gb: int) -> str:
-    """Adaptive summary default: 12B QAT on >=16GB boxes, e4b on smaller ones."""
-    if system_ram_total_gb >= 16:
+def detect_summary_model_default(system_ram_total_gb: int, *, has_gpu: bool = False) -> str:
+    """Adaptive summary default: gated on GPU presence, not RAM size alone.
+
+    Field evidence (candidate #17, AMD Ryzen 7 8745HS / 32 GB RAM / CPU-only
+    inference, Windows 11 -- the reference target hardware class, spec §7.7
+    ``tier-0``): the RAM-only rule below picked ``gemma4-12b-ollama`` on this
+    32GB box because it satisfied ``>=16GB``, but 12B is not viable CPU-only
+    there. Measured on that same hardware class (a second CPU-only 32GB
+    32-logical-core station, gpu=None): ``gemma4:12b`` took 366s to complete
+    one summary generation cold and then failed outright twice more under
+    realistic memory pressure (CPU buffer allocation failure; a crashed
+    ``llama-server`` subprocess) -- not just slow, unreliable. ``gemma4:e4b``
+    completed every attempt (cold 128s, warm 94s) on the same box. RAM
+    headroom does not predict CPU token-generation throughput; a discrete
+    GPU does, because CPU-only inference throughput is bound by memory
+    bandwidth and core count, not capacity. So a real GPU (any VRAM, i.e.
+    tier-1 and above per ``platform.hardware._tier_for``) is now required
+    before 12B is offered as the default; a CPU-only box (``has_gpu=False``,
+    ``platform.hardware`` recommends ``tier-0`` for it) gets e4b regardless
+    of how much system RAM it reports, because 32GB CPU-only boxes are a
+    real, common, and explicitly supported target configuration -- not an
+    edge case to optimize away from.
+    """
+    if has_gpu and system_ram_total_gb >= 16:
         return "gemma4-12b-ollama"
     return "gemma4-e4b-ollama"
 

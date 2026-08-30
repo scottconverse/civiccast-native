@@ -25,6 +25,7 @@ from civiccast.contribute.models import (
 from civiccast.contribute.store import (
     ContributorSubmissionStore,
     reap_unreferenced_contributor_uploads,
+    resolve_contributor_upload_path,
 )
 
 
@@ -406,6 +407,64 @@ def test_create_submission_rejects_upload_ref_outside_the_upload_directory(
 
     with pytest.raises(ValueError, match="contributor upload directory"):
         store.create_submission(payload)
+
+
+def test_create_submission_rejects_a_traversal_style_relative_upload_ref(
+    upload_dir: Path, tmp_path: Path
+) -> None:
+    """Task C: the opaque ``upload_ref`` is now a bare filename joined onto
+    the contributor upload directory (``resolve_contributor_upload_path``),
+    not an already-anchored path -- so a relative ``..`` traversal string
+    must still be caught by the containment check after the join+resolve,
+    exactly as a fabricated absolute path already is above."""
+    secret_dir = tmp_path / "not-the-upload-dir"
+    secret_dir.mkdir()
+    secret_file = secret_dir / "elsewhere.mov"
+    secret_file.write_bytes(b"attacker-controlled-bytes")
+
+    store = ContributorSubmissionStore()
+    payload = _submission_payload(upload_dir)
+    traversal_ref = os.path.relpath(secret_file, upload_dir)
+    payload = payload.model_copy(
+        update={
+            "media": SubmissionMediaReference(
+                upload_ref=traversal_ref,
+                filename="elsewhere.mov",
+                content_type="video/quicktime",
+                size_bytes=len(b"attacker-controlled-bytes"),
+                sha256=hashlib.sha256(b"attacker-controlled-bytes").hexdigest(),
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="contributor upload directory"):
+        store.create_submission(payload)
+
+
+def test_resolve_contributor_upload_path_joins_a_bare_opaque_token(upload_dir: Path) -> None:
+    """The shape the public upload endpoint now issues: no directory
+    component at all, resolved by joining onto the upload directory."""
+    real_path = upload_dir / "a1b2c3.mov"
+    real_path.write_bytes(b"x")
+
+    resolved = resolve_contributor_upload_path("a1b2c3.mov", upload_dir=upload_dir)
+
+    assert resolved == real_path.resolve()
+
+
+def test_resolve_contributor_upload_path_stays_compatible_with_a_legacy_absolute_ref(
+    upload_dir: Path,
+) -> None:
+    """Submissions recorded before this fix carry a full absolute path as
+    ``upload_ref``; Path.__truediv__ leaves an anchored right-hand operand
+    unchanged, so those must keep resolving to the exact same file with no
+    data migration."""
+    real_path = upload_dir / "legacy-absolute-ref.mov"
+    real_path.write_bytes(b"x")
+
+    resolved = resolve_contributor_upload_path(str(real_path), upload_dir=upload_dir)
+
+    assert resolved == real_path.resolve()
 
 
 def test_create_submission_rejects_a_wrong_client_claimed_sha256(upload_dir: Path) -> None:

@@ -57,18 +57,23 @@ function ingestPlan(relays = [relayConfig]) {
   return {
     channel_id: 'government',
     generated_at: '2026-05-31T18:00:00Z',
+    // Bug B5: the legacy placeholder never claims ready -- CivicCast runs
+    // no RTMP listener at this address. It stays present only so the plan
+    // always has a recommended_path_id to fall back to.
     local_default: {
       path_id: 'government:local',
-      label: 'Local encoder',
+      label: 'Legacy local placeholder (unusable)',
       mode: 'local_rtmp',
       endpoint_url: 'rtmp://127.0.0.1/live/government',
       return_playback_url: null,
       provider: 'self-hosted',
-      enabled: true,
-      health_state: 'ready',
+      enabled: false,
+      health_state: 'not_configured',
       outbound_only: false,
       requires_inbound_firewall: false,
-      operator_action: 'Point the room encoder at the local CivicCast ingest endpoint.',
+      operator_action:
+        'Add a real meeting source (Setup > Sources, or Run Meeting). This placeholder ' +
+        'never worked: CivicCast ships no RTMP broker.',
       risk_note: null,
     },
     relay_paths: relayPaths,
@@ -475,7 +480,7 @@ test.describe('operator live room', () => {
     await expect(page.getByText(/Connect a real encoder or meeting source/)).toBeVisible()
   })
 
-  test('shows remote ingest health and local default fallback', async ({ page }) => {
+  test('shows remote ingest health and an honest no-source state', async ({ page }) => {
     await openLive(page)
     await expect(page.getByRole('heading', { name: 'Remote ingest' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Project Hosted Relay' })).toBeVisible()
@@ -484,9 +489,13 @@ test.describe('operator live room', () => {
     await expect(page.getByText(/Outbound only/)).toBeVisible()
     await expect(page.getByText('Ready', { exact: true }).first()).toBeVisible()
 
+    // Bug B5: with no relay paths and no configured LiveSource, the legacy
+    // rtmp://127.0.0.1 placeholder must not be presented as a usable
+    // fallback -- CivicCast never runs an RTMP listener there.
     await openLive(page, { relays: [] })
-    await expect(page.getByText('Local default')).toBeVisible()
-    await expect(page.getByText(/No cloud relay is configured/)).toBeVisible()
+    await expect(page.getByText('No source configured')).toBeVisible()
+    await expect(page.getByText(/No meeting source is configured for this channel yet/)).toBeVisible()
+    await expect(page.getByText(/No cloud relay is configured/)).not.toBeVisible()
   })
 
   test('loading state is visible while configuration loads', async ({ page }) => {
@@ -619,8 +628,14 @@ test.describe('operator live room', () => {
 
     await expect(page.getByText('Pre-flight blocked')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Start Live Stream' })).toBeDisabled()
-    await expect(page.getByText(/Resolve network.unreachable/)).toBeVisible()
-    await expect(page.getByText(/Resolve operator.unconfirmed/)).toBeVisible()
+    // Field evidence (native beta candidate #17): the raw backend reason code must
+    // never reach the screen -- only the plain-English next step it maps to.
+    await expect(page.getByText(/network\.unreachable/)).not.toBeVisible()
+    await expect(page.getByText(/operator\.unconfirmed/)).not.toBeVisible()
+    await expect(
+      page.getByText(/Check the station's network cable or Wi-Fi connection/),
+    ).toBeVisible()
+    await expect(page.getByText(/Resolve the item above, then select Run pre-flight again/)).toBeVisible()
   })
 
   test('axe scan has no serious or critical violations', async ({ page }) => {

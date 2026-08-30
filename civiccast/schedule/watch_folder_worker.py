@@ -285,6 +285,36 @@ class WatchFolderWorker:
             else:
                 time.sleep(poll_seconds)
 
+    # -- Operator-triggered single-folder scan -------------------------------
+
+    def scan_now(self, config_id: str, *, now: datetime | None = None) -> WatchFolderFolderResult:
+        """Scan one config immediately, ignoring its ``poll_interval_seconds`` due-check.
+
+        Backs the staff "Scan now" action (media_lifecycle_router.py) added
+        after field evidence (candidate #17 tester report, finding 4): a
+        freshly-added watch folder shows ``Last poll: never`` with no way to
+        force an immediate check, so an operator who just dropped a file in
+        has no way to find out whether ingest is working short of waiting
+        out the poll interval. Runs the exact same per-folder pass
+        ``run_once`` uses (settle-window, degraded-state, and ingest
+        handling all unchanged) -- never a parallel path.
+
+        Raises :class:`ValueError` if ``config_id`` names no watch folder, so
+        the router can turn that into a 404 rather than a silent no-op.
+        """
+
+        resolved_now = now or self._clock()
+        if not self._settings.upload_dir:
+            raise RuntimeError(
+                "CIVICCAST_UPLOAD_DIR is not set; the watch-folder daemon has nowhere to "
+                "ingest into."
+            )
+        with self._session_factory() as session:
+            exists = session.get(WatchFolderConfig, config_id) is not None
+        if not exists:
+            raise ValueError(config_id)
+        return self._scan_one_folder(config_id, resolved_now)
+
     # -- Top-level pass ------------------------------------------------------
 
     def run_once(

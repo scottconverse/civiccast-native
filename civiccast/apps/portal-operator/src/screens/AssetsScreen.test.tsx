@@ -18,6 +18,7 @@ vi.mock('../api/client', () => ({
   packageStaffAsset: vi.fn(),
   getStaffIdentity: vi.fn(),
   getReadinessDashboard: vi.fn(),
+  uploadAssetFileWithProgress: vi.fn(),
 }))
 
 import {
@@ -202,6 +203,71 @@ describe('AssetsScreen readiness badges (S7)', () => {
       await findByRole('button', {
         name: /Open detail for Scheduled recording 2026-06-28 15:44 UTC \(asset-public\)/,
       }),
+    ).toBeTruthy()
+  })
+
+  it('clarifies that a published asset is already live even while its readiness dot is not "Ready"', async () => {
+    // Candidate #17 tester finding 6: "council-test-clip still shows 'Not
+    // ready' even after it was successfully packaged AND published."
+    const row = {
+      ...asset('asset-public'),
+      manifest_url: 'http://127.0.0.1:8000/media/vod/asset-public/playlist.m3u8',
+      published_at: '2026-08-01T12:00:00Z',
+    }
+    vi.mocked(listStaffAssets).mockResolvedValue([row])
+    vi.mocked(getReadinessDashboard).mockResolvedValue({
+      total_assets: 1,
+      ready_count: 0,
+      transcoding_count: 0,
+      missing_count: 0,
+      rejected_count: 0,
+      by_asset: [
+        {
+          asset_id: 'asset-public',
+          title: 'x',
+          readiness_state: 'not_ready',
+          readiness_reason: 'Readiness has not been computed yet.',
+          in_flight_jobs_count: 0,
+        },
+      ],
+    })
+    const { findByText } = renderScreen()
+
+    expect(await findByText('Not ready')).toBeTruthy()
+    expect(
+      await findByText(
+        'Already live on the portal — this dot tracks the optimized playback proxy, not publish status.',
+      ),
+    ).toBeTruthy()
+  })
+})
+
+describe('AssetsScreen upload control (S7 candidate #17 finding 1/2)', () => {
+  it('offers an Upload video control -- the tester\'s exact "no upload button" complaint', async () => {
+    const { findByRole } = renderScreen()
+    expect(await findByRole('button', { name: 'Upload video' })).toBeTruthy()
+  })
+
+  it('points the empty state at the upload control that now actually exists on this screen', async () => {
+    vi.mocked(listStaffAssets).mockResolvedValue([])
+    const { findByText } = renderScreen()
+    expect(await findByText(/Use Upload video above/)).toBeTruthy()
+  })
+
+  it('disables the upload form and explains why for an operator without an upload role', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue({
+      operator_id: 'dana',
+      operator_display_name: 'Dana',
+      roles: ['publish_operator'],
+    })
+    const { findByRole, findByText } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: 'Upload video' }))
+
+    expect(
+      await findByText(
+        'A records clerk, meeting operator, or support administrator role is required to upload video.',
+      ),
     ).toBeTruthy()
   })
 })

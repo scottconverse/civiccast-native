@@ -933,6 +933,25 @@ def _probed_summary_ram_gb() -> int:
         return 8
 
 
+def _probed_summary_has_gpu() -> bool:
+    """Whether the box has a real (NVML-detected) GPU, or False if probing fails.
+
+    False is the conservative/CPU-only assumption -- gates the 12B adaptive
+    summary default off rather than risking it on a box the probe could not
+    read. See ``seed_ai_model_default`` / ``detect_summary_model_default``
+    for why this matters: a false positive here would reintroduce the
+    RAM-only rule field evidence retired (12B failing on a 32GB CPU-only
+    reference station).
+    """
+
+    try:
+        from civiccast.platform import hardware
+
+        return hardware.probe().gpu is not None
+    except Exception:
+        return False
+
+
 def complete_first_admin_setup(
     request: FirstAdminSetupRequest,
     *,
@@ -951,7 +970,10 @@ def complete_first_admin_setup(
         operator_console_url=console_url or operator_console_url(),
     )
     with suppress(Exception):
-        seed_ai_model_default(system_ram_total_gb=_probed_summary_ram_gb())
+        seed_ai_model_default(
+            system_ram_total_gb=_probed_summary_ram_gb(),
+            has_gpu=_probed_summary_has_gpu(),
+        )
     return response
 
 
@@ -2368,6 +2390,11 @@ def create_source_from_setup(
 _SAMPLE_REHEARSAL_SOURCE_ID = "civiccast-sample-test-source"
 _SAMPLE_REHEARSAL_SOURCE_ENDPOINT = "rtmp://127.0.0.1/live/civiccast-sample-rehearsal"
 
+# Public alias: civiccast.app wires ``build_sample_rehearsal_source_probe``
+# below into the real pre-flight evaluator (bug B1) and needs to recognize
+# this id from outside this module without importing a private name.
+SAMPLE_REHEARSAL_SOURCE_ID = _SAMPLE_REHEARSAL_SOURCE_ID
+
 
 def create_sample_rehearsal_upload(
     *,
@@ -2441,7 +2468,7 @@ def create_sample_rehearsal_upload(
         live_source_id=sample_source.live_source_id,
         source_type=sample_source.source_type,
         message="CivicCast created a short sample video and a no-camera test source for rehearsal.",
-        next_step="Run private rehearsal and confirm the resident preview.",
+        next_step="Open System Health and select Check broadcast readiness, then confirm the resident preview.",
     )
 
 
@@ -2512,6 +2539,55 @@ def _probe_sample_rehearsal_media(
     except (FfprobeNotFoundError, FfprobeError, UnsupportedFormatError, OSError) as exc:
         return False, f"The validated rehearsal sample is no longer usable: {exc}."
     return True, f"Validated recorded sample asset {asset_id} passed the media probe."
+
+
+def build_sample_rehearsal_source_probe() -> Callable[[Any], tuple[bool, str | None]]:
+    """Return a ``SourceProbe`` that validates the bundled sample by local file.
+
+    Bug B1 (field evidence, native beta candidate #17): the shipped
+    sample-rehearsal ``LiveSource`` carries a placeholder RTMP endpoint
+    (``rtmp://127.0.0.1/live/civiccast-sample-rehearsal``, see
+    ``_SAMPLE_REHEARSAL_SOURCE_ENDPOINT`` above) that no process in this
+    product listens on -- CivicCast ships no RTMP broker, so nothing can
+    ever push media there (chicken-and-egg: the real ingest engine only
+    starts once a station commits to air, but committing to air requires
+    this same probe to already pass). Probing that endpoint over the
+    network -- the path every other, real source takes
+    (``civiccast.live.source_probe.probe_live_source``) -- can therefore
+    never pass, which made the bundled "no-camera rehearsal" unusable for
+    exactly the case it exists to cover.
+
+    This wraps the same validated-local-file check the installer's own
+    private rehearsal already runs (``_probe_sample_rehearsal_media``) so
+    ANY caller of the production pre-flight evaluator -- not just the
+    installer's internal ``/rehearsal`` flow -- gets an honest, file-backed
+    answer for this one recognized source id. Zero network hop, zero
+    dependency on any ingest engine having started first. Every other
+    source still goes through the real network probe;
+    ``civiccast.app._resolve_preflight_evaluator`` only routes to this
+    probe when the selected source is the one CivicCast itself created.
+    """
+
+    def _probe(source: Any) -> tuple[bool, str | None]:
+        if getattr(source, "live_source_id", None) != _SAMPLE_REHEARSAL_SOURCE_ID:
+            return False, "This probe only validates CivicCast's bundled sample-rehearsal source."
+        upload_dir_raw = os.environ.get("CIVICCAST_UPLOAD_DIR")
+        if not upload_dir_raw:
+            return False, (
+                "Upload storage is not ready. Open Setup and prepare storage, then create the "
+                "sample video and run pre-flight again."
+            )
+        upload_dir = Path(upload_dir_raw).expanduser().resolve()
+        media = _load_sample_rehearsal_media(upload_dir)
+        if media is None:
+            return False, (
+                "No validated sample rehearsal video exists yet. Open Setup and create the "
+                "bundled sample video, then run pre-flight again."
+            )
+        asset_id, file_path = media
+        return _probe_sample_rehearsal_media(source, asset_id=asset_id, file_path=file_path)
+
+    return _probe
 
 
 def _source_setup_endpoint(kind: str, endpoint: str) -> tuple[LiveSourceTypeValue, str]:
@@ -3451,22 +3527,53 @@ def create_acceptance_packet() -> AcceptancePacketResponse:
     )
 
 
-def build_resident_preview() -> ResidentPreview:
-    """Return the resident-facing preview target used by operator screens."""
+#: Frontend dev-server fallback only (``npm run dev`` for portal-public,
+#: which Vite serves on 5174 when 5173 -- portal-operator's dev port -- is
+#: already taken). Bug B4 (field evidence, native beta candidate #17): this
+#: was ALSO the unconditional default in production, so a packaged station
+#: -- which mounts the real portal at its own control-plane origin, see
+#: ``civiccast.app._mount_packaged_portals`` -- reported a dev-only URL
+#: nothing was serving, and simultaneously called it "not_configured" even
+#: though a real preview was one click away.
+_RESIDENT_PORTAL_DEV_FALLBACK_URL = "http://127.0.0.1:5174"
 
-    public_url = os.getenv("CIVICCAST_RESIDENT_PORTAL_URL", "http://127.0.0.1:5174")
-    configured = bool(os.getenv("CIVICCAST_RESIDENT_PORTAL_URL"))
+
+def build_resident_preview() -> ResidentPreview:
+    """Return the resident-facing preview target used by operator screens.
+
+    Mirrors ``operator_console_url()``'s own packaged-vs-dev split just
+    above: when this station has a packaged public portal
+    (``CIVICCAST_PUBLIC_PORTAL_DIST`` -- the same env var
+    ``civiccast.app._mount_packaged_portals`` checks before mounting the
+    resident portal at ``/`` on the control plane's own origin), the real
+    preview is CivicCast's own local URL, not a Vite dev-server port.
+    """
+
+    explicit_url = os.getenv("CIVICCAST_RESIDENT_PORTAL_URL")
+    packaged = bool(os.getenv("CIVICCAST_PUBLIC_PORTAL_DIST"))
+    packaged_default_url = (
+        os.getenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", "http://127.0.0.1:8000") + "/"
+    )
+    default_url = packaged_default_url if packaged else _RESIDENT_PORTAL_DEV_FALLBACK_URL
+    public_url = explicit_url or default_url
+    available = bool(explicit_url) or packaged
     return ResidentPreview(
-        status="available" if configured else "not_configured",
+        status="available" if available else "not_configured",
         public_url=public_url,
         message=(
             "Resident preview is pointed at the configured public portal."
-            if configured
-            else "Resident preview is using the local public portal URL until the station sets a public portal URL."
+            if explicit_url
+            else (
+                "Resident preview is using this station's own public portal until a "
+                "public portal URL is set."
+                if packaged
+                else "Resident preview is not configured; this station has no packaged "
+                "public portal and no public portal URL set."
+            )
         ),
         next_step=(
             "Open the preview before the meeting and confirm residents can see the broadcast page."
-            if configured
+            if available
             else "Set CIVICCAST_RESIDENT_PORTAL_URL when the public portal has a station URL."
         ),
     )

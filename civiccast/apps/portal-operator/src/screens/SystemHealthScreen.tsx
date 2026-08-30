@@ -123,9 +123,13 @@ function RehearsalPanel({ report }: { report: RehearsalReport }) {
       style={{ background: 'var(--cc-info-soft)', border: '1px solid var(--cc-info)' }}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="m-0 text-base font-semibold">Rehearsal result</h2>
+        <h2 className="m-0 text-base font-semibold">Broadcast readiness check result</h2>
         <HealthPill color={report.safe_to_broadcast} />
       </div>
+      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+        This checks configuration, storage, and the bundled sample video -- it does not play
+        video in this screen. Use Open resident preview to see what residents will see.
+      </p>
       <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
         {report.message}
       </p>
@@ -1450,21 +1454,21 @@ export function SystemHealthScreen() {
                 className="rounded-md px-3 py-2 font-semibold"
                 style={{ background: canRunMeetingRehearsal ? 'var(--cc-ink)' : 'var(--cc-surface-3)', color: canRunMeetingRehearsal ? 'var(--cc-ink-inv)' : 'var(--cc-ink-3)' }}
               >
-                Run private rehearsal
+                Check broadcast readiness
               </button>
             </div>
           </section>
 
           {staffIdentityQuery.isSuccess && !canRunMeetingRehearsal && (
             <div className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}>
-              Private broadcast rehearsal requires the meeting operator role. Health checks remain visible.
+              Checking broadcast readiness requires the meeting operator role. Health checks remain visible.
             </div>
           )}
 
           {rehearsal.data && <RehearsalPanel report={rehearsal.data} />}
           {rehearsal.error && (
             <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
-              {apiMessage(rehearsal.error, 'Private rehearsal failed.')}
+              {apiMessage(rehearsal.error, 'The broadcast readiness check failed.')}
             </div>
           )}
 

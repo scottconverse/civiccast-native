@@ -3276,6 +3276,15 @@ Media lifecycle worker audit trail (dry-run entries included).
 - Request body: none
 - Responses: 200 `Array<LifecycleAuditEntryResponse>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/media-lifecycle/browse-folders`
+
+List subdirectories of a path, for the non-technical watch-folder picker.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `path` (query, optional): `string | null`
+- Request body: none
+- Responses: 200 `FolderBrowseResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/media-lifecycle/missing-media`
 
 Scheduled items whose backing asset is not ready within the horizon.
@@ -3355,7 +3364,7 @@ Add a watch folder (local disk, USB, or NAS/SMB path).
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: none
 - Request body: `WatchFolderConfigInput`
-- Responses: 201 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+- Responses: 201 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 monitor_path does not exist or is not readable; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `DELETE /api/staff/media-lifecycle/watch-folder-configs/{config_id}`
 
@@ -3373,7 +3382,16 @@ Update a watch folder config.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `config_id` (path, required): `string`
 - Request body: `WatchFolderConfigInput`
-- Responses: 200 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+- Responses: 200 `WatchFolderConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 422 monitor_path does not exist or is not readable; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/media-lifecycle/watch-folder-configs/{config_id}/scan-now`
+
+Scan one watch folder immediately, bypassing its poll interval.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `config_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `WatchFolderScanNowResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Watch folder config not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Watch-folder daemon not wired, or CIVICCAST_UPLOAD_DIR unset
 
 ### `POST /api/staff/migrate/apply`
 
@@ -4131,6 +4149,42 @@ Generate a sourced summary draft from committed transcript cues.
 - Request body: `SummaryGenerateRequest`
 - Responses: 201 `SummaryDraft`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Local Ollama AI runtime is not reachable. Start Ollama and retry, or configure a different summary model in AI model settings.
 
+### `GET /api/staff/summaries/jobs`
+
+List summary generation jobs for operator visibility.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `meeting_id` (query, optional): `string | null`; `state` (query, optional): `'pending' | 'running' | 'complete' | 'failed' | null`
+- Request body: none
+- Responses: 200 `Array<SummaryGenerationJobRecord>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle.
+
+### `POST /api/staff/summaries/jobs`
+
+Queue async summary generation from committed transcript cues.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `SummaryGenerateRequest`
+- Responses: 201 `SummaryGenerationJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle.
+
+### `GET /api/staff/summaries/jobs/{job_id}`
+
+Get one summary generation job's status/progress.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `job_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `SummaryGenerationJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Summary generation job not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle.
+
+### `POST /api/staff/summaries/jobs/{job_id}/retry`
+
+Manually retry a failed summary generation job.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `job_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `SummaryGenerationJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Summary generation job not found; 409 Only a failed job can be manually retried; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Summary generation job store is not configured for this app instance. Restart CivicCast through create_app() or configure the store bundle.
+
 ### `GET /api/staff/summaries/review-items`
 
 List sourced summaries awaiting operator review.
@@ -4499,7 +4553,7 @@ Read CivicCast local federation metadata.
 
 ### `AiDefaultSelection`
 
-- `basis` (required): `'ram-12b' | 'ram-e4b' | 'forced-cpu'`
+- `basis` (required): `'ram-12b' | 'ram-e4b' | 'forced-cpu' | 'cpu-only'`
 - `caption_model` (required): `string`
 - `detected_ram_gb` (required): `number`
 - `rationale` (required): `string`
@@ -6460,6 +6514,20 @@ rule (S13 §5.1).
 - `recommended_tier` (required): `string`
 - `steps` (required): `Array<InstallerStep>`
 - `time_to_first_broadcast_minutes` (required): `number`
+
+### `FolderBrowseEntry`
+
+- `name` (required): `string`
+- `path` (required): `string`
+
+### `FolderBrowseResponse`
+
+- `current_path` (required): `string | null`
+- `entries` (required): `Array<FolderBrowseEntry>`
+- `error` (optional): `string | null`
+- `parent_path` (required): `string | null`
+- `readable` (required): `boolean`
+- `separator` (required): `string`
 
 ### `FollowerModerationRequest`
 
@@ -8735,7 +8803,7 @@ rule (S13 §5.1).
 - `filename` (required): `string`
 - `sha256` (optional): `string | null`
 - `size_bytes` (required): `number`
-- `upload_ref` (required): `string`
+- `upload_ref` (required): `string` -- Opaque handle for the uploaded file, issued by POST /api/public/contribute/uploads. NOT a filesystem path -- resolve it server-side via civiccast.contribute.store.resolve_contributor_upload_path.
 
 ### `SubmissionMetadataPatch`
 
@@ -8808,6 +8876,19 @@ rule (S13 §5.1).
 
 - `cues` (optional): `Array<CaptionCue>`
 - `meeting_id` (required): `string`
+
+### `SummaryGenerationJobRecord`
+
+- `attempts` (optional): `number`
+- `created_at` (required): `string`
+- `cues` (optional): `Array<CaptionCue>`
+- `job_id` (required): `string`
+- `last_error` (optional): `string`
+- `meeting_id` (required): `string`
+- `next_attempt_at` (optional): `string | null`
+- `state` (required): `'pending' | 'running' | 'complete' | 'failed'`
+- `summary_id` (optional): `string | null`
+- `updated_at` (required): `string`
 
 ### `SummaryReviewQueueResponse`
 
@@ -9223,6 +9304,16 @@ rule (S13 §5.1).
 - `retention_policy_default` (required): `string | null`
 - `settle_window_seconds` (required): `number`
 - `updated_at` (required): `string`
+
+### `WatchFolderScanNowResponse`
+
+- `config` (required): `WatchFolderConfigResponse`
+- `error` (optional): `string | null`
+- `files_failed` (required): `number`
+- `files_ingested` (required): `number`
+- `files_reprocessed` (required): `number`
+- `files_seen` (required): `number`
+- `healthy` (required): `boolean`
 
 ### `YearOverYearPoint`
 

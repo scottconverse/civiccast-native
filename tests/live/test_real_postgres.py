@@ -397,8 +397,13 @@ class TestSingleAlembicHead:
         # rechained after ``0078_agenda_item_confidence`` (rather than the
         # original 0076) so it lands after the already-merged 0078, and is
         # the current head.
-        assert heads[0] == "0080_watch_folder_daemon", (
-            f"Expected head '0080_watch_folder_daemon'; got {heads[0]!r}."
+        # Updated to ``0081_summary_generation_jobs`` (field evidence,
+        # candidate #17: async summary generation job so a legitimate
+        # multi-minute CPU-only generation survives instead of blocking or
+        # discarding an HTTP request -- civiccast/summary/job.py), chained
+        # after ``0080_watch_folder_daemon``.
+        assert heads[0] == "0081_summary_generation_jobs", (
+            f"Expected head '0081_summary_generation_jobs'; got {heads[0]!r}."
         )
 
 

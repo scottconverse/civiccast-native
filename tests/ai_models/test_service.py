@@ -40,9 +40,14 @@ def service(tmp_path: Path) -> Iterator[AiModelService]:
     try:
         # No-op first-run reader so the fixture is hermetic (never reads ambient
         # station-state); the override-fallback path has its own dedicated tests.
+        # has_gpu=True: this fixture models a box that qualifies for the 12B
+        # adaptive default (16GB RAM + a real GPU). The CPU-only-box case
+        # (has_gpu defaults False -> e4b regardless of RAM) has its own
+        # dedicated tests in test_model_selection.py / test_catalog.py.
         yield AiModelService(
             AiModelStore(factory),
             system_ram_total_gb=16,
+            has_gpu=True,
             read_first_run_override=lambda _feature: None,
         )
     finally:
@@ -90,6 +95,9 @@ def _service_with_seed(
     return AiModelService(
         AiModelStore(factory),
         system_ram_total_gb=16,
+        # has_gpu=True: these tests model a box that qualifies for the 12B
+        # adaptive default (see the `service` fixture above for why).
+        has_gpu=True,
         read_first_run_override=lambda feature: seed.get(feature),
         write_first_run_override=_write,
     )

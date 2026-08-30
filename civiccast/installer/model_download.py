@@ -267,7 +267,9 @@ def _staged_ollama_check_for(model: str, models_root: Path) -> StagedOllamaModel
     return check_staged_ollama_model(models_root, repository=repository, tag=tag)
 
 
-def summary_provisioning_tags(system_ram_total_gb: int | None = None) -> tuple[str, ...]:
+def summary_provisioning_tags(
+    system_ram_total_gb: int | None = None, *, has_gpu: bool = True
+) -> tuple[str, ...]:
     """The summary runtime tags the release provisioning must install.
 
     Driven by the SAME ``detect_summary_model_default`` the first-run seed uses, so the
@@ -275,8 +277,20 @@ def summary_provisioning_tags(system_ram_total_gb: int | None = None) -> tuple[s
     When ``system_ram_total_gb`` is ``None`` (the default), BOTH summary tags are
     returned so the adaptive default is present regardless of RAM — including the
     air-gapped path. When a specific RAM size is given, the plan still includes the tag
-    of ``detect_summary_model_default(ram)`` (asserted by the provisioning-plan test)
-    plus the conservative e4b fallback.
+    of ``detect_summary_model_default(ram, has_gpu=has_gpu)`` (asserted by the
+    provisioning-plan test) plus the conservative e4b fallback.
+
+    ``has_gpu`` defaults ``True`` here -- the OPPOSITE of the production runtime
+    default (:func:`~civiccast.ai_models.models.detect_summary_model_default`
+    defaults ``has_gpu=False``, CPU-only, because a wrong *runtime* default can pick
+    a model that fails to complete). Provisioning is asymmetric: staging an extra
+    model nobody ends up using just costs disk space, while under-provisioning
+    strands a genuinely GPU-equipped high-RAM box without 12B pre-staged (a
+    first-selection network pull instead of an instant local swap). No caller in
+    this codebase narrows provisioning by a specific RAM figure today (the real CLI
+    path always leaves ``system_ram_total_gb=None`` and stages both tags
+    unconditionally); this default only matters if a future caller narrows it, and
+    conservative-stage-more is the safer failure mode for that case.
     """
 
     from civiccast.ai_models.catalog import catalog_tier
@@ -284,7 +298,9 @@ def summary_provisioning_tags(system_ram_total_gb: int | None = None) -> tuple[s
 
     if system_ram_total_gb is None:
         return SUMMARY_MODELS
-    default_tag = catalog_tier(detect_summary_model_default(system_ram_total_gb)).model_id
+    default_tag = catalog_tier(
+        detect_summary_model_default(system_ram_total_gb, has_gpu=has_gpu)
+    ).model_id
     fallback_tag = catalog_tier("gemma4-e4b-ollama").model_id
     # Preserve 12B-before-e4b ordering; de-dupe when the default already IS e4b.
     ordered = [default_tag] + [tag for tag in (fallback_tag,) if tag != default_tag]
@@ -597,6 +613,7 @@ def download_release_models(
     cache_dir: Path | None = None,
     dry_run: bool = False,
     system_ram_total_gb: int | None = None,
+    has_gpu: bool = True,
     whisper_downloader: Callable[[Path | None], str] = _download_whisper_model,
     floor_caption_downloader: Callable[[Path | None], str] = _download_floor_caption_model,
     ollama_pull: Callable[[str], None] = _run_ollama_pull,
@@ -641,7 +658,10 @@ def download_release_models(
 
     planned = dry_run
     items: list[ModelDownloadItem] = []
-    ollama_models = (*summary_provisioning_tags(system_ram_total_gb), TRANSLATION_MODEL)
+    ollama_models = (
+        *summary_provisioning_tags(system_ram_total_gb, has_gpu=has_gpu),
+        TRANSLATION_MODEL,
+    )
     floor_spec = CAPTION_TIER_REGISTRY[FLOOR_TIER_ID].require_bound()
     # require_bound() guarantees a non-None pinned repository; narrow the
     # Optional for the ModelDownloadItem(source=...) sites below (mypy).

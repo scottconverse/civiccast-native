@@ -177,7 +177,65 @@ def test_public_upload_endpoint_returns_media_reference(
     assert payload["content_type"] == "video/quicktime"
     assert payload["size_bytes"] == len(b"video-bytes")
     assert len(payload["sha256"]) == 64
-    assert (tmp_path / "program.mov").exists()
+    # Field evidence / GauntletGate finding: upload_ref must be an opaque
+    # handle, never the absolute server path (which used to reveal the
+    # service account's profile layout) and never even the contributor's
+    # own filename (guessable -- see store.resolve_contributor_upload_path's
+    # docstring for why that mattered beyond privacy).
+    upload_ref = payload["upload_ref"]
+    assert upload_ref != "program.mov"
+    assert upload_ref != str(tmp_path / "program.mov")
+    assert "/" not in upload_ref
+    assert "\\" not in upload_ref
+    assert str(tmp_path) not in upload_ref
+    assert upload_ref.endswith(".mov")
+    assert (tmp_path / upload_ref).exists()
+    assert not (tmp_path / "program.mov").exists()
+
+
+def test_public_upload_then_submit_round_trip_succeeds_with_the_opaque_ref(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Task D / field evidence follow-up: the real two-step flow, end to end.
+
+    Every other test in this module builds its ``SubmissionMediaReference``
+    by hand (writing a file directly and passing ``str(path)``) rather than
+    going through the real ``POST /uploads`` response -- which would have
+    hidden a mismatch between what the upload endpoint now returns (an
+    opaque token) and what the submission endpoint expects to resolve. This
+    drives the actual two calls a real contributor portal makes, verbatim.
+    """
+    client = _client(monkeypatch, tmp_path)
+
+    upload_response = client.post(
+        "/api/public/contribute/uploads",
+        files={"file": ("real-program.mov", b"a-real-programs-worth-of-bytes", "video/quicktime")},
+    )
+    assert upload_response.status_code == 201, upload_response.text
+    media = upload_response.json()
+
+    submit_response = client.post("/api/public/contribute/submissions", json=_payload(media))
+    assert submit_response.status_code == 201, submit_response.text
+    receipt = submit_response.json()
+    assert receipt["state"] == "submitted"
+
+    status_response = client.get(
+        f"/api/public/contribute/submissions/{receipt['submission_id']}/status",
+        params={"receipt_token": receipt["receipt_token"]},
+    )
+    assert status_response.status_code == 200
+    assert status_response.json()["state"] == "submitted"
+
+    # The staff view proves the submission's media now points at the SAME
+    # real file the upload endpoint wrote, resolved through the opaque ref.
+    staff_view = client.get(
+        f"/api/staff/contribute/submissions/{receipt['submission_id']}",
+        headers=_STAFF_HEADERS,
+    )
+    assert staff_view.status_code == 200
+    assert staff_view.json()["media"]["upload_ref"] == media["upload_ref"]
+    assert staff_view.json()["media"]["sha256"] == media["sha256"]
 
 
 def test_public_status_requires_receipt_token(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
