@@ -200,6 +200,19 @@ class EgressDaemon:
         restart_cooldown_seconds: float = _RESTART_COOLDOWN_SECONDS,
         monotonic: Callable[[], float] | None = None,
         ts_relay_supervisor: Any | None = None,
+        # DEFECT A: the GStreamer engine's hls sinks are delivered by a
+        # supervised ffmpeg relay child (real segments + a real manifest),
+        # not a native GStreamer element — see civiccast.egress.hls_relay.
+        # None (the ffmpeg-concat engine's default) means hls sinks pass
+        # through unchanged; that engine's own EgressSink/HlsSink already
+        # writes real HLS directly.
+        hls_relay_supervisor: Any | None = None,
+        # DEFECT D: called (channel_id, command, exception) whenever one
+        # queued command raises during process_once — see process_once's
+        # per-command isolation. Wired to the operator alert surface in
+        # civiccast.egress.automation.build_channel_automation; None is a
+        # silent no-op (tests / the CLI daemon loop that don't wire alerting).
+        command_failure_hook: Callable[[str, EgressCommand, BaseException], None] | None = None,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         self._store = store
@@ -210,6 +223,8 @@ class EgressDaemon:
         # #151: persistent per-channel TS relay so encoder relaunches never
         # reset the mux session at a udp-ts headend. None = pass-through.
         self._ts_relay = ts_relay_supervisor
+        self._hls_relay = hls_relay_supervisor
+        self._command_failure_hook = command_failure_hook
         self._work_dir = work_dir
         self._source_plan_provider = source_plan_provider
         self._fallback_source_provider = fallback_source_provider
@@ -279,13 +294,49 @@ class EgressDaemon:
         self._last_cg_overlay_event_keys: dict[str, tuple[str, str, str | None]] = {}
 
     def process_once(self, channel_id: str) -> int:
-        """Process all currently queued commands for one channel."""
+        """Process all currently queued commands for one channel.
+
+        DEFECT D (found live: after a crash, later queued commands —
+        "takeover", then a "stop" — sat unprocessed with zero log activity
+        for minutes). Root cause: ``pop_pending_commands`` marks the ENTIRE
+        currently-pending batch consumed in one durable update before any of
+        it runs (see ``EgressStore.pop_pending_commands``); an unguarded
+        ``for`` loop here meant one command raising (e.g. the DEFECT A hls
+        crash, or a hls-config'd channel's ``_start`` re-raising on every
+        subsequent takeover/reload attempt because the broken sink was still
+        configured) aborted the loop, and every command AFTER it in that same
+        batch was already marked consumed — durably lost, never retried,
+        with no per-command trace of what happened. Isolating each command's
+        processing means one bad command can no longer take the rest of the
+        batch down with it; the crashed command itself is still consumed
+        (at-most-once delivery is unchanged — reissue it), but everything
+        queued alongside or after it still runs.
+        """
 
         self._poll_process(channel_id)
         self._service_backoff_relaunch(channel_id)
         commands = self._store.pop_pending_commands(channel_id)
         for command in commands:
-            self._process_command(command)
+            try:
+                self._process_command(command)
+            except Exception as exc:
+                _LOG.exception(
+                    "Egress command %s (%s) failed for channel %s; it will NOT be "
+                    "retried (already marked consumed by pop_pending_commands) but "
+                    "every other queued command for this channel this pass still runs. "
+                    "Reissue the failed command if it was still needed.",
+                    command.command_id,
+                    command.action,
+                    channel_id,
+                )
+                if self._command_failure_hook is not None:
+                    try:
+                        self._command_failure_hook(channel_id, command, exc)
+                    except Exception:  # the hook must never break command draining
+                        _LOG.exception(
+                            "command_failure_hook itself raised for channel %s; continuing.",
+                            channel_id,
+                        )
         return len(commands)
 
     def has_live_process(self, channel_id: str) -> bool:
@@ -346,6 +397,8 @@ class EgressDaemon:
                 # Operator stop = the channel is leaving air; the relay's
                 # session ends WITH the channel (relaunches never come here).
                 self._ts_relay.stop_channel(command.channel_id)
+            if self._hls_relay is not None:
+                self._hls_relay.stop_channel(command.channel_id)
             self._write_state(command.channel_id, "STOPPED")
             return
         if command.action == "drain":
@@ -373,6 +426,10 @@ class EgressDaemon:
                 # #151: route udp-ts sinks through the channel-lifetime relay so
                 # this (re)launch splices into ONE continuous mux session.
                 config = self._ts_relay.apply(config)
+            if self._hls_relay is not None:
+                # DEFECT A: route hls sinks through the supervised ffmpeg relay
+                # that actually writes segments + a manifest for this engine.
+                config = self._hls_relay.apply(config)
             existing_process = self._processes.get(channel_id)
             if existing_process is not None and _process_poll(existing_process) is None:
                 state = self._store.read_state(channel_id)
@@ -893,6 +950,8 @@ class EgressDaemon:
                 # natural plan-end (automation restarts next tick) keeps the
                 # relay so the relaunch splices into the same mux session.
                 self._ts_relay.stop_channel(channel_id)
+            if was_draining and self._hls_relay is not None:
+                self._hls_relay.stop_channel(channel_id)
             self._write_state(channel_id, "STOPPED")
             self._append_health(channel_id, "STOPPED", sink_connected={})
             return
@@ -1137,6 +1196,8 @@ class EgressDaemon:
             # #151: keep the reload request's sink URIs consistent with the
             # relay-routed URIs the running encoder was started with.
             config = self._ts_relay.apply(config)
+        if self._hls_relay is not None:
+            config = self._hls_relay.apply(config)
         try:
             source_plan = self._source_plan_provider(channel_id)
         except SourcePrepareError:

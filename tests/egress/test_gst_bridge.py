@@ -77,6 +77,63 @@ def test_sink_element_spec_rejects_rtmp() -> None:
         sink_element_spec(EgressSinkSpec(kind="rtmp", label="r", uri="rtmp://h/app"))
 
 
+def test_sink_element_spec_rtmp_error_names_supported_kinds() -> None:
+    """DEFECT B: the fallthrough error must name the supported kinds, not just
+    say the one it rejected — an operator/log-reader needs to know what to use
+    instead, not just what didn't work."""
+    with pytest.raises(ValueError, match="rtmp") as excinfo:
+        sink_element_spec(EgressSinkSpec(kind="rtmp", label="r", uri="rtmp://h/app"))
+    message = str(excinfo.value)
+    for kind in ("srt", "local-ts", "udp-ts", "file", "sdi", "hls"):
+        assert kind in message
+
+
+def test_sink_element_spec_hls_produces_a_valid_element_chain() -> None:
+    """DEFECT A: an hls sink used to fall through sink_element_spec's kind
+    dispatch straight into ``raise ValueError(f"unknown sink kind: {spec.kind}")``
+    — the exact crash the live repro hit at ``start``. It must now return a
+    genuinely wired element, not raise, even when called directly (bypassing
+    HlsRelaySupervisor.apply, which is the real production hot path — see
+    civiccast.egress.hls_relay's module docstring for why no native GStreamer
+    HLS element exists in the shipped runtime)."""
+    spec = sink_element_spec(EgressSinkSpec(kind="hls", label="Web", uri="C:/CivicCast/live/gov"))
+    assert spec.factory == "udpsink"
+    assert spec.props["host"] == "127.0.0.1"
+    assert isinstance(spec.props["port"], int)
+    assert 18_000 <= spec.props["port"] < 18_500
+
+
+def test_sink_element_spec_hls_port_is_deterministic_and_matches_the_relay() -> None:
+    """The port sink_element_spec derives for a bare hls spec must be the
+    SAME port HlsRelaySupervisor listens on for the identical sink uri — the
+    two must agree without sharing mutable state (see hls_relay_uri_for)."""
+    from civiccast.egress.hls_relay import hls_relay_uri_for
+
+    spec = EgressSinkSpec(kind="hls", label="Web", uri="C:/CivicCast/live/gov")
+    element = sink_element_spec(spec)
+    expected_uri = hls_relay_uri_for(spec.uri)
+    assert f"udp://{element.props['host']}:{element.props['port']}" == expected_uri
+    # Same uri -> same port on repeated calls (pure function, no hidden state).
+    assert sink_element_spec(spec).props["port"] == element.props["port"]
+    # A DIFFERENT channel's directory -> (almost certainly) a different port,
+    # so two channels' relays don't collide by construction.
+    other = sink_element_spec(
+        EgressSinkSpec(kind="hls", label="Web", uri="C:/CivicCast/live/other-channel")
+    )
+    assert other.props["port"] != element.props["port"]
+
+
+def test_sink_element_spec_unknown_kind_names_supported_kinds() -> None:
+    """DEFECT B: the defensive fallthrough for a truly unrecognized kind must
+    also name what IS supported (reachable only by bypassing the pydantic
+    Literal, e.g. a raw dataclass-style construction in a future caller)."""
+    spec = EgressSinkSpec.model_construct(kind="carrier-pigeon", label="x", uri="x")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="carrier-pigeon") as excinfo:
+        sink_element_spec(spec)
+    for kind in ("srt", "local-ts", "udp-ts", "file", "sdi", "hls"):
+        assert kind in str(excinfo.value)
+
+
 def test_sink_branches_from_config_builds_queue_plus_sink_and_skips_sdi() -> None:
     config = EgressConfig(
         channel_id="ch1",
@@ -93,6 +150,24 @@ def test_sink_branches_from_config_builds_queue_plus_sink_and_skips_sdi() -> Non
     assert all(branch[0].factory == "queue" for branch in branches)
     assert branches[0][1].factory == "udpsink"
     assert branches[1][1].factory == "filesink"
+
+
+def test_sink_branches_from_config_builds_a_real_branch_for_hls() -> None:
+    """DEFECT A: an hls sink in the graph builder's own sink-branch assembly
+    (the function ``graph_from_config`` actually calls) must produce a real
+    branch — not raise, not silently drop the sink the way sdi legitimately
+    does (sdi has its own delivery path; hls does not — see the module-level
+    ``sink_element_spec`` test for why)."""
+    config = EgressConfig(
+        channel_id="gov",
+        enabled=True,
+        slate_message="Please stand by",
+        sinks=[EgressSinkSpec(kind="hls", label="Web", uri="C:/CivicCast/live/gov")],
+    )
+    branches = sink_branches_from_config(config)
+    assert len(branches) == 1
+    assert branches[0][0].factory == "queue"
+    assert branches[0][1].factory == "udpsink"
 
 
 def test_graph_from_config_builds_program_playlist_and_slate() -> None:

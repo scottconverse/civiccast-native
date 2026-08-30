@@ -24,6 +24,8 @@ from civiccast.egress.compliance import (
     read_last_probe,
     run_compliance_probe,
 )
+from civiccast.egress.engine_select import gstreamer_engine_selected
+from civiccast.egress.gst.bridge import SUPPORTED_SINK_KINDS as GST_SUPPORTED_SINK_KINDS
 from civiccast.egress.headend import (
     HeadendProfile,
     apply_headend_profile,
@@ -181,6 +183,39 @@ class StaffEgressChannelDetail(BaseModel):
     latest_health: EgressHealthSample | None = None
 
 
+def _reject_unsupported_sink_kinds(config: EgressConfig) -> None:
+    """DEFECT B: refuse an unsupported sink kind AT CONFIG TIME, with a clear
+    message naming the supported kinds -- instead of accepting it with 200 OK
+    and only discovering the gap deep inside a ``start`` pass (DEFECT A: an
+    ``hls`` sink was accepted here and crashed the channel the moment an
+    operator started it; the type system advertised it, the API accepted it,
+    and the engine could not run it -- an accept-then-crash gap, the same
+    shape several other defects this week share).
+
+    Engine-aware: the ffmpeg-concat engine's ``civiccast.egress.sinks``
+    already implements every declared ``EgressSinkKind`` (including
+    ``rtmp``), so this check only narrows the accepted set when the
+    GStreamer engine (the default) is actually selected -- it must never
+    reject a kind the SELECTED engine can genuinely deliver.
+    """
+    if not gstreamer_engine_selected():
+        return
+    unsupported = sorted(
+        {sink.kind for sink in config.sinks if sink.kind not in GST_SUPPORTED_SINK_KINDS}
+    )
+    if not unsupported:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail=(
+            f"Sink kind(s) {unsupported} are not supported by the active GStreamer egress "
+            f"engine. Supported kinds: {sorted(GST_SUPPORTED_SINK_KINDS)}. Switch the "
+            "channel's sink to a supported kind, or run the ffmpeg-concat engine instead "
+            "(CIVICCAST_EGRESS_ENGINE=ffmpeg-concat) if this station needs rtmp output."
+        ),
+    )
+
+
 def _require_store(store: EgressStore | None, *, surface: str) -> EgressStore:
     if store is None:
         raise HTTPException(
@@ -298,6 +333,7 @@ def upsert_config(
                 f"channel_id {payload.channel_id!r}."
             ),
         )
+    _reject_unsupported_sink_kinds(payload)
     store.upsert_config(payload)
     result = store.get_config(channel_id)
     if result is None:
@@ -480,6 +516,7 @@ def apply_headend_profile_to_channel(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
+    _reject_unsupported_sink_kinds(updated)
     store.upsert_config(updated)
     result = store.get_config(channel_id)
     if result is None:
