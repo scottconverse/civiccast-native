@@ -57964,7 +57964,8 @@
             "type": "string",
             "maxLength": 500,
             "minLength": 1,
-            "title": "Upload Ref"
+            "title": "Upload Ref",
+            "description": "Opaque handle for the uploaded file, issued by POST /api/public/contribute/uploads. NOT a filesystem path -- resolve it server-side via civiccast.contribute.store.resolve_contributor_upload_path."
           },
           "filename": {
             "type": "string",
