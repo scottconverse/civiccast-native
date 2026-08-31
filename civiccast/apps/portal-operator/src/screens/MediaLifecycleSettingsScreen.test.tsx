@@ -30,13 +30,14 @@ import {
   ApiError,
   browseFolders,
   createWatchFolderConfig,
+  deleteRetentionPolicy,
   deleteWatchFolderConfig,
   getStorageBudget,
   listRetentionPolicies,
   listWatchFolderConfigs,
   scanWatchFolderNow,
 } from '../api/client'
-import type { WatchFolderConfigResponse } from '../types/api.generated'
+import type { AssetRetentionPolicyResponse, WatchFolderConfigResponse } from '../types/api.generated'
 import { MediaLifecycleSettingsScreen } from './MediaLifecycleSettingsScreen'
 
 afterEach(cleanup)
@@ -65,6 +66,22 @@ function watchFolderConfigFixture(
     degraded_since: null,
     last_poll_at: null,
     last_ingest_at: null,
+    created_at: '2026-08-21T00:00:00Z',
+    updated_at: '2026-08-21T00:00:00Z',
+    ...overrides,
+  }
+}
+
+function retentionRuleFixture(
+  overrides: Partial<AssetRetentionPolicyResponse> = {},
+): AssetRetentionPolicyResponse {
+  return {
+    policy_id: 'rp-1',
+    name: 'City council',
+    match_meeting_body: 'City Council',
+    retention_policy: 'permanent',
+    priority: 0,
+    enabled: true,
     created_at: '2026-08-21T00:00:00Z',
     updated_at: '2026-08-21T00:00:00Z',
     ...overrides,
@@ -242,6 +259,61 @@ describe('MediaLifecycleSettingsScreen', () => {
 
       await waitFor(() => expect(queryByRole('alertdialog')).toBeNull())
       expect(deleteWatchFolderConfig).not.toHaveBeenCalled()
+    })
+
+    it('toasts an error (not silence) when removing a watch folder fails on the server', async () => {
+      vi.mocked(listWatchFolderConfigs).mockResolvedValue([watchFolderConfigFixture()])
+      vi.mocked(deleteWatchFolderConfig).mockRejectedValue(
+        new ApiError('Delete failed', 500, 'Could not reach the storage service.'),
+      )
+      const { findByRole, queryByRole, push } = renderScreen()
+
+      fireEvent.click(
+        await findByRole('button', { name: 'Remove watch folder /mnt/nas/incoming' }),
+      )
+      fireEvent.click(await findByRole('button', { name: 'Remove folder' }))
+
+      await waitFor(() => expect(deleteWatchFolderConfig).toHaveBeenCalledWith('wf-1'))
+      // The ConfirmDialog closes onSettled regardless of outcome -- that is
+      // fine as long as the failure is surfaced elsewhere, which is what
+      // this test actually guards.
+      await waitFor(() => expect(queryByRole('alertdialog')).toBeNull())
+      await waitFor(() =>
+        expect(push).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tone: 'error',
+            message: 'Could not remove watch folder.',
+            detail: 'Could not reach the storage service.',
+          }),
+        ),
+      )
+    })
+  })
+
+  describe('Retention rule removal errors are toasted, not silent', () => {
+    it('toasts an error when removing a retention rule fails on the server', async () => {
+      vi.mocked(listRetentionPolicies).mockResolvedValue([retentionRuleFixture()])
+      vi.mocked(deleteRetentionPolicy).mockRejectedValue(
+        new ApiError('Delete failed', 500, 'Rule is still referenced by an active asset.'),
+      )
+      const { findByRole, queryByRole, push } = renderScreen()
+
+      fireEvent.click(await findByRole('button', { name: 'Remove rule City council' }))
+      const dialog = await findByRole('alertdialog')
+      expect(dialog.textContent).toContain('Remove the retention rule "City council"?')
+      fireEvent.click(await findByRole('button', { name: 'Remove rule' }))
+
+      await waitFor(() => expect(deleteRetentionPolicy).toHaveBeenCalledWith('rp-1'))
+      await waitFor(() => expect(queryByRole('alertdialog')).toBeNull())
+      await waitFor(() =>
+        expect(push).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tone: 'error',
+            message: 'Could not remove retention rule.',
+            detail: 'Rule is still referenced by an active asset.',
+          }),
+        ),
+      )
     })
   })
 

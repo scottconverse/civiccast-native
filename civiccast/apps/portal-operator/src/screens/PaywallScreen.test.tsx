@@ -256,6 +256,22 @@ describe('PaywallScreen save', () => {
   })
 })
 
+describe('PaywallScreen "Saved." banner clears on further edits', () => {
+  it('hides "Saved." as soon as the operator makes another edit after a successful save', async () => {
+    const { findByLabelText, findByRole, findByText, queryByText } = renderScreen()
+    const toggle = (await findByLabelText('Enable paywall')) as HTMLInputElement
+    fireEvent.click(toggle)
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    await waitFor(() => expect(vi.mocked(upsertPaywallConfig)).toHaveBeenCalledTimes(1))
+    expect(await findByText('Saved.')).toBeTruthy()
+
+    // react-query's mutation.isSuccess never resets on its own -- editing
+    // the form again (without saving) must hide the stale "Saved." banner.
+    fireEvent.click(toggle)
+    await waitFor(() => expect(queryByText('Saved.')).toBeNull())
+  })
+})
+
 describe('PaywallScreen delete config 2-step confirm', () => {
   it('does not delete on the first click and does delete on the second', async () => {
     const { findByRole, findByText } = renderScreen()
@@ -329,6 +345,28 @@ describe('PaywallScreen comp grant form', () => {
         }),
       ),
     )
+  })
+
+  it('does not revoke a grant on the first click and does revoke on confirm', async () => {
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.click(await findByLabelText('Enable paywall'))
+    fireEvent.change(await findByLabelText(/^Email$/i), {
+      target: { value: 'viewer@example.gov' },
+    })
+    fireEvent.change(await findByLabelText(/^Scope ID$/i), {
+      target: { value: 'asset-2026-01' },
+    })
+    fireEvent.click(await findByRole('button', { name: /issue comp grant/i }))
+    await findByText('viewer@example.gov')
+
+    // Revoking cuts a real person's access -- it must arm, not fire
+    // immediately, matching Delete config / Regenerate secret.
+    fireEvent.click(await findByRole('button', { name: /^Revoke grant/i }))
+    expect(vi.mocked(deleteAccessGrant)).not.toHaveBeenCalled()
+    expect(await findByRole('button', { name: /^Confirm revoke grant/i })).toBeTruthy()
+
+    fireEvent.click(await findByRole('button', { name: /^Confirm revoke grant/i }))
+    await waitFor(() => expect(vi.mocked(deleteAccessGrant)).toHaveBeenCalledTimes(1))
   })
 })
 

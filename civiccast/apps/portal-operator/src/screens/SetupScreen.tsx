@@ -223,9 +223,23 @@ function RecoveryKitPanel({
     setKitActionTaken(true)
   }
 
+  // window.print() returns as soon as the OS print dialog OPENS, not when it
+  // closes -- setting kitActionTaken right after calling it (the previous
+  // behavior) unlocked the acknowledge gate even if the operator immediately
+  // hit Cancel. The browser's 'afterprint' event fires only once that dialog
+  // has actually been dismissed (printed OR cancelled), so it can't perfectly
+  // distinguish "printed" from "cancelled" either -- but it is the closest
+  // signal available, and it can no longer be satisfied by a mere click.
+  // Save kit (download) is a real, synchronous, unambiguous action and keeps
+  // unlocking the gate immediately, as before.
+  useEffect(() => {
+    const handleAfterPrint = () => setKitActionTaken(true)
+    window.addEventListener('afterprint', handleAfterPrint)
+    return () => window.removeEventListener('afterprint', handleAfterPrint)
+  }, [])
+
   const print = () => {
     window.print()
-    setKitActionTaken(true)
   }
 
   return (
@@ -1297,6 +1311,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
   const markTouched = (key: string) => setTouched((current) => ({ ...current, [key]: true }))
   const [loginForm, setLoginForm] = useState<StationLoginRequest>(INITIAL_LOGIN)
   const [recoveryForm, setRecoveryForm] = useState<StationRecoveryRequest>(INITIAL_RECOVERY)
+  const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState('')
+  const [recoveryArmed, setRecoveryArmed] = useState(false)
   const [completed, setCompleted] = useState<FirstAdminSetupResponse | null>(null)
   const [authenticated, setAuthenticated] = useState<StationAuthResponse | null>(null)
 
@@ -1356,6 +1372,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
       clearSignedOutNotice()
       setAuthenticated(response)
       setRecoveryForm(INITIAL_RECOVERY)
+      setRecoveryConfirmPassword('')
+      setRecoveryArmed(false)
       void queryClient.resetQueries({ queryKey: ['staff-identity'] })
       void queryClient.invalidateQueries({ queryKey: ['system-health'] })
       onAuthenticated?.()
@@ -1582,6 +1600,10 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
             onSubmit={(event) => {
               event.preventDefault()
+              if (!recoveryArmed) {
+                setRecoveryArmed(true)
+                return
+              }
               recoveryMutation.mutate(recoveryForm)
             }}
           >
@@ -1598,7 +1620,10 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               <input
                 id="recover-admin-username"
                 value={recoveryForm.admin_username}
-                onChange={(event) => setRecoveryForm((current) => ({ ...current, admin_username: event.target.value }))}
+                onChange={(event) => {
+                  setRecoveryArmed(false)
+                  setRecoveryForm((current) => ({ ...current, admin_username: event.target.value }))
+                }}
                 className="rounded-md px-3 py-2"
                 style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
               />
@@ -1608,7 +1633,10 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               <input
                 id="recover-code"
                 value={recoveryForm.recovery_code}
-                onChange={(event) => setRecoveryForm((current) => ({ ...current, recovery_code: event.target.value }))}
+                onChange={(event) => {
+                  setRecoveryArmed(false)
+                  setRecoveryForm((current) => ({ ...current, recovery_code: event.target.value }))
+                }}
                 className="cc-mono rounded-md px-3 py-2"
                 style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
               />
@@ -1619,23 +1647,52 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
                 id="recover-new-password"
                 type="password"
                 value={recoveryForm.new_admin_password}
-                onChange={(event) => setRecoveryForm((current) => ({ ...current, new_admin_password: event.target.value }))}
+                onChange={(event) => {
+                  setRecoveryArmed(false)
+                  setRecoveryForm((current) => ({ ...current, new_admin_password: event.target.value }))
+                }}
                 className="rounded-md px-3 py-2"
                 style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
               />
             </label>
+            <label className="grid gap-1 text-sm" htmlFor="recover-confirm-new-password">
+              <span className="font-semibold">Confirm new admin password</span>
+              <input
+                id="recover-confirm-new-password"
+                type="password"
+                value={recoveryConfirmPassword}
+                onChange={(event) => {
+                  setRecoveryArmed(false)
+                  setRecoveryConfirmPassword(event.target.value)
+                }}
+                className="rounded-md px-3 py-2"
+                style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
+              />
+              {recoveryConfirmPassword !== '' && recoveryConfirmPassword !== recoveryForm.new_admin_password && (
+                <span role="alert" className="text-xs" style={{ color: 'var(--cc-err)' }}>
+                  Passwords do not match.
+                </span>
+              )}
+            </label>
+            {recoveryArmed && (
+              <p role="alert" className="m-0 text-xs font-semibold" style={{ color: 'var(--cc-err)' }}>
+                This permanently consumes one recovery code — only 8 exist for this station. Click
+                Recover account again to confirm.
+              </p>
+            )}
             <button
               type="submit"
               disabled={
                 recoveryMutation.isPending ||
                 recoveryForm.admin_username.trim() === '' ||
                 recoveryForm.recovery_code.trim() === '' ||
-                recoveryForm.new_admin_password.length < 12
+                recoveryForm.new_admin_password.length < 12 ||
+                recoveryConfirmPassword !== recoveryForm.new_admin_password
               }
               className="rounded-md px-4 py-2 text-sm font-semibold"
               style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}
             >
-              Recover account
+              {recoveryArmed ? 'Confirm — consume recovery code' : 'Recover account'}
             </button>
             {recoveryMutation.error && (
               <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
