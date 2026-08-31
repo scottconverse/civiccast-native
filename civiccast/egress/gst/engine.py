@@ -16,11 +16,20 @@ from __future__ import annotations
 import base64
 import contextlib
 import os
+import re
 import signal
 import time
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
+
+# R3 banner-PNG cleanup: the per-call unique filename ``bridge.py``'s
+# ``graphics_overlay_leg_from_config`` renders (``graphics-overlay-lower-third.
+# <uuid4-hex>.png``). Deletion of an overlay layer's image file is gated on this
+# exact pattern so cleanup can NEVER touch an operator-configured, persistent
+# image (e.g. a station-bug/logo ``image_path`` from config) -- only a file this
+# module itself renders per-start()/per-reload matches.
+_STALE_BANNER_PNG_RE = re.compile(r"^graphics-overlay-lower-third\.[0-9a-f]{32}\.png$")
 
 _CPU_DECODE_FEATURE_RANK = ",".join(
     (
@@ -211,6 +220,12 @@ class GstPlayoutEngine:
         self._overlay_compositor: Gst.Element | None = None
         self._overlay_layer_pads: dict[str, Gst.Pad] = {}
         self._overlay_layer_elements: dict[str, list[Gst.Element]] = {}
+        # R3: the image_path each currently-live layer's chain reads from, so a
+        # swap/removal can delete the file it is REPLACING once (and only once)
+        # that old chain is fully disposed -- never the file the still-live or
+        # about-to-commit chain has open. Index-aligned with
+        # ``_overlay_layer_pads``/``_overlay_layer_elements`` by layer name.
+        self._overlay_layer_image_paths: dict[str, str] = {}
         self._pending_overlay_swaps: dict[str, dict[str, Any]] = {}
         self._overlay_layer_seq = 0
         # S11 gap 9: language tag events for secondary audio must be pushed AFTER the
@@ -499,6 +514,7 @@ class GstPlayoutEngine:
             layer_pad, elements = self._instantiate_overlay_layer(layer, compositor)
             self._overlay_layer_pads[layer.name] = layer_pad
             self._overlay_layer_elements[layer.name] = elements
+            self._overlay_layer_image_paths[layer.name] = layer.image_path
 
         download = self._make(ElementSpec("d3d11download", name="graphics_overlay_download"))
         self._link(compositor, download)
@@ -1375,11 +1391,19 @@ class GstPlayoutEngine:
             GLib.source_remove(entry["timeout_id"])  # committing — cancel the watchdog
         old_pad = self._overlay_layer_pads.get(layer_name)
         old_elements = self._overlay_layer_elements.get(layer_name, [])
+        old_image_path = self._overlay_layer_image_paths.get(layer_name)
         self._overlay_layer_pads[layer_name] = entry["new_pad"]
         self._overlay_layer_elements[layer_name] = entry["new_elements"]
+        self._overlay_layer_image_paths[layer_name] = entry["layer"].image_path
         del self._pending_overlay_swaps[layer_name]
         if old_pad is not None:
+            # R3: the swap point -- the NEW layer's first buffer has just landed,
+            # so the OLD chain (about to be disposed below) is provably off-air.
+            # Delete its banner PNG only once ``_dispose_overlay_layer_pad`` has
+            # unlinked/NULL'd/removed every element reading it (best-effort: never
+            # raises, matches that method's disposal-hiccup contract).
             self._dispose_overlay_layer_pad(old_pad, old_elements)
+            self._delete_stale_overlay_png(old_image_path)
         print(
             f"CTRL graphics-overlay layer {layer_name!r} reload committed "
             f"(elements={self._element_count()})",
@@ -1419,6 +1443,11 @@ class GstPlayoutEngine:
             with contextlib.suppress(Exception):
                 GLib.source_remove(entry["timeout_id"])
         self._dispose_overlay_layer_pad(entry["new_pad"], entry["new_elements"])
+        # R3: this chain never went on-air (superseded/build-error/timeout/removed
+        # before its first buffer committed) -- its banner PNG is an orphan the
+        # moment its elements are disposed above; delete it now rather than
+        # leaking it until the next start()'s sweep.
+        self._delete_stale_overlay_png(entry["layer"].image_path)
 
     def _remove_overlay_layer(self, layer_name: str) -> None:
         """Drop a layer no longer present in a reloaded graphics-overlay leg (the
@@ -1430,8 +1459,10 @@ class GstPlayoutEngine:
             self._abort_pending_overlay_swap(layer_name, reason="removed")
         pad = self._overlay_layer_pads.pop(layer_name, None)
         elements = self._overlay_layer_elements.pop(layer_name, [])
+        image_path = self._overlay_layer_image_paths.pop(layer_name, None)
         if pad is not None:
             self._dispose_overlay_layer_pad(pad, elements)
+            self._delete_stale_overlay_png(image_path)
 
     def _dispose_overlay_layer_pad(self, pad: Gst.Pad, elements: list[Gst.Element]) -> None:
         """Tear down one now-inactive overlay layer chain: unlink from the
@@ -1451,6 +1482,34 @@ class GstPlayoutEngine:
                 self.pipeline.remove(element)
         except Exception as exc:
             print(f"WARN: graphics-overlay layer disposal incomplete: {exc!r}", flush=True)
+
+    def _delete_stale_overlay_png(self, image_path: str | None) -> None:
+        """Delete an overlay layer's rendered banner PNG once its GStreamer chain
+        is fully disposed (called only after ``_dispose_overlay_layer_pad`` has
+        unlinked/NULL'd/removed every element that had it open).
+
+        Restricted to filenames matching ``_STALE_BANNER_PNG_RE`` -- the exact
+        per-call unique pattern ``bridge.graphics_overlay_leg_from_config``
+        renders -- so this can never delete an operator-configured, persistent
+        image (e.g. a future station-bug/logo layer's ``image_path``), only a
+        file this module's own reload/swap path generated. Best-effort: a file
+        still locked by a lingering process (Windows) fails to unlink and is
+        logged, never raised -- disposal must never take a live channel off air
+        (R3, 2026-08-31: round-1's per-uuid banner filename fix left nothing to
+        delete the old ones, so a 24/7 station accumulated one PNG per
+        start()/content-reload forever on the same volume as recordings/HLS/DB)."""
+        if not image_path:
+            return
+        path = Path(image_path)
+        if not _STALE_BANNER_PNG_RE.match(path.name):
+            return
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            print(
+                f"WARN: failed to delete stale graphics-overlay banner PNG {path}: {exc!r}",
+                flush=True,
+            )
 
     def stop(self, *, force_exit_on_hang: bool = False) -> bool:
         """Time-bounded teardown. Returns True iff the pipeline reached NULL within
