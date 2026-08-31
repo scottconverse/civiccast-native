@@ -716,6 +716,41 @@ def test_configure_logging_is_idempotent_no_handler_stacking(tmp_path: Path) -> 
     assert len(rotating) == 1  # not stacked across two calls
 
 
+def test_configure_logging_routes_library_records_to_supervisor_log(tmp_path: Path) -> None:
+    """Field finding (2026-08-30, real box): PR #80's orphaned-caption-tier
+    degrade WARNING is logged by ``civiccast.native.station_runtime`` inside
+    the supervisor host process, whose only configured handler hung off
+    ``civiccast.native.supervisor`` with ``propagate=False`` -- the record
+    climbed to a handlerless root logger and reached NO on-disk log. Proves
+    the real configured logging path now lands such a record in
+    supervisor.log, and that supervisor-logger records are not duplicated."""
+
+    configure_logging(log_root=tmp_path)
+
+    logging.getLogger("civiccast.native.station_runtime").warning(
+        "orphan-tier degrade canary: %s", "captions-large-v3"
+    )
+    logging.getLogger("civiccast.native.supervisor").warning("supervisor canary line")
+
+    content = (tmp_path / "supervisor.log").read_text(encoding="utf-8")
+    assert "orphan-tier degrade canary: captions-large-v3" in content
+    assert content.count("supervisor canary line") == 1  # no double handling
+
+
+def test_configure_logging_package_root_shares_one_handler_instance(tmp_path: Path) -> None:
+    """The package-root logger must reuse the SAME handler object as the
+    supervisor logger (a second handler on the same file would race rotation
+    renames on Windows), and reconfiguring must not stack handlers on it."""
+
+    configure_logging(log_root=tmp_path)
+    logger = configure_logging(log_root=tmp_path)
+
+    package_logger = logging.getLogger("civiccast")
+    rotating = [h for h in package_logger.handlers if hasattr(h, "maxBytes")]
+    assert len(rotating) == 1
+    assert rotating[0] is logger.handlers[0]
+
+
 def test_child_log_path_is_under_the_log_root(tmp_path: Path) -> None:
     assert child_log_path("postgres", log_root=tmp_path) == tmp_path / "postgres.log"
     assert child_log_path("control_plane", log_root=tmp_path) == tmp_path / "control_plane.log"

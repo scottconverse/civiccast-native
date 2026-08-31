@@ -18,18 +18,25 @@ def _restore_supervisor_logger_state() -> None:
     on test order.
     """
 
-    logger = logging.getLogger("civiccast.native.supervisor")
-    original_handlers = list(logger.handlers)
-    original_level = logger.level
-    original_propagate = logger.propagate
+    loggers = [
+        logging.getLogger("civiccast.native.supervisor"),
+        # configure_logging also wires the package-root logger (so library
+        # records in the supervisor process reach supervisor.log); restore it
+        # the same way or caplog assertions elsewhere become order-dependent.
+        logging.getLogger("civiccast"),
+    ]
+    originals = [(lg, list(lg.handlers), lg.level, lg.propagate) for lg in loggers]
     try:
         yield
     finally:
-        for handler in list(logger.handlers):
-            logger.removeHandler(handler)
-            if handler not in original_handlers:
-                handler.close()
-        for handler in original_handlers:
-            logger.addHandler(handler)
-        logger.setLevel(original_level)
-        logger.propagate = original_propagate
+        closed: set[int] = set()
+        for lg, original_handlers, original_level, original_propagate in originals:
+            for handler in list(lg.handlers):
+                lg.removeHandler(handler)
+                if handler not in original_handlers and id(handler) not in closed:
+                    closed.add(id(handler))
+                    handler.close()
+            for handler in original_handlers:
+                lg.addHandler(handler)
+            lg.setLevel(original_level)
+            lg.propagate = original_propagate

@@ -40,6 +40,43 @@ came across and what deliberately did not.
   readiness vocabulary. Tests updated to pin the once-per-page behavior
   (`ControlRoomReadinessPanel.test.tsx`, new `LiveRoomScreen.test.tsx`
   dedupe case).
+- **The orphaned-caption-tier degrade (PR #80) is now operator-visible: its
+  WARNING actually reaches `supervisor.log`, and the station raises a
+  `caption-tier-degraded` alert in the System Health hub.** Field finding
+  (2026-08-30, real box): PR #80's fallback works — a station whose
+  `captions-large-v3` was preserved by an uninstall/reinstall upgrade but
+  lost its activation receipt degrades to the proven floor tier and starts —
+  but the `_LOG.warning` recording that decision reached NO on-disk log
+  (full-file search of `ProgramData\CivicCast\logs` found nothing), so
+  operators ran silently degraded captions. Root cause: the warning is
+  emitted by `civiccast.native.station_runtime`'s module logger inside the
+  supervisor service process, whose only configured handler hangs off
+  `civiccast.native.supervisor` with `propagate=False`; station_runtime's
+  records propagated to a handlerless root logger, and a Windows service has
+  no visible stderr for logging's `lastResort`. Fix, in two halves:
+  - `configure_logging` (`civiccast/native/supervisor/service.py`) now also
+    wires the `civiccast` package-root logger to the SAME durable rotating
+    handler instance (one handler, so rotation renames never race on
+    Windows; no duplicate lines, since the supervisor logger still stops at
+    its own handler), so every `civiccast.*` library record emitted in the
+    supervisor host process lands in `supervisor.log`.
+  - The control plane surfaces the degrade through the EXISTING S8 alert
+    hub: a new `caption-tier-degraded` `AlertConditionKind`
+    (`civiccast/alerting/models.py`; unseeded, "warning" fallback — same
+    posture as `channel-automation-failure`), raised once per startup by
+    `_build_caption_tier_startup_condition` (`civiccast/app.py`) from the
+    `CIVICCAST_CAPTION_TIER_EVENT` environment `load_native_station_environment`
+    already emits (`fallback: true` → firing, de-duped across degraded
+    restarts; a healthy start resolves a previously-firing event, guarded on
+    `_find_firing_event` so a normal boot never writes a spurious audit
+    row). Registered as a lifespan startup-condition hook because
+    `create_app()` must never touch the database. Regenerated
+    `docs/openapi.json`, `docs/API-REFERENCE.md`, and the operator console's
+    `api.generated.ts` for the new kind. Tests:
+    `tests/native/test_supervisor_service.py` (library records land in
+    `supervisor.log` via the real configured logging path; single shared
+    handler) and `tests/test_caption_tier_startup_alert.py` (fire, de-dupe,
+    resolve, no-spurious-row, garbled-env and broken-DB never raise).
 
 ### Added
 

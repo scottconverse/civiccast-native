@@ -98,6 +98,15 @@ AlertConditionKind = Literal[
     # same fire/dedupe/auto-clear contract as every other condition here.
     # Unseeded, same posture as asrun-outbox-degraded above.
     "channel-automation-failure",
+    # Field finding (2026-08-30, PR #80 follow-up): a station whose optional
+    # large caption tier was orphaned by an uninstall/reinstall upgrade
+    # degrades to the proven floor tier and starts -- but the ONLY trace was
+    # a supervisor-process log line no operator would ever see. The control
+    # plane raises this at startup from the CIVICCAST_CAPTION_TIER_EVENT
+    # environment (station_runtime's fallback record) and resolves it once a
+    # start comes up on the requested tier again. Unseeded, same "warning"
+    # fallback posture as asrun-outbox-degraded above.
+    "caption-tier-degraded",
 ]
 
 AlertChannelKind = Literal["email", "sms", "webhook"]
