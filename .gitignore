@@ -259,3 +259,7 @@ civiccast/apps/ott-native/webos/civiccast-player.js
 civiccast/apps/ott-native/roku/out/
 civiccast/apps/ott-native/tizen/out/
 civiccast/apps/ott-native/webos-out/
+
+.claude/worktrees/
+.devwalk/
+UsersscottAppDataLocalTemp*
