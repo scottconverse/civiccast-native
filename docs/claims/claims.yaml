@@ -422,9 +422,9 @@ entries:
       # goes red and requires another current-source external proof.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: b21875effd5b5bfab36b65a92f03574e0b82e264
+          blob: 50544a91533383e714dface4cdd5bdff0336966b
         - path: civiccast/egress/gst/engine.py
-          blob: 6f4bedec81c9d3633136e217aebdcbdf6f055f1a
+          blob: 0c23fe383b3553aa45812678bf32b1e67c7c46da
         - path: civiccast/egress/gst/graph.py
           blob: 398eb6b568e14c2c8d0d16292337ba5a5b506338
         - path: civiccast/egress/gst/control.py
@@ -433,7 +433,7 @@ entries:
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 4bb7ea020764f488c12e5b23b98ee4b08cadf9af
+        blob: 476c49a2f6bae56d45e66f31de4301b56aee382e
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -551,9 +551,9 @@ entries:
       # goes red and requires another current-source session-0 proof.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: b21875effd5b5bfab36b65a92f03574e0b82e264
+          blob: 50544a91533383e714dface4cdd5bdff0336966b
         - path: civiccast/egress/gst/engine.py
-          blob: 6f4bedec81c9d3633136e217aebdcbdf6f055f1a
+          blob: 0c23fe383b3553aa45812678bf32b1e67c7c46da
         - path: civiccast/egress/gst/graph.py
           blob: 398eb6b568e14c2c8d0d16292337ba5a5b506338
         - path: civiccast/egress/gst/control.py
@@ -562,7 +562,7 @@ entries:
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 4bb7ea020764f488c12e5b23b98ee4b08cadf9af
+        blob: 476c49a2f6bae56d45e66f31de4301b56aee382e
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
