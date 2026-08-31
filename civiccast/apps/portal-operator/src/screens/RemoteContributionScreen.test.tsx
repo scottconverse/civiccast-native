@@ -1,14 +1,49 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 afterEach(cleanup)
 
-import type { ContributionRoom, RemoteGuestSession, StaffIdentityResponse } from '../types/api.generated'
+vi.mock('../api/client', () => ({
+  ApiError: class ApiError extends Error {
+    status: number
+    detail?: string
+    constructor(message: string, status = 0, detail?: string) {
+      super(message)
+      this.status = status
+      this.detail = detail
+    }
+  },
+  admitContributionGuest: vi.fn(),
+  closeContributionRoom: vi.fn(),
+  contributionDiagnostics: vi.fn(),
+  createContributionRoom: vi.fn(),
+  dropContributionGuest: vi.fn(),
+  getContributionRoom: vi.fn(),
+  getRemoteContributionInstallStatus: vi.fn(),
+  getStaffIdentity: vi.fn(),
+  listContributionRooms: vi.fn(),
+  mintGuestInvite: vi.fn(),
+  muteContributionGuest: vi.fn(),
+  openContributionRoom: vi.fn(),
+  putContributionGuestOnAir: vi.fn(),
+  takeContributionGuestOffAir: vi.fn(),
+  testTurnConnectivity: vi.fn(),
+}))
+
+import type { ContributionRoom, RemoteGuestSession, RoomDetail, StaffIdentityResponse } from '../types/api.generated'
+import {
+  closeContributionRoom,
+  getContributionRoom,
+  getStaffIdentity,
+  listContributionRooms,
+} from '../api/client'
 import {
   CreateRoomForm,
   DiagnosticsView,
   GuestTray,
   InviteComposer,
+  RemoteContributionScreen,
   RoomRow,
 } from './RemoteContributionScreen'
 import { hasRole } from './contribution-format'
@@ -94,6 +129,46 @@ describe('GuestTray', () => {
     )
     expect(getByText('Guests (1)')).toBeTruthy()
     expect(getByText('Ann')).toBeTruthy()
+  })
+
+  describe('Drop requires confirmation (round-3 audit gap)', () => {
+    it('does not drop the guest until the operator confirms, naming the guest', () => {
+      const onAction = vi.fn()
+      const { getByText, getByRole } = render(
+        <GuestTray sessions={[guest()]} canOperate pending={false} onAction={onAction} />,
+      )
+      fireEvent.click(getByText('Drop'))
+
+      const dialog = getByRole('alertdialog')
+      expect(dialog.textContent).toContain('Drop Jane?')
+      expect(onAction).not.toHaveBeenCalled()
+
+      fireEvent.click(getByText('Drop guest'))
+      expect(onAction).toHaveBeenCalledWith('gs_1', 'drop')
+    })
+
+    it('names the on-air/mid-broadcast consequence when the guest is currently on air', () => {
+      const onAction = vi.fn()
+      const onAir = guest({ admitted_at: '2026-01-01T00:01:00Z', state: 'on_air' })
+      const { getByText, getByRole } = render(
+        <GuestTray sessions={[onAir]} canOperate pending={false} onAction={onAction} />,
+      )
+      fireEvent.click(getByText('Drop'))
+      const dialog = getByRole('alertdialog')
+      expect(dialog.textContent).toContain('on air right now')
+      expect(dialog.textContent).toMatch(/cuts from the broadcast/i)
+    })
+
+    it('drops nothing when the operator cancels', () => {
+      const onAction = vi.fn()
+      const { getByText, queryByRole } = render(
+        <GuestTray sessions={[guest()]} canOperate pending={false} onAction={onAction} />,
+      )
+      fireEvent.click(getByText('Drop'))
+      fireEvent.click(getByText('Cancel'))
+      expect(queryByRole('alertdialog')).toBeNull()
+      expect(onAction).not.toHaveBeenCalled()
+    })
   })
 })
 
@@ -213,5 +288,63 @@ describe('InviteComposer + CreateRoomForm + RoomRow', () => {
     expect(getByText('Live')).toBeTruthy() // room state live -> "Live" (distinct from guest "On air")
     fireEvent.click(getByText('Chamber'))
     expect(onSelect).toHaveBeenCalled()
+  })
+})
+
+function renderScreen() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <RemoteContributionScreen />
+    </QueryClientProvider>,
+  )
+}
+
+function roomDetail(overrides: Partial<RoomDetail> = {}): RoomDetail {
+  return {
+    room: ROOM,
+    invites: [],
+    sessions: [],
+    ...overrides,
+  }
+}
+
+describe('RemoteContributionScreen: Close room requires confirmation (round-3 audit gap)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getStaffIdentity).mockResolvedValue({
+      operator_id: 'op_1', operator_display_name: 'Op', token_id: 'tok_1',
+      scopes: [], roles: ['meeting_operator'],
+    })
+    vi.mocked(listContributionRooms).mockResolvedValue([ROOM])
+    vi.mocked(getContributionRoom).mockResolvedValue(roomDetail())
+  })
+
+  it('does not close the room until the operator confirms, naming the room', async () => {
+    const { findByText, findByRole, getByRole } = renderScreen()
+
+    fireEvent.click(await findByText('Chamber'))
+    fireEvent.click(await findByRole('button', { name: 'Close room' }))
+
+    const dialog = await findByRole('alertdialog')
+    expect(dialog.textContent).toContain('Close "Chamber"?')
+    expect(dialog.textContent).toMatch(/disconnected immediately/i)
+    expect(closeContributionRoom).not.toHaveBeenCalled()
+
+    fireEvent.click(getByRole('button', { name: 'Close room now' }))
+    await waitFor(() => expect(closeContributionRoom).toHaveBeenCalled())
+    expect(vi.mocked(closeContributionRoom).mock.calls[0][0]).toBe('room_1')
+  })
+
+  it('closes nothing when the operator cancels', async () => {
+    const { findByText, findByRole, getByRole, queryByRole } = renderScreen()
+
+    fireEvent.click(await findByText('Chamber'))
+    fireEvent.click(await findByRole('button', { name: 'Close room' }))
+    await findByRole('alertdialog')
+
+    fireEvent.click(getByRole('button', { name: 'Cancel' }))
+    expect(queryByRole('alertdialog')).toBeNull()
+    expect(closeContributionRoom).not.toHaveBeenCalled()
   })
 })

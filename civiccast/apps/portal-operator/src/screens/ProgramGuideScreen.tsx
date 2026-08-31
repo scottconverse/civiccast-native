@@ -8,6 +8,7 @@ import {
   listProgramSlots,
   materializeProgramLog,
 } from '../api/client'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { ProgramSlotDrawer } from '../components/programlog/ProgramSlotDrawer'
 import { useToast } from '../components/toast-context'
 import type {
@@ -361,6 +362,7 @@ function LogList({ entries }: { entries: ChannelLogEntry[] }) {
 export function ProgramGuideScreen() {
   const [channelId, setChannelId] = useState<string>(DEFAULT_CHANNEL)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
   const queryClient = useQueryClient()
   const toast = useToast()
 
@@ -537,13 +539,12 @@ export function ProgramGuideScreen() {
               disabling={disableMutation.isPending}
               onDisable={(slot) => {
                 const display = slot.title_override?.trim() || slot.asset_id
-                if (
-                  window.confirm(
-                    `Disable "${display}"? Future airings will be cancelled.`,
-                  )
-                ) {
-                  disableMutation.mutate(slot)
-                }
+                setPendingConfirm({
+                  title: `Disable "${display}"?`,
+                  body: 'All future airings from this recurring slot are cancelled from the guide immediately. Past and in-progress airings are unaffected, but nothing new will schedule until the slot is re-enabled.',
+                  confirmLabel: 'Disable slot',
+                  run: () => disableMutation.mutate(slot),
+                })
               }}
             />
           </section>
@@ -573,6 +574,20 @@ export function ProgramGuideScreen() {
               detail: `${slot.title_override?.trim() || slot.asset_id} · ${RECURRENCE_LABEL[slot.recurrence]}`,
             })
           }}
+        />
+      )}
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
         />
       )}
     </div>

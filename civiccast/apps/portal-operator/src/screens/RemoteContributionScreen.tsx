@@ -13,6 +13,7 @@
 
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import {
   ApiError,
   admitContributionGuest,
@@ -140,6 +141,7 @@ function CopyableUrl({ label, url }: { label: string; url: string }) {
 export function RemoteContributionScreen() {
   const qc = useQueryClient()
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
 
   const identityQuery = useQuery({ queryKey: ['staff-identity'], queryFn: getStaffIdentity })
   const identity = identityQuery.data
@@ -350,7 +352,14 @@ export function RemoteContributionScreen() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => closeMutation.mutate(detail.room.room_id)}
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: `Close "${detail.room.name}"?`,
+                        body: 'Every guest connected right now is disconnected immediately and the room stops accepting contribution. If the meeting is live, their video/audio drops from the broadcast the instant you confirm. You can reopen the room and re-invite guests afterward.',
+                        confirmLabel: 'Close room now',
+                        run: () => closeMutation.mutate(detail.room.room_id),
+                      })
+                    }
                     disabled={closeMutation.isPending}
                     className="rounded px-3 py-1 text-xs font-semibold"
                     style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink)' }}
@@ -418,6 +427,20 @@ export function RemoteContributionScreen() {
             <p className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>Loading diagnostics…</p>
           )}
         </Card>
+      )}
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
+        />
       )}
     </div>
   )
@@ -587,6 +610,7 @@ export function GuestTray({
   onAction: (sessionId: string, action: string) => void
 }) {
   const active = sessions.filter((s) => s.state !== 'ended' && s.state !== 'dropped')
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
   return (
     <div>
       <h4 className="mb-2 text-xs font-semibold" style={{ color: 'var(--cc-ink)' }}>
@@ -633,12 +657,41 @@ export function GuestTray({
                   {s.state === 'on_air' && (
                     <GuestButton label="Off air" onClick={() => onAction(s.session_id, 'off-air')} pending={pending} />
                   )}
-                  <GuestButton label="Drop" onClick={() => onAction(s.session_id, 'drop')} pending={pending} tone="warn" />
+                  <GuestButton
+                    label="Drop"
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: `Drop ${s.guest_display_name}?`,
+                        body:
+                          s.state === 'on_air'
+                            ? `${s.guest_display_name} is on air right now — dropping ends their connection immediately and their video/audio cuts from the broadcast mid-session. They would need a new invite to rejoin.`
+                            : `Ends ${s.guest_display_name}'s connection to this room immediately. They would need a new invite to rejoin.`,
+                        confirmLabel: 'Drop guest',
+                        run: () => onAction(s.session_id, 'drop'),
+                      })
+                    }
+                    pending={pending}
+                    tone="warn"
+                  />
                 </div>
               )}
             </li>
           ))}
         </ul>
+      )}
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
+        />
       )}
     </div>
   )

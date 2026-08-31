@@ -9,6 +9,7 @@ import {
   prepareCommit,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { ScheduleDrawer } from '../components/schedule/ScheduleDrawer'
 import { useToast } from '../components/toast-context'
 import {
@@ -789,6 +790,7 @@ export function ScheduleScreen() {
   const [view, setView] = useState<ViewMode>(() => _initialView())
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()))
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
   const queryClient = useQueryClient()
   const toast = useToast()
 
@@ -967,9 +969,12 @@ export function ScheduleScreen() {
             items={items}
             onCancel={(it) => {
               const display = it.asset_title?.trim() || it.asset_id
-              if (window.confirm(`Cancel scheduled item for "${display}"?`)) {
-                cancelMutation.mutate(it.id)
-              }
+              setPendingConfirm({
+                title: `Cancel scheduled item for "${display}"?`,
+                body: 'The item is removed from the schedule and will not air at its scheduled time. This cannot be undone — you would need to create a new scheduled item to air it again.',
+                confirmLabel: 'Cancel scheduled item',
+                run: () => cancelMutation.mutate(it.id),
+              })
             }}
           />
         ))}
@@ -1000,6 +1005,20 @@ export function ScheduleScreen() {
               detail: `${MODE_META[item.mode].label} · ${item.asset_title ?? item.asset_id} · ${localTime}`,
             })
           }}
+        />
+      )}
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
         />
       )}
     </div>
