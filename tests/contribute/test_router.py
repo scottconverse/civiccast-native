@@ -345,6 +345,83 @@ def test_staff_review_can_edit_accept_schedule_and_report(
 
 
 @_FFMPEG_SKIP
+def test_accepted_submission_asset_reaches_packageable_state(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """night-a4 field gap: accept must produce media an operator can actually air.
+
+    PR #65 (fix/contributor-accept-schedule-ingest) proved accept ingests a
+    real, retrievable library asset and made ``schedule_item_id`` non-null --
+    but its own end-to-end test never called the packaging step, so it never
+    caught that ``civiccast.app._EphemeralAssetStore`` (the store
+    ``get_postgres_store`` resolves to in throwaway/dev mode, exactly the
+    mode a quick board-demo box runs in without ``DATABASE_URL``) had no
+    ``mark_packaged``/``mark_unpublished`` methods. Packaging ANY validated
+    asset in that mode -- including one a contributor's accept had just
+    ingested -- raised ``AttributeError`` and came back as a 503 that never
+    recorded a ``manifest_url``. The submission genuinely reached "accepted"
+    with a real ``asset_id`` (this part of #65 worked), but that asset could
+    never become truly airable: no manifest, nothing to package, nothing a
+    resident could ever watch -- exactly what the field survey called "never
+    turns into an airable asset" even after #65 merged. This drives the real
+    operator sequence past where #65's own test stopped: accept, package,
+    and confirm the asset carries a real playback manifest before/while it
+    also has a real schedule item -- and that unpublish (idempotent, per
+    the Postgres sibling's contract) doesn't blow up either.
+    """
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
+    ).json()
+
+    accepted = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={"action": "accept"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    asset_id = accepted.json()["asset_id"]
+    assert asset_id
+
+    before_package = client.get(f"/api/staff/assets/{asset_id}", headers=_STAFF_HEADERS)
+    assert before_package.status_code == 200
+    assert before_package.json()["manifest_url"] is None
+
+    packaged = client.post(f"/api/staff/assets/{asset_id}/package", headers=_STAFF_HEADERS)
+    assert packaged.status_code == 200, packaged.text
+    assert packaged.json()["manifest_url"], "packaging must record a real playback manifest"
+    assert packaged.json()["manifest_url"].endswith("/playlist.m3u8")
+
+    after_package = client.get(f"/api/staff/assets/{asset_id}", headers=_STAFF_HEADERS)
+    assert after_package.status_code == 200
+    assert after_package.json()["manifest_url"] == packaged.json()["manifest_url"]
+
+    # The submission can still be sent to the schedule after packaging --
+    # the two are independent operator actions, and neither one silently
+    # breaks the other.
+    scheduled = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={
+            "action": "schedule",
+            "schedule_handoff": {
+                "channel_id": "public",
+                "requested_start": "2026-06-01T18:00:00Z",
+                "duration_seconds": 1800,
+            },
+        },
+    )
+    assert scheduled.status_code == 200, scheduled.text
+    assert scheduled.json()["schedule_handoff"]["schedule_item_id"]
+
+    # Idempotent unpublish must not 500 on a never-published, freshly
+    # packaged asset -- same contract as PostgresAssetStore.mark_unpublished.
+    unpublish = client.post(f"/api/staff/assets/{asset_id}/unpublish", headers=_STAFF_HEADERS)
+    assert unpublish.status_code == 200, unpublish.text
+    assert unpublish.json()["published_at"] is None
+
+
+@_FFMPEG_SKIP
 def test_send_to_schedule_before_accept_is_refused_not_silently_broken(
     monkeypatch: MonkeyPatch, tmp_path: Path
 ) -> None:
