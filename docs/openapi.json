@@ -10428,7 +10428,7 @@
             "description": "Submission not found"
           },
           "409": {
-            "description": "Not yet ingested / not yet accepted / schedule conflict / asset id collision"
+            "description": "Not yet ingested / not yet accepted / schedule conflict / asset id collision / another review action already in flight"
           },
           "422": {
             "description": "Invalid review request, or the contributor's media failed the broken-media probe"
@@ -12991,6 +12991,90 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/installer/sessions/revoke-others": {
+      "post": {
+        "tags": [
+          "staff",
+          "installer"
+        ],
+        "summary": "Sign out every other operator-console session, keeping this one signed in",
+        "description": "CRITICAL fix: a lost/stolen laptop's session had no revoke path.\n\nLogin and recovery deliberately APPEND to the session list rather than\nreplacing it (see the OWNER DECISION in\nciviccast.installer.station_state on ``_MAX_OPERATOR_SESSIONS``), so a\nsession from a lost device stayed valid until 20 more sign-ins evicted\nit or the station was destructively reset. This lets the signed-in\noperator end every OTHER session in one action while staying signed in\nthemselves.",
+        "operationId": "revoke_other_operator_console_sessions_api_staff_installer_sessions_revoke_others_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeOtherSessionsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/installer/recovery-kit/regenerate": {
+      "post": {
+        "tags": [
+          "staff",
+          "installer"
+        ],
+        "summary": "Mint a fresh recovery kit for the already-signed-in admin",
+        "description": "CRITICAL fix: recovery kits had no regenerate path before this.\n\nIf the browser died between first-run setup and saving the kit, the 8\ncodes were gone forever -- a later lost password meant a permanent\nlockout with no escape except the destructive, undocumented\n``CIVICCAST_ALLOW_FIRST_ADMIN_RESET`` full station wipe. This route\nrequires an already-authenticated admin (``setup_admin``, enforced by\nthe dependency above) so it can never become a second lockout-bypass --\nit is for \"I still have my password but lost my codes,\" not for\nrecovering a locked-out account.",
+        "operationId": "regenerate_operator_recovery_kit_api_staff_installer_recovery_kit_regenerate_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryKitRegenerateResponse"
                 }
               }
             }
@@ -53161,6 +53245,32 @@
         "title": "RecoveryKitContract",
         "description": "Operator-safe recovery-kit contract without secret values."
       },
+      "RecoveryKitRegenerateResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "regenerated",
+            "title": "Status"
+          },
+          "recovery_kit": {
+            "$ref": "#/components/schemas/RecoveryKit"
+          },
+          "next_step": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Next Step"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "recovery_kit",
+          "next_step"
+        ],
+        "title": "RecoveryKitRegenerateResponse",
+        "description": "One-time regenerated recovery kit for an already-authenticated admin."
+      },
       "RecurrenceSpec": {
         "properties": {
           "kind": {
@@ -53874,6 +53984,40 @@
         ],
         "title": "RestoreTableResult",
         "description": "One table's expected-vs-actual comparison from a restore drill.\n\n``expected_*`` is ``None`` for a table that showed up in the restored\ncopy but was never in the backup manifest -- an unexpected extra table\nis exactly as real a piece of drift as a missing one, and this shape\nlets :func:`civiccast.dr.restore_drill._table_results` report it without\ninventing a fake \"expected\" value."
+      },
+      "RevokeOtherSessionsResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "revoked",
+            "title": "Status"
+          },
+          "revoked_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Revoked Count"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Message"
+          },
+          "next_step": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Next Step"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "revoked_count",
+          "message",
+          "next_step"
+        ],
+        "title": "RevokeOtherSessionsResponse",
+        "description": "Result of revoking every operator-console session except the caller's."
       },
       "Rfc3161TimestampProof": {
         "properties": {

@@ -798,6 +798,136 @@ def recovery_code_correct(request: StationRecoveryRequest) -> bool:
     return _consume_recovery_code(raw, request.recovery_code)
 
 
+def revoke_other_operator_sessions(token: str) -> int:
+    """Sign out every operator-console session except the caller's own.
+
+    CRITICAL audit finding: login/recovery deliberately APPEND to
+    ``operator_console.tokens`` (see the OWNER DECISION on
+    ``_MAX_OPERATOR_SESSIONS`` above) so a routine sign-in never fratricides
+    another already-open browser. But that fix left no way for an operator to
+    deliberately end a lost/stolen laptop's session -- it would otherwise
+    stay valid until 20 more logins evict it (months, at a single-admin
+    station) or a destructive full station reset. This gives the operator a
+    real "sign out other sessions" action: it keeps exactly the session that
+    is calling it and revokes every other one, in one step.
+
+    ``token`` is the caller's own already-verified bearer token (the plain
+    value, not a hash) -- callers must resolve it from the same
+    ``Authorization`` header that ``require_any_role`` already authenticated
+    for this request. Raises :class:`StationAuthError` when ``token`` does
+    not match any current operator-console session, so a caller
+    authenticated some other way (an env-configured or DB-issued staff
+    token) can never blindly wipe every local admin browser session by
+    calling this.
+
+    Returns the number of sessions revoked (0 when the caller's session was
+    already the only one).
+    """
+
+    raw = _load_raw_state()
+    console = raw.get("operator_console")
+    if not isinstance(console, dict):
+        raise StationAuthError("No operator-console session exists to revoke.")
+    entries = _operator_token_entries(console)
+    caller_entry: dict[str, Any] | None = None
+    for entry in entries:
+        if hmac.compare_digest(
+            _hash_token(token, salt=entry["token_salt"]), entry["token_hash"]
+        ):
+            caller_entry = entry
+            break
+    if caller_entry is None:
+        raise StationAuthError("Invalid staff bearer token.")
+    revoked_count = len(entries) - 1
+    raw["operator_console"] = {
+        "tokens": [caller_entry],
+        "rotated_at": datetime.now(UTC).isoformat(),
+    }
+    _save_raw_state(raw)
+    return revoked_count
+
+
+def regenerate_recovery_kit() -> RecoveryKit:
+    """Mint a fresh 8-code recovery kit for an already-authenticated admin.
+
+    CRITICAL audit finding: the first-setup recovery kit is shown exactly
+    once. If the browser dies before the operator saves or prints it, the
+    codes are gone forever -- and a later lost password becomes a permanent
+    lockout with no escape except the destructive, undocumented
+    ``CIVICCAST_ALLOW_FIRST_ADMIN_RESET`` full station wipe. This gives a
+    signed-in admin (enforced by the router's auth dependency, NOT by this
+    function -- it performs no credential check of its own) a real "I still
+    have my password but lost/never-saved my codes" path: mint 8 new
+    plaintext codes, replace the stored hashes so every old code stops
+    working immediately, and return the new codes once. This is
+    deliberately not reachable while signed out -- it must never become a
+    second lockout-bypass alongside ``CIVICCAST_ALLOW_FIRST_ADMIN_RESET``.
+
+    Resets the acknowledge-the-kit gate (``recovery.acknowledged``) back to
+    ``False`` so the operator is walked through the same one-time save/print
+    discipline the first-setup kit uses, rather than silently trusting that
+    an old acknowledgment still applies to codes the operator has not seen.
+    """
+
+    raw = _load_raw_state()
+    profile = _profile_from_state(raw)
+    if profile is None or not raw.get("setup_complete"):
+        raise StationSetupNotCompleteError(
+            "First-admin setup is not complete, so there is no recovery kit to regenerate."
+        )
+    generated_at = datetime.now(UTC)
+    kit_id = "rk_" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")[:18]
+    recovery_codes = [_new_recovery_code() for _ in range(_RECOVERY_CODE_COUNT)]
+    existing_recovery = raw.get("recovery")
+    destination = (
+        str(existing_recovery.get("destination") or "")
+        if isinstance(existing_recovery, dict)
+        else ""
+    )
+    raw["recovery"] = {
+        "kit_id": kit_id,
+        "generated_at": generated_at.isoformat(),
+        "destination": destination,
+        "acknowledged": False,
+        "acknowledged_at": None,
+        "code_hashes": [_hash_secret(code, salt=kit_id) for code in recovery_codes],
+    }
+    station = raw.get("station")
+    if isinstance(station, dict):
+        station["recovery_kit_id"] = kit_id
+        station["recovery_kit_generated_at"] = generated_at.isoformat()
+    _save_raw_state(raw)
+
+    return RecoveryKit(
+        kit_id=kit_id,
+        generated_at=generated_at,
+        station_name=profile.station_name,
+        admin_username=profile.admin_username,
+        recovery_codes=recovery_codes,
+        instructions=[
+            "This kit REPLACES every recovery code issued before it -- the old "
+            "codes no longer work.",
+            "Print or save this kit now. It is shown only once and CivicCast "
+            "cannot show it again after this screen.",
+            "Keep it somewhere separate from the CivicCast computer.",
+            (
+                "Recovery codes are for emergencies ONLY -- use one only if the "
+                "admin password is truly lost. Each code works once, immediately "
+                "sets a new admin password, and should not be spent on routine "
+                "sign-in."
+            ),
+            "If this kit is exposed, rotate the admin password and regenerate a new kit.",
+        ],
+        excludes=[
+            "staff bearer token values",
+            "provider secret values",
+            "private keys",
+            "resident email addresses",
+            "database passwords",
+        ],
+    )
+
+
 def _load_raw_state() -> dict[str, Any]:
     path = station_state_path()
     try:

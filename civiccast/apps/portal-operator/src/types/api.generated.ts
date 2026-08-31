@@ -3552,6 +3552,12 @@ export interface RecoveryKitContract {
   rotation_path: string
 }
 
+export interface RecoveryKitRegenerateResponse {
+  status: string
+  recovery_kit: RecoveryKit
+  next_step: string
+}
+
 export interface RecurrenceSpec {
   kind: 'one_shot' | 'weekly'
   start?: string | null
@@ -3654,6 +3660,13 @@ export interface RestoreTableResult {
   expected_checksum: string | null
   actual_checksum: string | null
   matched: boolean
+}
+
+export interface RevokeOtherSessionsResponse {
+  status: string
+  revoked_count: number
+  message: string
+  next_step: string
 }
 
 export interface Rfc3161TimestampProof {

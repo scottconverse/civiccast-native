@@ -19,17 +19,23 @@ vi.mock('../api/client', () => ({
       this.detail = detail
     }
   },
+  acknowledgeRecoveryKit: vi.fn(),
   getStaffIdentity: vi.fn(),
   getStationProfile: vi.fn(),
   getStationBoxProfile: vi.fn(),
+  regenerateRecoveryKit: vi.fn(),
+  revokeOtherOperatorSessions: vi.fn(),
   updateStationProfile: vi.fn(),
 }))
 
 import {
+  acknowledgeRecoveryKit,
   ApiError,
   getStaffIdentity,
   getStationBoxProfile,
   getStationProfile,
+  regenerateRecoveryKit,
+  revokeOtherOperatorSessions,
   updateStationProfile,
 } from '../api/client'
 import { StationProfileScreen } from './StationProfileScreen'
@@ -289,5 +295,102 @@ describe('StationProfileScreen', () => {
     const { findByText, findByLabelText } = renderScreen()
     expect(await findByText(/probe failed/i)).toBeTruthy()
     expect(await findByLabelText('Station name')).toBeTruthy()
+  })
+
+  describe('Security panel', () => {
+    it('hides the session and recovery-kit actions for a read-only role', async () => {
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+      const { findByText, queryByText } = renderScreen()
+      expect(await findByText('Security')).toBeTruthy()
+      expect(await findByText(/require the setup admin role/i)).toBeTruthy()
+      expect(queryByText('Sign out other sessions')).toBeNull()
+      expect(queryByText('Regenerate recovery kit')).toBeNull()
+    })
+
+    it('signs out other sessions and reports how many were revoked, without a second confirm click', async () => {
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+      vi.mocked(revokeOtherOperatorSessions).mockResolvedValue({
+        status: 'revoked',
+        revoked_count: 2,
+        message: 'Signed out 2 other operator-console sessions. This browser stays signed in.',
+        next_step: 'Sign in again on any device that should still have access.',
+      })
+      const { findByText } = renderScreen()
+
+      fireEvent.click(await findByText('Sign out other sessions'))
+      fireEvent.click(await findByText('Confirm — sign out other sessions'))
+
+      expect(await findByText(/Signed out 2 other operator-console sessions/i)).toBeTruthy()
+      expect(revokeOtherOperatorSessions).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows an error banner when revoking other sessions fails', async () => {
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+      vi.mocked(revokeOtherOperatorSessions).mockRejectedValue(
+        new ApiError('boom', 401, 'Invalid staff bearer token.'),
+      )
+      const { findByText } = renderScreen()
+
+      fireEvent.click(await findByText('Sign out other sessions'))
+      fireEvent.click(await findByText('Confirm — sign out other sessions'))
+
+      expect(await findByText(/Invalid staff bearer token/i)).toBeTruthy()
+    })
+
+    it('regenerates the recovery kit, shows the new codes once, and requires save-or-print before Done is enabled', async () => {
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+      vi.mocked(regenerateRecoveryKit).mockResolvedValue({
+        status: 'regenerated',
+        recovery_kit: {
+          kit_id: 'rk_new123',
+          generated_at: '2026-08-31T00:00:00Z',
+          station_name: 'Pinegrove School Board',
+          admin_username: 'avery',
+          recovery_codes: ['CC-NEWCODE0001', 'CC-NEWCODE0002'],
+          instructions: ['Save or print this kit now.'],
+          excludes: ['staff bearer token values'],
+        },
+        next_step: 'Save or print this new recovery kit now -- it replaces every earlier one.',
+      })
+      vi.mocked(acknowledgeRecoveryKit).mockResolvedValue({
+        status: 'complete',
+        setup_complete: true,
+        operator_console_url: 'http://127.0.0.1:8000',
+        next_step: 'Open System Health.',
+      })
+      const { findByText, findByLabelText } = renderScreen()
+
+      fireEvent.click(await findByText('Regenerate recovery kit'))
+      fireEvent.click(await findByText('Confirm — regenerate kit'))
+
+      expect(await findByText('CC-NEWCODE0001')).toBeTruthy()
+      expect(await findByText('CC-NEWCODE0002')).toBeTruthy()
+
+      const doneButton = (await findByText('Done')) as HTMLButtonElement
+      expect(doneButton.disabled).toBe(true)
+
+      fireEvent.click(await findByText('Save kit'))
+      const confirmCheckbox = await findByLabelText(
+        /I have saved or printed the new recovery codes/i,
+      )
+      fireEvent.click(confirmCheckbox)
+      expect((await findByText('Done')).hasAttribute('disabled')).toBe(false)
+
+      fireEvent.click(await findByText('Done'))
+      await waitFor(() => expect(acknowledgeRecoveryKit).toHaveBeenCalledTimes(1))
+    })
+
+    it('shows an error banner when regenerating the recovery kit fails', async () => {
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+      vi.mocked(regenerateRecoveryKit).mockRejectedValue(
+        new ApiError('boom', 409, 'First-admin setup is not complete.'),
+      )
+      const { findByText } = renderScreen()
+
+      fireEvent.click(await findByText('Regenerate recovery kit'))
+      fireEvent.click(await findByText('Confirm — regenerate kit'))
+
+      expect(await findByText(/First-admin setup is not complete/i)).toBeTruthy()
+    })
   })
 })

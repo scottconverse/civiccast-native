@@ -58,9 +58,11 @@ from civiccast.installer.models import (
     R2ConciergeRequest,
     R2ConciergeResponse,
     RecoveryKitAcknowledgeRequest,
+    RecoveryKitRegenerateResponse,
     RehearsalReport,
     ResidentPreview,
     RestoreStatus,
+    RevokeOtherSessionsResponse,
     RollbackArtifactRequest,
     SafeToBroadcastContract,
     SampleSeedStatus,
@@ -113,7 +115,9 @@ from civiccast.installer.service import (
     read_station_setup,
     record_provider_proof,
     recover_station_admin,
+    regenerate_station_recovery_kit,
     retry_first_run_seed,
+    revoke_other_station_sessions,
     run_dr_drill,
     run_failed_update_rollback_rehearsal,
     run_first_health_check,
@@ -1372,6 +1376,88 @@ def public_station_recovery(
     except StationAuthError as exc:
         _record_setup_auth_failure(request)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+
+
+def _caller_bearer_token(request: Request) -> str:
+    """Return the raw bearer token this already-authenticated request carried.
+
+    Only used by staff routes that need to identify the caller's OWN token
+    value (not just its resolved identity) -- e.g. so a "revoke other
+    sessions" action can tell which operator-console session is the one
+    making the call. ``staff_auth_middleware`` has already verified this
+    header for every ``/api/staff/*`` request before any route handler
+    runs, so this just re-parses the same header the same way; it never
+    performs its own verification.
+    """
+
+    authorization = request.headers.get("Authorization")
+    if not authorization:  # pragma: no cover - staff_auth_middleware already rejects this
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header. Use Bearer <staff-token>.",
+        )
+    scheme, sep, token = authorization.partition(" ")
+    if not sep or scheme.lower() != "bearer" or not token.strip():
+        # pragma: no cover - staff_auth_middleware already rejects this
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Authorization header. Use Bearer <staff-token>.",
+        )
+    return token.strip()
+
+
+@staff_router.post(
+    "/sessions/revoke-others",
+    response_model=RevokeOtherSessionsResponse,
+    summary="Sign out every other operator-console session, keeping this one signed in",
+    dependencies=[Depends(require_any_role("setup_admin"))],
+)
+def revoke_other_operator_console_sessions(request: Request) -> RevokeOtherSessionsResponse:
+    """CRITICAL fix: a lost/stolen laptop's session had no revoke path.
+
+    Login and recovery deliberately APPEND to the session list rather than
+    replacing it (see the OWNER DECISION in
+    civiccast.installer.station_state on ``_MAX_OPERATOR_SESSIONS``), so a
+    session from a lost device stayed valid until 20 more sign-ins evicted
+    it or the station was destructively reset. This lets the signed-in
+    operator end every OTHER session in one action while staying signed in
+    themselves.
+    """
+
+    caller_token = _caller_bearer_token(request)
+    try:
+        return revoke_other_station_sessions(caller_token)
+    except StationAuthError as exc:
+        # The caller authenticated with something other than a station
+        # operator-console token (an env-configured or DB-issued staff
+        # token) -- there is no operator-console session of theirs to keep,
+        # so refuse rather than guess which session (if any) to preserve.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+
+
+@staff_router.post(
+    "/recovery-kit/regenerate",
+    response_model=RecoveryKitRegenerateResponse,
+    summary="Mint a fresh recovery kit for the already-signed-in admin",
+    dependencies=[Depends(require_any_role("setup_admin"))],
+)
+def regenerate_operator_recovery_kit() -> RecoveryKitRegenerateResponse:
+    """CRITICAL fix: recovery kits had no regenerate path before this.
+
+    If the browser died between first-run setup and saving the kit, the 8
+    codes were gone forever -- a later lost password meant a permanent
+    lockout with no escape except the destructive, undocumented
+    ``CIVICCAST_ALLOW_FIRST_ADMIN_RESET`` full station wipe. This route
+    requires an already-authenticated admin (``setup_admin``, enforced by
+    the dependency above) so it can never become a second lockout-bypass --
+    it is for "I still have my password but lost my codes," not for
+    recovering a locked-out account.
+    """
+
+    try:
+        return regenerate_station_recovery_kit()
+    except StationSetupNotCompleteError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @staff_router.post(

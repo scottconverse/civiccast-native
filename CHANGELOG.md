@@ -15,6 +15,29 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **Operator-console sessions had no revoke path, and a lost first-run
+  recovery kit was a permanent lockout.** Two CRITICAL findings from a
+  hostile audit of the #83 fratricide fix. (1) Login and recovery
+  deliberately APPEND a fresh token to `operator_console.tokens` instead of
+  replacing it (so a routine sign-in never signs out another already-open
+  browser), but that left no way to end a lost or stolen laptop's session on
+  purpose — it stayed valid until 20 more sign-ins evicted it (months, at a
+  single-admin station) or a destructive full reset. A new "Sign out other
+  sessions" action (`revoke_other_operator_sessions` in
+  `civiccast/installer/station_state.py`, `POST
+  /api/staff/installer/sessions/revoke-others`, a Security panel on the
+  Station Profile screen) keeps the calling session valid and revokes every
+  other one in one step. (2) The one-time first-run recovery kit had no
+  regenerate path: a browser dying before the kit was saved meant the 8
+  codes were gone forever, and a later lost password was a permanent
+  lockout with no escape but the destructive, undocumented
+  `CIVICCAST_ALLOW_FIRST_ADMIN_RESET` full-station wipe. A new "Regenerate
+  recovery kit" action (`regenerate_recovery_kit`, `POST
+  /api/staff/installer/recovery-kit/regenerate`, same Security panel)
+  requires an already-authenticated `setup_admin` — it is the "I still have
+  my password but lost my codes" path, not a lockout bypass — and mints 8
+  new codes while immediately invalidating every old one.
+
 - **Designed empty states on every operator-console screen, and the Control
   Room "banner wall" collapsed to one verdict per page.** A 38-screen field
   survey on a real box (2026-08-30) found about a dozen console pages whose

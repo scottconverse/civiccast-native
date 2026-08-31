@@ -59,10 +59,12 @@ from civiccast.installer.models import (
     ProviderReadinessReport,
     ProviderReadinessStatus,
     RecoveryKitContract,
+    RecoveryKitRegenerateResponse,
     RehearsalReport,
     ResidentPreview,
     RestoreProofItem,
     RestoreStatus,
+    RevokeOtherSessionsResponse,
     RollbackArtifactRequest,
     RollbackProofState,
     SafeToBroadcastCheckContract,
@@ -102,6 +104,12 @@ from civiccast.installer.station_state import (
 )
 from civiccast.installer.station_state import (
     recover_station_admin as persist_station_recovery,
+)
+from civiccast.installer.station_state import (
+    regenerate_recovery_kit as persist_recovery_kit_regeneration,
+)
+from civiccast.installer.station_state import (
+    revoke_other_operator_sessions as persist_other_session_revocation,
 )
 from civiccast.installer.storage import (
     EXTERNAL_DATABASE_NOT_READY_STATUSES,
@@ -1000,6 +1008,50 @@ def recover_station_admin(
     return persist_station_recovery(
         request,
         operator_console_url=console_url or operator_console_url(),
+    )
+
+
+def revoke_other_station_sessions(caller_token: str) -> RevokeOtherSessionsResponse:
+    """Sign out every operator-console session except the one calling this.
+
+    ``caller_token`` is the plain bearer token the caller's own already-
+    authenticated request carried (see civiccast.installer.router, which
+    resolves it from the same ``Authorization`` header
+    ``require_any_role("setup_admin")`` already verified for this request).
+    """
+
+    revoked_count = persist_other_session_revocation(caller_token)
+    if revoked_count == 0:
+        message = "No other operator-console sessions were signed in. This browser stays signed in."
+    else:
+        noun = "session" if revoked_count == 1 else "sessions"
+        message = (
+            f"Signed out {revoked_count} other operator-console {noun}. "
+            "This browser stays signed in."
+        )
+    return RevokeOtherSessionsResponse(
+        status="revoked",
+        revoked_count=revoked_count,
+        message=message,
+        next_step="Sign in again on any device that should still have access.",
+    )
+
+
+def regenerate_station_recovery_kit() -> RecoveryKitRegenerateResponse:
+    """Mint a fresh recovery kit for the already-signed-in local admin.
+
+    Requires the caller to already be authenticated -- enforced by the
+    router's ``require_any_role("setup_admin")`` dependency, not by this
+    function. This is the "I still have my password but lost/never-saved my
+    codes" path, not a lockout bypass: every code from the previous kit stops
+    working the instant this call succeeds.
+    """
+
+    recovery_kit = persist_recovery_kit_regeneration()
+    return RecoveryKitRegenerateResponse(
+        status="regenerated",
+        recovery_kit=recovery_kit,
+        next_step="Save or print this new recovery kit now -- it replaces every earlier one.",
     )
 
 
