@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
-import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, render } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render } from '@testing-library/react'
 
-import type { ChannelPlayoutPlan, ChannelProfile, EgressStateRow } from '../types/api.generated'
-import { EgressControlPanel, PlayoutPlanPanel } from './ChannelOpsScreen'
+import type {
+  ChannelPlayoutPlan,
+  ChannelProfile,
+  EgressStateRow,
+  GraphicsOverlayStateResponse,
+} from '../types/api.generated'
+import { EgressControlPanel, GraphicsOverlayPanel, PlayoutPlanPanel } from './ChannelOpsScreen'
 
 afterEach(cleanup)
 
@@ -89,5 +94,135 @@ describe('EgressControlPanel egress-state pill tone', () => {
     expect(renderEgressPill('ON_AIR').getByText('On air').style.background).toBe('var(--cc-ok-soft)')
     cleanup()
     expect(renderEgressPill('ERROR').getByText('Needs attention').style.background).toBe('var(--cc-err-soft)')
+  })
+})
+
+function graphicsOverlayState(overrides: Partial<GraphicsOverlayStateResponse> = {}): GraphicsOverlayStateResponse {
+  return {
+    channel_id: 'public',
+    graphics_overlay_enabled: false,
+    graphics_overlay_lower_third_text: '',
+    ...overrides,
+  }
+}
+
+describe('GraphicsOverlayPanel', () => {
+  it('reflects the returned/persisted enabled state in the toggle and badge', () => {
+    const { getByText, getByDisplayValue, queryByText } = render(
+      <GraphicsOverlayPanel
+        channelId="public"
+        state={graphicsOverlayState({ graphics_overlay_enabled: true, graphics_overlay_lower_third_text: 'Town Council -- Live' })}
+        loadError={null}
+        saving={false}
+        canEdit
+        saveError={null}
+        onSave={() => {}}
+      />,
+    )
+    expect(getByText('On air')).toBeTruthy()
+    expect(getByText('Take off air')).toBeTruthy()
+    expect(queryByText('Put on air')).toBeNull()
+    expect(getByDisplayValue('Town Council -- Live')).toBeTruthy()
+  })
+
+  it('shows Off air and Put on air when the state is disabled', () => {
+    const { getByText } = render(
+      <GraphicsOverlayPanel
+        channelId="public"
+        state={graphicsOverlayState()}
+        loadError={null}
+        saving={false}
+        canEdit
+        saveError={null}
+        onSave={() => {}}
+      />,
+    )
+    expect(getByText('Off air')).toBeTruthy()
+    expect(getByText('Put on air')).toBeTruthy()
+  })
+
+  it('requires a two-step confirm before calling the endpoint to change on-air state', () => {
+    const onSave = vi.fn()
+    const { getByText, getByPlaceholderText, queryByText } = render(
+      <GraphicsOverlayPanel
+        channelId="public"
+        state={graphicsOverlayState()}
+        loadError={null}
+        saving={false}
+        canEdit
+        saveError={null}
+        onSave={onSave}
+      />,
+    )
+    fireEvent.change(getByPlaceholderText('e.g. Town Council -- Live'), {
+      target: { value: 'Breaking: Council votes tonight' },
+    })
+    fireEvent.click(getByText('Put on air'))
+    // First click only reveals the confirm row -- the endpoint is not called yet.
+    expect(onSave).not.toHaveBeenCalled()
+    expect(getByText('Confirm: put on air')).toBeTruthy()
+
+    fireEvent.click(getByText('Confirm: put on air'))
+    expect(onSave).toHaveBeenCalledWith({
+      graphics_overlay_enabled: true,
+      graphics_overlay_lower_third_text: 'Breaking: Council votes tonight',
+    })
+    expect(queryByText('Confirm: put on air')).toBeNull()
+  })
+
+  it('cancelling the confirm row does not call the endpoint', () => {
+    const onSave = vi.fn()
+    const { getByText, getByPlaceholderText, queryByText } = render(
+      <GraphicsOverlayPanel
+        channelId="public"
+        state={graphicsOverlayState({ graphics_overlay_enabled: true, graphics_overlay_lower_third_text: 'x' })}
+        loadError={null}
+        saving={false}
+        canEdit
+        saveError={null}
+        onSave={onSave}
+      />,
+    )
+    fireEvent.click(getByText('Take off air'))
+    expect(getByText('Confirm: take off air')).toBeTruthy()
+    fireEvent.click(getByText('Cancel'))
+    expect(queryByText('Confirm: take off air')).toBeNull()
+    expect(onSave).not.toHaveBeenCalled()
+    // Cancelling stays on air -- placeholder input untouched, still exists.
+    expect(getByPlaceholderText('e.g. Town Council -- Live')).toBeTruthy()
+  })
+
+  it('disables Put on air until the operator enters banner text', () => {
+    const { getByText } = render(
+      <GraphicsOverlayPanel
+        channelId="public"
+        state={graphicsOverlayState()}
+        loadError={null}
+        saving={false}
+        canEdit
+        saveError={null}
+        onSave={() => {}}
+      />,
+    )
+    const button = getByText('Put on air') as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(getByText('Enter banner text before putting it on air.')).toBeTruthy()
+  })
+
+  it('disables editing when the operator lacks the role', () => {
+    const { getByText } = render(
+      <GraphicsOverlayPanel
+        channelId="public"
+        state={graphicsOverlayState()}
+        loadError={null}
+        saving={false}
+        canEdit={false}
+        saveError={null}
+        onSave={() => {}}
+      />,
+    )
+    expect(getByText(/requires the meeting operator or setup admin role/)).toBeTruthy()
+    const button = getByText('Put on air') as HTMLButtonElement
+    expect(button.disabled).toBe(true)
   })
 })

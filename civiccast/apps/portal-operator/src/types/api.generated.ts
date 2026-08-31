@@ -1793,6 +1793,8 @@ export interface EgressConfig {
   loudness_tolerance_lufs?: number
   slate_message: string
   canonical_profile?: CanonicalProfile
+  graphics_overlay_enabled?: boolean
+  graphics_overlay_lower_third_text?: string
 }
 
 export interface EgressHealthSample {
@@ -2145,6 +2147,17 @@ export interface GPUInfo {
   vram_free_gb: number
   driver_version: string
   cuda_version?: string | null
+}
+
+export interface GraphicsOverlayStateResponse {
+  channel_id: string
+  graphics_overlay_enabled: boolean
+  graphics_overlay_lower_third_text: string
+}
+
+export interface GraphicsOverlayUpdateRequest {
+  graphics_overlay_enabled: boolean
+  graphics_overlay_lower_third_text?: string
 }
 
 export interface GstreamerRepairResponse {

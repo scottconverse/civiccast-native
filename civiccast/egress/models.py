@@ -209,6 +209,15 @@ class EgressConfigDb(Base):
     ndi_relay_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     sdi_relay_device: Mapped[str | None] = mapped_column(String(200), nullable=True)
     slate_message: Mapped[str] = mapped_column(Text, nullable=False)
+    # S15 graphics-overlay operator control: off by default (empty string / False),
+    # so an unconfigured channel's graph stays byte-identical to before this
+    # existed. See EgressConfig.graphics_overlay_enabled / _lower_third_text.
+    graphics_overlay_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    graphics_overlay_lower_third_text: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=text("''")
+    )
     loudness_target_lufs: Mapped[float] = mapped_column(Float, nullable=False, default=-16.0)
     loudness_tolerance_lufs: Mapped[float] = mapped_column(Float, nullable=False, default=2.0)
     canonical_profile_json: Mapped[str] = mapped_column(Text, nullable=False)
@@ -436,6 +445,14 @@ class EgressConfig(BaseModel):
     loudness_tolerance_lufs: Annotated[float, Field(gt=0, le=10)] = 2.0
     slate_message: Annotated[str, Field(min_length=1, max_length=240)]
     canonical_profile: CanonicalProfile = Field(default_factory=CanonicalProfile)
+    # S15 graphics-overlay operator control (station bug + lower-third leg, PR #93):
+    # the operator-facing on/off switch and lower-third banner text. Both default
+    # off/blank so an unconfigured channel's playout graph is unaffected. Only the
+    # NEXT pipeline build (start / content-reload) picks up a change here -- see
+    # civiccast.egress.gst.bridge.graphics_overlay_leg_from_config for the wiring
+    # and its documented "not hot" limitation.
+    graphics_overlay_enabled: bool = False
+    graphics_overlay_lower_third_text: Annotated[str, Field(default="", max_length=240)] = ""
 
     @model_validator(mode="after")
     def _sink_labels_are_unique(self) -> EgressConfig:

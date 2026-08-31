@@ -35,7 +35,11 @@ from typing import Any, ClassVar, Protocol, cast
 from civiccast.captions.tap import build_audio_tap_plan
 from civiccast.egress.encoder_strategy import EncoderStartRequest, EncoderStartResult
 from civiccast.egress.errors import EncoderUnavailableError
-from civiccast.egress.gst.bridge import CaptionEmbedRequest, graph_from_config
+from civiccast.egress.gst.bridge import (
+    CaptionEmbedRequest,
+    graph_from_config,
+    graphics_overlay_leg_from_config,
+)
 from civiccast.egress.gst.encoder_probe import (
     CG_OVERLAY_ELEMENT,
     decide_encoder,
@@ -691,6 +695,7 @@ class GstPlayoutStrategy:
 
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:
         encoder_override = self._resolve_encoder_override(request, warn=True)
+        channel_dir = request.work_dir / request.channel_id
         graph = graph_from_config(
             request.config,
             request.source_plan,
@@ -699,9 +704,11 @@ class GstPlayoutStrategy:
             audio_tracks=self._audio_tracks(request.channel_id),
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=True),
+            graphics_overlay=graphics_overlay_leg_from_config(
+                request.config, render_dir=channel_dir
+            ),
         )
         graph = self._with_audio_tap(graph, request.channel_id)
-        channel_dir = request.work_dir / request.channel_id
         graph_path = channel_dir / "playout-graph.json"
         _write_graph_file(graph_path, graph_to_json(graph))
 
@@ -836,6 +843,7 @@ class GstPlayoutStrategy:
         # after a software fallback (adversarial-review BLOCKER). warn=False: the
         # fallback was already announced at start(); don't re-log every content swap.
         encoder_override = self._resolve_encoder_override(request, warn=False)
+        channel_dir = work_dir / channel_id
         graph = graph_from_config(
             request.config,
             request.source_plan,
@@ -844,9 +852,11 @@ class GstPlayoutStrategy:
             audio_tracks=self._audio_tracks(channel_id),
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=False),
+            graphics_overlay=graphics_overlay_leg_from_config(
+                request.config, render_dir=channel_dir
+            ),
         )
         graph = self._with_audio_tap(graph, channel_id)
-        channel_dir = work_dir / channel_id
         # ENG-005: a unique per-reload filename — the worker consumes (deletes) it after
         # reading, so concurrent reloads can't clobber a fixed path mid-read.
         reload_path = channel_dir / f"playout-graph.reload.{uuid.uuid4().hex}.json"
