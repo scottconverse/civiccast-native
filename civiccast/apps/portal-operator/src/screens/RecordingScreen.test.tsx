@@ -239,14 +239,14 @@ describe('RecordingScreen empty states', () => {
   it('shows the schedules empty-state copy when no schedules', async () => {
     const { findByText } = renderScreen()
     expect(
-      await findByText(/No recording schedules yet — create one below/i),
+      await findByText(/No recording schedules yet\./i),
     ).toBeTruthy()
   })
 
   it('shows the recordings empty-state copy when no recordings', async () => {
     const { findByText } = renderScreen()
     expect(
-      await findByText(/No recordings yet — schedule a recording or use Record Now/i),
+      await findByText(/No recordings yet\./i),
     ).toBeTruthy()
   })
 })

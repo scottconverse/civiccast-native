@@ -21,7 +21,11 @@ import {
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
 import { RadioCardGroup } from '../components/RadioCardGroup'
-import { readinessLabel, toneForReadiness } from './status-language'
+import {
+  READINESS_DO_NOT_BROADCAST_YET,
+  readinessLabel,
+  toneForReadiness,
+} from './status-language'
 import {
   LIVE_STATE_META,
   PREFLIGHT_LABELS,
@@ -552,6 +556,15 @@ export function PreviewPanel({
 
 export function PreflightList({ evaluation }: { evaluation: PreflightEvaluation | null }) {
   const checks = evaluation?.checks ?? []
+  // Banner-wall fix (field survey 2026-08-30): every failed check used to carry
+  // its own "DO NOT BROADCAST YET" pill, so a fresh box with several failures
+  // read as a wall of identical red banners. The page verdict is stated ONCE in
+  // the summary banner below; per-row pills render only when they say something
+  // the verdict banner does not. Failed rows keep their severity via the red
+  // border and their "Next step" line.
+  const failedCount = checks.filter(
+    (check) => readinessLabel(check.status) === READINESS_DO_NOT_BROADCAST_YET,
+  ).length
   return (
     <section className="flex flex-col gap-3">
       <div>
@@ -565,21 +578,47 @@ export function PreflightList({ evaluation }: { evaluation: PreflightEvaluation 
           Run pre-flight to populate the nine-check contract.
         </div>
       ) : (
+        <>
+        {failedCount > 0 && (
+          <div
+            className="rounded-md p-3 text-xs"
+            role="note"
+            style={{ background: 'var(--cc-err-soft)', border: '1px solid var(--cc-err)' }}
+          >
+            <strong className="block text-sm" style={{ color: 'var(--cc-err)' }}>
+              {READINESS_DO_NOT_BROADCAST_YET}
+            </strong>
+            <span>
+              {failedCount === 1
+                ? '1 pre-flight check must pass'
+                : `${failedCount} pre-flight checks must pass`}{' '}
+              before this room can go live. Each failed item below says what to do next.
+            </span>
+          </div>
+        )}
         <ul className="m-0 grid list-none gap-2 p-0">
           {checks.map((check) => (
             <li
               key={check.name}
               className="rounded-md p-3"
-              style={{ border: '1px solid var(--cc-line)' }}
+              style={{
+                border: `1px solid ${
+                  readinessLabel(check.status) === READINESS_DO_NOT_BROADCAST_YET
+                    ? 'var(--cc-err)'
+                    : 'var(--cc-line)'
+                }`,
+              }}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium">
                   {PREFLIGHT_LABELS[check.name] ?? check.name}
                 </span>
-                <StatusPill
-                  label={readinessLabel(check.status)}
-                  tone={toneForReadiness(check.status)}
-                />
+                {readinessLabel(check.status) !== READINESS_DO_NOT_BROADCAST_YET && (
+                  <StatusPill
+                    label={readinessLabel(check.status)}
+                    tone={toneForReadiness(check.status)}
+                  />
+                )}
               </div>
               {check.message && (
                 <div className="mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
@@ -594,6 +633,7 @@ export function PreflightList({ evaluation }: { evaluation: PreflightEvaluation 
             </li>
           ))}
         </ul>
+        </>
       )}
     </section>
   )

@@ -64,6 +64,7 @@ import type {
 } from '../types/api.generated'
 import { formatTimecode } from './agendas-format'
 import { hasRole } from './contribution-format'
+import { EmptyState } from '../components/EmptyState'
 
 // Spec §4 / router _AUTHOR — records_clerk or meeting_operator may CRUD,
 // publish, sync, and import.
@@ -1217,10 +1218,10 @@ function AgendasBody() {
         />
       ) : (
         !agendasQuery.isLoading && (
-          <Banner tone="info">
-            No agendas yet. Use the form above to create one — it starts as a draft and only goes
-            public once you publish it.
-          </Banner>
+          <EmptyState
+            headline="No agendas yet."
+            body="Agendas list what a meeting will cover and appear alongside its recording on the public meeting page. Create one with the form above — it stays a private draft until you publish it."
+          />
         )
       )}
     </div>

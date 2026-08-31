@@ -75,11 +75,12 @@ describe('ControlRoomReadinessPanel', () => {
         <ControlRoomReadinessPanel report={REPORT} />
       </MemoryRouter>,
     )
-    // F1: the headline AND the blocking check's pill both speak the operator
-    // language guide's sanctioned readiness words, not this panel's own fourth
-    // vocabulary ('Blocked') or the raw enum. Both saying the same phrase is
-    // the point: the overall verdict and the check that caused it agree.
-    expect(getAllByText('Do not broadcast yet')).toHaveLength(2)
+    // F1 + banner-wall fix (field survey 2026-08-30): the page verdict phrase
+    // appears exactly ONCE, in the headline banner. Blocking check rows no
+    // longer repeat it in their own pill (a fresh box showed the same red
+    // "DO NOT BROADCAST YET" five times); they carry severity via the red
+    // border, and still never invent a fourth vocabulary or leak the raw enum.
+    expect(getAllByText('Do not broadcast yet')).toHaveLength(1)
     expect(queryByText('Blocked')).toBeNull()
     expect(queryByText('blocked')).toBeNull()
     // F-RC3-7: the always-visible copy uses operator words; the evidence

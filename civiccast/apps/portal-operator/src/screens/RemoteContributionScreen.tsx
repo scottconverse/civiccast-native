@@ -51,6 +51,7 @@ import {
   roomStateLabel,
   roomStateTone,
 } from './contribution-format'
+import { EmptyState } from '../components/EmptyState'
 
 const READ_ROLES = ['setup_admin', 'support_admin', 'meeting_operator']
 const OPERATE_ROLES = ['meeting_operator']
@@ -299,9 +300,10 @@ export function RemoteContributionScreen() {
               {apiMessage(roomsQuery.error, 'Could not load rooms.')}
             </p>
           ) : rooms.length === 0 ? (
-            <p className="mt-3 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-              No contribution rooms yet.
-            </p>
+            <EmptyState
+              headline="No contribution rooms yet."
+              body="Contribution rooms let remote presenters send live video into this station from a web browser — no studio visit needed. Create a room above and its invite links appear here."
+            />
           ) : (
             <ul className="mt-3 flex flex-col gap-2">
               {rooms.map((room) => (

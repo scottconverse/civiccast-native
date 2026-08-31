@@ -13,6 +13,34 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Designed empty states on every operator-console screen, and the Control
+  Room "banner wall" collapsed to one verdict per page.** A 38-screen field
+  survey on a real box (2026-08-30) found about a dozen console pages whose
+  success-empty state rendered as a bare grey one-liner ("No devices yet.",
+  "No saved searches yet.") — technically correct, but reading as "nothing
+  there / broken" to a non-technical viewer. A new shared
+  `EmptyState` component (`src/components/EmptyState.tsx`) generalizes the
+  pattern Missing Media and Assets already had (dashed panel, headline +
+  plain-language explainer): one sentence on what the screen does for a
+  station, one on how it gets populated. Applied to Control Room Setup
+  (devices, cues), Control Room (devices, fired-cue audit), Custom Fields,
+  Remote Contribution, CG Board, CG Board Designer, Auto-schedule (saved
+  searches, dayparts, rules), Program Guide (slots, 7-day log), Recording
+  (schedules, recordings), Agendas, EPG Export, Underwriting (spots,
+  flights), Playback Policy (audit log), and the Analytics in-table empty
+  rows. Separately, the readiness surfaces stacked the same red
+  "Do not broadcast yet" phrase once per blocked check — five identical
+  banners on a fresh box. `ControlRoomReadinessPanel` and the Live Room
+  `PreflightList` now state the page verdict exactly once (headline banner /
+  a new one-line summary banner with the failed-check count); blocked rows
+  keep their severity via a red border and their existing next-step copy,
+  and the operator-language guide's five sanctioned phrases remain the only
+  readiness vocabulary. Tests updated to pin the once-per-page behavior
+  (`ControlRoomReadinessPanel.test.tsx`, new `LiveRoomScreen.test.tsx`
+  dedupe case).
+
 ### Added
 
 - **Gate A dirty lane: an uninstall-remnant reinstall gate

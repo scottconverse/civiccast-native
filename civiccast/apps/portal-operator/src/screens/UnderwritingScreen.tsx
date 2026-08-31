@@ -65,6 +65,7 @@ import {
   parseChannelsText,
   stringifyChannels,
 } from './underwriting-format'
+import { EmptyState } from '../components/EmptyState'
 
 const MANAGE_ROLES = ['publish_operator', 'setup_admin']
 const AFFIDAVIT_ROLES = ['support_admin']
@@ -1477,9 +1478,10 @@ function UnderwritingBody({ identity }: { identity: StaffIdentityResponse }) {
                     {apiMessage(spotsQuery.error, 'Could not load spots.')}
                   </Banner>
                 ) : sortedSpots.length === 0 ? (
-                  <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-                    No underwriting spots are defined yet. Use the form above to create one.
-                  </p>
+                  <EmptyState
+                    headline="No underwriting spots yet."
+                    body="Underwriting spots are the sponsor acknowledgements this station airs between programs. Create a spot with the form above and it appears here."
+                  />
                 ) : (
                   <ul className="space-y-2">
                     {sortedSpots.map((spot) => (
@@ -1553,9 +1555,10 @@ function UnderwritingBody({ identity }: { identity: StaffIdentityResponse }) {
                     {apiMessage(flightsQuery.error, 'Could not load flights.')}
                   </Banner>
                 ) : sortedFlights.length === 0 ? (
-                  <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-                    No flights are defined yet. Use the form above to create one.
-                  </p>
+                  <EmptyState
+                    headline="No flights yet."
+                    body="A flight is a sponsor's run — which spot airs, on which channels, between which dates. Create a flight with the form above and airing reports build from it."
+                  />
                 ) : (
                   <ul className="space-y-2">
                     {sortedFlights.map((flight) => (

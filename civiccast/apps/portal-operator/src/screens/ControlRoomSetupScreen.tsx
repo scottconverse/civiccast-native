@@ -9,6 +9,7 @@
 // actions (gpi_pulse / serial_send / router_take).
 
 import { useState } from 'react'
+import { EmptyState } from '../components/EmptyState'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ApiError,
@@ -508,7 +509,12 @@ export function ControlRoomSetupScreen() {
               </div>
             </div>
           ))}
-          {devicesQuery.isSuccess && devices.length === 0 && <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>No devices yet.</div>}
+          {devicesQuery.isSuccess && devices.length === 0 && (
+            <EmptyState
+              headline="No devices registered yet."
+              body="Control Room Setup is where this station registers the switchers, routers, and other production gear it drives during a meeting. Register your first device with the form above to see it here."
+            />
+          )}
         </div>
       </section>
 
@@ -574,7 +580,10 @@ export function ControlRoomSetupScreen() {
               </div>
             ))}
             {surfaceQuery.isSuccess && (surfaceQuery.data?.cues ?? []).length === 0 && (
-              <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>This surface has no cues yet.</div>
+              <EmptyState
+                headline="No cues on this surface yet."
+                body="Cues are the one-press actions an operator fires during a meeting — take a camera, roll a slate, pulse a device. Add the first cue with the form above and it appears here."
+              />
             )}
           </div>
         </section>
