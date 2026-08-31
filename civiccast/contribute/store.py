@@ -33,6 +33,7 @@ from civiccast.contribute.models import (
     ProducerActivityReport,
     ProducerActivityReportRow,
     PublicSubmissionStatus,
+    ReviewAction,
     SubmissionAgreementCatalog,
     SubmissionMediaReference,
     SubmissionNotificationPreference,
@@ -78,6 +79,21 @@ class ContributorUploadAlreadyUsedError(Exception):
     """
 
 
+class ContributorReviewConflictError(RuntimeError):
+    """Raised when a review action is not valid for a submission's current state.
+
+    CRITICAL/MAJOR field evidence: ``accept``/``schedule`` used to be guarded
+    only by a plain state read the router took OUTSIDE the store's lock
+    (TOCTOU), and ``mark_under_review``/``request_changes`` had no guard at
+    all -- either could revert an already-scheduled/published submission
+    while the real schedule item stayed live. This is a distinct type from
+    ``ValueError`` (which ``_apply_review`` still raises for payload-shape
+    problems like a missing media-gate pass) so the router maps it to 409
+    Conflict -- the resource's state conflicts with the request, the
+    request body itself is well-formed.
+    """
+
+
 class ContributorSubmissionStore:
     """Thread-safe JSON-backed submission queue for external producers."""
 
@@ -85,6 +101,22 @@ class ContributorSubmissionStore:
         self._path = path
         self._lock = Lock()
         self._submissions = self._load()
+        # CRITICAL race fix: in-process reservation ledger keyed by
+        # submission_id -> the ReviewAction currently claiming it. Only
+        # ``accept``/``schedule`` use this (see ``reserve_review_action``) --
+        # both trigger a REAL external side effect (ffprobe ingest into the
+        # asset library / a real civiccast.schedule_items row) BEFORE this
+        # store is asked to persist anything, so a state guard applied only
+        # at persist time is too late: two concurrent accepts would already
+        # have created two real assets before either write landed. Reserving
+        # first closes that off -- the second concurrent/duplicate request
+        # is rejected before it can touch the asset/schedule store at all.
+        # In-memory and per-process by design (same trade-off as
+        # ``civiccast.auth.rate_limit.AuthRateLimiter``): it only needs to
+        # arbitrate requests racing within this process, which is exactly
+        # where the race lives (both requests go through the same FastAPI
+        # app/threadpool).
+        self._in_flight: dict[str, str] = {}
 
     def current_agreement(self) -> SubmissionAgreementCatalog:
         return _CURRENT_AGREEMENT.model_copy(deep=True)
@@ -232,6 +264,56 @@ class ContributorSubmissionStore:
             if submission is None:
                 raise ContributorSubmissionNotFoundError(submission_id)
             return submission.model_copy(deep=True)
+
+    def reserve_review_action(self, submission_id: str, action: ReviewAction) -> ContributorSubmission:
+        """Atomically claim ``action`` for ``submission_id`` before its real side effect runs.
+
+        CRITICAL fix: the router must call this BEFORE it runs
+        ``_ingest_accepted_media`` / ``_create_real_schedule_item`` for
+        ``accept``/``schedule`` -- both create a REAL external resource (a
+        library asset; a ``civiccast.schedule_items`` row) that a later,
+        persist-time-only guard cannot un-create. Under one lock this
+        (a) proves ``submission_id`` exists, (b) proves no OTHER review
+        action is already in flight for it, and (c) proves the submission's
+        CURRENT state actually allows ``action`` (the same check
+        :func:`_ensure_review_action_allowed` applies at persist time) --
+        then claims the reservation, so a second concurrent/duplicate
+        request is rejected here, cleanly, before it can touch the asset or
+        schedule store at all.
+
+        The caller MUST release the reservation exactly once, on every
+        path -- success or failure -- via :meth:`release_reservation`
+        (``review_contributor_submission`` does this in a ``finally``).
+
+        Raises:
+            ContributorSubmissionNotFoundError: no such submission.
+            ContributorReviewConflictError: another review action is
+                already in flight for this submission, or the submission's
+                current state does not allow ``action``.
+        """
+        with self._lock:
+            submission = self._submissions.get(submission_id)
+            if submission is None:
+                raise ContributorSubmissionNotFoundError(submission_id)
+            in_flight = self._in_flight.get(submission_id)
+            if in_flight is not None:
+                raise ContributorReviewConflictError(
+                    f"Another review action ({in_flight!r}) is already being processed "
+                    "for this submission. Try again once it completes."
+                )
+            _ensure_review_action_allowed(submission, action)
+            self._in_flight[submission_id] = action
+            return submission.model_copy(deep=True)
+
+    def release_reservation(self, submission_id: str) -> None:
+        """Release a reservation :meth:`reserve_review_action` claimed.
+
+        Idempotent -- releasing a submission with no active reservation (it
+        was never reserved, or was already released) is a no-op, so the
+        router's ``finally`` can call this unconditionally.
+        """
+        with self._lock:
+            self._in_flight.pop(submission_id, None)
 
     def review_submission(
         self,
@@ -592,6 +674,55 @@ def _verified_media_reference(
     return media.model_copy(update={"sha256": recomputed_sha256, "size_bytes": size_bytes})
 
 
+# CRITICAL/MAJOR field evidence: a submission that is already ``scheduled``
+# or ``published`` is a REAL, live booking on the schedule -- reverting it
+# to ``under_review``/``needs_changes`` (or double-accepting/double-
+# scheduling it) leaves that real booking dangling while the contributor
+# portal and operator queue disagree about what state it is in. ``decline``
+# is deliberately NOT blocked at ``scheduled`` here -- that is exactly the
+# state the BLOCKER fix (pulling the real schedule item, see
+# civiccast.contribute.router._cancel_schedule_item_for_decline) needs to
+# reach; it IS blocked at ``published`` because a recording that has
+# already aired/gone public cannot be un-published by a decline.
+_LOCKED_FOR_REVERSION_STATES = frozenset({"scheduled", "published"})
+
+
+def _ensure_review_action_allowed(submission: ContributorSubmission, action: ReviewAction) -> None:
+    """Guard a review ``action`` against the submission's CURRENT state.
+
+    Raises :class:`ContributorReviewConflictError` when ``action`` is not
+    valid from ``submission.state``. Called from two places, both inside
+    ``ContributorSubmissionStore._lock``, so the check is atomic with either
+    the reservation (:meth:`ContributorSubmissionStore.reserve_review_action`)
+    or the actual persisted mutation (:func:`_apply_review`) -- never a
+    read that a concurrent request can invalidate before it is acted on.
+    """
+    state = submission.state
+    if action == "accept":
+        if state not in {"submitted", "under_review", "needs_changes"}:
+            raise ContributorReviewConflictError(f"Cannot accept a submission in state {state!r}.")
+    elif action == "schedule":
+        if state in _LOCKED_FOR_REVERSION_STATES:
+            raise ContributorReviewConflictError(
+                "This submission has already been sent to the schedule."
+            )
+        if state != "accepted":
+            raise ContributorReviewConflictError(
+                "This submission has not been ingested into the asset library yet. "
+                "Accept it before sending it to the schedule."
+            )
+    elif action in {"mark_under_review", "request_changes"}:
+        if state in _LOCKED_FOR_REVERSION_STATES:
+            raise ContributorReviewConflictError(
+                f"Cannot move a {state!r} submission back into review -- it is already "
+                "a live booking on the schedule."
+            )
+    elif action == "decline" and state == "published":
+        raise ContributorReviewConflictError(
+            "Cannot decline a submission that has already been published."
+        )
+
+
 def _apply_review(
     submission: ContributorSubmission,
     request: ContributorReviewRequest,
@@ -599,6 +730,7 @@ def _apply_review(
     ingested_asset_id: str | None = None,
     created_schedule_item_id: str | None = None,
 ) -> ContributorSubmission:
+    _ensure_review_action_allowed(submission, request.action)
     values = submission.model_dump()
     if request.metadata_patch is not None:
         values.update(request.metadata_patch.model_dump(exclude_none=True))

@@ -23,6 +23,7 @@ from civiccast.contribute.models import (
     SubmissionNotificationPreference,
 )
 from civiccast.contribute.store import (
+    ContributorReviewConflictError,
     ContributorSubmissionStore,
     reap_unreferenced_contributor_uploads,
     resolve_contributor_upload_path,
@@ -182,11 +183,19 @@ def test_schedule_before_accept_is_refused(upload_dir: Path) -> None:
     """A submission with no library asset yet (never accepted, or accept
     never completed a real ingest) cannot be sent to the schedule -- this is
     what stops schedule_item_id from ever coming back null on a reported
-    success."""
+    success.
+
+    CRITICAL fix: the state guard now runs before either the media-gate
+    check or the schedule_item_id check inside ``_apply_review``, and
+    raises ``ContributorReviewConflictError`` (mapped to 409 by the
+    router) rather than the payload-shape ``ValueError`` -- a submission
+    that is not yet ``accepted`` is a state conflict, not a malformed
+    request.
+    """
     store = ContributorSubmissionStore()
     receipt = store.create_submission(_submission_payload(upload_dir))
 
-    with pytest.raises(ValueError, match="must be accepted"):
+    with pytest.raises(ContributorReviewConflictError, match="Accept it"):
         store.review_submission(
             receipt.submission_id,
             ContributorReviewRequest(

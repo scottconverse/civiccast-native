@@ -36,6 +36,7 @@ from civiccast.contribute.models import (
 )
 from civiccast.contribute.store import (
     ContributorReceiptTokenError,
+    ContributorReviewConflictError,
     ContributorStoreError,
     ContributorSubmissionNotFoundError,
     ContributorSubmissionStore,
@@ -973,6 +974,72 @@ def _create_real_schedule_item(
     return str(response.id)
 
 
+def _cancel_schedule_item_for_decline(
+    submission: ContributorSubmission,
+    *,
+    schedule_store: Any,
+) -> None:
+    """Pull a declined submission's real schedule item off the schedule.
+
+    BLOCKER field evidence: declining an already-accepted-and-scheduled
+    submission used to be a bare state flip in the JSON store -- the real
+    ``civiccast.schedule_items`` row ``_create_real_schedule_item`` created
+    earlier was never touched, so a "declined" recording still aired at its
+    scheduled time. This is called from
+    :func:`review_contributor_submission` BEFORE the decline is persisted
+    (see there) -- pulling it off the schedule is the urgent safety action,
+    so a decline is refused (rather than silently recorded) if the item
+    cannot actually be pulled, instead of ever leaving a submission marked
+    "declined" while it is still a live, airable booking.
+
+    A no-op when the submission never reached a real schedule item (most
+    declines: nothing to cancel). Cancelling an already-cancelled/already-
+    published item is itself a no-op (`PostgresScheduleStore.cancel` /
+    `_EphemeralScheduleStore.cancel`), so a decline that races a manual
+    cancel is safe, and a decline retried after a transient failure is safe.
+    """
+    if submission.schedule_handoff is None:
+        return
+    schedule_item_id = submission.schedule_handoff.schedule_item_id
+    if not schedule_item_id:
+        return
+    if schedule_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "This submission has a real schedule booking, and schedule storage "
+                "is not ready to cancel it, so declining cannot be completed safely "
+                "right now. " + _ASSET_STORE_NOT_READY_DETAIL
+            ),
+        )
+
+    from civiccast.schedule.store import ScheduleItemNotFoundError
+
+    try:
+        parsed_id = uuid.UUID(schedule_item_id)
+    except ValueError:
+        # Not expected -- _create_real_schedule_item always persists a real
+        # UUID string -- but never let an unparsable id silently let a live
+        # booking through un-cancelled.
+        _LOG.error(
+            "submission %r has an unparsable schedule_item_id %r; refusing to "
+            "decline without being able to cancel it",
+            submission.submission_id,
+            schedule_item_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "This submission's schedule booking could not be identified, so "
+                "declining cannot be completed safely right now. Contact support."
+            ),
+        ) from None
+
+    # Already gone (manually cancelled, or deleted) -- nothing left to pull.
+    with contextlib.suppress(ScheduleItemNotFoundError):
+        schedule_store.cancel(parsed_id)
+
+
 @staff_router.post(
     "/submissions/{submission_id}/review",
     response_model=ContributorSubmission,
@@ -981,7 +1048,8 @@ def _create_real_schedule_item(
         404: {"description": "Submission not found"},
         409: {
             "description": (
-                "Not yet ingested / not yet accepted / schedule conflict / asset id collision"
+                "Not yet ingested / not yet accepted / schedule conflict / asset id collision / "
+                "another review action already in flight"
             )
         },
         422: {
@@ -1008,60 +1076,96 @@ def review_contributor_submission(
     effective_request = request
     ingested_asset_id: str | None = None
     created_schedule_item_id: str | None = None
-
-    if request.action == "accept":
-        if current.state not in {"submitted", "under_review", "needs_changes"}:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Cannot accept a submission in state {current.state!r}.",
-            )
-        if asset_store is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=_ASSET_STORE_NOT_READY_DETAIL,
-            )
-        gate, ingested_asset_id = _ingest_accepted_media(current, request, asset_store=asset_store)
-        effective_request = request.model_copy(update={"broken_media_gate": gate})
-    elif request.action == "schedule":
-        if current.asset_id is None:
-            # TASK B: refuse rather than report success -- this is exactly
-            # the operator action that field evidence candidate #17 found
-            # missing from both the response and the resident-facing message.
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "This submission has not been ingested into the asset library "
-                    "yet. Accept it before sending it to the schedule."
-                ),
-            )
-        if schedule_store is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=_ASSET_STORE_NOT_READY_DETAIL,
-            )
-        created_schedule_item_id = _create_real_schedule_item(
-            current, request, schedule_store=schedule_store
-        )
-
+    # CRITICAL race fix: accept/schedule each trigger a REAL external side
+    # effect (ffprobe ingest into the asset library / a real
+    # civiccast.schedule_items row) below. A concurrent/duplicate request
+    # for the SAME submission must be rejected before it can reach either
+    # side effect -- a guard applied only when persisting to the JSON store
+    # (after the side effect already ran) is too late; it would have
+    # already created a second real asset or a second real, live schedule
+    # booking. reserve_review_action claims the submission atomically
+    # (existence + no other action already in flight + the submission's
+    # current state actually allows this action) before any side effect
+    # runs; release_reservation in the `finally` below always releases it,
+    # on every exit path.
+    reserved = False
     try:
-        return store.review_submission(
-            submission_id,
-            effective_request,
-            ingested_asset_id=ingested_asset_id,
-            created_schedule_item_id=created_schedule_item_id,
-        )
-    except ContributorSubmissionNotFoundError as exc:
-        raise _submission_not_found(submission_id) from exc
-    except ContributorStoreError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc),
-        ) from exc
+        if request.action == "accept":
+            try:
+                current = store.reserve_review_action(submission_id, "accept")
+            except ContributorSubmissionNotFoundError as exc:
+                raise _submission_not_found(submission_id) from exc
+            except ContributorReviewConflictError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+                ) from exc
+            reserved = True
+            if asset_store is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=_ASSET_STORE_NOT_READY_DETAIL,
+                )
+            gate, ingested_asset_id = _ingest_accepted_media(
+                current, request, asset_store=asset_store
+            )
+            effective_request = request.model_copy(update={"broken_media_gate": gate})
+        elif request.action == "schedule":
+            try:
+                current = store.reserve_review_action(submission_id, "schedule")
+            except ContributorSubmissionNotFoundError as exc:
+                raise _submission_not_found(submission_id) from exc
+            except ContributorReviewConflictError as exc:
+                # TASK B: refuse rather than report success -- this is exactly
+                # the operator action that field evidence candidate #17 found
+                # missing from both the response and the resident-facing
+                # message. Also covers CRITICAL: an already-scheduled/
+                # published submission, or a concurrent duplicate schedule
+                # request, is refused here too.
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+                ) from exc
+            reserved = True
+            if schedule_store is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=_ASSET_STORE_NOT_READY_DETAIL,
+                )
+            created_schedule_item_id = _create_real_schedule_item(
+                current, request, schedule_store=schedule_store
+            )
+        elif request.action == "decline":
+            # BLOCKER fix: pull any real schedule item off the schedule
+            # BEFORE the decline is persisted -- see
+            # _cancel_schedule_item_for_decline's docstring for why this
+            # ordering matters.
+            _cancel_schedule_item_for_decline(current, schedule_store=schedule_store)
+
+        try:
+            return store.review_submission(
+                submission_id,
+                effective_request,
+                ingested_asset_id=ingested_asset_id,
+                created_schedule_item_id=created_schedule_item_id,
+            )
+        except ContributorSubmissionNotFoundError as exc:
+            raise _submission_not_found(submission_id) from exc
+        except ContributorReviewConflictError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+        except ContributorStoreError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+    finally:
+        if reserved:
+            store.release_reservation(submission_id)
 
 
 @staff_router.get(
