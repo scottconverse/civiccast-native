@@ -64,6 +64,7 @@ from civiccast.native.runtime_closure import (  # noqa: E402
     FACTORY_PLUGIN,
     NON_FACTORY_PLUGINS,
     REQUIRED_FACTORIES,
+    STAGED_OPTIONAL_FACTORIES,
     assert_authorized_distributions,
     assert_no_gpl_distributions,
     resolve_pe_closure,
@@ -1285,7 +1286,14 @@ def build(*, stage: Path, out: Path, requirements: Path | None = None) -> dict[s
         for factory in (CONDITIONAL_FACTORIES | ABSENCE_TOLERANT_FACTORIES)
         if factory in origins
     }
-    required = REQUIRED_FACTORIES | optional_present
+    # STAGED_OPTIONAL_FACTORIES (S15 CG-lite / native-HLS: compositor,
+    # textoverlay, clockoverlay, hlssink3) are unconditionally folded in here,
+    # unlike optional_present above -- their plugins are known to be in the
+    # pinned wheels (verified against the staged tree, not merely hoped for),
+    # so a future build where one goes missing should refuse loudly via
+    # select_plugin_seeds' MissingPluginError rather than silently ship a
+    # tree that quietly dropped a plugin the product means to carry.
+    required = REQUIRED_FACTORIES | optional_present | STAGED_OPTIONAL_FACTORIES
     seeds = select_plugin_seeds(origins, required=required)
     print(f"  {len(seeds)} seed plugin file(s) selected")
 
