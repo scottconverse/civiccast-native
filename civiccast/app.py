@@ -1411,6 +1411,32 @@ class _EphemeralAssetStore:
     def get_staff_row(self, asset_id: str) -> StaffAssetRow | None:
         return self._staff_rows.get(asset_id)
 
+    def mark_packaged(self, asset_id: str, manifest_url: str) -> StaffAssetRow:
+        """Ephemeral-store sibling of :meth:`PostgresAssetStore.mark_packaged`.
+
+        Field gap (night-a4): ``schedule.router.package_staff_asset`` calls
+        this on whatever store ``get_postgres_store`` resolves to -- in
+        throwaway/dev mode (``CIVICCAST_ALLOW_EPHEMERAL_STORES=1``) that is
+        this class, not :class:`PostgresAssetStore`. Before this method
+        existed, packaging ANY validated asset in that mode -- including one
+        a contributor submission's ``accept`` action had just ingested --
+        raised ``AttributeError`` and surfaced as a 503 that never recorded a
+        ``manifest_url``. The asset row existed (accept itself worked, see
+        :func:`civiccast.contribute.router._ingest_accepted_media`) but could
+        never reach the packaged/playable state that makes it actually
+        airable, so it sat on the schedule with nothing to play. Mirrors the
+        Postgres sibling: only ``manifest_url`` changes; ``state`` stays
+        ``"validated"`` (this codebase encodes "packaged" as manifest_url
+        being set, not as a separate state value -- see
+        :meth:`civiccast.schedule.store.PostgresAssetStore.mark_packaged`).
+        """
+        row = self._staff_rows.get(asset_id)
+        if row is None:
+            raise AssetNotFoundError(asset_id)
+        updated = row.model_copy(update={"manifest_url": manifest_url})
+        self._staff_rows[asset_id] = updated
+        return updated
+
     def mark_published(self, asset_id: str, *, published_at: datetime) -> StaffAssetRow:
         row = self._staff_rows.get(asset_id)
         if row is None:
@@ -1423,6 +1449,27 @@ class _EphemeralAssetStore:
         if public is not None:
             self._public_assets[asset_id] = public.model_copy(update={"published_at": published_at})
         return updated
+
+    def mark_unpublished(self, asset_id: str) -> StaffAssetRow:
+        """Ephemeral-store sibling of :meth:`PostgresAssetStore.mark_unpublished`.
+
+        Same rationale as :meth:`mark_packaged` above -- ``schedule.router.
+        unpublish_asset`` calls this through the same ``get_postgres_store``
+        dependency, and it was missing here too. Idempotent, matching the
+        Postgres sibling's contract (unpublishing an already-unpublished
+        asset is a no-op).
+        """
+        row = self._staff_rows.get(asset_id)
+        if row is None:
+            raise AssetNotFoundError(asset_id)
+        if row.published_at is not None:
+            updated = row.model_copy(update={"published_at": None})
+            self._staff_rows[asset_id] = updated
+            row = updated
+        public = self._public_assets.get(asset_id)
+        if public is not None and public.published_at is not None:
+            self._public_assets[asset_id] = public.model_copy(update={"published_at": None})
+        return row
 
     def list_broken(self) -> builtins.list[StaffAssetRow]:
         """Ephemeral-store sibling of :meth:`PostgresAssetStore.list_broken`.
