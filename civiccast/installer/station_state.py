@@ -831,9 +831,7 @@ def revoke_other_operator_sessions(token: str) -> int:
     entries = _operator_token_entries(console)
     caller_entry: dict[str, Any] | None = None
     for entry in entries:
-        if hmac.compare_digest(
-            _hash_token(token, salt=entry["token_salt"]), entry["token_hash"]
-        ):
+        if hmac.compare_digest(_hash_token(token, salt=entry["token_salt"]), entry["token_hash"]):
             caller_entry = entry
             break
     if caller_entry is None:

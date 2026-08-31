@@ -274,7 +274,9 @@ class ContributorSubmissionStore:
                 raise ContributorSubmissionNotFoundError(submission_id)
             return submission.model_copy(deep=True)
 
-    def reserve_review_action(self, submission_id: str, action: ReviewAction) -> ContributorSubmission:
+    def reserve_review_action(
+        self, submission_id: str, action: ReviewAction
+    ) -> ContributorSubmission:
         """Atomically claim ``action`` for ``submission_id`` before its real side effect runs.
 
         CRITICAL fix: the router must call this BEFORE it runs

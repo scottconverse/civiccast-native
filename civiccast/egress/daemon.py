@@ -1156,8 +1156,7 @@ class EgressDaemon:
             current_source_label=previous_source_label,
             current_proof_event_id=proof_event_id,
             last_error=(
-                force_fallback_reason
-                or "FFmpeg child exited non-zero; relaunching encoder."
+                force_fallback_reason or "FFmpeg child exited non-zero; relaunching encoder."
             ),
         )
         self._append_health(channel_id, "STARTING", sink_connected={}, dropped_frames=0)

@@ -1136,9 +1136,7 @@ def review_contributor_submission(
             # message. Also covers CRITICAL: an already-scheduled/published
             # submission, or a concurrent/duplicate/interleaved review
             # request of ANY kind, is refused here too.
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-            ) from exc
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         reserved = True
 
         if request.action == "accept":
@@ -1189,9 +1187,7 @@ def review_contributor_submission(
                 _rollback_created_schedule_item(
                     created_schedule_item_id, schedule_store=schedule_store
                 )
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-            ) from exc
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         except ContributorStoreError as exc:
             if created_schedule_item_id is not None:
                 _rollback_created_schedule_item(

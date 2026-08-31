@@ -238,7 +238,9 @@ class HlsRelaySupervisor:
         tracked relay.
         """
         with self._guard:
-            relays = [relay for key, relay in self._relays.items() if key.startswith(f"{channel_id}|")]
+            relays = [
+                relay for key, relay in self._relays.items() if key.startswith(f"{channel_id}|")
+            ]
             if not relays:
                 return None
             return all(relay.process.poll() is None for relay in relays)

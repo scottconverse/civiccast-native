@@ -479,9 +479,7 @@ def test_staff_storage_setup_rejects_an_unrecognized_token_with_401(
         "CIVICCAST_STAFF_TOKENS",
         "setup-token:setup-1:Setup Admin:setup_admin",
     )
-    unrecognized_client = TestClient(
-        create_app(), headers={"Authorization": "Bearer setup-token"}
-    )
+    unrecognized_client = TestClient(create_app(), headers={"Authorization": "Bearer setup-token"})
     no_credential_client = TestClient(create_app())
     storage_dir = tmp_path / "unauthenticated-managed"
 
@@ -1492,9 +1490,7 @@ def test_regenerate_recovery_kit_requires_authentication(monkeypatch, tmp_path) 
 def test_regenerate_recovery_kit_before_setup_is_conflict(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
     monkeypatch.setenv("CIVICCAST_ALLOW_DETERMINISTIC_STAFF_TOKEN", "1")
-    client = TestClient(
-        create_app(), headers={"Authorization": "Bearer operator-token-a"}
-    )
+    client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
     response = client.post("/api/staff/installer/recovery-kit/regenerate")
     assert response.status_code == 409
 

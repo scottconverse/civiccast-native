@@ -201,7 +201,9 @@ def test_arm_and_start_pass_the_timeout_flag_through_to_the_real_ffmpeg_argv(
         ffmpeg_starter=fake_start_ffmpeg,
     )
     source = RecordingSource(kind="rtsp", uri="rtsp://example.test/cam1")
-    pipeline.arm(job_id="job-timeout", source=source, encoder_profile="copy", loudness_regime="inherit")
+    pipeline.arm(
+        job_id="job-timeout", source=source, encoder_profile="copy", loudness_regime="inherit"
+    )
     pipeline.start("job-timeout")
 
     assert len(captured_args) == 1

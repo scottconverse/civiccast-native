@@ -735,9 +735,7 @@ def test_decline_after_schedule_cancels_the_real_schedule_item(
     schedule_item_id = scheduled.json()["schedule_handoff"]["schedule_item_id"]
     assert schedule_item_id
 
-    before_decline = client.get(
-        f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS
-    )
+    before_decline = client.get(f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS)
     assert before_decline.status_code == 200
     assert before_decline.json()["state"] == "scheduled"
 
@@ -752,9 +750,7 @@ def test_decline_after_schedule_cancels_the_real_schedule_item(
     assert declined.status_code == 200, declined.text
     assert declined.json()["state"] == "declined"
 
-    after_decline = client.get(
-        f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS
-    )
+    after_decline = client.get(f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS)
     assert after_decline.status_code == 200, after_decline.text
     assert after_decline.json()["state"] == "cancelled", (
         "declining a scheduled submission must cancel its real schedule item -- "
@@ -766,9 +762,7 @@ def test_decline_after_schedule_cancels_the_real_schedule_item(
     # not carry the declined item as an active booking either.
     schedule_list = client.get("/api/staff/schedule", headers=_STAFF_HEADERS)
     assert schedule_list.status_code == 200
-    live_states = {
-        item["state"] for item in schedule_list.json() if item["id"] == schedule_item_id
-    }
+    live_states = {item["state"] for item in schedule_list.json() if item["id"] == schedule_item_id}
     assert live_states == {"cancelled"}
 
     public_status = client.get(
@@ -980,9 +974,7 @@ def test_mark_under_review_cannot_revert_an_already_scheduled_submission(
     )
     assert still_scheduled.json()["state"] == "scheduled"
 
-    schedule_item = client.get(
-        f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS
-    )
+    schedule_item = client.get(f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS)
     assert schedule_item.json()["state"] == "scheduled"
 
 
@@ -1065,8 +1057,7 @@ def test_concurrent_decline_and_schedule_never_leaves_a_live_row_behind_a_declin
 
     statuses = [status for _, status in results]
     assert statuses.count(200) >= 1, (
-        f"at least one of the racing schedule/decline requests must succeed; "
-        f"results={results}"
+        f"at least one of the racing schedule/decline requests must succeed; results={results}"
     )
     assert all(code in {200, 409} for code in statuses), results
 
