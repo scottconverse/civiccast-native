@@ -282,6 +282,40 @@ function runtimeApiBase(): string {
   return (window.__CIVICCAST_API_BASE__ ?? '').replace(/\/$/, '')
 }
 
+/**
+ * sessionStorage flag set when the shared 401 handler discards a stored
+ * staff token that the server no longer accepts (see queryClient.ts).
+ * SetupScreen reads it to explain WHY the operator is looking at a sign-in
+ * card again, and clears it on the next successful sign-in.
+ */
+export const STAFF_SIGNED_OUT_NOTICE_KEY = 'civiccast.staffSignedOutNotice'
+
+/**
+ * Drop this browser's stored staff token (both storages). Returns true when
+ * a stored token was actually present and removed.
+ *
+ * Called by the shared 401 handler the moment the server rejects a token
+ * this browser was still sending. Without this, every polling/screen query
+ * kept auto-resending the same dead token, and each of those 401s spent
+ * staff-auth failure budget -- the operator hit "Too many failed
+ * attempts... wait N seconds" with zero user action (owner-verified field
+ * bug, 2026-08-30) and could not sign back in until the cooldown passed.
+ * Once the token is cleared, subsequent requests go out with no
+ * Authorization header at all, which the middleware answers with a plain
+ * budget-free 401 (civiccast.auth.middleware's missing-credential path), so
+ * a single stale token can never saturate the limiter. The injected
+ * test-only window.__CIVICCAST_STAFF_TOKEN__ is deliberately not touched.
+ */
+export function clearStoredStaffToken(): boolean {
+  if (typeof window === 'undefined') return false
+  const hadToken =
+    window.localStorage.getItem('civiccast.staffToken') != null ||
+    window.sessionStorage.getItem('civiccast.staffToken') != null
+  window.localStorage.removeItem('civiccast.staffToken')
+  window.sessionStorage.removeItem('civiccast.staffToken')
+  return hadToken
+}
+
 function runtimeStaffToken(): string | null {
   if (typeof window === 'undefined') return null
   const localToken = window.localStorage.getItem('civiccast.staffToken')

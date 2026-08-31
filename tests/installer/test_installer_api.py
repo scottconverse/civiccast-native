@@ -1017,12 +1017,15 @@ def test_first_admin_setup_persists_first_station_commissioning_defaults(
     assert raw["station"]["operation_mode"] == "test"
 
 
-def test_station_login_replaces_token_but_recovery_appends_it(monkeypatch, tmp_path) -> None:
-    """Login still signs out this browser's own prior token (unchanged), but
-    recovery must NOT sign out other already-open sessions (field bug: the
-    operator's own second tab got 'Invalid staff bearer token' the instant
-    someone else recovered access -- see the OWNER DECISION comment on
-    civiccast.installer.station_state._MAX_OPERATOR_SESSIONS)."""
+def test_station_login_and_recovery_keep_other_sessions_signed_in(monkeypatch, tmp_path) -> None:
+    """Neither password login nor recovery may sign out other live sessions.
+
+    Field bug (OWNER-verified 2026-08-30, two-browser repro): a routine
+    password sign-in in browser A rotated the single stored token, so
+    browser B's console 401'd minutes later with zero user action -- while
+    the sign-in card promised the opposite. Both login and recovery now
+    APPEND to the bounded session list -- see the OWNER DECISION comment on
+    civiccast.installer.station_state._MAX_OPERATOR_SESSIONS."""
 
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
     client = TestClient(create_app())
@@ -1051,11 +1054,13 @@ def test_station_login_replaces_token_but_recovery_appends_it(monkeypatch, tmp_p
     login_token = login.json()["operator_console_token"]
     assert login_token != first_token
 
+    # The fratricide fix: browser B's token (issued at setup) must STILL be
+    # valid after browser A's routine password sign-in above.
     old_token_client = TestClient(
         create_app(),
         headers={"Authorization": f"Bearer {first_token}"},
     )
-    assert old_token_client.get("/api/staff/installer/station-state").status_code == 401
+    assert old_token_client.get("/api/staff/installer/station-state").status_code == 200
 
     recovery = client.post(
         "/api/setup/recover",
@@ -1149,6 +1154,22 @@ def test_repeated_recovery_caps_concurrent_sessions_instead_of_growing_forever(
     the 8 recovery codes a station ever has, so it's monkeypatched down to
     make eviction reachable within one kit's 8 codes."""
 
+    _assert_repeated_signin_caps_sessions(monkeypatch, tmp_path, flow="recovery")
+
+
+def test_repeated_login_caps_concurrent_sessions_instead_of_growing_forever(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Login appends too now (2026-08-30 fratricide fix), so it needs the same
+    bound: repeated password sign-ins evict the oldest session at the cap
+    instead of growing the state file forever."""
+
+    _assert_repeated_signin_caps_sessions(monkeypatch, tmp_path, flow="login")
+
+
+def _assert_repeated_signin_caps_sessions(monkeypatch, tmp_path, *, flow: str) -> None:
+
     import civiccast.installer.station_state as station_state
 
     monkeypatch.setattr(station_state, "_MAX_OPERATOR_SESSIONS", 3)
@@ -1171,21 +1192,30 @@ def test_repeated_recovery_caps_concurrent_sessions_instead_of_growing_forever(
 
     latest_token = first_token
     for index, code in enumerate(codes[:4]):
-        recovery = client.post(
-            "/api/setup/recover",
-            json={
-                "admin_username": "avery",
-                "recovery_code": code,
-                "new_admin_password": f"rotation password number {index}",
-            },
-        )
-        assert recovery.status_code == 200
-        latest_token = recovery.json()["operator_console_token"]
+        if flow == "recovery":
+            response = client.post(
+                "/api/setup/recover",
+                json={
+                    "admin_username": "avery",
+                    "recovery_code": code,
+                    "new_admin_password": f"rotation password number {index}",
+                },
+            )
+        else:
+            response = client.post(
+                "/api/setup/login",
+                json={
+                    "admin_username": "avery",
+                    "admin_password": "correct horse battery staple",
+                },
+            )
+        assert response.status_code == 200
+        latest_token = response.json()["operator_console_token"]
 
     raw = json.loads(state_path.read_text(encoding="utf-8"))
     assert len(raw["operator_console"]["tokens"]) == 3
 
-    # The very first token (issued at setup, before any of the 4 recoveries
+    # The very first token (issued at setup, before any of the 4 sign-ins
     # above pushed the list past the cap of 3) was evicted...
     evicted_client = TestClient(create_app(), headers={"Authorization": f"Bearer {first_token}"})
     assert evicted_client.get("/api/staff/installer/station-state").status_code == 401

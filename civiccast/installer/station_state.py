@@ -53,19 +53,22 @@ _PASSWORD_ITERATIONS = 210_000
 _RECOVERY_CODE_COUNT = 8
 _DEFAULT_ROLES = ["setup_admin", "publish_operator", "support_admin", "viewer"]
 
-# OWNER DECISION 2026-08-29 (field evidence, candidate #17 board-meeting test):
-# the station used to keep exactly one operator-console token, so ANY new
-# token issuance -- including one issued by the emergency recovery flow --
-# silently invalidated every other already-open browser tab's session. The
-# operator who set the station up watched their own console die mid-session
-# the moment someone else recovered access. A lost password is not evidence
-# that other live sessions are compromised, so recovery has no security
-# reason to end them. `operator_console.tokens` now holds a bounded list of
-# concurrently valid sessions instead of a single slot; recovery APPENDS a
-# fresh token, ordinary login still REPLACES (unchanged, still covered by
-# test_station_login_replaces_token_but_recovery_appends_it). The cap below only
-# bounds unbounded growth from repeated recoveries/logins that are never
-# explicitly signed out -- it is not a security control.
+# OWNER DECISION 2026-08-29, extended 2026-08-30 (field evidence, candidate
+# #17 board-meeting test, then the owner's own two-browser repro): the
+# station used to keep exactly one operator-console token, so ANY new token
+# issuance silently invalidated every other already-open browser's session.
+# The 08-29 fix made recovery APPEND but left ordinary password login
+# REPLACING the whole list -- and the owner then watched browser B's
+# console die minutes after browser A signed in with the correct password,
+# while the sign-in card promised the opposite ("without touching any other
+# browser or device already signed in"). Knowing the correct password is
+# not evidence that other live sessions are compromised either, so BOTH
+# login and recovery now append a fresh token to `operator_console.tokens`,
+# a bounded list of concurrently valid sessions (covered by
+# test_station_login_and_recovery_keep_other_sessions_signed_in). The cap
+# below only bounds unbounded growth from repeated logins/recoveries that
+# are never explicitly signed out -- oldest-issued entries are evicted
+# first; it is not a security control.
 _MAX_OPERATOR_SESSIONS = 20
 
 # The station's seed channels MUST match the real playout/egress channel
@@ -708,10 +711,11 @@ def login_station_admin(
         password=request.admin_password,
     ):
         raise StationAuthError("Invalid admin username or password.")
-    # Ordinary login REPLACES the session list (unchanged behavior, covered by
-    # test_station_login_replaces_token_but_recovery_appends_it): a fresh sign-in
-    # with the known-correct password is a deliberate "just this browser" act.
-    operator_token = _issue_operator_token(raw, source="login", replace=True)
+    # APPEND, never replace (OWNER DECISION 2026-08-30, see
+    # _MAX_OPERATOR_SESSIONS above): a routine password sign-in on one
+    # browser must not silently sign out every other browser or device
+    # already signed in -- which is exactly what the sign-in card promises.
+    operator_token = _issue_operator_token(raw, source="login")
     _save_raw_state(raw)
     return StationAuthResponse(
         status="authenticated",
@@ -740,7 +744,7 @@ def recover_station_admin(
     # any other already-open session is compromised, so recovering does not
     # get to silently sign out the admin's own other tabs/devices (see the
     # OWNER DECISION comment on _MAX_OPERATOR_SESSIONS above).
-    operator_token = _issue_operator_token(raw, source="recovery", replace=False)
+    operator_token = _issue_operator_token(raw, source="recovery")
     _save_raw_state(raw)
     return StationAuthResponse(
         status="recovered",
@@ -1047,21 +1051,21 @@ def _operator_token_entries(console: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _issue_operator_token(raw: dict[str, Any], *, source: str, replace: bool) -> str:
-    """Mint a fresh operator token, either replacing or appending to the session list.
+def _issue_operator_token(raw: dict[str, Any], *, source: str) -> str:
+    """Mint a fresh operator token and append it to the session list.
 
-    ``replace=True`` (ordinary login) keeps this browser's token as the only
-    valid one, matching the long-standing "signing in here signs you in
-    here" behavior. ``replace=False`` (recovery) keeps every other
-    currently-valid session alive and just adds this one, bounded to
+    Every issuance path (setup, ordinary login, recovery) keeps all other
+    currently-valid sessions alive and just adds this one, bounded to
     ``_MAX_OPERATOR_SESSIONS`` by dropping the oldest-issued entries first so
-    the state file cannot grow without limit.
+    the state file cannot grow without limit (OWNER DECISION 2026-08-30 on
+    ``_MAX_OPERATOR_SESSIONS``: no sign-in path gets to silently revoke
+    another browser's session).
     """
 
     console = raw.get("operator_console")
     existing = _operator_token_entries(console) if isinstance(console, dict) else []
     operator_token, entry = _new_operator_token_entry(source=source)
-    tokens = [entry] if replace else [*existing, entry][-_MAX_OPERATOR_SESSIONS:]
+    tokens = [*existing, entry][-_MAX_OPERATOR_SESSIONS:]
     raw["operator_console"] = {
         "tokens": tokens,
         "rotated_at": datetime.now(UTC).isoformat(),
