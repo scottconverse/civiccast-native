@@ -453,7 +453,26 @@ def start_ffmpeg(
     stdout_path: Path | None = None,
     stderr_path: Path | None = None,
 ) -> FfmpegProcessHandle:
-    """Start ffmpeg without waiting for it to exit."""
+    """Start ffmpeg without waiting for it to exit.
+
+    Job Object containment (spec D3) needs NO explicit per-child
+    ``AssignProcessToJobObject`` here, and deliberately does none. This child is
+    spawned by a plain ``subprocess.Popen`` from whatever process calls
+    ``start_ffmpeg`` — in a supervised deployment that is always the control
+    plane, which the supervisor assigns to its Job Object at startup
+    (``civiccast.native.supervisor.core.Supervisor.start_child``). The job
+    disables breakaway (``JOB_OBJECT_LIMIT_BREAKAWAY_OK`` /
+    ``_SILENT_BREAKAWAY_OK`` are cleared —
+    ``supervisor.job_object.Win32JobObjectApi.configure_kill_on_close_no_breakaway``),
+    so Windows captures every process an in-job parent spawns into the same job
+    automatically; the ffmpeg child is contained the instant it starts. Proven
+    empirically, with the production seam, in
+    ``tests/native/test_supervisor_job_object_win.py::
+    test_popen_child_of_an_in_job_process_is_contained_without_explicit_assign``.
+    (Outside the supervisor — a bare ``uvicorn`` dev run, or a unit test — there
+    is no Job Object at all, so there is nothing to assign to and nothing an
+    explicit assign here could do.)
+    """
 
     ffmpeg_path = _ffmpeg_path()
     resolved_args = _resolve_video_encoder_args(args, ffmpeg_path)

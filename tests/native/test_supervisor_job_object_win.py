@@ -143,6 +143,94 @@ def test_assign_child_real_process_is_reported_in_job() -> None:
         child.wait(timeout=5)
 
 
+# A stand-in for the control-plane process that runs ``start_ffmpeg``: it waits
+# for a go-signal on stdin (so the test can assign IT to the job FIRST), then
+# spawns a grandchild via a plain ``subprocess.Popen`` — exactly what
+# ``civiccast.stream._ffmpeg.start_ffmpeg`` does for ffmpeg — and prints the
+# grandchild pid so the test can assert its job membership.
+_IN_JOB_PARENT_PROG = (
+    "import subprocess, sys, time\n"
+    "sys.stdout.write('ready\\n'); sys.stdout.flush()\n"
+    "sys.stdin.readline()\n"
+    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+    "sys.stdout.write(str(child.pid) + '\\n'); sys.stdout.flush()\n"
+    "time.sleep(120)\n"
+)
+
+
+def test_popen_child_of_an_in_job_process_is_contained_without_explicit_assign() -> None:
+    """ITEM-2 empirical proof: ``start_ffmpeg`` needs no per-child Job Object
+    assignment.
+
+    ``start_ffmpeg`` spawns ffmpeg via a plain ``subprocess.Popen`` with NO
+    explicit ``AssignProcessToJobObject``. Under the supervisor, the process
+    that runs it (the control plane) is ITSELF assigned to the supervisor's job
+    (``core.Supervisor.start_child``), and that job disables breakaway
+    (``JOB_OBJECT_LIMIT_BREAKAWAY_OK`` / ``_SILENT_BREAKAWAY_OK`` cleared by
+    ``Win32JobObjectApi.configure_kill_on_close_no_breakaway``). Windows then
+    captures every process an in-job parent spawns into the same job
+    automatically.
+
+    This proves exactly that end-to-end with the production seam: assign a
+    parent process to the job FIRST (as the supervisor assigns the control
+    plane at startup), have that parent spawn a ``subprocess.Popen`` child
+    AFTER assignment (as the control plane later spawns ffmpeg), and assert via
+    ``IsProcessInJob`` that the child is already a member — with no explicit
+    assign of the child. Only the spawned parent is assigned to the
+    kill-on-close job, so closing the job reaps the parent tree, never the
+    pytest runner.
+    """
+
+    api = Win32JobObjectApi()
+    controller = JobObjectController(api=api, name=_unique_job_name())
+    parent = subprocess.Popen(
+        [sys.executable, "-c", _IN_JOB_PARENT_PROG],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    try:
+        assert parent.stdin is not None
+        assert parent.stdout is not None
+        assert parent.stdout.readline().strip() == "ready"
+
+        # Assign the control-plane stand-in to the job FIRST — before it spawns
+        # its Popen child — mirroring the supervisor's assign-at-startup.
+        controller.assign_child(parent.pid)
+        handle = controller.ensure_job()
+        assert api.is_process_in_job(handle, parent.pid) is True
+
+        # Now the in-job process spawns a plain subprocess.Popen child, exactly
+        # as start_ffmpeg does. It is NEVER explicitly assigned to the job.
+        parent.stdin.write("go\n")
+        parent.stdin.flush()
+        grandchild_pid = int(parent.stdout.readline().strip())
+        assert _wait_until(lambda: psutil.pid_exists(grandchild_pid)), (
+            "the Popen grandchild must have started"
+        )
+
+        # THE PROOF: the Popen child inherited job membership automatically
+        # (breakaway disabled), with no per-child AssignProcessToJobObject.
+        assert api.is_process_in_job(handle, grandchild_pid) is True
+
+        # And containment is real: closing the job reaps the child too.
+        controller.close()
+        assert _wait_until(lambda: not psutil.pid_exists(grandchild_pid)), (
+            "kill-on-close must reap the Popen grandchild"
+        )
+    finally:
+        controller.close()
+        if parent.poll() is None:
+            parent.kill()
+        parent.wait(timeout=5)
+        # Close the pipe wrappers explicitly — the repo's filterwarnings=error
+        # policy turns an unclosed-pipe ResourceWarning into a test failure.
+        for stream in (parent.stdin, parent.stdout):
+            if stream is not None:
+                stream.close()
+
+
 # ---------------------------------------------------------------------------
 # close() -- real kill-on-close, single child and a real tree
 # ---------------------------------------------------------------------------
