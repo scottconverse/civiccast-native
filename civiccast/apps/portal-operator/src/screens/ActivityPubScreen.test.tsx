@@ -98,6 +98,8 @@ describe('ActivityPubScreen DisabledPanel', () => {
     renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: /generate station key/i }))
+    // A confirmation dialog now stands between the button and the API call.
+    fireEvent.click(screen.getByRole('button', { name: 'Generate key' }))
 
     expect(await screen.findByText('Station key generated.')).toBeTruthy()
     expect(screen.getByText(/restart CivicCast to turn federation on/i)).toBeTruthy()
@@ -109,6 +111,7 @@ describe('ActivityPubScreen DisabledPanel', () => {
     renderPanel()
 
     fireEvent.click(screen.getByRole('button', { name: /generate station key/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Generate key' }))
 
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/disk full|could not be generated/i)
