@@ -479,7 +479,9 @@ def test_staff_storage_setup_rejects_an_unrecognized_token_with_401(
         "CIVICCAST_STAFF_TOKENS",
         "setup-token:setup-1:Setup Admin:setup_admin",
     )
-    unrecognized_client = TestClient(create_app(), headers={"Authorization": "Bearer setup-token"})
+    unrecognized_client = TestClient(
+        create_app(), headers={"Authorization": "Bearer not-a-registered-token"}
+    )
     no_credential_client = TestClient(create_app())
     storage_dir = tmp_path / "unauthenticated-managed"
 
