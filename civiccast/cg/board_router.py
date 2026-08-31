@@ -237,22 +237,28 @@ def _render_board_preview(
 
 @board_staff_router.get(
     "/channels/{channel_id}/board",
-    response_model=BoardView,
+    response_model=BoardView | None,
     summary="Read the active CG board for a channel (board + zones + feeds)",
     dependencies=[Depends(require_any_role(*_READ_ROLES))],
     responses={
-        404: {"description": "No active board"},
+        200: {
+            "description": (
+                "The active board, or JSON null when the channel has no board "
+                "yet (a normal pre-setup state, not an error)"
+            )
+        },
         503: {"description": _DB_NOT_READY_DESCRIPTION},
     },
 )
-def get_board(channel_id: str, service: Any = Depends(get_cg_board_service)) -> BoardView:
-    view = _service_or_503(service).get_board_view(channel_id)
-    if view is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active CG board for channel {channel_id!r}.",
-        )
-    return view
+def get_board(channel_id: str, service: Any = Depends(get_cg_board_service)) -> BoardView | None:
+    # "No board yet" is the normal state of every channel before an operator
+    # creates one — it is NOT an error, so it must not be a 404. A 404 here
+    # made the browser log a red network error on every open of the CG Board /
+    # CG Designer screens even though the UI rendered the empty state fine.
+    # The client (getCgBoard in portal-operator's api/client.ts) is typed
+    # Promise<BoardView | null> and the designer screen renders null as the
+    # empty state, so 200 + JSON null is the contract both sides expect.
+    return _service_or_503(service).get_board_view(channel_id)
 
 
 @board_staff_router.post(

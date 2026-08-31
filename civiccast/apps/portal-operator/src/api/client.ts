@@ -2403,6 +2403,9 @@ function cgBoardBase(channelId: string): string {
   return `/api/staff/cg/channels/${encodeURIComponent(channelId)}`
 }
 
+/** Resolves null when the channel has no board yet — the server returns 200 +
+ *  JSON null for that normal pre-setup state (not a 404), so opening the CG
+ *  Board / Designer screens leaves no failed request in the browser console. */
 export function getCgBoard(channelId: string): Promise<BoardView | null> {
   return request<BoardView | null>(`${cgBoardBase(channelId)}/board`)
 }

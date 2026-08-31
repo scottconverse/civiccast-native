@@ -8680,17 +8680,22 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "The active board, or JSON null when the channel has no board yet (a normal pre-setup state, not an error)",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BoardView"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/BoardView"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Board Api Staff Cg Channels  Channel Id  Board Get"
                 }
               }
             }
-          },
-          "404": {
-            "description": "No active board"
           },
           "503": {
             "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
