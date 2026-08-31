@@ -263,8 +263,10 @@ test.describe('asset detail + metadata edit', () => {
     const removeButton = page.getByRole('button', { name: 'Remove from portal' })
     await expect(removeButton).toBeVisible()
 
-    page.once('dialog', (dialog) => dialog.accept())
     await removeButton.click()
+    const dialog = page.getByRole('alertdialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: 'Remove from portal' }).click()
 
     // Once unpublished, the confirmed date disappears and so does the action.
     await expect(page.getByRole('button', { name: 'Remove from portal' })).toBeHidden()
@@ -284,8 +286,10 @@ test.describe('asset detail + metadata edit', () => {
     })
     await openDetail(page)
 
-    page.once('dialog', (dialog) => dialog.accept())
     await page.getByRole('button', { name: 'Remove from portal' }).click()
+    const dialog = page.getByRole('alertdialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: 'Remove from portal' }).click()
 
     await expect(page.getByRole('alert')).toContainText('Durable storage is not ready.')
     // The button is still there -- the operator can retry.
@@ -296,10 +300,13 @@ test.describe('asset detail + metadata edit', () => {
     await mockBackend(page, undefined, { published_at: '2026-05-08T18:00:00Z' })
     await openDetail(page)
 
-    page.once('dialog', (dialog) => dialog.dismiss())
     await page.getByRole('button', { name: 'Remove from portal' }).click()
+    const dialog = page.getByRole('alertdialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+    await expect(dialog).toBeHidden()
 
-    // Still published -- the dismissed native confirm never dispatched the call.
+    // Still published -- the cancelled ConfirmDialog never dispatched the call.
     await expect(page.getByRole('button', { name: 'Remove from portal' })).toBeVisible()
   })
 

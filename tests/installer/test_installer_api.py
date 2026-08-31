@@ -397,9 +397,28 @@ def test_public_first_admin_setup_rejects_malformed_body_from_non_loopback_befor
 
 
 def test_staff_storage_setup_requires_setup_admin_role(monkeypatch, tmp_path: Path) -> None:
+    """A correctly-authenticated but wrong-role token gets 403; a correctly-
+    authenticated setup_admin token succeeds.
+
+    civiccast.auth.tokens.verify_bearer_token (a370b35) made durable-storage
+    deployments fail closed on plain ``CIVICCAST_STAFF_TOKENS`` entries: once
+    a DB-backed ``staff_token_store`` is active (the default whenever
+    ``CIVICCAST_ALLOW_EPHEMERAL_STORES`` is not set, as here), an env token
+    that is not also a DB-issued token no longer authenticates on its own --
+    it needs the explicit ``CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB=1`` opt-in
+    used elsewhere in this file (see
+    ``test_public_storage_setup_enables_first_asset_upload_without_manual_upload_dir``
+    above). Without it, BOTH clients below get 401 before the role-check
+    dependency ever runs -- correct fail-closed behavior, but it means this
+    test was silently no longer proving the role check at all. Setting the
+    same opt-in restores real authentication for both tokens, so the 403 the
+    role dependency raises for the wrong-role token, and the 200 the
+    correctly-roled token gets, are both genuinely exercised again.
+    """
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("CIVICCAST_UPLOAD_DIR", raising=False)
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
+    monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
     monkeypatch.setenv(
         "CIVICCAST_STAFF_TOKENS",
         "records-token:records-1:Records Clerk:records_clerk;"
@@ -432,6 +451,60 @@ def test_staff_storage_setup_requires_setup_admin_role(monkeypatch, tmp_path: Pa
 
         records_client.close()
         setup_client.close()
+        reset_engine()
+        os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("CIVICCAST_UPLOAD_DIR", None)
+        gc.collect()
+
+
+def test_staff_storage_setup_rejects_an_unrecognized_token_with_401(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A bad/absent staff token gets 401 from the auth layer, before the
+    role-check dependency ever runs -- not the 403 a wrong-role-but-valid
+    token gets. Companion to
+    ``test_staff_storage_setup_requires_setup_admin_role`` above: that test
+    covers a VALID, correctly-authenticated token with the wrong role (403);
+    this one covers an env token that never authenticates in the first place
+    (the default, fail-closed behavior once a durable, DB-backed
+    ``staff_token_store`` is active and
+    ``CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB`` is NOT set -- see
+    civiccast.auth.tokens.verify_bearer_token, a370b35).
+    """
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("CIVICCAST_UPLOAD_DIR", raising=False)
+    monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", raising=False)
+    monkeypatch.setenv(
+        "CIVICCAST_STAFF_TOKENS",
+        "setup-token:setup-1:Setup Admin:setup_admin",
+    )
+    unrecognized_client = TestClient(
+        create_app(), headers={"Authorization": "Bearer not-a-registered-token"}
+    )
+    no_credential_client = TestClient(create_app())
+    storage_dir = tmp_path / "unauthenticated-managed"
+
+    try:
+        unrecognized = unrecognized_client.post(
+            "/api/staff/installer/storage",
+            json={"storage_dir": str(storage_dir)},
+        )
+        missing = no_credential_client.post(
+            "/api/staff/installer/storage",
+            json={"storage_dir": str(storage_dir)},
+        )
+
+        assert unrecognized.status_code == 401, unrecognized.text
+        assert missing.status_code == 401, missing.text
+        assert not storage_dir.exists()
+    finally:
+        import gc
+
+        from civiccast.db import reset_engine
+
+        unrecognized_client.close()
+        no_credential_client.close()
         reset_engine()
         os.environ.pop("DATABASE_URL", None)
         os.environ.pop("CIVICCAST_UPLOAD_DIR", None)
@@ -1222,6 +1295,206 @@ def _assert_repeated_signin_caps_sessions(monkeypatch, tmp_path, *, flow: str) -
     # ...but the most recent recovery's own token is still live.
     latest_client = TestClient(create_app(), headers={"Authorization": f"Bearer {latest_token}"})
     assert latest_client.get("/api/staff/installer/station-state").status_code == 200
+
+
+def test_revoke_other_sessions_keeps_caller_signed_in_and_signs_out_the_rest(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """CRITICAL fix: a lost/stolen laptop's operator-console session had no
+    revoke path. This proves the new "revoke others" action keeps the
+    calling session valid while invalidating every other one."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    client = TestClient(create_app())
+
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    assert setup.status_code == 200
+    setup_token = setup.json()["operator_console_token"]
+
+    # A second, third browser sign in -- e.g. the lost laptop, plus this
+    # operator's own desktop, which is the session issuing the revoke below.
+    lost_laptop_token = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "correct horse battery staple"},
+    ).json()["operator_console_token"]
+    caller_token = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "correct horse battery staple"},
+    ).json()["operator_console_token"]
+
+    caller_client = TestClient(create_app(), headers={"Authorization": f"Bearer {caller_token}"})
+    response = caller_client.post("/api/staff/installer/sessions/revoke-others")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "revoked"
+    assert body["revoked_count"] == 2  # setup token + lost-laptop token
+
+    # The calling session is still valid...
+    assert caller_client.get("/api/staff/installer/station-state").status_code == 200
+    # ...but every other session, including the lost laptop's, is dead.
+    setup_client = TestClient(create_app(), headers={"Authorization": f"Bearer {setup_token}"})
+    lost_laptop_client = TestClient(
+        create_app(), headers={"Authorization": f"Bearer {lost_laptop_token}"}
+    )
+    assert setup_client.get("/api/staff/installer/station-state").status_code == 401
+    assert lost_laptop_client.get("/api/staff/installer/station-state").status_code == 401
+
+    raw = json.loads((tmp_path / "station-state.json").read_text(encoding="utf-8"))
+    assert len(raw["operator_console"]["tokens"]) == 1
+
+
+def test_revoke_other_sessions_when_already_alone_revokes_nothing(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    client = TestClient(create_app())
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    token = setup.json()["operator_console_token"]
+    authed = TestClient(create_app(), headers={"Authorization": f"Bearer {token}"})
+
+    response = authed.post("/api/staff/installer/sessions/revoke-others")
+    assert response.status_code == 200
+    assert response.json()["revoked_count"] == 0
+    assert authed.get("/api/staff/installer/station-state").status_code == 200
+
+
+def test_revoke_other_sessions_requires_authentication(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+
+    response = client.post("/api/staff/installer/sessions/revoke-others")
+    assert response.status_code == 401
+
+
+def test_regenerate_recovery_kit_mints_working_codes_and_invalidates_the_old_ones(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """CRITICAL fix: a browser that died before saving the first-run kit had
+    no way to get a fresh set of codes short of the destructive full-station
+    reset env var. This proves the new regenerate action mints 8 new working
+    codes and immediately kills the old ones."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    client = TestClient(create_app())
+
+    setup = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+    assert setup.status_code == 200
+    token = setup.json()["operator_console_token"]
+    old_codes = list(setup.json()["recovery_kit"]["recovery_codes"])
+    old_kit_id = setup.json()["recovery_kit"]["kit_id"]
+
+    authed = TestClient(create_app(), headers={"Authorization": f"Bearer {token}"})
+    response = authed.post("/api/staff/installer/recovery-kit/regenerate")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "regenerated"
+    new_kit = body["recovery_kit"]
+    assert len(new_kit["recovery_codes"]) == 8
+    assert new_kit["kit_id"] != old_kit_id
+    new_codes = list(new_kit["recovery_codes"])
+    assert set(new_codes).isdisjoint(old_codes)
+
+    # An old code is dead now.
+    old_code_attempt = client.post(
+        "/api/setup/recover",
+        json={
+            "admin_username": "avery",
+            "recovery_code": old_codes[0],
+            "new_admin_password": "should not work at all",
+        },
+    )
+    assert old_code_attempt.status_code == 401
+
+    # A new code works and consumes exactly once.
+    new_code_attempt = client.post(
+        "/api/setup/recover",
+        json={
+            "admin_username": "avery",
+            "recovery_code": new_codes[0],
+            "new_admin_password": "fresh horse battery staple",
+        },
+    )
+    assert new_code_attempt.status_code == 200
+    reused_new_code = client.post(
+        "/api/setup/recover",
+        json={
+            "admin_username": "avery",
+            "recovery_code": new_codes[0],
+            "new_admin_password": "another horse battery staple",
+        },
+    )
+    assert reused_new_code.status_code == 401
+
+    raw = json.loads((tmp_path / "station-state.json").read_text(encoding="utf-8"))
+    assert new_kit["kit_id"] not in json.dumps(old_codes)
+    for code in new_codes:
+        assert code not in raw["recovery"]["code_hashes"] and code not in json.dumps(raw)
+
+
+def test_regenerate_recovery_kit_requires_authentication(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    client = TestClient(create_app())
+    client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+        },
+    )
+
+    response = client.post("/api/staff/installer/recovery-kit/regenerate")
+    assert response.status_code == 401
+
+
+def test_regenerate_recovery_kit_before_setup_is_conflict(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_ALLOW_DETERMINISTIC_STAFF_TOKEN", "1")
+    client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
+    response = client.post("/api/staff/installer/recovery-kit/regenerate")
+    assert response.status_code == 409
 
 
 def test_first_admin_setup_is_one_time_unless_reset_is_explicit(

@@ -189,6 +189,12 @@ function WatchFolderSection() {
   const deleteMutation = useMutation({
     mutationFn: (configId: string) => deleteWatchFolderConfig(configId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['watch-folder-configs'] }),
+    onError: (error: Error) =>
+      toast.push({
+        tone: 'error',
+        message: 'Could not remove watch folder.',
+        detail: error instanceof ApiError ? error.detail : error.message,
+      }),
   })
 
   async function handleScanNow(configId: string) {
@@ -381,6 +387,12 @@ function RetentionPolicySection() {
   const deleteMutation = useMutation({
     mutationFn: (policyId: string) => deleteRetentionPolicy(policyId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['retention-policies'] }),
+    onError: (error: Error) =>
+      toast.push({
+        tone: 'error',
+        message: 'Could not remove retention rule.',
+        detail: error instanceof ApiError ? error.detail : error.message,
+      }),
   })
   const applyMutation = useMutation({
     mutationFn: applyRetentionPolicies,

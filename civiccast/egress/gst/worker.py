@@ -100,6 +100,11 @@ def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, st
             with contextlib.suppress(OSError):
                 Path(command[1]).unlink()  # one-shot graph file: consumed after read
             engine_instance.reload_program(new_graph.sources[0])
+            # BLOCKER fix: re-apply the graphics-overlay leg too (mirrors the FIFO
+            # dispatch path, engine._dispatch_control) -- otherwise a content-reload
+            # delivered over the D2 Windows pipe seam would silently drop a lower-third
+            # text update just like the FIFO path used to.
+            engine_instance.reload_graphics_overlay(new_graph.graphics_overlay)
             return "applied", None
         if verb == "caption":
             text = base64.b64decode(command[3]).decode("utf-8", "replace")

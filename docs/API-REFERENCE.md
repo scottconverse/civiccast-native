@@ -1897,7 +1897,7 @@ Apply operator review decision to contributor submission.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `submission_id` (path, required): `string`
 - Request body: `ContributorReviewRequest`
-- Responses: 200 `ContributorSubmission`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Submission not found; 409 Not yet ingested / not yet accepted / schedule conflict / asset id collision; 422 Invalid review request, or the contributor's media failed the broken-media probe; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 ffprobe or asset/schedule storage not ready
+- Responses: 200 `ContributorSubmission`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Submission not found; 409 Not yet ingested / not yet accepted / schedule conflict / asset id collision / another review action already in flight; 422 Invalid review request, or the contributor's media failed the broken-media probe; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 ffprobe or asset/schedule storage not ready
 
 ### `GET /api/staff/contribution/diagnostics`
 
@@ -2835,6 +2835,15 @@ Read provider setup and readiness cards.
 - Request body: none
 - Responses: 200 `ProviderReadinessReport`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `POST /api/staff/installer/recovery-kit/regenerate`
+
+Mint a fresh recovery kit for the already-signed-in admin.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `RecoveryKitRegenerateResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `POST /api/staff/installer/rehearsal`
 
 Run a private first-broadcast rehearsal.
@@ -2933,6 +2942,15 @@ Retry first-run sample content and starter schedule seeding.
 - Parameters: none
 - Request body: none
 - Responses: 200 `SampleSeedStatus`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 409 Sample content is turned off for this station; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/installer/sessions/revoke-others`
+
+Sign out every other operator-console session, keeping this one signed in.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `RevokeOtherSessionsResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `GET /api/staff/installer/source-setup`
 
@@ -7978,6 +7996,12 @@ rule (S13 §5.1).
 - `operator_action` (required): `string`
 - `rotation_path` (required): `string`
 
+### `RecoveryKitRegenerateResponse`
+
+- `next_step` (required): `string`
+- `recovery_kit` (required): `RecoveryKit`
+- `status` (required): `string`
+
 ### `RecurrenceSpec`
 
 - `kind` (required): `'one_shot' | 'weekly'`
@@ -8081,6 +8105,13 @@ rule (S13 §5.1).
 - `expected_row_count` (required): `number | null`
 - `matched` (required): `boolean`
 - `name` (required): `string`
+
+### `RevokeOtherSessionsResponse`
+
+- `message` (required): `string`
+- `next_step` (required): `string`
+- `revoked_count` (required): `number`
+- `status` (required): `string`
 
 ### `Rfc3161TimestampProof`
 

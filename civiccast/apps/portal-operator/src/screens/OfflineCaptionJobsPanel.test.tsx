@@ -170,31 +170,28 @@ describe('OfflineCaptionJobsPanel (container)', () => {
   })
 
   it('confirms, retries, and shows the success state', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { findByRole, findByText } = renderScreen()
     fireEvent.click(await findByRole('button', { name: /Retry offline caption job job-1/i }))
-    expect(confirmSpy).toHaveBeenCalledOnce()
+    fireEvent.click(await findByRole('button', { name: /^Retry job$/i }))
     await waitFor(() => expect(vi.mocked(retryOfflineCaptionJob)).toHaveBeenCalledWith('job-1'))
     expect(await findByText(/Queued for retry\./i)).toBeTruthy()
-    confirmSpy.mockRestore()
   })
 
   it('does not call retry when the operator cancels the confirm dialog', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    const { findByRole } = renderScreen()
+    const { findByRole, queryByRole } = renderScreen()
     fireEvent.click(await findByRole('button', { name: /Retry offline caption job job-1/i }))
-    expect(confirmSpy).toHaveBeenCalledOnce()
+    fireEvent.click(await findByRole('button', { name: /^Cancel$/i }))
     expect(vi.mocked(retryOfflineCaptionJob)).not.toHaveBeenCalled()
-    confirmSpy.mockRestore()
+    expect(queryByRole('alertdialog')).toBeNull()
   })
 
   it('shows the retry error inline on 409', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.mocked(retryOfflineCaptionJob).mockRejectedValue(
       new ApiError('Request failed: 409', 409, 'Another job is already active for this asset.'),
     )
     const { findByRole, findByText } = renderScreen()
     fireEvent.click(await findByRole('button', { name: /Retry offline caption job job-1/i }))
+    fireEvent.click(await findByRole('button', { name: /^Retry job$/i }))
     expect(await findByText(/Another job is already active for this asset\./i)).toBeTruthy()
   })
 

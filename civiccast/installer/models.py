@@ -398,6 +398,27 @@ class StationSetupState(BaseModel):
     next_step: Annotated[str, Field(min_length=1)]
 
 
+class RevokeOtherSessionsResponse(BaseModel):
+    """Result of revoking every operator-console session except the caller's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["revoked"]
+    revoked_count: Annotated[int, Field(ge=0)]
+    message: Annotated[str, Field(min_length=1)]
+    next_step: Annotated[str, Field(min_length=1)]
+
+
+class RecoveryKitRegenerateResponse(BaseModel):
+    """One-time regenerated recovery kit for an already-authenticated admin."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["regenerated"]
+    recovery_kit: RecoveryKit
+    next_step: Annotated[str, Field(min_length=1)]
+
+
 class RecoveryKitAcknowledgeRequest(BaseModel):
     """Operator confirmation that the one-time recovery kit is saved or printed."""
 

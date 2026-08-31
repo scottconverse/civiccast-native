@@ -300,6 +300,81 @@ def test_check_dropout_stops_reconnecting_past_the_attempt_cap(tmp_path: Path) -
     assert len(handles) == 2  # no third process launched
 
 
+def test_check_dropout_does_not_duplicate_segments_past_the_attempt_cap(tmp_path: Path) -> None:
+    """CRITICAL regression: once the reconnect cap is exhausted, repeated
+    scheduler polls (~10s cadence) must NOT keep appending the same dead
+    segment. Pre-fix, ``check_dropout`` appended ``active.output_path`` to
+    ``active.segments`` unconditionally before checking the cap, then
+    early-returned without relaunching once exhausted — so every following
+    poll re-detected the same dead process and appended the SAME segment
+    again, unboundedly, and ``_finalize_segments`` concatenated hundreds of
+    duplicates into a looped/wrong-duration asset.
+
+    This drives ``check_dropout`` many times past the cap (simulating many
+    scheduler ticks against a source that never comes back) and proves both
+    that no further ffmpeg processes are spawned AND that the concatenated
+    output ``stop()`` finally delivers contains each real segment's bytes
+    exactly once — not duplicated.
+    """
+    _engine, factory, _target_dir = _make_store_and_dirs(tmp_path)
+    handles: list[_ScriptedHandle] = []
+
+    def fake_start_ffmpeg(args: list[str], **_kwargs) -> _ScriptedHandle:
+        handle = _ScriptedHandle(Path(args[-1]))
+        handles.append(handle)
+        return handle
+
+    pipeline = FfmpegScheduledCapturePipeline(
+        factory,
+        settings=ScheduledRecordingSettings(mode="off"),
+        ffmpeg_starter=fake_start_ffmpeg,
+        ffmpeg_runner=_ConcatCapture(),
+        max_reconnect_attempts=1,
+    )
+    source = RecordingSource(kind="rtsp", uri="rtsp://example.test/cam1")
+    pipeline.arm(
+        job_id="job-cap-poll", source=source, encoder_profile="copy", loudness_regime="inherit"
+    )
+    pipeline.start("job-cap-poll")
+    handles[0].write(1000)
+
+    # First crash: one reconnect allowed (cap == 1) — a second process
+    # launches and the first segment closes.
+    handles[0].kill(returncode=1)
+    result = pipeline.check_dropout("job-cap-poll")
+    assert result.reconnected is True
+    assert len(handles) == 2
+    handles[1].write(400)
+
+    # Second crash: cap already spent — detected but not reconnected. This
+    # is the poll where the previous code appended the dead segment.
+    handles[1].kill(returncode=1)
+    result = pipeline.check_dropout("job-cap-poll")
+    assert result.dropout_detected is True
+    assert result.reconnected is False
+    assert len(handles) == 2  # no third process launched
+
+    active = pipeline._active["job-cap-poll"]
+    assert active.exhausted is True
+    segments_after_first_exhaustion = list(active.segments)
+    assert len(segments_after_first_exhaustion) == 1  # only the first closed segment
+
+    # Simulate a dozen more scheduler ticks (~10s cadence each) against the
+    # still-dead source. None of these may mutate segments, relaunch
+    # ffmpeg, or otherwise repeat the exhausted-cap detection.
+    for _ in range(12):
+        repeat_result = pipeline.check_dropout("job-cap-poll")
+        assert repeat_result.dropout_detected is False
+        assert len(handles) == 2
+        assert active.segments == segments_after_first_exhaustion
+
+    captured = pipeline.stop("job-cap-poll")
+    merged_bytes = Path(captured.capture_path).read_bytes()
+    # Each real segment's bytes appear exactly once — no duplication.
+    assert merged_bytes == b"x" * 1000 + b"x" * 400
+    assert captured.bytes_written == 1000 + 400
+
+
 def test_service_tick_records_dropout_on_job_and_emits_alert(tmp_path: Path, monkeypatch) -> None:
     """End-to-end through RecordingService.tick: a dropout detected during a
     poll must durably bump the job's dropout_count/last_dropout_at AND land

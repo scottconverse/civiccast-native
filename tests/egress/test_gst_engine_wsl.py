@@ -1524,6 +1524,275 @@ def test_graphics_overlay_composites_station_bug_and_lower_third(tmp_path: Path)
     )
 
 
+def _ffmpeg_last_frame_rgb24(ts: Path, out_raw: Path, *, width: int, height: int) -> bytes | None:
+    """Decode ALL frames of ``ts`` to raw RGB24 and return the LAST one's bytes.
+
+    Deliberately does not use ``-ss``/``-sseof`` (see ``_ffmpeg_frame_rgb24``'s own
+    comment on why front-seek breaks against this product's TS PTS base) — decoding
+    linearly from the start and slicing the final fixed-size frame off the raw output
+    sidesteps that the same way frame-0 grabbing does, just at the other end of a
+    short capture window. Returns None (caller skips) if ffmpeg isn't installed or
+    produced no frames."""
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        return None
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-i", str(ts), "-f", "rawvideo", "-pix_fmt", "rgb24", str(out_raw)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    frame_bytes = width * height * 3
+    if proc.returncode != 0 or not out_raw.exists():
+        return None
+    raw = out_raw.read_bytes()
+    if len(raw) < frame_bytes:
+        return None
+    return raw[-frame_bytes:]
+
+
+def test_content_reload_reapplies_graphics_overlay(tmp_path: Path) -> None:
+    """BLOCKER regression (2026-08-30 audit): a content-reload used to rebuild ONLY
+    the program source leg (``reload_program``) and silently drop
+    ``new_graph.graphics_overlay`` -- an operator's mid-broadcast lower-third text
+    update never took effect until a full restart, even though the API + UI
+    advertise a content-reload as the way to apply it
+    (``civiccast.egress.router.update_graphics_overlay`` /
+    ``bridge.graphics_overlay_leg_from_config``, which re-renders a fresh banner PNG
+    on every call specifically so a reload can pick it up).
+
+    Proof bar, live, mirroring ``test_graphics_overlay_composites_station_bug_and_
+    lower_third``'s decoded-pixel proof: start a channel with a SOLID GREEN
+    "lower_third" overlay layer, reload with a new graph whose SAME-NAMED
+    "lower_third" layer points at a SOLID RED PNG instead, and assert (1) the
+    engine logs the layer's swap actually committing -- not merely that
+    ``reload_program`` committed the (unrelated) video source leg -- and (2) the
+    decoded LAST frame of the emitted TS reads red at the overlay's screen position,
+    not green. This test FAILS on the pre-fix engine: ``reload_graphics_overlay``
+    does not exist yet, so mark (1) never appears in the log (a 15s timeout) --
+    the reload silently keeps airing the original green layer forever."""
+    if not _graphics_overlay_available():
+        pytest.skip(
+            "d3d11compositor is not registered in this GStreamer runtime -- the "
+            "graphics-overlay leg has nothing to build on"
+        )
+    from civiccast.egress.gst.graphics_overlay import write_rgba_png
+
+    canvas_w, canvas_h = 640, 360
+    layer_w = layer_h = 64
+    caps = f"video/x-raw,width={canvas_w},height={canvas_h},framerate=30/1"
+
+    def _solid_overlay(color: tuple[int, int, int, int], png_path: Path):
+        write_rgba_png(png_path, layer_w, layer_h, bytes(color) * (layer_w * layer_h))
+        return graphmod.GraphicsOverlayLeg(
+            layers=(
+                graphmod.GraphicsOverlayLayer(
+                    name="lower_third",  # SAME name as bridge.py's real lower-third layer
+                    image_path=str(png_path),
+                    xpos=0,
+                    ypos=0,
+                    width=layer_w,
+                    height=layer_h,
+                    alpha=1.0,
+                ),
+            ),
+        )
+
+    def _black_program() -> graphmod.SourceLeg:
+        return graphmod.SourceLeg(
+            label="program",
+            elements=(
+                _E("videotestsrc", props={"is-live": True, "pattern": 2}),  # 2 = black
+                _E("capsfilter", props={"caps": caps}),
+            ),
+        )
+
+    green_overlay = _solid_overlay((0, 255, 0, 255), tmp_path / "green.png")
+    initial_graph = graphmod.PlayoutGraph(
+        sources=(_black_program(),),
+        encoder=graphmod.encode_chain_specs(
+            width=canvas_w, height=canvas_h, fps=30, bitrate_kbps=2000, gop=30
+        ),
+        mux=_E("mpegtsmux", name="mux"),
+        sinks=((_E("queue"), _E("filesink", props={"location": str(tmp_path / "out.ts")})),),
+        graphics_overlay=green_overlay,
+    )
+    red_overlay = _solid_overlay((255, 0, 0, 255), tmp_path / "red.png")
+    reload_graph = graphmod.PlayoutGraph(
+        sources=(_black_program(),),
+        encoder=initial_graph.encoder,
+        mux=initial_graph.mux,
+        sinks=initial_graph.sinks,
+        graphics_overlay=red_overlay,
+    )
+    reload_path = tmp_path / "reload.json"
+    reload_path.write_text(graphmod.graph_to_json(reload_graph), encoding="utf-8")
+
+    out_ts = tmp_path / "out.ts"
+    proc, control, log = _launch_worker(tmp_path, initial_graph, out_ts)
+    try:
+        time.sleep(1.5)  # let some GREEN frames flow before the reload
+        _send(control, f"reload {reload_path}")
+        _await_markers_if_needed(
+            log,
+            [
+                "CTRL reload committed",
+                "CTRL graphics-overlay layer 'lower_third' reload committed",
+            ],
+        )
+        time.sleep(1.5)  # let some RED frames flow after the reload commits
+        _send(control, "stop")
+        rc = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+    logtext = log.read_text(encoding="utf-8", errors="replace")
+    assert rc == 0, f"unclean teardown after graphics-overlay reload (rc={rc}); log:\n{logtext}"
+    assert out_ts.exists() and out_ts.stat().st_size > 0, f"no TS produced; log:\n{logtext}"
+    _assert_reload_committed(logtext)
+    assert "CTRL graphics-overlay layer 'lower_third' reload committed" in logtext, (
+        "content-reload did not re-apply the graphics-overlay leg -- the operator's "
+        f"lower-third change would never reach air without a full restart; log:\n{logtext}"
+    )
+    _assert_continuous(out_ts, logtext)
+
+    raw = _ffmpeg_last_frame_rgb24(
+        out_ts, tmp_path / "last_frame.raw", width=canvas_w, height=canvas_h
+    )
+    if raw is None:
+        pytest.skip("ffmpeg not installed -- skipping the decoded-pixel reload proof")
+    stride = canvas_w * 3
+
+    def pixel(x: int, y: int) -> tuple[int, int, int]:
+        off = y * stride + x * 3
+        return (raw[off], raw[off + 1], raw[off + 2])
+
+    r, g, b = pixel(30, 30)
+    assert r > g and r > b and r > 120, (
+        f"final frame pixel {(r, g, b)} does not read as the RELOADED red overlay -- "
+        f"the reload did not actually change what's on screen; log:\n{logtext}"
+    )
+
+
+def test_content_reload_deletes_the_superseded_banner_png_not_the_live_one(
+    tmp_path: Path,
+) -> None:
+    """R3 regression (2026-08-31): round-1's per-uuid banner filename fix
+    (``bridge.graphics_overlay_leg_from_config``) stopped a concurrent build from
+    reading a partial PNG, but nothing then deleted the OLD banner a content-reload
+    superseded -- an unbounded per-start()/per-reload PNG leak on a 24/7 station,
+    on the same volume as recordings/HLS/the DB.
+
+    Live proof, real GStreamer: start a channel with a real
+    ``graphics-overlay-lower-third.<uuid>.png``-named banner (the exact pattern
+    ``GstPlayoutEngine._delete_stale_overlay_png`` gates deletion on), reload with a
+    SECOND uniquely-named banner for the SAME layer name, and once the reload's
+    engine-side commit log line lands, assert:
+
+    1. the OLD banner file is gone (the swap point -- ``_delete_stale_overlay_png``
+       -- deleted it once ``_dispose_overlay_layer_pad`` proved the old chain was
+       off-air), and
+    2. the NEW (now on-air) banner file still exists (the swap point must never
+       delete the file the live pipeline's filesrc has open).
+
+    This fails on the pre-fix engine: neither banner is ever deleted, so both
+    remain on disk after the reload commits."""
+    if not _graphics_overlay_available():
+        pytest.skip(
+            "d3d11compositor is not registered in this GStreamer runtime -- the "
+            "graphics-overlay leg has nothing to build on"
+        )
+    from civiccast.egress.gst.graphics_overlay import write_rgba_png
+
+    canvas_w, canvas_h = 640, 360
+    layer_w = layer_h = 64
+    caps = f"video/x-raw,width={canvas_w},height={canvas_h},framerate=30/1"
+
+    def _banner_leg(color: tuple[int, int, int, int]) -> tuple[graphmod.GraphicsOverlayLeg, Path]:
+        # Exactly bridge.py's real per-call filename shape -- the pattern
+        # ``_STALE_BANNER_PNG_RE``/``_delete_stale_overlay_png`` gate deletion on.
+        png_path = tmp_path / f"graphics-overlay-lower-third.{uuid.uuid4().hex}.png"
+        write_rgba_png(png_path, layer_w, layer_h, bytes(color) * (layer_w * layer_h))
+        leg = graphmod.GraphicsOverlayLeg(
+            layers=(
+                graphmod.GraphicsOverlayLayer(
+                    name="lower_third",
+                    image_path=str(png_path),
+                    xpos=0,
+                    ypos=0,
+                    width=layer_w,
+                    height=layer_h,
+                    alpha=1.0,
+                ),
+            ),
+        )
+        return leg, png_path
+
+    def _black_program() -> graphmod.SourceLeg:
+        return graphmod.SourceLeg(
+            label="program",
+            elements=(
+                _E("videotestsrc", props={"is-live": True, "pattern": 2}),  # 2 = black
+                _E("capsfilter", props={"caps": caps}),
+            ),
+        )
+
+    green_overlay, green_path = _banner_leg((0, 255, 0, 255))
+    initial_graph = graphmod.PlayoutGraph(
+        sources=(_black_program(),),
+        encoder=graphmod.encode_chain_specs(
+            width=canvas_w, height=canvas_h, fps=30, bitrate_kbps=2000, gop=30
+        ),
+        mux=_E("mpegtsmux", name="mux"),
+        sinks=((_E("queue"), _E("filesink", props={"location": str(tmp_path / "out.ts")})),),
+        graphics_overlay=green_overlay,
+    )
+    red_overlay, red_path = _banner_leg((255, 0, 0, 255))
+    reload_graph = graphmod.PlayoutGraph(
+        sources=(_black_program(),),
+        encoder=initial_graph.encoder,
+        mux=initial_graph.mux,
+        sinks=initial_graph.sinks,
+        graphics_overlay=red_overlay,
+    )
+    reload_path = tmp_path / "reload.json"
+    reload_path.write_text(graphmod.graph_to_json(reload_graph), encoding="utf-8")
+
+    assert green_path.exists() and red_path.exists(), "both banners must exist before the reload"
+
+    out_ts = tmp_path / "out.ts"
+    proc, control, log = _launch_worker(tmp_path, initial_graph, out_ts)
+    try:
+        time.sleep(1.5)  # let some GREEN frames flow before the reload
+        _send(control, f"reload {reload_path}")
+        _await_markers_if_needed(
+            log,
+            [
+                "CTRL reload committed",
+                "CTRL graphics-overlay layer 'lower_third' reload committed",
+            ],
+        )
+        time.sleep(1.0)  # give the main-loop commit's file deletion time to land
+        _send(control, "stop")
+        rc = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+    logtext = log.read_text(encoding="utf-8", errors="replace")
+    assert rc == 0, f"unclean teardown after graphics-overlay reload (rc={rc}); log:\n{logtext}"
+    assert "CTRL graphics-overlay layer 'lower_third' reload committed" in logtext, (
+        f"reload never committed -- can't assert cleanup happened; log:\n{logtext}"
+    )
+
+    assert not green_path.exists(), (
+        "the SUPERSEDED (green) banner PNG must be deleted once the reload's new "
+        f"layer committed -- it leaked instead; log:\n{logtext}"
+    )
+    assert red_path.exists(), (
+        "the NEW (red, now on-air) banner PNG must NEVER be deleted by its own "
+        f"commit -- it was wrongly removed; log:\n{logtext}"
+    )
+
+
 def test_graphics_overlay_disabled_matches_existing_no_overlay_behavior(tmp_path: Path) -> None:
     """Regression bar: a graph with ``graphics_overlay=None`` (the default -- every
     pre-existing caller in this codebase) must build and run exactly as it did before

@@ -31,6 +31,23 @@ from civiccast.egress.schema_currency import (
 )
 
 
+def reject_control_chars(value: str, *, field_name: str) -> str:
+    """Reject C0 + DEL control characters in a free-text operator field.
+
+    Shared by ``EgressConfig.graphics_overlay_lower_third_text`` (below) AND
+    ``civiccast.egress.router.GraphicsOverlayUpdateRequest`` (the request body the
+    graphics-overlay PUT endpoint validates BEFORE ``EgressConfig.model_copy``
+    applies it — ``model_copy`` does not re-run field validators, so the request
+    model needs this same check or a poisoned string would sail through the
+    endpoint's actual write path untouched by the config-level validator below).
+    Unlike ``clean_relay_identifier``, blank/whitespace-only stays valid here (it
+    means "no overlay" for the lower-third text) and padding is preserved, not
+    stripped -- callers that want that behavior pass the raw value through."""
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise ValueError(f"{field_name} cannot contain control characters")
+    return value
+
+
 def clean_relay_identifier(value: str | None, *, field_name: str) -> str | None:
     """Normalize a BYO relay identifier (NDI name / SDI device name).
 
@@ -453,6 +470,17 @@ class EgressConfig(BaseModel):
     # and its documented "not hot" limitation.
     graphics_overlay_enabled: bool = False
     graphics_overlay_lower_third_text: Annotated[str, Field(default="", max_length=240)] = ""
+
+    @field_validator("graphics_overlay_lower_third_text")
+    @classmethod
+    def _graphics_overlay_lower_third_text_is_control_char_free(cls, value: str) -> str:
+        # MINOR fix (2026-08-30 audit): mirror clean_relay_identifier's control-char
+        # rule (ndi_relay_name / sdi_relay_device above) for consistency -- a control
+        # character here would ride into graphics_overlay_leg_from_config's rendered
+        # banner PNG (civiccast.egress.gst.graphics_overlay.render_lower_third_png),
+        # same class of poisoned-string-at-render-time risk those fields guard
+        # against.
+        return reject_control_chars(value, field_name="graphics_overlay_lower_third_text")
 
     @model_validator(mode="after")
     def _sink_labels_are_unique(self) -> EgressConfig:

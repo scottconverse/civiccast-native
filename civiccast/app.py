@@ -838,6 +838,37 @@ def _build_caption_tier_startup_condition(session_factory: Any) -> Callable[[], 
     return _run
 
 
+def _build_recording_reconcile_startup_condition(recording_svc: Any) -> Callable[[], None]:
+    """One-shot startup hook that fails any recording job orphaned by a crash.
+
+    ``RecordingService.reconcile_orphans`` (wrapping
+    ``RecordingStore.reconcile_orphaned_active_jobs``) exists precisely to
+    fail a job stuck in ``arming``/``recording``/``finalizing`` past its
+    planned window after an unclean process exit -- otherwise the row is
+    never resolved, and because ``recording`` is an overlap-blocking state
+    (see ``RecordingStore.find_overlaps``), every future recording on that
+    source is silently skipped forever. It was previously only exercised by
+    tests; this hook is the production call site, run once per lifespan
+    start (same posture as the caption-tier condition above). Never raises:
+    a reconciliation failure must not take down the control plane -- a
+    truly stuck job just gets retried on the next restart.
+    """
+
+    def _run() -> None:
+        try:
+            transitioned = recording_svc.reconcile_orphans()
+            if transitioned:
+                _LOG.warning(
+                    "recording.reconcile_orphans failed %d job(s) orphaned by a prior "
+                    "restart (stuck past their planned window in an active state)",
+                    transitioned,
+                )
+        except Exception:
+            _LOG.exception("Failed to reconcile orphaned recording jobs at startup")
+
+    return _run
+
+
 def _build_contribution_alert_hook(session_factory: Any) -> Callable[[str, str], None]:
     """An (kind, detail) -> S8 sink for the S17 co-process supervisor + service.
 
@@ -2843,6 +2874,16 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.dependency_overrides[get_recording_service] = _resolve_recording_service
 
     _wire_stage_f_workers(app, _session_factory)
+    # BLOCKER fix: reconcile_orphans() exists (recording/service.py) but was
+    # never called from production -- a restart mid-recording left the job
+    # "recording" forever and permanently blocked that source's future
+    # captures (overlap-blocking state). Registered as a one-shot startup
+    # condition hook (list is guaranteed to exist after _wire_stage_f_workers
+    # above) rather than run inline, matching the caption-tier hook's
+    # "create_app() must never touch the database" posture.
+    app.state.startup_condition_hooks.append(
+        _build_recording_reconcile_startup_condition(recording_svc)
+    )
 
 
 def _install_ephemeral_store_wiring(

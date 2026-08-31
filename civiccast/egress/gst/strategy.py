@@ -705,7 +705,7 @@ class GstPlayoutStrategy:
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=True),
             graphics_overlay=graphics_overlay_leg_from_config(
-                request.config, render_dir=channel_dir
+                request.config, render_dir=channel_dir, sweep_stale=True
             ),
         )
         graph = self._with_audio_tap(graph, request.channel_id)

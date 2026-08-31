@@ -98,6 +98,12 @@ class _ActiveCapture:
     # Dropout-detection bookkeeping (stall = no file growth across a poll).
     last_known_size: int = 0
     reconnect_attempts: int = 0
+    # CRITICAL fix: set once ``reconnect_attempts`` hits the cap and no
+    # further reconnect will be attempted. Guards ``check_dropout`` against
+    # re-processing the same dead segment on every subsequent scheduler poll
+    # (~10s cadence) for the rest of the recording window — see that
+    # method's docstring.
+    exhausted: bool = False
 
 
 # Item 6: a source is considered dropped if the output file hasn't grown
@@ -113,6 +119,16 @@ _STALL_POLLS_BEFORE_DROPOUT = 2
 # trying and reports an unreconnected dropout. Bounds a source that never
 # comes back from hot-looping ffmpeg relaunches for the rest of the window.
 _MAX_RECONNECT_ATTEMPTS = 20
+
+# MAJOR fix: without an explicit network I/O timeout, ffmpeg's own connect
+# attempt against an unreachable RTSP/SRT/HLS/RTMP/MPEG-TS source blocks for
+# whatever the OS TCP stack decides (commonly minutes on Windows) before
+# ffmpeg itself ever reports failure — per attempt, and every scheduled
+# `record_now`/arm retries the same unreachable source. 15s bounds that to a
+# single scheduler-tick-scale wait, in line with the ~10s poll cadence
+# elsewhere in this module. Expressed in microseconds, the unit every one of
+# the flags below takes.
+_NETWORK_IO_TIMEOUT_MICROSECONDS = 15_000_000
 
 
 class FfmpegScheduledCapturePipeline:
@@ -263,6 +279,24 @@ class FfmpegScheduledCapturePipeline:
         "reconnect"). Capped by ``max_reconnect_attempts`` per job so a
         source that never comes back doesn't hot-loop ffmpeg for the rest
         of the recording window.
+
+        CRITICAL fix: once the reconnect cap is exhausted, this method must
+        stop mutating ``active.segments``/``active.output_path`` entirely.
+        The previous version appended ``active.output_path`` to
+        ``active.segments`` unconditionally, before checking the cap; once
+        exhausted it returned without relaunching, so every following poll
+        (same scheduler cadence, ~10s) re-detected the same dead process and
+        appended the SAME already-dead segment again -- unbounded duplicate
+        entries that ``_finalize_segments`` would later concatenate into a
+        looped/wrong-duration asset. The dead segment is now appended only
+        on the branch that actually rolls to a new ``output_path`` (a
+        successful reconnect); the cap-exhausted branch leaves ``segments``
+        untouched so ``_finalize_segments``'s ``[*segments, output_path]``
+        still includes the one real dead segment exactly once. The
+        ``exhausted`` flag additionally short-circuits every following poll
+        so a job whose source will never come back stops re-running the
+        detection work (and re-emitting the dropout alert) for the
+        remainder of the recording window.
         """
         # Held for the whole method: check_dropout (scheduler tick thread)
         # and stop/stop_arming (operator HTTP thread) must never interleave
@@ -274,6 +308,11 @@ class FfmpegScheduledCapturePipeline:
             with self._lock:
                 active = self._active.get(job_id)
             if active is None:
+                return DropoutCheckResult(dropout_detected=False)
+            if active.exhausted:
+                # The reconnect cap was already hit on a prior poll — the
+                # one real dead segment was recorded then; never touch
+                # segments/output_path again for this job.
                 return DropoutCheckResult(dropout_detected=False)
 
             exited = active.handle.poll() is not None
@@ -294,19 +333,31 @@ class FfmpegScheduledCapturePipeline:
             else:
                 detail = f"ffmpeg child exited unexpectedly mid-recording (job {job_id!r})."
 
-            # Dropout confirmed — close out the dead segment and attempt reconnect.
+            # Dropout confirmed — close out the dead process.
             active.handle.terminate(grace_seconds=5.0)
-            active.segments.append(active.output_path)
             self._stall_streak[job_id] = 0
             if active.reconnect_attempts >= self._max_reconnect_attempts:
+                # No reconnect will be attempted: leave active.segments and
+                # active.output_path exactly as they are (the still-current
+                # output_path IS the one real dead segment; it reaches
+                # _finalize_segments via its own `[*segments, output_path]`
+                # construction). Mark exhausted so no later poll repeats
+                # any of this work for this job.
+                active.exhausted = True
                 return DropoutCheckResult(
                     dropout_detected=True,
                     reconnected=False,
                     detail=f"{detail} Reconnect attempt cap ({self._max_reconnect_attempts}) reached.",
                 )
-            active.reconnect_attempts += 1
+            # Attempting a reconnect. Do NOT mutate active.segments or
+            # active.reconnect_attempts until we know the outcome — a
+            # relaunch attempt that raises (ffmpeg-not-found, arg error)
+            # must leave active.output_path/segments exactly as they were,
+            # same reasoning as the cap-exhausted branch above, otherwise a
+            # persistently-failing launch would re-append the same dead
+            # segment on every poll until the cap was reached.
             next_output = self._segment_path(
-                active.capture_dir, job_id, segment=len(active.segments)
+                active.capture_dir, job_id, segment=len(active.segments) + 1
             )
             next_output.unlink(missing_ok=True)
             try:
@@ -317,14 +368,25 @@ class FfmpegScheduledCapturePipeline:
                     loudness_regime=active.loudness_regime,
                     capture_dir=active.capture_dir,
                     output_path=next_output,
-                    segment=len(active.segments),
+                    segment=len(active.segments) + 1,
                 )
             except Exception as exc:  # ffmpeg-not-found, arg error, etc.
+                # A relaunch that can't even start is not something a 10s
+                # retry is likely to fix — treat it the same as cap
+                # exhaustion: stop here, leave segments/output_path
+                # untouched (the still-current output_path is the one real
+                # dead segment and reaches _finalize_segments via its own
+                # `[*segments, output_path]`), and never revisit this job.
+                active.exhausted = True
                 return DropoutCheckResult(
                     dropout_detected=True,
                     reconnected=False,
                     detail=f"{detail} Reconnect failed: {exc}",
                 )
+            # Reconnect succeeded: the now-dead output_path becomes a closed
+            # segment, and the fresh output_path takes over as the current one.
+            active.segments.append(active.output_path)
+            active.reconnect_attempts += 1
             active.handle = new_handle
             active.output_path = next_output
             active.last_known_size = 0
@@ -488,17 +550,36 @@ class FfmpegScheduledCapturePipeline:
             raise RuntimeError("No usable local recording target is configured.")
 
     def _input_args(self, source: RecordingSource) -> list[str]:
+        # MAJOR fix: an unreachable network source (dead RTSP/SRT/HLS/RTMP/
+        # MPEG-TS URI) must fail fast and bounded rather than hang ffmpeg for
+        # the OS's own TCP connect timeout (commonly minutes on Windows) on
+        # every single arm/record_now attempt. Each protocol below takes its
+        # own real, documented AVOption for this — there is no one flag that
+        # covers all of them:
+        #  - rtsp demuxer: `-timeout` (microseconds) is its own documented
+        #    socket TCP I/O timeout AVOption.
+        #  - srt protocol: `-timeout` (microseconds) is its own documented
+        #    raise-error timeout for read/write/connect (distinct from the
+        #    rtsp option of the same CLI name — ffmpeg resolves it per the
+        #    active protocol).
+        #  - hls/rtmp/mpegts have no protocol-specific timeout AVOption;
+        #    they take the generic AVFormatContext `-rw_timeout`
+        #    (microseconds) instead, which bounds any network read/write.
+        timeout_us = str(_NETWORK_IO_TIMEOUT_MICROSECONDS)
         match source.kind:
             case "rtsp":
-                return ["-rtsp_transport", "tcp", "-i", source.uri]
-            case "srt" | "hls" | "rtmp" | "mpegts":
-                return ["-i", source.uri]
+                return ["-rtsp_transport", "tcp", "-timeout", timeout_us, "-i", source.uri]
+            case "srt":
+                return ["-timeout", timeout_us, "-i", source.uri]
+            case "hls" | "rtmp" | "mpegts":
+                return ["-rw_timeout", timeout_us, "-i", source.uri]
             case "ndi":
                 return ["-f", "libndi_newtek", "-i", source.input_id]
             case "sdi" | "hdmi":
                 # Hardware devices are operator-named ffmpeg inputs. The exact
                 # dshow/avfoundation/v4l2 prefix remains station-specific, but the
                 # source id is validated upstream and is passed as one argv token.
+                # Not a network I/O path, so no connect/read timeout applies here.
                 return ["-i", source.input_id]
             case _:
                 raise RuntimeError(f"Unsupported scheduled recording source kind {source.kind!r}.")

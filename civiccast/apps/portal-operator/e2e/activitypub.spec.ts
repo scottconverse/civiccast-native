@@ -208,9 +208,23 @@ test.describe('activitypub federation dashboard', () => {
     }
     await openFederation(page)
 
+    // Approve fires immediately -- it is not a destructive action.
     await page.getByRole('button', { name: 'Approve' }).click()
+    await expect.poll(() => posted.length).toBe(1)
+
+    // Reject and block are destructive: each routes through the shared
+    // ConfirmDialog before the request fires.
     await page.getByRole('button', { name: 'Reject' }).click()
+    const rejectDialog = page.getByRole('alertdialog', { name: 'Reject https://neighbor.example/users/alex?' })
+    await expect(rejectDialog).toBeVisible()
+    await rejectDialog.getByRole('button', { name: 'Reject follower' }).click()
+    await expect(rejectDialog).toBeHidden()
+
     await page.getByRole('button', { name: 'Block' }).click()
+    const blockDialog = page.getByRole('alertdialog', { name: 'Block https://neighbor.example/users/alex?' })
+    await expect(blockDialog).toBeVisible()
+    await blockDialog.getByRole('button', { name: 'Block follower' }).click()
+    await expect(blockDialog).toBeHidden()
 
     await expect.poll(() => posted.length).toBe(3)
     expect(posted.map((item) => item.action)).toEqual(['approve', 'reject', 'block'])

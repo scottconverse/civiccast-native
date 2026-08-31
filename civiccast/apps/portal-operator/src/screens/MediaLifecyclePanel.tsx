@@ -10,6 +10,7 @@ import {
   replaceAssetSource,
   setAssetLegalHold,
 } from '../api/client'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { ReadinessBadge } from '../components/ReadinessBadge'
 import { useToast } from '../components/toast-context'
 
@@ -33,6 +34,14 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
   const toast = useToast()
   const [holdReason, setHoldReason] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // A misclick on the file picker used to overwrite the asset's source
+  // immediately, with no way back except "the old file is archived, not
+  // deleted" -- stage the picked file and require an explicit confirm before
+  // it actually replaces anything. Legal hold place/clear are similarly
+  // consequential (place/clear the only thing standing between an asset and
+  // automatic expiry) and get the same shared ConfirmDialog treatment.
+  const [pendingReplace, setPendingReplace] = useState<File | null>(null)
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
 
   const query = useQuery({
     queryKey: ['asset-readiness', assetId],
@@ -68,6 +77,10 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
         message: 'Could not replace the source file.',
         detail: error instanceof ApiError ? error.detail : error.message,
       }),
+    onSettled: () => {
+      setPendingReplace(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    },
   })
 
   return (
@@ -160,7 +173,15 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
             {query.data.legal_hold ? (
               <button
                 type="button"
-                onClick={() => holdMutation.mutate({ legal_hold: false })}
+                onClick={() =>
+                  setPendingConfirm({
+                    title: 'Clear the legal hold on this asset?',
+                    body: 'Once cleared, this asset is subject to its normal retention policy again and can expire automatically.',
+                    confirmLabel: 'Clear legal hold',
+                    tone: 'danger',
+                    run: () => holdMutation.mutate({ legal_hold: false }),
+                  })
+                }
                 disabled={holdMutation.isPending}
                 className="rounded-md px-2.5 py-1 text-[11px] font-medium"
                 style={{ border: '1px solid var(--cc-line)', background: 'var(--cc-surface)' }}
@@ -179,7 +200,15 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
                 />
                 <button
                   type="button"
-                  onClick={() => holdMutation.mutate({ legal_hold: true, reason: holdReason || null })}
+                  onClick={() =>
+                    setPendingConfirm({
+                      title: 'Place a legal hold on this asset?',
+                      body: 'This blocks the asset from expiring under any retention policy until the hold is explicitly cleared.',
+                      confirmLabel: 'Place legal hold',
+                      tone: 'brand',
+                      run: () => holdMutation.mutate({ legal_hold: true, reason: holdReason || null }),
+                    })
+                  }
                   disabled={holdMutation.isPending}
                   className="rounded-md px-2.5 py-1 text-[11px] font-medium"
                   // Same contrast fix as the badge above: --cc-ink text, not --cc-warn.
@@ -206,7 +235,7 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
               aria-label="Replacement video file"
               onChange={(e) => {
                 const file = e.target.files?.[0]
-                if (file) replaceMutation.mutate(file)
+                if (file) setPendingReplace(file)
               }}
               disabled={replaceMutation.isPending}
               className="text-[11px]"
@@ -218,6 +247,34 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
             )}
           </div>
         </>
+      )}
+      {pendingReplace && (
+        <ConfirmDialog
+          title="Replace this asset's source file?"
+          body={`"${pendingReplace.name}" will overwrite the current source. The current file is archived alongside the asset, not deleted, but every viewer sees the new file immediately once processing finishes.`}
+          confirmLabel="Replace source file"
+          tone="danger"
+          busy={replaceMutation.isPending}
+          onConfirm={() => replaceMutation.mutate(pendingReplace)}
+          onCancel={() => {
+            setPendingReplace(null)
+            if (fileInputRef.current) fileInputRef.current.value = ''
+          }}
+        />
+      )}
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          busy={holdMutation.isPending}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
+        />
       )}
     </section>
   )

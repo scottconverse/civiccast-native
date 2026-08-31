@@ -497,7 +497,18 @@ test('setup admin can apply a headend delivery preset (CA-6)', async ({ page }) 
   await page
     .getByLabel(/Destination \(udp:\/\/address:port\)/)
     .fill('udp://239.255.0.1:5000')
+  // The panel defaults to keeping the channel's other outputs -- uncheck it
+  // so this test still exercises (and the ConfirmDialog body still names)
+  // the "removes the other outputs" branch it always covered.
+  await page
+    .getByRole('checkbox', { name: "Keep the channel's other outputs alongside the headend feed" })
+    .uncheck()
   await page.getByRole('button', { name: 'Apply headend preset' }).click()
+  const applyDialog = page.getByRole('alertdialog', { name: 'Apply this headend preset?' })
+  await expect(applyDialog).toBeVisible()
+  await expect(applyDialog).toContainText("removes the channel's other outputs")
+  await applyDialog.getByRole('button', { name: 'Apply preset' }).click()
+  await expect(applyDialog).toBeHidden()
 
   await expect.poll(() => requests.headendApplies.length).toBe(1)
   expect(requests.headendApplies[0]).toMatchObject({
@@ -543,8 +554,14 @@ test('operator can verify the headend stream with TSDuck (CA-7)', async ({ page 
     .getByLabel(/Destination \(udp:\/\/address:port\)/)
     .fill('udp://239.255.0.1:5000')
   await page.getByRole('button', { name: 'Apply headend preset' }).click()
+  const applyDialog = page.getByRole('alertdialog', { name: 'Apply this headend preset?' })
+  await expect(applyDialog).toBeVisible()
+  await applyDialog.getByRole('button', { name: 'Apply preset' }).click()
+  await expect(applyDialog).toBeHidden()
   await expect.poll(() => requests.headendApplies.length).toBe(1)
 
+  // Verifying with TSDuck is a read-only probe -- it still fires immediately,
+  // with no confirmation step.
   await page.getByRole('button', { name: 'Verify stream (TSDuck)' }).click()
   await expect.poll(() => probeCalls).toBe(1)
   await expect(page.getByText('Verification: pass')).toBeVisible()

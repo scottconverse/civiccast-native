@@ -10,6 +10,7 @@
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthRequiredState } from '../components/AuthRequiredState'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 
 import {
   ApiError,
@@ -246,7 +247,7 @@ export function DecisionsSection({
 }: {
   decisions: EasDisplayDecision[]
   canDisplay: boolean
-  onClear: (decisionId: string) => void
+  onClear: (decision: EasDisplayDecision) => void
   loading?: boolean
 }) {
   const live = decisions.filter((d) => d.state === 'displayed')
@@ -276,7 +277,7 @@ export function DecisionsSection({
                   type="button"
                   className="rounded-md px-2 py-1 text-xs font-semibold"
                   style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
-                  onClick={() => onClear(decision.decision_id)}
+                  onClick={() => onClear(decision)}
                 >
                   Clear
                 </button>
@@ -292,6 +293,7 @@ export function DecisionsSection({
 export function EasScreen() {
   const qc = useQueryClient()
   const [channelId, setChannelId] = useState('gov')
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
   const identityQuery = useQuery<StaffIdentityResponse>({
     queryKey: ['staff-identity'],
     queryFn: getStaffIdentity,
@@ -423,9 +425,33 @@ export function EasScreen() {
       <DecisionsSection
         decisions={decisionsQuery.data ?? []}
         canDisplay={canDisplay}
-        onClear={(decisionId) => clearMut.mutate(decisionId)}
+        onClear={(decision) =>
+          setPendingConfirm({
+            title: `Take this ${decision.mode.replace('_', ' ')} down on ${decision.channel_id}?`,
+            body:
+              decision.mode === 'forced_slate'
+                ? 'This ends the full-screen public-safety takeover immediately. Residents watching that channel go back to regular programming.'
+                : 'This removes the public-safety alert from the channel immediately. Residents watching lose it until it is displayed again.',
+            confirmLabel: 'Clear alert',
+            run: () => clearMut.mutate(decision.decision_id),
+          })
+        }
         loading={decisionsQuery.isLoading}
       />
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
     </div>
   )
 }

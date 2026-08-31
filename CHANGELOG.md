@@ -15,6 +15,69 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **BLOCKER B1 — a live SRT/UDP/RTSP source that is unreachable or drops no
+  longer crash-loops the channel forever.** Hostile-audit finding: the
+  encoder process itself starts fine against a bad live source (so
+  `_start`'s own `EncoderUnavailableError`/`FfmpegNotFoundError`
+  fallback-to-slate seam never fires), then dies inside the pipeline once it
+  can't connect to / keep reading the source — `_relaunch_after_crash` paced
+  the *rate* of relaunch but always relaunched against the *same* source, so
+  the channel never reached a stable on-air state. `civiccast/egress/daemon.py`
+  now tracks a crash-relaunch streak that has never once reached a healthy
+  uptime; once it crosses `_LIVE_SOURCE_FAILURE_FALLBACK_STREAK` (5, matching
+  the existing S9-5 escalation threshold), the daemon forces the same
+  fallback-slate path `_start` already uses for encoder-unavailable, instead
+  of trusting the source plan again — and stays latched onto slate across a
+  slate-encoder crash too, so a further crash cannot flap the channel back to
+  the still-dead live source. `civiccast.egress.automation`'s existing
+  `_check_slate_replan` (30s-paced reload) already retries the real source on
+  its own schedule, so a source that recovers is picked back up automatically.
+  "Dead air is NEVER acceptable" now has a terminal slate state to back it up
+  for this failure mode, not just for a synchronous encoder-start failure.
+
+- **MAJOR M1 — a dead HLS relay child (disk full / ffmpeg missing / OOM) no
+  longer stays invisible.** Nothing polled `HlsRelaySupervisor`'s supervised
+  ffmpeg relay process after `apply()` started it, and
+  `civiccast.egress.health.build_default_sink_health` judged the `hls` sink
+  healthy from the *main* encoder's own UDP send progress alone — blind to
+  whether the separate relay child was still alive. `EgressDaemon` now polls
+  `HlsRelaySupervisor.is_alive(channel_id)` every `process_once` tick
+  (mirroring how the main worker is polled) and overrides the `hls` sink's
+  reported health to unhealthy the moment the relay is confirmed dead, so
+  `/api/staff/egress/channels/{id}/health` stops reporting "connected" for a
+  relay residents are no longer actually receiving anything from.
+
+- Noted but explicitly deferred: **C1** (per-leg SRT reconnect without a full
+  pipeline rebuild) is a larger redesign, out of scope for this fix. **N1**
+  (srtsrc/udpsrc connect-timeout properties in `civiccast/egress/gst/bridge.py`)
+  was evaluated and skipped — the GStreamer SRT plugin's exact timeout-property
+  surface could not be verified against the real runtime in this environment
+  (no `gi`/GStreamer available), and shipping an unverified property name
+  risks breaking the live-source element build outright; a future pass with
+  `gi` available should confirm the property name before adding it.
+- **Operator-console sessions had no revoke path, and a lost first-run
+  recovery kit was a permanent lockout.** Two CRITICAL findings from a
+  hostile audit of the #83 fratricide fix. (1) Login and recovery
+  deliberately APPEND a fresh token to `operator_console.tokens` instead of
+  replacing it (so a routine sign-in never signs out another already-open
+  browser), but that left no way to end a lost or stolen laptop's session on
+  purpose — it stayed valid until 20 more sign-ins evicted it (months, at a
+  single-admin station) or a destructive full reset. A new "Sign out other
+  sessions" action (`revoke_other_operator_sessions` in
+  `civiccast/installer/station_state.py`, `POST
+  /api/staff/installer/sessions/revoke-others`, a Security panel on the
+  Station Profile screen) keeps the calling session valid and revokes every
+  other one in one step. (2) The one-time first-run recovery kit had no
+  regenerate path: a browser dying before the kit was saved meant the 8
+  codes were gone forever, and a later lost password was a permanent
+  lockout with no escape but the destructive, undocumented
+  `CIVICCAST_ALLOW_FIRST_ADMIN_RESET` full-station wipe. A new "Regenerate
+  recovery kit" action (`regenerate_recovery_kit`, `POST
+  /api/staff/installer/recovery-kit/regenerate`, same Security panel)
+  requires an already-authenticated `setup_admin` — it is the "I still have
+  my password but lost my codes" path, not a lockout bypass — and mints 8
+  new codes while immediately invalidating every old one.
+
 - **Designed empty states on every operator-console screen, and the Control
   Room "banner wall" collapsed to one verdict per page.** A 38-screen field
   survey on a real box (2026-08-30) found about a dozen console pages whose

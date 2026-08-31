@@ -2507,3 +2507,204 @@ def test_default_independent_slate_strategy_is_none_when_gst_not_importable(
 
     monkeypatch.setattr(builtins, "__import__", _blocked_import)
     assert _default_independent_slate_strategy() is None
+
+
+# --- BLOCKER B1: a live source that keeps crashing the worker must land on slate,
+# --- never crash-loop against the same dead source forever ("dead air is NEVER
+# --- acceptable" — see the encoder-unavailable comment in daemon.py). --------------
+
+
+def test_repeated_live_source_crash_falls_back_to_slate_instead_of_dead_air_loop(
+    tmp_path: Path,
+) -> None:
+    """A live SRT/UDP/RTSP source that is unreachable or drops crashes the
+    worker immediately after each relaunch — the encoder process itself starts
+    fine (so ``_start``'s own EncoderUnavailableError/FfmpegNotFoundError
+    fallback-to-slate seam never fires), then dies inside the pipeline once it
+    can't connect to / keep reading the source. Before this fix,
+    ``_relaunch_after_crash`` paced the RATE of relaunch but always relaunched
+    against the SAME source_plan_provider, so this was an infinite crash-loop
+    with no terminal slate state — dead air forever. After
+    ``_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`` consecutive crash-relaunches that
+    never once reached a healthy uptime, the daemon must stop trusting the
+    configured live source and force the fallback-slate path instead."""
+    from civiccast.egress.daemon import _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    n = _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+    pids = tuple(100 + i for i in range(n + 1))  # 1 initial start + n relaunches
+    processes = [_FakeProcess(pid=pid, returncode=None) for pid in pids]
+    started: list[_FakeProcess] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _live_source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        restart_cooldown_seconds=0.0,  # never defer — isolate the fallback trigger itself
+    )
+
+    daemon.process_once("gov")  # start → the live source, ON_AIR
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Live: Council chamber"
+
+    for _ in range(n):
+        started[-1].returncode = 1  # the live source drops / never connects
+        daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    # The terminal state that replaces dead air: slate, not a channel still
+    # silently crash-looping against the same unreachable source.
+    assert state.state == "FALLBACK_SLATE"
+    assert state.current_source_label == "Fallback slate"
+    assert state.last_error is not None
+    assert str(n) in state.last_error
+    assert len(started) == n + 1  # every relaunch actually tried a fresh process
+    assert store.recent_health("gov", 1)[0].state == "FALLBACK_SLATE"
+
+
+def test_live_source_fallback_latches_stably_even_if_the_slate_encoder_also_crashes(
+    tmp_path: Path,
+) -> None:
+    """Once the crash streak has forced the channel onto the fallback slate,
+    a further crash of THAT slate encoder must relaunch the slate again — not
+    bounce back to re-resolving the still-dead live source via
+    ``source_plan_provider`` for one attempt before flapping back to slate on
+    the next crash. The streak only clears on a healthy uptime or an explicit
+    operator/automation command (see ``_begin_relaunch``'s docstring), so the
+    channel stays latched onto a stable slate state across repeat crashes of
+    the slate encoder itself, instead of an ON_AIR/FALLBACK_SLATE flap."""
+    from civiccast.egress.daemon import _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    n = _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+    # 1 initial start + n relaunches to reach slate + n more relaunches of the
+    # (also crashing) slate encoder itself.
+    pids = tuple(100 + i for i in range(2 * n + 1))
+    processes = [_FakeProcess(pid=pid, returncode=None) for pid in pids]
+    started: list[_FakeProcess] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _live_source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        restart_cooldown_seconds=0.0,
+    )
+
+    daemon.process_once("gov")
+    for _ in range(n):
+        started[-1].returncode = 1
+        daemon.process_once("gov")
+    assert store.read_state("gov").state == "FALLBACK_SLATE"
+
+    for _ in range(n):
+        started[-1].returncode = 1  # the slate encoder itself keeps crashing too
+        daemon.process_once("gov")
+        # Every relaunch in this loop stayed on slate — none of them ever
+        # bounced back to ON_AIR against the still-dead live source.
+        state = store.read_state("gov")
+        assert state is not None
+        assert state.state == "FALLBACK_SLATE"
+        assert state.current_source_label == "Fallback slate"
+
+    assert len(started) == 2 * n + 1
+
+
+# --- MAJOR M1: an HLS relay child death must surface in health, not stay invisible --
+
+
+def test_dead_hls_relay_overrides_sink_health_to_false_on_the_next_daemon_tick(
+    tmp_path: Path,
+) -> None:
+    """Before this fix, nothing polled the HLS relay subprocess after start:
+    ``/api/staff/egress/channels/{id}/health`` derived the ``hls`` sink's
+    ``connected`` flag purely from the MAIN encoder's own UDP send progress
+    (``build_default_sink_health`` / an injected ``sink_health_provider``),
+    blind to whether the SEPARATE relay child (disk full / ffmpeg missing /
+    OOM) was still alive. This proves the daemon now polls
+    ``HlsRelaySupervisor.is_alive`` every ``process_once`` tick and overrides
+    the hls sink to unhealthy the moment the relay is confirmed dead — even
+    though the injected health provider below always claims "connected", so
+    the assertion can only pass if the daemon's own liveness poll is what
+    flipped it."""
+    from civiccast.egress.hls_relay import HlsRelaySupervisor
+
+    store = InMemoryEgressStore()
+    hls_sink = EgressSinkSpec(kind="hls", label="Web", uri=str(tmp_path / "hls-live"))
+    store.upsert_config(
+        EgressConfig(channel_id="gov", enabled=True, slate_message="slate", sinks=[hls_sink])
+    )
+    store.enqueue_command(_command())
+
+    relay_procs: list[_FakeProcess] = []
+
+    def relay_starter(_args: list[str]) -> _FakeProcess:
+        proc = _FakeProcess(pid=999)
+        relay_procs.append(proc)
+        return proc
+
+    hls_relay = HlsRelaySupervisor(starter=relay_starter)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(pid=4242, returncode=None),
+        hls_relay_supervisor=hls_relay,
+        # Always claims "connected" — proves the override, not the provider,
+        # is what produces the False below.
+        sink_health_provider=lambda _channel_id, _config, _metrics: {"Web": True},
+    )
+
+    assert daemon.process_once("gov") == 1
+    assert len(relay_procs) == 1  # the relay was actually created for the hls sink
+    assert store.recent_health("gov", 1)[0].sink_connected == {"Web": True}
+
+    relay_procs[0].returncode = 1  # the relay child dies on its own between ticks
+    daemon.process_once("gov")  # a routine tick — the main encoder is unaffected
+
+    health = store.recent_health("gov", 1)[0]
+    assert health.sink_connected == {"Web": False}
+
+
+def test_hls_relay_health_override_is_not_applied_when_relay_is_still_alive(
+    tmp_path: Path,
+) -> None:
+    """Negative case for the same seam: a live relay must never be forced
+    unhealthy — the override is death-specific, not a blanket downgrade."""
+    from civiccast.egress.hls_relay import HlsRelaySupervisor
+
+    store = InMemoryEgressStore()
+    hls_sink = EgressSinkSpec(kind="hls", label="Web", uri=str(tmp_path / "hls-live"))
+    store.upsert_config(
+        EgressConfig(channel_id="gov", enabled=True, slate_message="slate", sinks=[hls_sink])
+    )
+    store.enqueue_command(_command())
+
+    hls_relay = HlsRelaySupervisor(starter=lambda _args: _FakeProcess(pid=999))
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(pid=4242, returncode=None),
+        hls_relay_supervisor=hls_relay,
+        sink_health_provider=lambda _channel_id, _config, _metrics: {"Web": True},
+    )
+
+    daemon.process_once("gov")
+    daemon.process_once("gov")  # a second, routine tick — relay never died
+
+    assert store.recent_health("gov", 1)[0].sink_connected == {"Web": True}

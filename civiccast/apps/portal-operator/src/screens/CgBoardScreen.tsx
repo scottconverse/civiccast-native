@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ApiError,
@@ -18,6 +18,7 @@ import type {
   CgZone,
 } from '../types/api.generated'
 import { EmptyState } from '../components/EmptyState'
+import { useToast } from '../components/toast-context'
 
 const POLL_MS = 30_000
 
@@ -273,10 +274,115 @@ function BulletinAddForm({
   )
 }
 
-function BulletinModerationPanel({ channelId }: { channelId: string }) {
+// In-app replacement for window.prompt when requesting changes or declining
+// a bulletin — the native browser prompt breaks the app's webview theming.
+// A blank submission never silently no-ops: it toasts and keeps the dialog
+// open so the operator can fix it, matching the ConfirmDialog's escape/focus
+// contract without pulling in its confirm/cancel button pair.
+function ModerationNoteDialog({
+  title,
+  placeholder,
+  submitLabel,
+  onSubmit,
+  onCancel,
+}: {
+  title: string
+  placeholder: string
+  submitLabel: string
+  onSubmit: (notes: string) => void
+  onCancel: () => void
+}) {
+  const [notes, setNotes] = useState('')
+  const toast = useToast()
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const onCancelRef = useRef(onCancel)
+  useEffect(() => {
+    onCancelRef.current = onCancel
+  }, [onCancel])
+
+  useEffect(() => {
+    textareaRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onCancelRef.current()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [])
+
+  const submit = () => {
+    const trimmed = notes.trim()
+    if (!trimmed) {
+      toast.push({ tone: 'error', message: 'Enter a note before submitting — it tells the submitter what to fix.' })
+      return
+    }
+    onSubmit(trimmed)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'color-mix(in srgb, var(--cc-ink) 45%, transparent)' }}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="moderation-note-title"
+        className="grid w-full max-w-md gap-3 rounded-md p-5"
+        style={{
+          background: 'var(--cc-surface)',
+          border: '1px solid var(--cc-line)',
+          boxShadow: '0 12px 32px rgba(0, 0, 0, 0.35)',
+        }}
+      >
+        <h2 id="moderation-note-title" className="m-0 text-base font-semibold">
+          {title}
+        </h2>
+        <textarea
+          ref={textareaRef}
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder={placeholder}
+          rows={4}
+          className="rounded-md px-3 py-2 text-sm"
+          style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
+        />
+        <div className="mt-1 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md px-3 py-2 text-sm font-medium"
+            style={{ border: '1px solid var(--cc-line)', color: 'var(--cc-ink-2)', background: 'var(--cc-surface)' }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            className="rounded-md px-3 py-2 text-sm font-semibold"
+            style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
+          >
+            {submitLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function BulletinModerationPanel({ channelId }: { channelId: string }) {
   const queryClient = useQueryClient()
+  const toast = useToast()
   const [showAdd, setShowAdd] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [pendingModeration, setPendingModeration] = useState<
+    { kind: 'changes' | 'decline'; submission: CgBulletinSubmission } | null
+  >(null)
 
   const queueQuery = useQuery({
     queryKey: ['staff-bulletins', channelId],
@@ -335,21 +441,11 @@ function BulletinModerationPanel({ channelId }: { channelId: string }) {
   }
 
   const requestChanges = (submission: CgBulletinSubmission) => {
-    const notes = window.prompt('What needs to change before this bulletin can air?')
-    if (!notes?.trim()) return
-    moderateMutation.mutate({
-      submissionId: submission.submission_id,
-      patch: { state: 'needs_changes', moderation_notes: notes.trim() },
-    })
+    setPendingModeration({ kind: 'changes', submission })
   }
 
   const decline = (submission: CgBulletinSubmission) => {
-    const notes = window.prompt('Why is this bulletin declined? (Required.)')
-    if (!notes?.trim()) return
-    moderateMutation.mutate({
-      submissionId: submission.submission_id,
-      patch: { state: 'declined', moderation_notes: notes.trim() },
-    })
+    setPendingModeration({ kind: 'decline', submission })
   }
 
   return (
@@ -462,6 +558,38 @@ function BulletinModerationPanel({ channelId }: { channelId: string }) {
           </div>
         )}
       </div>
+
+      {pendingModeration && (
+        <ModerationNoteDialog
+          title={pendingModeration.kind === 'changes' ? 'Request changes' : 'Decline bulletin'}
+          placeholder={
+            pendingModeration.kind === 'changes'
+              ? 'What needs to change before this bulletin can air?'
+              : 'Why is this bulletin declined? (Required.)'
+          }
+          submitLabel={pendingModeration.kind === 'changes' ? 'Send request' : 'Decline bulletin'}
+          onSubmit={(notes) => {
+            moderateMutation.mutate({
+              submissionId: pendingModeration.submission.submission_id,
+              patch:
+                pendingModeration.kind === 'changes'
+                  ? { state: 'needs_changes', moderation_notes: notes }
+                  : { state: 'declined', moderation_notes: notes },
+            })
+            setPendingModeration(null)
+          }}
+          onCancel={() => {
+            toast.push({
+              tone: 'info',
+              message:
+                pendingModeration.kind === 'changes'
+                  ? 'Request changes cancelled — no note was sent.'
+                  : 'Decline cancelled — the bulletin was not declined.',
+            })
+            setPendingModeration(null)
+          }}
+        />
+      )}
     </section>
   )
 }

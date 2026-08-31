@@ -1563,9 +1563,25 @@ export function SystemHealthScreen() {
                 })
               }
               runningRollback={rollbackRehearsal.isPending}
-              onRunFailedUpdateRollback={() => failedUpdateRollback.mutate()}
+              onRunFailedUpdateRollback={() =>
+                requestConfirm({
+                  title: 'Run the failed-update rollback rehearsal?',
+                  body: 'This simulates a failed update and exercises the rollback path end to end against the configured rollback artifact. It is heavy work for the station machine — run it outside broadcast hours.',
+                  confirmLabel: 'Run rehearsal',
+                  tone: 'brand',
+                  run: () => failedUpdateRollback.mutate(),
+                })
+              }
               runningFailedUpdateRollback={failedUpdateRollback.isPending}
-              onRunPostUpdateProof={() => postUpdateProof.mutate()}
+              onRunPostUpdateProof={() =>
+                requestConfirm({
+                  title: 'Run the post-update proof?',
+                  body: 'This re-runs the station’s readiness proof against the currently installed build to confirm the update landed cleanly. Run it outside broadcast hours.',
+                  confirmLabel: 'Run proof',
+                  tone: 'brand',
+                  run: () => postUpdateProof.mutate(),
+                })
+              }
               runningPostUpdateProof={postUpdateProof.isPending}
               canManageRollback={canRunUpdatePreflight}
             />

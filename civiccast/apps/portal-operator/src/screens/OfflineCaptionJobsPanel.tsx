@@ -8,6 +8,7 @@ import {
 } from '../api/client'
 import type { OfflineCaptionJobRecord } from '../types/api.generated'
 import { hasRole } from './contribution-format'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 
 const RETRY_ROLES = ['records_clerk']
 
@@ -235,6 +236,7 @@ export function OfflineCaptionJobsPanel({ assetId }: { assetId: string }) {
 
   const [retriedJobId, setRetriedJobId] = useState<string | null>(null)
   const [retryError, setRetryError] = useState<{ jobId: string; error: unknown } | null>(null)
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
 
   const retryMutation = useMutation({
     mutationFn: (jobId: string) => retryOfflineCaptionJob(jobId),
@@ -250,26 +252,40 @@ export function OfflineCaptionJobsPanel({ assetId }: { assetId: string }) {
   })
 
   const handleRetry = (jobId: string) => {
-    if (
-      !window.confirm(
-        'Retry this offline caption job? It will restart transcription from scratch with a fresh attempt budget.',
-      )
-    ) {
-      return
-    }
-    retryMutation.mutate(jobId)
+    setPendingConfirm({
+      title: 'Retry this offline caption job?',
+      body: 'This restarts transcription from scratch with a fresh attempt budget. Any partial progress from the current attempt is discarded.',
+      confirmLabel: 'Retry job',
+      tone: 'brand',
+      run: () => retryMutation.mutate(jobId),
+    })
   }
 
   return (
-    <OfflineCaptionJobsView
-      jobs={jobsQuery.data}
-      loading={jobsQuery.isLoading}
-      error={jobsQuery.error}
-      canRetry={canRetry}
-      retryingJobId={retryMutation.isPending ? (retryMutation.variables ?? null) : null}
-      retriedJobId={retriedJobId}
-      retryError={retryError}
-      onRetry={handleRetry}
-    />
+    <>
+      <OfflineCaptionJobsView
+        jobs={jobsQuery.data}
+        loading={jobsQuery.isLoading}
+        error={jobsQuery.error}
+        canRetry={canRetry}
+        retryingJobId={retryMutation.isPending ? (retryMutation.variables ?? null) : null}
+        retriedJobId={retriedJobId}
+        retryError={retryError}
+        onRetry={handleRetry}
+      />
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
+    </>
   )
 }

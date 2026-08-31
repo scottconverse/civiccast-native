@@ -16,11 +16,20 @@ from __future__ import annotations
 import base64
 import contextlib
 import os
+import re
 import signal
 import time
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
+
+# R3 banner-PNG cleanup: the per-call unique filename ``bridge.py``'s
+# ``graphics_overlay_leg_from_config`` renders (``graphics-overlay-lower-third.
+# <uuid4-hex>.png``). Deletion of an overlay layer's image file is gated on this
+# exact pattern so cleanup can NEVER touch an operator-configured, persistent
+# image (e.g. a station-bug/logo ``image_path`` from config) -- only a file this
+# module itself renders per-start()/per-reload matches.
+_STALE_BANNER_PNG_RE = re.compile(r"^graphics-overlay-lower-third\.[0-9a-f]{32}\.png$")
 
 _CPU_DECODE_FEATURE_RANK = ",".join(
     (
@@ -68,6 +77,7 @@ try:  # package context (Windows can't reach here — gi import fails first)
         AudioTapLeg,
         CaptionEmbedLeg,
         ElementSpec,
+        GraphicsOverlayLayer,
         GraphicsOverlayLeg,
         PlaylistLeg,
         PlayoutGraph,
@@ -84,6 +94,7 @@ except (
         AudioTapLeg,
         CaptionEmbedLeg,
         ElementSpec,
+        GraphicsOverlayLayer,
         GraphicsOverlayLeg,
         PlaylistLeg,
         PlayoutGraph,
@@ -200,6 +211,23 @@ class GstPlayoutEngine:
         self._source_leg_elements: list[list[Gst.Element]] = []
         self._collecting: list[Gst.Element] | None = None
         self._pending_reload: dict[str, Any] | None = None
+        # S15 graphics-overlay reload state (BLOCKER fix, 2026-08-30 audit): the
+        # compositor + per-layer-name pad/elements built by ``_build_graphics_overlay``
+        # (None/empty when the graph has no overlay leg), plus any swap that is
+        # currently settling toward a first-buffer commit -- mirrors
+        # ``_source_leg_elements``/``_pending_reload`` above, one entry per layer NAME
+        # instead of one leg per role index (see ``reload_graphics_overlay``).
+        self._overlay_compositor: Gst.Element | None = None
+        self._overlay_layer_pads: dict[str, Gst.Pad] = {}
+        self._overlay_layer_elements: dict[str, list[Gst.Element]] = {}
+        # R3: the image_path each currently-live layer's chain reads from, so a
+        # swap/removal can delete the file it is REPLACING once (and only once)
+        # that old chain is fully disposed -- never the file the still-live or
+        # about-to-commit chain has open. Index-aligned with
+        # ``_overlay_layer_pads``/``_overlay_layer_elements`` by layer name.
+        self._overlay_layer_image_paths: dict[str, str] = {}
+        self._pending_overlay_swaps: dict[str, dict[str, Any]] = {}
+        self._overlay_layer_seq = 0
         # S11 gap 9: language tag events for secondary audio must be pushed AFTER the
         # pipeline reaches PLAYING (push_event at NULL state doesn't flow into mpegtsmux).
         # Stored here during _build(); flushed by _flush_lang_tags() post-_await_playing().
@@ -462,8 +490,16 @@ class GstPlayoutEngine:
         ``GraphicsOverlayLeg``'s docstring) — and the composited result is downloaded
         back to system memory (``d3d11download``) so the (system-memory) encoder chain
         is unaffected. Returns the tail element (``videoconvert`` after the download)
-        the caller links into its encoder chain."""
+        the caller links into its encoder chain.
+
+        The compositor and each layer's pad/elements are retained on
+        ``self._overlay_compositor``/``self._overlay_layer_pads``/
+        ``self._overlay_layer_elements`` so a later content-reload
+        (``reload_graphics_overlay``) can add/swap/remove layers by name on the
+        already-PLAYING pipeline instead of silently ignoring the reload's overlay
+        leg (BLOCKER fix, 2026-08-30 audit)."""
         compositor = self._make(leg.compositor)
+        self._overlay_compositor = compositor
 
         base_upload = self._make(ElementSpec("d3d11upload", name="graphics_overlay_base_upload"))
         self._link(video_prev, base_upload)
@@ -475,39 +511,73 @@ class GstPlayoutEngine:
             raise RuntimeError("failed to link program video into the graphics-overlay compositor")
 
         for layer in leg.layers:
-            chain = (
-                ElementSpec("filesrc", props={"location": layer.image_path}),
-                ElementSpec("decodebin"),
-                ElementSpec("videoconvert"),
-                ElementSpec("d3d11upload", name=f"graphics_overlay_upload_{layer.name}"),
-            )
-            _first, layer_tail = self._build_chain(chain)
-            layer_pad = compositor.request_pad_simple("sink_%u")
-            if (
-                layer_pad is None
-                or layer_tail.get_static_pad("src").link(layer_pad) != Gst.PadLinkReturn.OK
-            ):
-                raise RuntimeError(
-                    f"failed to link graphics-overlay layer {layer.name!r} into the compositor"
-                )
-            layer_pad.set_property("xpos", layer.xpos)
-            layer_pad.set_property("ypos", layer.ypos)
-            if layer.width:
-                layer_pad.set_property("width", layer.width)
-            if layer.height:
-                layer_pad.set_property("height", layer.height)
-            layer_pad.set_property("alpha", layer.alpha)
-            # A still-image filesrc/decodebin chain EOSes its compositor pad after its
-            # single buffer (the bundled runtime ships no `imagefreeze`); repeat-after-eos
-            # holds that last buffer on screen instead of dropping the pad — proven live
-            # (see the S15 graphics-overlay pipeline proof test).
-            layer_pad.set_property("repeat-after-eos", layer.repeat_after_eos)
+            layer_pad, elements = self._instantiate_overlay_layer(layer, compositor)
+            self._overlay_layer_pads[layer.name] = layer_pad
+            self._overlay_layer_elements[layer.name] = elements
+            self._overlay_layer_image_paths[layer.name] = layer.image_path
 
         download = self._make(ElementSpec("d3d11download", name="graphics_overlay_download"))
         self._link(compositor, download)
         post_convert = self._make(ElementSpec("videoconvert", name="graphics_overlay_post_convert"))
         self._link(download, post_convert)
         return post_convert
+
+    def _instantiate_overlay_layer(
+        self, layer: GraphicsOverlayLayer, compositor: Gst.Element
+    ) -> tuple[Gst.Pad, list[Gst.Element]]:
+        """Build one graphics-overlay image layer's still-image chain
+        (``filesrc ! decodebin ! videoconvert ! d3d11upload``) and link it into a
+        NEW compositor request pad, applying the layer's position/size/alpha/
+        repeat-after-eos properties. Shared by the initial ``_build_graphics_overlay``
+        (pipeline not yet PLAYING — no explicit state sync needed, the top-level
+        ``set_state(PLAYING)`` cascades to every element already added) and by
+        ``_swap_overlay_layer`` (the content-reload re-apply path on an
+        already-PLAYING pipeline, which arms a first-buffer probe THEN calls
+        ``sync_state_with_parent()`` itself — mirrors ``reload_program``'s ENG-002
+        ordering, so the caller controls when/whether to sync).
+
+        Element names are suffixed with a monotonic sequence number
+        (``self._overlay_layer_seq``) so a reload's rebuilt chain for an
+        already-built layer name never collides with the still-live old chain it
+        is about to replace. Returns ``(compositor_sink_pad, elements)`` — the
+        caller collects/disposes ``elements`` as a unit, exactly like a source leg."""
+        self._overlay_layer_seq += 1
+        collected: list[Gst.Element] = []
+        self._collecting = collected
+        try:
+            chain = (
+                ElementSpec("filesrc", props={"location": layer.image_path}),
+                ElementSpec("decodebin"),
+                ElementSpec("videoconvert"),
+                ElementSpec(
+                    "d3d11upload",
+                    name=f"graphics_overlay_upload_{layer.name}_{self._overlay_layer_seq}",
+                ),
+            )
+            _first, layer_tail = self._build_chain(chain)
+        finally:
+            self._collecting = None
+        layer_pad = compositor.request_pad_simple("sink_%u")
+        if (
+            layer_pad is None
+            or layer_tail.get_static_pad("src").link(layer_pad) != Gst.PadLinkReturn.OK
+        ):
+            raise RuntimeError(
+                f"failed to link graphics-overlay layer {layer.name!r} into the compositor"
+            )
+        layer_pad.set_property("xpos", layer.xpos)
+        layer_pad.set_property("ypos", layer.ypos)
+        if layer.width:
+            layer_pad.set_property("width", layer.width)
+        if layer.height:
+            layer_pad.set_property("height", layer.height)
+        layer_pad.set_property("alpha", layer.alpha)
+        # A still-image filesrc/decodebin chain EOSes its compositor pad after its
+        # single buffer (the bundled runtime ships no `imagefreeze`); repeat-after-eos
+        # holds that last buffer on screen instead of dropping the pad — proven live
+        # (see the S15 graphics-overlay pipeline proof test).
+        layer_pad.set_property("repeat-after-eos", layer.repeat_after_eos)
+        return layer_pad, collected
 
     def _build_secondary_audio(self, leg: SecondaryAudioLeg, mux: Gst.Element) -> None:
         """S11 gap 9: build one secondary audio program and mux it as an extra audio PID.
@@ -762,6 +832,20 @@ class GstPlayoutEngine:
                 )
                 self._abort_pending_reload("error")
                 return True
+            # Mirrors the ENG-009 containment above, but for a still-settling
+            # graphics-overlay layer swap (e.g. a reloaded lower-third banner PNG
+            # that fails to decode): an async error on the NOT-YET-COMMITTED new
+            # layer chain must abort only that swap, never take the channel off air.
+            overlay_layer_name = self._belongs_to_pending_overlay_swap(message.src)
+            if overlay_layer_name is not None:
+                err, _debug = message.parse_error()
+                print(
+                    f"CTRL graphics-overlay reload for layer {overlay_layer_name!r} aborted: "
+                    f"new layer errored before commit: {err}",
+                    flush=True,
+                )
+                self._abort_pending_overlay_swap(overlay_layer_name, reason="error")
+                return True
             self._error = message.parse_error()
             if self._loop is not None:
                 self._loop.quit()
@@ -954,6 +1038,11 @@ class GstPlayoutEngine:
                 with contextlib.suppress(OSError):
                     Path(command[1]).unlink()  # one-shot graph file: consume it after read
                 self.reload_program(new_graph.sources[0])
+                # BLOCKER fix: a content-reload must also re-apply the graphics-overlay
+                # leg (station bug / lower-third) from the SAME reloaded graph — reload
+                # used to rebuild only the program leg and silently drop
+                # new_graph.graphics_overlay (see reload_graphics_overlay's docstring).
+                self.reload_graphics_overlay(new_graph.graphics_overlay)
                 print(f"CTRL reload armed ({command[1]})", flush=True)
             except Exception as exc:  # a bad reload must not kill the channel
                 print(f"CTRL reload failed: {exc!r}", flush=True)
@@ -1165,6 +1254,262 @@ class GstPlayoutEngine:
                 self.pipeline.remove(element)
         except Exception as exc:
             print(f"WARN: reload disposal incomplete: {exc!r}", flush=True)
+
+    # -- content-reload (S15 BLOCKER fix): re-apply the graphics-overlay leg too --
+
+    def _belongs_to_pending_overlay_swap(self, src: object) -> str | None:
+        """The layer NAME whose still-settling swap ``src`` (a bus-message source)
+        belongs to, or None. Mirrors ``_belongs_to_pending_reload``, one pending
+        swap per layer name instead of a single pending reload."""
+        if src is None:
+            return None
+        for layer_name, entry in self._pending_overlay_swaps.items():
+            node = src
+            while node is not None:
+                if node in entry["new_elements"]:
+                    return layer_name
+                node = node.get_parent() if hasattr(node, "get_parent") else None
+        return None
+
+    def reload_graphics_overlay(self, new_leg: GraphicsOverlayLeg | None) -> None:
+        """Re-apply the S15 graphics-overlay leg on a content-reload.
+
+        BLOCKER fix (2026-08-30 audit): a content-reload used to rebuild ONLY the
+        program source leg (``reload_program``) and silently drop
+        ``new_graph.graphics_overlay`` — an operator's mid-broadcast lower-third
+        text update never took effect until a full restart, even though the API +
+        UI advertise a content-reload as the way to apply it (see
+        ``civiccast.egress.router.update_graphics_overlay`` and
+        ``bridge.graphics_overlay_leg_from_config``, which re-renders a fresh
+        banner PNG on every call specifically so a reload can pick it up).
+
+        For every layer NAME present in ``new_leg`` this builds a fresh image
+        chain and swaps it in for that name's currently-live layer (or adds it, if
+        the name is new) via ``_swap_overlay_layer`` — the exact first-buffer-probe
+        pattern ``reload_program`` uses for the video source leg, so there is never
+        a frame where the OLD and NEW image for the SAME layer are both composited
+        (a visible double-exposure), and a build/preroll failure never disturbs the
+        already-on-air overlay. A layer name no longer present in ``new_leg`` (the
+        operator removed a layer, or turned the whole overlay off) is dropped via
+        ``_remove_overlay_layer``. The lower-third's operative case — the SAME
+        layer name (``"lower_third"``) with a freshly-rendered PNG at a new path —
+        is exactly a swap-by-name.
+
+        If the engine was built WITHOUT a graphics-overlay leg at all (no
+        compositor exists in this pipeline's topology —
+        ``self._overlay_compositor is None``), a reload cannot safely splice a
+        D3D11 compositor into an already-running pipeline; this is logged and
+        skipped, matching ``PlayoutGraph.graphics_overlay``'s documented
+        "None preserves today's behavior" contract — a channel that wants to ADD an
+        overlay where none existed needs a fresh start, not a reload."""
+        if self._overlay_compositor is None:
+            if new_leg is not None:
+                print(
+                    "WARN: content-reload carried a graphics-overlay update but this "
+                    "channel's pipeline was built without an overlay compositor -- a "
+                    "fresh start is required to add one; skipping.",
+                    flush=True,
+                )
+            return
+        new_layers_by_name = {
+            layer.name: layer for layer in (new_leg.layers if new_leg is not None else ())
+        }
+        for name in list(self._overlay_layer_pads):
+            if name not in new_layers_by_name:
+                self._remove_overlay_layer(name)
+        # A layer name can be PENDING (a not-yet-committed ADD, i.e. one never in
+        # ``_overlay_layer_pads`` because this is its first-ever reload) without the
+        # loop above ever seeing it -- close that gap here so a layer removed before
+        # its own add commits doesn't orphan a settling swap forever.
+        for name in list(self._pending_overlay_swaps):
+            if name not in new_layers_by_name and name not in self._overlay_layer_pads:
+                self._abort_pending_overlay_swap(name, reason="removed")
+        for layer in new_layers_by_name.values():
+            self._swap_overlay_layer(layer)
+
+    def _swap_overlay_layer(self, layer: GraphicsOverlayLayer) -> None:
+        """Build a fresh image chain for ``layer`` onto a new compositor pad, and
+        commit it in place of that layer name's current pad on the new chain's
+        first buffer. Mirrors ``reload_program``'s ENG-001/ENG-002/ENG-008 handling
+        (bounded watchdog, probe-armed-before-preroll, build-error containment) —
+        see that method's docstring for the rationale of each."""
+        compositor = self._overlay_compositor
+        if compositor is None:
+            return  # defensive; reload_graphics_overlay already gates this
+        if layer.name in self._pending_overlay_swaps:
+            # Supersede a still-settling swap for this same layer name (never drop
+            # a due overlay change) — the superseded chain is disposed first.
+            print(
+                f"CTRL graphics-overlay reload superseding a still-settling swap "
+                f"for layer {layer.name!r}",
+                flush=True,
+            )
+            self._abort_pending_overlay_swap(layer.name, reason="superseded")
+        new_pad, new_elements = self._instantiate_overlay_layer(layer, compositor)
+        entry: dict[str, Any] = {
+            "layer": layer,
+            "new_pad": new_pad,
+            "new_elements": new_elements,
+            "probe_id": None,
+            "timeout_id": None,
+        }
+        self._pending_overlay_swaps[layer.name] = entry
+        try:
+            # ENG-002 (mirrored): arm the first-buffer probe BEFORE PLAYING so the
+            # genuine first buffer can never slip past an unarmed probe.
+            entry["probe_id"] = new_pad.add_probe(
+                Gst.PadProbeType.BUFFER,
+                lambda _pad, _info, name=layer.name: self._on_overlay_first_buffer(name),
+            )
+            for element in new_elements:
+                element.sync_state_with_parent()  # preroll the new layer chain
+        except Exception:  # ENG-008 (mirrored): a preroll/arm failure must not wedge
+            self._abort_pending_overlay_swap(layer.name, reason="build-error")
+            raise
+        # ENG-001 (mirrored): bound the wait for the new layer's first buffer. If it
+        # never arrives, abort rather than pin the pending swap forever (the current
+        # overlay for this layer name keeps showing).
+        entry["timeout_id"] = GLib.timeout_add_seconds(
+            max(1, int(self.reload_timeout_s)),
+            lambda name=layer.name: self._on_overlay_swap_timeout(name),
+        )
+
+    def _on_overlay_first_buffer(self, layer_name: str) -> Gst.PadProbeReturn:
+        # Streaming thread: hand the commit to the main loop (no state changes here).
+        GLib.idle_add(self._commit_overlay_swap, layer_name)
+        return Gst.PadProbeReturn.REMOVE
+
+    def _commit_overlay_swap(self, layer_name: str) -> bool:
+        """Main-loop commit of one layer's swap: repoint ``self._overlay_layer_pads``/
+        ``self._overlay_layer_elements`` at the prerolled new chain, then dispose the
+        old one. A no-op if the swap was aborted/superseded before this fired.
+        ``return False`` so the GLib idle source runs once."""
+        entry = self._pending_overlay_swaps.get(layer_name)
+        if entry is None:
+            return False  # aborted or superseded before the first buffer landed
+        if entry["timeout_id"] is not None:
+            GLib.source_remove(entry["timeout_id"])  # committing — cancel the watchdog
+        old_pad = self._overlay_layer_pads.get(layer_name)
+        old_elements = self._overlay_layer_elements.get(layer_name, [])
+        old_image_path = self._overlay_layer_image_paths.get(layer_name)
+        self._overlay_layer_pads[layer_name] = entry["new_pad"]
+        self._overlay_layer_elements[layer_name] = entry["new_elements"]
+        self._overlay_layer_image_paths[layer_name] = entry["layer"].image_path
+        del self._pending_overlay_swaps[layer_name]
+        if old_pad is not None:
+            # R3: the swap point -- the NEW layer's first buffer has just landed,
+            # so the OLD chain (about to be disposed below) is provably off-air.
+            # Delete its banner PNG only once ``_dispose_overlay_layer_pad`` has
+            # unlinked/NULL'd/removed every element reading it (best-effort: never
+            # raises, matches that method's disposal-hiccup contract).
+            self._dispose_overlay_layer_pad(old_pad, old_elements)
+            self._delete_stale_overlay_png(old_image_path)
+        print(
+            f"CTRL graphics-overlay layer {layer_name!r} reload committed "
+            f"(elements={self._element_count()})",
+            flush=True,
+        )
+        return False
+
+    def _on_overlay_swap_timeout(self, layer_name: str) -> bool:
+        """Watchdog: the new layer chain never produced a first buffer in time.
+        Abort so the channel isn't wedged on a never-committing overlay swap; the
+        current overlay for this layer name keeps showing and the next due change
+        can retry."""
+        if layer_name not in self._pending_overlay_swaps:
+            return False  # already committed/aborted
+        print(
+            f"CTRL graphics-overlay reload for layer {layer_name!r} aborted: new layer "
+            f"produced no buffer within {max(1, int(self.reload_timeout_s))}s; "
+            "keeping current overlay",
+            flush=True,
+        )
+        self._abort_pending_overlay_swap(layer_name, reason="timeout")
+        return False  # one-shot
+
+    def _abort_pending_overlay_swap(self, layer_name: str, *, reason: str) -> None:
+        """Tear down the in-flight (uncommitted) swap for ``layer_name`` and clear
+        its pending slot. The currently-shown layer for that name is untouched.
+        Used by supersede, build-error, watchdog timeout, and async-error
+        containment."""
+        entry = self._pending_overlay_swaps.pop(layer_name, None)
+        if entry is None:
+            return
+        if entry["probe_id"] is not None:
+            with contextlib.suppress(Exception):  # probe may already have auto-removed
+                entry["new_pad"].remove_probe(entry["probe_id"])
+        if entry["timeout_id"] is not None and reason != "timeout":
+            # 'timeout' means the watchdog source is firing now (auto-removed on return).
+            with contextlib.suppress(Exception):
+                GLib.source_remove(entry["timeout_id"])
+        self._dispose_overlay_layer_pad(entry["new_pad"], entry["new_elements"])
+        # R3: this chain never went on-air (superseded/build-error/timeout/removed
+        # before its first buffer committed) -- its banner PNG is an orphan the
+        # moment its elements are disposed above; delete it now rather than
+        # leaking it until the next start()'s sweep.
+        self._delete_stale_overlay_png(entry["layer"].image_path)
+
+    def _remove_overlay_layer(self, layer_name: str) -> None:
+        """Drop a layer no longer present in a reloaded graphics-overlay leg (the
+        operator removed a layer, or turned the overlay off) — disposes its
+        compositor pad + elements the same way ``_dispose_source_leg`` retires a
+        source leg. A layer with a swap still settling is left alone (its own
+        commit/abort path disposes whichever chain loses)."""
+        if layer_name in self._pending_overlay_swaps:
+            self._abort_pending_overlay_swap(layer_name, reason="removed")
+        pad = self._overlay_layer_pads.pop(layer_name, None)
+        elements = self._overlay_layer_elements.pop(layer_name, [])
+        image_path = self._overlay_layer_image_paths.pop(layer_name, None)
+        if pad is not None:
+            self._dispose_overlay_layer_pad(pad, elements)
+            self._delete_stale_overlay_png(image_path)
+
+    def _dispose_overlay_layer_pad(self, pad: Gst.Pad, elements: list[Gst.Element]) -> None:
+        """Tear down one now-inactive overlay layer chain: unlink from the
+        compositor, release its request pad, then NULL + remove its elements.
+        Best-effort — mirrors ``_dispose_source_leg``: a disposal hiccup is logged,
+        never raised, so it can never take a live channel off air."""
+        try:
+            for element in elements:
+                element.set_state(Gst.State.NULL)
+            compositor = self._overlay_compositor
+            if compositor is not None:
+                peer = pad.get_peer()
+                if peer is not None:
+                    peer.unlink(pad)
+                compositor.release_request_pad(pad)
+            for element in elements:
+                self.pipeline.remove(element)
+        except Exception as exc:
+            print(f"WARN: graphics-overlay layer disposal incomplete: {exc!r}", flush=True)
+
+    def _delete_stale_overlay_png(self, image_path: str | None) -> None:
+        """Delete an overlay layer's rendered banner PNG once its GStreamer chain
+        is fully disposed (called only after ``_dispose_overlay_layer_pad`` has
+        unlinked/NULL'd/removed every element that had it open).
+
+        Restricted to filenames matching ``_STALE_BANNER_PNG_RE`` -- the exact
+        per-call unique pattern ``bridge.graphics_overlay_leg_from_config``
+        renders -- so this can never delete an operator-configured, persistent
+        image (e.g. a future station-bug/logo layer's ``image_path``), only a
+        file this module's own reload/swap path generated. Best-effort: a file
+        still locked by a lingering process (Windows) fails to unlink and is
+        logged, never raised -- disposal must never take a live channel off air
+        (R3, 2026-08-31: round-1's per-uuid banner filename fix left nothing to
+        delete the old ones, so a 24/7 station accumulated one PNG per
+        start()/content-reload forever on the same volume as recordings/HLS/DB)."""
+        if not image_path:
+            return
+        path = Path(image_path)
+        if not _STALE_BANNER_PNG_RE.match(path.name):
+            return
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            print(
+                f"WARN: failed to delete stale graphics-overlay banner PNG {path}: {exc!r}",
+                flush=True,
+            )
 
     def stop(self, *, force_exit_on_hang: bool = False) -> bool:
         """Time-bounded teardown. Returns True iff the pipeline reached NULL within

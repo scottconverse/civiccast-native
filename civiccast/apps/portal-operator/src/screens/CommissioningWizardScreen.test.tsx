@@ -228,8 +228,10 @@ describe('CommissioningWizardScreen', () => {
       },
     })
     vi.mocked(runCommissioningOutputProof).mockResolvedValue(proofRun())
-    const { findByText } = renderScreen()
+    const { findByText, findAllByText } = renderScreen()
     fireEvent.click(await findByText('Start proof run'))
+    const confirmButtons = await findAllByText('Start proof run')
+    fireEvent.click(confirmButtons[confirmButtons.length - 1])
     await waitFor(() => expect(vi.mocked(runCommissioningOutputProof)).toHaveBeenCalled())
     expect(await findByText(/Verdict: pass/i)).toBeTruthy()
     expect(await findByText(/Headend\/format proof only/i)).toBeTruthy()

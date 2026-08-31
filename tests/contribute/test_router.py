@@ -686,3 +686,490 @@ def test_upload_per_ip_cumulative_budget_blocks_before_the_directory_ceiling(
         "the per-IP budget must trip well before the aggregate directory "
         f"ceiling -- directory only holds {dir_total} bytes of a 10 MiB ceiling"
     )
+
+
+# ---------------------------------------------------------------------------
+# BLOCKER / CRITICAL / MAJOR: decline must pull a live schedule item, and
+# accept/schedule/mark_under_review/request_changes must be guarded against
+# racing or reverting a real, already-live booking.
+# ---------------------------------------------------------------------------
+
+
+@_FFMPEG_SKIP
+def test_decline_after_schedule_cancels_the_real_schedule_item(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """BLOCKER: declining an already-accepted-and-scheduled submission must
+    pull the REAL schedule item off the schedule, not just flip the JSON
+    submission state to "declined" -- otherwise the declined recording still
+    airs at its scheduled time. Must fail on the pre-fix code: the old
+    ``_apply_review`` "decline" branch only ever set
+    ``values["state"] = "declined"`` and never touched the schedule store,
+    so the schedule item this test checks stayed "scheduled" forever.
+    """
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
+    ).json()
+
+    accepted = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={"action": "accept"},
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    scheduled = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={
+            "action": "schedule",
+            "schedule_handoff": {
+                "channel_id": "public",
+                "requested_start": "2026-06-01T18:00:00Z",
+                "duration_seconds": 1800,
+            },
+        },
+    )
+    assert scheduled.status_code == 200, scheduled.text
+    schedule_item_id = scheduled.json()["schedule_handoff"]["schedule_item_id"]
+    assert schedule_item_id
+
+    before_decline = client.get(f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS)
+    assert before_decline.status_code == 200
+    assert before_decline.json()["state"] == "scheduled"
+
+    declined = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={
+            "action": "decline",
+            "decline_reason": "A rights dispute surfaced after this was scheduled.",
+        },
+    )
+    assert declined.status_code == 200, declined.text
+    assert declined.json()["state"] == "declined"
+
+    after_decline = client.get(f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS)
+    assert after_decline.status_code == 200, after_decline.text
+    assert after_decline.json()["state"] == "cancelled", (
+        "declining a scheduled submission must cancel its real schedule item -- "
+        f"got state={after_decline.json()['state']!r}, so the declined recording "
+        "would still air"
+    )
+
+    # The schedule listing (what an actual playout dispatch would read) must
+    # not carry the declined item as an active booking either.
+    schedule_list = client.get("/api/staff/schedule", headers=_STAFF_HEADERS)
+    assert schedule_list.status_code == 200
+    live_states = {item["state"] for item in schedule_list.json() if item["id"] == schedule_item_id}
+    assert live_states == {"cancelled"}
+
+    public_status = client.get(
+        f"/api/public/contribute/submissions/{created['submission_id']}/status",
+        params={"receipt_token": created["receipt_token"]},
+    )
+    assert public_status.status_code == 200
+    assert public_status.json()["state"] == "declined"
+
+
+@_FFMPEG_SKIP
+def test_decline_without_a_schedule_item_still_works(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sanity companion to the cancel-on-decline fix: a submission that was
+    never scheduled (the common case) must still decline cleanly -- the new
+    cancel step is a no-op when there is no real schedule item to pull."""
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_media(tmp_path))
+    ).json()
+
+    declined = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={"action": "decline", "decline_reason": "Not a fit for this channel."},
+    )
+
+    assert declined.status_code == 200, declined.text
+    assert declined.json()["state"] == "declined"
+
+
+@_FFMPEG_SKIP
+def test_concurrent_duplicate_accept_produces_exactly_one_library_asset(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """CRITICAL race: router.py read the submission's state OUTSIDE the
+    store's lock, so two concurrent accepts on the same "submitted"
+    submission could both pass the precondition check, both run the real
+    ffprobe ingest, and both call ``AssetStore.ingest_upload`` -- two real
+    library assets, one permanently orphaned. Drives many real concurrent
+    HTTP requests at the same submission (same pattern as
+    ``test_upload_byte_budget_is_atomic_under_concurrency`` above: a
+    ``threading.Barrier`` releases every worker into the request together).
+    With ``ContributorSubmissionStore.reserve_review_action`` in place,
+    exactly one request reaches the ingest and gets 200; every other
+    concurrent/duplicate request is rejected with 409 before it can touch
+    the asset store at all -- so exactly one library asset ever exists.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
+    ).json()
+
+    workers = 8
+    barrier = threading.Barrier(workers)
+
+    def accept_once(_: int) -> int:
+        barrier.wait()  # release every worker into the review POST together
+        response = client.post(
+            f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+            headers=_STAFF_HEADERS,
+            json={"action": "accept"},
+        )
+        return response.status_code
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        statuses = list(pool.map(accept_once, range(workers)))
+
+    assert statuses.count(200) == 1, (
+        f"exactly one concurrent accept must succeed; statuses={statuses}"
+    )
+    assert all(code in {200, 409} for code in statuses), statuses
+
+    queue = client.get("/api/staff/contribute/submissions", headers=_STAFF_HEADERS)
+    row = next(
+        item
+        for item in queue.json()["submissions"]
+        if item["submission_id"] == created["submission_id"]
+    )
+    assert row["state"] == "accepted"
+    assert row["asset_id"]
+
+    library = client.get("/api/staff/assets", headers=_STAFF_HEADERS)
+    assert library.status_code == 200
+    contributor_assets = [
+        item for item in library.json() if item["asset_id"].startswith("contributor-")
+    ]
+    assert len(contributor_assets) == 1, (
+        "a concurrent double-accept must never leave more than one real library "
+        f"asset behind; found {[a['asset_id'] for a in contributor_assets]}"
+    )
+    assert contributor_assets[0]["asset_id"] == row["asset_id"]
+
+
+@_FFMPEG_SKIP
+def test_concurrent_duplicate_schedule_produces_exactly_one_schedule_row(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """CRITICAL race: the same TOCTOU as the double-accept test above, but for
+    send-to-schedule -- two concurrent "schedule" requests on the same
+    accepted submission could both pass the precondition check and both call
+    ``PostgresScheduleStore.create``/``_EphemeralScheduleStore.create``,
+    creating two real, live ``schedule_items`` rows on the SAME channel at
+    the SAME time (one an orphaned live booking a resident could actually
+    see air). With the reservation in place, exactly one request creates a
+    real schedule row and every other concurrent/duplicate request is
+    rejected with 409 before it can touch the schedule store.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
+    ).json()
+    accepted = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={"action": "accept"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    asset_id = accepted.json()["asset_id"]
+
+    workers = 8
+    barrier = threading.Barrier(workers)
+    handoff = {
+        "action": "schedule",
+        "schedule_handoff": {
+            "channel_id": "public",
+            "requested_start": "2026-06-01T18:00:00Z",
+            "duration_seconds": 1800,
+        },
+    }
+
+    def schedule_once(_: int) -> int:
+        barrier.wait()  # release every worker into the review POST together
+        response = client.post(
+            f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+            headers=_STAFF_HEADERS,
+            json=handoff,
+        )
+        return response.status_code
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        statuses = list(pool.map(schedule_once, range(workers)))
+
+    assert statuses.count(200) == 1, (
+        f"exactly one concurrent schedule request must succeed; statuses={statuses}"
+    )
+    assert all(code in {200, 409} for code in statuses), statuses
+
+    schedule_list = client.get("/api/staff/schedule", headers=_STAFF_HEADERS)
+    assert schedule_list.status_code == 200
+    rows_for_asset = [item for item in schedule_list.json() if item["asset_id"] == asset_id]
+    assert len(rows_for_asset) == 1, (
+        "a concurrent double-schedule must never leave more than one real, live "
+        f"schedule row behind for the same asset; found {rows_for_asset}"
+    )
+
+
+@_FFMPEG_SKIP
+def test_mark_under_review_cannot_revert_an_already_scheduled_submission(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """MAJOR: mark_under_review/request_changes had no state guard at all --
+    an operator (or a stale/duplicate UI click) could revert an already-
+    scheduled submission straight back to "under_review" while the real
+    schedule item it produced stayed live and airable, leaving the
+    contributor portal and the operator queue disagreeing about whether the
+    program is actually going to air."""
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
+    ).json()
+    client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={"action": "accept"},
+    )
+    scheduled = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={
+            "action": "schedule",
+            "schedule_handoff": {
+                "channel_id": "public",
+                "requested_start": "2026-06-01T18:00:00Z",
+                "duration_seconds": 1800,
+            },
+        },
+    )
+    assert scheduled.status_code == 200, scheduled.text
+    schedule_item_id = scheduled.json()["schedule_handoff"]["schedule_item_id"]
+
+    reverted = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={"action": "mark_under_review"},
+    )
+    assert reverted.status_code == 409, reverted.text
+
+    still_scheduled = client.get(
+        f"/api/staff/contribute/submissions/{created['submission_id']}",
+        headers=_STAFF_HEADERS,
+    )
+    assert still_scheduled.json()["state"] == "scheduled"
+
+    schedule_item = client.get(f"/api/staff/schedule/{schedule_item_id}", headers=_STAFF_HEADERS)
+    assert schedule_item.json()["state"] == "scheduled"
+
+
+@_FFMPEG_SKIP
+def test_concurrent_decline_and_schedule_never_leaves_a_live_row_behind_a_declined_submission(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """BLOCKER race: before this fix, ``decline`` never took the same
+    reservation ``accept``/``schedule`` use. A decline could interleave
+    between a concurrent schedule request creating its real
+    ``civiccast.schedule_items`` row and that same request's own persist --
+    the schedule request would create the real row, then read a
+    not-yet-declined submission, then lose the persist race to a decline
+    that ran in between and had already flipped the JSON state to
+    "declined" -- leaving the real row live ("scheduled") behind a
+    submission the store called declined. Declined content could still air.
+
+    Reserving decline under the same in-flight ledger accept/schedule use
+    closes the interleaving: whichever of the two requests reserves first
+    runs to completion BEFORE the other can even begin -- no more window for
+    one to read stale state while the other's real side effect is only
+    half-applied. This does NOT mean only one request can ever succeed:
+    ``decline`` is deliberately still valid against an already-"scheduled"
+    submission (that is exactly how a normal, non-racing decline-after-
+    schedule cancels a live booking, see
+    ``test_decline_after_schedule_cancels_the_real_schedule_item`` above), so
+    if schedule wins the reservation first and decline is only refused
+    momentarily (409, "another review action is in flight"), the retry-
+    shaped request can still land right after and legitimately cancel it --
+    both then read 200. What must NEVER happen is the BLOCKER bug: a real
+    schedule row created and left live while the JSON store already calls
+    the submission "declined". Drives one real concurrent decline request
+    against one real concurrent schedule request on the SAME already-
+    accepted submission (``threading.Barrier``, same pattern as
+    ``test_concurrent_duplicate_accept_produces_exactly_one_library_asset``
+    above) and asserts that invariant holds no matter how the two requests
+    actually interleave: the submission never ends up "declined" while a
+    live (non-cancelled) schedule row still exists for it.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
+    ).json()
+    accepted = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={"action": "accept"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    asset_id = accepted.json()["asset_id"]
+
+    barrier = threading.Barrier(2)
+    schedule_request = {
+        "action": "schedule",
+        "schedule_handoff": {
+            "channel_id": "public",
+            "requested_start": "2026-06-01T18:00:00Z",
+            "duration_seconds": 1800,
+        },
+    }
+    decline_request = {
+        "action": "decline",
+        "decline_reason": "Racing against a concurrent schedule request.",
+    }
+
+    def review_once(payload: dict[str, object]) -> tuple[str, int]:
+        barrier.wait()  # release both workers into the review POST together
+        response = client.post(
+            f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+            headers=_STAFF_HEADERS,
+            json=payload,
+        )
+        return str(payload["action"]), response.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(review_once, [schedule_request, decline_request]))
+
+    statuses = [status for _, status in results]
+    assert statuses.count(200) >= 1, (
+        f"at least one of the racing schedule/decline requests must succeed; results={results}"
+    )
+    assert all(code in {200, 409} for code in statuses), results
+
+    final = client.get(
+        f"/api/staff/contribute/submissions/{created['submission_id']}",
+        headers=_STAFF_HEADERS,
+    )
+    final_state = final.json()["state"]
+    assert final_state in {"declined", "scheduled"}, final_state
+
+    schedule_list = client.get("/api/staff/schedule", headers=_STAFF_HEADERS)
+    assert schedule_list.status_code == 200
+    live_rows_for_asset = [
+        item
+        for item in schedule_list.json()
+        if item["asset_id"] == asset_id and item["state"] != "cancelled"
+    ]
+
+    if final_state == "declined":
+        assert live_rows_for_asset == [], (
+            "the submission ended declined but a live schedule row is still "
+            f"behind it: {live_rows_for_asset}"
+        )
+    else:
+        assert len(live_rows_for_asset) == 1, (
+            "the submission ended scheduled but no live schedule row backs "
+            f"it: {live_rows_for_asset}"
+        )
+
+
+@_FFMPEG_SKIP
+def test_schedule_row_is_rolled_back_when_persisting_the_review_fails(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    """BLOCKER fix: ``_create_real_schedule_item`` creates a real
+    ``civiccast.schedule_items`` row BEFORE ``store.review_submission``
+    persists the "scheduled" state. The reservation above closes the
+    interleaving that used to let a concurrent decline slip in ahead of
+    that persist, but the persist call can still fail for other reasons (a
+    store I/O error, a late validation problem) -- if it does after the row
+    already exists, that row must not stay live and airable behind a
+    submission that never actually reached "scheduled". Forces
+    ``review_submission`` to fail exactly on the schedule path, after the
+    real row has already been created, and asserts the row was cancelled
+    rather than left "scheduled", the submission is not left claiming to be
+    scheduled, and the reservation was released so a retry can proceed.
+    """
+    from civiccast.contribute.store import ContributorStoreError, ContributorSubmissionStore
+
+    client = _client(monkeypatch, tmp_path)
+    created = client.post(
+        "/api/public/contribute/submissions", json=_payload(_real_video(tmp_path))
+    ).json()
+    accepted = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={"action": "accept"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    asset_id = accepted.json()["asset_id"]
+
+    original_review_submission = ContributorSubmissionStore.review_submission
+
+    def failing_review_submission(self, submission_id, request, **kwargs):  # type: ignore[no-untyped-def]
+        if request.action == "schedule":
+            raise ContributorStoreError(
+                "simulated persist failure after the real schedule row was created"
+            )
+        return original_review_submission(self, submission_id, request, **kwargs)
+
+    monkeypatch.setattr(ContributorSubmissionStore, "review_submission", failing_review_submission)
+
+    scheduled = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={
+            "action": "schedule",
+            "schedule_handoff": {
+                "channel_id": "public",
+                "requested_start": "2026-06-01T18:00:00Z",
+                "duration_seconds": 1800,
+            },
+        },
+    )
+    assert scheduled.status_code == 503, scheduled.text
+
+    still_accepted = client.get(
+        f"/api/staff/contribute/submissions/{created['submission_id']}",
+        headers=_STAFF_HEADERS,
+    )
+    assert still_accepted.json()["state"] == "accepted", (
+        "a failed persist must not leave the submission claiming to be scheduled"
+    )
+
+    schedule_list = client.get("/api/staff/schedule", headers=_STAFF_HEADERS)
+    assert schedule_list.status_code == 200
+    rows_for_asset = [item for item in schedule_list.json() if item["asset_id"] == asset_id]
+    assert len(rows_for_asset) == 1, rows_for_asset
+    assert rows_for_asset[0]["state"] == "cancelled", (
+        "a real schedule row created before a failed persist must be rolled back "
+        f"(cancelled), not left live; got {rows_for_asset[0]}"
+    )
+
+    # The reservation must also have been released on this failure path, not
+    # leaked -- a subsequent request for the same submission must proceed.
+    monkeypatch.setattr(ContributorSubmissionStore, "review_submission", original_review_submission)
+    declined = client.post(
+        f"/api/staff/contribute/submissions/{created['submission_id']}/review",
+        headers=_STAFF_HEADERS,
+        json={
+            "action": "decline",
+            "decline_reason": "Cleaning up after the simulated schedule failure.",
+        },
+    )
+    assert declined.status_code == 200, declined.text

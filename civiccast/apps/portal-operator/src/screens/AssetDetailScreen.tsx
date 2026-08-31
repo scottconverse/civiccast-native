@@ -14,6 +14,7 @@ import type {
   RetentionPolicy,
 } from '../types/asset'
 import type { StaffIdentityResponse } from '../types/api.generated'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RadioCardGroup } from '../components/RadioCardGroup'
 import { AssetCustomFieldsEditor } from './AssetCustomFieldsEditor'
 import { OfflineCaptionJobsPanel } from './OfflineCaptionJobsPanel'
@@ -313,14 +314,14 @@ function DetailEditor({ asset, onClose, onEditTrim }: DetailEditorProps) {
     },
   })
 
+  // Unpublishing removes a public-record recording from residents' view --
+  // the shared ConfirmDialog (WCAG-compliant focus trap, Escape-to-cancel,
+  // consistent copy voice) replaces the native window.confirm() this used to
+  // use, matching every other destructive action in the console.
+  const [confirmingUnpublish, setConfirmingUnpublish] = useState(false)
+
   const handleUnpublish = () => {
-    if (
-      window.confirm(
-        `Remove "${asset.title}" from the public portal? Residents will no longer be able to view or find it there.`,
-      )
-    ) {
-      unpublishMutation.mutate()
-    }
+    setConfirmingUnpublish(true)
   }
 
   return (
@@ -747,6 +748,21 @@ function DetailEditor({ asset, onClose, onEditTrim }: DetailEditorProps) {
         <OfflineCaptionJobsPanel assetId={asset.asset_id} />
         <GenerateSummaryPanel assetId={asset.asset_id} />
       </div>
+
+      {confirmingUnpublish && (
+        <ConfirmDialog
+          title={`Remove "${asset.title}" from the public portal?`}
+          body="Residents will no longer be able to view or find it there. This only affects portal visibility -- the asset row, its media, and the Internet Archive / syndication copies are untouched."
+          confirmLabel="Remove from portal"
+          tone="danger"
+          busy={unpublishMutation.isPending}
+          onConfirm={() => {
+            setConfirmingUnpublish(false)
+            unpublishMutation.mutate()
+          }}
+          onCancel={() => setConfirmingUnpublish(false)}
+        />
+      )}
     </div>
   )
 }

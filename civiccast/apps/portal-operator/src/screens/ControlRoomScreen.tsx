@@ -44,6 +44,7 @@ import {
   deviceReachability,
 } from './control-room-format'
 import { ControlRoomReadinessPanel } from './ControlRoomReadinessPanel'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { EmptyState } from '../components/EmptyState'
 
 const READ_ROLES = ['setup_admin', 'support_admin', 'meeting_operator']
@@ -437,6 +438,7 @@ export function ControlRoomScreen() {
   const [confirmingCueId, setConfirmingCueId] = useState<string | null>(null)
   const [reach, setReach] = useState<Record<string, boolean>>({})
   const [unavailable, setUnavailable] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
 
   const devicesQuery = useQuery({ queryKey: ['cr-devices'], queryFn: listProductionDevices, enabled: canRead })
   const readinessQuery = useQuery({ queryKey: ['cr-readiness'], queryFn: getControlRoomReadiness, enabled: canRead })
@@ -663,7 +665,19 @@ export function ControlRoomScreen() {
           ) : (
             <div className="flex items-center gap-3">
               <Pill label={activeSession?.mode === 'on_air' ? 'On-Air session open' : 'Test session open'} tone={activeSession?.mode === 'on_air' ? 'warn' : 'info'} />
-              <button type="button" onClick={() => closeMut.mutate()} disabled={closeMut.isPending}
+              <button type="button"
+                onClick={() =>
+                  setPendingConfirm({
+                    title: 'End the control room session?',
+                    body:
+                      activeSession?.mode === 'on_air'
+                        ? 'This releases the operator lock on this control surface while the session is On-Air. Any cue mid-fire is not rolled back, and no operator can fire cues on this surface until a new session is opened.'
+                        : 'This releases the operator lock on this control surface. No operator can fire cues on this surface until a new session is opened.',
+                    confirmLabel: 'End session',
+                    run: () => closeMut.mutate(),
+                  })
+                }
+                disabled={closeMut.isPending}
                 className="rounded-md px-3 py-1 text-xs font-semibold"
                 style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
                 {closeMut.isPending ? 'Ending...' : 'End session'}
@@ -735,6 +749,19 @@ export function ControlRoomScreen() {
         <section><SessionAuditDrawer events={auditQuery.data ?? []} /></section>
       )}
       <ControlRoomSupportBundlePanel canCreate={canCreateSupportBundle} />
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
     </div>
   )
 }

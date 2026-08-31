@@ -13,6 +13,7 @@ decision D-S1-6 in the Stage-1 plan) is implemented below in ``graph_from_config
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -375,10 +376,53 @@ def secondary_audio_leg_from_track(
 GRAPHICS_OVERLAY_LOWER_THIRD_HEIGHT = 60
 
 
+# R3 banner-PNG cleanup: glob for exactly the per-call unique filename this
+# module renders below (``<name>.<uuid4-hex>.png``). Shared by
+# ``sweep_stale_lower_third_banners`` here and mirrored (as a compiled regex,
+# same pattern) by ``engine.py``'s swap/removal-time deletion -- the two never
+# need to agree on more than the filename shape, since each guards its own
+# lifecycle point.
+_LOWER_THIRD_BANNER_GLOB = "graphics-overlay-lower-third.*.png"
+
+
+def sweep_stale_lower_third_banners(render_dir: Path, *, keep: Path | None) -> None:
+    """Delete leftover lower-third banner PNGs from earlier start()/reload()
+    cycles in ``render_dir``, keeping only ``keep`` (this call's freshly
+    rendered banner, or ``None`` to sweep everything when the overlay is off).
+
+    Only ``graphics_overlay_leg_from_config``'s own ``start()`` caller uses this
+    (``sweep_stale=True``) -- a fresh ``start()`` always launches a brand-new
+    worker process, so any OLDER banner file in this channel's dir was written
+    by a worker that has, by definition, already exited; nothing here can be
+    live. A ``reload_content()`` call must NOT sweep: its freshly-rendered
+    banner races the still-on-air OLD banner in a different (worker) process,
+    and only that worker's own swap-commit (``engine.py``'s
+    ``_delete_stale_overlay_png``) can prove the old one is off-air before
+    deleting it.
+
+    Best-effort per file: a lingering handle (a slow-to-exit previous worker on
+    Windows) fails to unlink and is logged, never raised -- this must never
+    block a channel from starting."""
+    render_dir = Path(render_dir)
+    if not render_dir.is_dir():
+        return
+    for candidate in render_dir.glob(_LOWER_THIRD_BANNER_GLOB):
+        if keep is not None and candidate == keep:
+            continue
+        try:
+            candidate.unlink()
+        except OSError as exc:
+            print(
+                f"WARN: failed to sweep stale graphics-overlay banner PNG {candidate}: {exc!r}",
+                flush=True,
+            )
+
+
 def graphics_overlay_leg_from_config(
     config: EgressConfig,
     *,
     render_dir: Path,
+    sweep_stale: bool = False,
 ) -> GraphicsOverlayLeg | None:
     """Build the S15 graphics-overlay leg's lower-third layer from
     ``EgressConfig``'s operator-facing toggle (``graphics_overlay_enabled`` +
@@ -389,33 +433,54 @@ def graphics_overlay_leg_from_config(
 
     Renders a fresh banner PNG into ``render_dir`` on every call (the caller passes
     the channel's own work dir), so a channel that is STARTED or CONTENT-RELOADED
-    after the operator saves new text picks up the current text. This does NOT
-    hot-update an already-live pipeline's on-screen text -- the compositor holds no
-    live text-render path (see ``graphics_overlay.py``'s module docstring: text is
-    rasterized once, ahead of time, into a still PNG the compositor decodes) -- only
-    the NEXT pipeline build (a fresh ``start()`` or a seamless
-    ``reload_content()``) reflects a saved change.
+    after the operator saves new text picks up the current text. A ``start()`` (a
+    fresh pipeline build) always shows it; a ``reload_content()`` on an already-live
+    pipeline now re-applies it too, via ``GstPlayoutEngine.reload_graphics_overlay``
+    -- the compositor gained a swap-by-layer-name path so a reload's rebuilt banner
+    PNG replaces the on-screen one instead of being silently dropped (BLOCKER fix,
+    2026-08-30 audit; see that method's docstring).
+
+    ENG-005 (mirrored): the banner filename carries a per-call ``uuid4`` suffix, not
+    a fixed name -- a crash-relaunch racing an in-flight reload (or two reloads in
+    close succession) must never have one process read a banner PNG the other is
+    still mid-write on the same path, which crashed the whole worker at startup on
+    a partial-PNG decode failure (MAJOR fix, 2026-08-30 audit).
+
+    R3 (2026-08-31): the per-uuid filename above fixed the partial-read crash but
+    left nothing to delete the OLD ones -- a 24/7 station accumulated one PNG per
+    start()/content-reload forever, unbounded, on the volume that also holds
+    recordings/HLS/the DB. Two independent cleanup points close that: a live
+    pipeline's OLD banner is deleted by ``GstPlayoutEngine`` itself the moment a
+    reload's NEW layer commits (provably off-air by then -- see
+    ``_delete_stale_overlay_png``); and ``sweep_stale=True`` here sweeps any leftover
+    banner this channel's dir accumulated from a PREVIOUS (now-exited) worker
+    process, keeping only the one this call just rendered.
 
     Only the lower-third banner is wired here. ``station_bug_and_lower_third_leg``
     (the same PR's station-bug/logo layer) requires a ``logo_path``, and there is no
     operator-facing station-logo config surface yet -- that layer is out of scope
     for this slice.
     """
-    if not config.graphics_overlay_enabled:
+    render_dir_path = Path(render_dir)
+    if not config.graphics_overlay_enabled or not config.graphics_overlay_lower_third_text.strip():
+        if sweep_stale:
+            sweep_stale_lower_third_banners(render_dir_path, keep=None)
         return None
     text = config.graphics_overlay_lower_third_text.strip()
-    if not text:
-        return None
     profile = config.canonical_profile
-    render_dir_path = Path(render_dir)
     render_dir_path.mkdir(parents=True, exist_ok=True)
-    banner_path = render_dir_path / "graphics-overlay-lower-third.png"
+    # ENG-005 (mirrored from strategy.reload_content's reload-graph filename): a
+    # unique per-call filename so a concurrent build (a crash-relaunch racing a
+    # reload) can never read a partially-written PNG on a clobbered fixed path.
+    banner_path = render_dir_path / f"graphics-overlay-lower-third.{uuid.uuid4().hex}.png"
     render_lower_third_png(
         banner_path,
         text,
         canvas_width=profile.width,
         banner_height=GRAPHICS_OVERLAY_LOWER_THIRD_HEIGHT,
     )
+    if sweep_stale:
+        sweep_stale_lower_third_banners(render_dir_path, keep=banner_path)
     return GraphicsOverlayLeg(
         layers=(
             GraphicsOverlayLayer(
