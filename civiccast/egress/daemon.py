@@ -141,6 +141,29 @@ _RESTART_STREAK_RESET_UPTIME_S = 60.0
 # step 4; until then the escalation is durably recorded as a proof event).
 _RESTART_ESCALATION_STREAK = 5
 
+# BLOCKER B1 (hostile audit): a live SRT/UDP/RTSP source that is unreachable or
+# drops makes the GStreamer worker crash immediately after each relaunch — the
+# encoder process itself starts fine (so _start's own EncoderUnavailableError /
+# FfmpegNotFoundError fallback-to-slate seam never fires), then dies inside the
+# pipeline once it can't connect to / keep reading the source. Left alone that
+# is an infinite crash-loop against the SAME dead source: _relaunch_after_crash
+# paces the *rate* of relaunch (the cooldown above) but never changes *what* it
+# relaunches, so the channel never reaches a stable on-air state — "dead air is
+# NEVER acceptable" (see the encoder-unavailable comment below) was violated for
+# exactly this case. At this many consecutive crash-relaunches that never once
+# reached a healthy uptime (the streak only advances on a crash before the
+# reset-uptime threshold; see _RESTART_STREAK_RESET_UPTIME_S), the daemon stops
+# trusting the configured source and forces the same fallback-slate path used
+# for EncoderUnavailableError/FfmpegNotFoundError in _start, instead of
+# relaunching against the same source again. This IS the terminal state that
+# replaces dead air: the channel lands on FALLBACK_SLATE, healthy uptime there
+# resets the streak (see _poll_process), and civiccast.egress.automation's
+# existing _check_slate_replan already retries the real source on its own
+# 30s-paced cooldown — so a source that recovers is picked back up automatically,
+# and a source that stays dead keeps the station on slate instead of crash-looping
+# silently forever.
+_LIVE_SOURCE_FAILURE_FALLBACK_STREAK = _RESTART_ESCALATION_STREAK
+
 
 # RAT-004: poll cadence for stop_all_channels' observed-exit wait loop.
 _DRAIN_POLL_INTERVAL_SECONDS = 0.05
@@ -289,6 +312,12 @@ class EgressDaemon:
         # daemon existed can be a predecessor's orphans.
         self._boot_epoch = time.time()
         self._stderr_logs: dict[str, Path] = {}
+        # MAJOR M1: last-observed liveness of each channel's supervised HLS
+        # relay child (True = confirmed dead since last poll; absent = alive
+        # or not applicable). Polled every process_once tick (see
+        # _poll_hls_relay) so a relay death (disk full / ffmpeg missing / OOM)
+        # is visible even while the main encoder keeps sending fine.
+        self._hls_relay_dead: dict[str, bool] = {}
         self._last_loudness_lufs: dict[str, float] = {}
         self._active_cg_overlay_ids: dict[str, str] = {}
         self._last_cg_overlay_event_keys: dict[str, tuple[str, str, str | None]] = {}
@@ -313,6 +342,10 @@ class EgressDaemon:
         queued alongside or after it still runs.
         """
 
+        # Poll the HLS relay child BEFORE the main worker so a relay death is
+        # already reflected in _hls_relay_dead by the time _poll_process's own
+        # health append (below) calls _sink_connected this same tick (MAJOR M1).
+        self._poll_hls_relay(channel_id)
         self._poll_process(channel_id)
         self._service_backoff_relaunch(channel_id)
         commands = self._store.pop_pending_commands(channel_id)
@@ -415,6 +448,8 @@ class EgressDaemon:
         *,
         previous_state: str | None = None,
         previous_source_label: str | None = None,
+        force_fallback_slate: bool = False,
+        force_fallback_reason: str | None = None,
     ) -> None:
         try:
             config = self._store.get_config(channel_id)
@@ -456,12 +491,31 @@ class EgressDaemon:
             self._reap_orphan(channel_id)
             using_fallback_slate = False
             fallback_reason: str | None = None
-            readiness = (
-                self._caption_readiness_provider(channel_id)
-                if self._caption_readiness_provider is not None
-                else None
-            )
-            if readiness is not None and not getattr(readiness, "ready", True):
+            if force_fallback_slate and self._fallback_source_provider is not None:
+                # BLOCKER B1: the caller (a crash-relaunch that has never once
+                # reached a healthy uptime — see _LIVE_SOURCE_FAILURE_FALLBACK_STREAK)
+                # has already decided the configured source is unusable right now.
+                # Go straight to the fallback-slate plan rather than re-resolving
+                # (and re-trusting) the same source_plan_provider that keeps
+                # producing a source the encoder can't stay attached to.
+                fallback_reason = force_fallback_reason or (
+                    "Live source failed repeatedly; aired fallback slate instead of "
+                    "an infinite crash-loop."
+                )
+                self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
+                # Annotated because this is the FIRST binding of source_plan on this
+                # branch path — see the matching note at the other first-binding
+                # branch below for why the annotation matters to mypy.
+                source_plan: EgressSourcePlan | None = self._fallback_source_provider(config)
+                using_fallback_slate = True
+                readiness = None
+            elif (
+                readiness := (
+                    self._caption_readiness_provider(channel_id)
+                    if self._caption_readiness_provider is not None
+                    else None
+                )
+            ) is not None and not getattr(readiness, "ready", True):
                 reason = getattr(readiness, "refusal_reason", None) or "caption-readiness-refused"
                 fallback_reason = f"caption storage refused: {reason}"
                 if not getattr(readiness, "requires_fallback_slate", False):
@@ -471,14 +525,7 @@ class EgressDaemon:
                     self._append_health(channel_id, "FALLBACK_SLATE", sink_connected={})
                     return
                 self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
-                # Annotated because this is the FIRST binding of source_plan and
-                # the fallback provider returns a plain EgressSourcePlan, while
-                # _source_plan_provider below returns EgressSourcePlan | None.
-                # Without it mypy fixed the narrower type here, rejected the
-                # assignment at the `else` branch, and then treated the
-                # `if source_plan is None` slate guard below as unreachable --
-                # leaving the daemon's whole no-plan fallback path unchecked.
-                source_plan: EgressSourcePlan | None = self._fallback_source_provider(config)
+                source_plan = self._fallback_source_provider(config)
                 using_fallback_slate = True
             else:
                 try:
@@ -865,6 +912,40 @@ class EgressDaemon:
                 channel_id,
             )
 
+    def _poll_hls_relay(self, channel_id: str) -> None:
+        """MAJOR M1: poll this channel's supervised HLS relay child liveness.
+
+        Mirrors ``_poll_process`` polling the main worker, for the SEPARATE
+        ffmpeg co-process ``HlsRelaySupervisor`` owns (see DEFECT A / M1 in
+        ``civiccast.egress.hls_relay``). Before this, a relay death was never
+        observed until the channel's next full encoder start/reload happened
+        to call ``apply()`` again. Result is cached in ``_hls_relay_dead`` and
+        consulted by ``_sink_connected`` so the ``hls`` sink's reported health
+        reflects the relay's OWN liveness, not just the main encoder's UDP
+        send progress.
+        """
+        if self._hls_relay is None:
+            return
+        is_alive = getattr(self._hls_relay, "is_alive", None)
+        if not callable(is_alive):
+            return
+        alive = is_alive(channel_id)
+        if alive is None:
+            # No relay currently tracked for this channel (no hls sink
+            # configured, or none started yet) -- not a health signal.
+            self._hls_relay_dead.pop(channel_id, None)
+            return
+        was_already_flagged_dead = self._hls_relay_dead.get(channel_id, False)
+        self._hls_relay_dead[channel_id] = not alive
+        if not alive and not was_already_flagged_dead:
+            _LOG.error(
+                "HLS relay child for channel %s is no longer running (disk full, "
+                "ffmpeg missing, or OOM are the known causes); the main encoder is "
+                "unaffected but residents on the hls sink are getting a stale or "
+                "dead stream until this channel's next start/reload restarts it.",
+                channel_id,
+            )
+
     def _poll_process(self, channel_id: str) -> None:
         process = self._processes.get(channel_id)
         if process is None:
@@ -1037,18 +1118,55 @@ class EgressDaemon:
         previous_source_label: str | None,
         proof_event_id: str | None,
     ) -> None:
+        # BLOCKER B1: a crash-relaunch streak that has never once reached a
+        # healthy uptime is the "unreachable/dropping live source" signature —
+        # relaunching against the SAME source again would just repeat the
+        # crash. Once the streak crosses the threshold, force the same
+        # fallback-slate path _start already uses for
+        # EncoderUnavailableError/FfmpegNotFoundError, instead of trusting the
+        # source_plan_provider again — deliberately WITHOUT excluding a
+        # ``previous_state == "FALLBACK_SLATE"`` crash: the streak (once
+        # crossed) only clears on a healthy uptime (see _poll_process /
+        # _reset_restart_tracking) or an explicit operator/automation command
+        # (see _process_command popping _backoff_relaunch), so leaving this
+        # unguarded keeps the channel LATCHED onto slate across a slate-encoder
+        # crash too, instead of one relaunch attempt bouncing back to
+        # re-resolving the still-dead live source via source_plan_provider
+        # (which has no reason to behave differently) before the very next
+        # crash forces fallback again — an avoidable ON_AIR/FALLBACK_SLATE
+        # flap that is not the stable terminal slate state this fix exists to
+        # provide. A crash-looping slate encoder itself is the deeper
+        # zero-ffmpeg-floor case _start's own exception handler still covers,
+        # unchanged, if the slate encoder can't even START.
+        streak = self._restart_streak.get(channel_id, 0)
+        force_fallback_slate = (
+            streak >= _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+            and self._fallback_source_provider is not None
+        )
+        force_fallback_reason = (
+            f"Live source failed to stay on air after {streak} consecutive "
+            "crash-relaunches; aired fallback slate instead of an infinite "
+            "crash-loop against the dead source."
+            if force_fallback_slate
+            else None
+        )
         self._write_state(
             channel_id,
             "STARTING",
             current_source_label=previous_source_label,
             current_proof_event_id=proof_event_id,
-            last_error="FFmpeg child exited non-zero; relaunching encoder.",
+            last_error=(
+                force_fallback_reason
+                or "FFmpeg child exited non-zero; relaunching encoder."
+            ),
         )
         self._append_health(channel_id, "STARTING", sink_connected={}, dropped_frames=0)
         self._start(
             channel_id,
             previous_state=previous_state,
             previous_source_label=previous_source_label,
+            force_fallback_slate=force_fallback_slate,
+            force_fallback_reason=force_fallback_reason,
         )
         # CC-WS5-006: a crash-relaunch brings up a FRESH worker on a fresh control
         # pipe. Replay the channel's desired state (reload/swap) over it so a swap
@@ -1366,6 +1484,7 @@ class EgressDaemon:
         # genuine crash as a clean reload handoff.
         self._reload_kills.discard(channel_id)
         self._stderr_logs.pop(channel_id, None)
+        self._hls_relay_dead.pop(channel_id, None)
         self._clear_cg_overlay_proof(channel_id, "DRAINING" if draining else "STOPPING")
         # Operator stop — the channel comes off air now; close the open as-run
         # row. The encoder is popped from _processes here, so _poll_process will
@@ -1558,8 +1677,25 @@ class EgressDaemon:
     ) -> dict[str, bool]:
         metrics = self._health_metrics(channel_id, state=state)
         if self._sink_health_provider is not None:
-            return self._sink_health_provider(channel_id, config, metrics)
-        return build_default_sink_health(config=config, metrics=metrics, state=state)
+            health = self._sink_health_provider(channel_id, config, metrics)
+        else:
+            health = build_default_sink_health(config=config, metrics=metrics, state=state)
+        # MAJOR M1: neither the injected provider nor the default health
+        # builder above knows about the HLS relay CHILD PROCESS -- both only
+        # see the main encoder's own send progress. A relay confirmed dead by
+        # _poll_hls_relay overrides the hls sink(s) to unhealthy here, in one
+        # place, regardless of which health path produced the dict, so
+        # /api/staff/egress/channels/{id}/health stops reporting "connected"
+        # for a dead relay.
+        if self._hls_relay_dead.get(channel_id):
+            hls_labels = [sink.label for sink in config.sinks if sink.kind == "hls"]
+            if hls_labels:
+                # Copy rather than mutate in place -- a provider (or the cached
+                # default builder result) may hand back a dict it reuses.
+                health = dict(health)
+                for label in hls_labels:
+                    health[label] = False
+        return health
 
 
 def _default_orphan_probe(pid: int) -> OrphanInfo | None:

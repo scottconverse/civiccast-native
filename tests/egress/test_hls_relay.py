@@ -186,3 +186,47 @@ def test_apply_creates_a_fresh_relay_after_stop_channel() -> None:
     assert len(calls) == 2
     assert procs[0].terminated
     assert not procs[1].terminated
+
+
+# --- MAJOR M1: relay-child liveness ----------------------------------------------------
+#
+# Before ``is_alive`` existed, nothing polled the relay subprocess after ``apply()``
+# started it: a relay that died later (disk full, ffmpeg missing/removed mid-run, OOM)
+# stayed invisible until the channel's next full encoder start/reload happened to call
+# ``apply()`` again. These tests pin the liveness contract ``civiccast.egress.daemon``
+# polls every tick; see ``tests/egress/test_daemon.py`` for the daemon-level integration
+# (health surfacing) proof.
+
+
+def test_is_alive_is_none_when_no_relay_is_tracked_for_the_channel() -> None:
+    sup, _calls, _procs = _supervisor()
+
+    assert sup.is_alive("gov") is None
+
+
+def test_is_alive_is_true_while_the_relay_process_is_running() -> None:
+    sup, _calls, procs = _supervisor()
+    sup.apply(_config(_hls_sink(), channel_id="gov"))
+
+    assert sup.is_alive("gov") is True
+    assert not procs[0].terminated  # is_alive is read-only — it must not touch the process
+
+
+def test_is_alive_is_false_once_the_relay_process_has_exited() -> None:
+    sup, _calls, procs = _supervisor()
+    sup.apply(_config(_hls_sink(), channel_id="gov"))
+
+    procs[0]._returncode = 1  # simulate the relay child dying on its own (disk full / OOM)
+
+    assert sup.is_alive("gov") is False
+
+
+def test_is_alive_only_reports_on_the_named_channels_relays() -> None:
+    sup, _calls, procs = _supervisor()
+    sup.apply(_config(_hls_sink(), channel_id="gov"))
+    sup.apply(_config(_hls_sink(uri="C:/CivicCast/live/other"), channel_id="other"))
+
+    procs[0]._returncode = 1  # only "gov"'s relay died
+
+    assert sup.is_alive("gov") is False
+    assert sup.is_alive("other") is True

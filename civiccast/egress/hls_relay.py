@@ -217,6 +217,32 @@ class HlsRelaySupervisor:
             )
             return relay_uri
 
+    def is_alive(self, channel_id: str) -> bool | None:
+        """Liveness of this channel's relay child(ren) (MAJOR M1).
+
+        Before this method existed, nothing polled the relay subprocess after
+        ``_ensure_relay`` started it: a relay that died later (disk full,
+        ``ffmpeg`` missing/removed mid-run, OOM-killed) stayed dead until the
+        channel's NEXT full encoder start/reload happened to call ``apply()``
+        again (which does self-heal by restarting a dead relay lazily) --
+        for a long-running ON_AIR channel that can be hours or days, all the
+        while the GStreamer program mux keeps muxing fine and
+        ``civiccast.egress.health.build_default_sink_health`` keeps reporting
+        the ``hls`` sink healthy from the MAIN encoder's UDP send progress
+        alone, blind to whether anything is still listening on the relay's
+        loopback port. Returns ``None`` when no relay is currently tracked
+        for this channel (not using an ``hls`` sink, or a relay was never
+        successfully started) -- callers must not treat that as "dead",
+        only "not applicable". Returns ``True``/``False`` (all-tracked-relays
+        alive / at least one exited) when this channel has at least one
+        tracked relay.
+        """
+        with self._guard:
+            relays = [relay for key, relay in self._relays.items() if key.startswith(f"{channel_id}|")]
+            if not relays:
+                return None
+            return all(relay.process.poll() is None for relay in relays)
+
     def stop_channel(self, channel_id: str) -> None:
         """Tear down a channel's HLS relay(s) (channel stop, not encoder relaunch)."""
         with self._guard:
