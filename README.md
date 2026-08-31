@@ -16,13 +16,12 @@ See [BRANCHES.md](BRANCHES.md) for the full explanation, including where an
 earlier, retired WSL2/Ubuntu lane's history now lives (a separate, private
 repository, not this one).
 
-**Current version: `v1.0.0-beta.1`** — an owner-held development candidate.
-
-The retired WSL/mainline identity `v1.0.0-rc18` remains an owner-held unpublished candidate;
-it is not the native beta or an approved public installer.
-It is **not yet published**; this README describes candidate #22 on `main`
-(commit `73fd258`), the state a technical reviewer would find by checking
-out this repository today.
+**Current version:
+[`v1.0.0-beta.1`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.1)**
+— an owner-held development candidate, not a public or production release.
+No installer download is attached to that tag; this README describes
+candidate #22 on `main` (commit `73fd258`), the state a technical reviewer
+would find by checking out this repository today.
 
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
@@ -138,9 +137,9 @@ things outside this repository's control:
   see [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
   [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
   for the setup path, Authenticode signature verification, and the pack-trust
-  model. `v1.0.0-beta.1` is an owner-held candidate and is not yet published
-  as a downloadable release — see [BRANCHES.md](BRANCHES.md) for release
-  identity and status.
+  model. `v1.0.0-beta.1` is an owner-held candidate; the tag is published but
+  has no installer download attached — see [BRANCHES.md](BRANCHES.md) for
+  release identity and status.
 - **In-product operator manual.** Once running, open the operator manual
   from inside the app at any time, including before signing in — it serves
   the same content as [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md)

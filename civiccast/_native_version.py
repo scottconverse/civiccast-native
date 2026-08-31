@@ -2,24 +2,25 @@
 # Copyright (c) The CivicCast Authors
 """Single source of truth for the NATIVE Windows product line's own version.
 
-Deliberately separate from ``civiccast._version`` (native-windows chain J,
-2026-08-02). ``civiccast._version.__version__`` is the WSL/mainline product
-line's own release identity -- read by a dozen-plus pre-existing policy
-checks and public docs (README.md's public-beta paragraph, INSTALL-WINDOWS.md,
-ARCHITECTURE.md, CAPABILITIES.md, FAQ.md, SUPPORT.md, the v1.7 adoption gate,
-the Windows release downloader, ``package.json``, the WSL Tauri config, ...)
-that all describe the already-published WSL beta and must not be disturbed by
-native-line development.
+Historically kept deliberately separate from ``civiccast._version``
+(native-windows chain J, 2026-08-02), back when the WSL/mainline product line
+was still shipped alongside the native line and needed its own,
+independently-moving release identity. The owner retired the WSL/Linux lane
+entirely on 2026-08-19 (see ``CLAUDE.md``) and, on 2026-08-31, retired the
+vestigial WSL *version* machinery too: there is now one product and one
+version, and ``civiccast._version.__version__`` and this module's
+``__version__`` are required to hold the identical string
+(``scripts/policy/check_release_identity.py`` enforces it). Both modules are
+kept, rather than collapsed into one, because a dozen-plus pre-existing
+policy checks and public docs still import ``civiccast._version`` by name;
+collapsing them is tracked as future cleanup, not required for correctness
+now that the gate enforces they agree.
 
-The native Windows product ("CivicCast (Native)") is a separate product under
-active, unreleased development. Before this module existed it inherited the
-WSL line's own version string verbatim, which produced two functionally
-different installers reporting the identical string ``1.0.0-rc15`` -- this
-confused the project owner personally and would confuse a PEG-station
-operator. This module is what the native line's own identity surfaces
+The native Windows product ("CivicCast (Native)") is this repository's only
+product. This module is what the native line's own identity surfaces
 (``tauri.native.conf.json``'s ``"version"``, the installer Rust crate's
 ``CIVICCAST_VERSION`` constant, and native component pack builders' default
-``--product-version``) are kept in lockstep with instead.
+``--product-version``) are kept in lockstep with.
 
 This value is surfaced by the shared backend's ``/health`` and
 ``/api/version`` endpoints ONLY when the process is actually running as a

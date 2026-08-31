@@ -13,6 +13,13 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+## [1.0.0-beta.1] - 2026-08-31
+
+First tagged release of the native-Windows CivicCast line — owner-held, not
+a public or production release. See
+[`v1.0.0-beta.1`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.1).
+Everything below was previously tracked under `[Unreleased]`.
+
 ### Changed
 
 - Replaced the GitHub Pages front door with an evidence-grounded station-level

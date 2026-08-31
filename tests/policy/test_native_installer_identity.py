@@ -2794,17 +2794,24 @@ def test_estimated_size_is_measured_from_the_real_installed_tree_not_hardcoded()
 # Chain J (2026-08-02): the native product reported the bare version string
 # "1.0.0-rc15" -- byte-identical to the older WSL line's own release string.
 # Two different rc15 installers existed in the wild; it confused the project
-# owner personally. The fix gives the native line its OWN version source
+# owner personally. The fix gave the native line its OWN version source
 # (civiccast/_native_version.py), deliberately separate from
-# civiccast/_version.py (the WSL line's own identity, read by a dozen-plus
-# pre-existing policy checks and public docs that must not move -- see
-# evidence/chainJ-analysis.md on this branch for why repointing the shared
-# civiccast._version.__version__ itself was investigated and rejected).
+# civiccast/_version.py (the WSL line's own identity) for as long as the WSL
+# line shipped alongside the native one.
+#
+# The owner retired the WSL/Linux lane on 2026-08-19 and, on 2026-08-31,
+# retired the vestigial WSL *version* machinery too: there is one product and
+# one version now, and civiccast/_version.py and civiccast/_native_version.py
+# are REQUIRED to agree (scripts/policy/check_release_identity.py enforces
+# it). The two files are kept separate only because a dozen-plus pre-existing
+# surfaces still import civiccast/_native_version.py by name -- collapsing
+# them is tracked as future cleanup, not a correctness requirement.
+#
 # main.rs's CIVICCAST_VERSION and tauri.native.conf.json's "version" both
 # track civiccast/_native_version.py; civiccast.native.station_runtime.
 # native_reported_version_environment is the matching runtime wire that makes
 # a native-hosted backend's own /health agree with that constant. Any of
-# these tests would fail if a surface reverted to a bare, shared "1.0.0-rc15".
+# these tests would fail if a surface reverted to a bare, stale "1.0.0-rc15".
 # ---------------------------------------------------------------------------
 
 
@@ -2834,20 +2841,22 @@ def test_native_overlay_version_matches_the_native_python_source_of_truth() -> N
     )
 
 
-def test_native_and_base_tauri_configs_never_report_the_same_version() -> None:
-    """The regression this chain exists to prevent. A machine's Add/Remove
-    Programs list must never show two entries with the same version string
-    under different product names -- that IS the "two rc15 installers"
-    confusion the retired WSL product used to risk. The base config no
-    longer builds a shipped product on its own, but its "version" field is
-    still the one Tauri's CLI reads by default, so the two must keep
-    disjoint identities."""
+def test_native_and_base_tauri_configs_report_the_single_product_version() -> None:
+    """The retired chain-J regression this test used to guard against (two
+    DIFFERENT rc15 installers under one version string) required the native
+    and base Tauri configs to stay disjoint. With the WSL/Linux lane retired
+    (2026-08-19) and its separate version identity retired with it
+    (2026-08-31), there is one product line and one version -- the base
+    config no longer builds a shipped product of its own, and both configs
+    are now REQUIRED to report the identical single-source version. Drift
+    between them is the regression to catch today."""
     native_config = _load(NATIVE_CONFIG)
     base_config = _load(BASE_CONFIG)
 
-    assert native_config.get("version") != base_config.get("version"), (
-        "native and base Tauri configs report the identical version "
-        f"{native_config.get('version')!r} -- they must never match"
+    assert native_config.get("version") == base_config.get("version"), (
+        "native and base Tauri configs report different versions -- "
+        f"{native_config.get('version')!r} vs {base_config.get('version')!r} -- "
+        "there is one product line now and both must agree"
     )
 
 
