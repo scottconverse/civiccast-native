@@ -53,6 +53,28 @@ describe('LiveRoomScreen pre-flight checklist', () => {
     expect(screen.queryByText('fail')).toBeNull()
     expect(screen.queryByText('not_configured')).toBeNull()
   })
+
+  it('states the do-not-broadcast verdict once, not once per failed check', () => {
+    // Banner-wall fix (field survey 2026-08-30): with several failed checks the
+    // list used to render an identical "Do not broadcast yet" pill on every
+    // row, stacking into a wall of red banners. The verdict now lives in one
+    // summary banner; failed rows carry severity via border + next-step copy.
+    render(
+      <PreflightList
+        evaluation={{
+          live_session_id: 'sess-2',
+          ready: false,
+          checks: [
+            { name: 'media_probe', status: 'fail', reason_code: 'no_source', message: null },
+            { name: 'archive_target', status: 'fail', reason_code: 'no_target', message: null },
+            { name: 'syndication', status: 'fail', reason_code: 'no_target', message: null },
+          ],
+        }}
+      />,
+    )
+    expect(screen.getAllByText('Do not broadcast yet')).toHaveLength(1)
+    expect(screen.getByText(/3 pre-flight checks must pass/)).not.toBeNull()
+  })
 })
 
 describe('LiveRoomScreen broadcast readiness', () => {

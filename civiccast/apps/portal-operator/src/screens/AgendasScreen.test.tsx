@@ -178,7 +178,7 @@ describe('AgendasScreen empty state', () => {
     vi.mocked(listMeetingAgendas).mockResolvedValue([])
     const { findByText, queryByLabelText } = renderScreen()
     expect(
-      await findByText(/No agendas yet\. Use the form above to create one/i),
+      await findByText(/No agendas yet\./i),
     ).toBeTruthy()
     // The whole picker `<select>` is gone — not just the placeholder option.
     expect(queryByLabelText('Pick an agenda')).toBeNull()

@@ -85,6 +85,7 @@ import {
   utcDateTimeLocalToLocalEcho,
   utcHHMMToLocalEcho,
 } from './recording-format'
+import { EmptyState } from '../components/EmptyState'
 
 const VIEW_ROLES = ['setup_admin', 'meeting_operator', 'support_admin']
 const WRITE_ROLES = ['setup_admin', 'meeting_operator']
@@ -556,9 +557,10 @@ function SchedulesSection({
           Loading schedules…
         </p>
       ) : sorted.length === 0 ? (
-        <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-          No recording schedules yet — create one below.
-        </p>
+        <EmptyState
+          headline="No recording schedules yet."
+          body="A recording schedule captures a meeting or event automatically at the same time each week. Create one below, or use Record Now for a one-off capture."
+        />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -1541,9 +1543,10 @@ function JobsSection({
           Loading recordings…
         </p>
       ) : jobs.length === 0 ? (
-        <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-          No recordings yet — schedule a recording or use Record Now.
-        </p>
+        <EmptyState
+          headline="No recordings yet."
+          body="Every capture — in progress or finished — appears here with its status. Schedule a recording above or press Record Now to make the first one."
+        />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">

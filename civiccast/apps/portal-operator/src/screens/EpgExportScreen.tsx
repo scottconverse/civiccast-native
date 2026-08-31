@@ -32,6 +32,7 @@ import type {
 } from '../types/api.generated'
 import { hasRole } from './contribution-format'
 import { parseFieldMapText, stringifyFieldMap } from './reports-format'
+import { EmptyState } from '../components/EmptyState'
 
 // Spec §4: setup_admin or publish_operator can read + manage EPG configs.
 const ROLES = ['setup_admin', 'publish_operator']
@@ -625,9 +626,10 @@ export function EpgExportScreen() {
         ) : configsQuery.isError ? (
           <Banner tone="warn">{apiMessage(configsQuery.error, 'Could not load configs.')}</Banner>
         ) : sortedConfigs.length === 0 ? (
-          <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            No EPG export configs are defined yet. Use the form above to create one.
-          </p>
+          <EmptyState
+            headline="No guide exports set up yet."
+            body="An EPG export publishes this station's program guide in the format cable boxes and TV apps read. Create an export with the form above and it appears here."
+          />
         ) : (
           <ul className="space-y-2">
             {sortedConfigs.map((cfg) => (

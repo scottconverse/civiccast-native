@@ -39,6 +39,7 @@ import {
   slotActionTone,
 } from './autoschedule-format'
 import { stateLabel } from './status-language'
+import { EmptyState } from '../components/EmptyState'
 
 type AssetStateValue = NonNullable<AssetQuery['states']>[number]
 
@@ -295,9 +296,10 @@ function SavedSearchesSection({ canWrite, canRead }: { canWrite: boolean; canRea
           {creating && canWrite && <SavedSearchForm submitting={create.isPending} onSubmit={(p) => create.mutate(p)} />}
           {query.isLoading && <LoadingNote what="saved searches" />}
           {!query.isLoading && searches.length === 0 && (
-            <div className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
-              No saved searches yet.
-            </div>
+            <EmptyState
+              headline="No saved searches yet."
+              body="A saved search collects the recordings that match rules you set — the newest council meetings, a weekly series, a category. Create one here and auto-schedule uses it to pick what airs."
+            />
           )}
           <div className="grid gap-2">
             {searches.map((search: SavedSearch) => (
@@ -477,9 +479,10 @@ function BlocksSection({ canWrite, canRead }: { canWrite: boolean; canRead: bool
           {creating && canWrite && <BlockForm submitting={create.isPending} onSubmit={(p) => create.mutate(p)} />}
           {query.isLoading && <LoadingNote what="dayparts" />}
           {!query.isLoading && blocks.length === 0 && (
-            <div className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
-              No dayparts yet.
-            </div>
+            <EmptyState
+              headline="No dayparts yet."
+              body="A daypart is a block of air time you hand over to auto-schedule — weekday evenings, overnight repeats. Create one here and rules can start filling it."
+            />
           )}
           <div className="grid gap-2">
             {blocks.map((block: ScheduleBlock) => (
@@ -769,9 +772,10 @@ function RulesSection({ canWrite, canRead }: { canWrite: boolean; canRead: boole
           {creating && canWrite && <RuleForm searches={searches} blocks={blocks} submitting={create.isPending} onSubmit={(p) => create.mutate(p)} />}
           {rulesQuery.isLoading && <LoadingNote what="rules" />}
           {!rulesQuery.isLoading && rules.length === 0 && (
-            <div className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
-              No rules yet. Create a saved search and a daypart, then add a rule to connect them.
-            </div>
+            <EmptyState
+              headline="No rules yet."
+              body="A rule connects a saved search to a daypart so the channel fills itself with matching programs. Create a saved search and a daypart first, then add a rule here to connect them."
+            />
           )}
           <div className="grid gap-2">
             {rules.map((rule: AutoScheduleRule) => (

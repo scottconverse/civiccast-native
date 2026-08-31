@@ -127,7 +127,7 @@ function DimensionTable({ title, rows }: { title: string; rows: AnalyticsDimensi
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td className="px-3 py-3 text-sm" colSpan={2} style={{ color: 'var(--cc-ink-3)' }}>No data yet</td></tr>
+              <tr><td className="px-3 py-3 text-sm" colSpan={2} style={{ color: 'var(--cc-ink-3)' }}>No viewer data yet — rows appear once residents start watching this station.</td></tr>
             ) : rows.map((row) => (
               <tr key={`${row.dimension}:${row.key}`} style={{ borderTop: '1px solid var(--cc-line)' }}>
                 <td className="px-3 py-2">{row.key}</td>
@@ -157,7 +157,7 @@ function AssetTable({ rows }: { rows: AssetViewPoint[] }) {
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td className="px-3 py-3 text-sm" colSpan={4} style={{ color: 'var(--cc-ink-3)' }}>No playback data yet</td></tr>
+              <tr><td className="px-3 py-3 text-sm" colSpan={4} style={{ color: 'var(--cc-ink-3)' }}>No playback data yet — rows appear once published recordings get their first views.</td></tr>
             ) : rows.map((row) => (
               <tr key={`${row.content_id}:${row.day}`} style={{ borderTop: '1px solid var(--cc-line)' }}>
                 <td className="px-3 py-2">{row.content_id}</td>
@@ -190,7 +190,7 @@ function LiveTable({ rows }: { rows: LiveConcurrentPoint[] }) {
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td className="px-3 py-3 text-sm" colSpan={5} style={{ color: 'var(--cc-ink-3)' }}>No live samples yet</td></tr>
+              <tr><td className="px-3 py-3 text-sm" colSpan={5} style={{ color: 'var(--cc-ink-3)' }}>No live samples yet — rows appear after this station's first live stream.</td></tr>
             ) : rows.map((row) => (
               <tr key={`${row.channel_id}:${row.day}`} style={{ borderTop: '1px solid var(--cc-line)' }}>
                 <td className="px-3 py-2">{row.channel_id}</td>
@@ -308,7 +308,7 @@ function RollupTable({ rollups }: { rollups: ViewershipRollupPoint[] }) {
         </thead>
         <tbody>
           {rollups.length === 0 ? (
-            <tr><td className="px-3 py-3 text-sm" colSpan={6} style={{ color: 'var(--cc-ink-3)' }}>No rollup rows for this range</td></tr>
+            <tr><td className="px-3 py-3 text-sm" colSpan={6} style={{ color: 'var(--cc-ink-3)' }}>No rollup rows for this range — pick a wider range, or check back after the station has aired content.</td></tr>
           ) : rollups.map((row, i) => (
             <tr key={`${row.stream_type}:${row.bucket_kind}:${row.subject_id}:${row.bucket_start}:${i}`} style={{ borderTop: '1px solid var(--cc-line)' }}>
               <td className="px-3 py-2">{row.stream_type}</td>

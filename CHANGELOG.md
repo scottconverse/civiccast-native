@@ -13,6 +13,34 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Designed empty states on every operator-console screen, and the Control
+  Room "banner wall" collapsed to one verdict per page.** A 38-screen field
+  survey on a real box (2026-08-30) found about a dozen console pages whose
+  success-empty state rendered as a bare grey one-liner ("No devices yet.",
+  "No saved searches yet.") — technically correct, but reading as "nothing
+  there / broken" to a non-technical viewer. A new shared
+  `EmptyState` component (`src/components/EmptyState.tsx`) generalizes the
+  pattern Missing Media and Assets already had (dashed panel, headline +
+  plain-language explainer): one sentence on what the screen does for a
+  station, one on how it gets populated. Applied to Control Room Setup
+  (devices, cues), Control Room (devices, fired-cue audit), Custom Fields,
+  Remote Contribution, CG Board, CG Board Designer, Auto-schedule (saved
+  searches, dayparts, rules), Program Guide (slots, 7-day log), Recording
+  (schedules, recordings), Agendas, EPG Export, Underwriting (spots,
+  flights), Playback Policy (audit log), and the Analytics in-table empty
+  rows. Separately, the readiness surfaces stacked the same red
+  "Do not broadcast yet" phrase once per blocked check — five identical
+  banners on a fresh box. `ControlRoomReadinessPanel` and the Live Room
+  `PreflightList` now state the page verdict exactly once (headline banner /
+  a new one-line summary banner with the failed-check count); blocked rows
+  keep their severity via a red border and their existing next-step copy,
+  and the operator-language guide's five sanctioned phrases remain the only
+  readiness vocabulary. Tests updated to pin the once-per-page behavior
+  (`ControlRoomReadinessPanel.test.tsx`, new `LiveRoomScreen.test.tsx`
+  dedupe case).
+
 ### Added
 
 - **In-product operator manual (`/help` in the operator console), plus a "Generate station key" button for federation.** Field evidence from a non-technical tester (candidate #17): "In-product manual: THERE IS NONE. /docs, /help, /manual, /guide all 404"; provider setup cards told the operator to "Ask the technical admin" on a one-person station with no technical admin; ActivityPub required typing a raw `civiccast activitypub keygen ...` shell command. The manual is built from the existing `docs/USER-MANUAL.md` (the repo's canonical operator doc), not a parallel document that drifts: `scripts/render_docsite_manual.py` renders it via the same `pandoc` toolchain `scripts/render_user_manual.py` already requires for the PDF/DOCX, sanitizes the HTML through an allowlist parser (`civiccast/docsite/render.py`), and writes the committed artifact `civiccast/docsite/manual.json` plus a hash manifest (`civiccast/docsite/manual.render.json`) — the identical hash-pinning drift-gate pattern the PDF/DOCX pipeline already uses, now also enforced in `ci-docs.yml`. `civiccast/docsite/service.py` + `router.py` serve it read-only, publicly (no staff token — reachable even from the un-authenticated First Setup screen), at `GET /api/public/manual`; the operator console's new `ManualScreen.tsx` renders it as a searchable table-of-contents + content pane at `/help` (aliases `/docs`, `/manual`). Full write-up: `docs/docsite-sync.md`. The manual gained new plain-language content: a Glossary (S3 access key/secret, bucket/object store, CDN, pull-zone, OAuth client ID/secret, webhook secret, egress), a per-provider "Setting Up Providers, Plain Language" section (each provider optional, its own anchor), "Where Recordings And Backups Live", "What Each Publish Surface Means", "The CDN Cost Estimate Is A Guess, Not A Quote", and "Don't Have A GitHub Account?". Every provider readiness card (`ProviderReadinessItem.manual_section`, `civiccast/installer/service.py`) and several setup panels now carry a "Read more in the manual" link straight into the matching section. Federation: `POST /api/staff/activitypub/keygen` (`civiccast/activitypub/router.py`) generates the same RSA station key `civiccast activitypub keygen` does, server-side, behind a real button in `ActivityPubScreen.tsx` — replacing the raw CLI instruction — plus a plain-language paragraph on what federation is and that most stations don't need it. Applying the generated settings and restarting CivicCast is still a separate manual step (`load_activitypub_config` reads strictly from process environment, matching the existing beta-handoff "ask a technical administrator to restart" pattern in `civiccast/installer/handoff.py`); the CLI-typing barrier for a non-technical operator is gone regardless.

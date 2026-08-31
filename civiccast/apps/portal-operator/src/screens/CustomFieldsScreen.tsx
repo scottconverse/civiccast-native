@@ -42,6 +42,7 @@ import {
   sortDefs,
   stringifyOptions,
 } from './custom-fields-format'
+import { EmptyState } from '../components/EmptyState'
 
 // Spec §4: only setup_admin defines fields.
 const ROLES = ['setup_admin']
@@ -581,9 +582,10 @@ export function CustomFieldsScreen() {
         ) : defsQuery.isError ? (
           <Banner tone="warn">{apiMessage(defsQuery.error, 'Could not load fields.')}</Banner>
         ) : defs.length === 0 ? (
-          <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            No custom fields are defined yet. Use the form above to add your first one.
-          </p>
+          <EmptyState
+            headline="No custom fields yet."
+            body="Custom fields let this station tag its programs with its own labels — a department, a meeting body, a sponsor code. Add your first field with the form above and it appears here."
+          />
         ) : (
           <ul className="space-y-1">
             {defs.map((def, index) => (
