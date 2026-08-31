@@ -9,8 +9,9 @@ import {
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
 import { StateBadge } from '../components/StateBadge'
-import { ReadinessBadge } from '../components/ReadinessBadge'
 import type { ReadinessState } from '../components/ReadinessBadge'
+import { AssetStatusBadge } from '../components/assets/AssetStatusBadge'
+import { deriveAssetStatus } from '../components/assets/assetStatus'
 import { AssetUploadControl } from '../components/assets/AssetUploadControl'
 import type { AssetRow, AssetState } from '../types/asset'
 
@@ -49,33 +50,6 @@ function fmtDate(iso: string | null): string {
     hour: 'numeric',
     minute: '2-digit',
   })
-}
-
-function PackagingHint({ row }: { row: AssetRow }) {
-  if (row.manifest_url) {
-    return (
-      <span className="cc-mono text-[10px]" style={{ color: 'var(--cc-ok)' }}>
-        Packaged
-      </span>
-    )
-  }
-  if (row.state === 'recorded') {
-    // Live recordings may be packaged locally; without a public manifest URL
-    // they are not servable to residents either way (manifest honesty rule).
-    return (
-      <span className="cc-mono text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
-        Not servable yet
-      </span>
-    )
-  }
-  if (row.state === 'validated') {
-    return (
-      <span className="cc-mono text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
-        Not packaged yet
-      </span>
-    )
-  }
-  return null
 }
 
 function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
@@ -335,12 +309,11 @@ export function AssetsScreen({
               >
                 <th className="px-3 py-2">Title</th>
                 <th className="px-3 py-2">State</th>
-                <th className="px-3 py-2">Readiness</th>
+                <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Duration</th>
                 <th className="px-3 py-2">Size</th>
                 <th className="px-3 py-2">Codec</th>
                 <th className="px-3 py-2">Published</th>
-                <th className="px-3 py-2">Packaging</th>
                 <th className="px-3 py-2"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
@@ -382,34 +355,20 @@ export function AssetsScreen({
                     <StateBadge state={row.state} />
                   </td>
                   <td className="px-3 py-3 align-top">
-                    {readinessByAssetId.has(row.asset_id) ? (
-                      <>
-                        <ReadinessBadge
-                          state={readinessByAssetId.get(row.asset_id)!.readiness_state}
-                          inFlightJobsCount={readinessByAssetId.get(row.asset_id)!.in_flight_jobs_count}
-                          reason={readinessByAssetId.get(row.asset_id)!.readiness_reason}
-                        />
-                        {/* Candidate #17 tester finding 6: "council-test-clip still
-                            shows Not ready even after it was successfully packaged
-                            AND published." Readiness tracks the ingest-time playback
-                            proxy pipeline, not publish status -- asset.published_at
-                            can be set well before (or after) that pipeline settles,
-                            and a stale/not-yet-computed readiness row reads as
-                            "broken" next to a live Published date otherwise. Say
-                            plainly what the dot does and does not mean rather than
-                            silently redefining readiness to track publish state. */}
-                        {row.published_at && readinessByAssetId.get(row.asset_id)!.readiness_state !== 'ready' && (
-                          <div className="mt-1 max-w-40 text-[10px] leading-tight" style={{ color: 'var(--cc-ink-3)' }}>
-                            Already live on the portal — this dot tracks the optimized
-                            playback proxy, not publish status.
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-                        —
-                      </span>
-                    )}
+                    {/* Candidate #17 field finding (second report): a
+                        Validated + Packaged asset showed "Not ready". The
+                        status is now derived from the asset row itself
+                        (state / manifest_url / published_at / file_status),
+                        with the lifecycle worker's readiness row layered in
+                        only for transcode-in-flight and missing-file detail
+                        -- see deriveAssetStatus. An absent or stale worker
+                        row can no longer demote a packaged/published asset. */}
+                    <AssetStatusBadge
+                      status={deriveAssetStatus(row, readinessByAssetId.get(row.asset_id))}
+                      inFlightJobsCount={
+                        readinessByAssetId.get(row.asset_id)?.in_flight_jobs_count
+                      }
+                    />
                   </td>
                   <td
                     className="cc-mono cc-tabular px-3 py-3 align-top text-xs"
@@ -443,9 +402,6 @@ export function AssetsScreen({
                     style={{ color: 'var(--cc-ink-2)' }}
                   >
                     {fmtDate(row.published_at)}
-                  </td>
-                  <td className="px-3 py-3 align-top">
-                    <PackagingHint row={row} />
                   </td>
                   <td className="px-3 py-3 align-top">
                     <div className="flex flex-col items-start gap-1">

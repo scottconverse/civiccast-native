@@ -237,6 +237,17 @@ class TestRouteOrdering:
         assert "total_assets" in body
         assert "by_asset" in body
 
+    def test_dashboard_row_before_worker_pass_carries_honest_reason(self, factory) -> None:  # type: ignore[no-untyped-def]
+        """Candidate #17 field finding (second report): a dashboard row for
+        an asset the worker never touched used to ship reason=None, leaving
+        the operator UI a bare "Not ready" with no explanation."""
+        _seed_asset(factory, asset_id="a1")
+        client = _client(factory)
+        body = client.get("/api/staff/assets/readiness-dashboard").json()
+        rows = {row["asset_id"]: row for row in body["by_asset"]}
+        assert rows["a1"]["readiness_state"] == "not_ready"
+        assert "has not been computed yet" in (rows["a1"]["readiness_reason"] or "")
+
 
 class TestReadiness:
     def test_get_readiness_unknown_asset_404s(self, factory) -> None:  # type: ignore[no-untyped-def]

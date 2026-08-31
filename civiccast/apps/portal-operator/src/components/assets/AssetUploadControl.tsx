@@ -14,7 +14,7 @@
 // difference is XHR instead of fetch, so this control can show real
 // upload progress.
 
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { ApiError, uploadAssetFileWithProgress } from '../../api/client'
 import type { UploadedAssetResponse } from '../../types/api.generated'
 
@@ -74,8 +74,29 @@ export function AssetUploadControl({ canUpload, roleCheckReady, onUploaded }: As
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [lastUploaded, setLastUploaded] = useState<UploadedAssetResponse | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const panelRef = useRef<HTMLElement | null>(null)
+  const titleInputRef = useRef<HTMLInputElement | null>(null)
   const fileInputId = useId()
   const titleInputId = useId()
+  const panelId = useId()
+
+  // Candidate #17 field finding: clicking "Upload video" made the button
+  // vanish and swapped in a form the operator could not see ("I assumed it
+  // was broken"). The trigger now stays put as a labeled active state, and
+  // opening the panel scrolls it into view and moves focus to the first
+  // field so keyboard and screen-reader users land inside it too.
+  useEffect(() => {
+    if (!open) return
+    // Optional-call form: jsdom's Element has no scrollIntoView.
+    panelRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+    titleInputRef.current?.focus()
+  }, [open])
+
+  function closePanel() {
+    cancelUpload()
+    setOpen(false)
+    reset()
+  }
 
   const disabled = roleCheckReady && !canUpload
 
@@ -152,23 +173,42 @@ export function AssetUploadControl({ canUpload, roleCheckReady, onUploaded }: As
     abortRef.current?.abort()
   }
 
+  // The trigger button never vanishes: closed it reads "Upload video",
+  // open it becomes the labeled active state "Cancel upload" so the
+  // operator always sees what their click did and how to undo it.
+  const trigger = (
+    <div className="px-6 pb-2">
+      <button
+        type="button"
+        onClick={() => (open ? closePanel() : setOpen(true))}
+        aria-expanded={open}
+        aria-controls={panelId}
+        className="rounded-md px-3 py-1.5 text-xs font-semibold"
+        style={
+          open
+            ? {
+                background: 'var(--cc-surface)',
+                color: 'var(--cc-ink-2)',
+                border: '1px solid var(--cc-line-strong)',
+              }
+            : { background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }
+        }
+      >
+        {open ? 'Cancel upload' : 'Upload video'}
+      </button>
+    </div>
+  )
+
   if (!open) {
-    return (
-      <div className="px-6 pb-2">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="rounded-md px-3 py-1.5 text-xs font-semibold"
-          style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
-        >
-          Upload video
-        </button>
-      </div>
-    )
+    return trigger
   }
 
   return (
+    <>
+      {trigger}
     <section
+      id={panelId}
+      ref={panelRef}
       aria-label="Upload video"
       className="mx-6 mb-4 flex flex-col gap-3 rounded-md p-4"
       style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
@@ -181,19 +221,6 @@ export function AssetUploadControl({ canUpload, roleCheckReady, onUploaded }: As
             validation finishes.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            cancelUpload()
-            setOpen(false)
-            reset()
-          }}
-          className="rounded-md px-2 py-1 text-xs"
-          style={{ border: '1px solid var(--cc-line)', color: 'var(--cc-ink-2)' }}
-          aria-label="Close upload panel"
-        >
-          Close
-        </button>
       </div>
 
       {disabled && (
@@ -215,6 +242,7 @@ export function AssetUploadControl({ canUpload, roleCheckReady, onUploaded }: As
             <span className="font-semibold">Title</span>
             <input
               id={titleInputId}
+              ref={titleInputRef}
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               disabled={disabled}
@@ -305,5 +333,6 @@ export function AssetUploadControl({ canUpload, roleCheckReady, onUploaded }: As
         </div>
       )}
     </section>
+    </>
   )
 }

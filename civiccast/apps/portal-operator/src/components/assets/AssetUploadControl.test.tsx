@@ -54,6 +54,32 @@ describe('AssetUploadControl idle/choosing state', () => {
     expect(getByLabelText('Title')).toBeTruthy()
   })
 
+  it('keeps the trigger visible as a labeled "Cancel upload" state instead of vanishing (candidate #17 field finding)', () => {
+    // Operator verbatim: "that's actually really bad ui. I assumed it was
+    // broken" -- the button used to disappear on click with the form
+    // rendered off-screen.
+    const { getByRole, queryByRole } = renderControl()
+    const trigger = getByRole('button', { name: 'Upload video' })
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+
+    fireEvent.click(trigger)
+
+    const cancel = getByRole('button', { name: 'Cancel upload' })
+    expect(cancel.getAttribute('aria-expanded')).toBe('true')
+    expect(queryByRole('button', { name: 'Upload video' })).toBeNull()
+
+    // Clicking the same control again collapses the panel and restores it.
+    fireEvent.click(cancel)
+    expect(getByRole('button', { name: 'Upload video' })).toBeTruthy()
+    expect(queryByRole('region', { name: 'Upload video' })).toBeNull()
+  })
+
+  it('moves focus to the Title field when the panel opens', () => {
+    const { getByRole, getByLabelText } = renderControl()
+    fireEvent.click(getByRole('button', { name: 'Upload video' }))
+    expect(document.activeElement).toBe(getByLabelText('Title'))
+  })
+
   it('names every accepted type up front', () => {
     const { getByRole, getByText } = renderControl()
     fireEvent.click(getByRole('button', { name: 'Upload video' }))
