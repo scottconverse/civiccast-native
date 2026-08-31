@@ -15,23 +15,24 @@ def _write(path: Path, text: str) -> None:
 
 
 def _write_aligned_release_identity_fixture(
-    root: Path, version: str = "0.10.0", *, native_version: str = "0.11.0-beta.1"
+    root: Path, version: str = "0.10.0", *, native_version: str | None = None
 ) -> None:
-    """A fully-aligned fixture tree, post-chain-J.
+    """A fully-aligned fixture tree, post-WSL-retirement (2026-08-31).
 
-    ``version`` is the WSL/mainline product line's own identity, sourced from
-    ``civiccast/_version.py`` -- the SAME string every WSL-facing surface
-    below tracks (README, CHANGELOG, docs/index.html, API-REFERENCE, the
-    docs/releases verification doc, Cargo.toml, tauri.conf.json,
-    headless-bootstrap.ps1, the operator-console e2e mock).
+    ``version`` is this repository's single product identity, sourced from
+    ``civiccast/_version.py`` -- and tracked identically by every surface
+    below (README, CHANGELOG, docs/index.html, API-REFERENCE, the
+    docs/releases verification doc, Cargo.toml, tauri.conf.json, the
+    operator-console e2e mock, tauri.native.conf.json, and main.rs's
+    CIVICCAST_VERSION constant).
 
-    ``native_version`` is the SEPARATE native Windows product line's own
-    identity, sourced from ``civiccast/_native_version.py`` -- tracked by
-    ``tauri.native.conf.json`` and the installer's Rust ``CIVICCAST_VERSION``
-    constant. DIFFERENT from ``version`` by default, matching the real,
-    post-fix repo shape, where the two product lines must never report an
-    identical version string. Pass equal values explicitly to exercise the
-    divergence check itself."""
+    ``native_version`` defaults to the same value as ``version``, matching
+    the real, post-retirement repo shape where ``civiccast/_native_version.py``
+    is a distinct file but is REQUIRED to agree with ``civiccast/_version.py``
+    now that there is one product line. Pass a different value explicitly to
+    exercise the single-source-of-truth divergence check itself."""
+    if native_version is None:
+        native_version = version
     _write(root / "civiccast" / "_version.py", f'__version__ = "{version}"\n')
     _write(root / "civiccast" / "_native_version.py", f'__version__ = "{native_version}"\n')
     _write(root / "docs" / "API-REFERENCE.md", f"OpenAPI schema, version `{version}`\n")
@@ -49,34 +50,27 @@ def _write_aligned_release_identity_fixture(
         root / "civiccast" / "apps" / "installer" / "src-tauri" / "Cargo.toml",
         f'[package]\nname = "civiccast-installer"\nversion = "{version}"\n',
     )
-    # The WSL Tauri config tracks the WSL line's own `version`.
+    # This repository's sole Tauri config tracks civiccast/_version.py's own
+    # version.
     _write(
         root / "civiccast" / "apps" / "installer" / "src-tauri" / "tauri.conf.json",
         f'{{"identifier": "org.civiccast.installer", "version": "{version}"}}\n',
     )
-    # The native Tauri overlay tracks the SEPARATE native line's own version.
+    # The native Tauri overlay tracks civiccast/_native_version.py's own
+    # version -- required equal to `version` today, but checked against its
+    # own source file so a drift in this file specifically still surfaces.
     _write(
         root / "civiccast" / "apps" / "installer" / "src-tauri" / "tauri.native.conf.json",
         f'{{"identifier": "org.civiccast.native", "version": "{native_version}"}}\n',
     )
-    # The operator-console e2e mock is a synthetic frontend-rendering test
-    # (not a real installer-identity surface), pinned to the WSL `version`.
+    # The operator-console e2e mock is a synthetic frontend-rendering test,
+    # pinned to the product's single version.
     _write(
         root / "civiccast" / "apps" / "portal-operator" / "e2e" / "route-table-smoke.spec.ts",
         f"await expect(page.getByText('v{version}')).toBeVisible()\n",
     )
-    # headless-bootstrap.ps1 is WSL-ONLY: it must track the WSL version.
-    _write(
-        root
-        / "civiccast"
-        / "apps"
-        / "installer"
-        / "src-tauri"
-        / "resources"
-        / "headless-bootstrap.ps1",
-        f'$CivicCastVersion = "{version}"\n',
-    )
-    # main.rs's CIVICCAST_VERSION is the NATIVE line's own runtime constant.
+    # main.rs's CIVICCAST_VERSION is the installer's own runtime constant,
+    # sourced from civiccast/_native_version.py.
     _write(
         root / "civiccast" / "apps" / "installer" / "src-tauri" / "src" / "main.rs",
         f'const CIVICCAST_VERSION: &str = "{native_version}";\n',
@@ -126,25 +120,18 @@ def test_release_identity_rejects_mismatched_installer_cargo_version(
     ]
 
 
-def test_release_identity_rejects_wsl_tauri_config_drifting_from_the_version_file(
+def test_release_identity_rejects_tauri_config_drifting_from_the_version_file(
     tmp_path: Path,
 ) -> None:
-    """tauri.conf.json (WSL) must track civiccast/_version.py's own version --
-    headless-bootstrap.ps1 is pinned against THIS file's version, not the
-    top-level `version` directly, so a drift here must surface on its own."""
+    """tauri.conf.json must track civiccast/_version.py's own version."""
     _write_aligned_release_identity_fixture(tmp_path)
     _write(
         tmp_path / "civiccast" / "apps" / "installer" / "src-tauri" / "tauri.conf.json",
         '{"identifier": "org.civiccast.installer", "version": "0.9.9"}\n',
     )
 
-    # One violation, not two. The second was the headless-bootstrap.ps1
-    # expected-version guard; that script is the WSL2 install lane, deleted
-    # under "no linux", and check_release_identity no longer audits a file this
-    # product does not ship. The WSL/native version-agreement check above it is
-    # untouched and still fires.
     assert evaluate_release_identity(tmp_path) == [
-        "civiccast/apps/installer/src-tauri/tauri.conf.json reports WSL product version "
+        "civiccast/apps/installer/src-tauri/tauri.conf.json reports product version "
         "0.9.9, expected 0.10.0 (from civiccast/_version.py).",
     ]
 
@@ -152,37 +139,46 @@ def test_release_identity_rejects_wsl_tauri_config_drifting_from_the_version_fil
 def test_release_identity_rejects_native_overlay_version_drifting_from_the_native_version_file(
     tmp_path: Path,
 ) -> None:
-    """chain J (2026-08-02): nothing checked tauri.native.conf.json's own
-    "version" before this -- it could silently drift from
-    civiccast._native_version, which would break the installer's own
+    """tauri.native.conf.json's own "version" must track
+    civiccast._native_version -- a drift here would break the installer's own
     post-install health verification (main.rs's CIVICCAST_VERSION constant,
     required equal to the same native_source_version, is what that check
     compares against the running service)."""
     _write_aligned_release_identity_fixture(tmp_path)
     _write(
         tmp_path / "civiccast" / "apps" / "installer" / "src-tauri" / "tauri.native.conf.json",
-        '{"identifier": "org.civiccast.native", "version": "0.11.0-beta.2"}\n',
+        '{"identifier": "org.civiccast.native", "version": "0.10.1"}\n',
     )
 
     assert evaluate_release_identity(tmp_path) == [
         "civiccast/apps/installer/src-tauri/tauri.native.conf.json reports native product "
-        "version 0.11.0-beta.2, expected 0.11.0-beta.1 (from civiccast/_native_version.py)."
+        "version 0.10.1, expected 0.10.0 (from civiccast/_native_version.py)."
     ]
 
 
-def test_release_identity_rejects_native_and_wsl_product_lines_sharing_one_version(
+def test_release_identity_rejects_native_version_file_diverging_from_the_single_source(
     tmp_path: Path,
 ) -> None:
-    """The regression this whole chain exists to prevent: the native and WSL
-    Tauri configs must never report the same version string again (that was
-    exactly the "two rc15 installers" confusion)."""
+    """The regression this whole rewrite exists to catch: with the WSL line
+    (and its separate version identity) retired, there is one product and
+    one version. civiccast/_native_version.py drifting from
+    civiccast/_version.py is the bug now -- the two used to be REQUIRED to
+    differ; today they are required to agree."""
     _write_aligned_release_identity_fixture(tmp_path, version="0.10.0", native_version="0.10.0")
+    _write(tmp_path / "civiccast" / "_native_version.py", '__version__ = "0.10.1"\n')
 
     assert evaluate_release_identity(tmp_path) == [
-        "civiccast/apps/installer/src-tauri/tauri.native.conf.json reports the same version "
-        "(0.10.0) as the WSL product's civiccast/apps/installer/src-tauri/tauri.conf.json "
-        "(0.10.0) -- the native and WSL product lines must never report an identical "
-        "version string."
+        "civiccast/_native_version.py reports version 0.10.1, expected 0.10.0 "
+        "(from civiccast/_version.py) -- there is one product line now and both "
+        "files must agree.",
+        "civiccast/apps/installer/src-tauri/tauri.native.conf.json reports native product "
+        "version 0.10.0, expected 0.10.1 (from civiccast/_native_version.py).",
+        "civiccast/apps/installer/src-tauri/src/main.rs does not carry the installer Rust "
+        "runtime version constant for 0.10.1 (from civiccast/_native_version.py). This "
+        "constant drives the installer's own post-install health verification and the real "
+        "pack-trust expected_product_version/expected_compatible_core -- see "
+        "civiccast.native.station_runtime.native_reported_version_environment for the matching "
+        "runtime override that makes the native-hosted backend's /health agree.",
     ]
 
 
@@ -192,16 +188,16 @@ def test_release_identity_rejects_main_rs_constant_drifting_from_the_native_vers
     """main.rs's CIVICCAST_VERSION is the REAL runtime source for the
     installer's post-install health verification and the real pack-trust
     expected_product_version/expected_compatible_core -- it must track
-    civiccast._native_version, not the WSL civiccast._version."""
+    civiccast._native_version."""
     _write_aligned_release_identity_fixture(tmp_path)
     _write(
         tmp_path / "civiccast" / "apps" / "installer" / "src-tauri" / "src" / "main.rs",
-        'const CIVICCAST_VERSION: &str = "0.10.0";\n',  # the WSL version, not the native one
+        'const CIVICCAST_VERSION: &str = "0.9.0";\n',
     )
 
     assert evaluate_release_identity(tmp_path) == [
         "civiccast/apps/installer/src-tauri/src/main.rs does not carry the installer Rust "
-        "runtime version constant for 0.11.0-beta.1 (from civiccast/_native_version.py). This "
+        "runtime version constant for 0.10.0 (from civiccast/_native_version.py). This "
         "constant drives the installer's own post-install health verification and the real "
         "pack-trust expected_product_version/expected_compatible_core -- see "
         "civiccast.native.station_runtime.native_reported_version_environment for the matching "
@@ -211,34 +207,8 @@ def test_release_identity_rejects_main_rs_constant_drifting_from_the_native_vers
 
 def test_release_identity_accepts_matching_health_example_version(tmp_path: Path) -> None:
     """TW-E: docs/technical-ops-reference.md's `/health` example must show the
-    version a NATIVE station reports -- civiccast/_native_version.py's, not
-    civiccast/_version.py's, which belongs to the retired WSL line."""
-    _write_aligned_release_identity_fixture(tmp_path)
-    _write(
-        tmp_path / "docs" / "technical-ops-reference.md",
-        "```bash\ncurl -s http://127.0.0.1:8000/health\n"
-        '{"status":"degraded","version":"0.11.0-beta.1","schema":"not-configured"}\n```\n',
-    )
-
-    assert evaluate_release_identity(tmp_path) == []
-
-
-def test_release_identity_rejects_the_wsl_lines_version_in_the_health_example(
-    tmp_path: Path,
-) -> None:
-    """The specific regression this check now guards.
-
-    A native station's /health reports the NATIVE version: station_runtime
-    sets CIVICCAST_NATIVE_REPORTED_VERSION from civiccast/_native_version.py
-    and app.py's _reported_version() prefers it over the module __version__.
-    An example showing the retired WSL line's number tells an operator to
-    expect something their station never prints -- and the old check actively
-    REQUIRED that wrong number, because it was anchored to
-    civiccast/_version.py.
-
-    The fixture's two versions differ on purpose (0.10.0 vs 0.11.0-beta.1), so
-    neither this nor the accepting test above can pass by coincidence.
-    """
+    version a native station reports -- civiccast/_native_version.py's,
+    which is now required to equal civiccast/_version.py's."""
     _write_aligned_release_identity_fixture(tmp_path)
     _write(
         tmp_path / "docs" / "technical-ops-reference.md",
@@ -246,10 +216,7 @@ def test_release_identity_rejects_the_wsl_lines_version_in_the_health_example(
         '{"status":"degraded","version":"0.10.0","schema":"not-configured"}\n```\n',
     )
 
-    assert evaluate_release_identity(tmp_path) == [
-        "docs/technical-ops-reference.md's /health example shows version '0.10.0', "
-        "expected '0.11.0-beta.1' (from civiccast/_native_version.py)."
-    ]
+    assert evaluate_release_identity(tmp_path) == []
 
 
 def test_release_identity_rejects_stale_health_example_version(tmp_path: Path) -> None:
@@ -265,5 +232,5 @@ def test_release_identity_rejects_stale_health_example_version(tmp_path: Path) -
 
     assert evaluate_release_identity(tmp_path) == [
         "docs/technical-ops-reference.md's /health example shows version '0.9.0', "
-        "expected '0.11.0-beta.1' (from civiccast/_native_version.py)."
+        "expected '0.10.0' (from civiccast/_native_version.py)."
     ]

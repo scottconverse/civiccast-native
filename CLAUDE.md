@@ -90,7 +90,16 @@ repository and `main` carries it. The WSL2/Linux lane it once shipped
 alongside (ADR 0021's "parallel-shipped deployment line") was retired by owner
 decision on 2026-08-19 and is not present here -- no docker/, no systemd
 units, no WSL2 install target. Its history remains in the private (not
-archived) scottconverse/civiccast if something needs recovering. **Scott Converse is the owner** (merge, tag, release
+archived) scottconverse/civiccast if something needs recovering. On
+2026-08-31 the owner also fully retired the WSL line's vestigial *version*
+machinery: `civiccast/_version.py` no longer tracks a separate WSL release
+identity (it used to hold `1.0.0-rcNN` while `civiccast/_native_version.py`
+held the native line's own `1.0.0-beta.N`). There is one product and one
+version now -- both files hold `1.0.0-beta.1`, and
+`scripts/policy/check_release_identity.py` enforces that they, and every
+other release-identity surface it checks (README, docs/index.html,
+CHANGELOG, docs/API-REFERENCE.md, the installer's Cargo/Tauri/package.json
+identities, main.rs's `CIVICCAST_VERSION`), agree. **Scott Converse is the owner** (merge, tag, release
 signing, publication, shipment, cutover, and tie-break decisions). The active
 coder is assigned by the owner's current handoff; the coder seat was
 transferred from Codex to Claude on 2026-07-29 (owner decision, recorded in

@@ -1,6 +1,6 @@
 [package]
 name = "civiccast-installer"
-version = "1.0.0-rc18"
+version = "1.0.0-beta.1"
 edition = "2021"
 
 [features]
