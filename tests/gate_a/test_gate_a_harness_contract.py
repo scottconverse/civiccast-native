@@ -40,6 +40,7 @@ shipper cost the installer"):
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
@@ -82,6 +83,8 @@ _HOST_LAUNCHER = _SANDBOX_LAB / "Host-Launch-Sandbox-Test.ps1"
 _RUN_GATE_A = _SANDBOX_LAB / "Run-GateA.ps1"
 _JUDGE = _REPO_ROOT / "scripts" / "gate_a_verdict.py"
 _WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "gate-a-station-acceptance.yml"
+_WSB_TEMPLATE = _SANDBOX_LAB / "CivicCastSandboxTest.wsb.template"
+_UPGRADE_BASELINE = _SANDBOX_LAB / "upgrade-baseline.json"
 
 #: Matches a PowerShell single-quoted here-string body. The driver embeds the
 #: watchdog, the shipper supervisor, and the shipper tick as here-strings;
@@ -1157,3 +1160,76 @@ def test_clean_lane_flow_is_untouched_by_dirty_mode() -> None:
     raise_at = code.index("$MaxScriptMinutes = 210")
     gate_at = code.rindex("if ($script:DirtyMode) {", 0, raise_at)
     assert gate_at != -1
+
+
+# --------------------------------------------------------------------------
+# 9. Cross-version install-over-existing extension
+# --------------------------------------------------------------------------
+
+
+def test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob() -> None:
+    baseline = json.loads(_UPGRADE_BASELINE.read_text(encoding="utf-8"))
+    assert baseline["schema_version"] == 1
+    assert re.fullmatch(r"[0-9a-f]{40}", baseline["source_sha"])
+    assert str(baseline["run_id"]).isdigit()
+    assert str(baseline["gate_a_run_id"]).isdigit()
+    assert baseline["run_id"] != baseline["gate_a_run_id"]
+    assert baseline["candidate_label"]
+
+    workflow = _read(_WORKFLOW)
+    assert "sandbox-lab/upgrade-baseline.json" in workflow
+    assert "previous_source_sha" in workflow
+    assert "previous_run_id" in workflow
+    assert "C:\\CivicCastTester\\kit-staging" in workflow
+    assert "previous-kit-staging" in workflow
+    assert "Previous full kit is absent" in workflow
+    assert "latest" not in "\n".join(
+        line.lower() for line in workflow.splitlines() if "previous" in line.lower()
+    ), "the previous candidate must be an explicit immutable identity, never newest/latest"
+
+
+def test_run_gate_a_requires_and_maps_a_distinct_previous_kit_for_upgrade_mode() -> None:
+    text = _read(_RUN_GATE_A)
+    assert "[string]$PreviousKitDir" in text
+    assert "[string]$PreviousSourceSha" in text
+    assert "$PreviousSourceSha -eq $sourceSha" in text
+    assert "previous-kit-download" in text
+    assert "{{PREVIOUS_KIT_MAPPING}}" in _read(_WSB_TEMPLATE)
+    assert "CivicCastPreviousPayload" in _read(_HOST_LAUNCHER)
+    assert "-UpgradeMode:$upgradeMode" in text
+    assert "-PreviousSourceSha $PreviousSourceSha" in text
+
+
+def test_upgrade_mode_is_an_additive_dirty_lane_opt_in_and_uses_previous_payload_first() -> None:
+    host = _read(_HOST_LAUNCHER)
+    driver = _read(_DRIVER)
+    assert "[switch]$UpgradeMode" in host
+    assert "Join-Path $OutDir 'UPGRADE_MODE.txt'" in host
+    assert "$script:UpgradeMode = Test-Path (Join-Path $OutDir 'UPGRADE_MODE.txt')" in driver
+    assert "C:\\CivicCastPreviousPayload" in driver
+    assert "PREVIOUS_INSTALLER_SHA256" in driver
+    assert "CURRENT_INSTALLER_SHA256" in driver
+    assert "UPGRADE_OVER_LIVE_REQUESTED=1" in driver
+    assert "UPGRADE_CURRENT_INSTALL_EXIT" in driver
+
+    code = _code_only(driver).replace("\r\n", "\n")
+    assert "if ($script:UpgradeMode)" in code
+    assert "if (-not $script:UpgradeMode)" in code, (
+        "the real-uninstaller remnant path must remain available when no previous kit is supplied"
+    )
+
+
+def test_workflow_dirty_lane_supplies_the_previous_candidate_to_gate_a() -> None:
+    workflow = _read(_WORKFLOW)
+    clean_job = workflow.split("  station-acceptance:", 1)[1].split(
+        "  station-acceptance-dirty:", 1
+    )[0]
+    dirty_job = workflow.split("  station-acceptance-dirty:", 1)[1]
+    assert "id: upgrade_baseline" not in clean_job
+    assert "id: upgrade_baseline" in dirty_job
+    assert "Require the pinned previous full kit" in dirty_job
+    dirty_line = next(
+        line for line in dirty_job.splitlines() if "Run-GateA.ps1" in line and "-DirtyLane" in line
+    )
+    assert "-PreviousKitDir" in dirty_line
+    assert "-PreviousSourceSha" in dirty_line

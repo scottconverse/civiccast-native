@@ -196,6 +196,11 @@ Write-Marker -Name '_LOCALOUT.marker' -Content "local_out_dir=$OutDir ship_dir=$
 # numbers are untouched: without DIRTY_MODE.txt nothing in this block changes
 # any value.
 $script:DirtyMode = Test-Path (Join-Path $OutDir 'DIRTY_MODE.txt')
+$script:UpgradeMode = Test-Path (Join-Path $OutDir 'UPGRADE_MODE.txt')
+if ($script:UpgradeMode -and -not $script:DirtyMode) {
+    Write-Marker -Name '_INVALID-UPGRADE-MODE.marker' -Content 'UPGRADE_MODE.txt requires DIRTY_MODE.txt'
+    throw 'UPGRADE_MODE.txt requires DIRTY_MODE.txt'
+}
 if ($script:DirtyMode) {
     if ($MaxScriptMinutes -lt 210) { $MaxScriptMinutes = 210 }
     Write-Marker -Name '_DIRTY-MODE.marker' -Content "dirty_mode=1 max_script_minutes=$MaxScriptMinutes detected_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
@@ -1624,7 +1629,9 @@ function Test-TsProof {
 # top of this file). Everything here happens BEFORE the normal acceptance
 # flow, which then runs unchanged against the remnant-carrying box:
 #
-#   P1. Install the candidate once (same silent command as the normal flow).
+#   P1. Install either the pinned previous candidate (upgrade mode) or the
+#       current candidate (legacy remnant mode), using the same silent
+#       command as the normal flow.
 #       The install-time provision creates a REAL PostgreSQL cluster at
 #       %ProgramData%\CivicCast\data\pgdata -- not a hand-faked seed.
 #   P2. Plant operator data: two media files into
@@ -1671,12 +1678,33 @@ function Invoke-DirtyRemnantPrologue {
     $pd = Join-Path $env:ProgramData 'CivicCast'
     $installRoot = 'C:\CivicCastHostStore\install'
 
-    # P1. Phase-1 install.
-    $dirtyExe = Get-ChildItem -Path $PayloadDir -Filter '*setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    # P1. Phase-1 install. Cross-version mode uses the separately mapped,
+    # immutable previous full kit; legacy remnant mode keeps the historical
+    # same-candidate install/uninstall shape.
+    $phase1Payload = if ($script:UpgradeMode) { 'C:\CivicCastPreviousPayload' } else { $PayloadDir }
+    $dirtyExe = Get-ChildItem -Path $phase1Payload -Filter '*setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $dirtyExe) {
-        "PHASE1_INSTALL_EXIT=-999 (no *setup.exe found in $PayloadDir)" | Add-Content -Path $prep -Encoding UTF8
+        "PHASE1_INSTALL_EXIT=-999 (no *setup.exe found in $phase1Payload)" | Add-Content -Path $prep -Encoding UTF8
         Save-Summary -Step 'dirty-prep-no-installer'
         return
+    }
+    if ($script:UpgradeMode) {
+        $currentUpgradeExe = Get-ChildItem -Path $PayloadDir -Filter '*setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+        "UPGRADE_MODE=1" | Add-Content -Path $prep -Encoding UTF8
+        "UPGRADE_OVER_LIVE_REQUESTED=1" | Add-Content -Path $prep -Encoding UTF8
+        if (-not $currentUpgradeExe) {
+            "CURRENT_INSTALLER_SHA256=<missing>" | Add-Content -Path $prep -Encoding UTF8
+            "PHASE1_INSTALL_EXIT=-999 (no current *setup.exe found in $PayloadDir)" | Add-Content -Path $prep -Encoding UTF8
+            return
+        }
+        try { $previousInstallerHash = (Get-FileHash -LiteralPath $dirtyExe.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower() } catch { $previousInstallerHash = "<hash-error: $_>" }
+        try { $currentInstallerHash = (Get-FileHash -LiteralPath $currentUpgradeExe.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower() } catch { $currentInstallerHash = "<hash-error: $_>" }
+        "PREVIOUS_INSTALLER_SHA256=$previousInstallerHash" | Add-Content -Path $prep -Encoding UTF8
+        "CURRENT_INSTALLER_SHA256=$currentInstallerHash" | Add-Content -Path $prep -Encoding UTF8
+        if ($previousInstallerHash -eq $currentInstallerHash) {
+            "PHASE1_INSTALL_EXIT=-996 (previous and current installer identities are identical)" | Add-Content -Path $prep -Encoding UTF8
+            return
+        }
     }
     Enter-ShipperQuiesce -Reason 'dirty-lane-phase1-install' -MaxMinutes 120
     Save-Summary -Step 'dirty-prep-phase1-install-begin'
@@ -1723,6 +1751,19 @@ function Invoke-DirtyRemnantPrologue {
         "PGDATA_PRESENT_AFTER_PHASE1=0 (no cluster at $pgdata after a phase-1 install that exited 0)" | Add-Content -Path $prep -Encoding UTF8
     }
     Save-Summary -Step 'dirty-prep-pgdata-recorded'
+
+    if ($script:UpgradeMode) {
+        # Leave the previous candidate installed and running. The normal
+        # acceptance flow below now invokes the current setup directly over
+        # this live install; the installer owns graceful quiescence/migration.
+        "dirty_prep_finished_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Add-Content -Path $prep -Encoding UTF8
+        Save-Summary -Step 'dirty-prep-cross-version-live'
+        return
+    }
+
+    if (-not $script:UpgradeMode) {
+        Write-Marker -Name '_DIRTY-LEGACY-REMNANT.marker' -Content 'legacy uninstall-remnant path selected'
+    }
 
     # P4. Stop the service (bounded poll), then run the real uninstaller.
     try { & sc.exe stop CivicCastSupervisor 2>&1 | Out-Null } catch {}
@@ -1946,7 +1987,7 @@ try {
         #    (SetErrorLevel + Abort) makes the process exit code a real, meaningful
         #    signal of which postinstall step failed (110=pack delivery,
         #    111/112/121/122=D2 verify, 116-119=D4 provision/service/firewall,
-        #    120=install-over-existing refusal, 123=D4 activation [K1], etc).
+        #    120=upgrade quiesce failure, 123=D4 activation [K1], etc).
         # /D= sets the NSIS install directory to the WRITABLE host-mapped folder
         # (C:\CivicCastHostStore\install, backed by the host's 1.2TB) so the WHOLE
         # install -- stage-packs, provision (which creates the dependencies/
@@ -2176,7 +2217,7 @@ try {
 
     # 5. CivicCastSupervisor service state -- Get-Service (typed) and raw
     #    sc.exe query / qc (matches exactly what the installer's own
-    #    PREINSTALL refusal-gate check does: "sc query CivicCastSupervisor",
+    #    PREINSTALL upgrade classification does: "sc query CivicCastSupervisor",
     #    exit 0 = registered, 1060 = ERROR_SERVICE_DOES_NOT_EXIST = not
     #    registered). None of these three calls block/wait.
     $svc = Get-Service -Name 'CivicCastSupervisor' -ErrorAction SilentlyContinue
@@ -2381,7 +2422,8 @@ try {
 
     # 5b-dirty. DIRTY-LANE SURVIVAL VERIFY <gate-a-dirty-lane>. Only in dirty
     # mode, right after the station-up verdict: prove the operator data the
-    # prologue planted before the uninstall/reinstall cycle survived it, and
+    # prologue planted before the upgrade or legacy uninstall/reinstall cycle
+    # survived it, and
     # (when the orphaned large-v3 remnant was seeded) that PR #80's
     # orphaned-tier fallback actually FIRED -- the supervisor log must carry
     # its WARNING, proving the remnant was detected and degraded rather than
@@ -2390,6 +2432,10 @@ try {
     if ($script:DirtyMode) {
         $dirtyRes = Join-Path $OutDir 'DIRTY-RESULT.txt'
         "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $dirtyRes -Encoding UTF8
+        if ($script:UpgradeMode) {
+            "UPGRADE_MODE=1" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "UPGRADE_CURRENT_INSTALL_EXIT=$($summary.installer_exit_code)" | Add-Content -Path $dirtyRes -Encoding UTF8
+        }
         $pdRoot = Join-Path $env:ProgramData 'CivicCast'
 
         # pgdata: the SAME cluster, not a re-provisioned lookalike.

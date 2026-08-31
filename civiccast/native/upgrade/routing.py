@@ -53,7 +53,7 @@ a running supervisor's D7 control pipe and its health gate SCM-starts the
 service, so with no registered service those steps cannot mean anything even
 if they somehow succeeded.
 
-The same probe already gates the install-only refusal in
+The same probe already gates the install-over-existing classification in
 ``NSIS_HOOK_PREINSTALL`` and the D3 drain's writers-active check
 (``service_control._real_service_registered_probe``) -- this module reuses that
 question rather than inventing a fourth product-existence convention.

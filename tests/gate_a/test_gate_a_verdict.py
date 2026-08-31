@@ -704,6 +704,32 @@ def _write_dirty_evidence(
     (run_dir / "DIRTY-RESULT.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_upgrade_evidence(
+    run_dir: Path,
+    *,
+    previous_installer_sha256: str = "a" * 64,
+    current_installer_sha256: str = "b" * 64,
+    current_install_exit: str = "0",
+) -> None:
+    prep = [
+        "UPGRADE_MODE=1",
+        "PHASE1_INSTALL_EXIT=0",
+        "UPGRADE_OVER_LIVE_REQUESTED=1",
+        f"PREVIOUS_INSTALLER_SHA256={previous_installer_sha256}",
+        f"CURRENT_INSTALLER_SHA256={current_installer_sha256}",
+    ]
+    (run_dir / "DIRTY-PREP-RESULT.txt").write_text("\n".join(prep) + "\n", encoding="utf-8")
+    result = [
+        "UPGRADE_MODE=1",
+        f"UPGRADE_CURRENT_INSTALL_EXIT={current_install_exit}",
+        "DIRTY_PGDATA_PRESERVED=1 detail=same cluster",
+        "DIRTY_UPLOADS_PRESERVED=1",
+        "DIRTY_ORPHAN_SEEDED=0",
+        "DIRTY_ORPHAN_WARNING=NA",
+    ]
+    (run_dir / "DIRTY-RESULT.txt").write_text("\n".join(result) + "\n", encoding="utf-8")
+
+
 def test_clean_lane_judge_is_unchanged_by_default(tmp_path: Path) -> None:
     """No --lane / lane='clean' produces the pre-dirty-lane document: no lane
     field, no dirty checks -- even when dirty evidence files are present."""
@@ -724,6 +750,47 @@ def test_dirty_lane_all_pass(tmp_path: Path) -> None:
     for name in DIRTY_CHECKS:
         assert result["checks"][name]["status"] == "PASS", result["checks"][name]["detail"]
     assert result["verdict"] == "PASS"
+
+
+def test_cross_version_upgrade_lane_passes_only_with_distinct_installer_identities(
+    tmp_path: Path,
+) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir)
+    result = gav.judge(run_dir, source_sha="b" * 40, run_id="123", lane="dirty")
+
+    assert result["checks"]["dirty_prep"]["status"] == "PASS"
+    assert result["checks"]["dirty_survival"]["status"] == "PASS"
+    assert result["checks"]["dirty_orphaned_tier"]["status"] == "SKIP"
+    assert "cross-version upgrade" in result["checks"]["dirty_prep"]["detail"]
+    assert result["verdict"] == "PASS"
+
+
+def test_cross_version_upgrade_lane_rejects_same_installer_as_not_cross_version(
+    tmp_path: Path,
+) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    same = "a" * 64
+    _write_upgrade_evidence(
+        run_dir,
+        previous_installer_sha256=same,
+        current_installer_sha256=same,
+    )
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+
+    assert result["checks"]["dirty_prep"]["status"] == "FAIL"
+    assert "identical" in result["checks"]["dirty_prep"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_cross_version_upgrade_lane_requires_current_install_success(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir, current_install_exit="120")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+
+    assert result["checks"]["dirty_survival"]["status"] == "FAIL"
+    assert "UPGRADE_CURRENT_INSTALL_EXIT=120" in result["checks"]["dirty_survival"]["detail"]
+    assert result["verdict"] == "FAIL"
 
 
 def test_dirty_lane_missing_evidence_fails_closed(tmp_path: Path) -> None:

@@ -23,10 +23,10 @@
 # floor that runs on every candidate build, not a replacement for either.
 #
 # DIRTY LANE <gate-a-dirty-lane>: a second job (station-acceptance-dirty,
-# below) reruns the same acceptance against a box carrying REMNANTS of a
-# previous install -- the harness installs the candidate, plants operator
-# data, really uninstalls it, optionally seeds an orphaned caption tier, and
-# reinstalls. See that job's own header and docs/ops/gate-a.md, "Dirty lane".
+# below) installs a pinned previous candidate, plants operator data, leaves
+# that version live, then runs the current setup directly over it. Exact
+# previous/current installer hashes and data survival are judged fail-closed.
+# See that job's own header and docs/ops/gate-a.md, "Dirty lane".
 #
 # STATUS: informational only. It reports its verdict on every candidate but
 # does NOT block merges or releases until the owner promotes it to a required
@@ -410,7 +410,7 @@ jobs:
   # wait window -- asserted by tests/gate_a/test_gate_a_harness_contract.py.
   # ==========================================================================
   station-acceptance-dirty:
-    name: Dirty-box remnant lane (uninstall-remnant reinstall) + verdict
+    name: Cross-version install-over-existing lane + verdict
     needs: station-acceptance
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, windows, sandbox-lab]
@@ -550,6 +550,56 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}
 
+      - name: Resolve and verify immutable previous candidate
+        id: upgrade_baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $baselinePath = "sandbox-lab/upgrade-baseline.json"
+          $baseline = Get-Content -LiteralPath $baselinePath -Raw | ConvertFrom-Json
+          if ($baseline.schema_version -ne 1) { throw "Unsupported upgrade baseline schema: $($baseline.schema_version)" }
+          $previousSha = [string]$baseline.source_sha
+          $previousRunId = [string]$baseline.run_id
+          if ($previousSha -notmatch '^[0-9a-f]{40}$' -or $previousRunId -notmatch '^\d+$') {
+            throw "Invalid immutable previous candidate identity in $baselinePath"
+          }
+          if ($previousSha -eq "${{ steps.run_id.outputs.source_sha }}") {
+            throw "Pinned previous source SHA equals the current candidate; this would be a same-candidate reinstall."
+          }
+          $runJson = & gh run view $previousRunId -R "scottconverse/civiccast-native" --json headSha,workflowName,conclusion,status 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "Could not verify pinned previous candidate run ${previousRunId}: $runJson" }
+          $run = $runJson | ConvertFrom-Json
+          if ($run.headSha -ne $previousSha -or $run.workflowName -ne 'native-beta-candidate-artifacts' -or $run.conclusion -ne 'success') {
+            throw "Pinned previous candidate identity mismatch: expected sha=$previousSha workflow=native-beta-candidate-artifacts conclusion=success; got sha=$($run.headSha) workflow=$($run.workflowName) conclusion=$($run.conclusion)"
+          }
+          "previous_source_sha=$previousSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_run_id=$previousRunId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Verified previous candidate: label=$($baseline.candidate_label) run_id=$previousRunId source_sha=$previousSha gate_a_run_id=$($baseline.gate_a_run_id)"
+
+      - name: Require the pinned previous full kit from local staging
+        shell: pwsh
+        run: |
+          # Candidate #23 was built on the self-hosted runner with large-kit
+          # upload disabled. Its complete, already-verified kit is retained
+          # in the runner's local staging mirror; the small candidate artifact
+          # is not a substitute for these bytes. Fail closed if it is absent.
+          $previousSha = "${{ steps.upgrade_baseline.outputs.previous_source_sha }}"
+          $local = Join-Path "C:\CivicCastTester\kit-staging" $previousSha
+          $targetRoot = "sandbox-lab/previous-kit-staging"
+          $target = Join-Path $targetRoot $previousSha
+          $installer = Get-ChildItem -LiteralPath $local -Filter "*setup.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not (Test-Path (Join-Path $local "station\station-index.json")) -or -not $installer) {
+            throw "Previous full kit is absent or incomplete at $local; refusing to substitute a different candidate or partial artifact."
+          }
+          New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
+          if (Test-Path $target) {
+            $item = Get-Item -LiteralPath $target -Force
+            if ($item.LinkType) { $item.Delete() } else { Remove-Item -LiteralPath $target -Recurse -Force }
+          }
+          New-Item -ItemType Junction -Path $target -Target $local | Out-Null
+          Write-Host "Pinned previous full kit: $target -> $local"
+
       - name: Run Gate A (dirty lane)
         id: gate_a_dirty
         shell: pwsh
@@ -561,7 +611,7 @@ jobs:
           # test_gate_a_harness_contract.py). -SoakMinutes 10 keeps the total
           # two-install-cycle run inside that bound; the clean lane already
           # soaked this same candidate for 20.
-          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DirtyLane -SoakMinutes 10 -TimeoutMinutes 230
+          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DirtyLane -PreviousKitDir "sandbox-lab/previous-kit-staging/${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -PreviousSourceSha "${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -SoakMinutes 10 -TimeoutMinutes 230
           $exitCode = $LASTEXITCODE
           "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           $latest = Get-ChildItem -Path "sandbox-lab/evidence" -Directory -Recurse -ErrorAction SilentlyContinue |
@@ -580,7 +630,7 @@ jobs:
           # (including the SKIP status of any uncovered remnant shape) on the
           # run's front page, not just inside an artifact.
           $evidenceDir = "${{ steps.gate_a_dirty.outputs.evidence_dir }}"
-          $lines = @("## Gate A dirty lane (uninstall-remnant reinstall)", "")
+          $lines = @("## Gate A dirty lane (cross-version install over existing)", "")
           $verdictPath = if ($evidenceDir) { Join-Path $evidenceDir 'gate-a-verdict.json' } else { $null }
           if ($verdictPath -and (Test-Path $verdictPath)) {
             try {

@@ -248,7 +248,7 @@ function Invoke-CivicCastSilentInstall {
         nsis-hooks-bootstrap.nsh's CIVICCAST_FAIL macro (SetErrorLevel + Abort)
         maps postinstall steps onto distinct codes -- 110 pack delivery,
         111/112/121/122 D2 verify, 116-119 D4 provision/service/firewall,
-        120 install-over-existing refusal, 123 D4 activation (K1). Callers
+        120 upgrade quiesce failure, 123 D4 activation (K1). Callers
         should record it verbatim rather than collapsing it to a boolean.
 
         Returns a hashtable with installer_source, installer_sha256,

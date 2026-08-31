@@ -34,6 +34,9 @@ from civiccast.native.upgrade.pg_lifecycle import (
     real_database_reachable,
     real_start_postgres,
     real_stop_postgres,
+    service_allows_scoped_postgres_start,
+    wrap_health_gate,
+    wrap_restore_backup,
     wrap_schema_revision,
 )
 
@@ -88,6 +91,69 @@ def test_unreachable_service_absent_starts_and_stop_owed() -> None:
     assert state.started_by_us is True
 
 
+def test_registered_but_stopped_service_allows_scoped_postgres_start() -> None:
+    """Install-over-existing preserves SCM registration for D3 routing, but
+    PREINSTALL has already proved the service STOPPED. That state has no
+    service-owned postgres process and is safe for the scoped pg_ctl owner."""
+
+    assert service_allows_scoped_postgres_start(registered=True, stopped=True) is True
+    assert service_allows_scoped_postgres_start(registered=False, stopped=None) is True
+    assert service_allows_scoped_postgres_start(registered=True, stopped=False) is False
+    assert service_allows_scoped_postgres_start(registered=None, stopped=None) is False
+
+
+def test_real_scoped_start_probe_accepts_registered_but_stopped_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import civiccast.native.upgrade.service_control as service_control
+
+    monkeypatch.setattr(pg_lifecycle, "real_service_registered_probe", lambda: None)
+    monkeypatch.setattr(service_control, "_real_service_stopped_probe", lambda: True)
+
+    assert pg_lifecycle.real_scoped_postgres_start_allowed() is True
+
+
+def test_real_scoped_start_probe_rejects_registered_running_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import civiccast.native.upgrade.service_control as service_control
+
+    monkeypatch.setattr(pg_lifecycle, "real_service_registered_probe", lambda: None)
+    monkeypatch.setattr(service_control, "_real_service_stopped_probe", lambda: False)
+
+    assert pg_lifecycle.real_scoped_postgres_start_allowed() is False
+
+
+def test_health_gate_hands_scoped_postgres_back_to_supervisor_first() -> None:
+    calls: list[str] = []
+    state = PgLifecycleState(checked=True, started_by_us=True)
+    wrapped = wrap_health_gate(
+        lambda: (calls.append("health"), True)[1],
+        stop_postgres=lambda: calls.append("stop_pg"),
+        state=state,
+    )
+
+    assert wrapped() is True
+    assert calls == ["stop_pg", "health"]
+    assert state.started_by_us is False
+
+
+def test_restore_restarts_scoped_postgres_after_failed_service_handoff() -> None:
+    calls: list[str] = []
+    state = PgLifecycleState(checked=True, started_by_us=False)
+    wrapped = wrap_restore_backup(
+        lambda _backup: calls.append("restore"),
+        database_reachable=lambda: False,
+        scoped_start_allowed=lambda: True,
+        start_postgres=lambda: calls.append("start_pg"),
+        state=state,
+    )
+
+    wrapped(object())  # type: ignore[arg-type]
+    assert calls == ["start_pg", "restore"]
+    assert state.started_by_us is True
+
+
 def test_unreachable_service_absent_stop_called_even_when_work_raises() -> None:
     """The finally-block contract __main__.py implements: work() (standing in
     for run_upgrade) raises AFTER schema_revision started postgres, and the
@@ -136,7 +202,7 @@ def test_unreachable_service_present_or_ambiguous_fails_closed(registered) -> No
         wrapped()
 
     assert str(excinfo.value) == FAIL_CLOSED_DETAIL
-    assert "service present but database unreachable" in str(excinfo.value)
+    assert "service is not confirmed stopped" in str(excinfo.value)
     assert calls == []  # neither start nor schema_revision (inner) ran
     assert state.started_by_us is False
 
@@ -632,6 +698,11 @@ def test_attach_is_inert_construction(tmp_path) -> None:
     new_seams, stop_if_started = attach_pg_lifecycle(seams, context)
 
     assert new_seams.schema_revision is not seams.schema_revision
+    assert new_seams.drain_and_verify_quiescence is not seams.drain_and_verify_quiescence
+    assert new_seams.backup is not seams.backup
+    assert new_seams.migrate is not seams.migrate
+    assert new_seams.health_gate is not seams.health_gate
+    assert new_seams.restore_backup is not seams.restore_backup
     assert callable(stop_if_started)
     # Never started (schema_revision was never invoked) -> a no-op stop.
     stop_if_started()

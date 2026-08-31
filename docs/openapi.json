@@ -1778,8 +1778,8 @@
         "tags": [
           "staff"
         ],
-        "summary": "Package validated local media for resident playback",
-        "description": "Encode one validated upload into the existing local HLS media service.\n\nPackaging writes to a sibling staging directory and only swaps it into\nplace after the multivariant manifest exists. The database is updated\nlast, so residents never receive a manifest URL for a partial package.",
+        "summary": "Package validated or recorded local media for resident playback",
+        "description": "Encode one validated or recorded asset into the local HLS media service.\n\nPackaging writes to a sibling staging directory and only swaps it into\nplace after the multivariant manifest exists. The database is updated\nlast, so residents never receive a manifest URL for a partial package.",
         "operationId": "package_staff_asset_api_staff_assets__asset_id__package_post",
         "parameters": [
           {

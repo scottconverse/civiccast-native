@@ -6,6 +6,7 @@
        note, not here. Bump on hosts with less headroom only after re-measuring. -->
   <MemoryInMB>16384</MemoryInMB>
   <MappedFolders>
+    {{PREVIOUS_KIT_MAPPING}}
     <MappedFolder>
       <HostFolder>{{ROOT}}\kit-download</HostFolder>
       <SandboxFolder>C:\CivicCastPayload</SandboxFolder>

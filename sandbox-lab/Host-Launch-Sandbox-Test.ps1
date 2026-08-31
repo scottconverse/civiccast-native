@@ -120,6 +120,12 @@ param(
     # without the switch nothing about the clean lane changes.
     [switch]$DirtyMode,
 
+    # Cross-version extension of DirtyMode. When present, map the pinned
+    # previous full kit into the guest and leave its install live for the
+    # current setup to replace. PreviousSourceSha is recorded as evidence.
+    [switch]$UpgradeMode,
+    [string]$PreviousSourceSha,
+
     # HARDENED <gate-a-orphan-guard> 2026-08-26: minutes a WindowsSandbox
     # server/client process may sit with NO vmmemWindowsSandbox (the actual
     # VM) before the pre-launch busy guard stops treating it as someone
@@ -159,6 +165,14 @@ Write-Host "Root: $Root"
 
 if (-not (Test-Path $TemplatePath)) {
     Write-Error "Missing .wsb template at $TemplatePath"
+    exit 1
+}
+if ($UpgradeMode -and -not $DirtyMode) {
+    Write-Error "-UpgradeMode requires -DirtyMode."
+    exit 1
+}
+if ($UpgradeMode -and [string]::IsNullOrWhiteSpace($PreviousSourceSha)) {
+    Write-Error "-UpgradeMode requires -PreviousSourceSha."
     exit 1
 }
 
@@ -212,6 +226,17 @@ function Resolve-PhysicalPath {
 #    Resolve-PhysicalPath above for what that fixes and, just as important,
 #    what it does not.
 $templateContent = Get-Content -Path $TemplatePath -Raw
+$previousMapping = ''
+if ($UpgradeMode) {
+    $previousMapping = @"
+<MappedFolder>
+      <HostFolder>{{ROOT}}\previous-kit-download</HostFolder>
+      <SandboxFolder>C:\CivicCastPreviousPayload</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+"@
+}
+$templateContent = $templateContent.Replace('{{PREVIOUS_KIT_MAPPING}}', $previousMapping)
 $rendered = $templateContent.Replace('{{ROOT}}', $Root)
 # Explicit match loop rather than a MatchEvaluator scriptblock: Windows
 # PowerShell 5.1's scriptblock-to-delegate conversion is not something this
@@ -260,7 +285,10 @@ if ($DirtyMode) {
         $TimeoutMinutes = 230
     }
 }
-Write-Host "Output dir stamped clean: $OutDir (SOAK_MINUTES=$SoakMinutes, DirtyMode=$([bool]$DirtyMode))"
+if ($UpgradeMode) {
+    Set-Content -Path (Join-Path $OutDir 'UPGRADE_MODE.txt') -Value "upgrade_mode=1 previous_source_sha=$PreviousSourceSha requested_utc=$((Get-Date).ToUniversalTime().ToString('o'))" -Encoding UTF8
+}
+Write-Host "Output dir stamped clean: $OutDir (SOAK_MINUTES=$SoakMinutes, DirtyMode=$([bool]$DirtyMode), UpgradeMode=$([bool]$UpgradeMode))"
 
 # 1b. Guard: wait for a free sandbox. Windows Sandbox only ever runs ONE
 #     instance system-wide -- if any of $SandboxProcessNames is already

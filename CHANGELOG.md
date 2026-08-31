@@ -13,6 +13,20 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Added
+
+- **Supported data-preserving install-over-existing upgrades for CivicCast
+  (Native).** Setup now invokes the already-installed bootstrap's production
+  native service quiescence before replacing application files, aborts before mutation
+  if that teardown is nonzero or its trusted bootstrap is missing, preserves
+  `C:\ProgramData\CivicCast`, and lets provisioning adopt and migrate the
+  existing station database. Gate A's dirty job now proves the operation
+  against an immutable, hash-distinct previous candidate left live in the
+  sandbox; it fails closed if the pinned prior build/kit identity is absent or
+  if the two installers are the same bytes. The prior uninstall-remnant shape
+  remains available as a separate manual harness mode and is never combined
+  with cross-version evidence.
+
 ## [1.0.0-beta.1] - 2026-08-31
 
 First tagged release of the native-Windows CivicCast line — owner-held, not

@@ -492,13 +492,46 @@ def _dirty_line(text: str, key: str) -> str | None:
 
 
 def check_dirty_prep(output_dir: Path) -> CheckResult:
-    """The remnant prologue completed: phase-1 install exit 0, real uninstall
-    exit 0, and the uninstaller's preservation contract held (pgdata and the
-    planted uploads survived the uninstall; the install tree did not)."""
+    """Grade either dirty-lane preparation shape.
+
+    Upgrade mode installs a hash-distinct previous candidate and leaves it
+    live for the current setup to replace. Legacy remnant mode retains the
+    same-candidate install/uninstall/preservation contract.
+    """
     text, err = _read_text(output_dir, "DIRTY-PREP-RESULT.txt")
     if err is not None:
         return _fail(err)
     assert text is not None
+    if _dirty_line(text, "UPGRADE_MODE") == "1":
+        upgrade_expectations = {
+            "PHASE1_INSTALL_EXIT": "0",
+            "UPGRADE_OVER_LIVE_REQUESTED": "1",
+        }
+        for key, want in upgrade_expectations.items():
+            got = _dirty_line(text, key)
+            if got != want:
+                return _fail(f"DIRTY-PREP-RESULT.txt {key}={got or '<missing>'} (expected {want})")
+        previous_hash = _dirty_line(text, "PREVIOUS_INSTALLER_SHA256")
+        current_hash = _dirty_line(text, "CURRENT_INSTALLER_SHA256")
+        for label, value in (
+            ("PREVIOUS_INSTALLER_SHA256", previous_hash),
+            ("CURRENT_INSTALLER_SHA256", current_hash),
+        ):
+            if value is None or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+                return _fail(
+                    f"DIRTY-PREP-RESULT.txt {label}={value or '<missing>'} "
+                    "(expected lowercase SHA-256)"
+                )
+        if previous_hash == current_hash:
+            return _fail(
+                "previous and current installer SHA-256 identities are identical -- this is "
+                "a same-candidate reinstall, not a cross-version upgrade"
+            )
+        return _pass(
+            "cross-version upgrade prepared: previous candidate installed live and installer "
+            "SHA-256 identities are distinct"
+        )
+
     expectations = {
         "PHASE1_INSTALL_EXIT": "0",
         "UNINSTALL_EXIT": "0",
@@ -524,6 +557,13 @@ def check_dirty_survival(output_dir: Path) -> CheckResult:
     if err is not None:
         return _fail(err)
     assert text is not None
+    if _dirty_line(text, "UPGRADE_MODE") == "1":
+        current_exit = _dirty_line(text, "UPGRADE_CURRENT_INSTALL_EXIT")
+        if current_exit != "0":
+            return _fail(
+                "DIRTY-RESULT.txt "
+                f"UPGRADE_CURRENT_INSTALL_EXIT={current_exit or '<missing>'} (expected 0)"
+            )
     pg = _dirty_line(text, "DIRTY_PGDATA_PRESERVED")
     if pg != "1":
         return _fail(f"DIRTY-RESULT.txt DIRTY_PGDATA_PRESERVED={pg or '<missing>'} (expected 1)")
@@ -531,6 +571,11 @@ def check_dirty_survival(output_dir: Path) -> CheckResult:
     if uploads != "1":
         return _fail(
             f"DIRTY-RESULT.txt DIRTY_UPLOADS_PRESERVED={uploads or '<missing>'} (expected 1)"
+        )
+    if _dirty_line(text, "UPGRADE_MODE") == "1":
+        return _pass(
+            "current installer completed over the live previous candidate; pgdata cluster "
+            "identity and planted uploads survived"
         )
     return _pass("pgdata cluster identity and planted uploads survived the reinstall")
 
@@ -545,6 +590,14 @@ def check_dirty_orphaned_tier(output_dir: Path) -> CheckResult:
     if err is not None:
         return _fail(err)
     assert text is not None
+    if _dirty_line(text, "UPGRADE_MODE") == "1":
+        return CheckResult(
+            status="SKIP",
+            detail=(
+                "cross-version upgrade mode does not author the uninstall-only orphaned-tier "
+                "shape -- that legacy remnant sub-shape was NOT covered this run"
+            ),
+        )
     seeded = _dirty_line(text, "DIRTY_ORPHAN_SEEDED")
     if seeded == "0":
         return CheckResult(

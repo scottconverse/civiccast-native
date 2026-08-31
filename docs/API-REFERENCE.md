@@ -1280,7 +1280,7 @@ Set or clear a legal hold (blocks retention expiry per CLAUDE.md §4.6).
 
 ### `POST /api/staff/assets/{asset_id}/package`
 
-Package validated local media for resident playback.
+Package validated or recorded local media for resident playback.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `asset_id` (path, required): `string`

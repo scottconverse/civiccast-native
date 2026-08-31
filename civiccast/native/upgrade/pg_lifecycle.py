@@ -21,17 +21,16 @@ itself -- see that module's docstring):
 * reachable                              -> do nothing; never stop what we
                                              did not start (not ours to
                                              manage).
-* unreachable, CivicCastSupervisor ABSENT
-  from the SCM (:func:`civiccast.native.upgrade.service_control.
-  _real_service_registered_probe`, landed 1cf3e938 -- absent is PROVABLE,
-  nothing else can own postgres) -> start postgres against the preserved
+* unreachable, CivicCastSupervisor ABSENT from the SCM, or registered but
+  definitively STOPPED (:func:`civiccast.native.upgrade.service_control.
+  _real_service_stopped_probe`) -> start postgres against the preserved
   data dir via the ONE blessed pg_ctl wrapper
   (:mod:`civiccast.native.supervisor.children`'s ``postgres_child_spec`` /
   ``graceful_stop_action`` -- this module introduces NO second pg_ctl
   call-site, it only supplies the ``subprocess.run`` children.py
   deliberately does not), run the engine, and stop postgres again in a
   ``finally`` (never left running for D4 provisioning to trip over).
-* unreachable, service PRESENT (or its absence could not be confirmed) ->
+* unreachable, service running/transitional (or STOPPED could not be confirmed) ->
   fail closed (unchanged behavior) with a message naming the actual
   condition instead of an uncaught traceback.
 
@@ -40,12 +39,9 @@ provisioning does (:func:`civiccast.native.provision.__main__.
 resolve_provision_paths`) plus the database_url the rest of the engine
 already connects to -- no new path or endpoint convention is invented here.
 
-The wrapping is applied to ``schema_revision`` specifically because it is
-the first (and, on a resumed run starting at a later phase, one of the
-only) DB-touching seams invoked -- see :func:`wrap_schema_revision`. A
-resumed upgrade whose first forward step is drain/backup (i.e. it never
-calls ``schema_revision`` before those) is NOT covered by this scoped fix;
-that gap is disclosed, not silently papered over (see the WP report).
+The lifecycle wraps every resumable DB boundary (schema revision, drain,
+backup, migrate, and rollback restore) plus the maintenance health gate, where
+scoped pg_ctl ownership is handed back to the supervisor.
 
 Every real primitive here (subprocess pg_ctl invocation, SQLAlchemy
 connection, SCM query) is lazily imported/executed only when the wrapped
@@ -78,13 +74,15 @@ from civiccast.native.supervisor.children import (
     graceful_stop_action,
     postgres_child_spec,
 )
-from civiccast.native.upgrade.models import UpgradeContext, UpgradeSeams
+from civiccast.native.upgrade.models import BackupRef, UpgradeContext, UpgradeSeams
 
 DatabaseReachableFn = Callable[[], bool]
 ServiceRegisteredProbe = Callable[[], bool | None]
 StartPostgresFn = Callable[[], None]
 StopPostgresFn = Callable[[], None]
 SchemaRevisionFn = Callable[[], str | None]
+HealthGateFn = Callable[[], bool]
+RestoreBackupFn = Callable[[BackupRef], None]
 
 # Margin over children.py's own spec-carried budgets: pg_ctl's own ``-w``
 # wait (start) / the D5 graceful-stop deadline (stop) should elapse and
@@ -97,7 +95,7 @@ _STDERR_TAIL_CHARS = 2000
 
 FAIL_CLOSED_DETAIL = (
     "postgres is unreachable and the CivicCastSupervisor service is "
-    "registered (service present but database unreachable) -- refusing to "
+    "not confirmed stopped (service may own postgres but database is unreachable) -- refusing to "
     "start postgres out from under a service that may already own it. "
     "Verify the CivicCastSupervisor service state and the postgres data "
     "directory manually, then retry the upgrade."
@@ -353,7 +351,7 @@ def real_service_registered_probe() -> bool | None:
     """Is the CivicCastSupervisor service registered in the SCM at all --
     reuses :func:`civiccast.native.upgrade.service_control.
     _real_service_registered_probe` verbatim (the same "is it provably
-    absent" question the drain seam's install-only-refusal fix already
+    absent" question the drain seam's upgrade-routing fix already
     answers), not a second SCM-query call-site."""
 
     from civiccast.native.upgrade.service_control import _real_service_registered_probe
@@ -454,9 +452,9 @@ def wrap_schema_revision(
 
     * reachable                              -> no-op; ``state.started_by_us``
       stays False, so the caller's stop-in-finally never fires.
-    * unreachable, service ABSENT (probe returns exactly ``False``) ->
+    * unreachable, scoped ownership allowed (probe returns exactly ``False``) ->
       ``start_postgres()``; ``state.started_by_us = True``.
-    * unreachable, service present or ambiguous (anything but ``False``) ->
+    * unreachable, scoped ownership unsafe/ambiguous (anything but ``False``) ->
       raise :class:`PostgresLifecycleError` (``FAIL_CLOSED_DETAIL``),
       fail-closed, unchanged behavior otherwise.
 
@@ -478,11 +476,87 @@ def wrap_schema_revision(
     return _call
 
 
+def service_allows_scoped_postgres_start(*, registered: bool | None, stopped: bool | None) -> bool:
+    """Whether this installer process can safely become postgres's owner.
+
+    An absent service is the existing uninstall/reinstall case. A registered
+    but definitively STOPPED service is the install-over-existing case: keeping
+    registration preserves D3's product identity, while STOPPED proves it has
+    no process tree that can own the cluster. Every ambiguous or live state
+    fails closed.
+    """
+
+    return registered is False or stopped is True
+
+
+def real_scoped_postgres_start_allowed() -> bool:
+    registered = real_service_registered_probe()
+    if registered is False:
+        return True
+
+    from civiccast.native.upgrade.service_control import _real_service_stopped_probe
+
+    return service_allows_scoped_postgres_start(
+        registered=registered,
+        stopped=_real_service_stopped_probe(),
+    )
+
+
+def wrap_health_gate(
+    health_gate: HealthGateFn,
+    *,
+    stop_postgres: StopPostgresFn,
+    state: PgLifecycleState,
+) -> HealthGateFn:
+    """Hand a scoped postgres process back to the supervisor before health.
+
+    The health gate starts the registered service in maintenance mode. Its
+    supervisor must be the sole postgres owner, so a pg_ctl process started by
+    this D3 run is stopped first. The state latch is cleared only after that
+    stop succeeds; the outer ``finally`` therefore retries a failed stop.
+    """
+
+    def _call() -> bool:
+        if state.started_by_us:
+            stop_postgres()
+            state.started_by_us = False
+        return health_gate()
+
+    return _call
+
+
+def wrap_restore_backup(
+    restore_backup: RestoreBackupFn,
+    *,
+    database_reachable: DatabaseReachableFn,
+    scoped_start_allowed: Callable[[], bool],
+    start_postgres: StartPostgresFn,
+    state: PgLifecycleState,
+) -> RestoreBackupFn:
+    """Ensure rollback restore has a safely-owned PostgreSQL process.
+
+    A failed service handoff can leave the service stopped after the scoped
+    process was shut down for health. Rollback still owes the verified restore;
+    restart postgres only when the database is unreachable and the SCM proves
+    this installer may own it.
+    """
+
+    def _call(backup: BackupRef) -> None:
+        if not database_reachable():
+            if not scoped_start_allowed():
+                raise PostgresLifecycleError(FAIL_CLOSED_DETAIL)
+            start_postgres()
+            state.started_by_us = True
+        restore_backup(backup)
+
+    return _call
+
+
 def attach_pg_lifecycle(
     seams: UpgradeSeams,
     context: UpgradeContext,
 ) -> tuple[UpgradeSeams, StopPostgresFn]:
-    """Return ``(seams-with-schema_revision-wrapped, stop_if_started)``.
+    """Return ``(lifecycle-wrapped-seams, stop_if_started)``.
 
     ``stop_if_started`` MUST be called in a ``finally`` around the engine
     run (:func:`civiccast.native.upgrade.orchestrator.run_upgrade`) -- it
@@ -491,27 +565,79 @@ def attach_pg_lifecycle(
     provisioning to trip over, and a postgres this process did NOT start
     (already reachable, or owned by the running service) is never touched.
 
-    Deriving paths and wrapping the seam is inert (no subprocess/SQL/SCM
-    call fires here); the real primitives only run when the wrapped
-    ``schema_revision`` is actually invoked by the orchestrator, so a
+    Deriving paths and wrapping the seams is inert (no subprocess/SQL/SCM
+    call fires here); the real primitives only run when a wrapped seam is
+    actually invoked by the orchestrator, so a
     refusal (REFUSED_NON_RESTORABLE) or terminal-journal no-op -- neither of
     which ever call ``schema_revision`` -- never touches postgres.
     """
 
     paths = derive_pg_lifecycle_paths(context)
     state = PgLifecycleState()
-    wrapped = wrap_schema_revision(
+
+    def database_reachable() -> bool:
+        return real_database_reachable(context.database_url)
+
+    def start_postgres() -> None:
+        real_start_postgres(paths)
+
+    def stop_postgres() -> None:
+        real_stop_postgres(paths)
+
+    scoped_start_allowed = real_scoped_postgres_start_allowed
+
+    def ensure_postgres() -> None:
+        if database_reachable():
+            return
+        if not scoped_start_allowed():
+            raise PostgresLifecycleError(FAIL_CLOSED_DETAIL)
+        start_postgres()
+        state.started_by_us = True
+
+    def wrapped_drain() -> bool:
+        ensure_postgres()
+        return seams.drain_and_verify_quiescence()
+
+    def wrapped_backup(backup_dir: str) -> BackupRef:
+        ensure_postgres()
+        return seams.backup(backup_dir)
+
+    def wrapped_migrate() -> None:
+        ensure_postgres()
+        seams.migrate()
+
+    wrapped_schema_revision = wrap_schema_revision(
         seams.schema_revision,
-        database_reachable=lambda: real_database_reachable(context.database_url),
-        service_registered_probe=real_service_registered_probe,
-        start_postgres=lambda: real_start_postgres(paths),
+        database_reachable=database_reachable,
+        service_registered_probe=lambda: False if scoped_start_allowed() else None,
+        start_postgres=start_postgres,
         state=state,
     )
-    new_seams = dataclasses.replace(seams, schema_revision=wrapped)
+    wrapped_health_gate = wrap_health_gate(
+        seams.health_gate,
+        stop_postgres=stop_postgres,
+        state=state,
+    )
+    wrapped_restore_backup = wrap_restore_backup(
+        seams.restore_backup,
+        database_reachable=database_reachable,
+        scoped_start_allowed=scoped_start_allowed,
+        start_postgres=start_postgres,
+        state=state,
+    )
+    new_seams = dataclasses.replace(
+        seams,
+        schema_revision=wrapped_schema_revision,
+        drain_and_verify_quiescence=wrapped_drain,
+        backup=wrapped_backup,
+        migrate=wrapped_migrate,
+        health_gate=wrapped_health_gate,
+        restore_backup=wrapped_restore_backup,
+    )
 
     def _stop_if_started() -> None:
         if state.started_by_us:
-            real_stop_postgres(paths)
+            stop_postgres()
 
     return new_seams, _stop_if_started
 
@@ -525,8 +651,12 @@ __all__ = [
     "attach_pg_lifecycle",
     "derive_pg_lifecycle_paths",
     "real_database_reachable",
+    "real_scoped_postgres_start_allowed",
     "real_service_registered_probe",
     "real_start_postgres",
     "real_stop_postgres",
+    "service_allows_scoped_postgres_start",
+    "wrap_health_gate",
+    "wrap_restore_backup",
     "wrap_schema_revision",
 ]
