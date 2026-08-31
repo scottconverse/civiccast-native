@@ -25,6 +25,8 @@ import {
   updateEgressConfig,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
+import { feedCommandConfirmCopy } from './feed-command-confirm'
 import { humanizeDuration } from '../format'
 import { RadioCardGroup } from '../components/RadioCardGroup'
 import { CableVerificationCard } from './CableVerificationCard'
@@ -1341,6 +1343,9 @@ export function ChannelOpsScreen() {
   }, [channelsQuery.data, selectedChannelId])
   const channelId = selectedChannel?.channel_id
   const selectedAppChannel = channelId ? appChannelById.get(channelId) : undefined
+  // Outgoing-feed commands are live one-click actions; they stage a
+  // confirmation here first (same copy as System Health's readiness panel).
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
   const stationMutation = useMutation({
     mutationFn: updateAppPlatformConfig,
     onSuccess: () => {
@@ -1522,7 +1527,12 @@ export function ChannelOpsScreen() {
             canControl={canControlEgress}
             error={egressCommandMutation.error}
             onCommand={(action) => {
-              if (channelId) egressCommandMutation.mutate({ channelId, action })
+              if (!channelId) return
+              const channelName = selectedChannel?.branding.display_name ?? channelId
+              setPendingConfirm({
+                ...feedCommandConfirmCopy(action, channelName),
+                run: () => egressCommandMutation.mutate({ channelId, action }),
+              })
             }}
           />
           <TakeoverCard
@@ -1563,6 +1573,19 @@ export function ChannelOpsScreen() {
           <CtvPanel feed={ctvQuery.data} />
         </div>
       </div>
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
     </div>
   )
 }

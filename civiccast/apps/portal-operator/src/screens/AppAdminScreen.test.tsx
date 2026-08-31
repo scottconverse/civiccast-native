@@ -8,20 +8,49 @@ import type { StoreSubmissionMetadata } from '../types/api.generated'
 import { NewBuildForm, StoreSubmissionRow } from './AppAdminScreen'
 
 describe('NewBuildForm', () => {
-  it('submits the default target + tier', () => {
-    const onSubmit = vi.fn()
-    const { getByText } = render(<NewBuildForm submitting={false} onSubmit={onSubmit} />)
-    fireEvent.click(getByText('Queue build'))
-    expect(onSubmit).toHaveBeenCalledWith({ app_target: 'web_pwa', build_tier: 'unbranded' })
-  })
-
-  it('submits the chosen target + tier', () => {
+  it('keeps Queue build disabled until both fields are chosen (blank form cannot queue)', () => {
     const onSubmit = vi.fn()
     const { getByText, getByLabelText } = render(<NewBuildForm submitting={false} onSubmit={onSubmit} />)
+    const button = getByText('Queue build') as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    fireEvent.click(button)
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    fireEvent.change(getByLabelText('Platform target'), { target: { value: 'roku' } })
+    expect(button.disabled).toBe(true)
+    fireEvent.change(getByLabelText('Tier'), { target: { value: 'branded' } })
+    expect(button.disabled).toBe(false)
+  })
+
+  it('submits the chosen target + tier only after the confirmation dialog', () => {
+    const onSubmit = vi.fn()
+    const { getByText, getByRole, getByLabelText } = render(
+      <NewBuildForm submitting={false} onSubmit={onSubmit} />,
+    )
     fireEvent.change(getByLabelText('Platform target'), { target: { value: 'roku' } })
     fireEvent.change(getByLabelText('Tier'), { target: { value: 'branded' } })
     fireEvent.click(getByText('Queue build'))
+
+    // Dialog open, nothing submitted yet.
+    expect(getByRole('alertdialog')).toBeTruthy()
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    fireEvent.click(getByRole('alertdialog').querySelector('button:last-child') as HTMLElement)
     expect(onSubmit).toHaveBeenCalledWith({ app_target: 'roku', build_tier: 'branded' })
+  })
+
+  it('submits nothing when the dialog is cancelled', () => {
+    const onSubmit = vi.fn()
+    const { getByText, getByRole, queryByRole, getByLabelText } = render(
+      <NewBuildForm submitting={false} onSubmit={onSubmit} />,
+    )
+    fireEvent.change(getByLabelText('Platform target'), { target: { value: 'roku' } })
+    fireEvent.change(getByLabelText('Tier'), { target: { value: 'branded' } })
+    fireEvent.click(getByText('Queue build'))
+    fireEvent.click(getByRole('button', { name: 'Cancel' }))
+
+    expect(queryByRole('alertdialog')).toBeNull()
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 })
 
@@ -146,8 +175,12 @@ describe('AppAdminScreen container role gate', () => {
         'App build tooling is not configured in this runtime. Meeting capture and scheduled recording are unaffected; app-shell builds are optional and require the station app build toolchain.',
       ),
     )
-    const { findByText } = renderScreen()
+    const { findByText, findByRole, findByLabelText } = renderScreen()
+    fireEvent.change(await findByLabelText('Platform target'), { target: { value: 'web_pwa' } })
+    fireEvent.change(await findByLabelText('Tier'), { target: { value: 'unbranded' } })
     fireEvent.click(await findByText('Queue build'))
+    const dialog = await findByRole('alertdialog')
+    fireEvent.click(dialog.querySelector('button:last-child') as HTMLElement)
     expect(await findByText(/App build tooling is not configured/)).toBeTruthy()
     expect(await findByText(/Meeting capture and scheduled recording are unaffected/)).toBeTruthy()
   })

@@ -17,6 +17,7 @@ import {
   listWatchFolderConfigs,
   scanWatchFolderNow,
 } from '../api/client'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { FolderBrowser } from '../components/media-lifecycle/FolderBrowser'
 import { useToast } from '../components/toast-context'
 import type {
@@ -162,6 +163,9 @@ function WatchFolderSection() {
   const [monitorPath, setMonitorPath] = useState('')
   const [browsing, setBrowsing] = useState(false)
   const [scanningId, setScanningId] = useState<string | null>(null)
+  // "Remove" is a one-click destructive action on a live ingest path — it
+  // stages a confirmation dialog naming the folder before anything is deleted.
+  const [confirmingRemove, setConfirmingRemove] = useState<WatchFolderConfigResponse | null>(null)
   const [scanError, setScanError] = useState<{ configId: string; message: string } | null>(null)
   const query = useQuery<WatchFolderConfigResponse[], Error>({
     queryKey: ['watch-folder-configs'],
@@ -304,7 +308,7 @@ function WatchFolderSection() {
                 />
                 <button
                   type="button"
-                  onClick={() => deleteMutation.mutate(config.config_id)}
+                  onClick={() => setConfirmingRemove(config)}
                   className="rounded-md px-2 py-1"
                   style={{ border: '1px solid var(--cc-err)', color: 'var(--cc-ink)' }}
                   aria-label={`Remove watch folder ${config.monitor_path}`}
@@ -315,6 +319,20 @@ function WatchFolderSection() {
             </li>
           ))}
         </ul>
+      )}
+      {confirmingRemove && (
+        <ConfirmDialog
+          title={`Remove the watch folder ${confirmingRemove.monitor_path}?`}
+          body="New files dropped there stop being ingested automatically. Assets already ingested from this folder are not affected."
+          confirmLabel="Remove folder"
+          busy={deleteMutation.isPending}
+          onConfirm={() =>
+            deleteMutation.mutate(confirmingRemove.config_id, {
+              onSettled: () => setConfirmingRemove(null),
+            })
+          }
+          onCancel={() => setConfirmingRemove(null)}
+        />
       )}
     </SectionCard>
   )
@@ -330,6 +348,8 @@ function RetentionPolicySection() {
   const [name, setName] = useState('')
   const [matchMeetingBody, setMatchMeetingBody] = useState('')
   const [policy, setPolicy] = useState<(typeof RETENTION_POLICIES)[number]>('meeting')
+  // Same one-click-destructive rule as watch folders: confirm before removing.
+  const [confirmingRemove, setConfirmingRemove] = useState<AssetRetentionPolicyResponse | null>(null)
 
   const query = useQuery<AssetRetentionPolicyResponse[], Error>({
     queryKey: ['retention-policies'],
@@ -454,7 +474,7 @@ function RetentionPolicySection() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => deleteMutation.mutate(rule.policy_id)}
+                  onClick={() => setConfirmingRemove(rule)}
                   className="rounded-md px-2 py-1"
                   style={{ border: '1px solid var(--cc-err)', color: 'var(--cc-ink)' }}
                   aria-label={`Remove rule ${rule.name}`}
@@ -476,6 +496,20 @@ function RetentionPolicySection() {
             </button>
           </div>
         </>
+      )}
+      {confirmingRemove && (
+        <ConfirmDialog
+          title={`Remove the retention rule "${confirmingRemove.name}"?`}
+          body="The rule stops applying on future runs. Assets keep the retention policy they already have."
+          confirmLabel="Remove rule"
+          busy={deleteMutation.isPending}
+          onConfirm={() =>
+            deleteMutation.mutate(confirmingRemove.policy_id, {
+              onSettled: () => setConfirmingRemove(null),
+            })
+          }
+          onCancel={() => setConfirmingRemove(null)}
+        />
       )}
     </SectionCard>
   )

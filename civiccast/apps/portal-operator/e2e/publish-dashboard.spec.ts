@@ -268,6 +268,7 @@ test.describe('publish dashboard', () => {
     await openPublish(page)
 
     await page.getByRole('button', { name: 'Approve and Publish selected' }).first().click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and Publish' }).click()
     await expect.poll(() => postedBody).toBeTruthy()
     expect(postedBody).toMatchObject({
       approved_surface_ids: [
@@ -306,6 +307,7 @@ test.describe('publish dashboard', () => {
       .getByLabel('Override justification for Internet Archive')
       .fill('Town clerk approval CC-2026-05-08-IA while credentials are repaired.')
     await page.getByRole('button', { name: 'Approve and Publish selected' }).first().click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and Publish' }).click()
     await expect.poll(() => postedBody).toBeTruthy()
     expect(postedBody).toMatchObject({
       overrides: [

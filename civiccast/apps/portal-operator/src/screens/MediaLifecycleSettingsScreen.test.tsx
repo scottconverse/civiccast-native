@@ -30,6 +30,7 @@ import {
   ApiError,
   browseFolders,
   createWatchFolderConfig,
+  deleteWatchFolderConfig,
   getStorageBudget,
   listRetentionPolicies,
   listWatchFolderConfigs,
@@ -195,6 +196,53 @@ describe('MediaLifecycleSettingsScreen', () => {
     const alertEl = await findByRole('alert')
     expect(alertEl.textContent).toContain('Degraded')
     expect(await findByText('[WinError 53] The network path was not found')).toBeTruthy()
+  })
+
+  describe('Remove requires confirmation (board-demo survey fix)', () => {
+    it('does not delete a watch folder until the operator confirms', async () => {
+      vi.mocked(listWatchFolderConfigs).mockResolvedValue([watchFolderConfigFixture()])
+      vi.mocked(deleteWatchFolderConfig).mockResolvedValue(undefined as never)
+      const { findByRole } = renderScreen()
+
+      fireEvent.click(
+        await findByRole('button', { name: 'Remove watch folder /mnt/nas/incoming' }),
+      )
+
+      // The dialog names the folder; nothing has been deleted yet.
+      const dialog = await findByRole('alertdialog')
+      expect(dialog.textContent).toContain('Remove the watch folder /mnt/nas/incoming?')
+      expect(deleteWatchFolderConfig).not.toHaveBeenCalled()
+
+      fireEvent.click(await findByRole('button', { name: 'Remove folder' }))
+      await waitFor(() => expect(deleteWatchFolderConfig).toHaveBeenCalledWith('wf-1'))
+    })
+
+    it('deletes nothing when the operator cancels', async () => {
+      vi.mocked(listWatchFolderConfigs).mockResolvedValue([watchFolderConfigFixture()])
+      const { findByRole, queryByRole } = renderScreen()
+
+      fireEvent.click(
+        await findByRole('button', { name: 'Remove watch folder /mnt/nas/incoming' }),
+      )
+      fireEvent.click(await findByRole('button', { name: 'Cancel' }))
+
+      expect(queryByRole('alertdialog')).toBeNull()
+      expect(deleteWatchFolderConfig).not.toHaveBeenCalled()
+    })
+
+    it('closes the dialog with Escape without deleting', async () => {
+      vi.mocked(listWatchFolderConfigs).mockResolvedValue([watchFolderConfigFixture()])
+      const { findByRole, queryByRole } = renderScreen()
+
+      fireEvent.click(
+        await findByRole('button', { name: 'Remove watch folder /mnt/nas/incoming' }),
+      )
+      await findByRole('alertdialog')
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      await waitFor(() => expect(queryByRole('alertdialog')).toBeNull())
+      expect(deleteWatchFolderConfig).not.toHaveBeenCalled()
+    })
   })
 
   describe('Scan now (candidate #17 finding 4)', () => {
