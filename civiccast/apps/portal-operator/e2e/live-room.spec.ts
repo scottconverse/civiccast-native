@@ -760,6 +760,10 @@ test.describe('operator live room', () => {
     await expect(page.getByText('Pre-flight ready')).toBeVisible()
     await page.getByRole('button', { name: 'Start Live Stream' }).click()
     await page.getByRole('button', { name: 'End Live Stream' }).click()
+    const endDialog = page.getByRole('alertdialog', { name: 'End the live stream?' })
+    await expect(endDialog).toBeVisible()
+    await endDialog.getByRole('button', { name: 'End live stream' }).click()
+    await expect(endDialog).toBeHidden()
 
     const panel = page.getByRole('region', { name: 'Recording finalization' })
     await expect(panel).toBeVisible()
