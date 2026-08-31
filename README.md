@@ -17,6 +17,9 @@ earlier, retired WSL2/Ubuntu lane's history now lives (a separate, private
 repository, not this one).
 
 **Current version: `v1.0.0-beta.1`** — an owner-held development candidate.
+
+The retired WSL/mainline identity `v1.0.0-rc18` remains an owner-held unpublished candidate;
+it is not the native beta or an approved public installer.
 It is **not yet published**; this README describes candidate #22 on `main`
 (commit `73fd258`), the state a technical reviewer would find by checking
 out this repository today.

@@ -13,6 +13,16 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced the GitHub Pages front door with an evidence-grounded station-level
+  landing page. The new page presents CivicCast as an open-source PEG platform,
+  maps the end-to-end station workflow, explains local AI and the three-channel
+  reference profile, and keeps the current beta boundaries prominent. It does
+  not promote native multi-channel soak, physical SDI, headend acceptance,
+  provider delivery, OTT-store publication, or field operation beyond the
+  evidence recorded in the repository.
+
 ### Fixed
 
 - **BLOCKER B1 — a live SRT/UDP/RTSP source that is unreachable or drops no
