@@ -514,6 +514,27 @@ def _egress_drain_deadline_seconds() -> float:
         return _DEFAULT_EGRESS_DRAIN_DEADLINE_SECONDS
 
 
+# Peer of the egress drain deadline: the per-shutdown budget for gracefully
+# finalizing in-flight scheduled recordings to a valid asset before process
+# exit tears them down. Same 15s default as the egress drain.
+_DEFAULT_RECORDING_DRAIN_DEADLINE_SECONDS = 15.0
+
+
+def _recording_drain_deadline_seconds() -> float:
+    raw = os.environ.get("CIVICCAST_RECORDING_DRAIN_DEADLINE_SECONDS", "").strip()
+    if not raw:
+        return _DEFAULT_RECORDING_DRAIN_DEADLINE_SECONDS
+    try:
+        return float(raw)
+    except ValueError:
+        _LOG.warning(
+            "CIVICCAST_RECORDING_DRAIN_DEADLINE_SECONDS=%r is not a number; using the %ss default.",
+            raw,
+            _DEFAULT_RECORDING_DRAIN_DEADLINE_SECONDS,
+        )
+        return _DEFAULT_RECORDING_DRAIN_DEADLINE_SECONDS
+
+
 def _supervisor_mode() -> str:
     """RAT-001: read the WSL-never-sets-this, supervisor-only env contract.
 
@@ -605,6 +626,21 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
         egress_daemon = getattr(app.state, "egress_daemon", None)
         if egress_daemon is not None:
             egress_daemon.stop_all_channels(deadline_seconds=_egress_drain_deadline_seconds())
+        # Recording peer of the egress drain: gracefully finalize any in-flight
+        # scheduled recording (arming/recording/finalizing) to a valid asset
+        # BEFORE background.stop() halts the scheduler poll thread, so a
+        # mid-recording shutdown produces a finalized asset instead of an
+        # orphan the next boot's reconcile_orphans can only mark failed. Runs
+        # safely alongside the still-live poll thread via the capture
+        # pipeline's per-job lock (see RecordingService.drain_in_flight). A
+        # plain app instance with no durable storage never wires a recording
+        # worker, so this is a no-op there (getattr default None).
+        scheduled_recording_worker = getattr(app.state, "scheduled_recording_worker", None)
+        if scheduled_recording_worker is not None:
+            with suppress(Exception):
+                scheduled_recording_worker.drain_in_flight(
+                    deadline_seconds=_recording_drain_deadline_seconds()
+                )
         supervisor = getattr(app.state, "finalization_worker_supervisor", None)
         if supervisor is not None:
             supervisor.stop()

@@ -25,6 +25,32 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- **A shutdown mid-recording now finalizes in-flight scheduled recordings to a
+  valid asset instead of losing them.** PR #100 deferred this (its item 4).
+  `_app_lifespan`'s shutdown drained the egress daemon
+  (`stop_all_channels(deadline_seconds=...)`) but left in-flight
+  `RecordingService` jobs (`arming`/`recording`/`finalizing`) to be torn down
+  by process exit — the ffmpeg capture was killed and its already-valid,
+  flushed MPEG-TS segment on disk was never concatenated or finalized, so the
+  job sat orphaned until the next boot's `reconcile_orphans` marked it
+  `failed`. `RecordingService.drain_in_flight(...)` (called from the lifespan
+  `finally`, peer to the egress drain, via
+  `ScheduledRecordingWorker.drain_in_flight`) now gracefully stops each
+  in-flight job through the existing `stop_job` path — producing a finalized
+  asset — bounded by `CIVICCAST_RECORDING_DRAIN_DEADLINE_SECONDS` (default
+  15s, best-effort, never hangs shutdown). It runs safely alongside the still
+  live scheduler poll thread through the capture pipeline's per-job lock;
+  jobs not reached within the deadline fall through to `reconcile_orphans` as
+  before (never worse than today). No migration.
+- **Verified (no change needed): ffmpeg children spawned by `start_ffmpeg` are
+  already Job-Object-contained.** PR #100's other deferred item. `start_ffmpeg`
+  uses a plain `subprocess.Popen` with no explicit `AssignProcessToJobObject`;
+  empirically proven (Windows, production seam) that this is sufficient — the
+  control-plane process that runs it is assigned to the supervisor's job at
+  startup and the job disables breakaway, so Windows captures every child it
+  spawns automatically. See
+  `tests/native/test_supervisor_job_object_win.py::test_popen_child_of_an_in_job_process_is_contained_without_explicit_assign`
+  and the containment note in `civiccast/stream/_ffmpeg.py::start_ffmpeg`.
 - **BLOCKER B1 — a live SRT/UDP/RTSP source that is unreachable or drops no
   longer crash-loops the channel forever.** Hostile-audit finding: the
   encoder process itself starts fine against a bad live source (so

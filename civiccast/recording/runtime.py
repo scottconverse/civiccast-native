@@ -35,6 +35,7 @@ from civiccast.recording.models import RecordingSource
 from civiccast.recording.service import (
     CaptureResult,
     DropoutCheckResult,
+    RecordingDrainResult,
     RecordingService,
     TickCounters,
 )
@@ -736,6 +737,17 @@ class ScheduledRecordingWorker:
             self._station_id,
             horizon=timedelta(seconds=self._settings.tick_horizon_seconds),
         )
+
+    def drain_in_flight(self, *, deadline_seconds: float) -> RecordingDrainResult:
+        """Shutdown drain for this worker's station: gracefully finalize every
+        in-flight recording to a valid asset, bounded by ``deadline_seconds``.
+
+        Thin wrapper over :meth:`RecordingService.drain_in_flight` that supplies
+        this worker's ``station_id`` — the seam the app lifespan's ``finally``
+        block calls (peer to the egress ``stop_all_channels`` drain) so a
+        mid-recording shutdown produces a finalized asset instead of an orphan.
+        """
+        return self._service.drain_in_flight(self._station_id, deadline_seconds=deadline_seconds)
 
     def run_forever(self, *, poll_seconds: float, stop_event: threading.Event) -> None:
         while not stop_event.is_set():
