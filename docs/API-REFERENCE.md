@@ -4599,7 +4599,7 @@ Read CivicCast local federation metadata.
 
 - `acknowledged_at` (optional): `string | null`
 - `acknowledged_by` (optional): `string | null`
-- `condition` (required): `'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure'`
+- `condition` (required): `'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure' | 'caption-tier-degraded'`
 - `detail` (optional): `string`
 - `event_id` (required): `string`
 - `first_observed_at` (required): `string`
@@ -4616,7 +4616,7 @@ Read CivicCast local federation metadata.
 ### `AlertRule`
 
 - `channel_ids` (optional): `Array<string>`
-- `condition` (required): `'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure'`
+- `condition` (required): `'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure' | 'caption-tier-degraded'`
 - `dedupe_window_seconds` (optional): `number`
 - `enabled` (optional): `boolean`
 - `notify_on_resolve` (optional): `boolean`

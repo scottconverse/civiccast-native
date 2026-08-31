@@ -192,6 +192,18 @@ SUPERVISOR_LOG_NAME = "supervisor.log"
 LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
 LOG_BACKUP_COUNT = 10
 LOGGER_NAME = "civiccast.native.supervisor"
+#: The package-root logger ``configure_logging`` ALSO wires to supervisor.log.
+#: Field finding (2026-08-30, real box): library code the supervisor host
+#: process calls directly -- concretely ``station_runtime``'s orphaned-caption-
+#: tier degrade WARNING inside ``default_dependency_provider`` ->
+#: ``station_environment_for_python`` -- logs under its own module logger
+#: (``civiccast.native.station_runtime``), which is NOT a descendant of
+#: ``LOGGER_NAME``. Those records propagated to the root logger, which has no
+#: handler in the service process (and a Windows service has no visible
+#: stderr for ``lastResort``), so an operator-critical degrade warning reached
+#: NO on-disk log. Handling the package root catches every ``civiccast.*``
+#: record emitted in this process while children keep their own log files.
+PACKAGE_LOGGER_NAME = "civiccast"
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
@@ -266,10 +278,17 @@ def configure_logging(*, log_root: Path | str | None = None) -> logging.Logger:
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.INFO)
     logger.propagate = False
+    package_logger = logging.getLogger(PACKAGE_LOGGER_NAME)
+    package_logger.setLevel(logging.INFO)
+    package_logger.propagate = False
     # Replace any handlers a prior configure_logging left behind (idempotent).
-    for handler in list(logger.handlers):
-        logger.removeHandler(handler)
-        handler.close()
+    # The ONE handler instance is shared by both loggers (below), so it is
+    # removed from both before being closed exactly once.
+    for owner in (logger, package_logger):
+        for handler in list(owner.handlers):
+            owner.removeHandler(handler)
+            if handler not in logger.handlers and handler not in package_logger.handlers:
+                handler.close()
 
     file_handler = _DurableRotatingFileHandler(
         root / SUPERVISOR_LOG_NAME,
@@ -279,6 +298,14 @@ def configure_logging(*, log_root: Path | str | None = None) -> logging.Logger:
     )
     file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
     logger.addHandler(file_handler)
+    # The SAME handler instance (never a second handler opening the same
+    # file, which would race rotation renames on Windows) also serves the
+    # ``civiccast`` package root, so library records emitted in the
+    # supervisor host process -- e.g. station_runtime's orphaned-caption-tier
+    # degrade WARNING -- reach supervisor.log instead of a handlerless root
+    # logger. No duplicate lines: ``LOGGER_NAME``'s records stop at its own
+    # handler (``propagate=False``) and never climb to the package root.
+    package_logger.addHandler(file_handler)
     return logger
 
 
@@ -2209,6 +2236,7 @@ __all__ = [
     "DEFAULT_LOG_ROOT",
     "LOG_BACKUP_COUNT",
     "LOG_MAX_BYTES",
+    "PACKAGE_LOGGER_NAME",
     "SERVICE_DESCRIPTION",
     "ChildStopResult",
     "CommandLineHandler",

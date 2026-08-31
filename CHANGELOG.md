@@ -13,6 +13,46 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The orphaned-caption-tier degrade (PR #80) is now operator-visible: its
+  WARNING actually reaches `supervisor.log`, and the station raises a
+  `caption-tier-degraded` alert in the System Health hub.** Field finding
+  (2026-08-30, real box): PR #80's fallback works — a station whose
+  `captions-large-v3` was preserved by an uninstall/reinstall upgrade but
+  lost its activation receipt degrades to the proven floor tier and starts —
+  but the `_LOG.warning` recording that decision reached NO on-disk log
+  (full-file search of `ProgramData\CivicCast\logs` found nothing), so
+  operators ran silently degraded captions. Root cause: the warning is
+  emitted by `civiccast.native.station_runtime`'s module logger inside the
+  supervisor service process, whose only configured handler hangs off
+  `civiccast.native.supervisor` with `propagate=False`; station_runtime's
+  records propagated to a handlerless root logger, and a Windows service has
+  no visible stderr for logging's `lastResort`. Fix, in two halves:
+  - `configure_logging` (`civiccast/native/supervisor/service.py`) now also
+    wires the `civiccast` package-root logger to the SAME durable rotating
+    handler instance (one handler, so rotation renames never race on
+    Windows; no duplicate lines, since the supervisor logger still stops at
+    its own handler), so every `civiccast.*` library record emitted in the
+    supervisor host process lands in `supervisor.log`.
+  - The control plane surfaces the degrade through the EXISTING S8 alert
+    hub: a new `caption-tier-degraded` `AlertConditionKind`
+    (`civiccast/alerting/models.py`; unseeded, "warning" fallback — same
+    posture as `channel-automation-failure`), raised once per startup by
+    `_build_caption_tier_startup_condition` (`civiccast/app.py`) from the
+    `CIVICCAST_CAPTION_TIER_EVENT` environment `load_native_station_environment`
+    already emits (`fallback: true` → firing, de-duped across degraded
+    restarts; a healthy start resolves a previously-firing event, guarded on
+    `_find_firing_event` so a normal boot never writes a spurious audit
+    row). Registered as a lifespan startup-condition hook because
+    `create_app()` must never touch the database. Regenerated
+    `docs/openapi.json`, `docs/API-REFERENCE.md`, and the operator console's
+    `api.generated.ts` for the new kind. Tests:
+    `tests/native/test_supervisor_service.py` (library records land in
+    `supervisor.log` via the real configured logging path; single shared
+    handler) and `tests/test_caption_tier_startup_alert.py` (fire, de-dupe,
+    resolve, no-spurious-row, garbled-env and broken-DB never raise).
+
 ### Added
 
 - **In-product operator manual (`/help` in the operator console), plus a "Generate station key" button for federation.** Field evidence from a non-technical tester (candidate #17): "In-product manual: THERE IS NONE. /docs, /help, /manual, /guide all 404"; provider setup cards told the operator to "Ask the technical admin" on a one-person station with no technical admin; ActivityPub required typing a raw `civiccast activitypub keygen ...` shell command. The manual is built from the existing `docs/USER-MANUAL.md` (the repo's canonical operator doc), not a parallel document that drifts: `scripts/render_docsite_manual.py` renders it via the same `pandoc` toolchain `scripts/render_user_manual.py` already requires for the PDF/DOCX, sanitizes the HTML through an allowlist parser (`civiccast/docsite/render.py`), and writes the committed artifact `civiccast/docsite/manual.json` plus a hash manifest (`civiccast/docsite/manual.render.json`) — the identical hash-pinning drift-gate pattern the PDF/DOCX pipeline already uses, now also enforced in `ci-docs.yml`. `civiccast/docsite/service.py` + `router.py` serve it read-only, publicly (no staff token — reachable even from the un-authenticated First Setup screen), at `GET /api/public/manual`; the operator console's new `ManualScreen.tsx` renders it as a searchable table-of-contents + content pane at `/help` (aliases `/docs`, `/manual`). Full write-up: `docs/docsite-sync.md`. The manual gained new plain-language content: a Glossary (S3 access key/secret, bucket/object store, CDN, pull-zone, OAuth client ID/secret, webhook secret, egress), a per-provider "Setting Up Providers, Plain Language" section (each provider optional, its own anchor), "Where Recordings And Backups Live", "What Each Publish Surface Means", "The CDN Cost Estimate Is A Guess, Not A Quote", and "Don't Have A GitHub Account?". Every provider readiness card (`ProviderReadinessItem.manual_section`, `civiccast/installer/service.py`) and several setup panels now carry a "Read more in the manual" link straight into the matching section. Federation: `POST /api/staff/activitypub/keygen` (`civiccast/activitypub/router.py`) generates the same RSA station key `civiccast activitypub keygen` does, server-side, behind a real button in `ActivityPubScreen.tsx` — replacing the raw CLI instruction — plus a plain-language paragraph on what federation is and that most stations don't need it. Applying the generated settings and restarting CivicCast is still a separate manual step (`load_activitypub_config` reads strictly from process environment, matching the existing beta-handoff "ask a technical administrator to restart" pattern in `civiccast/installer/handoff.py`); the CLI-typing barrier for a non-technical operator is gone regardless.
