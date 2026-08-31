@@ -1,8 +1,8 @@
 ---
 title: CivicCast User Manual
-subtitle: For station operators, clerks, and IT staff · v1.0.0-rc18 release candidate
+subtitle: For station operators, clerks, and IT staff · v1.0.0-beta.1 (native Windows line)
 author: The CivicCast Authors
-date: 2026-07-21
+date: 2026-08-30
 # Layout, fonts, and colours live in docs/assets/manual.pandoc.yaml so the
 # shell and Python renderers cannot drift. Keep this block to content
 # metadata only.
@@ -43,11 +43,12 @@ work (see
 [Comparative Capability Status](#comparative-capability-status) in
 Section C). These source capabilities and their lab evidence are not stock
 acceptance claims and do not establish station-device, provider, app-store, or
-production proof. The rc13 Windows installer is withdrawn after a genuine
-clean-host bootstrap failure. Do not install rc13. `v1.0.0-rc18` is the
-published controlled beta: its installer is built from the gate-cleared `main`,
-Authenticode-signed, and proven on a genuinely clean Windows host through
-install, launch, reinstall, uninstall and the rc17 upgrade.
+production proof. `v1.0.0-beta.1` is the current native-Windows development
+candidate (an owner-held candidate, not yet a published release) described in
+this manual. It is a fresh, from-scratch native Windows product line — its
+version numbers do not continue from, and are not comparable to, the older
+`v1.0.0-rcNN` line documented for a retired WSL2-based product in a separate,
+private repository.
 
 ![CivicCast system architecture](assets/architecture/civiccast-system-architecture.png)
 
@@ -102,7 +103,43 @@ Optional surfaces — Internet Archive mirroring, YouTube simulcast,
 emergency-alert ingest — turn on per-station, with the station's own
 accounts.
 
-### Your First Beta Workflow
+### Advanced Capabilities — Roadmap, Not This Beta {#advanced-not-this-beta}
+
+To keep this manual honest about what a station can rely on today, the
+following are **not** ready in this beta. Each has real source code in the
+repository, but none has been field-proven the way the recorded-media
+workflow in [Your First Beta Workflow](#your-first-beta-workflow) has:
+
+- **Full cable/SDI headend delivery.** The software writes the file
+  packages and TSDuck compliance checks a cable headend needs, but no
+  physical SDI output, QAM modulation, or PEG-headend acceptance has been
+  proven with real hardware. See
+  [Comparative Capability Status](#comparative-capability-status).
+- **Running more than one channel at the same time.** The engine and data
+  model support multiple channels, but simultaneous multi-channel
+  operation on one station has not been soak-tested the way the
+  single-channel path has.
+- **Internet Archive and YouTube syndication as a turnkey path.** Both
+  providers have real adapters and can be configured (see
+  [Setting Up Providers, Plain Language](#provider-setup-plain-language)),
+  but each station must independently prove its own credentials and run a
+  private upload proof before relying on either for residents — neither
+  ships pre-verified.
+- **OTT apps (Roku, Apple TV, and similar).** Native source trees exist for
+  six targets, but publishing through commercial app stores needs the
+  station's own developer accounts and passing that store's own review —
+  outside this package, and not tested end to end here.
+- **Emergency Alert System (EAS) hardware take-over.** CivicCast is
+  software that can display and log CAP alerts and force a slate with
+  explicit per-alert operator confirmation. It is **not** an EAS device,
+  is not FCC-certified EAS equipment, and does not replace the station's
+  existing certified EAS relay. See
+  [What if there's an emergency during a meeting?](#common-operator-questions)
+
+If a board member or IT lead asks whether one of these is "done," the
+honest answer is: the code exists, the field proof does not yet.
+
+### Your First Beta Workflow {#your-first-beta-workflow}
 
 This walkthrough assumes someone has finished the installer and you have
 a username and password for the operator console.
@@ -128,6 +165,45 @@ a username and password for the operator console.
    approve it.
 8. **Confirm resident playback.** Open the resident portal in a second browser
    and play the approved recording. Unapproved media must remain private.
+
+### Destructive Actions Now Confirm Before They Fire {#destructive-actions-confirm}
+
+Nearly every one-click action in the operator console that changes what
+residents see or takes something off air now shows a confirmation dialog
+before it actually runs — a second, deliberate click, not a `window.confirm`
+browser popup. This closed a real gap: a board member or a curious visitor
+standing at the console could previously end a live stream, wipe a saved
+configuration, or publish a recording with a single accidental click.
+
+The dialog names the plain-language, resident-facing consequence of the
+action (for example, "This immediately stops sending video to residents on
+this channel"), and pressing **Escape** or **Cancel** does nothing — no
+network request is sent until you press the confirm button. Covered actions
+include, among others:
+
+- **Channel Ops / Safe-to-broadcast** — Start, Stop, Restart feed, and
+  drain, on both the Channels screen and the readiness panel.
+- **Run Meeting** — End Live Stream, and Take off air.
+- **Publish** — Approve and Publish selected.
+- **Paywall** — regenerate the signing secret, delete the paywall config,
+  and revoke an individual subscriber's access.
+- **Media Lifecycle** — Remove a watch-folder or retention-rule.
+- **Federation (ActivityPub)** — Generate station key.
+- **App Admin** — Queue build (the build form also starts with nothing
+  selected and keeps this button disabled until the form is actually
+  valid).
+- **Schedule** — Cancel a scheduled item.
+- **Program Guide** — Disable a program slot.
+- **Emergency Alert Screen** — Clear an alert, and force a slate (which
+  already required its own separate acknowledgement checkbox before this
+  change).
+- **System Health** — Repair GStreamer runtime & restore, run a real
+  database restore drill, run a rollback rehearsal, and open a maintenance
+  window.
+
+Read-only actions — checks, previews, scans, and refreshes — deliberately
+did **not** gain a confirmation step; a dialog on a safe action is
+confirmation fatigue, not safety.
 
 ### Where Recordings And Backups Live {#where-recordings-live}
 
@@ -161,6 +237,29 @@ real Windows path, such as `C:\CivicCastBackups` or `D:\CivicCastBackups` —
 CivicCast rejects a WSL/Linux-style path (anything containing `\mnt\c\...`
 or `/mnt/c/...`) because that path format does not exist on a Windows
 station and would silently mean nothing was actually being backed up.
+
+### Managing Your Own Sign-In {#managing-sign-in}
+
+Open **Setup → Station Profile** and find the **Security** panel for two
+account-safety actions, both available to `setup_admin`:
+
+- **Multiple sessions are normal and supported.** Signing in on another
+  browser or device no longer signs you out anywhere else — CivicCast
+  keeps up to 20 signed-in sessions at once (oldest evicted first past
+  that cap), so a laptop, a phone, and a second browser tab can all stay
+  signed in at the same time. This is a fix from an earlier behavior where
+  a routine sign-in elsewhere silently ended every other open session.
+- **Sign out other sessions.** If a laptop or device with an open
+  CivicCast session is lost or stolen, use this to immediately end every
+  *other* signed-in session while leaving the browser you're using right
+  now signed in. It requires a second, explicit confirmation click before
+  it fires.
+- **Regenerate recovery kit.** If the one-time recovery kit from first-run
+  setup was lost, never saved, or you just want a fresh set, this mints 8
+  new recovery codes and immediately invalidates every old one. It
+  requires being signed in with the current admin password already — it
+  is a way to replace lost codes, not a way back in if you are actually
+  locked out.
 
 ### What Each Publish Surface Means {#publish-surfaces}
 
@@ -201,7 +300,48 @@ CivicCast estimate); BunnyCDN, Fastly, and Akamai each set and change their
 own rates, so check their pricing pages directly before budgeting a paid
 CDN.
 
-### Common Operator Questions
+### Live Broadcast — What It Needs And Its Honest Limits {#live-broadcast-limits}
+
+Live broadcast is available, but it is not turnkey the way the recorded-media
+workflow is. Two things to know before relying on it for a real meeting:
+
+- **A live broadcast needs an encoder or SRT source configured first.**
+  Without one, **Run Meeting** shows **Source preview unavailable** and
+  keeps **Start Live Stream** disabled — that is the expected safe state
+  described in [Your First Beta Workflow](#your-first-beta-workflow), not a
+  bug. Set up and verify the station's encoder/SRT source before the first
+  live meeting.
+- **A live-source drop mid-broadcast causes a brief re-establish, not a
+  seamless reconnect.** If the encoder or SRT feed drops during a live
+  broadcast, the channel does not silently keep playing the interrupted
+  feed and it does not instantly resume where it left off either — after
+  a short run of failed relaunch attempts against the same dead source,
+  CivicCast falls back to a slate (a hold screen) rather than looping the
+  crash forever, and picks the source back up automatically once it
+  recovers. Residents will see a brief interruption, not a seamless
+  hand-off. Never assume the recording continued through a drop — confirm
+  the recording and finalization status before publishing.
+
+### Operator Graphics Control (Lower-Third Banner) {#operator-graphics-control}
+
+**Channel Ops** now has a graphics-overlay panel where an operator can set a
+lower-third text banner (a text strip across the bottom of the picture) and
+turn it on or off for a channel, without editing any config file.
+
+**Honest limit: this is not a live, hot text update.** A saved banner
+toggle or text change takes effect the next time the channel's playout
+pipeline builds or reloads its content — the next channel start, or the
+next scheduled content reload — not instantly on an already-live picture.
+The banner itself is a still image the engine composites into the video,
+not a live text-render layer, so there is no way to flash updated text onto
+an already-running broadcast the instant you type it. Plan a lower-third
+change before the meeting starts, or expect a short delay before it appears
+on an already-live channel.
+
+Station bug/logo placement is not yet operator-controllable from this
+panel; only the lower-third text layer is.
+
+### Common Operator Questions {#common-operator-questions}
 
 **What happens if Wi-Fi drops mid-meeting?** The stock build does not claim automatic
 source-drop detection or slate failover (automatically switching to a hold
@@ -221,6 +361,37 @@ automatically from the meeting audio using a local AI model — your
 audio never leaves the station unless you turn on a cloud model in
 settings. A records clerk reviews and corrects the captions before
 the recording is published.
+
+**What if my station's captions quietly drop to a lower-quality model?**
+If the station's large caption model can't be verified at startup (for
+example, after an upgrade), CivicCast automatically falls back to its
+proven standard-tier model rather than failing to start — but it no
+longer does this silently. **System Health** raises a visible
+**"Captions are running on the standard tier ... open AI Models"** alert
+so staff know to re-check the model, instead of running degraded
+captions with no on-screen sign anything changed.
+
+**Why does an asset's readiness dot say "Not ready" even though it's
+already published?** The small readiness dot on **Assets** tracks the
+optimized playback proxy the ingest pipeline builds, not whether the
+recording is public. A published, live-on-the-portal asset can still show
+a not-ready proxy dot — hover it (or check the screen-reader text) for the
+plain-language reason, and check the separate **Published** column for
+actual publish status.
+
+**I can't find the upload button on Assets.** It's there: **Assets**
+has its own **Upload video** button (separate from the First Setup
+rehearsal picker), with a progress bar and a plain-language error if the
+file type isn't supported. It's gated to `records_clerk`,
+`meeting_operator`, and `support_admin` — if your role lacks it, the
+button is visibly disabled with the reason stated, not hidden.
+
+**A watch-folder file didn't ingest — how do I know why?** Each watch
+folder now shows its own health status, last poll time, last ingest time,
+and — when something's wrong (an unreachable path, a permission problem)
+— the actual degraded reason, instead of failing silently. Use **Scan
+now** on the folder's card to force an immediate check instead of waiting
+for the next automatic poll.
 
 **How do residents find a recording?** The public website has a
 **Browse** page with search and filters. Each recording also has a
@@ -453,8 +624,7 @@ narrative install procedure on Windows, see
 ### Install And First Boot
 
 The source supports two installation paths. Windows beta use is limited to the
-bounded recorded-media workflow while each new signed candidate repeats the
-genuine clean-host run first completed by rc14:
+bounded recorded-media workflow described in Section A.
 
 1. **Windows installer (controlled beta for testing).** The release `.exe`
    from the GitHub Release page registers a Windows service through the SCM,
@@ -469,7 +639,7 @@ genuine clean-host run first completed by rc14:
    Leave at least **5 GB free** for the base installation. Recordings, station
    media, backups, and downloaded caption models require additional storage.
 
-   **Local AI models (rc17 and later).** The local AI models (Ollama summary and
+   **Local AI models.** The local AI models (Ollama summary and
    translation models, roughly 15-20 GB combined) are large; CivicCast
    ensures the same three-tag target set and downloads only the tags still
    missing, automatically in the background after the base install finishes,
@@ -493,6 +663,33 @@ After install, open the operator console at `http://localhost:8000/operator/`
 (or the installer-provided operator handoff URL), confirm **System Health**
 is green, save the recovery kit, and run a private first-broadcast
 rehearsal before the first public meeting.
+
+### Updating To A New Version — Uninstall First {#upgrade-path}
+
+The Windows installer is **install-only by design**: running a new
+installer `.exe` over an existing, live CivicCast (Native) install refuses
+loudly and makes no changes, rather than attempting an in-place upgrade
+while the service is running (see
+`civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh`, the
+"install-only refusal" preinstall check). The documented, and only
+supported, update path is:
+
+1. **Uninstall the current version first**, from Windows **Settings →
+   Apps**. Leave the **"Delete the application data"** checkbox
+   **unchecked** — leaving it unchecked preserves your recordings,
+   database, and settings under `C:\ProgramData\CivicCast`. (Checking that
+   box does the opposite: it deletes everything, including recordings.)
+2. **Run the new version's installer.** The fresh install detects the
+   preserved data under `C:\ProgramData\CivicCast` and adopts it —
+   including its database — automatically, then upgrades the database
+   schema in place.
+3. Confirm **System Health** is green and spot-check a known recording is
+   still present in **Assets** before resuming station use.
+
+Do not try to run a new installer directly over a live install expecting
+it to upgrade in place; it will refuse and leave the running station
+untouched, which is the intended fail-closed behavior — not a bug to work
+around.
 
 ### Roles And Permissions
 
@@ -921,7 +1118,7 @@ enabled — no admin rights, no system installer. NDI runtime/SDK, DeckLink
 hardware/drivers, app-store provider accounts, and live station headend
 equipment remain operator/provider supplied.
 
-**Local AI provisioning (rc17 and later).** CivicCast also provisions the local Ollama runtime for
+**Local AI provisioning.** CivicCast also provisions the local Ollama runtime for
 on-station AI (reusing a healthy existing install if one is already present
 and installing a pinned version only when Ollama is absent), then ensures the
 same three-tag target set of standard summary and translation models,
@@ -1212,6 +1409,15 @@ Hardware-bounded surfaces — physical SDI, QAM modulation, EAS hardware
 endec, app-store publication — are out of the software boundary; the
 software writes the full path up to the interface, and the LPM-lab
 acceptance (Step 14) is where the hardware side gets proven.
+
+Read every `shipped` row above as "the source module exists and has unit/
+integration coverage," not as "field-proven for this beta." The
+[Advanced Capabilities — Roadmap, Not This Beta](#advanced-not-this-beta)
+box in Section A states, in plain language, which of these a station should
+not yet rely on: full cable/SDI headend delivery, simultaneous
+multi-channel operation, turnkey Internet Archive/YouTube syndication, OTT
+app-store publication, and any EAS row — CivicCast is EAS-adjacent
+software, not a certified EAS device.
 
 ### Open Items And Roadmap Pointers
 
