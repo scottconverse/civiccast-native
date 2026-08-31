@@ -657,6 +657,14 @@ def _maybe_start_background_supervisors(app: FastAPI) -> None:
         return
     for supervisor in getattr(app.state, "background_supervisors", []):
         supervisor.start()  # each no-ops unless its mode is "inline"
+    # One-shot startup-condition hooks (e.g. the caption-tier degrade alert):
+    # drained so a hook runs exactly once whether durable storage was wired at
+    # boot (lifespan reaches here first) or mid-flight ("Prepare storage" ->
+    # _wire_stage_f_workers -> here with the lifespan already started). Each
+    # hook owns its own failure handling and never raises.
+    hooks = getattr(app.state, "startup_condition_hooks", [])
+    while hooks:
+        hooks.pop(0)()
 
 
 def _build_program_log_materializer(session_factory: Any) -> ProgramLogMaterializer:
@@ -751,6 +759,83 @@ def _station_tz() -> tzinfo:
     except (ZoneInfoNotFoundError, ValueError, OSError):
         _LOG.warning("%s=%r is not a valid IANA zone; using UTC.", source, name)
         return UTC
+
+
+#: The env var station_runtime's tier resolution serializes its selection
+#: event into (civiccast.native.station_runtime.load_native_station_environment).
+_CAPTION_TIER_EVENT_ENV = "CIVICCAST_CAPTION_TIER_EVENT"
+_CAPTION_TIER_ALERT_REF = "caption-tier"
+
+
+def _build_caption_tier_startup_condition(session_factory: Any) -> Callable[[], None]:
+    """One-shot startup hook surfacing a degraded caption tier to the operator.
+
+    PR #80's orphaned-tier fallback (an uninstall/reinstall upgrade preserves
+    ``components/captions-large-v3`` but not its activation receipt) degrades
+    the station to the proven floor tier and starts it -- correct, but the only
+    trace was a supervisor-process log line. The full record of that decision
+    already reaches this process as ``CIVICCAST_CAPTION_TIER_EVENT`` (set by
+    ``load_native_station_environment`` for every start), so this hook reads it
+    once at lifespan startup and lands the condition in the S8 alert hub the
+    System Health surface already shows:
+
+    - ``fallback: true`` -> raise ``caption-tier-degraded`` (hub de-dupes
+      across restarts of the same degraded state);
+    - a healthy start -> resolve a previously-firing event, guarded on
+      ``_find_firing_event`` so a normal boot never writes a spurious
+      pre-resolved audit row (same posture as ``alerting.self_test``).
+
+    Never raises: an alert-sink failure must not take down the control plane.
+    """
+    import json as _json
+
+    from civiccast.alerting.store import _find_firing_event
+
+    def _run() -> None:
+        raw = os.environ.get(_CAPTION_TIER_EVENT_ENV, "").strip()
+        if not raw:
+            return  # not a native station start (dev/test/WSL-era env)
+        try:
+            event = _json.loads(raw)
+        except ValueError:
+            _LOG.exception("%s is not valid JSON; skipping", _CAPTION_TIER_EVENT_ENV)
+            return
+        if not isinstance(event, dict):
+            return
+        fallback = bool(event.get("fallback"))
+        requested = str(event.get("requested") or event.get("tier") or "unknown")
+        try:
+            with session_factory() as session:
+                if fallback:
+                    record_alert_condition(
+                        session,
+                        kind="caption-tier-degraded",
+                        resource_ref=_CAPTION_TIER_ALERT_REF,
+                        source_section="captions",
+                        summary=(
+                            "Captions are running on the standard tier; the large "
+                            f"caption model ({requested}) needs re-validation "
+                            "-- open AI Models"
+                        ),
+                        detail=str(event.get("reason") or ""),
+                    )
+                elif (
+                    _find_firing_event(session, "caption-tier-degraded", _CAPTION_TIER_ALERT_REF)
+                    is not None
+                ):
+                    record_alert_condition(
+                        session,
+                        kind="caption-tier-degraded",
+                        resource_ref=_CAPTION_TIER_ALERT_REF,
+                        source_section="captions",
+                        summary=f"Caption tier restored: station started on {requested}",
+                        resolved=True,
+                    )
+                session.commit()
+        except Exception:
+            _LOG.exception("Failed to record the caption-tier startup condition")
+
+    return _run
 
 
 def _build_contribution_alert_hook(session_factory: Any) -> Callable[[str, str], None]:
@@ -1020,6 +1105,14 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # on the next cadence without a restart.
         retry_worker=AlertRetryWorker(session_factory, alert_credentials),
     )
+    # PR #80 follow-up: surface an orphaned-caption-tier degrade (or its
+    # recovery) through the alert hub once per startup. Registered as a
+    # startup-condition hook rather than run inline because create_app() must
+    # never touch the database (pinned by
+    # test_create_app_does_not_call_engine_connect); the lifespan runs it.
+    if not hasattr(app.state, "startup_condition_hooks"):
+        app.state.startup_condition_hooks = []
+    app.state.startup_condition_hooks.append(_build_caption_tier_startup_condition(session_factory))
     alert_settings = AlertingMaintenanceSettings()
     app.state.background_supervisors.append(
         ThreadSupervisor(

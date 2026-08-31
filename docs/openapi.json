@@ -31475,7 +31475,8 @@
               "scheduled-recording-failure",
               "scheduled-recording-dropout",
               "asrun-outbox-degraded",
-              "channel-automation-failure"
+              "channel-automation-failure",
+              "caption-tier-degraded"
             ],
             "title": "Condition"
           },
@@ -31623,7 +31624,8 @@
               "scheduled-recording-failure",
               "scheduled-recording-dropout",
               "asrun-outbox-degraded",
-              "channel-automation-failure"
+              "channel-automation-failure",
+              "caption-tier-degraded"
             ],
             "title": "Condition"
           },
