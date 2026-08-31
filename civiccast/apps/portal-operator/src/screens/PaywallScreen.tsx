@@ -303,9 +303,20 @@ function PaywallEditor({
   const [newGrant, setNewGrant] = useState<NewGrantFormState>(EMPTY_NEW_GRANT)
   const [grantDateError, setGrantDateError] = useState<string | null>(null)
 
+  // upsertMut.isSuccess stays true for the entire remaining lifetime of this
+  // mutation object -- react-query never resets it on its own -- so a "Saved."
+  // banner keyed only on isSuccess would keep showing even after the operator
+  // makes further, unsaved edits. Track dirtiness explicitly: any edit to a
+  // field the Save payload actually includes clears it; a successful save
+  // sets it back.
+  const [dirtySinceSave, setDirtySinceSave] = useState(false)
+
   const upsertMut = useMutation({
     mutationFn: (payload: PaywallConfigInput) => upsertPaywallConfig(payload),
-    onSuccess: () => onConfigInvalidated(),
+    onSuccess: () => {
+      setDirtySinceSave(false)
+      onConfigInvalidated()
+    },
   })
 
   const deleteMut = useMutation({
@@ -353,10 +364,12 @@ function PaywallEditor({
     }
     setTiers((prev) => [...prev, tier])
     setNewTier(EMPTY_NEW_TIER)
+    setDirtySinceSave(true)
   }
 
   const handleRemoveTier = (tierId: string) => {
     setTiers((prev) => prev.filter((t) => t.tier_id !== tierId))
+    setDirtySinceSave(true)
   }
 
   const handleIssueGrant = () => {
@@ -415,10 +428,19 @@ function PaywallEditor({
         deleteError={
           deleteMut.isError ? apiMessage(deleteMut.error, 'Could not delete the config.') : null
         }
-        saved={upsertMut.isSuccess}
-        onToggleEnabled={(next) => setEnabled(next)}
-        onProviderChange={(next) => setProvider(next)}
-        onSigningSecretChange={(next) => setSigningSecret(next)}
+        saved={upsertMut.isSuccess && !dirtySinceSave}
+        onToggleEnabled={(next) => {
+          setEnabled(next)
+          setDirtySinceSave(true)
+        }}
+        onProviderChange={(next) => {
+          setProvider(next)
+          setDirtySinceSave(true)
+        }}
+        onSigningSecretChange={(next) => {
+          setSigningSecret(next)
+          setDirtySinceSave(true)
+        }}
         onToggleShowSecret={() => setShowSecret((v) => !v)}
         confirmingRegenerate={confirmRegenerateSecret}
         onArmRegenerateSecret={() => {
@@ -426,6 +448,7 @@ function PaywallEditor({
           // → fresh-generated is a safe single-click path.
           if (signingSecret.trim() === '') {
             setSigningSecret(generateSigningSecret())
+            setDirtySinceSave(true)
             return
           }
           setConfirmRegenerateSecret(true)
@@ -433,6 +456,7 @@ function PaywallEditor({
         onCancelRegenerateSecret={() => setConfirmRegenerateSecret(false)}
         onConfirmRegenerateSecret={() => {
           setSigningSecret(generateSigningSecret())
+          setDirtySinceSave(true)
           setConfirmRegenerateSecret(false)
         }}
         onSave={handleSave}
@@ -978,6 +1002,10 @@ function GrantsSection({
   const idExpires = useId()
   const showScopeId = newGrant.scope_kind !== 'all'
   const canIssue = newGrant.email.trim() !== '' && !issuing
+  // A revoke cuts a real person's access immediately, unlike the read-only
+  // rows around it -- match the arm-then-confirm pattern used by Delete
+  // config / Regenerate secret instead of firing on the first click.
+  const [armedRevokeGrantId, setArmedRevokeGrantId] = useState<string | null>(null)
   // UX-5: same inert/aria-disabled treatment as the Tiers section — the
   // greyed look now reflects "you can't interact here" honestly.
   return (
@@ -1045,19 +1073,46 @@ function GrantsSection({
                       {grant.expires_at ?? 'never'}
                     </td>
                     <td className="px-2 py-1 text-right">
-                      <button
-                        type="button"
-                        aria-label={`Revoke grant ${grant.grant_id}`}
-                        disabled={revoking === grant.grant_id}
-                        onClick={() => onRevokeGrant(grant.grant_id)}
-                        className="rounded-md px-2 py-1 text-xs font-medium disabled:opacity-50"
-                        style={{
-                          background: 'var(--cc-surface)',
-                          border: '1px solid var(--cc-line)',
-                        }}
-                      >
-                        {revoking === grant.grant_id ? 'Revoking…' : 'Revoke'}
-                      </button>
+                      {armedRevokeGrantId === grant.grant_id ? (
+                        <div className="flex justify-end gap-1">
+                          <button
+                            type="button"
+                            aria-label={`Confirm revoke grant ${grant.grant_id}`}
+                            disabled={revoking === grant.grant_id}
+                            onClick={() => {
+                              setArmedRevokeGrantId(null)
+                              onRevokeGrant(grant.grant_id)
+                            }}
+                            className="rounded-md px-2 py-1 text-xs font-semibold disabled:opacity-50"
+                            style={{ background: 'var(--cc-err-soft)', border: '1px solid var(--cc-err)' }}
+                          >
+                            {revoking === grant.grant_id ? 'Revoking…' : 'Confirm revoke'}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Cancel revoke grant ${grant.grant_id}`}
+                            onClick={() => setArmedRevokeGrantId(null)}
+                            className="rounded-md px-2 py-1 text-xs font-medium"
+                            style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label={`Revoke grant ${grant.grant_id}`}
+                          disabled={revoking === grant.grant_id}
+                          onClick={() => setArmedRevokeGrantId(grant.grant_id)}
+                          className="rounded-md px-2 py-1 text-xs font-medium disabled:opacity-50"
+                          style={{
+                            background: 'var(--cc-surface)',
+                            border: '1px solid var(--cc-line)',
+                          }}
+                        >
+                          Revoke
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )

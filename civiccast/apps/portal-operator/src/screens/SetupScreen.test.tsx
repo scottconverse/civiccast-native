@@ -477,6 +477,111 @@ describe('SetupScreen first-admin recovery kit gate', () => {
     expect(screen.getByText(/CivicCast\\media/)).toBeTruthy()
     expect(window.localStorage.getItem('civiccast.staffToken')).toBe('ccst_test_operator_console_token')
   })
+
+  it('does not unlock the acknowledge checkbox merely because Print kit was clicked, before the print dialog closes', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    // Simulate the real browser contract: window.print() returns as soon as
+    // the OS dialog opens, well before the operator dismisses it (by
+    // printing OR cancelling). 'afterprint' does not fire synchronously.
+    vi.spyOn(window, 'print').mockImplementation(() => {})
+
+    let setupComplete = false
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url === '/api/setup/station-state') {
+        return jsonResponse({
+          status: setupComplete ? 'complete' : 'not_started',
+          setup_complete: setupComplete,
+          profile: setupComplete ? profile : null,
+          recovery_kit_created: setupComplete,
+          recovery_kit_id: setupComplete ? 'rk_test' : null,
+          recovery_kit_acknowledged: false,
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
+          next_step: setupComplete ? 'Open System Health.' : 'Create the first admin.',
+        })
+      }
+      if (url === '/api/setup/storage') {
+        return jsonResponse({
+          status: 'ready',
+          database_url: 'sqlite:///tmp/civiccast.db',
+          database_path: '/tmp/civiccast.db',
+          upload_dir: '/tmp/uploads',
+          storage_dir: '/tmp',
+          migrations_applied: true,
+          configured_at: '2026-06-28T00:00:00Z',
+          operator_message: 'Storage ready',
+          next_step: 'Create the first admin.',
+        })
+      }
+      if (url === '/api/staff/auth/me') {
+        return jsonResponse({
+          operator_id: 'testadmin',
+          operator_display_name: 'Test Admin',
+          roles: ['setup_admin'],
+        })
+      }
+      if (url === '/api/setup/first-admin' && method === 'POST') {
+        setupComplete = true
+        return jsonResponse({
+          status: 'complete',
+          profile,
+          recovery_kit: {
+            kit_id: 'rk_test',
+            generated_at: '2026-06-28T00:00:00Z',
+            station_name: profile.station_name,
+            admin_username: profile.admin_username,
+            recovery_codes: ['CC-ONE', 'CC-TWO'],
+            instructions: ['Store the kit offline.'],
+            excludes: ['staff bearer token values'],
+          },
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
+          operator_console_token: 'ccst_test_operator_console_token',
+          next_step: 'Save the recovery kit.',
+        })
+      }
+      return jsonResponse({ detail: `Unhandled ${method} ${url}` }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderSetupScreen()
+
+    await screen.findByText('Station name')
+    fireEvent.change(inputById('station_name'), { target: { value: profile.station_name } })
+    fireEvent.change(inputById('admin_display_name'), { target: { value: profile.admin_display_name } })
+    fireEvent.change(inputById('admin_username'), { target: { value: profile.admin_username } })
+    fireEvent.change(inputById('admin_password'), { target: { value: 'correct horse battery staple' } })
+    fireEvent.change(inputById('confirm_password'), { target: { value: 'correct horse battery staple' } })
+    fireEvent.change(inputById('recovery_kit_destination'), {
+      target: { value: 'printed and stored offline' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create first admin' }))
+    expect(await screen.findByText('Recovery kit ready')).toBeTruthy()
+
+    // CRITICAL regression check: clicking Print kit alone (dialog not yet
+    // dismissed) must NOT unlock the "I have saved or printed this kit"
+    // checkbox -- otherwise cancelling the OS print dialog still lets the
+    // operator leave the only screen showing the admin password + recovery
+    // codes without ever saving them.
+    fireEvent.click(screen.getByRole('button', { name: 'Print kit' }))
+    expect(window.print).toHaveBeenCalled()
+    expect(screen.getByRole('checkbox', { name: /I have saved or printed this kit/ })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    expect(screen.getByText('Use Print kit or Save kit first.')).toBeTruthy()
+
+    // Only once the browser reports the print dialog actually closed
+    // ('afterprint') does the checkbox unlock.
+    fireEvent(window, new Event('afterprint'))
+    await waitFor(() => {
+      expect(screen.getByRole('checkbox', { name: /I have saved or printed this kit/ })).toHaveProperty(
+        'disabled',
+        false,
+      )
+    })
+  })
 })
 
 describe('SetupScreen returning-operator sign-in', () => {
@@ -539,10 +644,67 @@ describe('SetupScreen returning-operator sign-in', () => {
     fireEvent.change(inputById('recover-new-password'), {
       target: { value: 'brand new password twelve' },
     })
+    fireEvent.change(inputById('recover-confirm-new-password'), {
+      target: { value: 'brand new password twelve' },
+    })
+    // Recovery permanently consumes one of only 8 codes, so the first click
+    // only arms a confirmation; the second click actually submits.
     fireEvent.click(screen.getByRole('button', { name: 'Recover account' }))
+    fireEvent.click(screen.getByRole('button', { name: /Confirm/ }))
 
     expect(await screen.findByText('Invalid recovery code or admin username.')).toBeTruthy()
     expect(screen.queryByText(/ask a setup admin/)).toBeNull()
+  })
+
+  it('requires a matching confirm-password and an explicit confirm click before consuming a recovery code', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    let recoverCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      stubReturningOperatorFetch({
+        onRecover: async (body) => {
+          recoverCalls += 1
+          return jsonResponse({
+            status: 'complete',
+            profile,
+            operator_console_url: 'http://127.0.0.1:8000/operator/',
+            operator_console_token: 'ccst_test_operator_console_token',
+            next_step: 'Open System Health.',
+            _received: body,
+          })
+        },
+      }),
+    )
+
+    renderSetupScreen()
+
+    await screen.findByText('Use recovery code')
+    fireEvent.change(inputById('recover-admin-username'), { target: { value: 'testadmin' } })
+    fireEvent.change(inputById('recover-code'), { target: { value: 'CC-ONE' } })
+    fireEvent.change(inputById('recover-new-password'), {
+      target: { value: 'brand new password twelve' },
+    })
+    fireEvent.change(inputById('recover-confirm-new-password'), {
+      target: { value: 'does not match' },
+    })
+
+    expect(screen.getByText('Passwords do not match.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Recover account' })).toHaveProperty('disabled', true)
+
+    fireEvent.change(inputById('recover-confirm-new-password'), {
+      target: { value: 'brand new password twelve' },
+    })
+
+    // First click only arms the destructive confirmation -- it must not
+    // consume the recovery code by itself.
+    fireEvent.click(screen.getByRole('button', { name: 'Recover account' }))
+    expect(
+      screen.getByText(/This permanently consumes one recovery code/),
+    ).toBeTruthy()
+    expect(recoverCalls).toBe(0)
+
+    fireEvent.click(screen.getByRole('button', { name: /Confirm — consume recovery code/ }))
+    await waitFor(() => expect(recoverCalls).toBe(1))
   })
 
   it('warns that recovery is an emergency-only path that spends a limited code', async () => {

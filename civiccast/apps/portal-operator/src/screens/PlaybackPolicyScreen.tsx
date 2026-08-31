@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ApiError,
@@ -95,14 +95,32 @@ function stateFromPolicy(policy: PlaybackPolicyConfig): PolicyFormState {
   }
 }
 
+// A row the operator hasn't touched at all (still the blank template) --
+// never blocks Save and never counts as a "dropped" incomplete row.
+function isCreativeBlank(creative: CreativeDraft): boolean {
+  return (
+    creative.creative_id.trim() === '' &&
+    creative.asset_url.trim() === '' &&
+    creative.accessible_label.trim() === '' &&
+    creative.transcript_url.trim() === '' &&
+    creative.skippable_after_seconds.trim() === ''
+  )
+}
+
+// The full set of fields the API requires to accept a preroll creative.
+function isCreativeComplete(creative: CreativeDraft): boolean {
+  return (
+    creative.creative_id.trim() !== '' &&
+    creative.asset_url.trim() !== '' &&
+    creative.accessible_label.trim() !== '' &&
+    Number(creative.duration_seconds) > 0
+  )
+}
+
 function buildUpdate(state: PolicyFormState): PlaybackPolicyUpdate {
   const gated = state.access_tier !== 'public'
   const creatives = state.creatives
-    .filter((creative) => (
-      creative.creative_id.trim() &&
-      creative.asset_url.trim() &&
-      creative.accessible_label.trim()
-    ))
+    .filter(isCreativeComplete)
     .map((creative) => ({
       creative_id: creative.creative_id.trim(),
       kind: creative.kind,
@@ -145,13 +163,19 @@ function formatDate(value: string | null | undefined): string {
   }).format(d)
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
+function FieldLabel({ htmlFor, children }: { htmlFor?: string; children: React.ReactNode }) {
   return (
-    <label className="text-[11px] font-semibold uppercase" style={{ color: 'var(--cc-ink-3)' }}>
+    <label
+      htmlFor={htmlFor}
+      className="text-[11px] font-semibold uppercase"
+      style={{ color: 'var(--cc-ink-3)' }}
+    >
       {children}
     </label>
   )
 }
+
+let textInputAutoId = 0
 
 function TextInput({
   label,
@@ -159,17 +183,22 @@ function TextInput({
   onChange,
   disabled,
   placeholder,
+  id,
 }: {
   label: string
   value: string
   onChange: (value: string) => void
   disabled?: boolean
   placeholder?: string
+  id?: string
 }) {
+  const [generatedId] = useState(() => id ?? `playback-policy-field-${(textInputAutoId += 1)}`)
+  const inputId = id ?? generatedId
   return (
     <div className="grid gap-1.5">
-      <FieldLabel>{label}</FieldLabel>
+      <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
       <input
+        id={inputId}
         value={value}
         disabled={disabled}
         placeholder={placeholder}
@@ -274,6 +303,7 @@ function CreativeEditor({
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <TextInput
+          id={`preroll-${index}-creative-id`}
           label="Creative ID"
           value={creative.creative_id}
           onChange={(value) => onChange({ ...creative, creative_id: value })}
@@ -288,12 +318,14 @@ function CreativeEditor({
           ]}
         />
         <TextInput
+          id={`preroll-${index}-asset-url`}
           label="Asset URL"
           value={creative.asset_url}
           placeholder="/media/preroll/station-card.png"
           onChange={(value) => onChange({ ...creative, asset_url: value })}
         />
         <TextInput
+          id={`preroll-${index}-accessible-label`}
           label="Accessible label"
           value={creative.accessible_label}
           onChange={(value) => onChange({ ...creative, accessible_label: value })}
@@ -324,9 +356,22 @@ function CreativeEditor({
 export function PlaybackPolicyScreen() {
   const queryClient = useQueryClient()
   const [subjectType, setSubjectType] = useState<SubjectType>('channel')
-  const [subjectId, setSubjectId] = useState('government')
+  // subjectIdInput reflects every keystroke immediately (so typing feels
+  // responsive); debouncedSubjectId is what actually feeds the query key, so
+  // a subject in the middle of being typed doesn't fire a fetch (and the
+  // background-load effect below doesn't wipe in-progress form edits) on
+  // every character. See finding: typing in "Target ID" used to feed the
+  // query key directly, refetching -- and resetting the whole form -- on
+  // every keystroke.
+  const [subjectIdInput, setSubjectIdInput] = useState('government')
+  const [debouncedSubjectId, setDebouncedSubjectId] = useState('government')
   const [form, setForm] = useState<PolicyFormState>(() => defaultState())
-  const normalizedSubjectId = subjectId.trim() || 'government'
+  const normalizedSubjectId = debouncedSubjectId.trim() || 'government'
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebouncedSubjectId(subjectIdInput), 400)
+    return () => window.clearTimeout(handle)
+  }, [subjectIdInput])
 
   const policyQuery = useQuery({
     queryKey: ['playback-policy', subjectType, normalizedSubjectId],
@@ -340,30 +385,48 @@ export function PlaybackPolicyScreen() {
     mutationFn: () => updatePlaybackPolicy(subjectType, normalizedSubjectId, buildUpdate(form)),
     onSuccess: (policy) => {
       setForm(stateFromPolicy(policy))
+      syncedSubjectKeyRef.current = `${subjectType}:${normalizedSubjectId}`
       queryClient.setQueryData(['playback-policy', subjectType, normalizedSubjectId], policy)
       void queryClient.invalidateQueries({ queryKey: ['playback-policy-audit'] })
     },
   })
 
+  // Only load fetched policy data into the form when the operator has
+  // switched subjects (a new subjectType/subjectId key) -- never when the
+  // *same* subject's data merely refetches in the background (window
+  // refocus, TanStack Query's own retries, etc.), which would otherwise
+  // silently overwrite unsaved edits the operator is mid-way through.
+  const syncedSubjectKeyRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!policyQuery.data) return undefined
-    const handle = window.setTimeout(() => setForm(stateFromPolicy(policyQuery.data)), 0)
-    return () => window.clearTimeout(handle)
-  }, [policyQuery.data])
+    if (!policyQuery.data) return
+    const key = `${subjectType}:${normalizedSubjectId}`
+    if (syncedSubjectKeyRef.current === key) return
+    syncedSubjectKeyRef.current = key
+    setForm(stateFromPolicy(policyQuery.data))
+  }, [policyQuery.data, subjectType, normalizedSubjectId])
+
+  const incompleteCreativeIndexes = useMemo(
+    () =>
+      form.creatives
+        .map((creative, index) => ({ creative, index }))
+        .filter(({ creative }) => !isCreativeBlank(creative) && !isCreativeComplete(creative))
+        .map(({ index }) => index + 1),
+    [form.creatives],
+  )
 
   const saveDisabled = useMemo(() => {
     if (saveMutation.isPending) return true
     if (form.access_tier === 'invite_only' && !form.invite_group_id.trim()) return true
     if (form.preroll_enabled) {
-      return !form.creatives.some((creative) => (
-        creative.creative_id.trim() &&
-        creative.asset_url.trim() &&
-        creative.accessible_label.trim() &&
-        Number(creative.duration_seconds) > 0
-      ))
+      // Block Save while any present preroll row is incomplete, rather than
+      // silently dropping it -- previously Save only required ONE valid
+      // creative, so a second, partially-filled row would be submitted away
+      // without any indication to the operator.
+      if (incompleteCreativeIndexes.length > 0) return true
+      if (!form.creatives.some(isCreativeComplete)) return true
     }
     return false
-  }, [form, saveMutation.isPending])
+  }, [form, saveMutation.isPending, incompleteCreativeIndexes])
   const policy = policyQuery.data
   const auditEvents = auditQuery.data?.events ?? []
 
@@ -411,7 +474,12 @@ export function PlaybackPolicyScreen() {
               { value: 'asset', label: 'Asset' },
             ]}
           />
-          <TextInput label="Target ID" value={subjectId} onChange={setSubjectId} />
+          <TextInput
+            id="playback-policy-target-id"
+            label="Target ID"
+            value={subjectIdInput}
+            onChange={setSubjectIdInput}
+          />
           <div className="self-end rounded-md px-3 py-2 text-xs" style={{ background: 'var(--cc-surface)' }}>
             Updated {formatDate(policy?.updated_at)}
           </div>
@@ -505,6 +573,19 @@ export function PlaybackPolicyScreen() {
             Add preroll
           </button>
         </div>
+        {form.preroll_enabled && incompleteCreativeIndexes.length > 0 && (
+          <div
+            role="alert"
+            className="rounded-md p-3 text-xs font-semibold"
+            style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+          >
+            {incompleteCreativeIndexes.length === 1
+              ? `Preroll ${incompleteCreativeIndexes[0]} is missing required fields.`
+              : `Prerolls ${incompleteCreativeIndexes.join(', ')} are missing required fields.`}{' '}
+            Fill in every field (or remove the row) before saving -- an incomplete row would
+            otherwise be silently dropped.
+          </div>
+        )}
         {form.preroll_enabled && (
           <div className="grid gap-3">
             {form.creatives.map((creative, index) => (
