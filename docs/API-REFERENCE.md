@@ -1699,7 +1699,7 @@ Read the active CG board for a channel (board + zones + feeds).
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `channel_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `BoardView`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 No active board; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+- Responses: 200 `BoardView | null`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
 ### `PATCH /api/staff/cg/channels/{channel_id}/board`
 
