@@ -1793,6 +1793,21 @@ export interface EgressConfig {
   loudness_tolerance_lufs?: number
   slate_message: string
   canonical_profile?: CanonicalProfile
+  graphics_overlay_enabled?: boolean
+  graphics_overlay_lower_third_text?: string
+}
+
+/** GET response for /api/staff/egress/channels/{channel_id}/graphics-overlay. */
+export interface GraphicsOverlayState {
+  channel_id: string
+  graphics_overlay_enabled: boolean
+  graphics_overlay_lower_third_text: string
+}
+
+/** PUT body for /api/staff/egress/channels/{channel_id}/graphics-overlay. */
+export interface GraphicsOverlayUpdate {
+  graphics_overlay_enabled: boolean
+  graphics_overlay_lower_third_text?: string
 }
 
 export interface EgressHealthSample {

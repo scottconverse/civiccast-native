@@ -15,6 +15,7 @@ import {
   getEgressConfig,
   getEgressHealth,
   getEgressState,
+  getGraphicsOverlay,
   listEgressChannels,
   getStaffIdentity,
   listChannelProfiles,
@@ -23,6 +24,7 @@ import {
   updateAppPlatformChannelBranding,
   updateAppPlatformConfig,
   updateEgressConfig,
+  updateGraphicsOverlay,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
 import { humanizeDuration } from '../format'
@@ -44,6 +46,8 @@ import type {
   ComplianceProbeResult,
   CtvFeed,
   EgressConfig,
+  GraphicsOverlayState,
+  GraphicsOverlayUpdate,
   HeadendProfile,
   PlayoutBlock,
   StationAppConfig,
@@ -933,6 +937,192 @@ function EgressConfigPanel({
   )
 }
 
+export function GraphicsOverlayPanel({
+  channelId,
+  state,
+  loadError,
+  saving,
+  canEdit,
+  saveError,
+  onSave,
+}: {
+  channelId: string | undefined
+  state: GraphicsOverlayState | undefined
+  loadError: unknown
+  saving: boolean
+  canEdit: boolean
+  saveError: unknown
+  onSave: (next: GraphicsOverlayUpdate) => void
+}) {
+  const [text, setText] = useState<string | null>(null)
+  // Two-step confirm before an on-air state change, mirroring the "Take off
+  // air" pattern in CommitToAirPanel.CommitReportRow: reveal a confirm/cancel
+  // row instead of firing the request straight from the toggle click.
+  const [confirmingAction, setConfirmingAction] = useState<'on' | 'off' | null>(null)
+
+  const effectiveText = text ?? state?.graphics_overlay_lower_third_text ?? ''
+  const isOnAir = state?.graphics_overlay_enabled ?? false
+  const notFound = loadError instanceof ApiError && loadError.status === 404
+  const canPutOnAir = effectiveText.trim().length > 0
+
+  function confirmToggle() {
+    if (!confirmingAction) return
+    onSave({
+      graphics_overlay_enabled: confirmingAction === 'on',
+      graphics_overlay_lower_third_text: effectiveText,
+    })
+    setConfirmingAction(null)
+  }
+
+  return (
+    <section
+      className="rounded-md p-4"
+      style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+      aria-label="Lower-third banner"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="m-0 text-lg font-semibold">Lower-third banner</h2>
+        {state && (
+          <span
+            className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold"
+            style={{
+              background: isOnAir ? 'var(--cc-ok-soft)' : 'var(--cc-surface-3)',
+              color: isOnAir ? 'var(--cc-ok)' : 'var(--cc-ink-3)',
+            }}
+          >
+            {isOnAir ? 'On air' : 'Off air'}
+          </span>
+        )}
+      </div>
+      <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+        {channelId
+          ? 'Sets the station bug graphics overlay for this channel’s next pipeline build (a fresh start or a scheduled content swap). Does not hot-change an already-live broadcast’s on-screen text.'
+          : 'Select a channel to edit its lower-third banner.'}
+      </div>
+
+      {notFound && (
+        <div
+          className="mt-3 rounded-md p-3 text-xs"
+          style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
+        >
+          This channel has no outgoing-feed configuration yet. Create one from
+          the channel egress runbook (or the setup flow) first; then the
+          lower-third banner appears here.
+        </div>
+      )}
+      {Boolean(loadError) && !notFound && (
+        <div role="alert" className="mt-3 text-sm" style={{ color: 'var(--cc-err)' }}>
+          {apiMessage(loadError, 'Could not load the lower-third banner state.')}
+        </div>
+      )}
+
+      {state && (
+        <div className="mt-3 grid gap-3">
+          <label className="block">
+            <span
+              className="mb-1 block text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: 'var(--cc-ink-3)' }}
+            >
+              Lower-third text
+            </span>
+            <input
+              type="text"
+              value={effectiveText}
+              disabled={!canEdit || saving}
+              onChange={(e) => setText(e.target.value)}
+              maxLength={240}
+              placeholder="e.g. Town Council -- Live"
+              className={fieldClass + ' w-full'}
+              style={fieldStyle}
+            />
+          </label>
+
+          {confirmingAction ? (
+            <div className="grid gap-2">
+              <div className="text-sm">
+                {confirmingAction === 'on'
+                  ? 'Put this banner on air for this channel’s next pipeline build?'
+                  : 'Take this banner off air?'}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={confirmToggle}
+                  className="rounded-md px-3 py-2 text-sm font-semibold"
+                  style={{
+                    background: saving
+                      ? 'var(--cc-surface-3)'
+                      : confirmingAction === 'on'
+                        ? 'var(--cc-brand)'
+                        : 'var(--cc-err)',
+                    color: saving ? 'var(--cc-ink-3)' : confirmingAction === 'on' ? 'var(--cc-brand-ink)' : 'white',
+                  }}
+                >
+                  {saving
+                    ? 'Saving…'
+                    : confirmingAction === 'on'
+                      ? 'Confirm: put on air'
+                      : 'Confirm: take off air'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingAction(null)}
+                  className="rounded-md px-3 py-2 text-sm font-medium"
+                  style={{ border: '1px solid var(--cc-line)', color: 'var(--cc-ink-2)', background: 'var(--cc-surface)' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={!canEdit || saving || (!isOnAir && !canPutOnAir)}
+                onClick={() => setConfirmingAction(isOnAir ? 'off' : 'on')}
+                className="rounded-md px-3 py-2 text-sm font-semibold"
+                style={{
+                  background:
+                    !canEdit || saving || (!isOnAir && !canPutOnAir)
+                      ? 'var(--cc-surface-3)'
+                      : isOnAir
+                        ? 'var(--cc-err)'
+                        : 'var(--cc-brand)',
+                  color:
+                    !canEdit || saving || (!isOnAir && !canPutOnAir)
+                      ? 'var(--cc-ink-3)'
+                      : isOnAir
+                        ? 'white'
+                        : 'var(--cc-brand-ink)',
+                }}
+              >
+                {isOnAir ? 'Take off air' : 'Put on air'}
+              </button>
+              {!isOnAir && !canPutOnAir && (
+                <span className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+                  Enter banner text before putting it on air.
+                </span>
+              )}
+            </div>
+          )}
+
+          {Boolean(saveError) && (
+            <div role="alert" className="text-sm" style={{ color: 'var(--cc-err)' }}>
+              {apiMessage(saveError, 'Could not save the lower-third banner.')}
+            </div>
+          )}
+          {!canEdit && (
+            <div className="text-sm" style={{ color: 'var(--cc-ink-3)' }}>
+              The lower-third banner requires the meeting operator or setup admin role.
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function HeadendDeliveryPanel({
   channelId,
   profiles,
@@ -1416,6 +1606,18 @@ export function ChannelOpsScreen() {
       void queryClient.invalidateQueries({ queryKey: ['egress-config', variables.channel_id] })
     },
   })
+  const graphicsOverlayQuery = useQuery({
+    queryKey: ['graphics-overlay', channelId],
+    queryFn: () => getGraphicsOverlay(channelId ?? ''),
+    enabled: Boolean(channelId) && egressConfigured,
+    retry: false,
+  })
+  const graphicsOverlayMutation = useMutation({
+    mutationFn: (next: GraphicsOverlayUpdate) => updateGraphicsOverlay(channelId ?? '', next),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['graphics-overlay', channelId] })
+    },
+  })
   const headendProfilesQuery = useQuery({
     queryKey: ['headend-profiles'],
     queryFn: listHeadendProfiles,
@@ -1558,6 +1760,15 @@ export function ChannelOpsScreen() {
             saveError={egressConfigMutation.error}
             onSave={(next) => egressConfigMutation.mutate(next)}
             configured={egressConfigured}
+          />
+          <GraphicsOverlayPanel
+            channelId={channelId}
+            state={graphicsOverlayQuery.data}
+            loadError={graphicsOverlayQuery.error}
+            saving={graphicsOverlayMutation.isPending}
+            canEdit={canControlEgress}
+            saveError={graphicsOverlayMutation.error}
+            onSave={(next) => graphicsOverlayMutation.mutate(next)}
           />
           <OutputsPanel outputs={selectedChannel?.outputs ?? []} />
           <CtvPanel feed={ctvQuery.data} />
