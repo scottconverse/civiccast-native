@@ -11,20 +11,24 @@
 //    readiness report (hardware, playout engine, PEG readiness roll-up,
 //    cable-grade-OS verdict) via GET /api/staff/station-box-profile.
 
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { AuthRequiredState } from '../components/AuthRequiredState'
 import {
+  acknowledgeRecoveryKit,
   ApiError,
   getStaffIdentity,
   getStationBoxProfile,
   getStationProfile,
+  regenerateRecoveryKit,
+  revokeOtherOperatorSessions,
   updateStationProfile,
 } from '../api/client'
 import { manualLink } from './manual-link'
 import type {
   PegReadinessDimension,
+  RecoveryKitRegenerateResponse,
   StaffIdentityResponse,
   StationBoxProfile,
   StationProfile,
@@ -467,6 +471,281 @@ function StationBoxProfilePanel() {
   )
 }
 
+/**
+ * Newly-minted recovery codes shown exactly once, right after a successful
+ * regenerate. Mirrors the discipline of the first-run RecoveryKitPanel
+ * (SetupScreen.tsx) -- save-or-print, then explicitly confirm -- so an admin
+ * can never lose a second kit the same way the first one could be lost.
+ */
+function RegeneratedKitPanel({
+  kit,
+  onDone,
+}: {
+  kit: RecoveryKitRegenerateResponse['recovery_kit']
+  onDone: () => void
+}) {
+  const [kitActionTaken, setKitActionTaken] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+  const ackMutation = useMutation({
+    mutationFn: acknowledgeRecoveryKit,
+    onSuccess: onDone,
+  })
+  const printable = useMemo(
+    () =>
+      [
+        `CivicCast recovery kit (regenerated): ${kit.station_name}`,
+        `Admin username: ${kit.admin_username}`,
+        `Kit: ${kit.kit_id}`,
+        '',
+        'Emergency recovery codes (use ONLY if the admin password is lost --',
+        'each code works once and immediately sets a new password):',
+        ...kit.recovery_codes.map((code) => `- ${code}`),
+        '',
+        ...kit.instructions,
+      ].join('\n'),
+    [kit],
+  )
+
+  const download = () => {
+    const blob = new Blob([printable], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `civiccast-recovery-kit-${kit.kit_id}.txt`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setKitActionTaken(true)
+  }
+  const print = () => {
+    window.print()
+    setKitActionTaken(true)
+  }
+
+  return (
+    <section
+      aria-label="Newly regenerated recovery kit"
+      className="grid gap-3 rounded-md p-3 text-sm"
+      style={{ background: 'var(--cc-ok-soft)', border: '1px solid var(--cc-ok)' }}
+    >
+      <div>
+        <h3 className="m-0 text-sm font-semibold">New recovery kit ready</h3>
+        <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          This is the only time these 8 codes are shown. Every code from the previous kit stopped
+          working the moment this kit was created. Save or print now.
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {kit.recovery_codes.map((code) => (
+          <div
+            key={code}
+            className="cc-mono rounded-md px-3 py-2 text-sm font-semibold"
+            style={{ background: 'var(--cc-surface)' }}
+          >
+            {code}
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={print}
+          className="rounded-md px-3 py-2 text-sm font-semibold"
+          style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}
+        >
+          Print kit
+        </button>
+        <button
+          type="button"
+          onClick={download}
+          className="rounded-md px-3 py-2 text-sm font-semibold"
+          style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+        >
+          Save kit
+        </button>
+      </div>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={confirmed}
+          disabled={!kitActionTaken}
+          onChange={(event) => setConfirmed(event.target.checked)}
+        />
+        <span>
+          I have saved or printed the new recovery codes and stored them away from this computer.
+          {!kitActionTaken && (
+            <span className="block text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+              Use Print kit or Save kit first.
+            </span>
+          )}
+        </span>
+      </label>
+      <div>
+        <button
+          type="button"
+          disabled={!confirmed || ackMutation.isPending}
+          onClick={() => ackMutation.mutate()}
+          className="rounded-md px-4 py-2 text-sm font-semibold disabled:opacity-50"
+          style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
+        >
+          {ackMutation.isPending ? 'Recording confirmation…' : 'Done'}
+        </button>
+      </div>
+      {ackMutation.isError && (
+        <Banner tone="warn">
+          {apiMessage(ackMutation.error, 'Could not record the confirmation. Try again.')}
+        </Banner>
+      )}
+    </section>
+  )
+}
+
+function SecurityPanel({ canWrite }: { canWrite: boolean }) {
+  const revokeMutation = useMutation({ mutationFn: revokeOtherOperatorSessions })
+  const regenerateMutation = useMutation({ mutationFn: regenerateRecoveryKit })
+  const [revokeArmed, setRevokeArmed] = useState(false)
+  const [regenerateArmed, setRegenerateArmed] = useState(false)
+
+  const newKit = regenerateMutation.data?.recovery_kit ?? null
+
+  return (
+    <section
+      aria-label="Security"
+      className="space-y-4 rounded-md p-3 text-sm"
+      style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">Security</h2>
+        {!canWrite && (
+          <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+            read-only
+          </span>
+        )}
+      </div>
+
+      <div className="grid gap-2 rounded-md p-3" style={{ background: 'var(--cc-surface-2)' }}>
+        <h3 className="m-0 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--cc-ink-3)' }}>
+          Sessions
+        </h3>
+        <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          A routine sign-in never signs out other already-open browsers or devices, so a lost or
+          stolen laptop&apos;s session otherwise stays signed in indefinitely. Use this to end
+          every OTHER operator-console session right now -- this browser stays signed in.
+        </p>
+        {revokeMutation.isSuccess && (
+          <Banner tone="ok">{revokeMutation.data.message}</Banner>
+        )}
+        {revokeMutation.isError && (
+          <Banner tone="warn">
+            {apiMessage(revokeMutation.error, 'Could not sign out other sessions. Try again.')}
+          </Banner>
+        )}
+        {canWrite && !revokeArmed && (
+          <button
+            type="button"
+            onClick={() => setRevokeArmed(true)}
+            className="justify-self-start rounded-md px-3 py-1.5 text-xs font-semibold"
+            style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+          >
+            Sign out other sessions
+          </button>
+        )}
+        {canWrite && revokeArmed && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+              This immediately signs out every other browser and device signed in as this admin.
+            </span>
+            <button
+              type="button"
+              disabled={revokeMutation.isPending}
+              onClick={() => {
+                revokeMutation.mutate(undefined, { onSuccess: () => setRevokeArmed(false) })
+              }}
+              className="rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              style={{ background: 'var(--cc-warn)', color: 'var(--cc-ink-inv)' }}
+            >
+              {revokeMutation.isPending ? 'Signing out…' : 'Confirm — sign out other sessions'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setRevokeArmed(false)}
+              className="rounded-md px-3 py-1.5 text-xs font-semibold"
+              style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-2 rounded-md p-3" style={{ background: 'var(--cc-surface-2)' }}>
+        <h3 className="m-0 text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--cc-ink-3)' }}>
+          Recovery kit
+        </h3>
+        <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          If the recovery kit from first-run setup was lost, never saved, or you just want a fresh
+          set, mint a new one now. This requires being signed in with the current admin password --
+          it is not a way back in if you are locked out.
+        </p>
+        {newKit ? (
+          <RegeneratedKitPanel kit={newKit} onDone={() => regenerateMutation.reset()} />
+        ) : (
+          <>
+            {regenerateMutation.isError && (
+              <Banner tone="warn">
+                {apiMessage(regenerateMutation.error, 'Could not regenerate the recovery kit. Try again.')}
+              </Banner>
+            )}
+            {canWrite && !regenerateArmed && (
+              <button
+                type="button"
+                onClick={() => setRegenerateArmed(true)}
+                className="justify-self-start rounded-md px-3 py-1.5 text-xs font-semibold"
+                style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+              >
+                Regenerate recovery kit
+              </button>
+            )}
+            {canWrite && regenerateArmed && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+                  This permanently invalidates every existing recovery code and replaces them with
+                  8 new ones.
+                </span>
+                <button
+                  type="button"
+                  disabled={regenerateMutation.isPending}
+                  onClick={() => {
+                    regenerateMutation.mutate(undefined, {
+                      onSuccess: () => setRegenerateArmed(false),
+                    })
+                  }}
+                  className="rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                  style={{ background: 'var(--cc-warn)', color: 'var(--cc-ink-inv)' }}
+                >
+                  {regenerateMutation.isPending ? 'Regenerating…' : 'Confirm — regenerate kit'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRegenerateArmed(false)}
+                  className="rounded-md px-3 py-1.5 text-xs font-semibold"
+                  style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {!canWrite && (
+          <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+            Sessions and recovery-kit actions require the setup admin role.
+          </p>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function StationProfileScreen() {
   const identityQuery = useQuery<StaffIdentityResponse>({
     queryKey: ['staff-identity'],
@@ -515,6 +794,7 @@ export function StationProfileScreen() {
         <StationIdentityPanel canWrite={canWrite} />
         <StationBoxProfilePanel />
       </div>
+      <SecurityPanel canWrite={canWrite} />
     </div>
   )
 }

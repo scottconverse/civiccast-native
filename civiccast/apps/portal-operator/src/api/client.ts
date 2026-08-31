@@ -7,6 +7,8 @@ import type {
   CommissioningState,
   OutputProofSettings,
   PegReadinessRollup,
+  RecoveryKitRegenerateResponse,
+  RevokeOtherSessionsResponse,
   StationBoxProfile,
   StationProfile,
 } from '../types/api.generated'
@@ -615,6 +617,31 @@ export function recoverStationAdmin(
   return request<StationAuthResponse>('/api/setup/recover', {
     method: 'POST',
     body: payload,
+  })
+}
+
+/**
+ * Sign out every operator-console session except the one making this call.
+ * Requires the caller to already be signed in (setup_admin) -- the CRITICAL
+ * "lost/stolen laptop" fix: previously a session issued by any browser
+ * stayed valid until 20 more sign-ins evicted it, or the station was
+ * destructively reset.
+ */
+export function revokeOtherOperatorSessions(): Promise<RevokeOtherSessionsResponse> {
+  return request<RevokeOtherSessionsResponse>('/api/staff/installer/sessions/revoke-others', {
+    method: 'POST',
+  })
+}
+
+/**
+ * Mint a fresh 8-code recovery kit for the already-signed-in admin,
+ * replacing every earlier kit's codes immediately. Requires setup_admin --
+ * this is the "I still have my password but lost my codes" path, not a
+ * lockout bypass.
+ */
+export function regenerateRecoveryKit(): Promise<RecoveryKitRegenerateResponse> {
+  return request<RecoveryKitRegenerateResponse>('/api/staff/installer/recovery-kit/regenerate', {
+    method: 'POST',
   })
 }
 
