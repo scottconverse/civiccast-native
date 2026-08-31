@@ -63,8 +63,8 @@ import type {
   ComplianceProbeResult,
   EgressCaptionProofSample,
   EgressConfig,
-  GraphicsOverlayState,
-  GraphicsOverlayUpdate,
+  GraphicsOverlayStateResponse,
+  GraphicsOverlayUpdateRequest,
   GstreamerRepairResponse,
   OfflineCaptionJobRecord,
   HeadendProfile,
@@ -2241,8 +2241,8 @@ export function getEgressConfig(channelId: string): Promise<EgressConfig> {
  * sibling of getEgressConfig/updateEgressConfig, so the operator's "put on
  * air" toggle never has to round-trip sinks/secrets it doesn't touch.
  */
-export function getGraphicsOverlay(channelId: string): Promise<GraphicsOverlayState> {
-  return request<GraphicsOverlayState>(
+export function getGraphicsOverlay(channelId: string): Promise<GraphicsOverlayStateResponse> {
+  return request<GraphicsOverlayStateResponse>(
     `/api/staff/egress/channels/${encodeURIComponent(channelId)}/graphics-overlay`,
   )
 }
@@ -2255,9 +2255,9 @@ export function getGraphicsOverlay(channelId: string): Promise<GraphicsOverlaySt
  */
 export function updateGraphicsOverlay(
   channelId: string,
-  payload: GraphicsOverlayUpdate,
-): Promise<GraphicsOverlayState> {
-  return request<GraphicsOverlayState>(
+  payload: GraphicsOverlayUpdateRequest,
+): Promise<GraphicsOverlayStateResponse> {
+  return request<GraphicsOverlayStateResponse>(
     `/api/staff/egress/channels/${encodeURIComponent(channelId)}/graphics-overlay`,
     { method: 'PUT', body: payload },
   )

@@ -46,8 +46,8 @@ import type {
   ComplianceProbeResult,
   CtvFeed,
   EgressConfig,
-  GraphicsOverlayState,
-  GraphicsOverlayUpdate,
+  GraphicsOverlayStateResponse,
+  GraphicsOverlayUpdateRequest,
   HeadendProfile,
   PlayoutBlock,
   StationAppConfig,
@@ -947,12 +947,12 @@ export function GraphicsOverlayPanel({
   onSave,
 }: {
   channelId: string | undefined
-  state: GraphicsOverlayState | undefined
+  state: GraphicsOverlayStateResponse | undefined
   loadError: unknown
   saving: boolean
   canEdit: boolean
   saveError: unknown
-  onSave: (next: GraphicsOverlayUpdate) => void
+  onSave: (next: GraphicsOverlayUpdateRequest) => void
 }) {
   const [text, setText] = useState<string | null>(null)
   // Two-step confirm before an on-air state change, mirroring the "Take off
@@ -1613,7 +1613,7 @@ export function ChannelOpsScreen() {
     retry: false,
   })
   const graphicsOverlayMutation = useMutation({
-    mutationFn: (next: GraphicsOverlayUpdate) => updateGraphicsOverlay(channelId ?? '', next),
+    mutationFn: (next: GraphicsOverlayUpdateRequest) => updateGraphicsOverlay(channelId ?? '', next),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['graphics-overlay', channelId] })
     },

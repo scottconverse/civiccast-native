@@ -28767,6 +28767,151 @@
         ]
       }
     },
+    "/api/staff/egress/channels/{channel_id}/graphics-overlay": {
+      "get": {
+        "tags": [
+          "staff",
+          "egress"
+        ],
+        "summary": "Read the S15 graphics-overlay (lower-third) state for a channel",
+        "operationId": "get_graphics_overlay_api_staff_egress_channels__channel_id__graphics_overlay_get",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphicsOverlayStateResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Egress config not found"
+          },
+          "503": {
+            "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "staff",
+          "egress"
+        ],
+        "summary": "Set the S15 graphics-overlay (lower-third) state for a channel",
+        "description": "Persist the lower-third toggle + text. Takes effect on the channel's NEXT\npipeline build (a fresh ``start`` or a content-reload) -- it does not hot-update\nan already-live pipeline's on-screen text; see\n``civiccast.egress.gst.bridge.graphics_overlay_leg_from_config``.",
+        "operationId": "update_graphics_overlay_api_staff_egress_channels__channel_id__graphics_overlay_put",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphicsOverlayUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphicsOverlayStateResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Egress config not found"
+          },
+          "503": {
+            "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/egress/channels/{channel_id}/loudness-plan": {
       "get": {
         "tags": [
@@ -41851,6 +41996,17 @@
           },
           "canonical_profile": {
             "$ref": "#/components/schemas/CanonicalProfile"
+          },
+          "graphics_overlay_enabled": {
+            "type": "boolean",
+            "title": "Graphics Overlay Enabled",
+            "default": false
+          },
+          "graphics_overlay_lower_third_text": {
+            "type": "string",
+            "maxLength": 240,
+            "title": "Graphics Overlay Lower Third Text",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -44150,6 +44306,52 @@
         ],
         "title": "GPUInfo",
         "description": "NVIDIA GPU summary. None when no NVIDIA GPU is detected."
+      },
+      "GraphicsOverlayStateResponse": {
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "title": "Channel Id"
+          },
+          "graphics_overlay_enabled": {
+            "type": "boolean",
+            "title": "Graphics Overlay Enabled"
+          },
+          "graphics_overlay_lower_third_text": {
+            "type": "string",
+            "title": "Graphics Overlay Lower Third Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "channel_id",
+          "graphics_overlay_enabled",
+          "graphics_overlay_lower_third_text"
+        ],
+        "title": "GraphicsOverlayStateResponse",
+        "description": "Current operator-facing S15 graphics-overlay state for one channel."
+      },
+      "GraphicsOverlayUpdateRequest": {
+        "properties": {
+          "graphics_overlay_enabled": {
+            "type": "boolean",
+            "title": "Graphics Overlay Enabled"
+          },
+          "graphics_overlay_lower_third_text": {
+            "type": "string",
+            "maxLength": 240,
+            "title": "Graphics Overlay Lower Third Text",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "graphics_overlay_enabled"
+        ],
+        "title": "GraphicsOverlayUpdateRequest",
+        "description": "Set the lower-third banner text and on/off state for one channel.\n\nA small, focused body (not the full ``EgressConfig``) so the operator UI's\non-air toggle never has to round-trip sinks/secrets/branding it doesn't touch\n-- mirrors ``HeadendProfileApplyRequest`` above, which patches a subset of the\nchannel's config the same way."
       },
       "GstreamerRepairResponse": {
         "properties": {

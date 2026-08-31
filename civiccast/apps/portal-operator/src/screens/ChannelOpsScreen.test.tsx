@@ -7,7 +7,7 @@ import type {
   ChannelPlayoutPlan,
   ChannelProfile,
   EgressStateRow,
-  GraphicsOverlayState,
+  GraphicsOverlayStateResponse,
 } from '../types/api.generated'
 import { EgressControlPanel, GraphicsOverlayPanel, PlayoutPlanPanel } from './ChannelOpsScreen'
 
@@ -97,7 +97,7 @@ describe('EgressControlPanel egress-state pill tone', () => {
   })
 })
 
-function graphicsOverlayState(overrides: Partial<GraphicsOverlayState> = {}): GraphicsOverlayState {
+function graphicsOverlayState(overrides: Partial<GraphicsOverlayStateResponse> = {}): GraphicsOverlayStateResponse {
   return {
     channel_id: 'public',
     graphics_overlay_enabled: false,

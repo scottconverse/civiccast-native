@@ -1797,19 +1797,6 @@ export interface EgressConfig {
   graphics_overlay_lower_third_text?: string
 }
 
-/** GET response for /api/staff/egress/channels/{channel_id}/graphics-overlay. */
-export interface GraphicsOverlayState {
-  channel_id: string
-  graphics_overlay_enabled: boolean
-  graphics_overlay_lower_third_text: string
-}
-
-/** PUT body for /api/staff/egress/channels/{channel_id}/graphics-overlay. */
-export interface GraphicsOverlayUpdate {
-  graphics_overlay_enabled: boolean
-  graphics_overlay_lower_third_text?: string
-}
-
 export interface EgressHealthSample {
   channel_id: string
   sampled_at: string
@@ -2160,6 +2147,17 @@ export interface GPUInfo {
   vram_free_gb: number
   driver_version: string
   cuda_version?: string | null
+}
+
+export interface GraphicsOverlayStateResponse {
+  channel_id: string
+  graphics_overlay_enabled: boolean
+  graphics_overlay_lower_third_text: string
+}
+
+export interface GraphicsOverlayUpdateRequest {
+  graphics_overlay_enabled: boolean
+  graphics_overlay_lower_third_text?: string
 }
 
 export interface GstreamerRepairResponse {
