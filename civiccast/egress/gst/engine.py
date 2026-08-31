@@ -68,6 +68,7 @@ try:  # package context (Windows can't reach here — gi import fails first)
         AudioTapLeg,
         CaptionEmbedLeg,
         ElementSpec,
+        GraphicsOverlayLeg,
         PlaylistLeg,
         PlayoutGraph,
         SecondaryAudioLeg,
@@ -83,6 +84,7 @@ except (
         AudioTapLeg,
         CaptionEmbedLeg,
         ElementSpec,
+        GraphicsOverlayLeg,
         PlaylistLeg,
         PlayoutGraph,
         SecondaryAudioLeg,
@@ -445,6 +447,68 @@ class GstPlayoutEngine:
         if self.caption_appsrc is not None:
             GLib.timeout_add(100, self._advance_live_caption_gap)
 
+    def _build_graphics_overlay(
+        self, leg: GraphicsOverlayLeg, video_prev: Gst.Element
+    ) -> Gst.Element:
+        """S15 graphics-overlay leg: composite the station bug/logo (and any other
+        image layer, e.g. a pre-rendered lower-third text banner) over the program
+        video on the output half, between the selector and the encoder chain.
+
+        ``video_prev`` is the selector (or whatever upstream element the caller has
+        built so far). The base program video and every overlay layer are uploaded to
+        D3D11 GPU memory (``d3d11upload``) before their compositor request pad — this
+        product's bundled runtime ships no plain ``compositor``/``videomixer``, only
+        the D3D11 family (confirmed by a real ``gst-inspect`` enumeration; see
+        ``GraphicsOverlayLeg``'s docstring) — and the composited result is downloaded
+        back to system memory (``d3d11download``) so the (system-memory) encoder chain
+        is unaffected. Returns the tail element (``videoconvert`` after the download)
+        the caller links into its encoder chain."""
+        compositor = self._make(leg.compositor)
+
+        base_upload = self._make(ElementSpec("d3d11upload", name="graphics_overlay_base_upload"))
+        self._link(video_prev, base_upload)
+        base_pad = compositor.request_pad_simple("sink_%u")
+        if (
+            base_pad is None
+            or base_upload.get_static_pad("src").link(base_pad) != Gst.PadLinkReturn.OK
+        ):
+            raise RuntimeError("failed to link program video into the graphics-overlay compositor")
+
+        for layer in leg.layers:
+            chain = (
+                ElementSpec("filesrc", props={"location": layer.image_path}),
+                ElementSpec("decodebin"),
+                ElementSpec("videoconvert"),
+                ElementSpec("d3d11upload", name=f"graphics_overlay_upload_{layer.name}"),
+            )
+            _first, layer_tail = self._build_chain(chain)
+            layer_pad = compositor.request_pad_simple("sink_%u")
+            if (
+                layer_pad is None
+                or layer_tail.get_static_pad("src").link(layer_pad) != Gst.PadLinkReturn.OK
+            ):
+                raise RuntimeError(
+                    f"failed to link graphics-overlay layer {layer.name!r} into the compositor"
+                )
+            layer_pad.set_property("xpos", layer.xpos)
+            layer_pad.set_property("ypos", layer.ypos)
+            if layer.width:
+                layer_pad.set_property("width", layer.width)
+            if layer.height:
+                layer_pad.set_property("height", layer.height)
+            layer_pad.set_property("alpha", layer.alpha)
+            # A still-image filesrc/decodebin chain EOSes its compositor pad after its
+            # single buffer (the bundled runtime ships no `imagefreeze`); repeat-after-eos
+            # holds that last buffer on screen instead of dropping the pad — proven live
+            # (see the S15 graphics-overlay pipeline proof test).
+            layer_pad.set_property("repeat-after-eos", layer.repeat_after_eos)
+
+        download = self._make(ElementSpec("d3d11download", name="graphics_overlay_download"))
+        self._link(compositor, download)
+        post_convert = self._make(ElementSpec("videoconvert", name="graphics_overlay_post_convert"))
+        self._link(download, post_convert)
+        return post_convert
+
     def _build_secondary_audio(self, leg: SecondaryAudioLeg, mux: Gst.Element) -> None:
         """S11 gap 9: build one secondary audio program and mux it as an extra audio PID.
 
@@ -557,6 +621,12 @@ class GstPlayoutEngine:
         # Output half (stays PLAYING): selector → encode chain → mux → sink(s).
         self.selector = self._make(ElementSpec("input-selector", "sel"))
         prev = self.selector
+        if self.graph.graphics_overlay is not None:
+            # S15 graphics-overlay leg: station bug/logo (+ lower-third banner) burned
+            # in on the output half, before encode, so it survives every source
+            # swap/reload untouched — same insertion point as the S15 §5 CG-lite
+            # full-frame board raster in bridge.graph_from_config.
+            prev = self._build_graphics_overlay(self.graph.graphics_overlay, prev)
         for spec in self.graph.encoder:
             element = self._make(spec)
             self._link(prev, element)
