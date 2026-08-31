@@ -32,7 +32,12 @@ from civiccast.live.recording_paths import (
     REHEARSAL_RECORDING_TARGET_ID,
 )
 from civiccast.live.router import get_recording_target_store
-from civiccast.recording.models import RecordingSchedule, RecordingSource, RecurrenceSpec
+from civiccast.recording.models import (
+    RecordingJob,
+    RecordingSchedule,
+    RecordingSource,
+    RecurrenceSpec,
+)
 from civiccast.recording.router import get_recording_service
 from civiccast.recording.runtime import (
     FfmpegScheduledCapturePipeline,
@@ -431,3 +436,82 @@ def test_record_now_stop_creates_file_backed_recorded_asset(monkeypatch, tmp_pat
         assert Path(asset.file_path).exists()
         assert asset.duration_seconds == 12
         assert asset.codec_video == "h264"
+
+
+def test_app_startup_reconciles_a_job_orphaned_by_a_prior_crash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """BLOCKER regression: reconcile_orphans() existed but was never called
+    from production.
+
+    ``RecordingStore.reconcile_orphaned_active_jobs`` /
+    ``RecordingService.reconcile_orphans`` fail a job stuck in an active
+    state (``arming``/``recording``/``finalizing``) past its planned end --
+    the trace of an unclean process exit. Before this fix, only the unit
+    tests in ``test_service.py`` / ``test_models_and_store.py`` ever called
+    it; a real service restart mid-recording left the DB row "recording"
+    forever, and because "recording" is an overlap-blocking state
+    (``RecordingStore.find_overlapping_jobs``), every future recording on
+    that source was silently skipped, permanently, with no operator-visible
+    error.
+
+    This test seeds a job stuck in "recording" with a planned_end in the
+    past directly into the app's own database file, boots the real app
+    (``create_app`` + the ``TestClient`` lifespan, exactly like a service
+    restart), and asserts the job is failed by the time startup completes --
+    proving the production lifespan, not just a unit test, now calls the
+    reconciler.
+    """
+
+    db_path = _native_control_plane_env(monkeypatch, tmp_path)
+
+    engine = _station_engine(db_path)
+
+    @contextmanager
+    def factory() -> Iterator[Session]:
+        with Session(bind=engine) as session:
+            yield session
+
+    stuck_start = _NOW - timedelta(hours=3)
+    stuck_end = _NOW - timedelta(hours=2)
+    store = RecordingStore(factory)
+    store.create_job(
+        RecordingJob(
+            job_id="zombie-restart-1",
+            station_id="civiccast-station",
+            schedule_id=None,
+            planned_start=stuck_start,
+            planned_end=stuck_end,
+            state="scheduled",
+            source_snapshot=RecordingSource(kind="rtsp", uri="rtsp://example.local/stream"),
+            encoder_profile="hw-h264-1080p",
+        )
+    )
+    # Drive it into "recording" the same way a real capture does, so the
+    # seeded row is indistinguishable from one orphaned mid-capture.
+    store.set_job_state("zombie-restart-1", "arming")
+    store.set_job_state("zombie-restart-1", "recording")
+    engine.dispose()
+
+    from civiccast.app import create_app
+
+    try:
+        app = create_app()
+        with TestClient(app):
+            pass  # lifespan startup (and its one-shot reconcile hook) runs on enter/exit.
+
+        recovery_engine = _station_engine(db_path)
+
+        @contextmanager
+        def recovery_factory() -> Iterator[Session]:
+            with Session(bind=recovery_engine) as session:
+                yield session
+
+        job = RecordingStore(recovery_factory).get_job("zombie-restart-1")
+        recovery_engine.dispose()
+    finally:
+        reset_engine()
+
+    assert job is not None
+    assert job.state == "failed"
+    assert job.failure_reason
