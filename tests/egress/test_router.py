@@ -198,6 +198,40 @@ def test_staff_egress_graphics_overlay_404_before_config_exists(client: TestClie
     assert r.status_code == 404
 
 
+def test_staff_egress_graphics_overlay_rejects_control_characters(client: TestClient) -> None:
+    """MINOR fix (2026-08-30 audit): mirrors ``ndi_relay_name``/``sdi_relay_device``'s
+    ``clean_relay_identifier`` control-char rule for the lower-third text -- rejected
+    at save time so a poisoned string can never reach
+    ``graphics_overlay_leg_from_config``'s rendered banner PNG.
+
+    This exercises the PUT endpoint itself, not just the ``EgressConfig`` model: the
+    endpoint applies the payload via ``EgressConfig.model_copy(update=...)``, which
+    does NOT re-run ``EgressConfig``'s own field validators -- so the request body
+    model (``GraphicsOverlayUpdateRequest``) needs the identical check, or a control
+    character would sail straight past the model-level validator through this
+    endpoint's actual write path (the real regression this test targets)."""
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+
+    r = client.put(
+        "/api/staff/egress/channels/gov/graphics-overlay",
+        json={
+            "graphics_overlay_enabled": True,
+            "graphics_overlay_lower_third_text": "Council\x07Room",
+        },
+    )
+    assert r.status_code == 422, r.text
+    assert "control characters" in r.text
+
+    # And the config must NOT have been persisted (a 422 that still wrote the row
+    # would be the same accept-then-crash gap with extra steps).
+    r = client.get("/api/staff/egress/channels/gov/graphics-overlay")
+    assert r.status_code == 200
+    assert r.json()["graphics_overlay_lower_third_text"] == ""
+
+
 def test_staff_egress_config_rtmp_allowed_on_ffmpeg_concat_engine(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

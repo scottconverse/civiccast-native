@@ -13,6 +13,7 @@ decision D-S1-6 in the Stage-1 plan) is implemented below in ``graph_from_config
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -389,12 +390,18 @@ def graphics_overlay_leg_from_config(
 
     Renders a fresh banner PNG into ``render_dir`` on every call (the caller passes
     the channel's own work dir), so a channel that is STARTED or CONTENT-RELOADED
-    after the operator saves new text picks up the current text. This does NOT
-    hot-update an already-live pipeline's on-screen text -- the compositor holds no
-    live text-render path (see ``graphics_overlay.py``'s module docstring: text is
-    rasterized once, ahead of time, into a still PNG the compositor decodes) -- only
-    the NEXT pipeline build (a fresh ``start()`` or a seamless
-    ``reload_content()``) reflects a saved change.
+    after the operator saves new text picks up the current text. A ``start()`` (a
+    fresh pipeline build) always shows it; a ``reload_content()`` on an already-live
+    pipeline now re-applies it too, via ``GstPlayoutEngine.reload_graphics_overlay``
+    -- the compositor gained a swap-by-layer-name path so a reload's rebuilt banner
+    PNG replaces the on-screen one instead of being silently dropped (BLOCKER fix,
+    2026-08-30 audit; see that method's docstring).
+
+    ENG-005 (mirrored): the banner filename carries a per-call ``uuid4`` suffix, not
+    a fixed name -- a crash-relaunch racing an in-flight reload (or two reloads in
+    close succession) must never have one process read a banner PNG the other is
+    still mid-write on the same path, which crashed the whole worker at startup on
+    a partial-PNG decode failure (MAJOR fix, 2026-08-30 audit).
 
     Only the lower-third banner is wired here. ``station_bug_and_lower_third_leg``
     (the same PR's station-bug/logo layer) requires a ``logo_path``, and there is no
@@ -409,7 +416,10 @@ def graphics_overlay_leg_from_config(
     profile = config.canonical_profile
     render_dir_path = Path(render_dir)
     render_dir_path.mkdir(parents=True, exist_ok=True)
-    banner_path = render_dir_path / "graphics-overlay-lower-third.png"
+    # ENG-005 (mirrored from strategy.reload_content's reload-graph filename): a
+    # unique per-call filename so a concurrent build (a crash-relaunch racing a
+    # reload) can never read a partially-written PNG on a clobbered fixed path.
+    banner_path = render_dir_path / f"graphics-overlay-lower-third.{uuid.uuid4().hex}.png"
     render_lower_third_png(
         banner_path,
         text,
