@@ -155,6 +155,65 @@ class SecondaryAudioLeg:
 
 
 @dataclass(frozen=True)
+class GraphicsOverlayLayer:
+    """One image layer composited over the program video (S15 graphics-overlay leg).
+
+    ``image_path`` is a filesystem PNG (decoded via ``filesrc ! decodebin`` — real
+    alpha-aware decode, not a re-implementation); ``xpos``/``ypos``/``width``/``height``
+    place and scale it on the output canvas. ``repeat_after_eos=True`` (the default) is
+    what keeps a ONE-FRAME still image on screen for the pipeline's whole run: the
+    bundled native-Windows GStreamer runtime ships no ``imagefreeze`` element, so a
+    finite ``filesrc`` PNG source would otherwise EOS its compositor pad after its
+    single buffer. ``GstD3D11CompositorPad.repeat-after-eos`` (verified present on this
+    runtime — see the S15 graphics-overlay engine notes) holds that last buffer on
+    screen instead of dropping the pad, which is the mechanism this leg relies on."""
+
+    name: str
+    image_path: str
+    xpos: int = 0
+    ypos: int = 0
+    width: int = 0  # 0 = the decoded image's native width (no scale-in-compositor)
+    height: int = 0
+    alpha: float = 1.0
+    repeat_after_eos: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("GraphicsOverlayLayer requires a name")
+        if not self.image_path.strip():
+            raise ValueError(f"GraphicsOverlayLayer {self.name!r} requires an image_path")
+        if not 0.0 <= self.alpha <= 1.0:
+            raise ValueError(f"GraphicsOverlayLayer {self.name!r} alpha must be in [0.0, 1.0]")
+
+
+@dataclass(frozen=True)
+class GraphicsOverlayLeg:
+    """S15 graphics-overlay leg: a station bug/logo PNG (and, via a second layer, a
+    pre-rendered lower-third text banner PNG) composited onto the program video on the
+    OUTPUT half (between the selector and the encoder chain — same insertion point the
+    S15 §5 CG-lite full-frame board raster uses in ``bridge.graph_from_config``), so it
+    survives every source swap/reload untouched. ``compositor`` defaults to
+    ``d3d11compositor`` — the only compositor element this product's curated bundled
+    GStreamer runtime ships (no base ``compositor``/``videomixer``, confirmed by a real
+    ``gst-inspect`` enumeration of the installed runtime; see PR notes). D3D11 elements
+    require GPU-memory frames, so the base program video and each layer are uploaded via
+    ``d3d11upload`` before their compositor pad, and the composited result is downloaded
+    back to system memory via ``d3d11download`` before the (system-memory) encoder chain.
+    None (the default on ``PlayoutGraph``) preserves today's behavior byte-identically —
+    this leg is strictly opt-in."""
+
+    layers: tuple[GraphicsOverlayLayer, ...]
+    compositor: ElementSpec = ElementSpec("d3d11compositor", name="graphics_overlay_comp")
+
+    def __post_init__(self) -> None:
+        if not self.layers:
+            raise ValueError("GraphicsOverlayLeg requires at least one layer")
+        names = [layer.name for layer in self.layers]
+        if len(names) != len(set(names)):
+            raise ValueError(f"GraphicsOverlayLeg layer names must be unique, got {names!r}")
+
+
+@dataclass(frozen=True)
 class AudioTapLeg:
     """Raw program-audio fork consumed by the mandatory live-caption worker."""
 
@@ -188,6 +247,10 @@ class PlayoutGraph:
     # Optional secondary audio programs (S11 gap 9 — SAP / descriptive). Empty = a single
     # audio PID (today's behavior, byte-identical).
     secondary_audio: tuple[SecondaryAudioLeg, ...] = ()
+    # Optional station-bug/logo + lower-third graphics overlay (S15 graphics-overlay
+    # leg). None = today's behavior (no overlay stage; the graph is byte-identical to
+    # the pre-overlay graph).
+    graphics_overlay: GraphicsOverlayLeg | None = None
 
     def __post_init__(self) -> None:
         if not self.sources:
@@ -403,6 +466,50 @@ def _secondary_from_dict(obj: dict[str, Any]) -> SecondaryAudioLeg:
     )
 
 
+def _overlay_layer_to_dict(layer: GraphicsOverlayLayer) -> dict[str, Any]:
+    return {
+        "name": layer.name,
+        "image_path": layer.image_path,
+        "xpos": layer.xpos,
+        "ypos": layer.ypos,
+        "width": layer.width,
+        "height": layer.height,
+        "alpha": layer.alpha,
+        "repeat_after_eos": layer.repeat_after_eos,
+    }
+
+
+def _overlay_layer_from_dict(obj: dict[str, Any]) -> GraphicsOverlayLayer:
+    return GraphicsOverlayLayer(
+        name=obj["name"],
+        image_path=obj["image_path"],
+        xpos=int(obj.get("xpos", 0)),
+        ypos=int(obj.get("ypos", 0)),
+        width=int(obj.get("width", 0)),
+        height=int(obj.get("height", 0)),
+        alpha=float(obj.get("alpha", 1.0)),
+        repeat_after_eos=bool(obj.get("repeat_after_eos", True)),
+    )
+
+
+def _graphics_overlay_to_dict(leg: GraphicsOverlayLeg | None) -> dict[str, Any] | None:
+    if leg is None:
+        return None
+    return {
+        "layers": [_overlay_layer_to_dict(layer) for layer in leg.layers],
+        "compositor": _elem_to_dict(leg.compositor),
+    }
+
+
+def _graphics_overlay_from_dict(obj: dict[str, Any] | None) -> GraphicsOverlayLeg | None:
+    if obj is None:
+        return None
+    return GraphicsOverlayLeg(
+        layers=tuple(_overlay_layer_from_dict(layer) for layer in obj["layers"]),
+        compositor=_elem_from_dict(obj["compositor"]),
+    )
+
+
 def graph_to_json(graph: PlayoutGraph) -> str:
     def src(source: SourceLeg | PlaylistLeg) -> dict[str, Any]:
         if isinstance(source, PlaylistLeg):
@@ -436,6 +543,7 @@ def graph_to_json(graph: PlayoutGraph) -> str:
             "sinks": [[_elem_to_dict(e) for e in branch] for branch in graph.sinks],
             "captions": _captions_to_dict(graph.captions),
             "secondary_audio": [_secondary_to_dict(leg) for leg in graph.secondary_audio],
+            "graphics_overlay": _graphics_overlay_to_dict(graph.graphics_overlay),
         },
         indent=2,
     )
@@ -475,4 +583,5 @@ def graph_from_json(text: str) -> PlayoutGraph:
         sinks=tuple(tuple(_elem_from_dict(e) for e in branch) for branch in data["sinks"]),
         captions=_captions_from_dict(data.get("captions")),
         secondary_audio=tuple(_secondary_from_dict(obj) for obj in data.get("secondary_audio", [])),
+        graphics_overlay=_graphics_overlay_from_dict(data.get("graphics_overlay")),
     )
