@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from civiccast.captions import CaptionCue
@@ -123,3 +125,70 @@ class TestSummaryGenerationRetry:
         assert result.operator_message
         assert "timestamp evidence" in result.operator_message.lower()
         assert len(model.prompt_versions) == 2
+
+
+class _FakeSummaryProvenance:
+    digest = "sha256:deadbeef"
+    ollama_version = "0.5.7"
+
+
+class _FakeRealSummaryModel:
+    """Stand-in for OllamaSummaryModel: exposes real model_tag + provenance."""
+
+    model_tag = "gemma4:e4b"
+    provenance: ClassVar[_FakeSummaryProvenance] = _FakeSummaryProvenance()
+
+    def __init__(self, output: dict) -> None:
+        self._output = output
+        self.prompt_versions: list[str] = []
+
+    def generate(self, *, meeting_id: str, cues, prompt_version: str) -> dict:
+        self.prompt_versions.append(prompt_version)
+        return self._output
+
+
+class TestSummaryProvenanceStamping:
+    """A real, records-bound draft must carry the real model's provenance —
+    not the fixture tag that the pipeline used to hardcode over it."""
+
+    _OUTPUT: ClassVar[dict] = {
+        "narrative": "The board welcomed residents to the meeting.",
+        "sourced_claims": [
+            {
+                "claim_id": "claim-1",
+                "text": "The board welcomed residents to the meeting.",
+                "claim_type": "narrative",
+                "transcript_ranges": [
+                    {"cue_id": "cue-1", "start_seconds": 0.0, "end_seconds": 5.0}
+                ],
+            }
+        ],
+    }
+
+    def test_real_model_provenance_is_recorded_not_a_fixture_tag(self) -> None:
+        model = _FakeRealSummaryModel(self._OUTPUT)
+        pipeline = SummaryGenerationPipeline(model=model)
+
+        result = pipeline.generate(
+            meeting_id="meeting-1",
+            cues=[_cue("cue-1", 0.0, 5.0, "The board welcomed residents to the meeting.")],
+        )
+
+        assert result.status == "pending_review"
+        assert result.provenance.model_tag == "gemma4:e4b"
+        assert result.provenance.model_digest == "sha256:deadbeef"
+        assert result.provenance.ollama_version == "0.5.7"
+
+    def test_test_fixture_model_still_stamps_the_fixture_tag(self) -> None:
+        # A genuine test fixture (no model_tag) honestly falls back to the
+        # fixture label rather than claiming a real model ran.
+        model = DeterministicSummaryModel()
+        pipeline = SummaryGenerationPipeline(model=model)
+
+        result = pipeline.generate(
+            meeting_id="meeting-1",
+            cues=[_cue("cue-1", 0.0, 5.0, "The board welcomed residents to the meeting.")],
+        )
+
+        assert result.provenance.model_tag == "fixture-summary-no-real-model"
+        assert result.provenance.model_digest is None
