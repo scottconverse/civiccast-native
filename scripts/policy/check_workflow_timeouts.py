@@ -55,6 +55,14 @@ TRANSFER_ACTIONS = ("actions/upload-artifact", "actions/download-artifact")
 
 #: job key -> why it legitimately outlives MAX_MINUTES.
 LONG_BY_DESIGN: dict[tuple[str, str], str] = {
+    ("gate-a-station-acceptance.yml", "station-acceptance-dirty"): (
+        "2026-08-30: the dirty lane runs TWO full sandbox cycles in one job -- a real "
+        "install + uninstall (phase 1, seeding true post-uninstall remnants) and then the "
+        "full clean-lane acceptance flow on top of those remnants (phase 2). Each phase is "
+        "sized like the existing 170-minute clean lane, so 340 minutes is the honest "
+        "two-phase ceiling, and the in-job timing contract (dirty 210 < 230 < job 340) is "
+        "asserted by tests/gate_a so the ceiling cannot silently drift."
+    ),
     ("six-hour-soak.yml", "six-hour-soak"): (
         "the six-hour soak IS the test; a shorter ceiling would defeat its entire purpose"
     ),

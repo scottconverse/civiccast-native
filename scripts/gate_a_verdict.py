@@ -110,9 +110,17 @@ no conclusion about the candidate, and calling that a station-acceptance
 FAIL would be the same authored-truth failure this module exists to
 prevent, pointed the other way.
 
+Dirty lane <gate-a-dirty-lane>: ``--lane dirty`` adds three checks on top of
+the unchanged clean set -- ``dirty_prep`` (the remnant prologue's
+install/uninstall/preservation contract), ``dirty_survival`` (operator data
+survived the uninstall -> reinstall cycle), and ``dirty_orphaned_tier``
+(PR #80's orphaned-caption-tier fallback provably fired; a loud ``SKIP`` when
+the runner staged no model seed). See docs/ops/gate-a.md, "Dirty lane". The
+default ``--lane clean`` is byte-identical to the pre-dirty-lane judge.
+
 Usage:
     python scripts/gate_a_verdict.py <output_dir> \
-        [--source-sha SHA] [--run-id ID] [--out PATH]
+        [--source-sha SHA] [--run-id ID] [--lane clean|dirty] [--out PATH]
 
 Exit code: 0 if the verdict is PASS, 1 if FAIL, 2 for anything that is not a
 station-acceptance finding at all -- the output directory not existing, a
@@ -459,6 +467,117 @@ def check_completion(output_dir: Path) -> CheckResult:
     return _pass(f"DONE.json present, harness_completed=true, last_completed_step={done_step!r}")
 
 
+# --------------------------------------------------------------------------
+# Dirty-lane checks <gate-a-dirty-lane>. Run IN ADDITION to every clean-lane
+# check when the judge is invoked with --lane dirty (Run-GateA.ps1
+# -DirtyLane). The dirty lane's evidence contract is written by
+# In-Sandbox-Report.ps1's remnant prologue (DIRTY-PREP-RESULT.txt) and its
+# post-station-up survival verify (DIRTY-RESULT.txt); see
+# docs/ops/gate-a.md, "Dirty lane" for the remnant shapes covered and the
+# field failures (weeks of clean-sandbox-green / real-machine-dead installs,
+# most recently DESKTOP-2BR3SJR's #18 receipt crash, PR #80) this lane
+# exists to catch before customers do.
+#
+# One status beyond PASS/FAIL exists here and ONLY here: ``SKIP``, used
+# exclusively by ``check_dirty_orphaned_tier`` when the run's own evidence
+# says the orphaned large-v3 remnant was not seeded (the real model was not
+# staged on the runner). A SKIP never silently passes -- it is surfaced in
+# the verdict document and the workflow's run summary as an uncovered shape.
+# --------------------------------------------------------------------------
+
+
+def _dirty_line(text: str, key: str) -> str | None:
+    match = _line_matching(text, rf"^{re.escape(key)}=(\S+)")
+    return match.group(1) if match else None
+
+
+def check_dirty_prep(output_dir: Path) -> CheckResult:
+    """The remnant prologue completed: phase-1 install exit 0, real uninstall
+    exit 0, and the uninstaller's preservation contract held (pgdata and the
+    planted uploads survived the uninstall; the install tree did not)."""
+    text, err = _read_text(output_dir, "DIRTY-PREP-RESULT.txt")
+    if err is not None:
+        return _fail(err)
+    assert text is not None
+    expectations = {
+        "PHASE1_INSTALL_EXIT": "0",
+        "UNINSTALL_EXIT": "0",
+        "PGDATA_PRESERVED_AFTER_UNINSTALL": "1",
+        "UPLOADS_PRESERVED_AFTER_UNINSTALL": "1",
+        "INSTALL_TREE_REMOVED_AFTER_UNINSTALL": "1",
+    }
+    for key, want in expectations.items():
+        got = _dirty_line(text, key)
+        if got != want:
+            return _fail(f"DIRTY-PREP-RESULT.txt {key}={got or '<missing>'} (expected {want})")
+    return _pass(
+        "phase-1 install + real uninstall completed; uninstall preserved pgdata and uploads "
+        "and removed the install tree"
+    )
+
+
+def check_dirty_survival(output_dir: Path) -> CheckResult:
+    """Operator data survived the full uninstall -> reinstall -> station-up
+    cycle: the SAME pgdata cluster (creation time + PG_VERSION identity) and
+    byte-identical planted uploads."""
+    text, err = _read_text(output_dir, "DIRTY-RESULT.txt")
+    if err is not None:
+        return _fail(err)
+    assert text is not None
+    pg = _dirty_line(text, "DIRTY_PGDATA_PRESERVED")
+    if pg != "1":
+        return _fail(f"DIRTY-RESULT.txt DIRTY_PGDATA_PRESERVED={pg or '<missing>'} (expected 1)")
+    uploads = _dirty_line(text, "DIRTY_UPLOADS_PRESERVED")
+    if uploads != "1":
+        return _fail(
+            f"DIRTY-RESULT.txt DIRTY_UPLOADS_PRESERVED={uploads or '<missing>'} (expected 1)"
+        )
+    return _pass("pgdata cluster identity and planted uploads survived the reinstall")
+
+
+def check_dirty_orphaned_tier(output_dir: Path) -> CheckResult:
+    """When the orphaned large-v3 remnant WAS seeded, PR #80's fallback must
+    have provably fired: the supervisor log carries its orphaned-tier
+    WARNING (DIRTY_ORPHAN_WARNING=1). When the remnant was not seeded (no
+    hash-valid model staged on the runner), this is a loud SKIP -- the shape
+    was not covered this run -- never a silent pass."""
+    text, err = _read_text(output_dir, "DIRTY-RESULT.txt")
+    if err is not None:
+        return _fail(err)
+    assert text is not None
+    seeded = _dirty_line(text, "DIRTY_ORPHAN_SEEDED")
+    if seeded == "0":
+        return CheckResult(
+            status="SKIP",
+            detail=(
+                "orphaned large-v3 remnant NOT seeded this run (no hash-valid model staged at "
+                "the runner's dirty-seed path) -- the PR #80 orphaned-tier shape was NOT covered; "
+                "see docs/ops/gate-a.md, 'Dirty lane' for how to enable it"
+            ),
+        )
+    if seeded != "1":
+        return _fail(
+            f"DIRTY-RESULT.txt DIRTY_ORPHAN_SEEDED={seeded or '<missing>'} (expected 0 or 1)"
+        )
+    warning = _dirty_line(text, "DIRTY_ORPHAN_WARNING")
+    if warning != "1":
+        return _fail(
+            f"DIRTY-RESULT.txt DIRTY_ORPHAN_WARNING={warning or '<missing>'} (expected 1): the "
+            "orphaned tier was seeded but the supervisor log carries no orphaned-tier fallback "
+            "WARNING -- either the remnant was never detected or the fallback did not fire"
+        )
+    return _pass(
+        "orphaned large-v3 remnant seeded and PR #80's fallback WARNING found in the supervisor log"
+    )
+
+
+DIRTY_CHECKS: dict[str, Callable[[Path], CheckResult]] = {
+    "dirty_prep": check_dirty_prep,
+    "dirty_survival": check_dirty_survival,
+    "dirty_orphaned_tier": check_dirty_orphaned_tier,
+}
+
+
 CHECKS: dict[str, Callable[[Path], CheckResult]] = {
     "install": check_install,
     "activation": check_activation,
@@ -513,18 +632,34 @@ def _sandbox_busy_verdict(
     }
 
 
-def judge(output_dir: Path, source_sha: str | None, run_id: str | None) -> dict[str, Any]:
+def judge(
+    output_dir: Path, source_sha: str | None, run_id: str | None, lane: str = "clean"
+) -> dict[str, Any]:
     """Run every required check against output_dir and build the verdict document.
 
     SANDBOX-BUSY.txt short-circuits this before any required check runs --
     see ``_sandbox_busy_verdict``.
+
+    ``lane="dirty"`` <gate-a-dirty-lane> adds the dirty-lane checks
+    (``DIRTY_CHECKS``) on top of the unchanged clean-lane set, and stamps a
+    ``lane`` field into the verdict document. ``SKIP`` (only ever produced by
+    ``check_dirty_orphaned_tier``) does not fail the verdict but is preserved
+    in the checks breakdown so an uncovered remnant shape stays visible.
+    The default ``lane="clean"`` produces the exact pre-dirty-lane document
+    -- no new fields, no new checks.
     """
     busy_verdict = _sandbox_busy_verdict(output_dir, source_sha, run_id)
     if busy_verdict is not None:
+        if lane != "clean":
+            busy_verdict["lane"] = lane
         return busy_verdict
 
+    all_checks: dict[str, Callable[[Path], CheckResult]] = dict(CHECKS)
+    if lane == "dirty":
+        all_checks.update(DIRTY_CHECKS)
+
     checks: dict[str, dict[str, str]] = {}
-    for name, fn in CHECKS.items():
+    for name, fn in all_checks.items():
         try:
             result = fn(output_dir)
         except Exception as exc:  # fail-closed even on a bug in a check itself, never propagate
@@ -538,7 +673,7 @@ def judge(output_dir: Path, source_sha: str | None, run_id: str | None) -> dict[
     harness_error = detect_harness_error(output_dir)
     if harness_error is not None:
         verdict = "HARNESS_ERROR"
-    elif all(c["status"] == "PASS" for c in checks.values()):
+    elif all(c["status"] in ("PASS", "SKIP") for c in checks.values()):
         verdict = "PASS"
     else:
         verdict = "FAIL"
@@ -559,7 +694,7 @@ def judge(output_dir: Path, source_sha: str | None, run_id: str | None) -> dict[
         station_boot_seconds = summary.get("station_boot_seconds")
         station_first_healthy_utc = summary.get("station_first_healthy_utc")
 
-    return {
+    document: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "source_sha": source_sha,
         "run_id": run_id,
@@ -572,6 +707,11 @@ def judge(output_dir: Path, source_sha: str | None, run_id: str | None) -> dict[
         "evidence_dir": str(output_dir),
         "judged_utc": datetime.now(UTC).isoformat(),
     }
+    if lane != "clean":
+        # Additive, dirty-lane-only field: a clean-lane verdict document is
+        # byte-shape-identical to the pre-dirty-lane schema.
+        document["lane"] = lane
+    return document
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -590,6 +730,16 @@ def main(argv: list[str] | None = None) -> int:
         "--run-id", default=None, help="GitHub Actions run id of the candidate build"
     )
     parser.add_argument(
+        "--lane",
+        choices=("clean", "dirty"),
+        default="clean",
+        help=(
+            "Which Gate A lane produced this evidence. 'dirty' adds the remnant-lane checks "
+            "(dirty_prep, dirty_survival, dirty_orphaned_tier) on top of the clean set; "
+            "'clean' (default) is byte-identical to the pre-dirty-lane judge"
+        ),
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         default=None,
@@ -605,7 +755,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    result = judge(output_dir, args.source_sha, args.run_id)
+    result = judge(output_dir, args.source_sha, args.run_id, lane=args.lane)
     out_path: Path = args.out if args.out is not None else output_dir / "gate-a-verdict.json"
     out_path.write_text(json.dumps(result, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 

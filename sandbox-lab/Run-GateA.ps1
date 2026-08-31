@@ -112,7 +112,27 @@ param(
     # waiting out the rest of -SandboxWaitMinutes on it. See that script's
     # <gate-a-orphan-guard> header comment and docs/ops/gate-a.md, "Shared
     # Windows Sandbox: the busy guard -- orphan detection".
-    [int]$OrphanGraceMinutes = 10
+    [int]$OrphanGraceMinutes = 10,
+
+    # DIRTY-BOX LANE <gate-a-dirty-lane>: run the remnant lane instead of the
+    # plain clean-box lane. Passed to Host-Launch-Sandbox-Test.ps1 as
+    # -DirtyMode (which writes the DIRTY_MODE.txt guest input) and to
+    # scripts/gate_a_verdict.py as --lane dirty (which adds the dirty-lane
+    # checks: prep/preservation, operator-data survival, orphaned-tier
+    # fallback). A dirty run performs TWO install cycles inside the sandbox,
+    # so pass -TimeoutMinutes of at least 230 with this switch (the launcher
+    # enforces the floor itself). The clean lane is untouched when this is
+    # absent. See docs/ops/gate-a.md, "Dirty lane".
+    [switch]$DirtyLane,
+
+    # Optional host-side source for the orphaned-caption-tier remnant seed: a
+    # directory shaped like <ProgramData>\CivicCast\components\captions-large-v3
+    # (i.e. carrying models\faster-whisper-large-v3\ with the REAL, hash-valid
+    # model files -- a stub cannot work; see In-Sandbox-Report.ps1's prologue
+    # note P6). When present it is staged to hoststore\dirty-seed\ for the
+    # sandbox to plant after the phase-1 uninstall. When absent, the dirty
+    # lane still runs but reports the orphaned-tier sub-shape as SKIP.
+    [string]$DirtySeedLargeV3Dir = 'C:\CivicCastTester\dirty-seed\captions-large-v3'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -316,6 +336,27 @@ if (Test-Path $hoststore) {
 }
 Write-Step "hoststore reset (fresh-install guarantee)"
 
+# Dirty lane only: stage the optional orphaned-tier seed AFTER the reset so
+# it rides into the sandbox via the already-mapped hoststore folder (no .wsb
+# template change, no new VSMB share). Copy, not junction: the mapped-folder
+# path already resolves reparse points at the TOP level only, and a reparse
+# point INSIDE a share is exactly the shape <gate-a-run7-findings> exists to
+# avoid handing VSMB.
+if ($DirtyLane) {
+    if ($DirtySeedLargeV3Dir -and (Test-Path (Join-Path $DirtySeedLargeV3Dir 'models'))) {
+        $seedDst = Join-Path $hoststore 'dirty-seed\captions-large-v3'
+        New-Item -ItemType Directory -Force -Path $seedDst | Out-Null
+        Write-Step "Dirty lane: staging orphaned-tier seed from $DirtySeedLargeV3Dir into $seedDst ..."
+        & robocopy.exe $DirtySeedLargeV3Dir $seedDst /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) {
+            Exit-HarnessError "robocopy of the dirty-lane orphaned-tier seed failed (exit $LASTEXITCODE)"
+        }
+        Write-Step "Dirty lane: orphaned-tier seed staged."
+    } else {
+        Write-Step "Dirty lane: no orphaned-tier seed at $DirtySeedLargeV3Dir (models\ missing) -- the orphaned-tier sub-shape will be reported SKIP by the judge."
+    }
+}
+
 # --------------------------------------------------------------------------
 # 5. Run the host launcher. It clears output\, writes SOAK_MINUTES.txt,
 #    renders the .wsb, launches Sandbox, and polls for DONE.json.
@@ -327,7 +368,7 @@ if (-not (Test-Path $launcherPath)) {
 }
 
 Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes, TeardownDrainSeconds=$TeardownDrainSeconds, TeardownDrainPollSeconds=$TeardownDrainPollSeconds, OrphanGraceMinutes=$OrphanGraceMinutes)..."
-& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds -OrphanGraceMinutes $OrphanGraceMinutes
+& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds -OrphanGraceMinutes $OrphanGraceMinutes -DirtyMode:$DirtyLane
 $launcherExit = $LASTEXITCODE
 Write-Step "Host launcher exited with code $launcherExit"
 
@@ -424,7 +465,8 @@ if ($launcherExit -ne 0) {
             $forensicRepoRoot = Split-Path $Root -Parent
             $forensicJudgePath = Join-Path $forensicRepoRoot 'scripts\gate_a_verdict.py'
             Write-Step "Running the verdict judge on partial evidence for forensics (harness did not complete cleanly)..."
-            & uv run --project $forensicRepoRoot python $forensicJudgePath $evidenceDir --source-sha $sourceSha --run-id "$resolvedRunId" --out (Join-Path $evidenceDir 'gate-a-verdict.json') 2>&1 | Write-Host
+            $forensicLane = if ($DirtyLane) { 'dirty' } else { 'clean' }
+            & uv run --project $forensicRepoRoot python $forensicJudgePath $evidenceDir --source-sha $sourceSha --run-id "$resolvedRunId" --lane $forensicLane --out (Join-Path $evidenceDir 'gate-a-verdict.json') 2>&1 | Write-Host
         }
     }
     Exit-HarnessError "Host-Launch-Sandbox-Test.ps1 did not complete cleanly (exit $launcherExit) -- see $evidenceDir"
@@ -446,8 +488,9 @@ if (-not (Test-Path $judgePath)) {
 }
 
 $verdictPath = Join-Path $evidenceDir 'gate-a-verdict.json'
-Write-Step "Judging $evidenceDir ..."
-& uv run --project $repoRoot python $judgePath $evidenceDir --source-sha $sourceSha --run-id "$resolvedRunId" --out $verdictPath
+$judgeLane = if ($DirtyLane) { 'dirty' } else { 'clean' }
+Write-Step "Judging $evidenceDir (lane=$judgeLane)..."
+& uv run --project $repoRoot python $judgePath $evidenceDir --source-sha $sourceSha --run-id "$resolvedRunId" --lane $judgeLane --out $verdictPath
 $judgeExit = $LASTEXITCODE
 
 # --------------------------------------------------------------------------
