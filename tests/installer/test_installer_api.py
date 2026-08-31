@@ -397,9 +397,28 @@ def test_public_first_admin_setup_rejects_malformed_body_from_non_loopback_befor
 
 
 def test_staff_storage_setup_requires_setup_admin_role(monkeypatch, tmp_path: Path) -> None:
+    """A correctly-authenticated but wrong-role token gets 403; a correctly-
+    authenticated setup_admin token succeeds.
+
+    civiccast.auth.tokens.verify_bearer_token (a370b35) made durable-storage
+    deployments fail closed on plain ``CIVICCAST_STAFF_TOKENS`` entries: once
+    a DB-backed ``staff_token_store`` is active (the default whenever
+    ``CIVICCAST_ALLOW_EPHEMERAL_STORES`` is not set, as here), an env token
+    that is not also a DB-issued token no longer authenticates on its own --
+    it needs the explicit ``CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB=1`` opt-in
+    used elsewhere in this file (see
+    ``test_public_storage_setup_enables_first_asset_upload_without_manual_upload_dir``
+    above). Without it, BOTH clients below get 401 before the role-check
+    dependency ever runs -- correct fail-closed behavior, but it means this
+    test was silently no longer proving the role check at all. Setting the
+    same opt-in restores real authentication for both tokens, so the 403 the
+    role dependency raises for the wrong-role token, and the 200 the
+    correctly-roled token gets, are both genuinely exercised again.
+    """
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("CIVICCAST_UPLOAD_DIR", raising=False)
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
+    monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
     monkeypatch.setenv(
         "CIVICCAST_STAFF_TOKENS",
         "records-token:records-1:Records Clerk:records_clerk;"
@@ -432,6 +451,60 @@ def test_staff_storage_setup_requires_setup_admin_role(monkeypatch, tmp_path: Pa
 
         records_client.close()
         setup_client.close()
+        reset_engine()
+        os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("CIVICCAST_UPLOAD_DIR", None)
+        gc.collect()
+
+
+def test_staff_storage_setup_rejects_an_unrecognized_token_with_401(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A bad/absent staff token gets 401 from the auth layer, before the
+    role-check dependency ever runs -- not the 403 a wrong-role-but-valid
+    token gets. Companion to
+    ``test_staff_storage_setup_requires_setup_admin_role`` above: that test
+    covers a VALID, correctly-authenticated token with the wrong role (403);
+    this one covers an env token that never authenticates in the first place
+    (the default, fail-closed behavior once a durable, DB-backed
+    ``staff_token_store`` is active and
+    ``CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB`` is NOT set -- see
+    civiccast.auth.tokens.verify_bearer_token, a370b35).
+    """
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("CIVICCAST_UPLOAD_DIR", raising=False)
+    monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", raising=False)
+    monkeypatch.setenv(
+        "CIVICCAST_STAFF_TOKENS",
+        "setup-token:setup-1:Setup Admin:setup_admin",
+    )
+    unrecognized_client = TestClient(
+        create_app(), headers={"Authorization": "Bearer setup-token"}
+    )
+    no_credential_client = TestClient(create_app())
+    storage_dir = tmp_path / "unauthenticated-managed"
+
+    try:
+        unrecognized = unrecognized_client.post(
+            "/api/staff/installer/storage",
+            json={"storage_dir": str(storage_dir)},
+        )
+        missing = no_credential_client.post(
+            "/api/staff/installer/storage",
+            json={"storage_dir": str(storage_dir)},
+        )
+
+        assert unrecognized.status_code == 401, unrecognized.text
+        assert missing.status_code == 401, missing.text
+        assert not storage_dir.exists()
+    finally:
+        import gc
+
+        from civiccast.db import reset_engine
+
+        unrecognized_client.close()
+        no_credential_client.close()
         reset_engine()
         os.environ.pop("DATABASE_URL", None)
         os.environ.pop("CIVICCAST_UPLOAD_DIR", None)
