@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -1932,17 +1933,23 @@ def _stage_large_v3_under(
     return files
 
 
-def test_large_v3_acquired_after_floor_activation_without_an_addendum_receipt_still_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_orphaned_large_v3_without_a_receipt_degrades_to_the_proven_floor_tier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The check itself must stay right: a station that resolves to large-v3
-    (because it is now staged in the acquisition root) but has NO receipt
-    proving that tier anywhere must keep failing exactly as loudly as before
-    -- this is the fail-closed floor `_validate_activation_receipt` must
-    never lose, field evidence or not."""
+    """The 2026-08-30 field failure (DESKTOP-2BR3SJR, UPGRADE-18-REPORT.md):
+    uninstall-old -> reinstall-new preserves `components/captions-large-v3`
+    under ProgramData, so tier resolution picks large-v3 -- but nothing on
+    the new install ever wrote an addendum receipt there. The station must
+    NOT crash-loop: it degrades to the floor tier whose receipt the fresh
+    install DID write at the install root, comes up with floor captions, and
+    logs a WARNING naming the orphaned tier so the operator re-acquires it
+    from the console. (This test fails on pre-fix main, which raised
+    `activation self-test receipt is missing or unreadable` here.)"""
 
     from civiccast.native import station_runtime
-    from civiccast.native.caption_tiers import FLOOR_TIER_ID
+    from civiccast.native.caption_tiers import FLOOR_TIER_ID, LARGE_V3_TIER_ID
 
     version_root, _ = _write_station(tmp_path, write_large_v3=False)
     floor_files = _write_floor_tier_files(version_root)
@@ -1957,17 +1964,47 @@ def test_large_v3_acquired_after_floor_activation_without_an_addendum_receipt_st
     monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
     monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
 
-    # No addendum receipt exists anywhere the resolved large-v3 tier's own
-    # base root is searched, so this fails at "no receipt to check" rather
-    # than "a receipt that disagrees" -- either way, fail-closed: a station
-    # that resolves a tier it cannot prove must never start.
+    with caplog.at_level(logging.WARNING, logger=station_runtime.__name__):
+        env = station_runtime.load_native_station_environment(
+            version_root, program_data_root=acquisition_root
+        )
+
+    assert env["CIVICCAST_CAPTION_TIER"] == FLOOR_TIER_ID
+    tier_event = json.loads(env["CIVICCAST_CAPTION_TIER_EVENT"])
+    assert tier_event["tier"] == FLOOR_TIER_ID
+    assert tier_event["requested"] == LARGE_V3_TIER_ID
+    assert tier_event["fallback"] is True
+    warnings = [
+        record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    orphan_warnings = [message for message in warnings if LARGE_V3_TIER_ID in message]
+    assert orphan_warnings, f"expected a WARNING naming the orphaned tier, got: {warnings}"
+    assert str(acquisition_root / "components" / "captions-large-v3") in orphan_warnings[0]
+    assert "operator console" in orphan_warnings[0]
+
+
+def test_an_unproven_tier_with_no_floor_to_fall_back_to_still_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fail-closed floor the degrade path must never lose: a station
+    whose ONLY staged tier is large-v3 (five-pack layout) with no readable
+    receipt has no proven tier to fall back to, and must keep raising exactly
+    as loudly as before."""
+
+    from civiccast.native import station_runtime
+
+    version_root, files = _write_station(tmp_path)
+    monkeypatch.setattr(station_runtime, "WHISPER_MODEL_FILES", files)
+    (version_root / "activation-self-test.json").unlink()
+    monkeypatch.setattr(station_runtime, "_probe_nvidia_vram_gb", lambda: None)
+    monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
+    monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
+
     with pytest.raises(
         station_runtime.NativeStationConfigurationError,
         match="activation self-test receipt is missing or unreadable",
     ):
-        station_runtime.load_native_station_environment(
-            version_root, program_data_root=acquisition_root
-        )
+        station_runtime.load_native_station_environment(version_root)
 
 
 def test_large_v3_acquired_after_floor_activation_with_a_valid_addendum_receipt_starts_clean(
