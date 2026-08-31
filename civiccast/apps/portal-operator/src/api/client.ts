@@ -63,6 +63,8 @@ import type {
   ComplianceProbeResult,
   EgressCaptionProofSample,
   EgressConfig,
+  GraphicsOverlayStateResponse,
+  GraphicsOverlayUpdateRequest,
   GstreamerRepairResponse,
   OfflineCaptionJobRecord,
   HeadendProfile,
@@ -2264,6 +2266,34 @@ export function listEgressChannels(): Promise<StaffEgressChannelSummary[]> {
 export function getEgressConfig(channelId: string): Promise<EgressConfig> {
   return request<EgressConfig>(
     `/api/staff/egress/channels/${encodeURIComponent(channelId)}/config`,
+  )
+}
+
+/**
+ * GET /api/staff/egress/channels/{channel_id}/graphics-overlay — current
+ * on/off + text for the S15 graphics-overlay lower-third banner. A narrower
+ * sibling of getEgressConfig/updateEgressConfig, so the operator's "put on
+ * air" toggle never has to round-trip sinks/secrets it doesn't touch.
+ */
+export function getGraphicsOverlay(channelId: string): Promise<GraphicsOverlayStateResponse> {
+  return request<GraphicsOverlayStateResponse>(
+    `/api/staff/egress/channels/${encodeURIComponent(channelId)}/graphics-overlay`,
+  )
+}
+
+/**
+ * PUT /api/staff/egress/channels/{channel_id}/graphics-overlay — set the
+ * lower-third toggle + text. Takes effect on the channel's NEXT pipeline
+ * build (a fresh start or a content-reload) — it does not hot-update an
+ * already-live pipeline's on-screen text.
+ */
+export function updateGraphicsOverlay(
+  channelId: string,
+  payload: GraphicsOverlayUpdateRequest,
+): Promise<GraphicsOverlayStateResponse> {
+  return request<GraphicsOverlayStateResponse>(
+    `/api/staff/egress/channels/${encodeURIComponent(channelId)}/graphics-overlay`,
+    { method: 'PUT', body: payload },
   )
 }
 

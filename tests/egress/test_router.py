@@ -130,6 +130,74 @@ def test_staff_egress_config_rejects_unsupported_sink_kind_at_save_time(
     assert r.status_code == 404
 
 
+def test_staff_egress_graphics_overlay_round_trip(client: TestClient) -> None:
+    """A-3: the operator's lower-third toggle + text persist through the
+    dedicated GET/PUT endpoint and flow back to the full config GET (proving
+    it lands on the same durable EgressConfig row the playout-graph builder
+    reads, not a side channel)."""
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+
+    # Default is off/blank before any operator ever sets it.
+    r = client.get("/api/staff/egress/channels/gov/graphics-overlay")
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "channel_id": "gov",
+        "graphics_overlay_enabled": False,
+        "graphics_overlay_lower_third_text": "",
+    }
+
+    r = client.put(
+        "/api/staff/egress/channels/gov/graphics-overlay",
+        json={
+            "graphics_overlay_enabled": True,
+            "graphics_overlay_lower_third_text": "Town Council - Live",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "channel_id": "gov",
+        "graphics_overlay_enabled": True,
+        "graphics_overlay_lower_third_text": "Town Council - Live",
+    }
+
+    # Get-after-set round trip via the dedicated endpoint...
+    r = client.get("/api/staff/egress/channels/gov/graphics-overlay")
+    assert r.status_code == 200
+    assert r.json()["graphics_overlay_enabled"] is True
+    assert r.json()["graphics_overlay_lower_third_text"] == "Town Council - Live"
+
+    # ...and via the full channel config, proving it's the same durable row.
+    r = client.get("/api/staff/egress/channels/gov/config")
+    assert r.status_code == 200
+    assert r.json()["graphics_overlay_enabled"] is True
+    assert r.json()["graphics_overlay_lower_third_text"] == "Town Council - Live"
+
+    # Take it back off air.
+    r = client.put(
+        "/api/staff/egress/channels/gov/graphics-overlay",
+        json={
+            "graphics_overlay_enabled": False,
+            "graphics_overlay_lower_third_text": "Town Council - Live",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["graphics_overlay_enabled"] is False
+
+
+def test_staff_egress_graphics_overlay_404_before_config_exists(client: TestClient) -> None:
+    r = client.get("/api/staff/egress/channels/never-configured/graphics-overlay")
+    assert r.status_code == 404
+
+    r = client.put(
+        "/api/staff/egress/channels/never-configured/graphics-overlay",
+        json={"graphics_overlay_enabled": True, "graphics_overlay_lower_third_text": "x"},
+    )
+    assert r.status_code == 404
+
+
 def test_staff_egress_config_rtmp_allowed_on_ffmpeg_concat_engine(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

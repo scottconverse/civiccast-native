@@ -7,7 +7,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -365,6 +365,106 @@ def get_config(
             detail=f"Egress config not found: {channel_id}",
         )
     return result
+
+
+class GraphicsOverlayStateResponse(BaseModel):
+    """Current operator-facing S15 graphics-overlay state for one channel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    channel_id: str
+    graphics_overlay_enabled: bool
+    graphics_overlay_lower_third_text: str
+
+
+class GraphicsOverlayUpdateRequest(BaseModel):
+    """Set the lower-third banner text and on/off state for one channel.
+
+    A small, focused body (not the full ``EgressConfig``) so the operator UI's
+    on-air toggle never has to round-trip sinks/secrets/branding it doesn't touch
+    -- mirrors ``HeadendProfileApplyRequest`` above, which patches a subset of the
+    channel's config the same way.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    graphics_overlay_enabled: bool
+    graphics_overlay_lower_third_text: Annotated[str, Field(default="", max_length=240)] = ""
+
+
+@staff_router.get(
+    "/channels/{channel_id}/graphics-overlay",
+    response_model=GraphicsOverlayStateResponse,
+    summary="Read the S15 graphics-overlay (lower-third) state for a channel",
+    dependencies=[Depends(require_any_role("setup_admin", "meeting_operator", "support_admin"))],
+    responses={
+        404: {"description": "Egress config not found"},
+        503: {"description": _DB_NOT_READY_DESCRIPTION},
+    },
+)
+def get_graphics_overlay(
+    channel_id: str,
+    egress_store: EgressStore | None = Depends(get_egress_store),
+) -> GraphicsOverlayStateResponse:
+    store = _require_store(egress_store, surface="graphics overlay")
+    config = store.get_config(channel_id)
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Egress config not found: {channel_id}",
+        )
+    return GraphicsOverlayStateResponse(
+        channel_id=channel_id,
+        graphics_overlay_enabled=config.graphics_overlay_enabled,
+        graphics_overlay_lower_third_text=config.graphics_overlay_lower_third_text,
+    )
+
+
+@staff_router.put(
+    "/channels/{channel_id}/graphics-overlay",
+    response_model=GraphicsOverlayStateResponse,
+    summary="Set the S15 graphics-overlay (lower-third) state for a channel",
+    dependencies=[Depends(require_any_role("meeting_operator", "setup_admin"))],
+    responses={
+        404: {"description": "Egress config not found"},
+        503: {"description": _DB_NOT_READY_DESCRIPTION},
+    },
+)
+def update_graphics_overlay(
+    channel_id: str,
+    payload: GraphicsOverlayUpdateRequest,
+    egress_store: EgressStore | None = Depends(get_egress_store),
+) -> GraphicsOverlayStateResponse:
+    """Persist the lower-third toggle + text. Takes effect on the channel's NEXT
+    pipeline build (a fresh ``start`` or a content-reload) -- it does not hot-update
+    an already-live pipeline's on-screen text; see
+    ``civiccast.egress.gst.bridge.graphics_overlay_leg_from_config``.
+    """
+    store = _require_store(egress_store, surface="graphics overlay")
+    config = store.get_config(channel_id)
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Egress config not found: {channel_id}",
+        )
+    updated = config.model_copy(
+        update={
+            "graphics_overlay_enabled": payload.graphics_overlay_enabled,
+            "graphics_overlay_lower_third_text": payload.graphics_overlay_lower_third_text,
+        }
+    )
+    store.upsert_config(updated)
+    result = store.get_config(channel_id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Egress config was not readable after save.",
+        )
+    return GraphicsOverlayStateResponse(
+        channel_id=channel_id,
+        graphics_overlay_enabled=result.graphics_overlay_enabled,
+        graphics_overlay_lower_third_text=result.graphics_overlay_lower_third_text,
+    )
 
 
 @staff_router.get(

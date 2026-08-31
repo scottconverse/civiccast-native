@@ -24,6 +24,8 @@ from civiccast.egress.gst.graph import (
     DEFAULT_H264_ENCODER,
     CaptionEmbedLeg,
     ElementSpec,
+    GraphicsOverlayLayer,
+    GraphicsOverlayLeg,
     PlaylistLeg,
     PlayoutGraph,
     SecondaryAudioLeg,
@@ -33,6 +35,7 @@ from civiccast.egress.gst.graph import (
     caption_embed_leg_live,
     encode_chain_specs,
 )
+from civiccast.egress.gst.graphics_overlay import render_lower_third_png
 from civiccast.egress.gst.pipeline import _is_multicast
 from civiccast.egress.hls_relay import hls_relay_uri_for
 from civiccast.egress.models import (
@@ -367,6 +370,67 @@ def secondary_audio_leg_from_track(
     )
 
 
+# S15 graphics-overlay operator control: the lower-third banner's fixed height in
+# output pixels (matches graphics_overlay.station_bug_and_lower_third_leg's default).
+GRAPHICS_OVERLAY_LOWER_THIRD_HEIGHT = 60
+
+
+def graphics_overlay_leg_from_config(
+    config: EgressConfig,
+    *,
+    render_dir: Path,
+) -> GraphicsOverlayLeg | None:
+    """Build the S15 graphics-overlay leg's lower-third layer from
+    ``EgressConfig``'s operator-facing toggle (``graphics_overlay_enabled`` +
+    ``graphics_overlay_lower_third_text``), or ``None`` when the toggle is off or
+    the text is blank -- so an unconfigured channel's graph is byte-identical to
+    before this field existed (matches the ``cg_overlay_image`` / caption-embed
+    opt-in pattern elsewhere in this module).
+
+    Renders a fresh banner PNG into ``render_dir`` on every call (the caller passes
+    the channel's own work dir), so a channel that is STARTED or CONTENT-RELOADED
+    after the operator saves new text picks up the current text. This does NOT
+    hot-update an already-live pipeline's on-screen text -- the compositor holds no
+    live text-render path (see ``graphics_overlay.py``'s module docstring: text is
+    rasterized once, ahead of time, into a still PNG the compositor decodes) -- only
+    the NEXT pipeline build (a fresh ``start()`` or a seamless
+    ``reload_content()``) reflects a saved change.
+
+    Only the lower-third banner is wired here. ``station_bug_and_lower_third_leg``
+    (the same PR's station-bug/logo layer) requires a ``logo_path``, and there is no
+    operator-facing station-logo config surface yet -- that layer is out of scope
+    for this slice.
+    """
+    if not config.graphics_overlay_enabled:
+        return None
+    text = config.graphics_overlay_lower_third_text.strip()
+    if not text:
+        return None
+    profile = config.canonical_profile
+    render_dir_path = Path(render_dir)
+    render_dir_path.mkdir(parents=True, exist_ok=True)
+    banner_path = render_dir_path / "graphics-overlay-lower-third.png"
+    render_lower_third_png(
+        banner_path,
+        text,
+        canvas_width=profile.width,
+        banner_height=GRAPHICS_OVERLAY_LOWER_THIRD_HEIGHT,
+    )
+    return GraphicsOverlayLeg(
+        layers=(
+            GraphicsOverlayLayer(
+                name="lower_third",
+                image_path=str(banner_path),
+                xpos=0,
+                ypos=profile.height - GRAPHICS_OVERLAY_LOWER_THIRD_HEIGHT,
+                width=profile.width,
+                height=GRAPHICS_OVERLAY_LOWER_THIRD_HEIGHT,
+                alpha=1.0,
+            ),
+        )
+    )
+
+
 def graph_from_config(
     config: EgressConfig,
     source_plan: EgressSourcePlan,
@@ -376,6 +440,7 @@ def graph_from_config(
     audio_tracks: list[AudioProgramTrack] | None = None,
     encoder_override: str | None = None,
     cg_overlay_image: Path | None = None,
+    graphics_overlay: GraphicsOverlayLeg | None = None,
 ) -> PlayoutGraph:
     """Assemble a PlayoutGraph for one channel (design D-S1-6, Option A).
 
@@ -460,6 +525,9 @@ def graph_from_config(
         sinks=sink_branches_from_config(config, resolve_secret),
         # S11a: CEA-708 embed leg, only when the channel opts in (else byte-identical).
         captions=caption_embed_leg(caption_embed) if caption_embed is not None else None,
+        # S15 graphics-overlay operator control: None (default) preserves today's
+        # behavior byte-identically -- see graphics_overlay_leg_from_config.
+        graphics_overlay=graphics_overlay,
         # S11 gap 9: secondary audio PIDs (SAP / descriptive) — non-primary tracks with a
         # source. Empty = single audio PID (byte-identical to today).
         secondary_audio=tuple(

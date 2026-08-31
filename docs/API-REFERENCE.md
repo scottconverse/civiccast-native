@@ -2439,6 +2439,24 @@ Apply a headend delivery profile to a channel's egress config.
 - Request body: `HeadendProfileApplyRequest`
 - Responses: 200 `EgressConfig`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Unknown headend profile; 422 Destination does not satisfy the profile's transport; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `GET /api/staff/egress/channels/{channel_id}/graphics-overlay`
+
+Read the S15 graphics-overlay (lower-third) state for a channel.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `channel_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `GraphicsOverlayStateResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Egress config not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+
+### `PUT /api/staff/egress/channels/{channel_id}/graphics-overlay`
+
+Set the S15 graphics-overlay (lower-third) state for a channel.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `channel_id` (path, required): `string`
+- Request body: `GraphicsOverlayUpdateRequest`
+- Responses: 200 `GraphicsOverlayStateResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Egress config not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+
 ### `GET /api/staff/egress/channels/{channel_id}/health`
 
 Read recent egress health samples.
@@ -6190,6 +6208,8 @@ Read CivicCast local federation metadata.
 - `channel_id` (required): `string`
 - `enabled` (required): `boolean`
 - `fill_policy` (optional): `'slate' | 'bulletins'`
+- `graphics_overlay_enabled` (optional): `boolean`
+- `graphics_overlay_lower_third_text` (optional): `string`
 - `loudness_target_lufs` (optional): `number`
 - `loudness_tolerance_lufs` (optional): `number`
 - `ndi_relay_name` (optional): `string | null`
@@ -6552,6 +6572,17 @@ rule (S13 §5.1).
 - `name` (required): `string` -- GPU model name as reported by NVML.
 - `vram_free_gb` (required): `number` -- Free VRAM in GB at probe time.
 - `vram_total_gb` (required): `number` -- Total VRAM in GB.
+
+### `GraphicsOverlayStateResponse`
+
+- `channel_id` (required): `string`
+- `graphics_overlay_enabled` (required): `boolean`
+- `graphics_overlay_lower_third_text` (required): `string`
+
+### `GraphicsOverlayUpdateRequest`
+
+- `graphics_overlay_enabled` (required): `boolean`
+- `graphics_overlay_lower_third_text` (optional): `string`
 
 ### `GstreamerRepairResponse`
 
