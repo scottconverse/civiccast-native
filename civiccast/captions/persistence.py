@@ -105,6 +105,13 @@ class CaptionReviewItem(Base):
 
     review_item_id: Mapped[str] = mapped_column(String(160), primary_key=True)
     asset_id: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    # BCP-47-ish language tag scoping the review pass this row belongs to
+    # (``en`` transcription vs ``es`` recorded-Spanish translation). Kept
+    # non-null with an ``en`` default/server_default so 0083 backfills every
+    # pre-existing row as English (migration 0083_caption_review_language).
+    language: Mapped[str] = mapped_column(
+        String(12), nullable=False, default="en", server_default="en"
+    )
     cue_id: Mapped[str] = mapped_column(String(160), nullable=False)
     start_seconds: Mapped[float] = mapped_column(Float, nullable=False)
     end_seconds: Mapped[float] = mapped_column(Float, nullable=False)
@@ -143,6 +150,7 @@ class PostgresCaptionReviewStore:
             row = CaptionReviewItem(
                 review_item_id=payload.review_item_id,
                 asset_id=payload.asset_id,
+                language=payload.language,
                 cue_id=payload.cue.cue_id,
                 start_seconds=payload.cue.start_seconds,
                 end_seconds=payload.cue.end_seconds,
@@ -213,6 +221,7 @@ class PostgresCaptionReviewStore:
         *,
         asset_id: str | None = None,
         status: CaptionReviewStatus | None = None,
+        language: str | None = None,
     ) -> list[CaptionReviewItemResponse]:
         with self._session_factory() as session:
             query = select(CaptionReviewItem).order_by(
@@ -222,6 +231,8 @@ class PostgresCaptionReviewStore:
                 query = query.where(CaptionReviewItem.asset_id == asset_id)
             if status is not None:
                 query = query.where(CaptionReviewItem.status == status)
+            if language is not None:
+                query = query.where(CaptionReviewItem.language == language)
             return [_to_response(row) for row in session.execute(query).scalars()]
 
     def approve(
@@ -284,6 +295,7 @@ def _to_response(row: CaptionReviewItem) -> CaptionReviewItemResponse:
         review_item_id=row.review_item_id,
         asset_id=row.asset_id,
         cue=_row_cue(row),
+        language=row.language,
         status=row.status,  # type: ignore[arg-type]
         original_text=row.original_text,
         reviewed_text=row.reviewed_text,

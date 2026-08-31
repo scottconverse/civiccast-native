@@ -1634,7 +1634,7 @@ Manually retry a failed offline caption job (K3).
 List caption review queue items.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
-- Parameters: `asset_id` (query, optional): `string | null`; `status_filter` (query, optional): `'pending' | 'approved' | 'edited' | 'rejected' | null`
+- Parameters: `asset_id` (query, optional): `string | null`; `status_filter` (query, optional): `'pending' | 'approved' | 'edited' | 'rejected' | null`; `language` (query, optional): `string | null`
 - Request body: none
 - Responses: 200 `Array<CaptionReviewItemResponse>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
@@ -5204,6 +5204,7 @@ Read CivicCast local federation metadata.
 
 - `asset_id` (required): `string`
 - `cue` (required): `CaptionCue`
+- `language` (optional): `string`
 - `review_item_id` (required): `string`
 - `reviewer_note` (optional): `string | null`
 
@@ -5213,6 +5214,7 @@ Read CivicCast local federation metadata.
 - `audio_evidence_available` (optional): `boolean`
 - `created_at` (required): `string`
 - `cue` (required): `CaptionCue`
+- `language` (optional): `string`
 - `low_confidence` (required): `boolean`
 - `original_text` (required): `string`
 - `review_item_id` (required): `string`

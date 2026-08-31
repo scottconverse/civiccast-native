@@ -176,6 +176,35 @@ def test_app_factory_wires_translation_provider_into_tap_worker(
     assert provider.model_tag == "translategemma:4b"
 
 
+def test_app_factory_wires_translation_provider_factory_into_offline_caption_worker(
+    durable_app_env: Path,
+) -> None:
+    """Recorded-Spanish (VOD): the offline caption worker must get a
+
+    translation provider factory so the recorded-Spanish leg can run, and
+    the leg must be on by default. Mirrors the LIVE tap assertion above,
+    except the offline worker builds the translator lazily per attempt
+    (nothing queued -> no model load), so the wiring proof is the factory,
+    not an eagerly-built provider.
+    """
+
+    from civiccast.app import create_app
+    from civiccast.translate.ollama import OllamaSpanishTranslator
+
+    app = create_app()
+    worker = getattr(app.state, "offline_caption_worker", None)
+    assert worker is not None, "create_app() must build the offline caption worker"
+    # Spanish is on by default for the native station requirement.
+    assert worker._settings.spanish_enabled is True
+    assert worker._settings.spanish_target_language == "es"
+    # The factory is wired but not yet invoked (no model loaded at startup).
+    assert worker._translation_provider is None
+    assert worker._translation_provider_factory is not None
+    provider = worker._translation_provider_factory()
+    assert isinstance(provider, OllamaSpanishTranslator)
+    assert provider.model_tag == "translategemma:4b"
+
+
 def test_native_station_startup_enables_caption_tap_feed_and_decode_back_proof(
     durable_app_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

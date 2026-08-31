@@ -33,6 +33,8 @@ from civiccast.captions.vod import (
     attach_reviewed_captions,
     extract_caption_audio,
     published_caption_sidecar,
+    published_spanish_caption_sidecar,
+    queue_translated_captions,
     resolve_vod_package,
     reviewed_caption_cues,
     transcribe_asset_captions,
@@ -49,6 +51,7 @@ from civiccast.captions.vod_job import (
 )
 from civiccast.stream._ffmpeg import FfmpegResult
 from civiccast.stream.config import ABR_LADDER, SLATE_RENDITION
+from civiccast.translate.service import DeterministicSpanishTranslator
 
 _ASSET_ID = "council-2026-08-16"
 
@@ -999,3 +1002,330 @@ class TestCaptionTrackReuse:
         assert (package_dir / "captions" / "en" / "playlist.m3u8").read_text(
             encoding="utf-8"
         ) == expected.playlist_path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# recorded-Spanish captions (owner requirement: a published recording carries
+# an operator-reviewed Spanish track alongside English)
+# ---------------------------------------------------------------------------
+
+
+def _approve_language(
+    store: InMemoryCaptionReviewStore,
+    language: str,
+    *,
+    asset_id: str = _ASSET_ID,
+) -> list[str]:
+    """Approve every pending row in one language queue; return the ids."""
+
+    approved: list[str] = []
+    for item in store.list(asset_id=asset_id, language=language):
+        if item.status == "pending":
+            store.approve(item.review_item_id, CaptionReviewDecision())
+            approved.append(item.review_item_id)
+    return approved
+
+
+class TestQueueTranslatedCaptions:
+    def test_spanish_rows_are_queued_low_confidence_false_and_approvable_without_audio(
+        self,
+    ) -> None:
+        """THE LANDMINE. A Spanish cue is a translation with no ASR audio.
+
+        ``require_low_confidence_approval_evidence`` blocks approval of any
+        low_confidence cue lacking retained audio evidence -- so if Spanish
+        rows were queued low_confidence=True they could NEVER be approved and
+        the Spanish track would deadlock. This proves they are queued
+        low_confidence=False and can be approved with no audio evidence at
+        all (no acknowledgement, no retained WAV).
+        """
+
+        review_store = InMemoryCaptionReviewStore()
+        english_cues = [
+            _cue("cue-000000", 0.0, 1.8, "motion carries"),
+            _cue("cue-000001", 2.0, 3.6, "public comment"),
+        ]
+
+        queued = queue_translated_captions(
+            review_store,
+            asset_id=_ASSET_ID,
+            cues=english_cues,
+            provider=DeterministicSpanishTranslator(),
+        )
+
+        spanish_rows = review_store.list(asset_id=_ASSET_ID, language="es")
+        assert len(spanish_rows) == 2
+        assert [row.review_item_id for row in spanish_rows] == queued.created_review_item_ids
+        # Every Spanish row is low_confidence=False and carries no audio
+        # evidence -- the two facts that together prove the landmine is
+        # defused.
+        assert all(not row.low_confidence for row in spanish_rows)
+        assert all(not row.audio_evidence_available for row in spanish_rows)
+
+        # The real proof: approval SUCCEEDS with a bare decision (no
+        # low_confidence_acknowledged, no evidence) -- which would raise
+        # CaptionReviewAudioEvidenceRequiredError for a low_confidence cue.
+        for row in spanish_rows:
+            approved = review_store.approve(row.review_item_id, CaptionReviewDecision())
+            assert approved.status == "approved"
+
+    def test_spanish_rows_are_scoped_to_es_and_do_not_pollute_the_english_queue(
+        self,
+    ) -> None:
+        review_store = InMemoryCaptionReviewStore()
+        # Seed an English row the way transcription would.
+        from civiccast.captions.review import CaptionReviewItemCreate
+
+        review_store.create(
+            CaptionReviewItemCreate(
+                review_item_id=f"{_ASSET_ID}:cue-000000",
+                asset_id=_ASSET_ID,
+                cue=_cue("cue-000000", 0.0, 1.8, "motion carries"),
+            )
+        )
+
+        queue_translated_captions(
+            review_store,
+            asset_id=_ASSET_ID,
+            cues=[_cue("cue-000000", 0.0, 1.8, "motion carries")],
+            provider=DeterministicSpanishTranslator(),
+        )
+
+        english = review_store.list(asset_id=_ASSET_ID, language="en")
+        spanish = review_store.list(asset_id=_ASSET_ID, language="es")
+        assert [row.review_item_id for row in english] == [f"{_ASSET_ID}:cue-000000"]
+        assert [row.review_item_id for row in spanish] == [f"{_ASSET_ID}:cue-000000:es"]
+        # reviewed_caption_cues gates per-language: the two queues never mix.
+        assert reviewed_caption_cues(review_store, _ASSET_ID, language="en").total == 1
+        assert reviewed_caption_cues(review_store, _ASSET_ID, language="es").total == 1
+
+    def test_rerun_reports_duplicates_instead_of_reclobbering_spanish_decisions(
+        self,
+    ) -> None:
+        review_store = InMemoryCaptionReviewStore()
+        english_cues = [_cue("cue-000000", 0.0, 1.8, "motion carries")]
+
+        first = queue_translated_captions(
+            review_store,
+            asset_id=_ASSET_ID,
+            cues=english_cues,
+            provider=DeterministicSpanishTranslator(),
+        )
+        _approve_language(review_store, "es")
+        second = queue_translated_captions(
+            review_store,
+            asset_id=_ASSET_ID,
+            cues=english_cues,
+            provider=DeterministicSpanishTranslator(),
+        )
+
+        assert second.created_review_item_ids == []
+        assert second.duplicate_review_item_ids == first.created_review_item_ids
+        assert {row.status for row in review_store.list(asset_id=_ASSET_ID, language="es")} == {
+            "approved"
+        }
+
+    def test_translate_then_attach_produces_two_tracks_and_two_sidecars(
+        self, tmp_path: Path
+    ) -> None:
+        package_dir = _package(tmp_path / "packages")
+        english_cues = [_cue("cue-000000", 0.0, 1.8, "motion carries")]
+        spanish_cues = [_cue("cue-000000:es", 0.0, 1.8, "la mocion se aprueba")]
+
+        attached = attach_reviewed_captions(package_dir, english_cues, spanish_cues=spanish_cues)
+
+        manifest = (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+        assert manifest.count("#EXT-X-MEDIA:TYPE=SUBTITLES") == 2
+        assert 'LANGUAGE="en"' in manifest and 'LANGUAGE="es"' in manifest
+        assert (package_dir / "captions" / "en" / "playlist.m3u8").is_file()
+        assert (package_dir / "captions" / "es" / "playlist.m3u8").is_file()
+
+        assert attached.spanish_cue_count == 1
+        assert attached.spanish_sidecar_path == published_spanish_caption_sidecar(package_dir)
+        english_body = published_caption_sidecar(package_dir).read_text(encoding="utf-8")
+        spanish_body = attached.spanish_sidecar_path.read_text(encoding="utf-8")
+        assert "motion carries" in english_body
+        assert "la mocion se aprueba" in spanish_body
+
+
+def _spanish_worker(
+    job_store: InMemoryOfflineCaptionJobStore,
+    review_store: InMemoryCaptionReviewStore,
+    runtime: object,
+    *,
+    tmp_path: Path,
+    spanish_enabled: bool = True,
+    max_attempts: int = 3,
+) -> OfflineCaptionJobWorker:
+    return OfflineCaptionJobWorker(
+        job_store,
+        review_store,
+        runtime_factory=lambda: runtime,  # type: ignore[arg-type,return-value]
+        translation_provider_factory=DeterministicSpanishTranslator,
+        settings=OfflineCaptionJobSettings(
+            max_attempts=max_attempts,
+            backoff_seconds=60.0,
+            chunk_seconds=2.0,
+            spanish_enabled=spanish_enabled,
+        ),
+        retention_policy=CaptionEvidenceRetentionPolicy.from_system(
+            storage_root=tmp_path / "egress"
+        ),
+    )
+
+
+class TestTwoPhaseSpanishWorker:
+    def test_english_then_spanish_then_both_tracks_attached(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        source = _write_wav(tmp_path / "meeting.wav", seconds=4.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        worker = _spanish_worker(
+            job_store,
+            review_store,
+            _ScriptedRuntime(["motion carries", "public comment"]),
+            tmp_path=tmp_path,
+        )
+        job = enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+
+        # Stage one: transcribe English, queue for review.
+        after_transcribe = worker.run_once()[0]
+        assert after_transcribe.state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        assert review_store.list(asset_id=_ASSET_ID, language="es") == []
+
+        # A poll before English is decided must not publish or translate.
+        assert worker.run_once()[0].state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        assert review_store.list(asset_id=_ASSET_ID, language="es") == []
+        assert not published_caption_sidecar(package_dir).exists()
+
+        # English approved -> the next poll queues Spanish for its OWN review
+        # pass but publishes NOTHING (Spanish still pending).
+        _approve_language(review_store, "en")
+        gated = worker.run_once()[0]
+        assert gated.state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        spanish_rows = review_store.list(asset_id=_ASSET_ID, language="es")
+        assert len(spanish_rows) == 2
+        assert {row.status for row in spanish_rows} == {"pending"}
+        assert not published_caption_sidecar(package_dir).exists()
+        assert "SUBTITLES" not in (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+
+        # Another poll while Spanish is under review still must not publish.
+        assert worker.run_once()[0].state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        assert not published_caption_sidecar(package_dir).exists()
+
+        # Spanish approved -> both tracks attach on the next poll.
+        _approve_language(review_store, "es")
+        published = worker.run_once()[0]
+        assert published.job_id == job.job_id
+        assert published.state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
+        assert published.published_cue_count == 2
+
+        manifest = (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+        assert manifest.count("#EXT-X-MEDIA:TYPE=SUBTITLES") == 2
+        assert 'LANGUAGE="es"' in manifest
+        assert published_caption_sidecar(package_dir).is_file()
+        assert published_spanish_caption_sidecar(package_dir).is_file()
+        spanish_body = published_spanish_caption_sidecar(package_dir).read_text(encoding="utf-8")
+        # DeterministicSpanishTranslator maps these civic phrases.
+        assert "la mocion se aprueba" in spanish_body
+        assert "comentario publico" in spanish_body
+
+    def test_translation_runs_once_not_on_every_poll(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        """Waiting on Spanish review must not re-invoke the model each poll."""
+
+        source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+
+        class _CountingTranslator(DeterministicSpanishTranslator):
+            calls = 0
+
+            def translate_text(self, text: str, **kwargs: object) -> str:  # type: ignore[override]
+                type(self).calls += 1
+                return super().translate_text(text, **kwargs)  # type: ignore[arg-type]
+
+        _CountingTranslator.calls = 0
+        worker = OfflineCaptionJobWorker(
+            job_store,
+            review_store,
+            runtime_factory=lambda: _ScriptedRuntime(["motion carries"]),  # type: ignore[arg-type,return-value]
+            translation_provider_factory=_CountingTranslator,
+            settings=OfflineCaptionJobSettings(chunk_seconds=2.0, backoff_seconds=60.0),
+            retention_policy=CaptionEvidenceRetentionPolicy.from_system(
+                storage_root=tmp_path / "egress"
+            ),
+        )
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        worker.run_once()  # transcribe
+        _approve_language(review_store, "en")
+        worker.run_once()  # translate + queue Spanish
+        assert _CountingTranslator.calls == 1
+        worker.run_once()  # poll while Spanish pending
+        worker.run_once()  # poll while Spanish pending
+        assert _CountingTranslator.calls == 1  # never re-translated
+
+    def test_spanish_disabled_publishes_english_only(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        worker = _spanish_worker(
+            job_store,
+            review_store,
+            _ScriptedRuntime(["motion carries"]),
+            tmp_path=tmp_path,
+            spanish_enabled=False,
+        )
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        worker.run_once()
+        _approve_language(review_store, "en")
+        done = worker.run_once()[0]
+
+        assert done.state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
+        # No Spanish was queued and only the English track shipped.
+        assert review_store.list(asset_id=_ASSET_ID, language="es") == []
+        manifest = (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+        assert manifest.count("#EXT-X-MEDIA:TYPE=SUBTITLES") == 1
+        assert 'LANGUAGE="es"' not in manifest
+        assert not published_spanish_caption_sidecar(package_dir).exists()
+
+    def test_all_spanish_rejected_ships_english_alone(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        worker = _spanish_worker(
+            job_store, review_store, _ScriptedRuntime(["motion carries"]), tmp_path=tmp_path
+        )
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        worker.run_once()
+        _approve_language(review_store, "en")
+        worker.run_once()  # queues Spanish
+        for row in review_store.list(asset_id=_ASSET_ID, language="es"):
+            review_store.reject(row.review_item_id, CaptionReviewDecision())
+        done = worker.run_once()[0]
+
+        assert done.state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
+        manifest = (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+        # English track ships; Spanish is not forced on when the operator
+        # rejected all of it.
+        assert manifest.count("#EXT-X-MEDIA:TYPE=SUBTITLES") == 1
+        assert not published_spanish_caption_sidecar(package_dir).exists()
+        assert published_caption_sidecar(package_dir).is_file()

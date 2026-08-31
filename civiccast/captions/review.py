@@ -15,6 +15,12 @@ from civiccast.captions.models import CaptionCue
 
 CaptionReviewStatus = Literal["pending", "approved", "edited", "rejected"]
 
+#: Default review-queue language. Offline English transcription and every
+#: pre-language-dimension review row are ``en``; the recorded-Spanish path
+#: (:func:`civiccast.captions.vod.queue_translated_captions`) queues ``es``
+#: rows so the two review passes stay cleanly separated by language.
+DEFAULT_CAPTION_REVIEW_LANGUAGE = "en"
+
 
 class CaptionReviewAudioEvidence(BaseModel):
     """Private local-audio identity retained for one live caption review cue."""
@@ -43,6 +49,11 @@ class CaptionReviewItemRequest(BaseModel):
     review_item_id: Annotated[str, Field(min_length=1, max_length=160)]
     asset_id: Annotated[str, Field(min_length=1, max_length=160)]
     cue: CaptionCue
+    #: BCP-47-ish language tag for the queue this row belongs to. English
+    #: transcription rows are ``en``; recorded-Spanish translation rows are
+    #: ``es``. Defaulted so every existing caller (and every pre-language
+    #: row) is unambiguously English without a code change.
+    language: Annotated[str, Field(min_length=2, max_length=12)] = DEFAULT_CAPTION_REVIEW_LANGUAGE
     reviewer_note: Annotated[str | None, Field(default=None, max_length=1000)] = None
 
 
@@ -83,6 +94,7 @@ class CaptionReviewItemResponse(BaseModel):
     review_item_id: str
     asset_id: str
     cue: CaptionCue
+    language: str = DEFAULT_CAPTION_REVIEW_LANGUAGE
     status: CaptionReviewStatus
     original_text: str
     reviewed_text: str | None = None
@@ -186,8 +198,14 @@ class CaptionReviewStore(Protocol):
         *,
         asset_id: str | None = None,
         status: CaptionReviewStatus | None = None,
+        language: str | None = None,
     ) -> list[CaptionReviewItemResponse]:
-        """Return review items filtered for operator queue views."""
+        """Return review items filtered for operator queue views.
+
+        ``language`` scopes the queue to one review pass (``en`` transcription
+        vs ``es`` translation); the recorded-Spanish path relies on it to keep
+        the two passes separate on a shared ``asset_id``.
+        """
 
     def approve(
         self,
@@ -222,6 +240,7 @@ class InMemoryCaptionReviewStore:
             review_item_id=payload.review_item_id,
             asset_id=payload.asset_id,
             cue=payload.cue,
+            language=payload.language,
             status="pending",
             original_text=payload.cue.text,
             reviewed_text=None,
@@ -252,12 +271,15 @@ class InMemoryCaptionReviewStore:
         *,
         asset_id: str | None = None,
         status: CaptionReviewStatus | None = None,
+        language: str | None = None,
     ) -> list[CaptionReviewItemResponse]:
         rows = list(self._items.values())
         if asset_id is not None:
             rows = [row for row in rows if row.asset_id == asset_id]
         if status is not None:
             rows = [row for row in rows if row.status == status]
+        if language is not None:
+            rows = [row for row in rows if row.language == language]
         return [
             deepcopy(row)
             for row in sorted(rows, key=lambda item: (item.created_at, item.review_item_id))

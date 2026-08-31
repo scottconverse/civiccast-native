@@ -12,6 +12,8 @@ import {
 import { hasOperatorRole } from '../auth/roles'
 import {
   CAPTION_STATUS_META,
+  captionLanguageMeta,
+  captionLanguageOf,
   type CaptionReviewItemResponse,
   type CaptionReviewStatus,
 } from '../types/captions'
@@ -25,6 +27,28 @@ const FILTERS: ReadonlyArray<{ id: FilterId; label: string }> = [
   { id: 'approved', label: 'Approved' },
   { id: 'rejected', label: 'Rejected' },
 ]
+
+type LanguageFilterId = 'all' | 'en' | 'es'
+
+const LANGUAGE_FILTERS: ReadonlyArray<{ id: LanguageFilterId; label: string }> = [
+  { id: 'all', label: 'All languages' },
+  { id: 'en', label: 'English' },
+  { id: 'es', label: 'Spanish' },
+]
+
+function LanguageBadge({ language }: { language: string }) {
+  const meta = captionLanguageMeta(language)
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
+      style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+      title={`${meta.label} caption review`}
+      aria-label={`${meta.label} caption review`}
+    >
+      {meta.code}
+    </span>
+  )
+}
 
 const EMPTY_ITEMS: CaptionReviewItemResponse[] = []
 
@@ -260,6 +284,7 @@ export function ReviewCard({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <LanguageBadge language={captionLanguageOf(item)} />
           {item.low_confidence && (
             <span
               className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
@@ -387,6 +412,7 @@ export function ReviewCard({
 
 export function ReviewQueueScreen() {
   const [filter, setFilter] = useState<FilterId>('pending')
+  const [languageFilter, setLanguageFilter] = useState<LanguageFilterId>('all')
   const [search, setSearch] = useState('')
   const [approvalFailureGenerations, setApprovalFailureGenerations] = useState<
     Record<string, number>
@@ -443,6 +469,7 @@ export function ReviewQueueScreen() {
     const needle = search.trim().toLowerCase()
     return items.filter((item) => {
       if (filter !== 'all' && item.status !== filter) return false
+      if (languageFilter !== 'all' && captionLanguageOf(item) !== languageFilter) return false
       if (
         needle &&
         !item.asset_id.toLowerCase().includes(needle) &&
@@ -453,7 +480,17 @@ export function ReviewQueueScreen() {
       }
       return true
     })
-  }, [filter, items, search])
+  }, [filter, languageFilter, items, search])
+
+  const languageCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const item of items) {
+      const language = captionLanguageOf(item)
+      counts[language] = (counts[language] ?? 0) + 1
+    }
+    return counts
+  }, [items])
+  const hasSpanish = (languageCounts.es ?? 0) > 0
 
   const busy =
     approveMutation.isPending || editMutation.isPending || rejectMutation.isPending
@@ -512,6 +549,47 @@ export function ReviewQueueScreen() {
             )
           })}
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 px-6">
+        <span
+          className="text-[10px] font-semibold uppercase tracking-wider"
+          style={{ color: 'var(--cc-ink-3)' }}
+        >
+          Language
+        </span>
+        <div role="tablist" aria-label="Caption review language filter" className="flex flex-wrap gap-2">
+          {LANGUAGE_FILTERS.map((item) => {
+            const active = item.id === languageFilter
+            const count =
+              item.id === 'all' ? items.length : languageCounts[item.id] ?? 0
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setLanguageFilter(item.id)}
+                className="min-h-8 rounded-md px-3 py-2 text-xs font-medium"
+                style={{
+                  background: active ? 'var(--cc-brand)' : 'transparent',
+                  color: active ? 'var(--cc-brand-ink)' : 'var(--cc-ink-2)',
+                  border: '1px solid var(--cc-line)',
+                }}
+              >
+                {item.label}
+                <span className="ml-1.5" style={{ color: active ? 'var(--cc-brand-ink)' : 'var(--cc-ink-3)' }}>
+                  {count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+        {!hasSpanish && (
+          <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+            Spanish cues appear here after English captions are approved and translated.
+          </span>
+        )}
       </div>
 
       {staffIdentityQuery.isSuccess && !canReview && (

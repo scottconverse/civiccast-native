@@ -17766,6 +17766,7 @@
           "captions"
         ],
         "summary": "List caption review queue items",
+        "description": "List review-queue rows.\n\n``language`` scopes to one review pass -- ``en`` (English transcription)\nor ``es`` (recorded-Spanish translation). Omitted, both are returned so\nthe operator console can render the language badge and filter\nclient-side; the parameter lets a caller fetch just one queue directly.",
         "operationId": "list_review_items_api_staff_captions_review_items_get",
         "parameters": [
           {
@@ -17804,6 +17805,22 @@
                 }
               ],
               "title": "Status Filter"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Language"
             }
           }
         ],
@@ -35451,6 +35468,13 @@
           "cue": {
             "$ref": "#/components/schemas/CaptionCue"
           },
+          "language": {
+            "type": "string",
+            "maxLength": 12,
+            "minLength": 2,
+            "title": "Language",
+            "default": "en"
+          },
           "reviewer_note": {
             "anyOf": [
               {
@@ -35486,6 +35510,11 @@
           },
           "cue": {
             "$ref": "#/components/schemas/CaptionCue"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
           },
           "status": {
             "type": "string",

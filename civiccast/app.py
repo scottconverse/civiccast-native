@@ -1275,6 +1275,16 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # caption tier and inherits the hardware-adaptive device the native
         # station runtime published into the environment (PR #398).
         runtime_factory=lambda: build_caption_runtime(_build_ai_model_service(session_factory)),
+        # Recorded-Spanish leg: a published recording carries an
+        # operator-reviewed Spanish track alongside English (owner
+        # requirement). Mirrors the LIVE tap's translation wiring above
+        # (build_translator at the CaptionTapWorker construction) -- the
+        # operator-selected translation tier (local TranslateGemma by
+        # default). Built lazily per attempt, same reason as the runtime
+        # factory: a station with nothing queued never loads the model.
+        translation_provider_factory=lambda: build_translator(
+            _build_ai_model_service(session_factory)
+        ),
         settings=offline_caption_settings,
     )
     app.state.offline_caption_worker = offline_caption_worker
