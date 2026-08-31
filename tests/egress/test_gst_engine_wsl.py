@@ -1372,3 +1372,167 @@ def test_content_reload_to_live_udp_ingest_continuity(tmp_path: Path) -> None:
     assert rc in (0, 70), f"worker did not exit after live takeover (rc={rc}); log:\n{logtext}"
     _assert_reload_committed(logtext)
     _assert_continuous(out_ts, logtext)
+
+
+# --- S15 graphics-overlay leg: station bug + lower-third banner (live compositing) ---
+
+
+def _graphics_overlay_available() -> bool:
+    """True only when the real compositor element the leg builds on is registered.
+    The bundled native-Windows runtime ships d3d11compositor and no other compositor
+    (confirmed by a real gst-inspect enumeration -- see graph.GraphicsOverlayLeg's
+    docstring); this skips cleanly wherever that element is absent instead of
+    false-failing, the same pattern _cc_embed_elements_available() uses."""
+    from gi.repository import Gst
+
+    Gst.init([])
+    from civiccast.egress.gst.graphics_overlay import GRAPHICS_OVERLAY_ELEMENT
+
+    return Gst.ElementFactory.find(GRAPHICS_OVERLAY_ELEMENT) is not None
+
+
+def _ffmpeg_frame_rgb24(ts: Path, out_raw: Path) -> bytes | None:
+    """Grab the first decoded RGB24 frame from ``ts`` via ffmpeg. Returns None (caller
+    skips) if ffmpeg isn't installed -- this proof step is a stronger-than-continuity
+    check (did the composited pixels actually change), not a hard dependency of the
+    suite. Deliberately does NOT pass ``-ss``: mpegtsmux stamps this product's TS with
+    a large PTS base (observed start=3600s on a real captured file), and ffmpeg's
+    ``-ss`` input-seek against that offset silently produced a zero-frame output on
+    this box -- grabbing frame 0 sidesteps that rather than fighting it, and the
+    graphics-overlay layers are on screen from the first frame (no fade-in), so frame 0
+    is exactly as valid a proof frame as any later one."""
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        return None
+    proc = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(ts),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            str(out_raw),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0 or not out_raw.exists():
+        return None
+    return out_raw.read_bytes()
+
+
+def test_graphics_overlay_composites_station_bug_and_lower_third(tmp_path: Path) -> None:
+    """S15 graphics-overlay leg, live: a station bug PNG + a rendered lower-third
+    banner are actually composited onto the program video through a real
+    d3d11compositor pipeline (filesrc/decodebin -> d3d11upload -> compositor pad,
+    repeat-after-eos holding each still image on screen -> d3d11download -> encode).
+
+    Proof bar: (1) MPEG-TS continuity is clean with the overlay ON -- the same bar
+    every other live-engine test in this module clears; (2) DECODED OUTPUT PIXELS at
+    the logo corner and the lower-third band differ from the plain program pattern's
+    color there -- i.e. this is not just 'the pipeline didn't crash', it's 'the pixels
+    on screen actually changed' (skipped, not failed, if ffmpeg isn't installed to
+    decode the proof frame -- continuity is still asserted unconditionally)."""
+    if not _graphics_overlay_available():
+        pytest.skip(
+            "d3d11compositor is not registered in this GStreamer runtime -- the "
+            "graphics-overlay leg has nothing to build on"
+        )
+    from civiccast.egress.gst.graphics_overlay import station_bug_and_lower_third_leg
+
+    canvas_w, canvas_h = 640, 360
+    logo_path = tmp_path / "logo.png"
+    # Fully-opaque bright green square -- easy to tell apart from videotestsrc's SMPTE
+    # bars (pattern 0) at the pixel level.
+    from civiccast.egress.gst.graphics_overlay import write_rgba_png
+
+    logo_w = logo_h = 80
+    write_rgba_png(logo_path, logo_w, logo_h, bytes((0, 255, 0, 255)) * (logo_w * logo_h))
+
+    overlay = station_bug_and_lower_third_leg(
+        logo_path=logo_path,
+        logo_corner="top-left",
+        logo_width=logo_w,
+        logo_height=logo_h,
+        logo_alpha=1.0,
+        canvas_width=canvas_w,
+        canvas_height=canvas_h,
+        banner_text="CIVICCAST LIVE",
+        banner_height=50,
+    )
+
+    caps = f"video/x-raw,width={canvas_w},height={canvas_h},framerate=30/1"
+    src = graphmod.SourceLeg(
+        label="program",
+        elements=(
+            _E("videotestsrc", props={"is-live": True, "pattern": 0}),  # 0 = SMPTE bars
+            _E("capsfilter", props={"caps": caps}),
+        ),
+    )
+    out_ts = tmp_path / "out.ts"
+    graph = graphmod.PlayoutGraph(
+        sources=(src,),
+        encoder=graphmod.encode_chain_specs(
+            width=canvas_w, height=canvas_h, fps=30, bitrate_kbps=2000, gop=30
+        ),
+        mux=_E("mpegtsmux", name="mux"),
+        sinks=((_E("queue"), _E("filesink", props={"location": str(out_ts)})),),
+        graphics_overlay=overlay,
+    )
+    proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        time.sleep(3.0)
+        _send(control, "stop")
+        rc = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+    logtext = log.read_text(encoding="utf-8", errors="replace")
+    assert rc == 0, f"unclean teardown with graphics overlay on (rc={rc}); log:\n{logtext}"
+    assert out_ts.exists() and out_ts.stat().st_size > 0, f"no TS produced; log:\n{logtext}"
+    _assert_continuous(out_ts, logtext)
+
+    raw = _ffmpeg_frame_rgb24(out_ts, tmp_path / "frame.raw")
+    if raw is None:
+        pytest.skip("ffmpeg not installed -- skipping the decoded-pixel compositing proof")
+    stride = canvas_w * 3
+    assert len(raw) >= stride * canvas_h, f"short decoded frame ({len(raw)} bytes); log:\n{logtext}"
+
+    def pixel(x: int, y: int) -> tuple[int, int, int]:
+        off = y * stride + x * 3
+        return (raw[off], raw[off + 1], raw[off + 2])
+
+    # Logo corner (well inside the 80x80 green square, away from any encoder-block
+    # edge softening): must read as green-dominant, nothing like SMPTE-bar white/blue.
+    r, g, b = pixel(30, 30)
+    assert g > r and g > b and g > 120, (
+        f"logo corner pixel {(r, g, b)} does not read as the green station bug -- "
+        f"overlay did not visibly composite; log:\n{logtext}"
+    )
+    # Lower-third band (near the bottom): must read as the banner's dark-blue bar, not
+    # SMPTE bars' bright colors at that same x/y in an un-overlaid frame.
+    r2, g2, b2 = pixel(200, canvas_h - 10)
+    assert b2 >= r2 and b2 >= g2 and (r2 + g2 + b2) < 400, (
+        f"lower-third pixel {(r2, g2, b2)} does not read as the dark banner bar -- "
+        f"overlay did not visibly composite; log:\n{logtext}"
+    )
+
+
+def test_graphics_overlay_disabled_matches_existing_no_overlay_behavior(tmp_path: Path) -> None:
+    """Regression bar: a graph with ``graphics_overlay=None`` (the default -- every
+    pre-existing caller in this codebase) must build and run exactly as it did before
+    this leg existed. ``demo_test_graph`` never sets the field, so this is the same
+    call shape ``test_build_play_teardown_clean``/``test_swap_role_continuity`` already
+    exercise -- pinned here explicitly, next to the overlay-ON test, so a future reader
+    sees the ON/OFF pair together."""
+    graph = graphmod.demo_test_graph(nsrc=2)
+    assert graph.graphics_overlay is None
+    rc, out_ts, log = _run_worker(tmp_path, graph, commands=["swap 1"], produce_window=1.0)
+    assert rc == 0, f"unclean teardown with graphics overlay off (rc={rc}); log:\n{log}"
+    _assert_continuous(out_ts, log)

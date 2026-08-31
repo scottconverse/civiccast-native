@@ -22,6 +22,12 @@
 # manual/Playwright acceptance work. Gate A is a fast, cheap, fail-closed
 # floor that runs on every candidate build, not a replacement for either.
 #
+# DIRTY LANE <gate-a-dirty-lane>: a second job (station-acceptance-dirty,
+# below) reruns the same acceptance against a box carrying REMNANTS of a
+# previous install -- the harness installs the candidate, plants operator
+# data, really uninstalls it, optionally seeds an orphaned caption tier, and
+# reinstalls. See that job's own header and docs/ops/gate-a.md, "Dirty lane".
+#
 # STATUS: informational only. It reports its verdict on every candidate but
 # does NOT block merges or releases until the owner promotes it to a required
 # check after 3 consecutive green runs (docs/ops/gate-a.md, "Promotion
@@ -381,4 +387,274 @@ jobs:
           $verdictLabel = '<unknown>'
           if ($verdict) { $verdictLabel = $verdict }
           Write-Error "Gate A did not PASS (Run-GateA.ps1 exit code: $code, verdict: $verdictLabel). See the uploaded gate-a-verdict / evidence artifacts."
+          exit 1
+
+  # ==========================================================================
+  # DIRTY-BOX REMNANT LANE <gate-a-dirty-lane>. Same candidate kit, same
+  # sandbox, but the in-sandbox harness first installs the candidate, plants
+  # operator data, REALLY uninstalls it, optionally seeds an orphaned
+  # captions-large-v3 remnant, and then runs the full acceptance flow against
+  # that remnant-carrying box -- the shape of every real customer upgrade
+  # machine. Weeks of field failures (installers green in the pristine
+  # sandbox, dead on machines carrying leftover ProgramData state; most
+  # recently DESKTOP-2BR3SJR's 2026-08-30 #18 supervisor crash-loop on a
+  # preserved-but-receiptless caption tier, fixed in PR #80) never had a CI
+  # gate because Gate A's sandbox has no history. This lane is that gate.
+  #
+  # Runs AFTER the clean lane (needs:), on the same runner; the workflow's
+  # `concurrency: sandbox-lab` group already serializes whole runs against
+  # candidate builds. INFORMATIONAL like the clean lane -- the owner promotes
+  # to required later. Timing contract: the dirty in-sandbox watchdog is 210
+  # minutes (two install cycles), the host poll below is 230, and this job's
+  # timeout-minutes must outlast 230 plus the up-to-90-minute shared-sandbox
+  # wait window -- asserted by tests/gate_a/test_gate_a_harness_contract.py.
+  # ==========================================================================
+  station-acceptance-dirty:
+    name: Dirty-box remnant lane (uninstall-remnant reinstall) + verdict
+    needs: station-acceptance
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, windows, sandbox-lab]
+    timeout-minutes: 340
+    steps:
+      - name: Wait for prior run's workspace to be clean
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          # Same rename-probe drain as the clean job above -- the clean lane
+          # that just finished on this same runner may still be releasing its
+          # VSMB handles when this job's Checkout starts. See that step's
+          # comment for the observed EBUSY this prevents.
+          if (-not (Test-Path 'sandbox-lab')) {
+            Write-Host "No sandbox-lab/ present yet -- nothing to drain, proceeding to Checkout."
+            exit 0
+          }
+          function Test-DirectoryHandlesFree {
+              param([string]$Path)
+              if (-not (Test-Path -LiteralPath $Path)) { return $true }
+              $parent = Split-Path -Parent $Path
+              $leaf = Split-Path -Leaf $Path
+              $probeLeaf = "$leaf.checkout-drain-probe-$([guid]::NewGuid().ToString('N'))"
+              $probePath = Join-Path $parent $probeLeaf
+              try {
+                  Rename-Item -LiteralPath $Path -NewName $probeLeaf -ErrorAction Stop
+              } catch {
+                  return $false
+              }
+              try {
+                  Rename-Item -LiteralPath $probePath -NewName $leaf -ErrorAction Stop
+                  return $true
+              } catch {
+                  Start-Sleep -Milliseconds 500
+                  try {
+                      Rename-Item -LiteralPath $probePath -NewName $leaf -ErrorAction Stop
+                  } catch {
+                      Write-Warning "Could not rename $probePath back to $leaf -- left renamed for manual recovery: $_"
+                  }
+                  return $false
+              }
+          }
+          $probeTargets = @('scripts', 'hoststore', 'output', 'soak-4h') |
+              ForEach-Object { Join-Path 'sandbox-lab' $_ } |
+              Where-Object { Test-Path $_ }
+          if (-not $probeTargets) {
+            Write-Host "sandbox-lab/ present but none of its mapped subfolders exist -- proceeding to Checkout."
+            exit 0
+          }
+          $deadline = (Get-Date).AddSeconds(300)
+          while ($true) {
+              $busy = @($probeTargets | Where-Object { -not (Test-DirectoryHandlesFree -Path $_) })
+              if ($busy.Count -eq 0) { Write-Host "Workspace is clean."; break }
+              Write-Host "$((Get-Date).ToString('o')) waiting on prior run's teardown -- still locked: $($busy -join ', ')"
+              if ((Get-Date) -ge $deadline) { Write-Warning "Still locked after 300s -- proceeding to Checkout anyway."; break }
+              Start-Sleep -Seconds 5
+          }
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve target run id and candidate sha
+        id: run_id
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $runId = "${{ github.event.inputs.run_id }}"
+          if ([string]::IsNullOrWhiteSpace($runId)) {
+            $runId = "${{ github.event.workflow_run.id }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($runId)) {
+            throw "Could not resolve a run id from either workflow_dispatch input or workflow_run event."
+          }
+          "run_id=$runId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $sha = "${{ github.event.workflow_run.head_sha }}"
+          if ([string]::IsNullOrWhiteSpace($sha)) {
+            Write-Host "No workflow_run head_sha available (workflow_dispatch trigger) -- resolving via gh run view $runId."
+            $runJson = & gh run view $runId -R "scottconverse/civiccast-native" --json headSha 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh run view $runId failed: $runJson"
+            }
+            $sha = ($runJson | ConvertFrom-Json).headSha
+          }
+          if ([string]::IsNullOrWhiteSpace($sha)) {
+            throw "Could not resolve a candidate sha for run $runId."
+          }
+          "source_sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "run_id=$runId source_sha=$sha"
+
+      - name: Clean previous kit-staging (21 GB/run -- keep only the current candidate)
+        shell: pwsh
+        run: |
+          $stagingRoot = "sandbox-lab/kit-staging"
+          $currentSha = "${{ steps.run_id.outputs.source_sha }}"
+          if (Test-Path $stagingRoot) {
+            Get-ChildItem -Path $stagingRoot -Directory -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -ne $currentSha } |
+              ForEach-Object {
+                Write-Host "Removing stale kit-staging dir: $($_.FullName)"
+                if ($_.LinkType) {
+                  $_.Delete()
+                } else {
+                  Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                }
+              }
+          } else {
+            New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+          }
+
+      - name: Reuse a locally pre-staged kit when this box already has it
+        id: local_kit
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $sha = "${{ steps.run_id.outputs.source_sha }}"
+          $local = Join-Path "C:\CivicCastTester\kit-staging" $sha
+          $target = Join-Path "sandbox-lab/kit-staging" $sha
+          if ((Test-Path (Join-Path $local "station")) -and (Get-ChildItem $local -Filter "*setup.exe" -ErrorAction SilentlyContinue)) {
+            New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+            if (Test-Path $target) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }
+            New-Item -ItemType Junction -Path $target -Target $local | Out-Null
+            Write-Host "Reusing locally staged kit: $local"
+            "found=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "No locally staged kit at $local -- falling back to artifact download."
+            "found=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Download the candidate kit artifact (parallel, chunked)
+        if: steps.local_kit.outputs.found != 'true'
+        uses: actions/download-artifact@v4
+        timeout-minutes: 60
+        with:
+          name: native-beta-kit-${{ steps.run_id.outputs.source_sha }}
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}
+
+      - name: Run Gate A (dirty lane)
+        id: gate_a_dirty
+        shell: pwsh
+        run: |
+          # Dirty-lane timing contract: the in-sandbox watchdog raises itself
+          # to 210 minutes when DIRTY_MODE.txt is present, so -TimeoutMinutes
+          # here MUST stay above 210 (210 < 230, the dirty analogue of the
+          # clean lane's 150 < 170 -- asserted by tests/gate_a/
+          # test_gate_a_harness_contract.py). -SoakMinutes 10 keeps the total
+          # two-install-cycle run inside that bound; the clean lane already
+          # soaked this same candidate for 20.
+          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DirtyLane -SoakMinutes 10 -TimeoutMinutes 230
+          $exitCode = $LASTEXITCODE
+          "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $latest = Get-ChildItem -Path "sandbox-lab/evidence" -Directory -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName "gate-a-verdict.json") } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($latest) {
+            "evidence_dir=$($latest.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+          exit $exitCode
+
+      - name: Publish the dirty-lane verdict to the run summary
+        if: always()
+        shell: pwsh
+        run: |
+          # The dirty lane's whole point is loud visibility -- put the verdict
+          # (including the SKIP status of any uncovered remnant shape) on the
+          # run's front page, not just inside an artifact.
+          $evidenceDir = "${{ steps.gate_a_dirty.outputs.evidence_dir }}"
+          $lines = @("## Gate A dirty lane (uninstall-remnant reinstall)", "")
+          $verdictPath = if ($evidenceDir) { Join-Path $evidenceDir 'gate-a-verdict.json' } else { $null }
+          if ($verdictPath -and (Test-Path $verdictPath)) {
+            try {
+              $v = Get-Content -Path $verdictPath -Raw | ConvertFrom-Json
+              $lines += "**Verdict: $($v.verdict)** (lane: $($v.lane))"
+              $lines += ""
+              $lines += "| check | status | detail |"
+              $lines += "| --- | --- | --- |"
+              foreach ($prop in $v.checks.PSObject.Properties) {
+                $detail = ($prop.Value.detail -replace '\|', '\|')
+                $lines += "| $($prop.Name) | $($prop.Value.status) | $detail |"
+              }
+              if (($v.checks.PSObject.Properties | Where-Object { $_.Value.status -eq 'SKIP' })) {
+                $lines += ""
+                $lines += "> :warning: One or more remnant shapes were **NOT covered** this run (status SKIP above). See docs/ops/gate-a.md, 'Dirty lane'."
+              }
+            } catch {
+              $lines += "Could not parse gate-a-verdict.json: $_"
+            }
+          } else {
+            $lines += "No gate-a-verdict.json was produced (exit code: ${{ steps.gate_a_dirty.outputs.exit_code }})."
+          }
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Upload dirty-lane verdict
+        if: always() && steps.gate_a_dirty.outputs.evidence_dir != ''
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 30
+        with:
+          name: gate-a-dirty-verdict-${{ steps.run_id.outputs.run_id }}
+          path: ${{ steps.gate_a_dirty.outputs.evidence_dir }}/gate-a-verdict.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload dirty-lane evidence
+        if: always() && steps.gate_a_dirty.outputs.evidence_dir != ''
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 30
+        with:
+          name: gate-a-dirty-${{ steps.run_id.outputs.run_id }}
+          path: ${{ steps.gate_a_dirty.outputs.evidence_dir }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail the job on a non-PASS verdict or harness error
+        if: always()
+        shell: pwsh
+        run: |
+          # Same BUSY / HARNESS_ERROR discrimination as the clean job above --
+          # neither is a station-acceptance finding, and neither may read as a
+          # dirty-lane product failure.
+          $code = "${{ steps.gate_a_dirty.outputs.exit_code }}"
+          if ($code -eq '0') {
+            Write-Host "Gate A dirty lane PASS."
+            exit 0
+          }
+          $verdict = $null
+          $evidenceDir = "${{ steps.gate_a_dirty.outputs.evidence_dir }}"
+          if ($evidenceDir -and (Test-Path (Join-Path $evidenceDir 'gate-a-verdict.json'))) {
+            try {
+              $verdict = (Get-Content -Path (Join-Path $evidenceDir 'gate-a-verdict.json') -Raw | ConvertFrom-Json).verdict
+            } catch {
+              Write-Warning "Could not parse gate-a-verdict.json to determine verdict: $_"
+            }
+          }
+          if ($verdict -eq 'BUSY') {
+            Write-Error "Gate A dirty lane did not run: Windows Sandbox was busy for the entire wait window. NOT a product failure -- re-run this workflow once the sandbox is free."
+            exit 1
+          }
+          if ($verdict -eq 'HARNESS_ERROR') {
+            Write-Error "Gate A dirty lane produced no station-acceptance verdict: the run's evidence channel broke (see gate-a-verdict.json's harness_error field). NOT a candidate failure -- re-run this workflow."
+            exit 1
+          }
+          $verdictLabel = '<unknown>'
+          if ($verdict) { $verdictLabel = $verdict }
+          Write-Error "Gate A dirty lane did not PASS (Run-GateA.ps1 exit code: $code, verdict: $verdictLabel). A candidate that only passes the pristine sandbox is exactly the failure family this lane exists to catch -- see the uploaded gate-a-dirty-verdict / evidence artifacts."
           exit 1

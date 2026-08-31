@@ -135,7 +135,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9a1dd0a3957e0a6d226be60b23f86c678a70529e
+        blob: 1a10e7af737d833f18bb91fedd7dcc00916406ca
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -213,7 +213,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9a1dd0a3957e0a6d226be60b23f86c678a70529e
+        blob: 1a10e7af737d833f18bb91fedd7dcc00916406ca
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -268,7 +268,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9a1dd0a3957e0a6d226be60b23f86c678a70529e
+        blob: 1a10e7af737d833f18bb91fedd7dcc00916406ca
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -331,7 +331,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9a1dd0a3957e0a6d226be60b23f86c678a70529e
+        blob: 1a10e7af737d833f18bb91fedd7dcc00916406ca
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -424,16 +424,16 @@ entries:
         - path: civiccast/egress/gst/worker.py
           blob: b21875effd5b5bfab36b65a92f03574e0b82e264
         - path: civiccast/egress/gst/engine.py
-          blob: bdaa1ad26f65879a8c904742e2bd49c187289aeb
+          blob: 6f4bedec81c9d3633136e217aebdcbdf6f055f1a
         - path: civiccast/egress/gst/graph.py
-          blob: 7bd347a1ebe3749721c889df5795e0605d8d5445
+          blob: 398eb6b568e14c2c8d0d16292337ba5a5b506338
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 7aad6604cde194692972740f77e2048d93a6ed96
+        blob: 4bb7ea020764f488c12e5b23b98ee4b08cadf9af
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -442,7 +442,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9a1dd0a3957e0a6d226be60b23f86c678a70529e
+        blob: 1a10e7af737d833f18bb91fedd7dcc00916406ca
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -464,7 +464,7 @@ entries:
       # exact-config artifact that was never committed for this spike.
       fixtures:
         - path: civiccast/egress/gst/graph.py
-          blob: 7bd347a1ebe3749721c889df5795e0605d8d5445
+          blob: 398eb6b568e14c2c8d0d16292337ba5a5b506338
     controls:
       - id: native-decision-gate-authority-record
         command: >-
@@ -553,16 +553,16 @@ entries:
         - path: civiccast/egress/gst/worker.py
           blob: b21875effd5b5bfab36b65a92f03574e0b82e264
         - path: civiccast/egress/gst/engine.py
-          blob: bdaa1ad26f65879a8c904742e2bd49c187289aeb
+          blob: 6f4bedec81c9d3633136e217aebdcbdf6f055f1a
         - path: civiccast/egress/gst/graph.py
-          blob: 7bd347a1ebe3749721c889df5795e0605d8d5445
+          blob: 398eb6b568e14c2c8d0d16292337ba5a5b506338
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 7aad6604cde194692972740f77e2048d93a6ed96
+        blob: 4bb7ea020764f488c12e5b23b98ee4b08cadf9af
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -571,7 +571,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9a1dd0a3957e0a6d226be60b23f86c678a70529e
+        blob: 1a10e7af737d833f18bb91fedd7dcc00916406ca
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1

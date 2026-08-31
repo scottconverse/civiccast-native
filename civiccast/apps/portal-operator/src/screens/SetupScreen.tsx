@@ -18,6 +18,7 @@ import {
   recoverStationAdmin,
   recordProviderProof,
   saveProviderCredentials,
+  STAFF_SIGNED_OUT_NOTICE_KEY,
   testProviderConnection,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
@@ -1272,6 +1273,25 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
   const queryClient = useQueryClient()
   const stationNameRef = useRef<HTMLInputElement | null>(null)
   const [form, setForm] = useState<FirstAdminSetupRequest>(INITIAL_FORM)
+  // Set by the shared 401 handler (src/queryClient.ts) when it discarded a
+  // stored staff token the server no longer accepted -- explains WHY the
+  // operator is looking at a sign-in card again instead of leaving them to
+  // suspect the station broke. Cleared on the next successful sign-in.
+  const [signedOutNotice, setSignedOutNotice] = useState<boolean>(() => {
+    try {
+      return window.sessionStorage.getItem(STAFF_SIGNED_OUT_NOTICE_KEY) != null
+    } catch {
+      return false
+    }
+  })
+  const clearSignedOutNotice = () => {
+    try {
+      window.sessionStorage.removeItem(STAFF_SIGNED_OUT_NOTICE_KEY)
+    } catch {
+      // Storage unavailable -- nothing persisted to clear.
+    }
+    setSignedOutNotice(false)
+  }
   const [confirmPassword, setConfirmPassword] = useState('')
   const [touched, setTouched] = useState<Record<string, boolean>>({})
   const markTouched = (key: string) => setTouched((current) => ({ ...current, [key]: true }))
@@ -1321,6 +1341,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
     onSuccess: (response) => {
       window.localStorage.setItem('civiccast.staffToken', response.operator_console_token)
       window.sessionStorage.setItem('civiccast.staffToken', response.operator_console_token)
+      clearSignedOutNotice()
       setAuthenticated(response)
       void queryClient.resetQueries({ queryKey: ['staff-identity'] })
       void queryClient.invalidateQueries({ queryKey: ['system-health'] })
@@ -1332,6 +1353,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
     onSuccess: (response) => {
       window.localStorage.setItem('civiccast.staffToken', response.operator_console_token)
       window.sessionStorage.setItem('civiccast.staffToken', response.operator_console_token)
+      clearSignedOutNotice()
       setAuthenticated(response)
       setRecoveryForm(INITIAL_RECOVERY)
       void queryClient.resetQueries({ queryKey: ['staff-identity'] })
@@ -1443,6 +1465,25 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
 
       {stateQuery.data?.setup_complete && !completed && (
         <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+          {signedOutNotice && (
+            <section
+              role="status"
+              className="rounded-md p-4 lg:col-span-2"
+              style={{
+                background: 'var(--cc-warn-soft, var(--cc-err-soft))',
+                border: '1px solid var(--cc-warn, var(--cc-err))',
+              }}
+            >
+              <h2 className="m-0 text-base font-semibold">You were signed out</h2>
+              <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+                This browser&apos;s console session is no longer valid — most often because it
+                was the oldest session and was removed to stay under the station&apos;s
+                concurrent-session limit after many sign-ins elsewhere, or because the
+                station&apos;s sign-in state was reset. Nothing is wrong with the station.
+                Sign in below to continue where you left off.
+              </p>
+            </section>
+          )}
           {stateQuery.data.recovery_kit_acknowledged === false && (
             <section
               role="alert"

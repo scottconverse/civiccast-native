@@ -23,7 +23,7 @@ WORKFLOWS = (
 # How far ci-test.yml's `--floor` values are allowed to sit below the ACTUAL,
 # freshly-collected tests/native count before this policy suite fails the
 # build. Chosen 2026-08-30 after an audit found the floors unmoved since the
-# repo's first commit while the real collection grew to (1675, 1869) -- 246
+# repo's first commit while the real collection grew to (1683, 1877) -- 246
 # and 304 tests of undetected slack. Every real batch in this file's own
 # history comment trail below adds low tens of tests at a time (the largest
 # single jump on record is +19); 50 comfortably absorbs a normal PR or two of
@@ -1007,8 +1007,8 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # both lanes; the 2 windows_only tests collect only into the full lane.
     # Rebased onto fix/setup-nonce-handoff's own floor (1666, 1858) after
     # that PR landed first; re-derived by an actual `--collect-only` run on
-    # this POST-REBASE tree, not by arithmetic: (1666, 1858) -> (1675, 1869).
-    assert (collect("not windows_only"), collect()) == (1676, 1870)
+    # this POST-REBASE tree, not by arithmetic: (1666, 1858) -> (1683, 1877).
+    assert (collect("not windows_only"), collect()) == (1683, 1877)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

@@ -148,9 +148,10 @@ class TestRoleGate:
         assert resp.status_code == 403
 
     def test_support_admin_may_read(self, factory) -> None:  # type: ignore[no-untyped-def]
-        # No board yet -> 404 (not 403): the read gate admits support_admin.
+        # No board yet -> 200 + null (not 403): the read gate admits support_admin.
         resp = _client(factory, scopes=("support",)).get(_BOARD)
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert resp.json() is None
 
     def test_503_when_storage_unwired(self, factory) -> None:  # type: ignore[no-untyped-def]
         resp = _client(factory, wire=False).post(
@@ -373,9 +374,15 @@ class TestPreviewPngDegradedSignal:
 
 
 class TestErrors:
-    def test_get_and_patch_board_404_without_board(self, factory) -> None:  # type: ignore[no-untyped-def]
+    def test_board_state_without_board(self, factory) -> None:  # type: ignore[no-untyped-def]
         client = _client(factory)
-        assert client.get(_BOARD).status_code == 404
+        # GET is the empty state, not an error: 200 + JSON null. The operator
+        # console polls this on every CG Board / Designer open, and a 404 put a
+        # red network error in the browser console for a perfectly normal state.
+        resp = client.get(_BOARD)
+        assert resp.status_code == 200
+        assert resp.json() is None
+        # Mutating a board that doesn't exist IS an error and stays 404.
         assert client.patch(_BOARD, json={"template_id": "x"}).status_code == 404
         assert client.get("/api/staff/cg/channels/public/preview").status_code == 404
 

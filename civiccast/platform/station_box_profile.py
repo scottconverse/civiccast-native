@@ -341,16 +341,47 @@ def select_ai_defaults(hardware_probe: HardwareProbe) -> AiDefaultSelection:
 # §3 EngineReadiness — GStreamer engine prerequisite detection
 # ---------------------------------------------------------------------------
 
+#: Base-tier elements the SHIPPED engine genuinely cannot run without.
+#:
+#: FIXED 2026-08-30 (field evidence, candidate #19): this list used to mirror
+#: S1 §6.5's original prose (`compositor`, `interpipesrc`/`interpipesink`,
+#: `hlssink3`, `textoverlay`/`clockoverlay`, ...), which predates two recorded
+#: product decisions, so Screen 8 failed EVERY correct install of the bundled
+#: runtime:
+#:
+#: * S15's dated Stage-0 decision (2026-06-14) demoted GstInterpipe to an
+#:   OPTIONAL future enhancement -- the shipping hot-swap mechanism is
+#:   ``input-selector`` (`civiccast.egress.gst.engine` drives exactly that),
+#:   and the RidgeRun interpipe plugin is not in the pinned upstream wheels
+#:   at all (its source build is unauthorized, S15 §3/§9).
+#: * The engine's HLS output is the supervised ffmpeg relay over ``udpsink``
+#:   (`civiccast.egress.hls_relay` -- no ``hlssink*`` element ships), and the
+#:   base slate deliberately avoids pango (`civiccast.egress.gst.bridge`,
+#:   design D-S1-7), so ``hlssink3``/``textoverlay``/``clockoverlay``/
+#:   ``compositor`` are not base prerequisites of the product that ships.
+#:
+#: Every factory here is in `civiccast.native.runtime_closure.REQUIRED_FACTORIES`
+#: (asserted by tests/platform/test_station_box_profile.py), so this probe can
+#: never demand an element the packaging closure does not guarantee.
 _BASE_REQUIRED_PLUGINS: tuple[str, ...] = (
-    "compositor",
-    "interpipesrc",
-    "interpipesink",
+    "input-selector",
     "mpegtsmux",
     "udpsink",
     "srtsink",
-    "hlssink3",
+    "videotestsrc",
+    "audiotestsrc",
+)
+
+#: S15 CG-lite / native-HLS elements that are probed and honestly reported in
+#: ``missing_plugins`` when absent (S1 §7-9 honesty boundary) but never gate
+#: the base tier: the shipped product does not use them yet (see the
+#: `_BASE_REQUIRED_PLUGINS` note above), and the bundled runtime does not
+#: ship them today, so gating on them would fail every correct install.
+_CG_HLS_OPTIONAL_PLUGINS: tuple[str, ...] = (
+    "compositor",
     "textoverlay",
     "clockoverlay",
+    "hlssink3",
 )
 _SDI_BROADCAST_EXTRA_PLUGINS: tuple[str, ...] = ("decklinkvideosink", "ndisink")
 _PREMIUM_CG_EXTRA_PLUGINS: tuple[str, ...] = ("wpesrc",)
@@ -556,7 +587,11 @@ def probe_engine_readiness(
     missing: list[str] = []
     hw_encoder: HardwareEncoder = "none"
     if gstreamer_present:
-        for plugin in (*_BASE_REQUIRED_PLUGINS, *_SDI_BROADCAST_EXTRA_PLUGINS):
+        for plugin in (
+            *_BASE_REQUIRED_PLUGINS,
+            *_CG_HLS_OPTIONAL_PLUGINS,
+            *_SDI_BROADCAST_EXTRA_PLUGINS,
+        ):
             if not _plugin_present(run, plugin):
                 missing.append(plugin)
         for encoder_kind, element in _HW_ENCODER_ELEMENTS.items():
@@ -575,20 +610,21 @@ def probe_engine_readiness(
 
     opengl_45 = opengl_45_override if opengl_45_override is not None else (gpu is not None)
 
-    next_step = _engine_next_step(
-        gstreamer_present=gstreamer_present,
-        missing=missing,
-        decklink_sdk_present=decklink_sdk_present,
-        ndi_sdk_present=ndi_sdk_present,
-        native_os=native_os,
-    )
-
     # Only meaningful when the DEFAULT runner actually ran (production path,
     # or a test exercising the default runner directly); an injected `runner`
     # bypasses `_default_gst_inspect_runner` entirely, so the source concept
     # doesn't apply there and the model's "unavailable" default stands.
     runtime_source: GstRuntimeSource = (
         _detect_gst_runtime_source() if runner is None else "unavailable"
+    )
+
+    next_step = _engine_next_step(
+        gstreamer_present=gstreamer_present,
+        missing=missing,
+        decklink_sdk_present=decklink_sdk_present,
+        ndi_sdk_present=ndi_sdk_present,
+        native_os=native_os,
+        runtime_source=runtime_source,
     )
 
     return EngineReadiness(
@@ -615,11 +651,22 @@ def _engine_next_step(
     decklink_sdk_present: bool,
     ndi_sdk_present: bool,
     native_os: bool,
+    runtime_source: GstRuntimeSource = "unavailable",
 ) -> str:
     if not gstreamer_present:
         return _GST_INSPECT_HINT
     base_missing = [plugin for plugin in missing if plugin in _BASE_REQUIRED_PLUGINS]
     if base_missing:
+        if runtime_source == "bundled":
+            # Every base-required element is guaranteed by the packaging
+            # closure (runtime_closure.REQUIRED_FACTORIES), so a bundled
+            # runtime missing one is an incomplete/corrupt install -- not
+            # something an operator can "install a plugin" into.
+            return (
+                "The installed CivicCast GStreamer runtime is incomplete "
+                f"(missing: {', '.join(base_missing)}). Re-run the CivicCast "
+                "installer's repair (native-app-payload component) to re-stage it."
+            )
         return f"Install gst-plugins-base/good/bad/rs for: {', '.join(base_missing)}."
     if not decklink_sdk_present:
         return (
@@ -654,7 +701,11 @@ def compute_engine_tier_verdict(engine: EngineReadiness) -> EngineTierVerdict:
             EngineBlocker(
                 tier="base",
                 reason=f"Missing base plugin(s): {', '.join(base_missing)}.",
-                next_step=f"Install gst-plugins-base/good/bad/rs for: {', '.join(base_missing)}.",
+                # engine.next_step already carries the source-aware remedy
+                # (bundled runtime -> installer repair; PATH runtime ->
+                # install the plugin packages).
+                next_step=engine.next_step
+                or f"Install gst-plugins-base/good/bad/rs for: {', '.join(base_missing)}.",
             )
         )
 

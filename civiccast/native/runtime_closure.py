@@ -40,6 +40,7 @@ __all__ = [
     "LINUX_ONLY_FACTORIES",
     "NON_FACTORY_PLUGINS",
     "REQUIRED_FACTORIES",
+    "STAGED_OPTIONAL_FACTORIES",
     "GplPolicyError",
     "MissingPluginError",
     "RuntimeClosureError",
@@ -274,6 +275,12 @@ FACTORY_PLUGIN: Mapping[str, str] = {
     # -- excluded (mapped so the negative control has something to refuse) --
     "x264enc": "gstx264.dll",
     "x265enc": "gstx265.dll",
+    # -- S15 CG-lite / native-HLS (staged, not yet engine-required) ---------
+    "compositor": "gstcompositor.dll",
+    "textoverlay": "gstpango.dll",
+    "clockoverlay": "gstpango.dll",
+    "timeoverlay": "gstpango.dll",
+    "hlssink3": "gsthlssink3.dll",
 }
 
 #: The 52 factories the product's pipelines cannot run without. Derived from
@@ -340,6 +347,32 @@ REQUIRED_FACTORIES = frozenset(
         "voaacenc",
     }
 )
+
+#: S15 CG-lite / native-HLS factories staged into the shipped tree AHEAD of
+#: any pipeline using them, per PR #88's disposition: `_BASE_REQUIRED_PLUGINS`
+#: (the commissioning probe's gate, `civiccast.platform.station_box_profile`)
+#: was found to demand `compositor`/`textoverlay`/`clockoverlay`/`hlssink3`
+#: that the shipped engine genuinely never used, and no pipeline in
+#: `civiccast/egress/gst/engine.py` builds a graph with any of these
+#: factories today -- so they do NOT belong in `REQUIRED_FACTORIES`, whose
+#: docstring is specifically "the factories the product's pipelines cannot
+#: run without". They belong here instead: plugins whose DLLs already ship
+#: in the pinned `gstreamer-libs`/`gstreamer-plugins` 1.28.5 wheels (no new
+#: upstream artifact, no version bump) and are staged now so the S15
+#: CG-lite compositing and native-HLS work can start against a runtime that
+#: already carries them, rather than needing a separate packaging change
+#: later.
+#:
+#: Unlike `CONDITIONAL_FACTORIES`/`ABSENCE_TOLERANT_FACTORIES`, presence
+#: here is NOT gated on "is it in `origins`" -- these are unconditionally
+#: folded into the build script's `required` set, so a build refuses loudly
+#: (`MissingPluginError`) if a future upstream bump ever drops one, instead
+#: of silently shipping a tree missing the plugin. `interpipesrc`/
+#: `interpipesink` are deliberately NOT here: PR #88 recorded that the
+#: RidgeRun interpipe plugin is not in the pinned wheels at all and would
+#: need a new upstream artifact, which is out of scope for an additive,
+#: no-new-download change.
+STAGED_OPTIONAL_FACTORIES = frozenset({"compositor", "textoverlay", "clockoverlay", "hlssink3"})
 
 #: Profile-selected encoders that ship when their plugin is present but whose
 #: *factories* only register on matching hardware. NVENC is the NVIDIA path;
