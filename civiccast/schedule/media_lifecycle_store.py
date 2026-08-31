@@ -159,7 +159,16 @@ class MediaLifecycleStore:
             for asset in assets:
                 row = readiness_by_id.get(asset.asset_id)
                 state = row.readiness_state if row is not None else "not_ready"
-                reason = row.readiness_reason if row is not None else None
+                # Mirror get()'s honest "not computed" reason: a dashboard row
+                # with no AssetReadiness record used to ship reason=None, so
+                # the operator UI showed a bare "Not ready" dot with no
+                # explanation (candidate #17 field finding, second report).
+                reason = (
+                    row.readiness_reason
+                    if row is not None
+                    else "Readiness has not been computed yet; the lifecycle worker "
+                    "runs on its normal poll interval."
+                )
                 by_asset.append(
                     ReadinessDashboardRow(
                         asset_id=asset.asset_id,

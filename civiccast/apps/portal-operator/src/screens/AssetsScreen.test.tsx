@@ -146,22 +146,15 @@ describe('AssetsScreen action labels', () => {
   })
 })
 
-describe('AssetsScreen readiness badges (S7)', () => {
-  it('shows a readiness badge for an asset the dashboard reports', async () => {
+describe('AssetsScreen status badges (S7 / candidate #17 second report)', () => {
+  it('surfaces in-flight transcodes from the readiness dashboard on an unpackaged asset', async () => {
     vi.mocked(getReadinessDashboard).mockResolvedValue({
       total_assets: 2,
-      ready_count: 1,
+      ready_count: 0,
       transcoding_count: 1,
       missing_count: 0,
       rejected_count: 0,
       by_asset: [
-        {
-          asset_id: 'asset-public',
-          title: 'x',
-          readiness_state: 'ready',
-          readiness_reason: null,
-          in_flight_jobs_count: 0,
-        },
         {
           asset_id: 'asset-education',
           title: 'x',
@@ -173,11 +166,12 @@ describe('AssetsScreen readiness badges (S7)', () => {
     })
     const { findByText } = renderScreen()
 
-    expect(await findByText('Ready')).toBeTruthy()
     expect(await findByText(/Transcoding \(2\)/)).toBeTruthy()
   })
 
-  it('falls back to a dash when the dashboard has no row for an asset', async () => {
+  it('still shows an honest derived status when the dashboard has no row for an asset', async () => {
+    // The lifecycle worker not having run must not blank or falsify the
+    // status column -- the asset row itself carries the truth.
     vi.mocked(getReadinessDashboard).mockResolvedValue({
       total_assets: 0,
       ready_count: 0,
@@ -188,13 +182,14 @@ describe('AssetsScreen readiness badges (S7)', () => {
     })
     const { findAllByText } = renderScreen()
 
-    const dashes = await findAllByText('—')
-    expect(dashes.length).toBeGreaterThan(0)
+    // Both fixture assets are recorded with no manifest: not servable yet.
+    const badges = await findAllByText('Not servable yet')
+    expect(badges.length).toBe(2)
   })
 
   it('does not break the asset list when the readiness dashboard request fails', async () => {
     vi.mocked(getReadinessDashboard).mockRejectedValue(new Error('boom'))
-    const { findByRole } = renderScreen()
+    const { findByRole, findAllByText } = renderScreen()
 
     // The primary asset list still renders even though the secondary
     // readiness signal failed -- readiness is best-effort, not a hard
@@ -204,15 +199,16 @@ describe('AssetsScreen readiness badges (S7)', () => {
         name: /Open detail for Scheduled recording 2026-06-28 15:44 UTC \(asset-public\)/,
       }),
     ).toBeTruthy()
+    expect((await findAllByText('Not servable yet')).length).toBe(2)
   })
 
-  it('clarifies that a published asset is already live even while its readiness dot is not "Ready"', async () => {
-    // Candidate #17 tester finding 6: "council-test-clip still shows 'Not
-    // ready' even after it was successfully packaged AND published."
+  it('shows Packaged for a validated+packaged asset even when the worker never computed readiness', async () => {
+    // Candidate #17 field finding, second report: "an asset that is
+    // ingest-Validated AND Packaged still shows 'Not ready'."
     const row = {
       ...asset('asset-public'),
+      state: 'validated' as const,
       manifest_url: 'http://127.0.0.1:8000/media/vod/asset-public/playlist.m3u8',
-      published_at: '2026-08-01T12:00:00Z',
     }
     vi.mocked(listStaffAssets).mockResolvedValue([row])
     vi.mocked(getReadinessDashboard).mockResolvedValue({
@@ -231,14 +227,51 @@ describe('AssetsScreen readiness badges (S7)', () => {
         },
       ],
     })
+    const { findByText, queryByText } = renderScreen()
+
+    expect(await findByText('Packaged')).toBeTruthy()
+    expect(queryByText('Not ready')).toBeNull()
+  })
+
+  it('shows Published for a published asset regardless of the readiness row', async () => {
+    const row = {
+      ...asset('asset-public'),
+      state: 'validated' as const,
+      manifest_url: 'http://127.0.0.1:8000/media/vod/asset-public/playlist.m3u8',
+      published_at: '2026-08-01T12:00:00Z',
+    }
+    vi.mocked(listStaffAssets).mockResolvedValue([row])
+    const { findByTitle, queryByText } = renderScreen()
+
+    // findByText('Published') would collide with the table's "Published"
+    // column header; the badge is uniquely identified by its detail tooltip.
+    expect(await findByTitle('Live on the resident portal.')).toBeTruthy()
+    expect(queryByText('Not ready')).toBeNull()
+  })
+
+  it('flags a missing backing file as an error state even on a published asset', async () => {
+    const row = {
+      ...asset('asset-public'),
+      state: 'validated' as const,
+      manifest_url: 'http://127.0.0.1:8000/media/vod/asset-public/playlist.m3u8',
+      published_at: '2026-08-01T12:00:00Z',
+      file_status: 'missing' as const,
+    }
+    vi.mocked(listStaffAssets).mockResolvedValue([row])
     const { findByText } = renderScreen()
 
-    expect(await findByText('Not ready')).toBeTruthy()
-    expect(
-      await findByText(
-        'Already live on the portal — this dot tracks the optimized playback proxy, not publish status.',
-      ),
-    ).toBeTruthy()
+    expect(await findByText('Missing file')).toBeTruthy()
+  })
+
+  it('labels an asset still in ingest validation as Validating, not "Not ready"', async () => {
+    const row = { ...asset('asset-public'), state: 'pending_ingest' as const }
+    vi.mocked(listStaffAssets).mockResolvedValue([row])
+    const { findAllByText, queryByText } = renderScreen()
+
+    // Badge label (the state filter tab also says "Analyzing"; the status
+    // badge says "Validating").
+    expect((await findAllByText('Validating')).length).toBeGreaterThan(0)
+    expect(queryByText('Not ready')).toBeNull()
   })
 })
 
