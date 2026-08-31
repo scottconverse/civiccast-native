@@ -14,6 +14,7 @@ import {
   rejectActivityPubFollower,
   replayActivityPubDeliveryRetry,
 } from '../api/client'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { manualLink } from './manual-link'
 import type {
   ActivityPubStatusResponse,
@@ -106,6 +107,7 @@ function LoadingState() {
 
 export function DisabledPanel({ status }: { status: ActivityPubStatusResponse }) {
   const [copied, setCopied] = useState(false)
+  const [confirmingGenerate, setConfirmingGenerate] = useState(false)
   const mutation = useMutation({
     mutationFn: generateActivityPubStationKey,
     onSuccess: () => setCopied(false),
@@ -166,7 +168,7 @@ export function DisabledPanel({ status }: { status: ActivityPubStatusResponse })
         <button
           type="button"
           disabled={mutation.isPending}
-          onClick={() => mutation.mutate()}
+          onClick={() => setConfirmingGenerate(true)}
           className="rounded-md px-4 py-2 text-sm font-semibold"
           style={{
             background: mutation.isPending ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
@@ -176,6 +178,23 @@ export function DisabledPanel({ status }: { status: ActivityPubStatusResponse })
           {mutation.isPending ? 'Generating...' : 'Generate station key'}
         </button>
       </div>
+      {confirmingGenerate && (
+        <ConfirmDialog
+          title="Generate the station key?"
+          body={
+            status.has_station_key
+              ? 'A station key already exists on disk, so generating reuses it — the station keeps the same federation identity.'
+              : "This creates the station's permanent federation identity key on disk. Other fediverse services will recognize the station by this key once federation is enabled."
+          }
+          confirmLabel="Generate key"
+          tone="brand"
+          onConfirm={() => {
+            setConfirmingGenerate(false)
+            mutation.mutate()
+          }}
+          onCancel={() => setConfirmingGenerate(false)}
+        />
+      )}
       {mutation.error && (
         <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
           {mutation.error instanceof ApiError

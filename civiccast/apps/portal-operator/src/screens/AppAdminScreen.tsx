@@ -11,6 +11,7 @@ import {
   updateStoreSubmission,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import type {
   AppBuildRecord,
   BuildRequest,
@@ -60,13 +61,23 @@ export function NewBuildForm({
   submitting: boolean
   onSubmit: (payload: BuildRequest) => void
 }) {
-  const [appTarget, setAppTarget] = useState<BuildRequest['app_target']>('web_pwa')
-  const [tier, setTier] = useState<'unbranded' | 'branded'>('unbranded')
+  // Both fields start unselected so a half-filled form can never queue a
+  // build: "Queue build" stays disabled until the operator has explicitly
+  // chosen a platform and a tier, then a confirmation dialog restates what
+  // will be built before anything runs.
+  const [appTarget, setAppTarget] = useState<BuildRequest['app_target'] | ''>('')
+  const [tier, setTier] = useState<'unbranded' | 'branded' | ''>('')
+  const [confirming, setConfirming] = useState(false)
+  const formValid = appTarget !== '' && tier !== ''
+  const disabled = submitting || !formValid
   return (
     <div className="grid gap-2 rounded-md p-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end" style={insetStyle}>
       <label className="grid gap-1 text-xs">
         <span style={{ color: 'var(--cc-ink-3)' }}>Platform target</span>
-        <select aria-label="Platform target" value={appTarget} onChange={(e) => setAppTarget(e.target.value as BuildRequest['app_target'])} className="rounded-md px-2 py-1.5" style={fieldStyle}>
+        <select aria-label="Platform target" value={appTarget} onChange={(e) => setAppTarget(e.target.value as BuildRequest['app_target'] | '')} className="rounded-md px-2 py-1.5" style={fieldStyle}>
+          <option value="" disabled>
+            Select a platform…
+          </option>
           {APP_TARGETS.map((t) => (
             <option key={t} value={t}>
               {humanize(t)}
@@ -76,7 +87,10 @@ export function NewBuildForm({
       </label>
       <label className="grid gap-1 text-xs">
         <span style={{ color: 'var(--cc-ink-3)' }}>Tier</span>
-        <select aria-label="Tier" value={tier} onChange={(e) => setTier(e.target.value as 'unbranded' | 'branded')} className="rounded-md px-2 py-1.5" style={fieldStyle}>
+        <select aria-label="Tier" value={tier} onChange={(e) => setTier(e.target.value as 'unbranded' | 'branded' | '')} className="rounded-md px-2 py-1.5" style={fieldStyle}>
+          <option value="" disabled>
+            Select a tier…
+          </option>
           {BUILD_TIERS.map((t) => (
             <option key={t} value={t}>
               {humanize(t)}
@@ -86,16 +100,29 @@ export function NewBuildForm({
       </label>
       <button
         type="button"
-        disabled={submitting}
-        onClick={() => onSubmit({ app_target: appTarget, build_tier: tier })}
+        disabled={disabled}
+        onClick={() => setConfirming(true)}
         className="rounded-md px-3 py-1.5 text-xs font-semibold"
         style={{
-          background: submitting ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
-          color: submitting ? 'var(--cc-ink-3)' : 'var(--cc-brand-ink)',
+          background: disabled ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
+          color: disabled ? 'var(--cc-ink-3)' : 'var(--cc-brand-ink)',
         }}
       >
         {submitting ? 'Building…' : 'Queue build'}
       </button>
+      {confirming && formValid && (
+        <ConfirmDialog
+          title={`Queue a ${humanize(appTarget)} build (${humanize(tier)} tier)?`}
+          body="The build runs on this machine using the station app build toolchain and appears in Build history when it finishes."
+          confirmLabel="Queue build"
+          tone="brand"
+          onConfirm={() => {
+            setConfirming(false)
+            onSubmit({ app_target: appTarget, build_tier: tier })
+          }}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
     </div>
   )
 }
