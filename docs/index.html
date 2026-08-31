@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CivicCast - Open-source civic meeting publication</title>
+    <title>CivicCast - Open-source civic broadcast software</title>
     <meta
       name="description"
-      content="CivicCast is open-source, self-hostable civic meeting recording and publication software. The rc line proves recorded-sample rehearsal, private packaging, explicit Portal approval, and resident playback; rc18 is the published controlled beta."
+      content="CivicCast is open-source, self-hostable civic broadcast software for PEG and local-government stations. v1.0.0-beta.1 is a development candidate: record, caption, review, and publish meetings to residents is proven end-to-end; on-air graphics and live broadcast are new and operator-drivable; cable headend output and syndication are on the roadmap."
     />
     <meta property="og:title" content="CivicCast" />
     <meta
       property="og:description"
-      content="Record and publish civic meetings on infrastructure you control. rc18 is the published controlled beta; its rc15 foundation passed exact-artifact clean-Windows validation for the bounded recorded-media workflow."
+      content="Record and publish civic meetings on infrastructure you control. v1.0.0-beta.1 is an owner-held development candidate, not yet a public release."
     />
     <meta property="og:type" content="website" />
     <style>
@@ -202,7 +202,7 @@
         hyphens: auto;
         overflow-wrap: break-word;
         letter-spacing: 0;
-        line-height: 0.9;
+        line-height: 0.95;
         margin: 0;
         max-width: 850px;
       }
@@ -254,8 +254,7 @@
         color: var(--ink);
       }
 
-      /* Download buttons carry the version, size and file type on a second
-         line so nobody has to click to find out what they are getting. */
+      /* Buttons that carry a status line beneath the label. */
       .button:has(.button-sub) {
         flex-direction: column;
         gap: 3px;
@@ -348,47 +347,46 @@
         margin: 0;
       }
 
-      .meter-grid {
+      .pipeline {
         display: grid;
-        gap: 10px;
-        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
       }
 
-      .meter {
-        background: rgba(255, 255, 255, 0.08);
-        min-height: 92px;
-        padding: 14px;
-      }
-
-      .meter strong {
-        display: block;
-        font-family: var(--display);
-        font-size: 1.45rem;
-        margin-top: 8px;
-      }
-
-      .timeline {
-        display: grid;
-        gap: 10px;
-      }
-
-      .timeline-row {
+      .pipeline-row {
         align-items: center;
+        background: rgba(255, 255, 255, 0.06);
+        border-left: 3px solid var(--sky);
         display: grid;
-        gap: 12px;
-        grid-template-columns: 82px 1fr;
+        gap: 4px 14px;
+        grid-template-columns: 108px 1fr;
+        padding: 10px 12px;
       }
 
-      .bar {
-        background: rgba(255, 255, 255, 0.12);
-        height: 12px;
-        overflow: hidden;
+      .pipeline-row.new {
+        border-left-color: var(--gold);
       }
 
-      .bar span {
-        background: var(--sky);
-        display: block;
-        height: 100%;
+      .pipeline-row span.step-name {
+        color: rgba(255, 255, 255, 0.55);
+        font-family: var(--mono);
+        font-size: 0.66rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .pipeline-row strong {
+        font-size: 0.94rem;
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      .pipeline-row em {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 0.78rem;
+        font-style: normal;
+        grid-column: 2;
+        grid-row: 2;
       }
 
       main {
@@ -427,6 +425,14 @@
         vertical-align: middle;
       }
 
+      .badge.amber {
+        background: var(--gold-ink);
+      }
+
+      .badge.muted {
+        background: var(--muted);
+      }
+
       h2 {
         font-family: var(--display);
         font-size: clamp(2rem, 4vw, 4.35rem);
@@ -453,14 +459,18 @@
       .feature {
         background: var(--surface);
         border: 1px solid var(--line);
-        min-height: 230px;
+        min-height: 210px;
         padding: 25px;
+      }
+
+      .feature.roadmap {
+        background: rgba(52, 64, 84, 0.04);
       }
 
       .feature h3 {
         font-family: var(--display);
-        font-size: 1.55rem;
-        line-height: 1.08;
+        font-size: 1.4rem;
+        line-height: 1.1;
         margin: 0 0 14px;
       }
 
@@ -472,7 +482,11 @@
       .feature .tag {
         color: var(--gold-ink);
         display: block;
-        margin-bottom: 38px;
+        margin-bottom: 28px;
+      }
+
+      .feature .tag.proven {
+        color: var(--green);
       }
 
       .band {
@@ -561,7 +575,7 @@
 
       .beta-card {
         background: var(--surface);
-        border-left: 6px solid var(--green);
+        border-left: 6px solid var(--gold-ink);
         box-shadow: 0 18px 60px rgba(16, 24, 40, 0.08);
         max-width: 860px;
         padding: 30px;
@@ -572,6 +586,15 @@
         font-size: clamp(1.8rem, 3vw, 3rem);
         line-height: 1;
         margin: 0 0 16px;
+      }
+
+      .beta-card p {
+        color: var(--ink-soft);
+      }
+
+      .fine-print {
+        color: var(--muted);
+        font-size: 0.9rem;
       }
 
       .docs-grid {
@@ -606,16 +629,7 @@
         font-size: 0.92rem;
       }
 
-      .doc.superseded {
-        /* UI-1 (gate-civiccast): a 0.66 group-opacity faded these still-clickable
-           historical links' description text to ~3.9:1, below WCAG AA. Keep the
-           text at full contrast; the "(superseded)" label in the copy carries the
-           status, plus a subtle ink tint de-emphasises the card without touching
-           text legibility. */
-        background: rgba(52, 64, 84, 0.05);
-      }
-
-      /* Desktop shows the full nav; the mobile download shortcut is hidden here. */
+      /* Desktop shows the full nav; the mobile shortcut is hidden here. */
       .nav-download {
         display: none;
       }
@@ -657,7 +671,7 @@
           display: none;
         }
 
-        /* With the nav hidden on mobile, keep a persistent tester shortcut. */
+        /* With the nav hidden on mobile, keep a persistent shortcut to status. */
         .nav-download {
           display: inline-flex;
           align-items: center;
@@ -704,12 +718,6 @@
           padding-right: 18px;
         }
 
-        /* h1 needs no override here: its clamp is container-relative, so it
-           already tracks the stacked single-column width. The old
-           clamp(3rem, 15vw, 4rem) sized off the viewport and produced 56px
-           type in a 339px column, forcing "infrastructure" to break
-           mid-word as "infrastructur / e". */
-
         .actions {
           flex-direction: column;
         }
@@ -718,8 +726,8 @@
           width: 100%;
         }
 
-        .meter-grid {
-          grid-template-columns: 1fr;
+        .pipeline-row {
+          grid-template-columns: 88px 1fr;
         }
       }
     </style>
@@ -729,62 +737,59 @@
     <header class="topbar" aria-label="Site header">
       <a class="brand" href="#top">Civic<span>Cast</span></a>
       <nav class="nav" aria-label="Primary navigation">
-        <a href="#features">Features</a>
-        <a href="#capabilities">Capabilities</a>
+        <a href="#proven">What works</a>
+        <a href="#new">New this candidate</a>
+        <a href="#roadmap">Roadmap</a>
         <a href="#workflow">Workflow</a>
-        <a href="#cost">Cost</a>
-        <a href="#beta">Beta</a>
+        <a href="#status">Status</a>
         <a href="#docs">Docs</a>
-        <a href="https://github.com/scottconverse/civiccast">GitHub</a>
+        <a href="https://github.com/scottconverse/civiccast-native">GitHub</a>
       </nav>
     </header>
 
     <!-- Body-level (not inside .topbar, whose backdrop-filter would trap a
-         fixed child): mobile-only persistent tester shortcut. -->
-    <!-- The class was already called nav-download; now it actually is one. -->
-    <a class="nav-download" href="https://github.com/scottconverse/civiccast/releases/download/v1.0.0-rc18/civiccast-1.0.0-rc18-windows-setup.exe" aria-label="Download the CivicCast v1.0.0-rc18 Windows installer, 232 MB">Download</a>
+         fixed child): mobile-only persistent status shortcut. -->
+    <a class="nav-download" href="#status">Release status</a>
 
     <section class="hero" id="top">
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="eyebrow">Open-source civic meeting software - controlled beta</p>
-          <h1>Record and publish civic meetings on infrastructure you control.</h1>
+          <p class="eyebrow">Open-source civic broadcast software - development beta</p>
+          <h1>Record a meeting. Caption it offline. Publish it for residents.</h1>
           <p class="lede">
-            The bounded local workflow -- create or upload recorded media, rehearse that exact sample privately, package it privately, explicitly approve Portal publication, and confirm resident playback -- was proven end-to-end against rc17's exact bytes on 2026-07-20; rc18 carries the same code path but that full walkthrough has not yet been re-run on rc18's shipped bytes. Live ingest, 24/7 station operation, hardware/headend delivery, external providers, and app stores need separate integration and field proof.
+            CivicCast is a self-hostable, open, public-good broadcast platform for
+            PEG and local-government stations, built to run on a Windows PC a
+            station already owns. <strong>v1.0.0-beta.1</strong> is a development
+            candidate: the record-and-publish core is proven end-to-end.
+            On-air graphics and live broadcast are new this candidate and
+            operator-drivable. Cable headend output, multi-channel playout, and
+            outside syndication are on the roadmap, not in this beta.
           </p>
           <div class="actions">
-            <!-- The download is the reason most visitors are here; it used to
-                 live only in the #beta section three screens down, behind a
-                 button labelled "v1.0.0-rc18" that opened the release listing
-                 rather than downloading anything. -->
-            <a class="button primary" href="https://github.com/scottconverse/civiccast/releases/download/v1.0.0-rc18/civiccast-1.0.0-rc18-windows-setup.exe" aria-label="Download the CivicCast v1.0.0-rc18 Windows installer, 232 MB">Download for Windows<span class="button-sub"><span>v1.0.0-rc18</span> &middot; 232 MB &middot; .exe</span></a>
-            <a class="button secondary" href="#beta">Read candidate status</a>
-            <a class="button secondary" href="https://github.com/scottconverse/civiccast">Browse the source</a>
+            <a class="button primary" href="#status">Read release status</a>
+            <a class="button secondary" href="https://github.com/scottconverse/civiccast-native">Browse the source</a>
             <a class="button secondary" href="USER-MANUAL.pdf">Read the user manual</a>
-            <a class="button secondary" href="https://github.com/scottconverse/civiccast/discussions">Join the beta</a>
+            <a class="button secondary" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">Read the product spec</a>
           </div>
         </div>
 
-        <aside class="product-shot" aria-label="CivicCast product preview">
+        <aside class="product-shot" aria-label="CivicCast meeting-night pipeline">
           <div class="shot-top">
             <strong>CivicCast Console</strong>
-            <span class="status-dot">Recorded-media beta</span>
+            <span class="status-dot">Development beta</span>
           </div>
           <div class="shot-main">
             <article class="broadcast-card">
-              <h2>June Board Meeting</h2>
-              <p>Private package ready for explicit Portal approval.</p>
+              <h2>Meeting-night pipeline</h2>
+              <p>Record through resident playback is proven end-to-end this candidate.</p>
             </article>
-            <div class="meter-grid">
-              <div class="meter"><span class="tag">Live</span><strong>Probe required</strong></div>
-              <div class="meter"><span class="tag">Package</span><strong>Private</strong></div>
-              <div class="meter"><span class="tag">Portal</span><strong>Awaiting approval</strong></div>
-            </div>
-            <div class="timeline" aria-label="Meeting workflow preview">
-              <div class="timeline-row"><span>Setup</span><div class="bar"><span style="width: 100%"></span></div></div>
-              <div class="timeline-row"><span>Broadcast</span><div class="bar"><span style="width: 72%"></span></div></div>
-              <div class="timeline-row"><span>Review</span><div class="bar"><span style="width: 42%"></span></div></div>
-              <div class="timeline-row"><span>Publish</span><div class="bar"><span style="width: 22%"></span></div></div>
+            <div class="pipeline" aria-label="Pipeline stages">
+              <div class="pipeline-row"><span class="step-name">Record</span><strong>Offline faster-whisper captions</strong><em>Proven</em></div>
+              <div class="pipeline-row"><span class="step-name">Review</span><strong>Audio-evidence attestation gate</strong><em>Proven</em></div>
+              <div class="pipeline-row"><span class="step-name">Summarize</span><strong>Transcript-linked AI summary</strong><em>Proven</em></div>
+              <div class="pipeline-row"><span class="step-name">Publish</span><strong>Dry-run + dead-air warning</strong><em>Proven</em></div>
+              <div class="pipeline-row"><span class="step-name">Portal</span><strong>Resident playback with captions</strong><em>Proven</em></div>
+              <div class="pipeline-row new"><span class="step-name">On-air</span><strong>Station bug + lower-third, live SRT-to-HLS</strong><em>New — engine-proven</em></div>
             </div>
           </div>
         </aside>
@@ -792,150 +797,154 @@
     </section>
 
     <main id="main">
-      <section class="section" id="features">
+      <section class="section" id="proven">
         <div class="section-header">
-          <p class="kicker">What it solves</p>
+          <p class="kicker">What v1.0.0-beta.1 actually does</p>
           <div>
-            <h2>A bounded beta workflow for recorded meetings and resident playback.</h2>
+            <h2>Proven, end-to-end, this candidate.</h2>
             <p class="intro">
-              rc17's stock acceptance run (2026-07-20) covered exact-sample private rehearsal, private packaging, explicit Portal approval, and resident playback; that walkthrough has not yet been re-run on rc18's exact bytes. The broader source inventory below is not a stock acceptance claim.
+              These are exercised and verified in v1.0.0-beta.1: not a promise
+              for a future release, and not aspirational source-tree inventory.
             </p>
           </div>
         </div>
         <div class="feature-grid">
           <article class="feature">
-            <span class="tag">PEG channel</span>
-            <h3>Source inventory for integrated 24/7 operation.</h3>
-            <p>Persistent GStreamer playout, three concurrent channels, query-driven auto-scheduling, the Commit-to-Air gate, and operator takeover controls.</p>
+            <span class="tag proven">Record &amp; caption</span>
+            <h3>Record, then caption offline.</h3>
+            <p>Record a meeting and generate captions with an on-device faster-whisper model — no cloud transcription service, no per-minute meter, no audio leaving the station's own machine.</p>
           </article>
           <article class="feature">
-            <span class="tag">Records</span>
-            <h3>Make review part of the product.</h3>
-            <p>Captions, sourced summaries, custom metadata, real RFC-3161 timestamped record exports, and a meeting-agenda sidebar synced to the video.</p>
+            <span class="tag proven">Operator review</span>
+            <h3>An audio-evidence attestation gate before anything airs.</h3>
+            <p>The operator reviews captions against an audio-evidence attestation gate before a recording moves forward — a deliberate check, not a rubber stamp.</p>
           </article>
           <article class="feature">
-            <span class="tag">Reach</span>
-            <h3>Give residents a stable place to watch.</h3>
-            <p>Portal playback was proven in rc17's stock acceptance run (2026-07-20) and has not yet been separately re-verified on rc18's exact bytes. Podcast, Internet Archive, YouTube, and native app distribution require separate provider/store proof.</p>
+            <span class="tag proven">AI summary</span>
+            <h3>A summary with claims linked back to the transcript.</h3>
+            <p>Every AI-generated summary line links back to the moment in the transcript that supports it, so a clerk or resident can verify a claim instead of trusting it blind.</p>
+          </article>
+          <article class="feature">
+            <span class="tag proven">Publish</span>
+            <h3>Schedule and publish with a dry-run and a dead-air warning.</h3>
+            <p>Publishing to the resident portal runs a dry-run first and warns before dead air — publish is a deliberate operator action, not a silent background job.</p>
+          </article>
+          <article class="feature">
+            <span class="tag proven">Resident portal</span>
+            <h3>Residents watch with captions, on infrastructure the station controls.</h3>
+            <p>The resident portal plays published meetings back with captions attached — no third-party video platform required.</p>
+          </article>
+          <article class="feature">
+            <span class="tag proven">Contributor intake</span>
+            <h3>Residents can submit; operators decide.</h3>
+            <p>Residents submit their own recordings through contributor intake; an operator accepts a submission into an airable asset or declines it. Nothing a resident submits goes out unreviewed.</p>
+          </article>
+          <article class="feature">
+            <span class="tag proven">Operator manual</span>
+            <h3>The manual is in the product, not a separate download.</h3>
+            <p>An in-product operator manual is built into the console itself, alongside the printable PDF linked below.</p>
+          </article>
+          <article class="feature">
+            <span class="tag proven">Health &amp; alerts</span>
+            <h3>Honest status, not a green light that always shows green.</h3>
+            <p>Health and alert surfaces report what is actually true of the station right now — a genuine problem shows as a genuine problem.</p>
+          </article>
+          <article class="feature">
+            <span class="tag proven">Install &amp; upgrade</span>
+            <h3>Install, and upgrade by uninstall-then-reinstall, both proven.</h3>
+            <p>A fresh install and an uninstall-then-reinstall upgrade were both proven this candidate, on a real Windows box and separately in a sandboxed environment.</p>
           </article>
         </div>
       </section>
 
-      <section class="section" id="capabilities">
+      <section class="section" id="new">
         <div class="section-header">
-          <p class="kicker">Inside CivicCast</p>
+          <p class="kicker">New this candidate</p>
           <div>
-            <h2>The broader source inventory and its remaining proof boundaries.</h2>
+            <h2>Engine-proven and operator-drivable — newer than the record-and-publish core.</h2>
             <p class="intro">
-              These modules exist in the source tree and have repo evidence, but live
-              media, hardware, headends, providers, app stores, and unattended station
-              operation still require separate field acceptance.
+              These work and an operator can drive them today. They have had
+              less real-world hardening than the core pipeline above, which is
+              why they are called out separately rather than folded into "what
+              works."
             </p>
           </div>
         </div>
         <div class="feature-grid">
           <article class="feature">
-            <span class="tag">Playout engine</span>
-            <h3>Persistent GStreamer pipeline.</h3>
-            <p>Three concurrent channels, source hot-swap without TS continuity breaks, and IP-TS / SRT / RTMP / HLS / NDI software paths. SDI/DeckLink remains config-gated and hardware proof pending through the station-supplied relay path.</p>
+            <span class="tag proven">On-air graphics</span>
+            <h3>Station bug and lower-third, operator-set.</h3>
+            <p>An operator can set a lower-third and put it on air. Proven at the engine level and operator-drivable end to end. Honest limit: a lower-third change takes effect on the next pipeline build, not as a hot mid-broadcast text swap — expect a brief rebuild, not an instant on-screen edit.</p>
           </article>
           <article class="feature">
-            <span class="tag">Six OTT apps</span>
-            <h3>Native Roku, Apple TV, Fire TV, Android TV, Android mobile, iOS.</h3>
-            <p>Real platform-idiomatic starter source for all six targets that builds with each platform's own toolchain. Store-ready polish (artwork, store metadata, accessibility) is per-target follow-up.</p>
-          </article>
-          <article class="feature">
-            <span class="tag">CG bulletin board</span>
-            <h3>Multi-zone rendering wired; live-video zones under contract.</h3>
-            <p>Approved bulletin slides and multi-zone template rendering (primary, ticker, schedule, and logo/image zones, composited live via the GStreamer overlay leg, with a designer preview that matches what airs) are wired for production use. Live video embedded in a zone and per-channel board background audio remain contract-only until runtime proof lands (spec S15 §5).</p>
-          </article>
-          <article class="feature">
-            <span class="tag">Scheduled recording</span>
-            <h3>Record from inputs or streams.</h3>
-            <p>SDI / HDMI / NDI inputs or RTSP / SRT / HLS / RTMP / MPEG-TS, one-shot or weekly recurrence, arm-record-finalize state machine, an S8 (source-loss) alert on source failure.</p>
-          </article>
-          <article class="feature">
-            <span class="tag">As-run + EPG</span>
-            <h3>Reporting that funders read.</h3>
-            <p>As-run / proof-of-performance logs, XMLTV / X-List / CSV EPG export, franchise hours-by-category, per-underwriter affidavits, and a billing export.</p>
-          </article>
-          <article class="feature">
-            <span class="tag">Underwriting</span>
-            <h3>Real PEG sponsorship trafficking.</h3>
-            <p>Spot-as-asset, rotation rules, break insertion, per-underwriter affidavits via the as-run join - PEG keeps the for-profit underwriting revenue, on the rails.</p>
-          </article>
-          <article class="feature">
-            <span class="tag">Captions &amp; EAS</span>
-            <h3>Caption proofs, loudness, CAP / IPAWS display.</h3>
-            <p>Local faster-whisper captions with fail-closed decode-back status, per-sink loudness target, CAP / IPAWS / NWS / AMBER display, EAS attention-tone stripping on web/OTT egress, SAP / descriptive-audio routing. The native caption runtime is built in software. Recorded-media packaging and playback were proven against rc17's exact bytes on 2026-07-20 and carry into rc18's code path; live ingest remains blocked until a server-side media probe and station egress path are separately verified.</p>
-          </article>
-          <article class="feature">
-            <span class="tag">Meeting agenda</span>
-            <h3>Agenda items synced to video.</h3>
-            <p>Chaptered navigation, public agenda sidebar with seek, plain-text import, optional agenda PDF beside the player.</p>
-          </article>
-          <article class="feature">
-            <span class="tag">AI choice</span>
-            <h3>Operator picks the model.</h3>
-            <p>Per-feature model selection across local Ollama, Ollama Cloud, and OpenRouter; defaults adapt to detected RAM. No vendor lock-in on captions, translation, or summaries.</p>
+            <span class="tag proven">Live broadcast</span>
+            <h3>Live SRT ingest through the engine to HLS.</h3>
+            <p>Live ingest over SRT, through the broadcast engine, out to HLS — proven this candidate with real footage, operator-drivable. Newer and less field-hardened than the recorded-meeting pipeline above.</p>
           </article>
         </div>
       </section>
 
-      <section class="band" id="workflow">
+      <section class="band" id="roadmap">
         <div class="section">
           <div class="section-header">
-            <p class="kicker">Meeting night</p>
+            <p class="kicker">Not in this beta</p>
             <div>
-              <h2>Built around the real jobs in the room.</h2>
+              <h2>On the roadmap — do not evaluate this beta against these.</h2>
               <p class="intro">
-                The admin, operator, clerk, and technical helper get different tools because they
-                have different jobs. CivicCast keeps those paths connected without making everyone
-                learn the same server vocabulary.
+                Naming these plainly is the point: a board that tests against
+                capabilities not yet built will find gaps, and we would rather
+                you find them here than in the console.
               </p>
             </div>
           </div>
-          <div class="workflow">
-            <article class="step"><span>01</span><strong>Set up</strong><p>Create the first admin, save recovery information, prepare storage, and rehearse backup.</p></article>
-            <article class="step"><span>02</span><strong>Rehearse safely</strong><p>Rehearse an exact recorded sample privately (last proven end-to-end on rc17's exact bytes, 2026-07-20; rc18's shipped build has not yet been separately re-walked). Real live use still requires a separately verified server-side media probe.</p></article>
-            <article class="step"><span>03</span><strong>Review</strong><p>Check captions, summaries, timestamps, metadata, and signed record exports.</p></article>
-            <article class="step"><span>04</span><strong>Publish</strong><p>Send approved material to residents, archives, subscribers, and optional provider lanes.</p></article>
-            <article class="step"><span>05</span><strong>Improve</strong><p>Use feedback from real meetings to harden the next release and the next station setup.</p></article>
+          <div class="feature-grid">
+            <article class="feature roadmap">
+              <span class="tag">Roadmap</span>
+              <h3>Full cable / SDI headend output</h3>
+              <p>Delivering a channel out to a cable headend over SDI is not part of this beta.</p>
+            </article>
+            <article class="feature roadmap">
+              <span class="tag">Roadmap</span>
+              <h3>Multi-channel simultaneous playout</h3>
+              <p>Running several channels out at once is not part of this beta.</p>
+            </article>
+            <article class="feature roadmap">
+              <span class="tag">Roadmap</span>
+              <h3>Internet Archive / YouTube syndication</h3>
+              <p>Syndicating to outside platforms needs accounts on those platforms and is not wired up in this beta.</p>
+            </article>
+            <article class="feature roadmap">
+              <span class="tag">Roadmap</span>
+              <h3>OTT apps (Roku, Apple TV, Fire TV, etc.)</h3>
+              <p>Native streaming-device apps are not part of this beta.</p>
+            </article>
+            <article class="feature roadmap">
+              <span class="tag">Roadmap</span>
+              <h3>Emergency Alert System</h3>
+              <p><strong>CivicCast is explicitly not an EAS device.</strong> Do not deploy it as, or in place of, EAS/CAP alerting equipment.</p>
+            </article>
           </div>
         </div>
       </section>
 
-      <section class="section" id="cost">
+      <section class="section" id="workflow">
         <div class="section-header">
-          <p class="kicker">What it costs</p>
+          <p class="kicker">Meeting night</p>
           <div>
-            <h2>One station was quoted about $48,000 for this work, plus captions by the hour. CivicCast is free.</h2>
+            <h2>Built around the real jobs in the room.</h2>
             <p class="intro">
-              In 2025, a Colorado PEG station received a commercial vendor's MSRP quote
-              to refresh a single three-channel playout server, and a companion quote for
-              captioning service. The figures below are taken directly from those quotes, which
-              are on file with the project. CivicCast is free, open-source software doing this
-              class of work on a Windows PC you own. It is also a controlled beta — weigh the
-              proof boundaries above before you retire anything.
+              The admin, operator, and records clerk get tools suited to their
+              job, connected by one pipeline so nothing has to be re-entered
+              between roles.
             </p>
           </div>
         </div>
-        <div class="feature-grid">
-          <article class="feature">
-            <span class="tag">Their server</span>
-            <h3>$48,537.50 for one refresh.</h3>
-            <p>One three-channel playout server ($30,650), bulletin-board licenses for three channels ($4,650), extended hardware warranty ($4,597.50), and Gold support at $8,640 per year after the included first year.</p>
-          </article>
-          <article class="feature">
-            <span class="tag">Their captions</span>
-            <h3>$6,700 per 1,000 hours — and hours run out.</h3>
-            <p>Captioning sold as prepaid blocks: $6,700 per 1,000 hours, $3,750 per 500. Caption translation is another $3,650 per 1,000 hours. Every meeting draws the balance down; the next block costs the same.</p>
-          </article>
-          <article class="feature">
-            <span class="tag">CivicCast</span>
-            <h3>$0 license. $0 per hour. Hardware you own.</h3>
-            <p>Playout, scheduling, the bulletin board, and on-device Whisper captions are open source: no license fee, no per-hour caption meter, no required support subscription. The station runs on one Windows machine that costs less than a single year of that support contract.</p>
-          </article>
+        <div class="workflow">
+          <article class="step"><span>01</span><strong>Set up</strong><p>Create the first admin, save recovery information, and prepare storage on the station's own machine.</p></article>
+          <article class="step"><span>02</span><strong>Record</strong><p>Record the meeting and generate offline captions with the on-device faster-whisper model.</p></article>
+          <article class="step"><span>03</span><strong>Review</strong><p>Check captions against the audio-evidence attestation gate and read the transcript-linked AI summary.</p></article>
+          <article class="step"><span>04</span><strong>Publish</strong><p>Schedule and publish to the resident portal, with a dry-run and a dead-air warning before it goes out.</p></article>
+          <article class="step"><span>05</span><strong>Improve</strong><p>Use feedback from real meetings, and the console's own health and alert surfaces, to harden the next candidate.</p></article>
         </div>
       </section>
 
@@ -949,77 +958,51 @@
         <div class="audiences">
           <article class="audience">
             <h3>Clerks and administrators</h3>
-            <p>Own setup, recovery, records, publishing policy, and the public-facing archive.</p>
-            <a href="https://github.com/scottconverse/civiccast/blob/main/docs/admin-guide.md">Admin guide</a>
+            <p>Own setup, recovery, records review, and publishing approval for the public-facing archive.</p>
+            <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/admin-guide.md">Admin guide</a>
           </article>
           <article class="audience">
             <h3>Meeting operators</h3>
-            <p>For uploaded recordings, package privately, approve publication, confirm resident playback, and hand the record to the clerk. Live operation requires separately proven ingest.</p>
-            <a href="https://github.com/scottconverse/civiccast/blob/main/docs/meeting-operator-guide.md">Operator guide</a>
+            <p>Record, review against the attestation gate, publish with the dry-run check, and drive on-air graphics and live broadcast.</p>
+            <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/meeting-operator-guide.md">Operator guide</a>
           </article>
           <article class="audience">
             <h3>Public-access and PEG stations</h3>
-            <p>Evaluate the broader playout, bulletin, scheduled-recording, underwriting, and reporting source inventory only with separate station-device evidence.</p>
-            <a href="https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">3.0 master spec</a>
+            <p>Evaluate v1.0.0-beta.1 against what it actually proves today, and read the long-term product spec for where the platform is headed.</p>
+            <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">3.0 master spec</a>
           </article>
         </div>
       </section>
 
-      <section class="beta" id="beta">
+      <section class="beta" id="status">
         <div class="section">
           <div class="beta-card">
-            <p class="kicker">Installer status - <span class="badge">controlled beta</span></p>
-            <h2>Download the current Windows controlled beta.</h2>
+            <p class="kicker">Release status - <span class="badge amber">development candidate</span></p>
+            <h2>v1.0.0-beta.1 is not yet a public release.</h2>
             <p>
-              A genuine clean-Windows test exposed concurrent bootstrap,
-              Windows-servicing, and missing-progress-feedback defects in
-              v1.0.0-rc13. It is withdrawn from beta use.
+              v1.0.0-beta.1 is an owner-held native-Windows development
+              candidate. There is no published installer today, and no
+              download button on this page — publishing that installer is a
+              separate, deliberate step the owner has not yet taken.
             </p>
             <p>
-              v1.0.0-rc18 is the current release. It carries
-              rc15's clean-Windows installer repairs (validated from a
-              WSL-disabled baseline through cold-reboot recovery), rc16's
-              published UI/UX repairs, rc17's beta-blocker fixes, and the sixteen
-              stage-gate fixes. Do not install rc13 — and do not use an older
-              prerelease, a source-code ZIP, or an untagged build.
-            </p>
-            <p>
-              <strong>v1.0.0-rc18 is the approved installer for the controlled
-              beta.</strong> rc18 fixes all sixteen findings a full stage
-              gate raised against the rc17 line, three of them Critical -
-              including a simulated archive that produced a link looking like a
-              genuine archive.org permalink for a meeting that was never
-              archived. Its installer is built from the gate-cleared main branch,
-              Authenticode-signed, and proven on a genuinely clean Windows host,
-              and its stage-gate re-run returned no blocker or critical findings.
-              rc17 remains downloadable from its release page as the rollback
-              target but carries all sixteen findings. rc18's proof boundary is
-              stated at the top of its verification record.
+              What is true right now: the record-and-publish core described
+              above is proven end-to-end this candidate; on-air graphics and
+              live broadcast are new and engine-proven, operator-drivable;
+              a fresh install and an uninstall-then-reinstall upgrade were
+              both proven on a real Windows box and separately in a
+              sandboxed environment. Cable headend output, multi-channel
+              playout, and outside syndication remain on the roadmap.
             </p>
             <div class="actions">
-              <!-- Links straight at the .exe. This button used to say
-                   "v1.0.0-rc18" and point at the release tag page, where the
-                   installer is one line among 28 assets (20 of them
-                   .sigstore.json) inside a list GitHub collapses -- so a
-                   button labelled Download delivered a directory listing and
-                   testers could not find the installer at all. -->
-              <a class="button primary" href="https://github.com/scottconverse/civiccast/releases/download/v1.0.0-rc18/civiccast-1.0.0-rc18-windows-setup.exe" aria-label="Download the CivicCast v1.0.0-rc18 Windows installer, 232 MB">Download for Windows<span class="button-sub"><span>v1.0.0-rc18</span> &middot; 232 MB &middot; .exe</span></a>
-              <a class="button secondary" href="https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18">Checksum &amp; all files</a>
-              <a class="button secondary" href="https://github.com/scottconverse/civiccast/blob/main/docs/tester/START-HERE.md">Read the tester packet</a>
-              <a class="button secondary" href="https://github.com/scottconverse/civiccast/blob/main/docs/releases/v1.0.0-rc13-verification.md">rc13 incident record</a>
+              <a class="button primary" href="https://github.com/scottconverse/civiccast-native/blob/main/CHANGELOG.md">Read the changelog</a>
+              <a class="button secondary" href="https://github.com/scottconverse/civiccast-native/blob/main/BRANCHES.md">Branch &amp; release policy</a>
+              <a class="button secondary" href="https://github.com/scottconverse/civiccast-native/issues">Report an issue</a>
             </div>
             <p class="fine-print">
-              A separate native Windows product line is under owner-approved
-              development. Its current development candidate, v1.0.0-beta.1, is an
-              owner-held unpublished candidate - not a public release, and not a
-              successor build of the WSL v1.0.0-rc18 line above.
-            </p>
-            <p class="verify-line">
-              Verify before you run it — SHA-256
-              <code>af4d2017c6287eaed8cb4b1553d539281fc14c3e3863869c0ea5b8d2e73c311b</code>,
-              243,742,408 bytes, Authenticode signed
-              <strong>CN=Scott Converse</strong>. In PowerShell:
-              <code>Get-FileHash .\civiccast-1.0.0-rc18-windows-setup.exe -Algorithm SHA256</code>
+              CivicCast is open-source and self-hostable. There is no vendor
+              lock-in and no requirement to wait for a packaged release to
+              read the source or evaluate the code directly.
             </p>
           </div>
         </div>
@@ -1039,21 +1022,20 @@
         <div class="docs-grid">
           <a class="doc" href="USER-MANUAL.pdf"><strong>User Manual (PDF)</strong><span>Plain-English product guide for the current beta; printable.</span></a>
           <a class="doc" href="install-windows.html"><strong>Windows Install</strong><span>Setup expectations and when to ask for IT help.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/tester/START-HERE.md"><strong>Tester Packet</strong><span>Walkthroughs, checklist, known limits, and reporting.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/records-clerk-guide.md"><strong>Records Clerk</strong><span>Caption review, summaries, exports, and publish approvals.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/ops/channel-egress-runbook.md"><strong>Channel Runbook</strong><span>Local channel output controls and technical test steps.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/API-REFERENCE.md"><strong>API Reference</strong><span>Developer docs and generated API contracts.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast"><strong>GitHub Repo</strong><span>Source code, releases, issues, and discussions.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md"><strong>3.0 Master Spec</strong><span>Thesis, feature scope, build order, and proof ladder.</span></a>
-          <a class="doc" href="spec/3.0/ROADMAP.status.yaml"><strong>Roadmap Status</strong><span>Repo-verified status manifest. Fail-closed against false claims.</span></a>
-          <a class="doc superseded" href="https://github.com/scottconverse/civiccast/blob/main/docs/spec/release-plan-v1.7.md"><strong>Release Plan (pre-1.0 numbering, superseded)</strong><span>Historical early-adoption/readiness policy from the pre-reset "v1.7" line. It does not describe the current rc18 controlled beta.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/adoption/early-adopter-quickstart.md"><strong>Early Adopter</strong><span>Quickstart for teams evaluating CivicCast in a controlled beta.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/adoption/support-intake.md"><strong>Support Intake</strong><span>What to collect before opening a support request.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/adoption/procurement-legal-brief.md"><strong>Procurement Brief</strong><span>Plain-English notes for procurement, records, and legal review.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/adoption/release-policy.md"><strong>Release Policy</strong><span>How packaged releases, checksums, and claims are handled.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md"><strong>Legal Notices</strong><span>Trademark, non-affiliation, patent, and licensing boundaries.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast/blob/main/docs/legal/patent-watchlist.md"><strong>Patent Risk Notes</strong><span>Watchlist and counsel-review triggers for future commercial work.</span></a>
-          <a class="doc superseded" href="https://github.com/scottconverse/civiccast/blob/main/docs/releases/v1.7-proof-bundle.md"><strong>Proof Bundle (pre-1.0 numbering, superseded)</strong><span>Historical evidence bundle from the pre-reset "v1.7" line. It does not describe the current rc18 controlled beta.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/QUICKSTART-OPERATOR.md"><strong>Operator Quickstart</strong><span>Fastest path from a fresh install to a published meeting.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/meeting-operator-guide.md"><strong>Meeting Operator Guide</strong><span>Record, review, on-air graphics, live broadcast, and publish.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/records-clerk-guide.md"><strong>Records Clerk Guide</strong><span>Caption review, summaries, and publish approvals.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/admin-guide.md"><strong>Admin Guide</strong><span>Setup, recovery, and station configuration.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/API-REFERENCE.md"><strong>API Reference</strong><span>Developer docs and generated API contracts.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/technical-ops-reference.md"><strong>Technical Ops Reference</strong><span>Runbooks and technical detail for station IT.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native"><strong>GitHub Repo</strong><span>Source code, issues, and commit history.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md"><strong>3.0 Master Spec</strong><span>Long-term product vision, thesis, and build order.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/adoption/early-adopter-quickstart.md"><strong>Early Adopter</strong><span>Quickstart for teams evaluating this development beta.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/adoption/procurement-legal-brief.md"><strong>Procurement Brief</strong><span>Plain-English notes for procurement, records, and legal review.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/adoption/support-intake.md"><strong>Support Intake</strong><span>What to collect before opening a support request.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/adoption/release-policy.md"><strong>Release Policy</strong><span>How packaged releases and claims are handled.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/LEGAL-NOTICES.md"><strong>Legal Notices</strong><span>Trademark, non-affiliation, patent, and licensing boundaries.</span></a>
+          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/BRANCHES.md"><strong>Branches &amp; Release Policy</strong><span>One product line, one branch, and where the retired WSL lane's history lives.</span></a>
         </div>
       </section>
     </main>
@@ -1061,16 +1043,15 @@
     <footer>
       <div class="footer-inner">
         <div>
-          <strong>CivicCast - v1.0.0-rc18 Windows controlled beta</strong><br />
+          <strong>CivicCast - v1.0.0-beta.1 native-Windows development candidate</strong><br />
           Open-source PEG broadcast software. Apache 2.0 (code), CC BY 4.0 (docs).
         </div>
         <div>
-          <a href="https://github.com/scottconverse/civiccast">GitHub</a> -
-          <a href="https://github.com/scottconverse/civiccast/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">3.0 Spec</a> -
-          <a href="https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md">Legal Notices</a> -
-          <a href="https://github.com/scottconverse/civiccast/blob/main/docs/releases/v1.0.0-rc13-verification.md">1.0.0-rc13 incident record</a> -
-          <a href="https://github.com/scottconverse/civiccast/blob/main/docs/releases/v0.2.0-verification.md">0.2.0 verification</a> -
-          <a href="https://github.com/scottconverse/civiccast/discussions">Discussions</a>
+          <a href="https://github.com/scottconverse/civiccast-native">GitHub</a> -
+          <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">3.0 Spec</a> -
+          <a href="https://github.com/scottconverse/civiccast-native/blob/main/LEGAL-NOTICES.md">Legal Notices</a> -
+          <a href="https://github.com/scottconverse/civiccast-native/blob/main/CHANGELOG.md">Changelog</a> -
+          <a href="https://github.com/scottconverse/civiccast-native/issues">Issues</a>
         </div>
       </div>
     </footer>
