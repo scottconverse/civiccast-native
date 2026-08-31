@@ -147,10 +147,20 @@ class SummaryGenerationPipeline:
         operator_message: str | None,
         errors: list[str] | None = None,
     ) -> SummaryDraft:
+        # Record the provenance of the model that actually ran. Real adapters
+        # (OllamaSummaryModel, CloudSummaryModel) expose ``model_tag`` and, for
+        # the local path, a ``provenance`` with the live manifest digest and
+        # runtime version; the pipeline previously discarded all of it and
+        # stamped every persisted, records-bound draft with a fixture tag, so
+        # the durable audit fingerprint misstated which model produced an
+        # operator-approved summary. Only a genuine test fixture (which exposes
+        # no ``model_tag``) falls back to the fixture label.
+        model = self._model
+        model_provenance = getattr(model, "provenance", None)
         provenance = ModelProvenance(
-            model_tag="fixture-summary-no-real-model",
-            model_digest=None,
-            ollama_version=None,
+            model_tag=getattr(model, "model_tag", None) or "fixture-summary-no-real-model",
+            model_digest=getattr(model_provenance, "digest", None),
+            ollama_version=getattr(model_provenance, "ollama_version", None),
             prompt_version=prompt_version,
             extraction_version=EXTRACTION_VERSION,
             runtime_parameters={"temperature": 0},
