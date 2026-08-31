@@ -158,6 +158,16 @@ def test_landing_page_has_one_coherent_current_release_posture() -> None:
     assert "not yet published" in html.lower()
 
 
+def test_landing_page_does_not_deny_completed_three_channel_soaks() -> None:
+    html = (REPO / "docs" / "index.html").read_text(encoding="utf-8").lower()
+    stale_claims = (
+        "has not yet completed a simultaneous three-channel unattended production soak",
+        "24-hour native windows multi-channel egress soak",
+        "final multi-channel soak",
+    )
+    assert not [claim for claim in stale_claims if claim in html]
+
+
 def test_readme_has_one_coherent_current_release_posture() -> None:
     text = (REPO / "README.md").read_text(encoding="utf-8")
     assert f"releases/tag/{WITHDRAWN_RELEASE_TAG}" not in text

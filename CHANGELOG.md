@@ -19,9 +19,9 @@ came across and what deliberately did not.
   landing page. The new page presents CivicCast as an open-source PEG platform,
   maps the end-to-end station workflow, explains local AI and the three-channel
   reference profile, and keeps the current beta boundaries prominent. It does
-  not promote native multi-channel soak, physical SDI, headend acceptance,
-  provider delivery, OTT-store publication, or field operation beyond the
-  evidence recorded in the repository.
+  not promote physical SDI, headend acceptance, provider delivery, OTT-store
+  publication, or field operation beyond the evidence recorded in the
+  repository.
 
 ### Fixed
 
