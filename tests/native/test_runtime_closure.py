@@ -106,7 +106,12 @@ def test_staged_optional_factories_are_the_three_cg_lite_plugins_pr88_named() ->
     is deliberately excluded: PR #88 recorded it as absent from the pinned
     wheels entirely (a RidgeRun-only artifact), so it cannot be staged
     additively the way these three can."""
-    assert set(STAGED_OPTIONAL_FACTORIES) == {"compositor", "textoverlay", "clockoverlay", "hlssink3"}
+    assert set(STAGED_OPTIONAL_FACTORIES) == {
+        "compositor",
+        "textoverlay",
+        "clockoverlay",
+        "hlssink3",
+    }
     assert "interpipesrc" not in STAGED_OPTIONAL_FACTORIES
     assert "interpipesink" not in STAGED_OPTIONAL_FACTORIES
 
