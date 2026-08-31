@@ -1,28 +1,13 @@
 # CivicCast Architecture
 
-> **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
-
-> **Release state:** `v1.0.0-rc18` is the current release line and the published
-> controlled beta. Its signed assets and complete manifest are on GitHub, and its
-> exact installer passed a clean-host install, launch, reinstall, uninstall and
-> upgrade on a pristine Windows 11 guest. `v1.0.0-rc17` remains the rollback
-> target; the full product path on a clean host was last proven against rc17's
-> bytes. Proof boundaries are recorded in
-> [docs/releases/v1.0.0-rc18-verification.md](docs/releases/v1.0.0-rc18-verification.md).
-> `v1.0.0-rc13` is withdrawn after a genuine clean-host bootstrap failure and
-> must not be installed — see
-> [docs/releases/v1.0.0-rc13-verification.md](docs/releases/v1.0.0-rc13-verification.md).
-> The rc17 line carries forward earlier installer and bootstrap repairs from
-> rc15 and rc13; that release-lineage detail lives in the verification doc
-> above and in
-> [docs/releases/0.2.0-switch-validation.md](docs/releases/0.2.0-switch-validation.md)
-> and [docs/releases/v0.1.0-rc6-verification.md](docs/releases/v0.1.0-rc6-verification.md)
-> (the historical lab-host install proof). Treat all of the above as bounded
-> source and lab proof, not as approval of rc13 or broad validation across
+> **Release state: `v1.0.0-beta.1` is the owner-held development candidate.**
+> It is unpublished — not a public or production release — and no installer
+> download is attached to the tag; it describes the state a technical
+> reviewer finds by checking out `main` today. See
+> [BRANCHES.md](BRANCHES.md) for release identity and status.
+>
+> Treat the repository state as bounded source and local contract-lab proof,
+> not as approval of any withdrawn candidate or as broad validation across
 > many machines, live external provider delivery, app stores, live hardware,
 > downstream cable headends, QAM, SDI/DeckLink, EAS, CEA-708 broadcast
 > compliance, or production operations. Local contract-lab work is
