@@ -79,6 +79,24 @@ PLUGIN_LICENSE: Final[dict[str, str]] = {
     "gstaudioresample.dll": "LGPL-2.1-or-later",
     "gstaudiotestsrc.dll": "LGPL-2.1-or-later",
     "gstclosedcaption.dll": "LGPL-2.1-or-later",
+    # gstcompositor.dll, gstpango.dll, gsthlssink3.dll: staged 2026-08-30 as
+    # STAGED_OPTIONAL_FACTORIES (S15 CG-lite / native-HLS, PR #88's
+    # disposition) -- the first build of this closure to ship them, so
+    # unlike the entries above there is no live gst_plugin_get_license()
+    # probe against a BUILT tree containing these three yet. Recorded from
+    # documentation instead: all three are gst-plugins-base/gst-plugins-good
+    # C plugins covered by the same upstream COPYING.LIB (LGPL-2.1-or-later)
+    # as every other plugin in this table drawn from those two modules, and
+    # `gstreamer-libs`/`gstreamer-plugins` 1.28.5's own METADATA declares
+    # "LGPL" project-wide (see `licenses/gstreamer_libs.txt` /
+    # `licenses/gstreamer_plugins.txt` after a build). A live probe against
+    # the first built tree that actually contains them is a real follow-up,
+    # same as `gsttypefindfunctions.dll` got above -- reviewed-against-
+    # documentation is recorded as the weaker claim it is, not upgraded to
+    # "observed" before it has been.
+    "gstcompositor.dll": "LGPL-2.1-or-later",
+    "gstpango.dll": "LGPL-2.1-or-later",
+    "gsthlssink3.dll": "LGPL-2.1-or-later",
     "gstcoreelements.dll": "LGPL-2.1-or-later",
     "gstd3d11.dll": "LGPL-2.1-or-later",
     "gstd3d12.dll": "LGPL-2.1-or-later",
