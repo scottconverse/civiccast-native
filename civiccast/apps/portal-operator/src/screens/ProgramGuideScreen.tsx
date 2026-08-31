@@ -17,6 +17,7 @@ import type {
   ProgramSlot,
   SlotOccurrence,
 } from '../types/api.generated'
+import { EmptyState } from '../components/EmptyState'
 
 const DEFAULT_CHANNEL = 'public'
 const LOG_HOURS = 168 // operator view: one rolling week
@@ -180,13 +181,10 @@ interface SlotListProps {
 function SlotList({ slots, onDisable, disabling }: SlotListProps) {
   if (slots.length === 0) {
     return (
-      <div
-        className="rounded-md p-4 text-center text-xs"
-        style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
-      >
-        No recurring slots yet. Use “Add to guide” to place a recording on this
-        channel.
-      </div>
+      <EmptyState
+        headline="Nothing on the guide yet."
+        body="The program guide is the weekly grid of what airs on this channel. Place a recording with “Add to guide” and its recurring slot appears here."
+      />
     )
   }
   return (
@@ -263,13 +261,10 @@ function LogList({ entries }: { entries: ChannelLogEntry[] }) {
   const today = new Date()
   if (entries.length === 0) {
     return (
-      <div
-        className="rounded-md p-4 text-center text-xs"
-        style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
-      >
-        Nothing on the guide for the next 7 days. Add a slot, then press
-        “Refresh guide”.
-      </div>
+      <EmptyState
+        headline="Nothing scheduled for the next 7 days."
+        body="This log is the day-by-day schedule built from the guide's recurring slots. Add a slot, then press “Refresh guide” to build out the week."
+      />
     )
   }
   return (

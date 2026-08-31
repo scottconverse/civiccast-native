@@ -41,6 +41,7 @@ import {
   zoneNeedsFeed,
   zoneSummary,
 } from './cg-board-format'
+import { EmptyState } from '../components/EmptyState'
 
 const POLL_MS = 30_000
 
@@ -568,7 +569,10 @@ export function CgBoardDesignerScreen() {
                     <BoardCreateForm submitting={createBoard.isPending} onSubmit={(p) => createBoard.mutate(p)} />
                   </div>
                 ) : (
-                  <div className="mt-2 text-sm" style={{ color: 'var(--cc-ink-2)' }}>No board configured for this channel yet.</div>
+                  <EmptyState
+                    headline="No board on this channel yet."
+                    body="The board designer controls what the community board looks like on air — its zones, feeds, and styling. A station admin creates the board for this channel; once created, it appears here."
+                  />
                 )
               )}
               {board != null && (

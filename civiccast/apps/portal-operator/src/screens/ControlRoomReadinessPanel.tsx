@@ -181,14 +181,27 @@ export function ControlRoomReadinessPanel({ report }: { report: ControlRoomReadi
 
       {(blocking.length > 0 || warnings.length > 0) && (
         <div className="space-y-2">
+          {/* Banner-wall fix (field survey 2026-08-30): each row here used to
+              open with its own readiness pill, and every blocked row's pill is
+              the same phrase as the headline banner above — so a fresh box
+              showed "DO NOT BROADCAST YET" five times on one screen. The page
+              verdict lives in the headline banner ONCE; a row's pill renders
+              only when it says something the headline does not (e.g. a warning
+              row under a blocked headline). Blocked rows keep their severity
+              via the red border. */}
           {[...blocking, ...warnings].map((check) => (
             <div
               key={check.check_id}
               className="rounded-md p-3 text-xs"
-              style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+              style={{
+                background: 'var(--cc-surface-2)',
+                border: `1px solid ${check.status === 'blocked' ? 'var(--cc-err)' : 'var(--cc-line)'}`,
+              }}
             >
               <div className="flex flex-wrap items-center gap-2">
-                <StatusPill label={readinessLabel(check.status)} tone={toneFor(check)} />
+                {readinessLabel(check.status) !== headlineReadiness && (
+                  <StatusPill label={readinessLabel(check.status)} tone={toneFor(check)} />
+                )}
                 <span className="font-semibold">{check.label}</span>
               </div>
               <div className="mt-1" style={{ color: 'var(--cc-ink-2)' }}>{check.detail}</div>

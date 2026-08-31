@@ -209,7 +209,7 @@ describe('CgBoardDesignerScreen container role gate', () => {
     vi.mocked(getCgBoard).mockResolvedValue(null)
     vi.mocked(listCgBoardAudit).mockResolvedValue([])
     const { findByText, queryByText } = renderScreen()
-    expect(await findByText('No board configured for this channel yet.')).toBeTruthy()
+    expect(await findByText('No board on this channel yet.')).toBeTruthy()
     expect(queryByText('Create a CG board for this channel')).toBeNull()
   })
 })

@@ -17,6 +17,7 @@ import type {
   CgTemplateZone,
   CgZone,
 } from '../types/api.generated'
+import { EmptyState } from '../components/EmptyState'
 
 const POLL_MS = 30_000
 
@@ -384,9 +385,10 @@ function BulletinModerationPanel({ channelId }: { channelId: string }) {
         )}
 
         {queueQuery.isSuccess && submissions.length === 0 && (
-          <div className="rounded-md p-3 text-center text-xs" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
-            No bulletins yet. Add one to get the community board started.
-          </div>
+          <EmptyState
+            headline="No bulletins yet."
+            body="The community board runs station and community announcements on this channel between programs. Add the first bulletin above to get it started."
+          />
         )}
 
         {submissions.map((submission) => {

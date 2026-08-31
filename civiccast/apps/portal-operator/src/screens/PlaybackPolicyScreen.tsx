@@ -11,6 +11,7 @@ import type {
   PlaybackPolicyUpdate,
   PrerollCreative,
 } from '../types/api.generated'
+import { EmptyState } from '../components/EmptyState'
 
 type SubjectType = PlaybackPolicyConfig['subject_type']
 type AccessTier = NonNullable<PlaybackPolicyConfig['access_tier']>
@@ -548,9 +549,10 @@ export function PlaybackPolicyScreen() {
           </div>
         )}
         {auditEvents.length === 0 ? (
-          <div className="rounded-md p-3 text-sm" style={{ background: 'var(--cc-surface)' }}>
-            No playback decisions yet.
-          </div>
+          <EmptyState
+            headline="No playback decisions yet."
+            body="Every time the player allows or blocks a viewer under this policy, the decision is logged here. Decisions appear as soon as residents start watching."
+          />
         ) : (
           <div className="grid gap-2">
             {auditEvents.slice(-8).reverse().map((event) => (

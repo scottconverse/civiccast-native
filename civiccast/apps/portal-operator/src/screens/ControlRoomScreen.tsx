@@ -44,6 +44,7 @@ import {
   deviceReachability,
 } from './control-room-format'
 import { ControlRoomReadinessPanel } from './ControlRoomReadinessPanel'
+import { EmptyState } from '../components/EmptyState'
 
 const READ_ROLES = ['setup_admin', 'support_admin', 'meeting_operator']
 type SessionMode = NonNullable<ControlRoomSession['mode']>
@@ -109,7 +110,12 @@ export function DeviceStrip({
   onProbe: (id: string) => void
 }) {
   if (devices.length === 0) {
-    return <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>No production devices configured.</div>
+    return (
+      <EmptyState
+        headline="No devices to operate yet."
+        body="The Control Room drives this station's registered production gear — switchers, routers, players — during a live meeting. Register a device in Control Room Setup and it appears here, ready to probe and operate."
+      />
+    )
   }
   return (
     <div className="flex flex-wrap gap-2">
@@ -395,7 +401,9 @@ export function SessionAuditDrawer({ events }: { events: CueFiredEvent[] }) {
     <div aria-live="polite" className="space-y-1">
       <div className="text-xs font-semibold uppercase" style={{ color: 'var(--cc-ink-3)' }}>Fired-cue audit</div>
       {events.length === 0 ? (
-        <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>No cues fired this session.</div>
+        <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          No cues fired this session yet. Every cue you fire is logged here for the record.
+        </div>
       ) : (
         events.map((e) => (
           <div key={e.event_id} className="flex items-center gap-2 text-xs">
