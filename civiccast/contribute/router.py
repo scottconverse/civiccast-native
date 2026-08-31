@@ -1040,6 +1040,37 @@ def _cancel_schedule_item_for_decline(
         schedule_store.cancel(parsed_id)
 
 
+def _rollback_created_schedule_item(schedule_item_id: str, *, schedule_store: Any) -> None:
+    """Cancel a schedule item this request just created after persisting failed.
+
+    BLOCKER fix: ``_create_real_schedule_item`` creates a real
+    ``civiccast.schedule_items`` row BEFORE ``store.review_submission``
+    persists the "scheduled" state. Reserving every review action (see
+    ``review_contributor_submission``) closes the interleaving that used to
+    let a concurrent decline slip in ahead of that persist, but the persist
+    call can still fail for other reasons (a store I/O error, a payload
+    validation issue caught late) -- if it does after the row already
+    exists, that row must not stay live and airable behind a submission
+    that never actually reached "scheduled". Best-effort: an already-gone
+    item is a no-op, matching ``_cancel_schedule_item_for_decline``.
+    """
+    from civiccast.schedule.store import ScheduleItemNotFoundError
+
+    try:
+        parsed_id = uuid.UUID(schedule_item_id)
+    except ValueError:
+        # Not expected -- _create_real_schedule_item always returns a real
+        # UUID string -- but never crash the error path we are already on.
+        _LOG.error(
+            "could not parse schedule_item_id %r to roll back after a failed "
+            "review persist; a live schedule item may be orphaned",
+            schedule_item_id,
+        )
+        return
+    with contextlib.suppress(ScheduleItemNotFoundError):
+        schedule_store.cancel(parsed_id)
+
+
 @staff_router.post(
     "/submissions/{submission_id}/review",
     response_model=ContributorSubmission,
@@ -1068,38 +1099,49 @@ def review_contributor_submission(
     asset_store: Any = Depends(get_postgres_store),
     schedule_store: Any = Depends(get_schedule_store),
 ) -> ContributorSubmission:
-    try:
-        current = store.get_submission(submission_id)
-    except ContributorSubmissionNotFoundError as exc:
-        raise _submission_not_found(submission_id) from exc
-
     effective_request = request
     ingested_asset_id: str | None = None
     created_schedule_item_id: str | None = None
-    # CRITICAL race fix: accept/schedule each trigger a REAL external side
-    # effect (ffprobe ingest into the asset library / a real
-    # civiccast.schedule_items row) below. A concurrent/duplicate request
-    # for the SAME submission must be rejected before it can reach either
-    # side effect -- a guard applied only when persisting to the JSON store
-    # (after the side effect already ran) is too late; it would have
-    # already created a second real asset or a second real, live schedule
-    # booking. reserve_review_action claims the submission atomically
-    # (existence + no other action already in flight + the submission's
-    # current state actually allows this action) before any side effect
-    # runs; release_reservation in the `finally` below always releases it,
-    # on every exit path.
+    # CRITICAL race fix: EVERY review action below is reserved before it
+    # runs -- not just accept/schedule. accept/schedule each trigger a REAL
+    # external side effect (ffprobe ingest into the asset library / a real
+    # civiccast.schedule_items row); a guard applied only when persisting to
+    # the JSON store (after the side effect already ran) is too late, it
+    # would have already created a second real asset or a second real, live
+    # schedule booking. decline/mark_under_review/request_changes create no
+    # side effect of their own, but BLOCKER field evidence showed a decline
+    # left unreserved can still interleave with an in-flight schedule: the
+    # schedule request creates its real schedule_items row, reads a
+    # not-yet-declined `current`, then loses the persist race to a decline
+    # that ran (and read stale state) in between -- leaving that real row
+    # live while the submission is marked declined. Reserving every action
+    # under the same in-flight ledger closes that off: whichever action
+    # claims the reservation first runs to completion (or fails and rolls
+    # back, see the persist `except` blocks below) before any other action
+    # for this submission can even start. reserve_review_action claims the
+    # submission atomically (existence + no other action already in flight +
+    # the submission's current state actually allows this action) before any
+    # side effect runs; release_reservation in the `finally` below always
+    # releases it, on every exit path.
     reserved = False
     try:
+        try:
+            current = store.reserve_review_action(submission_id, request.action)
+        except ContributorSubmissionNotFoundError as exc:
+            raise _submission_not_found(submission_id) from exc
+        except ContributorReviewConflictError as exc:
+            # TASK B: refuse rather than report success -- this is exactly
+            # the operator action that field evidence candidate #17 found
+            # missing from both the response and the resident-facing
+            # message. Also covers CRITICAL: an already-scheduled/published
+            # submission, or a concurrent/duplicate/interleaved review
+            # request of ANY kind, is refused here too.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+        reserved = True
+
         if request.action == "accept":
-            try:
-                current = store.reserve_review_action(submission_id, "accept")
-            except ContributorSubmissionNotFoundError as exc:
-                raise _submission_not_found(submission_id) from exc
-            except ContributorReviewConflictError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-                ) from exc
-            reserved = True
             if asset_store is None:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1110,21 +1152,6 @@ def review_contributor_submission(
             )
             effective_request = request.model_copy(update={"broken_media_gate": gate})
         elif request.action == "schedule":
-            try:
-                current = store.reserve_review_action(submission_id, "schedule")
-            except ContributorSubmissionNotFoundError as exc:
-                raise _submission_not_found(submission_id) from exc
-            except ContributorReviewConflictError as exc:
-                # TASK B: refuse rather than report success -- this is exactly
-                # the operator action that field evidence candidate #17 found
-                # missing from both the response and the resident-facing
-                # message. Also covers CRITICAL: an already-scheduled/
-                # published submission, or a concurrent duplicate schedule
-                # request, is refused here too.
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-                ) from exc
-            reserved = True
             if schedule_store is None:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1137,7 +1164,9 @@ def review_contributor_submission(
             # BLOCKER fix: pull any real schedule item off the schedule
             # BEFORE the decline is persisted -- see
             # _cancel_schedule_item_for_decline's docstring for why this
-            # ordering matters.
+            # ordering matters. `current` is the fresh, reservation-locked
+            # read above, not a pre-reservation snapshot, so this can no
+            # longer race a concurrent schedule request past this point.
             _cancel_schedule_item_for_decline(current, schedule_store=schedule_store)
 
         try:
@@ -1150,15 +1179,33 @@ def review_contributor_submission(
         except ContributorSubmissionNotFoundError as exc:
             raise _submission_not_found(submission_id) from exc
         except ContributorReviewConflictError as exc:
+            # BLOCKER fix: reserve_review_action already re-validates state
+            # atomically at reservation time, so this should be unreachable
+            # in the normal case -- but if persisting still fails here for
+            # any reason, a schedule action that already created a real
+            # schedule_items row must not leave it dangling behind a
+            # declined-elsewhere or otherwise-conflicting submission.
+            if created_schedule_item_id is not None:
+                _rollback_created_schedule_item(
+                    created_schedule_item_id, schedule_store=schedule_store
+                )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=str(exc)
             ) from exc
         except ContributorStoreError as exc:
+            if created_schedule_item_id is not None:
+                _rollback_created_schedule_item(
+                    created_schedule_item_id, schedule_store=schedule_store
+                )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(exc),
             ) from exc
         except ValueError as exc:
+            if created_schedule_item_id is not None:
+                _rollback_created_schedule_item(
+                    created_schedule_item_id, schedule_store=schedule_store
+                )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),

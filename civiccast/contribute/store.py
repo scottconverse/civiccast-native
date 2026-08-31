@@ -102,16 +102,25 @@ class ContributorSubmissionStore:
         self._lock = Lock()
         self._submissions = self._load()
         # CRITICAL race fix: in-process reservation ledger keyed by
-        # submission_id -> the ReviewAction currently claiming it. Only
-        # ``accept``/``schedule`` use this (see ``reserve_review_action``) --
-        # both trigger a REAL external side effect (ffprobe ingest into the
-        # asset library / a real civiccast.schedule_items row) BEFORE this
-        # store is asked to persist anything, so a state guard applied only
-        # at persist time is too late: two concurrent accepts would already
-        # have created two real assets before either write landed. Reserving
-        # first closes that off -- the second concurrent/duplicate request
-        # is rejected before it can touch the asset/schedule store at all.
-        # In-memory and per-process by design (same trade-off as
+        # submission_id -> the ReviewAction currently claiming it. Every
+        # review action (accept/schedule/decline/mark_under_review/
+        # request_changes) takes this reservation via
+        # ``reserve_review_action`` before it does anything else -- not just
+        # accept/schedule. accept/schedule each trigger a REAL external side
+        # effect (ffprobe ingest into the asset library / a real
+        # civiccast.schedule_items row) BEFORE this store is asked to
+        # persist anything, so a state guard applied only at persist time is
+        # too late: two concurrent accepts would already have created two
+        # real assets before either write landed. BLOCKER field evidence
+        # showed the same is true of decline even though it has no side
+        # effect of its own: an unreserved decline could interleave between
+        # a concurrent schedule's real-row creation and that schedule's
+        # persist, leaving the real schedule row live behind a submission
+        # marked declined. Reserving every action first closes all of this
+        # off -- the second concurrent/interleaved request of any kind is
+        # rejected before it can touch the asset/schedule store, or the
+        # persisted state, at all. In-memory and per-process by design (same
+        # trade-off as
         # ``civiccast.auth.rate_limit.AuthRateLimiter``): it only needs to
         # arbitrate requests racing within this process, which is exactly
         # where the race lives (both requests go through the same FastAPI
