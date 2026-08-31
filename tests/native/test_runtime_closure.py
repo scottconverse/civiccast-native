@@ -24,6 +24,7 @@ from civiccast.native.runtime_closure import (
     GPL_DISTRIBUTIONS,
     LINUX_ONLY_FACTORIES,
     REQUIRED_FACTORIES,
+    STAGED_OPTIONAL_FACTORIES,
     GplPolicyError,
     MissingPluginError,
     UnauthorizedDistributionError,
@@ -90,6 +91,89 @@ def test_required_factory_count_includes_the_mandatory_caption_audio_appsink() -
     assert "appsink" in REQUIRED_FACTORIES
     assert FACTORY_PLUGIN["appsink"] == FACTORY_PLUGIN["appsrc"] == "gstapp.dll"
     assert len(REQUIRED_FACTORIES) == 52
+
+
+# --------------------------------------------------------------------------
+# STAGED_OPTIONAL_FACTORIES -- S15 CG-lite / native-HLS (PR #88 disposition)
+# --------------------------------------------------------------------------
+
+
+def test_staged_optional_factories_are_the_three_cg_lite_plugins_pr88_named() -> None:
+    """PR #88's body named exactly these as staged-but-not-required: the
+    compositor (video mixer), the pango overlays (text/clock CG), and the
+    native HLS sink -- present in the already-pinned `gstreamer-libs`/
+    `gstreamer-plugins` 1.28.5 wheels, no new upstream artifact. `interpipe`
+    is deliberately excluded: PR #88 recorded it as absent from the pinned
+    wheels entirely (a RidgeRun-only artifact), so it cannot be staged
+    additively the way these three can."""
+    assert set(STAGED_OPTIONAL_FACTORIES) == {"compositor", "textoverlay", "clockoverlay", "hlssink3"}
+    assert "interpipesrc" not in STAGED_OPTIONAL_FACTORIES
+    assert "interpipesink" not in STAGED_OPTIONAL_FACTORIES
+
+
+def test_staged_optional_factories_are_disjoint_from_required_factories() -> None:
+    """REQUIRED_FACTORIES's own docstring is "the factories the product's
+    pipelines cannot run without" -- these three are not that (no pipeline in
+    `civiccast/egress/gst/engine.py` builds a graph with them today), so they
+    must never silently widen REQUIRED_FACTORIES's meaning or its asserted
+    count of 52."""
+    assert not (STAGED_OPTIONAL_FACTORIES & REQUIRED_FACTORIES)
+    assert not (STAGED_OPTIONAL_FACTORIES & EXCLUDED_GPL_FACTORIES)
+    assert not (STAGED_OPTIONAL_FACTORIES & LINUX_ONLY_FACTORIES)
+
+
+def test_staged_optional_factories_all_have_a_plugin_mapping() -> None:
+    """Every staged factory must resolve to a real plugin file, matching the
+    contract `test_every_policy_factory_has_a_plugin_mapping` already holds
+    REQUIRED/CONDITIONAL/ABSENCE_TOLERANT/EXCLUDED to."""
+    missing = sorted(STAGED_OPTIONAL_FACTORIES - set(FACTORY_PLUGIN))
+    assert missing == [], f"staged-optional factories with no plugin mapping: {missing}"
+    assert FACTORY_PLUGIN["compositor"] == "gstcompositor.dll"
+    assert FACTORY_PLUGIN["textoverlay"] == FACTORY_PLUGIN["clockoverlay"] == "gstpango.dll"
+    assert FACTORY_PLUGIN["hlssink3"] == "gsthlssink3.dll"
+
+
+def test_select_plugin_seeds_includes_staged_optional_factories_when_present() -> None:
+    """Mirrors exactly how `scripts/build_native_runtime_closure.py`'s
+    `build()` folds STAGED_OPTIONAL_FACTORIES into its `required` set
+    unconditionally (not gated on presence in `origins`, unlike
+    CONDITIONAL_FACTORIES/ABSENCE_TOLERANT_FACTORIES) -- proving the pack
+    actually carries the three CG-lite plugin files when they resolve."""
+    origins = _origins(
+        compositor=("lib/gstreamer-1.0/gstcompositor.dll", "gstreamer_libs"),
+        textoverlay=("lib/gstreamer-1.0/gstpango.dll", "gstreamer_libs"),
+        clockoverlay=("lib/gstreamer-1.0/gstpango.dll", "gstreamer_libs"),
+        hlssink3=("lib/gstreamer-1.0/gsthlssink3.dll", "gstreamer_plugins"),
+    )
+    required = frozenset(origins) | STAGED_OPTIONAL_FACTORIES
+    seeds = select_plugin_seeds(origins, required=required)
+    assert seeds == (
+        "lib/gstreamer-1.0/gstcompositor.dll",
+        "lib/gstreamer-1.0/gsthlssink3.dll",
+        "lib/gstreamer-1.0/gstpango.dll",
+    )
+
+
+def test_select_plugin_seeds_refuses_loudly_if_a_staged_optional_factory_goes_missing() -> None:
+    """The pack-carries-it guarantee is fail-closed, not best-effort: if a
+    future upstream bump ever drops one of these three plugins from the
+    pinned wheels, the build must refuse with MissingPluginError -- never
+    silently ship a tree missing the CG-lite plugin the product means to
+    carry (this is why STAGED_OPTIONAL_FACTORIES is folded into `required`
+    unconditionally in the build script, unlike CONDITIONAL_FACTORIES/
+    ABSENCE_TOLERANT_FACTORIES, which are only added when already present in
+    `origins`)."""
+    origins = _origins(
+        compositor=("lib/gstreamer-1.0/gstcompositor.dll", "gstreamer_libs"),
+        # textoverlay/clockoverlay/hlssink3 deliberately absent from origins.
+    )
+    required = REQUIRED_FACTORIES | STAGED_OPTIONAL_FACTORIES
+    with pytest.raises(MissingPluginError) as excinfo:
+        select_plugin_seeds(origins, required=required)
+    message = str(excinfo.value)
+    assert "textoverlay" in message
+    assert "clockoverlay" in message
+    assert "hlssink3" in message
 
 
 # --------------------------------------------------------------------------
