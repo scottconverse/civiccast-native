@@ -153,4 +153,78 @@ describe('createAppQueryClient 401 handling', () => {
     unsubscribe()
     expect(identityFetch).toHaveBeenCalledTimes(1)
   })
+
+  /**
+   * Token-fratricide field bug, self-lockout half (owner-verified
+   * 2026-08-30): a browser holding a token the server had stopped accepting
+   * kept auto-resending it from every polling query. Each of those 401s
+   * spent staff-auth failure budget until the operator was 429-locked out
+   * ("Too many failed attempts... wait N seconds") with zero user action.
+   * The fix: the FIRST rejected 401 discards the stored token, so every
+   * subsequent request goes out with no Authorization header at all -- the
+   * middleware's budget-free missing-credential path -- and leaves a
+   * sessionStorage notice for the sign-in card to explain the sign-out.
+   */
+  it('discards the stored staff token and records a signed-out notice on a 401', async () => {
+    window.localStorage.setItem('civiccast.staffToken', 'ccst_previously-good-token')
+    window.sessionStorage.setItem('civiccast.staffToken', 'ccst_previously-good-token')
+    const queryClient = createAppQueryClient()
+
+    await queryClient
+      .fetchQuery({
+        queryKey: ['some-staff-screen-data'],
+        queryFn: () => {
+          throw new ApiError('Request failed: 401 Unauthorized', 401, 'Invalid staff bearer token.')
+        },
+        retry: false,
+      })
+      .catch(() => undefined)
+
+    expect(window.localStorage.getItem('civiccast.staffToken')).toBeNull()
+    expect(window.sessionStorage.getItem('civiccast.staffToken')).toBeNull()
+    expect(window.sessionStorage.getItem('civiccast.staffSignedOutNotice')).toBe('1')
+    window.sessionStorage.removeItem('civiccast.staffSignedOutNotice')
+  })
+
+  it('records no signed-out notice for a browser that never had a stored token', async () => {
+    window.localStorage.removeItem('civiccast.staffToken')
+    window.sessionStorage.removeItem('civiccast.staffToken')
+    window.sessionStorage.removeItem('civiccast.staffSignedOutNotice')
+    const queryClient = createAppQueryClient()
+
+    await queryClient
+      .fetchQuery({
+        queryKey: ['some-staff-screen-data'],
+        queryFn: () => {
+          throw new ApiError(
+            'Request failed: 401 Unauthorized',
+            401,
+            'Missing Authorization header. Use Bearer <staff-token>.',
+          )
+        },
+        retry: false,
+      })
+      .catch(() => undefined)
+
+    expect(window.sessionStorage.getItem('civiccast.staffSignedOutNotice')).toBeNull()
+  })
+
+  it('discards the token even when the identity query itself is the one that 401s', async () => {
+    window.localStorage.setItem('civiccast.staffToken', 'ccst_previously-good-token')
+    const queryClient = createAppQueryClient()
+
+    await queryClient
+      .fetchQuery({
+        queryKey: ['staff-identity'],
+        queryFn: () => {
+          throw new ApiError('Request failed: 401 Unauthorized', 401, 'Invalid staff bearer token.')
+        },
+        retry: false,
+      })
+      .catch(() => undefined)
+
+    expect(window.localStorage.getItem('civiccast.staffToken')).toBeNull()
+    expect(window.sessionStorage.getItem('civiccast.staffSignedOutNotice')).toBe('1')
+    window.sessionStorage.removeItem('civiccast.staffSignedOutNotice')
+  })
 })
