@@ -1008,7 +1008,7 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # Rebased onto fix/setup-nonce-handoff's own floor (1666, 1858) after
     # that PR landed first; re-derived by an actual `--collect-only` run on
     # this POST-REBASE tree, not by arithmetic: (1666, 1858) -> (1675, 1869).
-    assert (collect("not windows_only"), collect()) == (1676, 1870)
+    assert (collect("not windows_only"), collect()) == (1678, 1872)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
