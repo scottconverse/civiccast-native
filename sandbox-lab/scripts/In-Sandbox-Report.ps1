@@ -172,6 +172,35 @@ Write-Marker -Name '_STARTED.marker' -Content "Started $RunStart"
 Write-Marker -Name '_DRIVER-PID.txt' -Content "driver_pid=$PID started_utc=$($RunStart.ToUniversalTime().ToString('o'))"
 Write-Marker -Name '_LOCALOUT.marker' -Content "local_out_dir=$OutDir ship_dir=$ShipDir seed_completed=$($script:SeedResult.completed) seed_error=$($script:SeedResult.error)"
 
+# DIRTY-BOX LANE <gate-a-dirty-lane>. DIRTY_MODE.txt is a host-provided input
+# (written by Host-Launch-Sandbox-Test.ps1 -DirtyMode into the mapped output
+# folder, seeded into $OutDir by the robocopy above -- the exact same channel
+# SOAK_MINUTES.txt and SKIP_MODE.txt already ride). When present, this run
+# executes a REMNANT prologue before the normal acceptance flow: install the
+# candidate once, plant operator data (uploads), uninstall it for real via its
+# own uninstaller, verify the uninstaller's preservation contract
+# (nsis-hooks-bootstrap.nsh: "$COMMONPROGRAMDATA\CivicCast ... is preserved
+# across uninstall by design"), optionally seed an orphaned captions-large-v3
+# component, and only THEN fall through into the unchanged full acceptance
+# flow -- which therefore runs against a machine shaped like every real
+# customer upgrade box (leftover pgdata, uploads, logs, journals) instead of
+# the pristine sandbox that has let remnant-only failures ship for weeks
+# (field instance: DESKTOP-2BR3SJR 2026-08-30, #18 supervisor crash-loop on a
+# preserved-but-receiptless caption tier -- PR #80).
+#
+# The mode flag must be resolved HERE, before the shipper and watchdog are
+# spawned below: a dirty run performs TWO full install cycles, so its overall
+# bound is raised to 210 minutes (contract: 210 in-sandbox < the host's 230
+# poll -- the dirty-lane analogue of the clean lane's 150 < 170 ordering,
+# asserted by tests/gate_a/test_gate_a_harness_contract.py). The clean lane's
+# numbers are untouched: without DIRTY_MODE.txt nothing in this block changes
+# any value.
+$script:DirtyMode = Test-Path (Join-Path $OutDir 'DIRTY_MODE.txt')
+if ($script:DirtyMode) {
+    if ($MaxScriptMinutes -lt 210) { $MaxScriptMinutes = 210 }
+    Write-Marker -Name '_DIRTY-MODE.marker' -Content "dirty_mode=1 max_script_minutes=$MaxScriptMinutes detected_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+}
+
 # Quiesce control <gate-a-run7-findings>. Raised around the installer so the
 # shipper stops competing with it for the shared VSMB transport; see the
 # QUIESCE note above the shipper for the measured cost of not doing this.
@@ -1589,7 +1618,214 @@ function Test-TsProof {
     return $result
 }
 
+# ============================================================================
+# DIRTY-BOX REMNANT PROLOGUE <gate-a-dirty-lane>. Runs ONLY when the host
+# opted this run into the dirty lane (see the DIRTY_MODE.txt block near the
+# top of this file). Everything here happens BEFORE the normal acceptance
+# flow, which then runs unchanged against the remnant-carrying box:
+#
+#   P1. Install the candidate once (same silent command as the normal flow).
+#       The install-time provision creates a REAL PostgreSQL cluster at
+#       %ProgramData%\CivicCast\data\pgdata -- not a hand-faked seed.
+#   P2. Plant operator data: two media files into
+#       %ProgramData%\CivicCast\data\uploads (install_layout.upload_dir),
+#       recording their SHA-256 so phase 2 can prove byte survival.
+#   P3. Record the pgdata cluster identity (PG_VERSION content + the
+#       directory's CreationTimeUtc) so phase 2 can prove the SAME cluster
+#       survived rather than a re-provisioned lookalike.
+#   P4. Stop the CivicCastSupervisor service (bounded) and run the REAL
+#       uninstaller silently. `_?=` keeps NSIS running in place so -Wait and
+#       the exit code are meaningful; its one side effect -- the uninstaller
+#       cannot delete its own exe -- is cleaned up afterwards (bounded),
+#       because on a customer machine the copy-to-%TEMP% flow removes it.
+#   P5. Verify the uninstaller's preservation contract
+#       (nsis-hooks-bootstrap.nsh: "$COMMONPROGRAMDATA\CivicCast ...
+#       preserved across uninstall by design"): pgdata and the planted
+#       uploads must still be there; the install tree must be gone.
+#   P6. OPTIONAL orphaned-caption-tier seed: if the host staged a
+#       hash-valid large-v3 model at C:\CivicCastHostStore\dirty-seed\
+#       captions-large-v3, mirror it to %ProgramData%\CivicCast\components\
+#       captions-large-v3 WITHOUT any ProgramData activation receipt --
+#       byte-for-byte the DESKTOP-2BR3SJR #17/#18 remnant shape whose
+#       receipt-path crash PR #80 fixed. A stub is NOT seeded when the real
+#       model is absent: `_resolve_caption_tier` validates the selected
+#       tier's pinned SHA-256 set BEFORE the receipt is read, so an
+#       incomplete model dir reproduces a deliberate fail-closed crash, not
+#       the orphaned-receipt degrade path this lane exists to prove.
+#       DIRTY-PREP-RESULT.txt records seeded=0 and the judge reports that
+#       sub-shape as SKIP (loudly), never as a silent pass.
+#
+# Every hoststore (mapped-folder) access is bounded via Invoke-BoundedProbe /
+# Invoke-BoundedProcess, per this file's <gate-a-hoststore-wedge> discipline.
+# ProgramData paths are the sandbox's own local disk and are safe to touch
+# directly. Failures are recorded, never thrown: a broken prologue must still
+# leave a judgeable evidence trail (the judge fails the dirty lane on the
+# recorded lines, and the normal flow still runs for forensics).
+# ============================================================================
+$script:DirtyPgdataCreationUtc = $null
+$script:DirtyPgVersion = $null
+$script:DirtyUploadHashes = @{}
+function Invoke-DirtyRemnantPrologue {
+    $prep = Join-Path $OutDir 'DIRTY-PREP-RESULT.txt'
+    "dirty_prep_started_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $prep -Encoding UTF8
+    $pd = Join-Path $env:ProgramData 'CivicCast'
+    $installRoot = 'C:\CivicCastHostStore\install'
+
+    # P1. Phase-1 install.
+    $dirtyExe = Get-ChildItem -Path $PayloadDir -Filter '*setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $dirtyExe) {
+        "PHASE1_INSTALL_EXIT=-999 (no *setup.exe found in $PayloadDir)" | Add-Content -Path $prep -Encoding UTF8
+        Save-Summary -Step 'dirty-prep-no-installer'
+        return
+    }
+    Enter-ShipperQuiesce -Reason 'dirty-lane-phase1-install' -MaxMinutes 120
+    Save-Summary -Step 'dirty-prep-phase1-install-begin'
+    $phase1Exit = $null
+    try {
+        $p1 = Start-Process -FilePath $dirtyExe.FullName -ArgumentList '/S /D=C:\CivicCastHostStore\install' -PassThru -Wait -WindowStyle Hidden
+        $phase1Exit = $p1.ExitCode
+    } catch {
+        "phase1_install_launch_error=$_" | Add-Content -Path $prep -Encoding UTF8
+    }
+    Exit-ShipperQuiesce
+    "PHASE1_INSTALL_EXIT=$(if ($null -ne $phase1Exit) { $phase1Exit } else { -998 })" | Add-Content -Path $prep -Encoding UTF8
+    Save-Summary -Step 'dirty-prep-phase1-install-done'
+    if ($phase1Exit -ne 0) {
+        "DIRTY_PREP=FAIL (phase-1 install did not exit 0 -- continuing into the normal flow for forensics only)" | Add-Content -Path $prep -Encoding UTF8
+        return
+    }
+
+    # P2. Plant operator uploads (install_layout.upload_dir =
+    # <ProgramData>\CivicCast\data\uploads). Source media is the mapped
+    # scripts folder's real sample clip -- never a synthetic file.
+    $uploads = Join-Path $pd 'data\uploads'
+    try { New-Item -ItemType Directory -Force -Path $uploads | Out-Null } catch {}
+    $sample = 'C:\CivicCastScripts\lpm-sample-short.mp4'
+    foreach ($name in @('dirty-remnant-recording-1.mp4', 'dirty-remnant-recording-2.mp4')) {
+        try {
+            Copy-Item -LiteralPath $sample -Destination (Join-Path $uploads $name) -Force -ErrorAction Stop
+            $h = (Get-FileHash -Path (Join-Path $uploads $name) -Algorithm SHA256).Hash.ToLower()
+            $script:DirtyUploadHashes[$name] = $h
+            "UPLOAD_PLANTED name=$name sha256=$h" | Add-Content -Path $prep -Encoding UTF8
+        } catch {
+            "UPLOAD_PLANT_FAILED name=$name error=$_" | Add-Content -Path $prep -Encoding UTF8
+        }
+    }
+    Save-Summary -Step 'dirty-prep-uploads-planted'
+
+    # P3. Record the pgdata cluster identity.
+    $pgdata = Join-Path $pd 'data\pgdata'
+    if (Test-Path $pgdata) {
+        try { $script:DirtyPgdataCreationUtc = (Get-Item -LiteralPath $pgdata -Force).CreationTimeUtc.ToString('o') } catch {}
+        try { $script:DirtyPgVersion = (Get-Content -LiteralPath (Join-Path $pgdata 'PG_VERSION') -Raw -ErrorAction Stop).Trim() } catch {}
+        "PGDATA_PRESENT_AFTER_PHASE1=1 creation_utc=$($script:DirtyPgdataCreationUtc) pg_version=$($script:DirtyPgVersion)" | Add-Content -Path $prep -Encoding UTF8
+    } else {
+        "PGDATA_PRESENT_AFTER_PHASE1=0 (no cluster at $pgdata after a phase-1 install that exited 0)" | Add-Content -Path $prep -Encoding UTF8
+    }
+    Save-Summary -Step 'dirty-prep-pgdata-recorded'
+
+    # P4. Stop the service (bounded poll), then run the real uninstaller.
+    try { & sc.exe stop CivicCastSupervisor 2>&1 | Out-Null } catch {}
+    $stopDeadline = (Get-Date).AddSeconds(120)
+    $svcState = 'unknown'
+    while ((Get-Date) -lt $stopDeadline) {
+        $q = (& sc.exe query CivicCastSupervisor 2>&1 | Out-String)
+        if ($q -match 'STOPPED') { $svcState = 'stopped'; break }
+        if ($q -match '1060') { $svcState = 'not-installed'; break }
+        Start-Sleep -Seconds 5
+    }
+    "SERVICE_STATE_BEFORE_UNINSTALL=$svcState" | Add-Content -Path $prep -Encoding UTF8
+    Save-Summary -Step 'dirty-prep-service-stopped'
+
+    $uninstProbe = Invoke-BoundedProbe -Name 'dirty-uninstaller-present' -TimeoutSeconds 60 -Arguments @{ Path = (Join-Path $installRoot 'uninstall.exe') } -ScriptText @'
+@{ items = @([bool](Test-Path $ProbeArgs['Path'])) } | ConvertTo-Json -Depth 3 | Set-Content -Path $ResultPath -Encoding UTF8
+'@
+    $uninstPresent = ($null -ne $uninstProbe) -and (@($uninstProbe.items)[0] -eq $true)
+    if (-not $uninstPresent) {
+        "UNINSTALL_EXIT=-999 (uninstall.exe not found under $installRoot)" | Add-Content -Path $prep -Encoding UTF8
+        Save-Summary -Step 'dirty-prep-no-uninstaller'
+        return
+    }
+    # 45-minute bound: the uninstaller's RMDir /r walks the ~12 GB, 10k-file
+    # install tree ACROSS VSMB (the same transport whose per-file cost run7
+    # measured at 1.6-4.2x) -- a bound sized for a local disk would kill a
+    # healthy uninstall mid-walk and report a false remnant-contract FAIL.
+    Enter-ShipperQuiesce -Reason 'dirty-lane-uninstall' -MaxMinutes 50
+    $uninstallRun = Invoke-BoundedProcess -FilePath (Join-Path $installRoot 'uninstall.exe') -ArgumentList @('/S', "_?=$installRoot") -TimeoutSeconds 2700
+    Exit-ShipperQuiesce
+    $uninstallExit = if ($uninstallRun.completed) { $uninstallRun.exit_code } else { -997 }
+    "UNINSTALL_EXIT=$uninstallExit uninstall_completed=$($uninstallRun.completed) uninstall_error=$($uninstallRun.error)" | Add-Content -Path $prep -Encoding UTF8
+    Save-Summary -Step 'dirty-prep-uninstall-done'
+
+    # `_?=` means the uninstaller could not delete its own exe (it schedules
+    # a delete-on-reboot that never happens in a sandbox). On a customer
+    # machine the copy-to-%TEMP% flow leaves no such file, so remove this
+    # harness-induced artifact -- and ONLY it -- before phase 2, or the
+    # phase-2 installer would see a tree shape no real machine has.
+    $cleanupProbe = Invoke-BoundedProbe -Name 'dirty-uninstaller-cleanup' -TimeoutSeconds 60 -Arguments @{ Root = $installRoot } -ScriptText @'
+$removed = @()
 try {
+    $u = Join-Path $ProbeArgs['Root'] 'uninstall.exe'
+    if (Test-Path $u) { Remove-Item -LiteralPath $u -Force -ErrorAction Stop; $removed += 'uninstall.exe' }
+    $items = @(Get-ChildItem -LiteralPath $ProbeArgs['Root'] -Force -ErrorAction SilentlyContinue)
+    if ($items.Count -eq 0) { Remove-Item -LiteralPath $ProbeArgs['Root'] -Force -ErrorAction SilentlyContinue; $removed += '<empty install root>' }
+    $removed += "leftover_entries=$((@(Get-ChildItem -LiteralPath $ProbeArgs['Root'] -Force -ErrorAction SilentlyContinue) | Select-Object -ExpandProperty Name) -join ';')"
+} catch { $removed += "cleanup_error=$_" }
+@{ items = @($removed) } | ConvertTo-Json -Depth 3 | Set-Content -Path $ResultPath -Encoding UTF8
+'@
+    "UNINSTALLER_SELF_CLEANUP=$(if ($cleanupProbe) { @($cleanupProbe.items) -join ' ' } else { '<probe did not complete>' })" | Add-Content -Path $prep -Encoding UTF8
+
+    # P5. Preservation contract after uninstall.
+    $pgPreserved = [int](Test-Path $pgdata)
+    $uploadsPreserved = 1
+    foreach ($name in $script:DirtyUploadHashes.Keys) {
+        if (-not (Test-Path (Join-Path $uploads $name))) { $uploadsPreserved = 0 }
+    }
+    "PGDATA_PRESERVED_AFTER_UNINSTALL=$pgPreserved" | Add-Content -Path $prep -Encoding UTF8
+    "UPLOADS_PRESERVED_AFTER_UNINSTALL=$uploadsPreserved" | Add-Content -Path $prep -Encoding UTF8
+    $treeProbe = Invoke-BoundedProbe -Name 'dirty-installtree-gone' -TimeoutSeconds 60 -Arguments @{ Root = $installRoot } -ScriptText @'
+$gone = 1
+foreach ($sub in @('runtime', 'packs')) {
+    if (Test-Path (Join-Path $ProbeArgs['Root'] $sub)) { $gone = 0 }
+}
+@{ items = @($gone) } | ConvertTo-Json -Depth 3 | Set-Content -Path $ResultPath -Encoding UTF8
+'@
+    $treeGone = if ($treeProbe) { @($treeProbe.items)[0] } else { '<probe did not complete>' }
+    "INSTALL_TREE_REMOVED_AFTER_UNINSTALL=$treeGone" | Add-Content -Path $prep -Encoding UTF8
+    Save-Summary -Step 'dirty-prep-preservation-checked'
+
+    # P6. Optional orphaned large-v3 seed.
+    $orphanSeeded = 0
+    $seedProbe = Invoke-BoundedProbe -Name 'dirty-orphan-seed-present' -TimeoutSeconds 60 -Arguments @{ Path = 'C:\CivicCastHostStore\dirty-seed\captions-large-v3\models' } -ScriptText @'
+@{ items = @([bool](Test-Path $ProbeArgs['Path'])) } | ConvertTo-Json -Depth 3 | Set-Content -Path $ResultPath -Encoding UTF8
+'@
+    if (($null -ne $seedProbe) -and (@($seedProbe.items)[0] -eq $true)) {
+        $seedDst = Join-Path $pd 'components\captions-large-v3'
+        $seedCopy = Invoke-BoundedProcess -FilePath 'robocopy.exe' -ArgumentList @(
+            'C:\CivicCastHostStore\dirty-seed\captions-large-v3', $seedDst, '/E', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/NP'
+        ) -TimeoutSeconds 1800
+        # Robocopy exit codes < 8 are success family.
+        if ($seedCopy.completed -and ($seedCopy.exit_code -lt 8)) { $orphanSeeded = 1 }
+        "ORPHAN_SEED_COPY completed=$($seedCopy.completed) exit=$($seedCopy.exit_code) error=$($seedCopy.error)" | Add-Content -Path $prep -Encoding UTF8
+    } else {
+        "ORPHAN_SEED_SOURCE_ABSENT=1 (no hash-valid large-v3 model staged by the host -- orphaned-tier remnant shape NOT covered this run; see docs/ops/gate-a.md, 'Dirty lane')" | Add-Content -Path $prep -Encoding UTF8
+    }
+    # The orphan shape requires the ProgramData receipt to be ABSENT. It is
+    # never deleted here -- if a phase-1 install legitimately wrote one, that
+    # is recorded and the judge surfaces the discrepancy instead of the
+    # harness authoring the shape it wants.
+    "RECEIPT_PRESENT_IN_PROGRAMDATA=$([int](Test-Path (Join-Path $pd 'activation-self-test.json')))" | Add-Content -Path $prep -Encoding UTF8
+    "DIRTY_ORPHAN_SEEDED=$orphanSeeded" | Add-Content -Path $prep -Encoding UTF8
+    "dirty_prep_finished_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Add-Content -Path $prep -Encoding UTF8
+    Save-Summary -Step 'dirty-prep-complete'
+}
+
+try {
+    if ($script:DirtyMode) {
+        Invoke-DirtyRemnantPrologue
+        Sync-Transcript -Checkpoint 'dirty-prologue'
+    }
+
     # 0. SKIP-REINSTALL MODE -- EXPERIMENTAL, OPT-IN ONLY, GATED (2026-08-19).
     #    A live run proved this mode's core premise wrong: station_up stayed
     #    False because CivicCastSupervisor never existed to answer on 8000.
@@ -2142,6 +2378,87 @@ try {
     }
     Save-Summary -Step 'station-diag-captured-after-wait'
     Save-Summary -Step 'runtime-ui-captured'
+
+    # 5b-dirty. DIRTY-LANE SURVIVAL VERIFY <gate-a-dirty-lane>. Only in dirty
+    # mode, right after the station-up verdict: prove the operator data the
+    # prologue planted before the uninstall/reinstall cycle survived it, and
+    # (when the orphaned large-v3 remnant was seeded) that PR #80's
+    # orphaned-tier fallback actually FIRED -- the supervisor log must carry
+    # its WARNING, proving the remnant was detected and degraded rather than
+    # nothing having been exercised at all. All paths here are the sandbox's
+    # own local disk (ProgramData); no mapped-folder access.
+    if ($script:DirtyMode) {
+        $dirtyRes = Join-Path $OutDir 'DIRTY-RESULT.txt'
+        "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $dirtyRes -Encoding UTF8
+        $pdRoot = Join-Path $env:ProgramData 'CivicCast'
+
+        # pgdata: the SAME cluster, not a re-provisioned lookalike.
+        $pgdataNow = Join-Path $pdRoot 'data\pgdata'
+        $pgPreserved = 0
+        $pgDetail = 'pgdata missing'
+        if (Test-Path $pgdataNow) {
+            $creationNow = $null
+            $pgVersionNow = $null
+            try { $creationNow = (Get-Item -LiteralPath $pgdataNow -Force).CreationTimeUtc.ToString('o') } catch {}
+            try { $pgVersionNow = (Get-Content -LiteralPath (Join-Path $pgdataNow 'PG_VERSION') -Raw -ErrorAction Stop).Trim() } catch {}
+            if ($script:DirtyPgdataCreationUtc -and ($creationNow -eq $script:DirtyPgdataCreationUtc) -and ($pgVersionNow -eq $script:DirtyPgVersion)) {
+                $pgPreserved = 1
+                $pgDetail = "same cluster (creation_utc=$creationNow pg_version=$pgVersionNow)"
+            } else {
+                $pgDetail = "identity mismatch: phase1 creation_utc=$($script:DirtyPgdataCreationUtc) now=$creationNow phase1 pg_version=$($script:DirtyPgVersion) now=$pgVersionNow"
+            }
+        }
+        "DIRTY_PGDATA_PRESERVED=$pgPreserved detail=$pgDetail" | Add-Content -Path $dirtyRes -Encoding UTF8
+
+        # uploads: byte-identical survival of the planted recordings.
+        $uploadsNow = Join-Path $pdRoot 'data\uploads'
+        $uploadsPreserved = 1
+        if ($script:DirtyUploadHashes.Count -eq 0) { $uploadsPreserved = 0 }
+        foreach ($name in $script:DirtyUploadHashes.Keys) {
+            $f = Join-Path $uploadsNow $name
+            $hNow = $null
+            try { if (Test-Path $f) { $hNow = (Get-FileHash -Path $f -Algorithm SHA256).Hash.ToLower() } } catch {}
+            $match = [int]($hNow -eq $script:DirtyUploadHashes[$name])
+            if ($match -ne 1) { $uploadsPreserved = 0 }
+            "DIRTY_UPLOAD name=$name survived=$match sha256_now=$hNow" | Add-Content -Path $dirtyRes -Encoding UTF8
+        }
+        "DIRTY_UPLOADS_PRESERVED=$uploadsPreserved" | Add-Content -Path $dirtyRes -Encoding UTF8
+
+        # Orphaned-tier warning (PR #80). Echo the seed decision from the
+        # prologue's own file, then grep every log in the station's log root
+        # (size-guarded) for the fallback's WARNING text.
+        $orphanSeeded = 'unknown'
+        try {
+            $prepRaw = Get-Content -LiteralPath (Join-Path $OutDir 'DIRTY-PREP-RESULT.txt') -Raw -ErrorAction Stop
+            $m = [regex]::Match($prepRaw, 'DIRTY_ORPHAN_SEEDED=(\d)')
+            if ($m.Success) { $orphanSeeded = $m.Groups[1].Value }
+        } catch {}
+        "DIRTY_ORPHAN_SEEDED=$orphanSeeded" | Add-Content -Path $dirtyRes -Encoding UTF8
+        if ($orphanSeeded -eq '1') {
+            $warningFound = 0
+            $logRoot = Join-Path $pdRoot 'logs'
+            try {
+                foreach ($logFile in @(Get-ChildItem -Path $logRoot -Filter '*.log*' -File -ErrorAction SilentlyContinue)) {
+                    if ($logFile.Length -gt 32MB) {
+                        "DIRTY_ORPHAN_LOG_SKIPPED name=$($logFile.Name) bytes=$($logFile.Length) (over 32MB cap)" | Add-Content -Path $dirtyRes -Encoding UTF8
+                        continue
+                    }
+                    $hit = Select-String -LiteralPath $logFile.FullName -Pattern 'staged but has no valid activation\s*self-test receipt' -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($hit) {
+                        $warningFound = 1
+                        "DIRTY_ORPHAN_WARNING_SOURCE=$($logFile.Name):$($hit.LineNumber)" | Add-Content -Path $dirtyRes -Encoding UTF8
+                        break
+                    }
+                }
+            } catch {
+                "DIRTY_ORPHAN_LOG_SCAN_ERROR=$_" | Add-Content -Path $dirtyRes -Encoding UTF8
+            }
+            "DIRTY_ORPHAN_WARNING=$warningFound" | Add-Content -Path $dirtyRes -Encoding UTF8
+        } else {
+            "DIRTY_ORPHAN_WARNING=NA (remnant not seeded this run -- orphaned-tier shape not covered)" | Add-Content -Path $dirtyRes -Encoding UTF8
+        }
+        Save-Summary -Step 'dirty-survival-verified'
+    }
 
     # 5c. T2 RENDER ASSERT (QA-F1 fix). The T1 checks above only prove the
     #     server answered with 200 + nonzero bytes -- true for the bare SPA

@@ -995,3 +995,165 @@ def test_judge_stays_ignorant_of_the_orphan_marker() -> None:
     judge_text = _read(_JUDGE)
     assert "SANDBOX-BUSY.txt" in judge_text
     assert "SANDBOX-ORPHAN.txt" not in judge_text
+
+
+# --------------------------------------------------------------------------
+# 8. Dirty-box remnant lane <gate-a-dirty-lane>
+# --------------------------------------------------------------------------
+
+
+def test_dirty_lane_timeout_budgets_are_ordered() -> None:
+    """A dirty run performs two install cycles: the driver raises its own
+    watchdog to 210 minutes when DIRTY_MODE.txt is present, the host launcher
+    enforces a 230-minute poll floor alongside -DirtyMode, and the workflow's
+    dirty job passes -TimeoutMinutes 230 explicitly -- the dirty analogue of
+    the clean lane's 150 < 170 ordering. Three files, one contract."""
+    driver = _driver_executable_text()
+    dirty_watchdog = _int_setting(
+        driver,
+        r"if \(\$MaxScriptMinutes -lt (\d+)\) \{ \$MaxScriptMinutes = \d+ \}",
+        "In-Sandbox-Report.ps1 dirty-mode watchdog raise",
+    )
+    assert dirty_watchdog == 210, "the dirty in-sandbox bound is 210 minutes (two install cycles)"
+
+    host = _read(_HOST_LAUNCHER)
+    assert "[switch]$DirtyMode" in host, "the host launcher must expose the -DirtyMode opt-in"
+    host_floor = _int_setting(
+        host,
+        r"if \(\$TimeoutMinutes -lt (\d+)\) \{",
+        "Host-Launch-Sandbox-Test.ps1 dirty-mode -TimeoutMinutes floor",
+    )
+    assert host_floor > dirty_watchdog, (
+        f"the host's dirty poll floor ({host_floor}m) must outlast the dirty in-sandbox "
+        f"watchdog ({dirty_watchdog}m), or the host gives up before the watchdog it depends on"
+    )
+
+    workflow = _read(_WORKFLOW)
+    dirty_line = next(
+        (ln for ln in workflow.splitlines() if "Run-GateA.ps1" in ln and "-DirtyLane" in ln),
+        None,
+    )
+    assert dirty_line is not None, "the workflow must carry a dirty-lane Run-GateA.ps1 invocation"
+    match = re.search(r"-TimeoutMinutes (\d+)", dirty_line)
+    assert match is not None, "the dirty-lane invocation must pass -TimeoutMinutes explicitly"
+    assert int(match.group(1)) == host_floor, (
+        "keep the workflow's dirty -TimeoutMinutes and the host launcher's dirty floor on the "
+        "same number"
+    )
+
+
+def test_dirty_mode_file_is_the_single_opt_in_channel() -> None:
+    """The host writes DIRTY_MODE.txt into output\\ (the same host-to-guest
+    input channel as SOAK_MINUTES.txt); the driver reads it from its LOCAL
+    seeded copy, before the shipper and watchdog spawn."""
+    host = _read(_HOST_LAUNCHER)
+    assert "Join-Path $OutDir 'DIRTY_MODE.txt'" in host
+    driver = _read(_DRIVER)
+    assert "$script:DirtyMode = Test-Path (Join-Path $OutDir 'DIRTY_MODE.txt')" in driver
+    code = _code_only(_driver_executable_text())
+    read_at = code.index("DIRTY_MODE.txt")
+    shipper_at = code.index("_SHIPPER_SPAWNED.marker")
+    watchdog_at = code.index("_WATCHDOG_SPAWNED.marker")
+    assert read_at < shipper_at and read_at < watchdog_at, (
+        "the dirty flag must be resolved before the shipper/watchdog spawn, or the raised "
+        "210-minute bound never reaches them"
+    )
+
+
+def test_dirty_prologue_runs_before_the_clean_flow_and_uses_the_real_uninstaller() -> None:
+    text = _read(_DRIVER)
+    assert "function Invoke-DirtyRemnantPrologue" in text
+    code = _code_only(text)
+    prologue_call = (
+        code.index("Invoke-DirtyRemnantPrologue\n")
+        if "Invoke-DirtyRemnantPrologue\n" in code
+        else code.rindex("Invoke-DirtyRemnantPrologue")
+    )
+    clean_install = code.index(_INSTALLER_LAUNCH)
+    assert prologue_call < clean_install, (
+        "the remnant prologue must run BEFORE the normal acceptance flow's installer"
+    )
+    # The uninstall is the REAL uninstaller, bounded, never a hand-faked
+    # deletion of the install tree.
+    assert "uninstall.exe" in text
+    assert re.search(
+        r"Invoke-BoundedProcess -FilePath \(Join-Path \$installRoot 'uninstall\.exe'\)", text
+    ), "the prologue must run the product's own uninstaller through a bounded child process"
+    # The orphan shape is never authored by deleting product state.
+    normalized = text.replace("\r\n", "\n")
+    prologue = normalized[
+        normalized.index("function Invoke-DirtyRemnantPrologue") : normalized.index(
+            "try {\n    if ($script:DirtyMode)"
+        )
+    ]
+    assert "RECEIPT_PRESENT_IN_PROGRAMDATA" in prologue
+    assert "Remove-Item" not in _code_only(prologue).replace(
+        "Remove-Item -LiteralPath $u", ""
+    ).replace("Remove-Item -LiteralPath $ProbeArgs['Root']", ""), (
+        "the prologue may remove only the `_?=` uninstaller leftovers, never other state"
+    )
+
+
+def test_dirty_evidence_filenames_agree_between_powershell_and_judge() -> None:
+    """DIRTY-PREP-RESULT.txt / DIRTY-RESULT.txt: one contract, two languages
+    -- the same shape rule as the quiet-share marker test above."""
+    driver = _read(_DRIVER)
+    judge_text = _read(_JUDGE)
+    for name in ("DIRTY-PREP-RESULT.txt", "DIRTY-RESULT.txt"):
+        assert name in driver, f"the driver never writes {name}"
+        assert name in judge_text, f"the judge never reads {name}"
+    for key in (
+        "PHASE1_INSTALL_EXIT",
+        "UNINSTALL_EXIT",
+        "PGDATA_PRESERVED_AFTER_UNINSTALL",
+        "UPLOADS_PRESERVED_AFTER_UNINSTALL",
+        "INSTALL_TREE_REMOVED_AFTER_UNINSTALL",
+        "DIRTY_PGDATA_PRESERVED",
+        "DIRTY_UPLOADS_PRESERVED",
+        "DIRTY_ORPHAN_SEEDED",
+        "DIRTY_ORPHAN_WARNING",
+    ):
+        assert key in driver, f"the driver never writes {key}"
+        assert key in judge_text, f"the judge never checks {key}"
+
+
+def test_dirty_orphan_warning_pattern_matches_the_product_log_line() -> None:
+    """The grep the harness runs against the supervisor log must actually
+    match the WARNING station_runtime.py emits on the orphaned-tier degrade
+    path (PR #80). The product's exact text: '... is staged but has no valid
+    activation self-test receipt at ...'."""
+    driver = _read(_DRIVER)
+    match = re.search(r"-Pattern '([^']*staged but has no valid[^']*)'", driver)
+    assert match is not None, "the driver must grep for the orphaned-tier WARNING"
+    pattern = match.group(1)
+    product_line = (
+        "Caption tier large-v3 at C:\\x is staged but has no valid activation "
+        "self-test receipt at C:\\y -- it was likely preserved from a previous install"
+    )
+    assert re.search(pattern, product_line), (
+        f"the harness grep pattern {pattern!r} does not match the product's own WARNING text"
+    )
+
+
+def test_run_gate_a_threads_the_dirty_lane_through_launcher_and_judge() -> None:
+    text = _read(_RUN_GATE_A)
+    assert "[switch]$DirtyLane" in text
+    assert "-DirtyMode:$DirtyLane" in text, "the launcher must receive the dirty opt-in"
+    assert "--lane $judgeLane" in text or "--lane $forensicLane" in text, (
+        "the judge must be told which lane produced the evidence"
+    )
+
+
+def test_clean_lane_flow_is_untouched_by_dirty_mode() -> None:
+    """Without DIRTY_MODE.txt nothing changes: the prologue and the survival
+    verify are both gated on $script:DirtyMode, and the clean lane's numbers
+    (150/170, SOAK 20) are asserted unchanged by the earlier ordering test."""
+    text = _read(_DRIVER)
+    code = _code_only(text)
+    assert "if ($script:DirtyMode) {\n        Invoke-DirtyRemnantPrologue" in code.replace(
+        "\r\n", "\n"
+    ), "the prologue call must be gated on the dirty flag"
+    # The dirty watchdog raise must live inside the same gate.
+    raise_at = code.index("$MaxScriptMinutes = 210")
+    gate_at = code.rindex("if ($script:DirtyMode) {", 0, raise_at)
+    assert gate_at != -1

@@ -15,6 +15,36 @@ came across and what deliberately did not.
 
 ### Added
 
+- **Gate A dirty lane: an uninstall-remnant reinstall gate
+  (`station-acceptance-dirty`).** Weeks of installers passed the pristine
+  Windows Sandbox and then died on real machines, because every real machine
+  carries the `%ProgramData%\CivicCast` state the uninstaller preserves *by
+  design* — most recently DESKTOP-2BR3SJR (2026-08-30), whose preserved
+  `components\captions-large-v3` without a ProgramData receipt crash-looped
+  the #18 supervisor (fixed in PR #80). Gate A stayed green throughout
+  because its sandbox has no history. The new lane, a second informational
+  job in `gate-a-station-acceptance.yml` running after the clean lane in the
+  same `sandbox-lab` concurrency group, makes the sandbox *have* history:
+  `In-Sandbox-Report.ps1` (opted in via `Run-GateA.ps1 -DirtyLane` →
+  `Host-Launch-Sandbox-Test.ps1 -DirtyMode` → `DIRTY_MODE.txt`) installs the
+  candidate, plants real uploads, records the provisioned pgdata cluster's
+  identity, runs the product's own uninstaller, verifies the preservation
+  contract, optionally seeds the orphaned large-v3 remnant (real model
+  required — a stub provably reproduces the fail-closed model gate, not the
+  PR #80 receipt path), and then runs the full unchanged acceptance flow
+  against the remnant-carrying box. `scripts/gate_a_verdict.py --lane dirty`
+  adds three fail-closed checks (`dirty_prep`, `dirty_survival`,
+  `dirty_orphaned_tier` — the last a loud `SKIP` when the model seed is not
+  staged on the runner), and the job posts the per-check verdict table to
+  the workflow run summary. Timing contract: dirty in-sandbox watchdog 210m
+  < host poll 230m (the clean lane's 150 < 170 is untouched), asserted with
+  the rest of the lane's invariants by new tests in
+  `tests/gate_a/test_gate_a_harness_contract.py` and
+  `tests/gate_a/test_gate_a_verdict.py`. Full design, covered-vs-not remnant
+  shapes, and the runner seed instructions: `docs/ops/gate-a.md`, "Dirty
+  lane". The clean lane's behavior, defaults, and verdict document shape are
+  byte-identical to before.
+
 - **In-product operator manual (`/help` in the operator console), plus a "Generate station key" button for federation.** Field evidence from a non-technical tester (candidate #17): "In-product manual: THERE IS NONE. /docs, /help, /manual, /guide all 404"; provider setup cards told the operator to "Ask the technical admin" on a one-person station with no technical admin; ActivityPub required typing a raw `civiccast activitypub keygen ...` shell command. The manual is built from the existing `docs/USER-MANUAL.md` (the repo's canonical operator doc), not a parallel document that drifts: `scripts/render_docsite_manual.py` renders it via the same `pandoc` toolchain `scripts/render_user_manual.py` already requires for the PDF/DOCX, sanitizes the HTML through an allowlist parser (`civiccast/docsite/render.py`), and writes the committed artifact `civiccast/docsite/manual.json` plus a hash manifest (`civiccast/docsite/manual.render.json`) — the identical hash-pinning drift-gate pattern the PDF/DOCX pipeline already uses, now also enforced in `ci-docs.yml`. `civiccast/docsite/service.py` + `router.py` serve it read-only, publicly (no staff token — reachable even from the un-authenticated First Setup screen), at `GET /api/public/manual`; the operator console's new `ManualScreen.tsx` renders it as a searchable table-of-contents + content pane at `/help` (aliases `/docs`, `/manual`). Full write-up: `docs/docsite-sync.md`. The manual gained new plain-language content: a Glossary (S3 access key/secret, bucket/object store, CDN, pull-zone, OAuth client ID/secret, webhook secret, egress), a per-provider "Setting Up Providers, Plain Language" section (each provider optional, its own anchor), "Where Recordings And Backups Live", "What Each Publish Surface Means", "The CDN Cost Estimate Is A Guess, Not A Quote", and "Don't Have A GitHub Account?". Every provider readiness card (`ProviderReadinessItem.manual_section`, `civiccast/installer/service.py`) and several setup panels now carry a "Read more in the manual" link straight into the matching section. Federation: `POST /api/staff/activitypub/keygen` (`civiccast/activitypub/router.py`) generates the same RSA station key `civiccast activitypub keygen` does, server-side, behind a real button in `ActivityPubScreen.tsx` — replacing the raw CLI instruction — plus a plain-language paragraph on what federation is and that most stations don't need it. Applying the generated settings and restarting CivicCast is still a separate manual step (`load_activitypub_config` reads strictly from process environment, matching the existing beta-handoff "ask a technical administrator to restart" pattern in `civiccast/installer/handoff.py`); the CLI-typing barrier for a non-technical operator is gone regardless.
 
 - **Assets/Library upload control, watch-folder Scan now + folder picker, and
