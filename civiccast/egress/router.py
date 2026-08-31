@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from civiccast.auth.models import OperatorIdentity
 from civiccast.auth.roles import require_any_role
@@ -47,6 +47,7 @@ from civiccast.egress.models import (
     EgressStateRow,
     ManualRouteState,
     TakeoverSession,
+    reject_control_chars,
 )
 from civiccast.egress.store import EgressStore
 from civiccast.egress.takeover_service import (
@@ -390,6 +391,17 @@ class GraphicsOverlayUpdateRequest(BaseModel):
 
     graphics_overlay_enabled: bool
     graphics_overlay_lower_third_text: Annotated[str, Field(default="", max_length=240)] = ""
+
+    @field_validator("graphics_overlay_lower_third_text")
+    @classmethod
+    def _lower_third_text_is_control_char_free(cls, value: str) -> str:
+        # MINOR fix (2026-08-30 audit): ``EgressConfig.model_copy(update=...)`` in
+        # ``update_graphics_overlay`` below does NOT re-run EgressConfig's own field
+        # validators (pydantic v2 ``model_copy`` never validates) -- so the same
+        # control-char rule that guards EgressConfig.graphics_overlay_lower_third_text
+        # must also gate THIS request body, or an operator could write a poisoned
+        # string straight past it through this endpoint's actual save path.
+        return reject_control_chars(value, field_name="graphics_overlay_lower_third_text")
 
 
 @staff_router.get(
