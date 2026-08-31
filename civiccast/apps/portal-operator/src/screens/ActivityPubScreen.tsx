@@ -14,7 +14,7 @@ import {
   rejectActivityPubFollower,
   replayActivityPubDeliveryRetry,
 } from '../api/client'
-import { ConfirmDialog } from '../components/ConfirmDialog'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { manualLink } from './manual-link'
 import type {
   ActivityPubStatusResponse,
@@ -525,6 +525,7 @@ function EvidencePanel({
 
 export function ActivityPubScreen() {
   const [filter, setFilter] = useState<FollowerStatus>('pending')
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
   const queryClient = useQueryClient()
   const statusQuery = useQuery({
     queryKey: ['activitypub-status'],
@@ -621,7 +622,21 @@ export function ActivityPubScreen() {
             <FollowersPanel
               followers={followersQuery.data.followers}
               filter={filter}
-              onAction={(action, actor) => mutation.mutate({ action, actor })}
+              onAction={(action, actor) => {
+                if (action === 'approve') {
+                  mutation.mutate({ action, actor })
+                  return
+                }
+                setPendingConfirm({
+                  title: action === 'block' ? `Block ${actor}?` : `Reject ${actor}?`,
+                  body:
+                    action === 'block'
+                      ? 'This blocks the follower permanently — it stops receiving future publish activity and cannot re-follow until unblocked.'
+                      : 'This rejects the pending follow request. The instance stops receiving future publish activity from this station.',
+                  confirmLabel: action === 'block' ? 'Block follower' : 'Reject follower',
+                  run: () => mutation.mutate({ action, actor }),
+                })
+              }}
               pendingAction={mutation.isPending ? mutation.variables?.actor ?? null : null}
             />
           )}
@@ -636,6 +651,19 @@ export function ActivityPubScreen() {
             </div>
           )}
         </>
+      )}
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={() => {
+            pendingConfirm.run()
+            setPendingConfirm(null)
+          }}
+          onCancel={() => setPendingConfirm(null)}
+        />
       )}
     </div>
   )

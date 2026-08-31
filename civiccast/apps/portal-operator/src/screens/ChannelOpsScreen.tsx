@@ -1041,10 +1041,13 @@ export function GraphicsOverlayPanel({
 
           {confirmingAction ? (
             <div className="grid gap-2">
-              <div className="text-sm">
+              <div className="text-sm font-semibold">
+                {confirmingAction === 'on' ? 'Put this banner on air?' : 'Take this banner off air?'}
+              </div>
+              <div className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
                 {confirmingAction === 'on'
-                  ? 'Put this banner on air for this channel’s next pipeline build?'
-                  : 'Take this banner off air?'}
+                  ? 'Applies to this channel’s next pipeline build (a fresh start or a scheduled content swap). Does not hot-change an already-live broadcast’s on-screen text.'
+                  : 'Removes the banner from this channel’s next pipeline build. Does not hot-remove it from an already-live broadcast — the current on-air text stays until the next build.'}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -1158,7 +1161,9 @@ function HeadendDeliveryPanel({
   const [profileId, setProfileId] = useState<string>('')
   const [destination, setDestination] = useState('')
   const [muxrate, setMuxrate] = useState('')
-  const [keepSinks, setKeepSinks] = useState(false)
+  // Defaults to keeping the channel's other outputs: applying a headend
+  // preset must never silently drop sinks the operator didn't ask to change.
+  const [keepSinks, setKeepSinks] = useState(true)
 
   const effectiveProfileId = profileId || profiles[0]?.profile_id || ''
   const selected = profiles.find((p) => p.profile_id === effectiveProfileId)
@@ -1754,7 +1759,18 @@ export function ChannelOpsScreen() {
             applying={headendApplyMutation.isPending}
             canEdit={canEditEgressConfig}
             applyError={headendApplyMutation.error}
-            onApply={(payload) => headendApplyMutation.mutate(payload)}
+            onApply={(payload) => {
+              const channelName = selectedChannel?.branding.display_name ?? channelId ?? 'this channel'
+              setPendingConfirm({
+                title: 'Apply this headend preset?',
+                body: payload.keep_existing_sinks
+                  ? `Sends ${channelName}'s outgoing feed to the selected headend profile and keeps the channel's other outputs running alongside it.`
+                  : `Sends ${channelName}'s outgoing feed to the selected headend profile and removes the channel's other outputs — only the headend feed keeps running.`,
+                confirmLabel: 'Apply preset',
+                tone: 'brand',
+                run: () => headendApplyMutation.mutate(payload),
+              })
+            }}
             verifying={complianceProbeMutation.isPending}
             verifyResult={complianceProbeMutation.data}
             verifyError={complianceProbeMutation.error}

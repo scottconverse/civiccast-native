@@ -20,6 +20,7 @@ import {
   startLivePreflight,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { RadioCardGroup } from '../components/RadioCardGroup'
 import {
   READINESS_DO_NOT_BROADCAST_YET,
@@ -645,6 +646,12 @@ export function LiveRoomScreen() {
   const [selectedSourceId, setSelectedSourceId] = useState('')
   const [operatorConfirmed, setOperatorConfirmed] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
+  const requestConfirm = (confirm: PendingConfirm) => setPendingConfirm(confirm)
+  const confirmed = () => {
+    pendingConfirm?.run()
+    setPendingConfirm(null)
+  }
   const [channelId, setChannelId] = useState<string>(() => {
     try {
       return window.localStorage.getItem(CHANNEL_STORAGE_KEY) ?? DEFAULT_CHANNEL_ID
@@ -914,7 +921,14 @@ export function LiveRoomScreen() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => runAction(() => endLiveBroadcast(session!.live_session_id))}
+                  onClick={() =>
+                    requestConfirm({
+                      title: 'End the live stream?',
+                      body: 'Residents watching the live stream lose it immediately. The session moves to finalization and cannot be resumed from here — start a new live session to go live again.',
+                      confirmLabel: 'End live stream',
+                      run: () => void runAction(() => endLiveBroadcast(session!.live_session_id)),
+                    })
+                  }
                   disabled={!canOperateMeeting || !session || session.state !== 'on_air'}
                   className="rounded-md px-3 py-2 text-sm font-semibold"
                   style={{ background: canOperateMeeting && session?.state === 'on_air' ? 'var(--cc-err)' : 'var(--cc-surface-3)', color: canOperateMeeting && session?.state === 'on_air' ? 'var(--cc-brand-ink)' : 'var(--cc-ink-3)' }}
@@ -934,6 +948,17 @@ export function LiveRoomScreen() {
       )}
 
       <PreflightList evaluation={preflight} />
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={confirmed}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
     </div>
   )
 }

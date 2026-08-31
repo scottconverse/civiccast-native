@@ -16,6 +16,7 @@
 import { type ReactNode, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthRequiredState } from '../components/AuthRequiredState'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   ApiError,
   buildCommissioningReport,
@@ -351,6 +352,7 @@ function OutputProofStep({
 }) {
   const [pattern, setPattern] = useState<'bars' | 'live' | 'slate'>('bars')
   const [durationSeconds, setDurationSeconds] = useState(60)
+  const [confirmingRun, setConfirmingRun] = useState(false)
 
   const runMut = useMutation({
     mutationFn: () =>
@@ -406,13 +408,26 @@ function OutputProofStep({
         <button
           type="button"
           disabled={!canWrite || runMut.isPending || !channelId}
-          onClick={() => runMut.mutate()}
+          onClick={() => setConfirmingRun(true)}
           className="rounded-md px-3 py-1.5 font-semibold disabled:opacity-50"
           style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
         >
           {runMut.isPending ? 'Running proof…' : 'Start proof run'}
         </button>
       </div>
+      {confirmingRun && (
+        <ConfirmDialog
+          title="Start the output proof run?"
+          body={`This pushes a ${pattern === 'bars' ? 'bars + tone' : pattern} test pattern to channel ${channelId} through the live GStreamer engine for ${durationSeconds} seconds, replacing the channel's real output for the duration. The call blocks until it finishes.`}
+          confirmLabel="Start proof run"
+          tone="brand"
+          onConfirm={() => {
+            setConfirmingRun(false)
+            runMut.mutate()
+          }}
+          onCancel={() => setConfirmingRun(false)}
+        />
+      )}
       {runMut.isError && <Banner tone="warn">{apiMessage(runMut.error, 'The output proof failed to start.')}</Banner>}
       {runMut.data && (
         <div className="space-y-1 text-xs">
