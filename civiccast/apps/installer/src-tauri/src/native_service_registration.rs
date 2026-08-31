@@ -2226,9 +2226,11 @@ pub const REGISTRY_CLEAR_SKIPPED_DETAIL: &str =
 
 /// PURE. May this teardown run clear machine-scoped registry state?
 ///
-/// Only when the service was confirmed STOPPED. A teardown whose stop-service
-/// step failed returns [`TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE`] (82),
-/// and `nsis-hooks-bootstrap.nsh`'s `NSIS_HOOK_PREUNINSTALL` then ABORTS the
+/// Only when the service was confirmed STOPPED **and** confirmed
+/// UNREGISTERED. A teardown whose stop-service step failed, OR whose
+/// remove-service step failed, returns
+/// [`TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE`] (82), and
+/// `nsis-hooks-bootstrap.nsh`'s `NSIS_HOOK_PREUNINSTALL` then ABORTS the
 /// whole uninstall before anything is deleted -- its own stated guarantee is
 /// that "aborting from PREUNINSTALL leaves the machine FULLY INTACT: exe,
 /// uninstaller, ARP entry, service, and trees all still present, so the
@@ -2241,11 +2243,24 @@ pub const REGISTRY_CLEAR_SKIPPED_DETAIL: &str =
 /// exactly the way F-01 documents). The machine would be left in a WORSE state
 /// by an uninstall that reported it had changed nothing.
 ///
-/// Deliberately keyed on the stop-service step alone, matching
-/// [`service_stop_failed`]: a failed firewall-rule removal does not make
-/// registry clearing unsafe.
+/// CRITICAL fix (hostile audit, 2026-08-31): this used to be keyed on the
+/// stop-service step ALONE. A service that stopped cleanly but then failed to
+/// UNREGISTER -- e.g. `ERROR_SERVICE_MARKED_FOR_DELETE` (1072) because some
+/// other handle (`services.msc`, an AV/EDR SCM hook, a monitoring `sc query`)
+/// still has the service object open -- fell through the old gate as "safe":
+/// `may_clear_registry_state` returned `true`, the `DatabaseUrl` and
+/// `InstalledVersion` markers were deleted, and the SCM entry survived
+/// pointing at soon-to-be-deleted (or already-deleted) binaries. The next
+/// install attempt under the same service name could then fail while the
+/// stale entry is still `MARKED_FOR_DELETE`, with no registry marker left to
+/// even signal that a prior install existed. [`run_service_removal`] already
+/// treats [`ERROR_SERVICE_DOES_NOT_EXIST`] (1060, "already absent") as
+/// success -- so any OTHER remove-service failure, `MARKED_FOR_DELETE`
+/// included, is a REAL failure this gate must now also key on, exactly
+/// mirroring how [`service_stop_failed`] already gates this for the stop
+/// step. See [`service_removal_failed`].
 pub fn may_clear_registry_state(steps_so_far: &[TeardownStepOutcome]) -> bool {
-    !service_stop_failed(steps_so_far)
+    !service_stop_failed(steps_so_far) && !service_removal_failed(steps_so_far)
 }
 
 /// `true` only when every step in a [`teardown_native_state`] run either
@@ -2262,8 +2277,9 @@ pub fn teardown_all_succeeded(steps: &[TeardownStepOutcome]) -> bool {
 /// through [`stop_native_service`]'s `Err` branch and land here as this one
 /// labeled step). Deliberately narrower than [`teardown_all_succeeded`]: a
 /// "remove service" or "delete firewall rule" failure alone does NOT trip
-/// this, because those failures do not make it unsafe to delete
-/// `$INSTDIR`'s trees -- only an unconfirmed service stop does (its
+/// this, because a "delete firewall rule" failure does not make it unsafe to
+/// delete `$INSTDIR`'s trees -- only an unconfirmed service stop, or an
+/// unconfirmed service REMOVAL (see [`service_removal_failed`]), does (its
 /// `pythonservice.exe` and its long-lived `postgres.exe`
 /// child run FROM those trees). See [`teardown_exit_code`], which is what
 /// actually maps this to a distinct process exit code for the NSIS hook to
@@ -2274,27 +2290,66 @@ pub fn service_stop_failed(steps: &[TeardownStepOutcome]) -> bool {
         .any(|step| step.label == "stop service" && step.failed)
 }
 
-/// CRITICAL fix (2026-07-30 adversarial review): the exit code
-/// `--civiccast-teardown-native-state` (main.rs) reports for this run's
-/// steps. Exit 0 only when every step succeeded or was a legitimate no-op
-/// ([`teardown_all_succeeded`]). Any OTHER failure previously collapsed to
-/// the single generic code 80, which `NSIS_HOOK_POSTUNINSTALL` could not use
-/// to distinguish "the service might still be running" (unsafe to delete the
-/// program tree out from under it) from "a firewall rule or registry value
-/// could not be removed" (safe to delete the tree; refusing over that would
-/// strand gigabytes of data for no safety reason). `TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE`
+/// `true` iff the **"remove service"** step specifically failed -- i.e.
+/// [`run_service_removal`] returned `Err`, meaning the CivicCastSupervisor
+/// service could not be confirmed UNREGISTERED. [`run_service_removal`]
+/// already maps [`ERROR_SERVICE_DOES_NOT_EXIST`] (1060, "already absent") to
+/// `Ok`, so every `Err` this checks for is a REAL failure -- most notably
+/// Win32 `ERROR_SERVICE_MARKED_FOR_DELETE` (1072), raised when some other
+/// handle (`services.msc` left open, an AV/EDR SCM hook, a concurrent
+/// `sc query`) is still holding the service object after a stop-then-delete,
+/// which leaves the SCM entry alive and pointing at a tree this teardown is
+/// about to (or already did) delete.
+///
+/// CRITICAL fix (hostile audit, 2026-08-31): paired with [`service_stop_failed`]
+/// in [`may_clear_registry_state`] and [`teardown_exit_code`] so an
+/// unregistered-but-undeletable service is treated with the SAME fail-closed
+/// discipline as an unstopped one -- registry markers stay in place and the
+/// uninstall reports [`TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE`] so
+/// `NSIS_HOOK_POSTUNINSTALL` refuses the recursive tree delete and the
+/// operator is told to retry once the stray handle closes (or after a
+/// reboot). Before this fix, this step's failure alone still tripped
+/// [`teardown_all_succeeded`] to `false` (a REAL failure was always
+/// reported), but [`may_clear_registry_state`] ignored it entirely and
+/// [`teardown_exit_code`] collapsed it into the generic, non-blocking 80 --
+/// the exact code the orphaned-SCM-entry scenario in this doc comment's
+/// sibling needs to NOT be.
+pub fn service_removal_failed(steps: &[TeardownStepOutcome]) -> bool {
+    steps
+        .iter()
+        .any(|step| step.label == "remove service" && step.failed)
+}
+
+/// CRITICAL fix (2026-07-30 adversarial review; widened 2026-08-31 hostile
+/// audit): the exit code `--civiccast-teardown-native-state` (main.rs)
+/// reports for this run's steps. Exit 0 only when every step succeeded or
+/// was a legitimate no-op ([`teardown_all_succeeded`]). Any OTHER failure
+/// previously collapsed to the single generic code 80, which
+/// `NSIS_HOOK_POSTUNINSTALL` could not use to distinguish "the service might
+/// still be running or still registered" (unsafe to delete the program tree
+/// out from under it) from "a firewall rule or registry value could not be
+/// removed" (safe to delete the tree; refusing over that would strand
+/// gigabytes of data for no safety reason). `TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE`
 /// (82) is a code of its own, chosen from a gap in the CLI's existing 64-81
 /// band (checked against every `Some(N)` / documented exit code across this
 /// binary's CLI subcommands before picking it) and clear of the installer's
 /// own NSIS-side 110-119 band (`nsis-hooks-bootstrap.nsh`). The NSIS macro
 /// gates its recursive `RMDir /r` block on exactly this code -- see that
 /// file's `NSIS_HOOK_POSTUNINSTALL`.
+///
+/// Despite its name, this code now covers BOTH an unconfirmed stop
+/// ([`service_stop_failed`]) AND an unconfirmed removal
+/// ([`service_removal_failed`], e.g. `ERROR_SERVICE_MARKED_FOR_DELETE`) --
+/// the constant is not renamed to avoid rippling through every call site,
+/// test, and the NSIS-side comment that already cite `82` by number, but the
+/// underlying condition it represents is now "the SCM state around this
+/// service could not be confirmed safe", not "the stop specifically failed".
 pub const TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE: i32 = 82;
 
 pub fn teardown_exit_code(steps: &[TeardownStepOutcome]) -> i32 {
     if teardown_all_succeeded(steps) {
         0
-    } else if service_stop_failed(steps) {
+    } else if service_stop_failed(steps) || service_removal_failed(steps) {
         TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE
     } else {
         80
@@ -3211,6 +3266,58 @@ mod tests {
         assert_eq!(teardown_exit_code(&other_step_failed), 80);
     }
 
+    /// CRITICAL fix pin (hostile audit, 2026-08-31): a service that stops
+    /// cleanly but fails to UNREGISTER (e.g. `ERROR_SERVICE_MARKED_FOR_DELETE`,
+    /// 1072, because another handle -- `services.msc`, an AV/EDR SCM hook, a
+    /// concurrent `sc query` -- still has the service object open) must map
+    /// to the SAME blocking `TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE`
+    /// (82) as an unconfirmed stop, NOT the generic 80. Before this fix it
+    /// fell through to 80, which `NSIS_HOOK_POSTUNINSTALL`'s tree-delete gate
+    /// does not block on -- exactly the gap that let an orphaned SCM entry
+    /// survive uninstall pointing at deleted binaries.
+    #[test]
+    fn teardown_exit_code_blocks_on_a_removal_failure_the_same_as_a_stop_failure() {
+        let removal_failed = vec![
+            TeardownStepOutcome {
+                label: "stop service",
+                detail: "ok".to_string(),
+                failed: false,
+            },
+            TeardownStepOutcome {
+                label: "remove service",
+                detail: "Could not remove CivicCastSupervisor (exit Some(1072)): The specified \
+                          service has been marked for deletion."
+                    .to_string(),
+                failed: true,
+            },
+        ];
+        assert!(service_removal_failed(&removal_failed));
+        assert!(!service_stop_failed(&removal_failed));
+        assert_eq!(
+            teardown_exit_code(&removal_failed),
+            TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE
+        );
+
+        // Both stop AND removal failing is still exactly one blocking code,
+        // not a distinct third state.
+        let both_failed = vec![
+            TeardownStepOutcome {
+                label: "stop service",
+                detail: "timed out".to_string(),
+                failed: true,
+            },
+            TeardownStepOutcome {
+                label: "remove service",
+                detail: "marked for deletion".to_string(),
+                failed: true,
+            },
+        ];
+        assert_eq!(
+            teardown_exit_code(&both_failed),
+            TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE
+        );
+    }
+
     #[test]
     fn installed_version_value_name_is_distinct_from_database_url_value_name() {
         assert_ne!(INSTALLED_VERSION_VALUE_NAME, DATABASE_URL_VALUE_NAME);
@@ -3476,6 +3583,65 @@ mod tests {
             },
         ];
         assert!(may_clear_registry_state(&firewall_failed));
+    }
+
+    /// CRITICAL fix pin (hostile audit, 2026-08-31): the pre-fix defect --
+    /// `may_clear_registry_state` checked ONLY the stop-service step, so a
+    /// service that stopped cleanly but failed to UNREGISTER (e.g.
+    /// `ERROR_SERVICE_MARKED_FOR_DELETE`, 1072, because a stray
+    /// `services.msc`/AV-EDR/`sc query` handle was still open) still cleared
+    /// `DatabaseUrl` and `InstalledVersion` out of the registry, leaving an
+    /// orphaned SCM entry with no marker left to even signal a prior install
+    /// existed. Stop-ok + removal-failed-non-1060 must now leave markers in
+    /// place, exactly like an unconfirmed stop does; stop-ok + removal-ok (or
+    /// removal reporting the benign "already absent" 1060 case, which
+    /// [`run_service_removal`] itself already folds into `Ok`, so it never
+    /// reaches this function as a `failed: true` step at all) must still
+    /// clear markers, unchanged from before this fix.
+    #[test]
+    fn registry_state_is_never_cleared_when_the_service_could_not_be_confirmed_removed() {
+        // stop ok + removal failed (non-1060, e.g. MARKED_FOR_DELETE) -> markers NOT cleared.
+        let removal_failed = vec![
+            TeardownStepOutcome {
+                label: TEARDOWN_STEP_LABELS[0],
+                detail: "stopped".to_string(),
+                failed: false,
+            },
+            TeardownStepOutcome {
+                label: TEARDOWN_STEP_LABELS[1],
+                detail: "Could not remove CivicCastSupervisor (exit Some(1072)): The specified \
+                          service has been marked for deletion."
+                    .to_string(),
+                failed: true,
+            },
+        ];
+        assert!(
+            !may_clear_registry_state(&removal_failed),
+            "an unconfirmed service REMOVAL must block registry clearing exactly like an \
+             unconfirmed stop does -- the SCM entry may still exist, pointing at trees this \
+             uninstall is about to delete"
+        );
+
+        // stop ok + removal ok (covers both a clean removal and the 1060
+        // "already absent" case, which run_service_removal already reports
+        // as Ok -- never reaching this list as `failed: true`) -> markers cleared.
+        let removal_ok = vec![
+            TeardownStepOutcome {
+                label: TEARDOWN_STEP_LABELS[0],
+                detail: "stopped".to_string(),
+                failed: false,
+            },
+            TeardownStepOutcome {
+                label: TEARDOWN_STEP_LABELS[1],
+                detail: "CivicCastSupervisor is unregistered (or was already absent).".to_string(),
+                failed: false,
+            },
+        ];
+        assert!(
+            may_clear_registry_state(&removal_ok),
+            "an ordinary uninstall, service confirmed stopped AND confirmed removed (or already \
+             absent), must still clear registry state -- unchanged from before this fix"
+        );
     }
 
     /// The teardown orchestration must actually CONTAIN the credential-clearing
