@@ -18,6 +18,7 @@ import civiccast.native.supervisor.install_layout as install_layout
 import civiccast.platform.station_box_profile as station_box_profile
 from civiccast.egress.compliance import TsduckStatus
 from civiccast.egress.sdi_relay import SdiReadiness
+from civiccast.native.runtime_closure import REQUIRED_FACTORIES
 from civiccast.platform.hardware import (
     CPUInfo,
     DiskInfo,
@@ -28,12 +29,14 @@ from civiccast.platform.hardware import (
 )
 from civiccast.platform.station_box_profile import (
     _BASE_REQUIRED_PLUGINS,
+    _CG_HLS_OPTIONAL_PLUGINS,
     BackupDestinationRef,
     CableOsVerdict,
     DeckLinkEngineRef,
     EngineReadiness,
     NdiSdkRef,
     _detect_gst_runtime_source,
+    _engine_next_step,
     _resolve_bundled_gst_tool,
     compute_cable_os_verdict,
     compute_engine_tier_verdict,
@@ -250,6 +253,87 @@ class TestEngineReadiness:
             native_os=True, gpu=None, runner=runner, device_runner=_no_device_runner
         )
         assert readiness.runtime_source == "unavailable"
+
+
+class TestBaseRequiredPluginsMatchShippedProduct:
+    """Field-evidence regression coverage (candidate #19): Screen 8 failed a
+    CORRECT install of the bundled 1.28.5 runtime because the base-required
+    list still mirrored S1's pre-decision prose (interpipe/compositor/
+    hlssink3/pango overlays) instead of what the shipped engine actually
+    needs. The bundled runtime genuinely does not ship those plugins -- and
+    the product does not use them (S15 Stage-0 decision 2026-06-14:
+    ``input-selector`` swap; ``civiccast.egress.hls_relay``: HLS via ffmpeg
+    relay; ``civiccast.egress.gst.bridge`` D-S1-7: pango-free base slate) --
+    so requiring them fails every real station."""
+
+    def test_base_required_is_subset_of_packaging_closure(self) -> None:
+        """The probe may never demand an element the packaging closure does
+        not guarantee to ship -- the exact drift that blocked candidate #19."""
+        assert set(_BASE_REQUIRED_PLUGINS) <= REQUIRED_FACTORIES
+
+    def test_interpipe_is_not_required_or_probed(self) -> None:
+        """S15's dated decision demoted GstInterpipe to optional; the plugin
+        is not in the pinned wheels, so it must be neither required nor
+        probed into missing_plugins."""
+        assert "interpipesrc" not in _BASE_REQUIRED_PLUGINS
+        assert "interpipesink" not in _BASE_REQUIRED_PLUGINS
+        runner = _gst_runner(missing=frozenset({"interpipesrc", "interpipesink"}))
+        readiness = probe_engine_readiness(
+            native_os=True, gpu=None, runner=runner, device_runner=_no_device_runner
+        )
+        assert readiness.required_plugins_present is True
+        assert "interpipesrc" not in readiness.missing_plugins
+        assert "interpipesink" not in readiness.missing_plugins
+
+    def test_bundled_runtime_plugin_set_passes_base(self) -> None:
+        """The exact candidate-#19 field state: bundled runtime present, CG/HLS
+        optional elements and SDI extras absent. Base must PASS; the absent
+        optional elements are still honestly reported in missing_plugins."""
+        absent = frozenset({*_CG_HLS_OPTIONAL_PLUGINS, "decklinkvideosink", "ndisink"})
+        runner = _gst_runner(missing=absent)
+        readiness = probe_engine_readiness(
+            native_os=True, gpu=None, runner=runner, device_runner=_no_device_runner
+        )
+        assert readiness.required_plugins_present is True
+        assert set(_CG_HLS_OPTIONAL_PLUGINS).issubset(set(readiness.missing_plugins))
+        verdict = compute_engine_tier_verdict(readiness)
+        assert verdict.base_ok is True
+        assert not [b for b in verdict.blockers if b.tier == "base"]
+
+    def test_missing_base_plugin_still_fails_closed(self) -> None:
+        runner = _gst_runner(missing=frozenset({"mpegtsmux"}))
+        readiness = probe_engine_readiness(
+            native_os=True, gpu=None, runner=runner, device_runner=_no_device_runner
+        )
+        assert readiness.required_plugins_present is False
+        assert "mpegtsmux" in readiness.missing_plugins
+        assert compute_engine_tier_verdict(readiness).base_ok is False
+
+    def test_bundled_base_missing_next_step_is_repair_not_install(self) -> None:
+        """An operator cannot 'install gst-plugins-base' into the bundled
+        runtime; the actionable remedy is the installer's repair."""
+        step = _engine_next_step(
+            gstreamer_present=True,
+            missing=["mpegtsmux"],
+            decklink_sdk_present=True,
+            ndi_sdk_present=True,
+            native_os=True,
+            runtime_source="bundled",
+        )
+        assert "repair" in step
+        assert "mpegtsmux" in step
+        assert "Install gst-plugins" not in step
+
+    def test_path_runtime_base_missing_next_step_keeps_install_hint(self) -> None:
+        step = _engine_next_step(
+            gstreamer_present=True,
+            missing=["mpegtsmux"],
+            decklink_sdk_present=True,
+            ndi_sdk_present=True,
+            native_os=True,
+            runtime_source="system-path",
+        )
+        assert "Install gst-plugins-base/good/bad/rs" in step
 
 
 class TestBundledGstResolution:
