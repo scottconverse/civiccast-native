@@ -8,6 +8,7 @@ import {
   retryPublishSurface,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import type {
   PublishApprovalRequest,
   PublishAssetStatus,
@@ -271,6 +272,9 @@ function AssetPanel({
     () => new Set(approvableSurfaceIds),
   )
   const [overrideIds, setOverrideIds] = useState<Set<string>>(() => new Set())
+  // Publishing is resident-facing and immediate — the button stages this
+  // confirmation before the approval request is sent.
+  const [confirmingPublish, setConfirmingPublish] = useState(false)
   const [overrideText, setOverrideText] = useState<Record<string, string>>({})
   const currentSurfaceIds = useMemo(
     () => new Set(approvableSurfaceIds),
@@ -433,7 +437,7 @@ function AssetPanel({
           <button
             type="button"
             disabled={!canSubmit}
-            onClick={submitApproval}
+            onClick={() => setConfirmingPublish(true)}
             className="rounded-md px-3 py-2 text-xs font-semibold"
             style={{
               background: canSubmit ? 'var(--cc-ink)' : 'var(--cc-surface-3)',
@@ -467,6 +471,19 @@ function AssetPanel({
             </span>
           )}
         </div>
+      )}
+      {confirmingPublish && (
+        <ConfirmDialog
+          title={`Publish "${asset.title}" to residents?`}
+          body={`${approvedSurfaceIds.length + overrides.length} selected surface(s) publish for real. The portal surface becomes publicly visible to residents immediately and starts offline caption transcription.`}
+          confirmLabel="Approve and Publish"
+          tone="brand"
+          onConfirm={() => {
+            setConfirmingPublish(false)
+            submitApproval()
+          }}
+          onCancel={() => setConfirmingPublish(false)}
+        />
       )}
     </article>
   )

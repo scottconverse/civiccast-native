@@ -80,6 +80,30 @@ came across and what deliberately did not.
 
 ### Added
 
+- **Confirmation dialogs on every live one-click destructive action in the
+  operator console — field evidence from the board-demo survey.** A survey on
+  a real box found the console studded with live one-click buttons a curious
+  board member could hit: a single click could take a channel off air or wipe
+  config with no confirmation. Every listed action now stages an accessible
+  confirmation dialog (`portal-operator/src/components/ConfirmDialog.tsx`:
+  `role="alertdialog"`, focus moves to Cancel, Tab is trapped, Escape
+  cancels, focus restores to the opener) whose copy names the plain-words
+  resident-facing consequence, matching the console's existing two-step
+  patterns (Commit-to-Air "Take off air", Paywall arm→confirm, Recording
+  stop). Covered: Start/Stop/Restart-feed/drain on both the Channels screen
+  and the Safe-to-broadcast readiness panel (shared copy via
+  `feed-command-confirm.ts`), "Repair GStreamer runtime & restore"
+  (upgraded from a bare `window.confirm`), "Run real database restore
+  drill", "Run rollback rehearsal", "Open maintenance window", Media
+  Lifecycle watch-folder and retention-rule "Remove", Federation "Generate
+  station key", App Admin "Queue build", and Publish "Approve and Publish
+  selected". App Admin's build form additionally starts with both fields
+  unselected and keeps "Queue build" disabled until the form is valid.
+  Safe/read-only actions (checks, previews, scans, refreshes) deliberately
+  gained no confirmation — confirmation fatigue is its own bug. Tests prove
+  each dialog blocks the API call until confirmed and that Cancel/Escape
+  fire nothing.
+
 - **In-product operator manual (`/help` in the operator console), plus a "Generate station key" button for federation.** Field evidence from a non-technical tester (candidate #17): "In-product manual: THERE IS NONE. /docs, /help, /manual, /guide all 404"; provider setup cards told the operator to "Ask the technical admin" on a one-person station with no technical admin; ActivityPub required typing a raw `civiccast activitypub keygen ...` shell command. The manual is built from the existing `docs/USER-MANUAL.md` (the repo's canonical operator doc), not a parallel document that drifts: `scripts/render_docsite_manual.py` renders it via the same `pandoc` toolchain `scripts/render_user_manual.py` already requires for the PDF/DOCX, sanitizes the HTML through an allowlist parser (`civiccast/docsite/render.py`), and writes the committed artifact `civiccast/docsite/manual.json` plus a hash manifest (`civiccast/docsite/manual.render.json`) — the identical hash-pinning drift-gate pattern the PDF/DOCX pipeline already uses, now also enforced in `ci-docs.yml`. `civiccast/docsite/service.py` + `router.py` serve it read-only, publicly (no staff token — reachable even from the un-authenticated First Setup screen), at `GET /api/public/manual`; the operator console's new `ManualScreen.tsx` renders it as a searchable table-of-contents + content pane at `/help` (aliases `/docs`, `/manual`). Full write-up: `docs/docsite-sync.md`. The manual gained new plain-language content: a Glossary (S3 access key/secret, bucket/object store, CDN, pull-zone, OAuth client ID/secret, webhook secret, egress), a per-provider "Setting Up Providers, Plain Language" section (each provider optional, its own anchor), "Where Recordings And Backups Live", "What Each Publish Surface Means", "The CDN Cost Estimate Is A Guess, Not A Quote", and "Don't Have A GitHub Account?". Every provider readiness card (`ProviderReadinessItem.manual_section`, `civiccast/installer/service.py`) and several setup panels now carry a "Read more in the manual" link straight into the matching section. Federation: `POST /api/staff/activitypub/keygen` (`civiccast/activitypub/router.py`) generates the same RSA station key `civiccast activitypub keygen` does, server-side, behind a real button in `ActivityPubScreen.tsx` — replacing the raw CLI instruction — plus a plain-language paragraph on what federation is and that most stations don't need it. Applying the generated settings and restarting CivicCast is still a separate manual step (`load_activitypub_config` reads strictly from process environment, matching the existing beta-handoff "ask a technical administrator to restart" pattern in `civiccast/installer/handoff.py`); the CLI-typing barrier for a non-technical operator is gone regardless.
 
 - **Assets/Library upload control, watch-folder Scan now + folder picker, and

@@ -264,6 +264,8 @@ test.describe('activitypub federation dashboard', () => {
     await expect(page.getByText(/most stations do not need this/i)).toBeVisible()
 
     await page.getByRole('button', { name: 'Generate station key' }).click()
+    // Confirmation dialog (board-demo survey fix) stands before the API call.
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Generate key' }).click()
     await expect(page.getByText('Station key generated.')).toBeVisible()
     await expect(page.getByText('CIVICCAST_ACTIVITYPUB_MODE')).toBeVisible()
     await expect(page.getByText(/restart CivicCast to turn federation on/i)).toBeVisible()

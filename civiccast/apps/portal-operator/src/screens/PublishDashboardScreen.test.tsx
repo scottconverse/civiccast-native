@@ -120,6 +120,8 @@ describe('PublishDashboardScreen safety feedback', () => {
     const { findByRole, findByText } = renderScreen()
 
     fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
+    // The confirmation dialog stands between the button and the API call.
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
 
     await waitFor(() => expect(approvePublishAsset).toHaveBeenCalled())
     expect(
@@ -127,6 +129,33 @@ describe('PublishDashboardScreen safety feedback', () => {
         /Publish preflight blocked: package the recording before approving Portal/i,
       ),
     ).toBeTruthy()
+  })
+
+  it('does not publish until the operator confirms the dialog', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(dashboard('pending'))
+    vi.mocked(approvePublishAsset).mockResolvedValue({} as never)
+    const { findByRole } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
+
+    // The dialog is open, naming the consequence — and nothing has fired yet.
+    const dialog = await findByRole('alertdialog')
+    expect(dialog.textContent).toContain('Publish "Sample asset" to residents?')
+    expect(approvePublishAsset).not.toHaveBeenCalled()
+
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
+    await waitFor(() => expect(approvePublishAsset).toHaveBeenCalledTimes(1))
+  })
+
+  it('publishes nothing when the operator cancels the dialog', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(dashboard('pending'))
+    const { findByRole, queryByRole } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
+    fireEvent.click(await findByRole('button', { name: 'Cancel' }))
+
+    expect(queryByRole('alertdialog')).toBeNull()
+    expect(approvePublishAsset).not.toHaveBeenCalled()
   })
 
   it('shows the exact safe API detail when a surface retry fails', async () => {

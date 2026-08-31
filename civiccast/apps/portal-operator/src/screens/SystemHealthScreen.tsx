@@ -32,7 +32,9 @@ import {
   startFirstBroadcastRehearsal,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
+import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { humanizeDuration } from '../format'
+import { feedCommandConfirmCopy } from './feed-command-confirm'
 import { readinessLabel, stateLabel, toneForEgressState, toneForReadiness } from './status-language'
 import type {
   ChannelRuntimeStatus,
@@ -1212,6 +1214,15 @@ export function SupportBundlePanel({ canCreate }: { canCreate: boolean }) {
 export function SystemHealthScreen() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  // Destructive actions stage their dialog copy + action here; one
+  // <ConfirmDialog> at the bottom of the screen renders it. Read-only
+  // checks (storage check, preflight, self-tests) never stage a confirm.
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
+  const requestConfirm = (confirm: PendingConfirm) => setPendingConfirm(confirm)
+  const confirmed = () => {
+    pendingConfirm?.run()
+    setPendingConfirm(null)
+  }
   const channelsQuery = useQuery({
     queryKey: ['channel-profiles'],
     queryFn: listChannelProfiles,
@@ -1481,20 +1492,27 @@ export function SystemHealthScreen() {
             error={channelsQuery.error ?? egressStatusQuery.error ?? egressCommandMutation.error}
             pendingCommand={egressCommandMutation.isPending ? (egressCommandMutation.variables ?? null) : null}
             canControl={canRunMeetingRehearsal}
-            onCommand={(channelId, action) => egressCommandMutation.mutate({ channelId, action })}
+            onCommand={(channelId, action) => {
+              const channelName =
+                channelsQuery.data?.find((channel) => channel.channel_id === channelId)?.branding
+                  .display_name ?? channelId
+              requestConfirm({
+                ...feedCommandConfirmCopy(action, channelName),
+                run: () => egressCommandMutation.mutate({ channelId, action }),
+              })
+            }}
           />
 
           <GstreamerRepairPanel
             result={gstreamerRepair.data}
-            onRun={() => {
-              if (
-                window.confirm(
-                  'Repair the GStreamer runtime? If the closure is still broken this launches a signed re-stage of the native egress engine.',
-                )
-              ) {
-                gstreamerRepair.mutate()
-              }
-            }}
+            onRun={() =>
+              requestConfirm({
+                title: 'Repair the GStreamer runtime?',
+                body: 'This re-verifies the runtime in place and, if the closure is still broken, launches a signed re-stage of the native egress engine. Channels may briefly run on the fallback engine while it completes.',
+                confirmLabel: 'Repair runtime',
+                run: () => gstreamerRepair.mutate(),
+              })
+            }
             running={gstreamerRepair.isPending}
             canRun={canRunRestoreRehearsal}
             error={gstreamerRepair.error}
@@ -1505,7 +1523,15 @@ export function SystemHealthScreen() {
               restore={restoreRehearsal.data ?? restoreQuery.data}
               realDrill={disasterRecoveryDrill.data}
               onRun={() => restoreRehearsal.mutate()}
-              onRunReal={() => disasterRecoveryDrill.mutate()}
+              onRunReal={() =>
+                requestConfirm({
+                  title: 'Run the real database restore drill?',
+                  body: 'This restores the latest backup into an isolated database copy and exercises crash recovery. It is heavy work for the station machine — run it outside broadcast hours. The live database is not modified.',
+                  confirmLabel: 'Run restore drill',
+                  tone: 'brand',
+                  run: () => disasterRecoveryDrill.mutate(),
+                })
+              }
               running={restoreRehearsal.isPending}
               runningReal={disasterRecoveryDrill.isPending}
               canRun={canRunRestoreRehearsal}
@@ -1515,11 +1541,27 @@ export function SystemHealthScreen() {
               onRunPreflight={() => updatePreflight.mutate()}
               runningPreflight={updatePreflight.isPending}
               canRunPreflight={canRunUpdatePreflight}
-              onOpenMaintenanceWindow={() => maintenanceWindow.mutate()}
+              onOpenMaintenanceWindow={() =>
+                requestConfirm({
+                  title: 'Open a 60-minute maintenance window?',
+                  body: 'While the window is open the station is flagged as under maintenance and an update may be applied. Close of the window happens automatically when it expires.',
+                  confirmLabel: 'Open window',
+                  tone: 'brand',
+                  run: () => maintenanceWindow.mutate(),
+                })
+              }
               openingMaintenanceWindow={maintenanceWindow.isPending}
               onConfigureRollback={(artifactPath) => rollbackArtifact.mutate(artifactPath)}
               configuringRollback={rollbackArtifact.isPending}
-              onRunRollback={() => rollbackRehearsal.mutate()}
+              onRunRollback={() =>
+                requestConfirm({
+                  title: 'Run the rollback rehearsal?',
+                  body: 'This exercises the configured rollback installer end to end to prove the station can roll back a bad update. Run it outside broadcast hours.',
+                  confirmLabel: 'Run rehearsal',
+                  tone: 'brand',
+                  run: () => rollbackRehearsal.mutate(),
+                })
+              }
               runningRollback={rollbackRehearsal.isPending}
               onRunFailedUpdateRollback={() => failedUpdateRollback.mutate()}
               runningFailedUpdateRollback={failedUpdateRollback.isPending}
@@ -1567,6 +1609,16 @@ export function SystemHealthScreen() {
             </div>
           </section>
         </>
+      )}
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          body={pendingConfirm.body}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone}
+          onConfirm={confirmed}
+          onCancel={() => setPendingConfirm(null)}
+        />
       )}
     </div>
   )

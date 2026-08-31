@@ -147,6 +147,7 @@ test('@fullstack approves a public-record publish cycle against the live API', a
   await expect(councilPanel.getByText('YouTube Live', { exact: true })).toBeVisible()
 
   await councilPanel.getByRole('button', { name: 'Approve and Publish selected' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and Publish' }).click()
 
   await expect(councilPanel.getByText('Portal public')).toBeVisible()
   await expect(councilPanel.getByText('IA and local NAS verified')).toBeVisible()

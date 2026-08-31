@@ -428,11 +428,13 @@ test('operator can queue channel egress start and stop commands', async ({ page 
   await expect(page.getByText('State: Stopped')).toBeVisible()
 
   await page.getByRole('button', { name: 'Start', exact: true }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Start feed' }).click()
   await expect.poll(() => requests.egressCommands).toEqual(['start'])
   await expect(page.getByText('State: On air')).toBeVisible()
   await expect(page.getByText('Source: Public live programming')).toBeVisible()
 
   await page.getByRole('button', { name: 'Stop', exact: true }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Stop feed' }).click()
   await expect.poll(() => requests.egressCommands).toEqual(['start', 'stop'])
   await expect(page.getByText('State: Stopped')).toBeVisible()
 })
