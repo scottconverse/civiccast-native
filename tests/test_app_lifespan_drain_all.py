@@ -111,3 +111,70 @@ def test_missing_egress_daemon_is_a_harmless_noop(
     with TestClient(app):
         assert getattr(app.state, "egress_daemon", None) is None
     # No exception on shutdown is the assertion.
+
+
+# ---------------------------------------------------------------------------
+# Item 1 (deferred from PR #100): the recording-side shutdown drain, the peer
+# of the egress stop_all_channels drain above.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingDrainSpy:
+    """Stands in for the ScheduledRecordingWorker at
+    app.state.scheduled_recording_worker."""
+
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    def drain_in_flight(self, *, deadline_seconds: float) -> object:
+        self.calls.append(deadline_seconds)
+        return None
+
+
+def test_lifespan_shutdown_drains_in_flight_recordings(app_env: Path) -> None:
+    """The real wiring puts a ScheduledRecordingWorker on
+    app.state.scheduled_recording_worker under durable storage; swap it for a
+    spy after startup and assert shutdown drives its drain."""
+
+    from civiccast.app import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        assert hasattr(app.state, "scheduled_recording_worker")
+        spy = _RecordingDrainSpy()
+        app.state.scheduled_recording_worker = spy
+
+    assert spy.calls == [15.0]  # default recording-drain deadline
+
+
+def test_recording_drain_deadline_is_configurable(
+    app_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CIVICCAST_RECORDING_DRAIN_DEADLINE_SECONDS", "4.25")
+
+    from civiccast.app import create_app
+
+    app = create_app()
+    with TestClient(app):
+        spy = _RecordingDrainSpy()
+        app.state.scheduled_recording_worker = spy
+
+    assert spy.calls == [4.25]
+
+
+def test_missing_recording_worker_is_a_harmless_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plain ephemeral-mode app wires no recording worker; shutdown must
+    still be clean -- the recording drain is optional, like the egress one."""
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+
+    from civiccast.app import create_app
+
+    app = create_app()
+    with TestClient(app):
+        assert getattr(app.state, "scheduled_recording_worker", None) is None
+    # No exception on shutdown is the assertion.

@@ -3,1058 +3,2241 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CivicCast - Open-source civic broadcast software</title>
+    <title>CivicCast - The Open PEG Station</title>
     <meta
       name="description"
-      content="CivicCast is open-source, self-hostable civic broadcast software for PEG and local-government stations. v1.0.0-beta.1 is a development candidate: record, caption, review, and publish meetings to residents is proven end-to-end; on-air graphics and live broadcast are new and operator-drivable; cable headend output and syndication are on the roadmap."
+      content="Open-source, local-first broadcast software for public, education, and government access television."
     />
-    <meta property="og:title" content="CivicCast" />
+    <meta property="og:title" content="CivicCast  -  The Open PEG Station" />
     <meta
       property="og:description"
-      content="Record and publish civic meetings on infrastructure you control. v1.0.0-beta.1 is an owner-held development candidate, not yet a public release."
+      content="A complete, open-source PEG broadcast platform - without the black box."
     />
     <meta property="og:type" content="website" />
+    <meta
+      property="og:url"
+      content="https://scottconverse.github.io/civiccast-native/"
+    />
+    <meta
+      property="og:image"
+      content="https://scottconverse.github.io/civiccast-native/og.png"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="CivicCast  -  The Open PEG Station" />
+    <meta
+      name="twitter:description"
+      content="A complete, open-source PEG broadcast platform - without the black box."
+    />
+    <meta
+      name="twitter:image"
+      content="https://scottconverse.github.io/civiccast-native/og.png"
+    />
     <style>
       :root {
-        --cc-paper: #f7f2ea;
-        --cc-brand: #2458a6;
-        --ink: #101828;
-        --ink-soft: #344054;
-        --muted: #667085;
-        --paper: #f7f2ea;
-        --paper-2: #efe4d3;
-        --surface: #fffaf2;
-        --surface-2: #eef5f6;
-        --line: #d8cdbf;
-        --navy: #14233d;
-        --blue: #2458a6;
-        --sky: #88c7e8;
-        --green: #2f6f5e;
-        --gold: #c58a2b;
-        --gold-ink: #8f6115; /* darker gold for small text (WCAG AA >=4.5:1 on paper) */
-        --coral: #a34434; /* darkened from #b85444 to clear WCAG AA on light bg */
-        --shadow: 0 28px 80px rgba(16, 24, 40, 0.18);
-        --sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-        --display: "Inter Tight", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-        --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
-        --mono: "IBM Plex Mono", Consolas, "Liberation Mono", monospace;
-        --max: 1180px;
+        --ink: #102a2c;
+        --paper: #f4f1e8;
+        --cream: #ebe5d8;
+        --signal: #f05a3d;
+        --cyan: #36b9b1;
+        --yellow: #edb83e;
+        --line: rgba(16, 42, 44, 0.16);
       }
-
       * {
         box-sizing: border-box;
       }
-
       html {
         scroll-behavior: smooth;
       }
-
       body {
         margin: 0;
         background: var(--paper);
         color: var(--ink);
-        font: 16px/1.6 var(--sans);
-        text-rendering: optimizeLegibility;
-        -webkit-font-smoothing: antialiased;
+        font-family: Arial, Helvetica, sans-serif;
       }
-
       a {
         color: inherit;
+        text-decoration: none;
       }
-
-      .skip-link {
+      .site-header {
+        height: 76px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 clamp(24px, 5vw, 80px);
+        border-bottom: 1px solid var(--line);
+        position: relative;
+        z-index: 3;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        font-size: 14px;
+      }
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        background: var(--ink);
+        color: var(--paper);
+        border-radius: 50% 50% 50% 12px;
+      }
+      nav {
+        display: flex;
+        align-items: center;
+        gap: 30px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      nav a:not(.nav-cta):hover {
+        color: var(--signal);
+      }
+      .nav-cta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
         background: var(--ink);
         color: white;
-        left: 16px;
-        padding: 10px 14px;
-        position: absolute;
-        top: -48px;
-        z-index: 20;
+        padding: 11px 15px;
+        border-radius: 6px;
       }
-
-      .skip-link:focus {
-        top: 16px;
-      }
-
-      .topbar {
-        align-items: center;
-        background: rgba(247, 242, 234, 0.9);
-        border-bottom: 1px solid rgba(16, 24, 40, 0.14);
-        display: flex;
-        gap: 24px;
-        justify-content: space-between;
-        left: 0;
-        padding: 17px max(22px, calc((100vw - var(--max)) / 2));
-        position: fixed;
-        right: 0;
-        top: 0;
-        z-index: 10;
-        backdrop-filter: blur(14px);
-      }
-
-      .brand {
-        font-family: var(--mono);
-        font-size: 0.78rem;
-        font-weight: 800;
-        letter-spacing: 0.15em;
-        text-decoration: none;
-        text-transform: uppercase;
-      }
-
-      .brand span {
-        color: var(--blue);
-      }
-
-      .nav {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 18px;
-        justify-content: flex-end;
-      }
-
-      .nav a {
-        color: var(--ink-soft);
-        font-size: 0.92rem;
-        font-weight: 800;
-        text-decoration: none;
-      }
-
-      .nav a:hover {
-        color: var(--blue);
-      }
-
       .hero {
-        background:
-          radial-gradient(circle at 78% 20%, rgba(136, 199, 232, 0.32), transparent 26rem),
-          radial-gradient(circle at 12% 28%, rgba(197, 138, 43, 0.18), transparent 25rem),
-          linear-gradient(135deg, #fff8ec 0%, #eef5f6 62%, #e7edf5 100%);
-        min-height: 92vh;
-        overflow: hidden;
-        padding: 112px 22px 56px;
-        position: relative;
-      }
-
-      .hero::after {
-        background-image:
-          linear-gradient(rgba(20, 35, 61, 0.05) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(20, 35, 61, 0.05) 1px, transparent 1px);
-        background-size: 34px 34px;
-        content: "";
-        inset: 0;
-        pointer-events: none;
-        position: absolute;
-      }
-
-      .hero-inner {
-        align-items: end;
+        min-height: calc(100vh - 76px);
         display: grid;
-        gap: 46px;
-        grid-template-columns: minmax(0, 1.02fr) minmax(360px, 0.88fr);
-        margin: 0 auto;
-        max-width: var(--max);
-        min-height: calc(92vh - 168px);
-        position: relative;
-        z-index: 1;
+        grid-template-columns: minmax(0, 0.88fr) minmax(520px, 1.12fr);
+        align-items: center;
+        gap: clamp(44px, 7vw, 110px);
+        padding: 70px clamp(24px, 5vw, 80px) 88px;
+        overflow: hidden;
       }
-
-      .eyebrow,
-      .kicker,
-      .tag {
-        font-family: var(--mono);
-        font-size: 0.76rem;
-        font-weight: 800;
-        letter-spacing: 0.15em;
+      .hero-copy {
+        max-width: 700px;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font:
+          700 12px/1.2 ui-monospace,
+          monospace;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
       }
-
-      .eyebrow {
-        color: var(--coral);
-        margin: 0 0 18px;
+      .live-dot {
+        width: 9px;
+        height: 9px;
+        background: var(--signal);
+        border-radius: 50%;
+        box-shadow: 0 0 0 5px rgba(240, 90, 61, 0.12);
       }
-
-      /* The headline column, made a container so the display type can size
-         against the column it actually lives in rather than the viewport. */
-      .hero-copy {
-        container-type: inline-size;
-        min-width: 0;
-      }
-
       h1 {
-        font-family: var(--display);
-        /* Was clamp(3.6rem, 8vw, 7.4rem). The hero grid caps at --max (1180px),
-           so past a ~1180px viewport the column stopped growing while 8vw kept
-           going: at 1560px the type hit 118px and "infrastructure" rendered
-           764px wide inside a 609px column, spilling 155px to the right, under
-           the product shot. cqi tracks the column, so the type cannot outgrow
-           the space it has. The vw line is the fallback for browsers without
-           container queries -- its max is sized to fit the capped column.
-           The floor is 2.6rem, not 3.6rem, so this one rule also serves the
-           narrowest phone column (~284px at a 320px viewport), which is why
-           the separate mobile font-size override below could be removed. */
-        font-size: clamp(2.6rem, 6vw, 5.7rem);
-        font-size: clamp(2.6rem, 15cqi, 7.4rem);
-        /* Last-resort guards only. Do NOT rely on hyphens: the sizing above is
-           what keeps "infrastructure" inside its column -- headless/embedded
-           Chrome often ships without hyphenation dictionaries, so hyphens:auto
-           silently does nothing and break-word takes over, which renders an
-           unhyphenated "infrastructur / e". These exist so a longer word in a
-           future headline degrades instead of escaping the box. */
-        hyphens: auto;
-        overflow-wrap: break-word;
-        letter-spacing: 0;
-        line-height: 0.95;
-        margin: 0;
+        margin: 28px 0 26px;
+        font-size: clamp(53px, 6.8vw, 102px);
+        line-height: 0.89;
+        letter-spacing: -0.065em;
+        font-weight: 900;
         max-width: 850px;
       }
-
-      .lede {
-        color: var(--ink-soft);
-        font-family: var(--serif);
-        font-size: clamp(1.22rem, 2vw, 1.55rem);
-        line-height: 1.5;
-        margin: 28px 0 0;
-        max-width: 690px;
+      h1 em {
+        font-family: Georgia, "Times New Roman", serif;
+        font-weight: 400;
+        color: var(--signal);
       }
-
-      .actions {
+      .hero-lede {
+        max-width: 650px;
+        margin: 0;
+        color: #385052;
+        font-size: clamp(18px, 1.45vw, 23px);
+        line-height: 1.52;
+      }
+      .hero-actions {
         display: flex;
         flex-wrap: wrap;
         gap: 12px;
-        margin-top: 32px;
+        margin-top: 34px;
       }
-
       .button {
-        align-items: center;
-        border: 1px solid var(--ink);
+        min-height: 52px;
         display: inline-flex;
-        font-weight: 850;
+        align-items: center;
         justify-content: center;
-        min-height: 50px;
-        padding: 13px 19px;
-        text-decoration: none;
-        transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+        gap: 10px;
+        padding: 0 22px;
+        border-radius: 6px;
+        font-weight: 800;
+        font-size: 15px;
+        border: 1px solid var(--ink);
+        transition:
+          transform 0.2s,
+          background 0.2s;
       }
-
       .button:hover {
         transform: translateY(-2px);
       }
-
       .button.primary {
-        background: var(--ink);
+        background: var(--signal);
+        border-color: var(--signal);
         color: white;
+        box-shadow: 6px 6px 0 var(--ink);
       }
-
-      .button.primary:hover {
-        background: var(--blue);
-        border-color: var(--blue);
+      .button.ghost {
+        background: transparent;
       }
-
-      .button.secondary {
-        background: rgba(255, 250, 242, 0.74);
-        color: var(--ink);
-      }
-
-      /* Buttons that carry a status line beneath the label. */
-      .button:has(.button-sub) {
-        flex-direction: column;
-        gap: 3px;
-        line-height: 1.15;
-        padding: 11px 22px;
-      }
-
-      .button-sub {
-        font-family: var(--mono);
-        font-size: 0.68rem;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        opacity: 0.78;
-        text-transform: uppercase;
-      }
-
-      .verify-line {
-        color: var(--ink-soft);
-        font-size: 0.86rem;
-        line-height: 1.65;
-        margin: 16px 0 0;
-      }
-
-      .verify-line code {
-        background: rgba(15, 23, 42, 0.06);
-        font-family: var(--mono);
-        font-size: 0.78rem;
-        overflow-wrap: break-word;
-        padding: 2px 6px;
-      }
-
-      .product-shot {
-        align-self: center;
-        background: var(--navy);
-        border: 1px solid rgba(255, 255, 255, 0.22);
-        box-shadow: var(--shadow);
-        color: white;
-        overflow: hidden;
-        position: relative;
-      }
-
-      .product-shot::before {
-        background: linear-gradient(90deg, var(--gold), var(--sky), var(--green));
-        content: "";
-        display: block;
-        height: 6px;
-      }
-
-      .shot-top {
+      .candidate-note {
+        display: flex;
         align-items: center;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+        gap: 9px;
+        margin-top: 26px;
+        font-size: 13px;
+        color: #586b6c;
+      }
+      .control-room {
+        position: relative;
+        background: #102729;
+        color: #f4f1e8;
+        border: 1px solid #274346;
+        border-radius: 10px;
+        padding: 22px;
+        box-shadow: 26px 32px 0 #ded7c7;
+        transform: rotate(1.2deg);
+      }
+      .control-room:before {
+        content: "";
+        position: absolute;
+        inset: -18px 28px auto -18px;
+        height: 80%;
+        border: 1px solid rgba(16, 42, 44, 0.22);
+        border-radius: 10px;
+        z-index: -1;
+        transform: rotate(-3deg);
+      }
+      .control-topbar {
         display: flex;
         justify-content: space-between;
-        padding: 18px 20px;
-      }
-
-      .status-dot {
         align-items: center;
-        display: inline-flex;
-        gap: 8px;
-      }
-
-      .status-dot::before {
-        background: #48d28f;
-        border-radius: 999px;
-        content: "";
-        height: 10px;
-        width: 10px;
-      }
-
-      .shot-main {
-        display: grid;
-        gap: 16px;
-        padding: 22px;
-      }
-
-      .broadcast-card {
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        padding: 18px;
-      }
-
-      .broadcast-card h2 {
-        font-size: 1.2rem;
-        margin: 0 0 8px;
-      }
-
-      .broadcast-card p {
-        color: rgba(255, 255, 255, 0.7);
-        margin: 0;
-      }
-
-      .pipeline {
-        display: grid;
-        gap: 8px;
-      }
-
-      .pipeline-row {
-        align-items: center;
-        background: rgba(255, 255, 255, 0.06);
-        border-left: 3px solid var(--sky);
-        display: grid;
-        gap: 4px 14px;
-        grid-template-columns: 108px 1fr;
-        padding: 10px 12px;
-      }
-
-      .pipeline-row.new {
-        border-left-color: var(--gold);
-      }
-
-      .pipeline-row span.step-name {
-        color: rgba(255, 255, 255, 0.55);
-        font-family: var(--mono);
-        font-size: 0.66rem;
-        font-weight: 800;
+        padding-bottom: 18px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        font:
+          700 11px/1.2 ui-monospace,
+          monospace;
         letter-spacing: 0.08em;
-        text-transform: uppercase;
       }
-
-      .pipeline-row strong {
-        font-size: 0.94rem;
-        grid-column: 2;
-        grid-row: 1;
+      .control-brand,
+      .system-state {
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
-
-      .pipeline-row em {
-        color: rgba(255, 255, 255, 0.6);
-        font-size: 0.78rem;
-        font-style: normal;
-        grid-column: 2;
-        grid-row: 2;
-      }
-
-      main {
+      .control-logo {
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
         background: var(--paper);
+        color: var(--ink);
+        border-radius: 4px;
+        font-weight: 900;
       }
-
-      .section {
-        margin: 0 auto;
-        max-width: var(--max);
-        padding: 88px 22px;
+      .system-state {
+        color: #8ce0b5;
       }
-
-      .section-header {
+      .system-state span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #62d79b;
+        box-shadow: 0 0 12px #62d79b;
+      }
+      .channel-grid {
         display: grid;
-        gap: 26px;
-        grid-template-columns: 210px minmax(0, 1fr);
-        margin-bottom: 42px;
-      }
-
-      .kicker {
-        color: var(--coral);
-        padding-top: 8px;
-      }
-
-      .badge {
-        background: var(--green);
-        border-radius: 999px;
-        color: white;
-        display: inline-block;
-        font-family: var(--mono);
-        font-size: 0.7rem;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        padding: 3px 10px;
-        text-transform: uppercase;
-        vertical-align: middle;
-      }
-
-      .badge.amber {
-        background: var(--gold-ink);
-      }
-
-      .badge.muted {
-        background: var(--muted);
-      }
-
-      h2 {
-        font-family: var(--display);
-        font-size: clamp(2rem, 4vw, 4.35rem);
-        letter-spacing: 0;
-        line-height: 1;
-        margin: 0;
-      }
-
-      .intro {
-        color: var(--ink-soft);
-        font-family: var(--serif);
-        font-size: 1.24rem;
-        line-height: 1.55;
-        margin: 18px 0 0;
-        max-width: 790px;
-      }
-
-      .feature-grid {
-        display: grid;
-        gap: 16px;
         grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        padding: 18px 0;
       }
-
-      .feature {
-        background: var(--surface);
-        border: 1px solid var(--line);
-        min-height: 210px;
-        padding: 25px;
+      .channel-card {
+        min-width: 0;
+        background: #173234;
+        border: 1px solid #2d4b4d;
+        border-radius: 5px;
+        overflow: hidden;
       }
-
-      .feature.roadmap {
-        background: rgba(52, 64, 84, 0.04);
+      .signal {
+        height: clamp(100px, 11vw, 170px);
+        position: relative;
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+        font:
+          900 35px/1 ui-monospace,
+          monospace;
+        color: rgba(255, 255, 255, 0.9);
       }
-
-      .feature h3 {
-        font-family: var(--display);
-        font-size: 1.4rem;
-        line-height: 1.1;
-        margin: 0 0 14px;
+      .signal:before,
+      .signal:after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        opacity: 0.8;
       }
-
-      .feature p {
-        color: var(--ink-soft);
+      .signal:before {
+        background:
+          repeating-linear-gradient(
+            90deg,
+            transparent 0 13px,
+            rgba(255, 255, 255, 0.1) 14px 15px
+          ),
+          linear-gradient(
+            135deg,
+            transparent 45%,
+            rgba(255, 255, 255, 0.4) 46% 48%,
+            transparent 49%
+          );
+      }
+      .signal:after {
+        inset: 18%;
+        border: 1px solid rgba(255, 255, 255, 0.55);
+        border-radius: 50%;
+      }
+      .signal-1 {
+        background: var(--signal);
+      }
+      .signal-2 {
+        background: var(--cyan);
+      }
+      .signal-3 {
+        background: var(--yellow);
+      }
+      .signal span {
+        z-index: 1;
+      }
+      .signal i {
+        position: absolute;
+        width: 52%;
+        aspect-ratio: 1;
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        transform: rotate(45deg);
+      }
+      .channel-meta {
+        padding: 13px;
+      }
+      .channel-meta h3 {
+        margin: 8px 0 4px;
+        font-size: 13px;
+      }
+      .channel-meta p {
         margin: 0;
+        font-size: 10px;
+        color: #9fb1b2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
-
-      .feature .tag {
-        color: var(--gold-ink);
+      .on-air {
+        font:
+          800 9px/1 ui-monospace,
+          monospace;
+        color: #ff9b86;
+        letter-spacing: 0.08em;
+      }
+      .on-air i {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        background: var(--signal);
+        border-radius: 50%;
+        margin-right: 3px;
+      }
+      .meter {
+        height: 3px;
+        margin-top: 13px;
+        background: #274548;
+      }
+      .meter span {
         display: block;
-        margin-bottom: 28px;
+        height: 100%;
+        background: #71d5ab;
       }
-
-      .feature .tag.proven {
-        color: var(--green);
+      .control-footer {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        padding-top: 16px;
+        color: #9fb1b2;
+        font-size: 10px;
       }
-
-      .band {
-        background: var(--navy);
+      .control-footer span {
+        display: grid;
+        gap: 3px;
+        padding: 0 10px;
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .control-footer span:last-child {
+        border: 0;
+      }
+      .control-footer b {
         color: white;
+        font-size: 14px;
       }
 
-      .band .section {
-        max-width: var(--max);
+      .proof-strip {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        background: var(--ink);
+        color: white;
+        padding: 26px clamp(24px, 5vw, 80px);
+      }
+      .proof-strip div {
+        display: grid;
+        gap: 4px;
+        padding: 0 26px;
+        border-right: 1px solid rgba(255, 255, 255, 0.16);
+      }
+      .proof-strip div:first-child {
+        padding-left: 0;
+      }
+      .proof-strip div:last-child {
+        border: 0;
+      }
+      .proof-strip b {
+        font-size: 16px;
+      }
+      .proof-strip span {
+        color: #9fb1b2;
+        font-size: 12px;
       }
 
-      .band .kicker {
-        color: var(--sky);
+      .platform-section,
+      .three-channel-section,
+      .positioning-section,
+      .faq-section {
+        padding: 120px clamp(24px, 7vw, 112px);
       }
-
-      .band .intro,
-      .band p {
-        color: rgba(255, 255, 255, 0.74);
+      .section-heading {
+        max-width: 850px;
+        margin: 0 auto 72px;
+        text-align: center;
       }
-
+      .section-heading.compact {
+        margin-bottom: 52px;
+      }
+      .section-kicker {
+        margin: 0 0 22px;
+        font:
+          800 11px/1.2 ui-monospace,
+          monospace;
+        letter-spacing: 0.17em;
+        color: var(--signal);
+      }
+      .section-kicker.light {
+        color: #ff9b86;
+      }
+      .section-heading h2,
+      .local-copy h2,
+      .truth-intro h2,
+      .positioning-lede h2,
+      .final-cta h2 {
+        margin: 0 0 24px;
+        font-size: clamp(42px, 5vw, 76px);
+        line-height: 1;
+        letter-spacing: -0.055em;
+      }
+      .section-heading h2 em,
+      .positioning-lede h2 em {
+        font-family: Georgia, "Times New Roman", serif;
+        font-weight: 400;
+        color: var(--signal);
+      }
+      .section-heading > p:last-child {
+        max-width: 750px;
+        margin: 0 auto;
+        color: #506466;
+        font-size: 18px;
+        line-height: 1.65;
+      }
       .workflow {
         display: grid;
-        gap: 12px;
-        grid-template-columns: repeat(5, 1fr);
-      }
-
-      .step {
-        background: rgba(255, 255, 255, 0.08);
-        border-top: 4px solid var(--sky);
-        min-height: 160px;
-        padding: 18px;
-      }
-
-      .step span {
-        color: var(--sky);
-        display: block;
-        font-family: var(--mono);
-        font-size: 0.72rem;
-        font-weight: 800;
-        letter-spacing: 0.13em;
-        margin-bottom: 12px;
-        text-transform: uppercase;
-      }
-
-      .step strong {
-        display: block;
-        font-size: 1.05rem;
-        line-height: 1.25;
-      }
-
-      .audiences {
-        display: grid;
-        gap: 16px;
         grid-template-columns: repeat(3, 1fr);
-      }
-
-      .audience {
-        background: var(--surface-2);
-        border: 1px solid #d3e1e3;
-        padding: 26px;
-      }
-
-      .audience h3 {
-        font-family: var(--display);
-        font-size: 1.6rem;
-        line-height: 1.08;
-        margin: 0 0 12px;
-      }
-
-      .audience p {
-        color: var(--ink-soft);
-        margin: 0 0 22px;
-      }
-
-      .audience a,
-      .text-link {
-        color: var(--blue);
-        font-weight: 850;
-      }
-
-      .beta {
-        background: linear-gradient(135deg, #fffaf2 0%, #f2eadc 100%);
-        border-bottom: 1px solid var(--line);
-        border-top: 1px solid var(--line);
-      }
-
-      .beta-card {
-        background: var(--surface);
-        border-left: 6px solid var(--gold-ink);
-        box-shadow: 0 18px 60px rgba(16, 24, 40, 0.08);
-        max-width: 860px;
-        padding: 30px;
-      }
-
-      .beta-card h2 {
-        font-family: var(--display);
-        font-size: clamp(1.8rem, 3vw, 3rem);
-        line-height: 1;
-        margin: 0 0 16px;
-      }
-
-      .beta-card p {
-        color: var(--ink-soft);
-      }
-
-      .fine-print {
-        color: var(--muted);
-        font-size: 0.9rem;
-      }
-
-      .docs-grid {
-        display: grid;
-        gap: 14px;
-        grid-template-columns: repeat(4, 1fr);
-      }
-
-      .doc {
-        background: rgba(255, 250, 242, 0.78);
         border: 1px solid var(--line);
-        min-height: 132px;
-        padding: 18px;
-        text-decoration: none;
-        transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+        background: rgba(255, 255, 255, 0.24);
       }
-
-      .doc:hover {
-        background: var(--surface);
-        border-color: var(--blue);
-        transform: translateY(-2px);
+      .workflow-step {
+        position: relative;
+        min-height: 190px;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 18px;
+        padding: 28px;
+        border-right: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
       }
-
-      .doc strong {
-        display: block;
-        line-height: 1.24;
-        margin-bottom: 10px;
+      .workflow-step:nth-child(3n) {
+        border-right: 0;
       }
-
-      .doc span {
-        color: var(--ink-soft);
-        font-size: 0.92rem;
+      .workflow-step:nth-child(n + 4) {
+        border-bottom: 0;
       }
-
-      /* Desktop shows the full nav; the mobile shortcut is hidden here. */
-      .nav-download {
+      .workflow-number {
+        font:
+          800 12px/1 ui-monospace,
+          monospace;
+        color: var(--signal);
+      }
+      .workflow-step h3 {
+        margin: 0 0 12px;
+        font-size: 16px;
+        letter-spacing: 0.08em;
+      }
+      .workflow-step p,
+      .capability-card p,
+      .positioning-grid p {
+        margin: 0;
+        color: #586b6c;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .workflow-arrow {
+        position: absolute;
+        right: -10px;
+        top: 28px;
+        z-index: 2;
+        background: var(--paper);
+        color: var(--signal);
+      }
+      .workflow-step:nth-child(3n) .workflow-arrow {
         display: none;
       }
+      .capability-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-top: 60px;
+      }
+      .capability-card {
+        min-height: 240px;
+        padding: 30px;
+        background: #fffdfa;
+        border: 1px solid var(--line);
+        transition:
+          transform 0.25s,
+          box-shadow 0.25s;
+      }
+      .capability-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 10px 10px 0 var(--cream);
+      }
+      .capability-icon {
+        width: 48px;
+        height: 48px;
+        display: grid;
+        place-items: center;
+        margin-bottom: 34px;
+        background: var(--cream);
+        color: var(--signal);
+        border-radius: 50%;
+      }
+      .capability-card h3,
+      .positioning-grid h3 {
+        margin: 0 0 12px;
+        font-size: 20px;
+      }
 
-      footer {
+      .local-section {
+        min-height: 760px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-items: center;
+        gap: clamp(40px, 9vw, 140px);
+        padding: 100px clamp(24px, 8vw, 130px);
         background: var(--ink);
         color: white;
-        padding: 42px 22px;
+        overflow: hidden;
       }
-
-      .footer-inner {
+      .local-visual {
+        position: relative;
+        width: min(520px, 100%);
+        aspect-ratio: 1;
+        margin: auto;
+      }
+      .orbit {
+        position: absolute;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 50%;
+        inset: 8%;
+      }
+      .orbit-two {
+        inset: 24%;
+        border-style: dashed;
+      }
+      .orbit:before,
+      .orbit:after {
+        content: "";
+        position: absolute;
+        width: 9px;
+        height: 9px;
+        background: var(--cyan);
+        border-radius: 50%;
+      }
+      .orbit-one:before {
+        left: 15%;
+        top: 11%;
+        box-shadow: 0 0 20px var(--cyan);
+      }
+      .orbit-one:after {
+        right: 7%;
+        bottom: 25%;
+        background: var(--signal);
+        box-shadow: 0 0 20px var(--signal);
+      }
+      .local-core {
+        position: absolute;
+        inset: 35%;
         display: flex;
-        flex-wrap: wrap;
-        gap: 20px;
-        justify-content: space-between;
-        margin: 0 auto;
-        max-width: var(--max);
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        background: var(--signal);
+        border-radius: 50%;
+        color: white;
+        box-shadow:
+          0 0 0 12px rgba(240, 90, 61, 0.11),
+          0 0 70px rgba(240, 90, 61, 0.25);
+      }
+      .local-core strong {
+        font:
+          800 11px/1 ui-monospace,
+          monospace;
+        letter-spacing: 0.1em;
+      }
+      .local-core span {
+        font:
+          700 8px/1 ui-monospace,
+          monospace;
+        opacity: 0.72;
+      }
+      .local-node {
+        position: absolute;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 10px 13px;
+        background: #173638;
+        border: 1px solid #315255;
+        border-radius: 5px;
+        font:
+          700 11px/1 ui-monospace,
+          monospace;
+      }
+      .node-one {
+        left: 0;
+        top: 22%;
+      }
+      .node-two {
+        right: 0;
+        top: 19%;
+      }
+      .node-three {
+        left: 3%;
+        bottom: 20%;
+      }
+      .node-four {
+        right: 2%;
+        bottom: 18%;
+      }
+      .local-copy {
+        max-width: 650px;
+      }
+      .local-copy > p:not(.section-kicker) {
+        color: #b8c5c5;
+        font-size: 18px;
+        line-height: 1.7;
+      }
+      .check-list {
+        display: grid;
+        gap: 14px;
+        padding: 0;
+        margin: 32px 0 0;
+        list-style: none;
+      }
+      .check-list li {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        color: #d8e1df;
+        font-size: 14px;
+      }
+      .check-list svg {
+        color: #77d6ad;
+        flex: 0 0 auto;
       }
 
-      footer a {
+      .triad {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        max-width: 1180px;
+        margin: auto;
+      }
+      .triad-card {
+        min-height: 260px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 28px;
+        color: white;
+      }
+      .triad-card.coral {
+        background: var(--signal);
+      }
+      .triad-card.aqua {
+        background: var(--cyan);
+      }
+      .triad-card.gold {
+        background: var(--yellow);
+        color: var(--ink);
+      }
+      .triad-code {
+        width: 62px;
+        height: 62px;
+        display: grid;
+        place-items: center;
+        border: 1px solid currentColor;
+        border-radius: 50%;
+        font:
+          900 25px/1 ui-monospace,
+          monospace;
+      }
+      .triad-card h3 {
+        margin: 0 0 9px;
+        font-size: 30px;
+      }
+      .triad-card p {
+        margin: 0;
+        max-width: 310px;
+        font-size: 14px;
+        line-height: 1.55;
+        opacity: 0.82;
+      }
+      .truth-section {
+        display: grid;
+        grid-template-columns: 0.7fr 1.3fr;
+        gap: clamp(50px, 8vw, 120px);
+        padding: 120px clamp(24px, 7vw, 112px);
+        background: #132f31;
+        color: white;
+      }
+      .truth-intro {
+        max-width: 460px;
+      }
+      .truth-intro h2 {
+        font-size: clamp(50px, 5vw, 78px);
+      }
+      .truth-intro > p:not(.section-kicker) {
+        color: #b5c3c3;
+        font-size: 17px;
+        line-height: 1.7;
+      }
+      .text-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        margin-top: 18px;
+        color: #7ee0d1;
+        font-weight: 800;
+        font-size: 14px;
+      }
+      .truth-columns {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .truth-card {
+        padding: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.035);
+      }
+      .truth-card.proven {
+        border-top: 5px solid #62d79b;
+      }
+      .truth-card.pending {
+        border-top: 5px solid var(--yellow);
+      }
+      .truth-title {
+        min-height: 62px;
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+      }
+      .truth-title svg {
+        flex: 0 0 auto;
+      }
+      .truth-card.proven .truth-title svg {
+        color: #62d79b;
+      }
+      .truth-card.pending .truth-title svg {
+        color: var(--yellow);
+      }
+      .truth-title h3 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.3;
+      }
+      .truth-card ul {
+        display: grid;
+        gap: 0;
+        padding: 0;
+        margin: 20px 0 0;
+        list-style: none;
+      }
+      .truth-card li {
+        padding: 12px 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        color: #c4cece;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .positioning-section {
+        background: #e7e0d1;
+      }
+      .positioning-lede {
+        max-width: 990px;
+      }
+      .positioning-lede h2 {
+        max-width: 980px;
+      }
+      .positioning-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1px;
+        margin-top: 68px;
+        background: rgba(16, 42, 44, 0.14);
+        border: 1px solid rgba(16, 42, 44, 0.14);
+      }
+      .positioning-grid article {
+        min-height: 280px;
+        padding: 28px;
+        background: #e7e0d1;
+      }
+      .positioning-grid svg {
+        margin-bottom: 65px;
+        color: var(--signal);
+      }
+
+      .faq-section {
+        background: #fffdfa;
+      }
+      .faq-list {
+        max-width: 900px;
+        margin: auto;
+        border-top: 1px solid var(--line);
+      }
+      .faq-list details {
+        border-bottom: 1px solid var(--line);
+      }
+      .faq-list summary {
+        position: relative;
+        cursor: pointer;
+        list-style: none;
+        padding: 27px 54px 27px 0;
+        font-size: 19px;
+        font-weight: 800;
+      }
+      .faq-list summary::-webkit-details-marker {
+        display: none;
+      }
+      .faq-list summary:after {
+        content: "+";
+        position: absolute;
+        right: 5px;
+        top: 21px;
+        color: var(--signal);
+        font-size: 28px;
+        font-weight: 400;
+      }
+      .faq-list details[open] summary:after {
+        content: "-";
+      }
+      .faq-list details p {
+        margin: 12px 50px 28px 0;
+        color: #526668;
+        font-size: 15px;
+        line-height: 1.7;
+      }
+
+      .final-cta {
+        min-height: 620px;
+        display: grid;
+        grid-template-columns: 0.75fr 1.25fr;
+        align-items: center;
+        gap: 70px;
+        padding: 80px clamp(24px, 8vw, 130px);
+        background: var(--signal);
+        color: white;
+        overflow: hidden;
+      }
+      .final-cta > div:last-child {
+        max-width: 760px;
+      }
+      .final-cta .section-kicker {
+        color: #ffd5ca;
+      }
+      .final-cta h2 {
+        font-size: clamp(50px, 6vw, 92px);
+      }
+      .final-cta p:not(.section-kicker) {
+        max-width: 680px;
+        color: #ffe2da;
+        font-size: 18px;
+        line-height: 1.6;
+      }
+      .cta-signal {
+        position: relative;
+        height: 400px;
+        display: grid;
+        place-items: center;
+      }
+      .cta-signal span {
+        position: absolute;
+        width: 180px;
+        height: 180px;
+        display: grid;
+        place-items: center;
+        border: 2px solid rgba(255, 255, 255, 0.8);
+        border-radius: 50%;
+        font:
+          900 54px/1 ui-monospace,
+          monospace;
+      }
+      .cta-signal span:nth-child(1) {
+        transform: translate(-65px, -80px);
+      }
+      .cta-signal span:nth-child(2) {
+        transform: translate(70px, -10px);
+      }
+      .cta-signal span:nth-child(3) {
+        transform: translate(-35px, 95px);
+      }
+      .cta-signal:before {
+        content: "";
+        width: 320px;
+        height: 320px;
+        border: 1px solid rgba(255, 255, 255, 0.26);
+        transform: rotate(45deg);
+      }
+      .light-button {
+        background: white !important;
+        color: var(--ink) !important;
+        border-color: white !important;
+      }
+      .button.dark-ghost {
+        color: white;
+        border-color: white;
+      }
+      footer {
+        min-height: 120px;
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        gap: 30px;
+        padding: 30px clamp(24px, 5vw, 80px);
+        background: #0b2224;
+        color: white;
+      }
+      footer p {
+        color: #8fa5a6;
+        font-size: 12px;
+        text-align: center;
+      }
+      footer > div {
+        display: flex;
+        justify-content: flex-end;
+        gap: 24px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .footer-brand {
         color: white;
       }
 
-      @media (prefers-reduced-motion: reduce) {
-        *,
-        *::before,
-        *::after {
-          scroll-behavior: auto !important;
-          transition: none !important;
-        }
-      }
-
-      @media (max-width: 920px) {
-        .topbar {
-          position: static;
-        }
-
-        .nav {
+      @media (max-width: 980px) {
+        nav > a:not(.nav-cta) {
           display: none;
         }
-
-        /* With the nav hidden on mobile, keep a persistent shortcut to status. */
-        .nav-download {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          position: fixed;
-          right: 16px;
-          bottom: 16px;
-          z-index: 50;
-          padding: 12px 18px;
-          border-radius: 999px;
-          background: var(--blue);
-          color: #fff;
-          font-weight: 700;
-          text-decoration: none;
-          box-shadow: var(--shadow);
+        .hero {
+          grid-template-columns: 1fr;
+          padding-top: 60px;
         }
-
+        .hero-copy {
+          max-width: 800px;
+        }
+        .control-room {
+          max-width: 760px;
+          transform: none;
+        }
+      }
+      @media (max-width: 980px) {
+        .proof-strip {
+          grid-template-columns: repeat(2, 1fr);
+          gap: 24px 0;
+        }
+        .proof-strip div:nth-child(2) {
+          border: 0;
+        }
+        .workflow,
+        .capability-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .workflow-step:nth-child(3n) {
+          border-right: 1px solid var(--line);
+        }
+        .workflow-step:nth-child(2n) {
+          border-right: 0;
+        }
+        .workflow-step:nth-child(n + 4) {
+          border-bottom: 1px solid var(--line);
+        }
+        .workflow-step:nth-child(n + 5) {
+          border-bottom: 0;
+        }
+        .workflow-step:nth-child(3n) .workflow-arrow {
+          display: block;
+        }
+        .workflow-step:nth-child(2n) .workflow-arrow {
+          display: none;
+        }
+        .local-section,
+        .truth-section,
+        .final-cta {
+          grid-template-columns: 1fr;
+        }
+        .local-visual {
+          max-width: 500px;
+        }
+        .positioning-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .positioning-grid article {
+          min-height: 240px;
+        }
+        .triad {
+          grid-template-columns: 1fr;
+        }
+        .triad-card {
+          min-height: 220px;
+        }
+        .cta-signal {
+          display: none;
+        }
+        footer {
+          grid-template-columns: 1fr;
+          text-align: center;
+        }
+        footer p {
+          order: 3;
+        }
+        footer > div {
+          justify-content: center;
+        }
+        .footer-brand {
+          justify-content: center;
+        }
+      }
+      @media (max-width: 620px) {
+        .site-header {
+          height: 66px;
+        }
+        .nav-cta {
+          font-size: 0;
+          padding: 10px;
+        }
         .hero {
           min-height: auto;
-          padding-top: 44px;
+          padding-top: 48px;
         }
-
-        .hero-inner,
-        .section-header {
+        h1 {
+          font-size: clamp(48px, 15vw, 72px);
+        }
+        .channel-grid {
           grid-template-columns: 1fr;
         }
-
-        .product-shot {
-          align-self: stretch;
+        .signal {
+          height: 112px;
         }
-
-        .feature-grid,
+        .control-footer {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+        .control-footer span {
+          border: 0;
+        }
+        .proof-strip {
+          grid-template-columns: 1fr;
+        }
+        .proof-strip div {
+          padding: 0 0 18px;
+          border-right: 0;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        .proof-strip div:last-child {
+          padding-bottom: 0;
+        }
+        .platform-section,
+        .three-channel-section,
+        .positioning-section,
+        .faq-section {
+          padding-top: 82px;
+          padding-bottom: 82px;
+        }
         .workflow,
-        .audiences,
-        .docs-grid {
+        .capability-grid,
+        .truth-columns,
+        .positioning-grid {
           grid-template-columns: 1fr;
+        }
+        .workflow-step {
+          border-right: 0 !important;
+          border-bottom: 1px solid var(--line) !important;
+        }
+        .workflow-step:last-child {
+          border-bottom: 0 !important;
+        }
+        .workflow-arrow {
+          display: none !important;
+        }
+        .local-section {
+          min-height: auto;
+          padding-top: 80px;
+          padding-bottom: 80px;
+        }
+        .local-visual {
+          aspect-ratio: 1;
+          transform: scale(0.92);
+        }
+        .local-node {
+          font-size: 9px;
+          padding: 8px;
+        }
+        .truth-section {
+          padding-top: 82px;
+          padding-bottom: 82px;
+        }
+        .truth-card {
+          padding: 22px;
+        }
+        .positioning-grid article {
+          min-height: 220px;
+        }
+        .final-cta {
+          min-height: auto;
+          padding-top: 90px;
+          padding-bottom: 90px;
         }
       }
 
-      @media (max-width: 560px) {
-        .hero,
-        .section {
-          padding-left: 18px;
-          padding-right: 18px;
-        }
-
-        .actions {
-          flex-direction: column;
-        }
-
-        .button {
-          width: 100%;
-        }
-
-        .pipeline-row {
-          grid-template-columns: 88px 1fr;
-        }
+      .skip-link {
+        position: fixed;
+        left: 16px;
+        top: -60px;
+        z-index: 100;
+        background: var(--ink);
+        color: white;
+        padding: 12px 16px;
+        font-weight: 800;
+      }
+      .skip-link:focus {
+        top: 16px;
+      }
+      a:focus-visible,
+      summary:focus-visible {
+        outline: 3px solid var(--yellow);
+        outline-offset: 4px;
       }
     </style>
+    <!-- The WSL/mainline version identity is fully retired: v1.0.0-beta.1 is now the single version across the product, installer and docs. It remains an owner-held unpublished candidate, not a public or production release. -->
   </head>
   <body>
-    <a class="skip-link" href="#main">Skip to content</a>
-    <header class="topbar" aria-label="Site header">
-      <a class="brand" href="#top">Civic<span>Cast</span></a>
-      <nav class="nav" aria-label="Primary navigation">
-        <a href="#proven">What works</a>
-        <a href="#new">New this candidate</a>
-        <a href="#roadmap">Roadmap</a>
-        <a href="#workflow">Workflow</a>
-        <a href="#status">Status</a>
-        <a href="#docs">Docs</a>
-        <a href="https://github.com/scottconverse/civiccast-native">GitHub</a>
-      </nav>
-    </header>
-
-    <!-- Body-level (not inside .topbar, whose backdrop-filter would trap a
-         fixed child): mobile-only persistent status shortcut. -->
-    <a class="nav-download" href="#status">Release status</a>
-
-    <section class="hero" id="top">
-      <div class="hero-inner">
+    <a class="skip-link" href="#top">Skip to content</a>
+    <main>
+      <header class="site-header">
+        <a class="brand" href="#top" aria-label="CivicCast home"
+          ><span class="brand-mark"
+            ><svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-radio"
+              aria-hidden="true"
+            >
+              <path d="M16.247 7.761a6 6 0 0 1 0 8.478"></path>
+              <path d="M19.075 4.933a10 10 0 0 1 0 14.134"></path>
+              <path d="M4.925 19.067a10 10 0 0 1 0-14.134"></path>
+              <path d="M7.753 16.239a6 6 0 0 1 0-8.478"></path>
+              <circle cx="12" cy="12" r="2"></circle></svg></span
+          ><span>CIVICCAST</span></a
+        >
+        <nav aria-label="Primary navigation">
+          <a href="#platform">Platform</a
+          ><a href="#honest-status">Beta status</a
+          ><a
+            class="nav-cta"
+            href="https://github.com/scottconverse/civiccast-native"
+            >View on GitHub
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-code-xml"
+              aria-hidden="true"
+            >
+              <path d="m18 16 4-4-4-4"></path>
+              <path d="m6 8-4 4 4 4"></path>
+              <path d="m14.5 4-5 16"></path></svg
+          ></a>
+        </nav>
+      </header>
+      <section class="hero" id="top">
         <div class="hero-copy">
-          <p class="eyebrow">Open-source civic broadcast software - development beta</p>
-          <h1>Record a meeting. Caption it offline. Publish it for residents.</h1>
-          <p class="lede">
-            CivicCast is a self-hostable, open, public-good broadcast platform for
-            PEG and local-government stations, built to run on a Windows PC a
-            station already owns. <strong>v1.0.0-beta.1</strong> is a development
-            candidate: the record-and-publish core is proven end-to-end.
-            On-air graphics and live broadcast are new this candidate and
-            operator-drivable. Cable headend output, multi-channel playout, and
-            outside syndication are on the roadmap, not in this beta.
+          <div class="eyebrow">
+            <span class="live-dot"></span> Open source | Local-first | Native
+            Windows
+          </div>
+          <h1>A complete PEG station.<br /><em>Without the black box.</em></h1>
+          <p class="hero-lede">
+            CivicCast brings playout, live production, scheduling, graphics,
+            public meetings, captions, archives, streaming, and resident access
+            into one open platform - built for the public, owned by your
+            station.
           </p>
-          <div class="actions">
-            <a class="button primary" href="#status">Read release status</a>
-            <a class="button secondary" href="https://github.com/scottconverse/civiccast-native">Browse the source</a>
-            <a class="button secondary" href="USER-MANUAL.pdf">Read the user manual</a>
-            <a class="button secondary" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">Read the product spec</a>
+          <div class="hero-actions">
+            <a
+              class="button primary"
+              href="https://github.com/scottconverse/civiccast-native"
+              >Explore the open source
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-arrow-right"
+                aria-hidden="true"
+              >
+                <path d="M5 12h14"></path>
+                <path d="m12 5 7 7-7 7"></path></svg></a
+            ><a class="button ghost" href="#honest-status">See what's proven</a>
           </div>
+          <p class="candidate-note">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-shield-check"
+              aria-hidden="true"
+            >
+              <path
+                d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+              ></path>
+              <path d="m9 12 2 2 4-4"></path>
+            </svg>
+            Native Windows beta candidate. No license fees. No vendor lock-in.
+          </p>
         </div>
-
-        <aside class="product-shot" aria-label="CivicCast meeting-night pipeline">
-          <div class="shot-top">
-            <strong>CivicCast Console</strong>
-            <span class="status-dot">Development beta</span>
-          </div>
-          <div class="shot-main">
-            <article class="broadcast-card">
-              <h2>Meeting-night pipeline</h2>
-              <p>Record through resident playback is proven end-to-end this candidate.</p>
-            </article>
-            <div class="pipeline" aria-label="Pipeline stages">
-              <div class="pipeline-row"><span class="step-name">Record</span><strong>Offline faster-whisper captions</strong><em>Proven</em></div>
-              <div class="pipeline-row"><span class="step-name">Review</span><strong>Audio-evidence attestation gate</strong><em>Proven</em></div>
-              <div class="pipeline-row"><span class="step-name">Summarize</span><strong>Transcript-linked AI summary</strong><em>Proven</em></div>
-              <div class="pipeline-row"><span class="step-name">Publish</span><strong>Dry-run + dead-air warning</strong><em>Proven</em></div>
-              <div class="pipeline-row"><span class="step-name">Portal</span><strong>Resident playback with captions</strong><em>Proven</em></div>
-              <div class="pipeline-row new"><span class="step-name">On-air</span><strong>Station bug + lower-third, live SRT-to-HLS</strong><em>New — engine-proven</em></div>
+        <div
+          class="control-room"
+          aria-label="Illustration of a three-channel CivicCast station dashboard"
+        >
+          <div class="control-topbar">
+            <div class="control-brand">
+              <span class="control-logo">C</span><span>Station Control</span>
             </div>
+            <div class="system-state"><span></span> SYSTEM NOMINAL</div>
           </div>
-        </aside>
-      </div>
-    </section>
-
-    <main id="main">
-      <section class="section" id="proven">
-        <div class="section-header">
-          <p class="kicker">What v1.0.0-beta.1 actually does</p>
-          <div>
-            <h2>Proven, end-to-end, this candidate.</h2>
-            <p class="intro">
-              These are exercised and verified in v1.0.0-beta.1: not a promise
-              for a future release, and not aspirational source-tree inventory.
-            </p>
+          <div class="channel-grid">
+            <article class="channel-card">
+              <div class="signal signal-1"><span>CH 8</span><i></i></div>
+              <div class="channel-meta">
+                <span class="on-air"
+                  ><i></i>
+                  <!-- -->ON AIR</span
+                >
+                <h3>Public Access</h3>
+                <p>Community Voices</p>
+                <div class="meter"><span style="width: 72%"></span></div>
+              </div>
+            </article>
+            <article class="channel-card">
+              <div class="signal signal-2"><span>CH 14</span><i></i></div>
+              <div class="channel-meta">
+                <span class="on-air"
+                  ><i></i>
+                  <!-- -->ON AIR</span
+                >
+                <h3>Education</h3>
+                <p>Board of Education</p>
+                <div class="meter"><span style="width: 80%"></span></div>
+              </div>
+            </article>
+            <article class="channel-card">
+              <div class="signal signal-3"><span>CH 16</span><i></i></div>
+              <div class="channel-meta">
+                <span class="on-air"
+                  ><i></i>
+                  <!-- -->ON AIR</span
+                >
+                <h3>Government</h3>
+                <p>City Council Replay</p>
+                <div class="meter"><span style="width: 88%"></span></div>
+              </div>
+            </article>
           </div>
-        </div>
-        <div class="feature-grid">
-          <article class="feature">
-            <span class="tag proven">Record &amp; caption</span>
-            <h3>Record, then caption offline.</h3>
-            <p>Record a meeting and generate captions with an on-device faster-whisper model — no cloud transcription service, no per-minute meter, no audio leaving the station's own machine.</p>
-          </article>
-          <article class="feature">
-            <span class="tag proven">Operator review</span>
-            <h3>An audio-evidence attestation gate before anything airs.</h3>
-            <p>The operator reviews captions against an audio-evidence attestation gate before a recording moves forward — a deliberate check, not a rubber stamp.</p>
-          </article>
-          <article class="feature">
-            <span class="tag proven">AI summary</span>
-            <h3>A summary with claims linked back to the transcript.</h3>
-            <p>Every AI-generated summary line links back to the moment in the transcript that supports it, so a clerk or resident can verify a claim instead of trusting it blind.</p>
-          </article>
-          <article class="feature">
-            <span class="tag proven">Publish</span>
-            <h3>Schedule and publish with a dry-run and a dead-air warning.</h3>
-            <p>Publishing to the resident portal runs a dry-run first and warns before dead air — publish is a deliberate operator action, not a silent background job.</p>
-          </article>
-          <article class="feature">
-            <span class="tag proven">Resident portal</span>
-            <h3>Residents watch with captions, on infrastructure the station controls.</h3>
-            <p>The resident portal plays published meetings back with captions attached — no third-party video platform required.</p>
-          </article>
-          <article class="feature">
-            <span class="tag proven">Contributor intake</span>
-            <h3>Residents can submit; operators decide.</h3>
-            <p>Residents submit their own recordings through contributor intake; an operator accepts a submission into an airable asset or declines it. Nothing a resident submits goes out unreviewed.</p>
-          </article>
-          <article class="feature">
-            <span class="tag proven">Operator manual</span>
-            <h3>The manual is in the product, not a separate download.</h3>
-            <p>An in-product operator manual is built into the console itself, alongside the printable PDF linked below.</p>
-          </article>
-          <article class="feature">
-            <span class="tag proven">Health &amp; alerts</span>
-            <h3>Honest status, not a green light that always shows green.</h3>
-            <p>Health and alert surfaces report what is actually true of the station right now — a genuine problem shows as a genuine problem.</p>
-          </article>
-          <article class="feature">
-            <span class="tag proven">Install &amp; upgrade</span>
-            <h3>Install, and upgrade by uninstall-then-reinstall, both proven.</h3>
-            <p>A fresh install and an uninstall-then-reinstall upgrade were both proven this candidate, on a real Windows box and separately in a sandboxed environment.</p>
-          </article>
+          <div class="control-footer">
+            <span><b>3</b> channels configured</span
+            ><span><b>24/7</b> automation target</span
+            ><span><b>Local</b> AI processing</span>
+          </div>
         </div>
       </section>
-
-      <section class="section" id="new">
-        <div class="section-header">
-          <p class="kicker">New this candidate</p>
-          <div>
-            <h2>Engine-proven and operator-drivable — newer than the record-and-publish core.</h2>
-            <p class="intro">
-              These work and an operator can drive them today. They have had
-              less real-world hardening than the core pipeline above, which is
-              why they are called out separately rather than folded into "what
-              works."
-            </p>
-          </div>
-        </div>
-        <div class="feature-grid">
-          <article class="feature">
-            <span class="tag proven">On-air graphics</span>
-            <h3>Station bug and lower-third, operator-set.</h3>
-            <p>An operator can set a lower-third and put it on air. Proven at the engine level and operator-drivable end to end. Honest limit: a lower-third change takes effect on the next pipeline build, not as a hot mid-broadcast text swap — expect a brief rebuild, not an instant on-screen edit.</p>
-          </article>
-          <article class="feature">
-            <span class="tag proven">Live broadcast</span>
-            <h3>Live SRT ingest through the engine to HLS.</h3>
-            <p>Live ingest over SRT, through the broadcast engine, out to HLS — proven this candidate with real footage, operator-drivable. Newer and less field-hardened than the recorded-meeting pipeline above.</p>
-          </article>
-        </div>
+      <section class="proof-strip" aria-label="CivicCast principles">
+        <div><b>Apache 2.0</b><span>Open-source code</span></div>
+        <div><b>Local-first</b><span>Your media stays yours</span></div>
+        <div><b>Operator-gated</b><span>AI never publishes itself</span></div>
+        <div><b>One platform</b><span>Station to resident</span></div>
       </section>
-
-      <section class="band" id="roadmap">
-        <div class="section">
-          <div class="section-header">
-            <p class="kicker">Not in this beta</p>
+      <section class="platform-section" id="platform">
+        <div class="section-heading">
+          <p class="section-kicker">THE STATION, NOT JUST THE STREAM</p>
+          <h2>One public-service workflow.<br /><em>End to end.</em></h2>
+          <p>
+            Most stations assemble a patchwork of automation, production,
+            captioning, streaming, archiving, reporting, and website tools.
+            CivicCast is being built as the shared operating system underneath
+            all of them.
+          </p>
+        </div>
+        <div class="workflow" aria-label="CivicCast station workflow">
+          <article class="workflow-step">
+            <div class="workflow-number">01</div>
             <div>
-              <h2>On the roadmap — do not evaluate this beta against these.</h2>
-              <p class="intro">
-                Naming these plainly is the point: a board that tests against
-                capabilities not yet built will find gaps, and we would rather
-                you find them here than in the console.
+              <h3>INGEST</h3>
+              <p>
+                Record a live source, watch a folder, upload media, or accept a
+                community contribution.
               </p>
             </div>
-          </div>
-          <div class="feature-grid">
-            <article class="feature roadmap">
-              <span class="tag">Roadmap</span>
-              <h3>Full cable / SDI headend output</h3>
-              <p>Delivering a channel out to a cable headend over SDI is not part of this beta.</p>
-            </article>
-            <article class="feature roadmap">
-              <span class="tag">Roadmap</span>
-              <h3>Multi-channel simultaneous playout</h3>
-              <p>Running several channels out at once is not part of this beta.</p>
-            </article>
-            <article class="feature roadmap">
-              <span class="tag">Roadmap</span>
-              <h3>Internet Archive / YouTube syndication</h3>
-              <p>Syndicating to outside platforms needs accounts on those platforms and is not wired up in this beta.</p>
-            </article>
-            <article class="feature roadmap">
-              <span class="tag">Roadmap</span>
-              <h3>OTT apps (Roku, Apple TV, Fire TV, etc.)</h3>
-              <p>Native streaming-device apps are not part of this beta.</p>
-            </article>
-            <article class="feature roadmap">
-              <span class="tag">Roadmap</span>
-              <h3>Emergency Alert System</h3>
-              <p><strong>CivicCast is explicitly not an EAS device.</strong> Do not deploy it as, or in place of, EAS/CAP alerting equipment.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" id="workflow">
-        <div class="section-header">
-          <p class="kicker">Meeting night</p>
-          <div>
-            <h2>Built around the real jobs in the room.</h2>
-            <p class="intro">
-              The admin, operator, and records clerk get tools suited to their
-              job, connected by one pipeline so nothing has to be re-entered
-              between roles.
-            </p>
-          </div>
-        </div>
-        <div class="workflow">
-          <article class="step"><span>01</span><strong>Set up</strong><p>Create the first admin, save recovery information, and prepare storage on the station's own machine.</p></article>
-          <article class="step"><span>02</span><strong>Record</strong><p>Record the meeting and generate offline captions with the on-device faster-whisper model.</p></article>
-          <article class="step"><span>03</span><strong>Review</strong><p>Check captions against the audio-evidence attestation gate and read the transcript-linked AI summary.</p></article>
-          <article class="step"><span>04</span><strong>Publish</strong><p>Schedule and publish to the resident portal, with a dry-run and a dead-air warning before it goes out.</p></article>
-          <article class="step"><span>05</span><strong>Improve</strong><p>Use feedback from real meetings, and the console's own health and alert surfaces, to harden the next candidate.</p></article>
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="section-header">
-          <p class="kicker">Who it is for</p>
-          <div>
-            <h2>Designed for civic teams that have to do the work themselves.</h2>
-          </div>
-        </div>
-        <div class="audiences">
-          <article class="audience">
-            <h3>Clerks and administrators</h3>
-            <p>Own setup, recovery, records review, and publishing approval for the public-facing archive.</p>
-            <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/admin-guide.md">Admin guide</a>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-chevron-right workflow-arrow"
+              aria-hidden="true"
+            >
+              <path d="m9 18 6-6-6-6"></path>
+            </svg>
           </article>
-          <article class="audience">
-            <h3>Meeting operators</h3>
-            <p>Record, review against the attestation gate, publish with the dry-run check, and drive on-air graphics and live broadcast.</p>
-            <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/meeting-operator-guide.md">Operator guide</a>
-          </article>
-          <article class="audience">
-            <h3>Public-access and PEG stations</h3>
-            <p>Evaluate v1.0.0-beta.1 against what it actually proves today, and read the long-term product spec for where the platform is headed.</p>
-            <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">3.0 master spec</a>
-          </article>
-        </div>
-      </section>
-
-      <section class="beta" id="status">
-        <div class="section">
-          <div class="beta-card">
-            <p class="kicker">Release status - <span class="badge amber">development candidate</span></p>
-            <h2>v1.0.0-beta.1 is not a public or production release.</h2>
-            <p>
-              <a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.1">v1.0.0-beta.1</a>
-              is an owner-held native-Windows development candidate. The tag
-              is published but carries no installer download and no download
-              button on this page — publishing an installer is a separate,
-              deliberate step the owner has not yet taken.
-            </p>
-            <p>
-              What is true right now: the record-and-publish core described
-              above is proven end-to-end this candidate; on-air graphics and
-              live broadcast are new and engine-proven, operator-drivable;
-              a fresh install and an uninstall-then-reinstall upgrade were
-              both proven on a real Windows box and separately in a
-              sandboxed environment. Cable headend output, multi-channel
-              playout, and outside syndication remain on the roadmap.
-            </p>
-            <div class="actions">
-              <a class="button primary" href="https://github.com/scottconverse/civiccast-native/blob/main/CHANGELOG.md">Read the changelog</a>
-              <a class="button secondary" href="https://github.com/scottconverse/civiccast-native/blob/main/BRANCHES.md">Branch &amp; release policy</a>
-              <a class="button secondary" href="https://github.com/scottconverse/civiccast-native/issues">Report an issue</a>
+          <article class="workflow-step">
+            <div class="workflow-number">02</div>
+            <div>
+              <h3>PREPARE</h3>
+              <p>
+                Validate, package, caption, translate, summarize, and review
+                before air or publication.
+              </p>
             </div>
-            <p class="fine-print">
-              CivicCast is open-source and self-hostable. There is no vendor
-              lock-in and no requirement to wait for a packaged release to
-              read the source or evaluate the code directly.
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-chevron-right workflow-arrow"
+              aria-hidden="true"
+            >
+              <path d="m9 18 6-6-6-6"></path>
+            </svg>
+          </article>
+          <article class="workflow-step">
+            <div class="workflow-number">03</div>
+            <div>
+              <h3>PROGRAM</h3>
+              <p>
+                Build recurring schedules, resolve conflicts, approve the log,
+                and keep channels moving.
+              </p>
+            </div>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-chevron-right workflow-arrow"
+              aria-hidden="true"
+            >
+              <path d="m9 18 6-6-6-6"></path>
+            </svg>
+          </article>
+          <article class="workflow-step">
+            <div class="workflow-number">04</div>
+            <div>
+              <h3>BROADCAST</h3>
+              <p>
+                Drive live and recorded playout with graphics, fallback
+                behavior, and channel health.
+              </p>
+            </div>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-chevron-right workflow-arrow"
+              aria-hidden="true"
+            >
+              <path d="m9 18 6-6-6-6"></path>
+            </svg>
+          </article>
+          <article class="workflow-step">
+            <div class="workflow-number">05</div>
+            <div>
+              <h3>PUBLISH</h3>
+              <p>
+                Send approved programs to the resident portal and configured
+                archive or reach services.
+              </p>
+            </div>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-chevron-right workflow-arrow"
+              aria-hidden="true"
+            >
+              <path d="m9 18 6-6-6-6"></path>
+            </svg>
+          </article>
+          <article class="workflow-step">
+            <div class="workflow-number">06</div>
+            <div>
+              <h3>ACCOUNT</h3>
+              <p>
+                Keep as-run history, public records, audience reports,
+                sponsorship, and audit trails.
+              </p>
+            </div>
+          </article>
+        </div>
+        <div class="capability-grid">
+          <article class="capability-card">
+            <span class="capability-icon"
+              ><svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="23"
+                height="23"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-calendar-clock"
+                aria-hidden="true"
+              >
+                <path d="M16 14v2.2l1.6 1"></path>
+                <path d="M16 2v3"></path>
+                <path
+                  d="M21 7.338V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h2.338"
+                ></path>
+                <path d="M3 9h5.859"></path>
+                <path d="M8 2v3"></path>
+                <circle cx="16" cy="16" r="6"></circle></svg
+            ></span>
+            <h3>Schedule &amp; automate</h3>
+            <p>
+              One-shot and recurring schedules, a rolling program log,
+              commit-to-air review, filler, fallback, and recovery logic.
             </p>
+          </article>
+          <article class="capability-card">
+            <span class="capability-icon"
+              ><svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="23"
+                height="23"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-clapperboard"
+                aria-hidden="true"
+              >
+                <path d="m12.296 3.464 3.02 3.956"></path>
+                <path
+                  d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z"
+                ></path>
+                <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                <path d="m6.18 5.276 3.1 3.899"></path></svg
+            ></span>
+            <h3>Run live production</h3>
+            <p>
+              Network-source ingest, recording, control-room workflows, source
+              routing, on-air graphics, and live HLS delivery.
+            </p>
+          </article>
+          <article class="capability-card">
+            <span class="capability-icon"
+              ><svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="23"
+                height="23"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-captions"
+                aria-hidden="true"
+              >
+                <rect width="18" height="14" x="3" y="5" rx="2" ry="2"></rect>
+                <path d="M7 15h4M15 15h2M7 11h2M13 11h4"></path></svg
+            ></span>
+            <h3>Make it accessible</h3>
+            <p>
+              Offline Faster Whisper captions, operator review, translation
+              tracks, transcript-linked summaries, and loudness planning.
+            </p>
+          </article>
+          <article class="capability-card">
+            <span class="capability-icon"
+              ><svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="23"
+                height="23"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-monitor-play"
+                aria-hidden="true"
+              >
+                <path
+                  d="M15.033 9.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56V7.648a.645.645 0 0 1 .967-.56z"
+                ></path>
+                <path d="M12 17v4"></path>
+                <path d="M8 21h8"></path>
+                <rect x="2" y="3" width="20" height="14" rx="2"></rect></svg
+            ></span>
+            <h3>Reach residents</h3>
+            <p>
+              A branded public portal for live, upcoming, replay, and archive
+              viewing - plus feeds, podcasts, and notifications.
+            </p>
+          </article>
+          <article class="capability-card">
+            <span class="capability-icon"
+              ><svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="23"
+                height="23"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-archive"
+                aria-hidden="true"
+              >
+                <rect width="20" height="5" x="2" y="3" rx="1"></rect>
+                <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"></path>
+                <path d="M10 12h4"></path></svg
+            ></span>
+            <h3>Preserve the record</h3>
+            <p>
+              Local storage, backup and restore, signed-record exports,
+              retention controls, and gated external archive delivery.
+            </p>
+          </article>
+          <article class="capability-card">
+            <span class="capability-icon"
+              ><svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="23"
+                height="23"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-chart-column"
+                aria-hidden="true"
+              >
+                <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>
+                <path d="M18 17V9"></path>
+                <path d="M13 17V5"></path>
+                <path d="M8 17v-3"></path></svg
+            ></span>
+            <h3>Report the work</h3>
+            <p>
+              As-run logs, EPG and proof-of-performance reports, audience
+              analytics, custom metadata, and underwriting tracking.
+            </p>
+          </article>
+        </div>
+      </section>
+      <section class="local-section">
+        <div class="local-visual" aria-hidden="true">
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <div class="local-core">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="38"
+              height="38"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-bot"
+              aria-hidden="true"
+            >
+              <path d="M12 8V4H8"></path>
+              <rect width="16" height="12" x="4" y="8" rx="2"></rect>
+              <path d="M2 14h2"></path>
+              <path d="M20 14h2"></path>
+              <path d="M15 13v2"></path>
+              <path d="M9 13v2"></path></svg
+            ><strong>LOCAL AI</strong><span>ON STATION</span>
+          </div>
+          <div class="local-node node-one">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-captions"
+              aria-hidden="true"
+            >
+              <rect width="18" height="14" x="3" y="5" rx="2" ry="2"></rect>
+              <path d="M7 15h4M15 15h2M7 11h2M13 11h4"></path>
+            </svg>
+            Captions
+          </div>
+          <div class="local-node node-two">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-file-text"
+              aria-hidden="true"
+            >
+              <path
+                d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
+              ></path>
+              <path d="M14 2v5a1 1 0 0 0 1 1h5"></path>
+              <path d="M10 9H8"></path>
+              <path d="M16 13H8"></path>
+              <path d="M16 17H8"></path>
+            </svg>
+            Summaries
+          </div>
+          <div class="local-node node-three">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-layers"
+              aria-hidden="true"
+            >
+              <path
+                d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"
+              ></path>
+              <path
+                d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"
+              ></path>
+              <path
+                d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"
+              ></path>
+            </svg>
+            Translation
+          </div>
+          <div class="local-node node-four">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-lock-keyhole"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="16" r="1"></circle>
+              <rect x="3" y="10" width="18" height="12" rx="2"></rect>
+              <path d="M7 10V7a5 5 0 0 1 10 0v3"></path>
+            </svg>
+            Private
+          </div>
+        </div>
+        <div class="local-copy">
+          <p class="section-kicker light">LOCAL AI, HUMAN AUTHORITY</p>
+          <h2>Your meetings don't need to leave town to become accessible.</h2>
+          <p>
+            CivicCast can run speech recognition, translation, and
+            transcript-linked summary drafting on station hardware. Operators
+            review the work and explicitly approve publication. Cloud AI is an
+            option - not a dependency.
+          </p>
+          <ul class="check-list">
+            <li>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-check"
+                aria-hidden="true"
+              >
+                <path d="M20 6 9 17l-5-5"></path>
+              </svg>
+              Faster Whisper captioning on recorded media
+            </li>
+            <li>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-check"
+                aria-hidden="true"
+              >
+                <path d="M20 6 9 17l-5-5"></path>
+              </svg>
+              Review queues and approval before publication
+            </li>
+            <li>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-check"
+                aria-hidden="true"
+              >
+                <path d="M20 6 9 17l-5-5"></path>
+              </svg>
+              Summary claims trace back to transcript timestamps
+            </li>
+            <li>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-check"
+                aria-hidden="true"
+              >
+                <path d="M20 6 9 17l-5-5"></path>
+              </svg>
+              No resident audio retained for AI training
+            </li>
+          </ul>
+        </div>
+      </section>
+      <section class="three-channel-section">
+        <div class="section-heading compact">
+          <p class="section-kicker">PUBLIC | EDUCATION | GOVERNMENT</p>
+          <h2>Designed around the real three-channel PEG station.</h2>
+          <p>
+            The reference profile treats public, education, and government
+            access as one station with distinct channels - not three separate
+            products.
+          </p>
+        </div>
+        <div class="triad">
+          <article class="triad-card coral">
+            <span class="triad-code">P</span>
+            <div>
+              <h3>Public</h3>
+              <p>
+                Community programs, contributor intake, underwriting, bulletin
+                boards, and local voices.
+              </p>
+            </div>
+          </article>
+          <article class="triad-card aqua">
+            <span class="triad-code">E</span>
+            <div>
+              <h3>Education</h3>
+              <p>
+                School board coverage, student media, recurring schedules,
+                accessible replays, and archives.
+              </p>
+            </div>
+          </article>
+          <article class="triad-card gold">
+            <span class="triad-code">G</span>
+            <div>
+              <h3>Government</h3>
+              <p>
+                Council and commission meetings, agendas, captions, public
+                records, and resident alerts.
+              </p>
+            </div>
+          </article>
+        </div>
+      </section>
+      <section class="truth-section" id="honest-status">
+        <div class="truth-intro">
+          <p class="section-kicker light">THE HONEST BETA</p>
+          <h2>Real software.<br />Real boundaries.</h2>
+          <p>
+            CivicCast is broad enough to evaluate as a station platform today.
+            It is not yet honest to call it field-proven for every live station
+            environment.
+          </p>
+          <a
+            href="https://github.com/scottconverse/civiccast-native/blob/main/README.md"
+            class="text-link"
+            >Read the candidate record
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-external-link"
+              aria-hidden="true"
+            >
+              <path d="M15 3h6v6"></path>
+              <path d="M10 14 21 3"></path>
+              <path
+                d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+              ></path></svg
+          ></a>
+        </div>
+        <div class="truth-columns">
+          <article class="truth-card proven">
+            <div class="truth-title">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="23"
+                height="23"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-circle-check"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="m9 12 2 2 4-4"></path>
+              </svg>
+              <h3>Built and evidenced in the current candidate</h3>
+            </div>
+            <ul>
+              <li>Recorded meeting-to-resident workflow</li>
+              <li>Network-source recording and finalization</li>
+              <li>Offline captions with operator review</li>
+              <li>Transcript-linked AI summaries</li>
+              <li>Scheduling, program logs, and explicit publishing</li>
+              <li>Resident portal and contributor intake</li>
+              <li>On-air station bug and lower-third graphics</li>
+              <li>Live ingest through the engine to HLS</li>
+              <li>Signed-pack install and data-preserving reinstall path</li>
+            </ul>
+          </article>
+          <article class="truth-card pending">
+            <div class="truth-title">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="23"
+                height="23"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-triangle-alert"
+                aria-hidden="true"
+              >
+                <path
+                  d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"
+                ></path>
+                <path d="M12 9v4"></path>
+                <path d="M12 17h.01"></path>
+              </svg>
+              <h3>Needs station proof or further hardening</h3>
+            </div>
+            <ul>
+              <li>Physical DeckLink SDI capture and acceptance</li>
+              <li>Real cable-operator headend acceptance</li>
+              <li>Large-audience public delivery at production scale</li>
+              <li>
+                Live provider proof for each station's IA/YouTube accounts
+              </li>
+              <li>Store-ready native OTT applications</li>
+              <li>Per-leg live SRT reconnect without pipeline rebuild</li>
+              <li>Sustained production use at a real PEG station</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+      <section class="positioning-section">
+        <div class="positioning-lede">
+          <p class="section-kicker">WHY CIVICCAST</p>
+          <h2>
+            Buy hardware because physics requires it.<br /><em
+              >Not because your software vendor does.</em
+            >
+          </h2>
+        </div>
+        <div class="positioning-grid">
+          <article>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="25"
+              height="25"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-code-xml"
+              aria-hidden="true"
+            >
+              <path d="m18 16 4-4-4-4"></path>
+              <path d="m6 8-4 4 4 4"></path>
+              <path d="m14.5 4-5 16"></path>
+            </svg>
+            <h3>Inspectable by default</h3>
+            <p>
+              Apache 2.0 source, documented interfaces, public issue tracking,
+              and no proprietary appliance required to understand your own
+              station.
+            </p>
+          </article>
+          <article>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="25"
+              height="25"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-lock-keyhole"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="16" r="1"></circle>
+              <rect x="3" y="10" width="18" height="12" rx="2"></rect>
+              <path d="M7 10V7a5 5 0 0 1 10 0v3"></path>
+            </svg>
+            <h3>Self-hosted by design</h3>
+            <p>
+              Your station controls its recordings, schedules, identities, AI
+              models, archives, and operational history on commodity Windows
+              hardware.
+            </p>
+          </article>
+          <article>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="25"
+              height="25"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-users"
+              aria-hidden="true"
+            >
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+              <path d="M16 3.128a4 4 0 0 1 0 7.744"></path>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+            </svg>
+            <h3>Built for public institutions</h3>
+            <p>
+              Operator approvals, role boundaries, accessible resident delivery,
+              public-record workflows, and evidence-aware reporting are core
+              concepts.
+            </p>
+          </article>
+          <article>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="25"
+              height="25"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-bell-ring"
+              aria-hidden="true"
+            >
+              <path d="M10.268 21a2 2 0 0 0 3.464 0"></path>
+              <path d="M22 8c0-2.3-.8-4.3-2-6"></path>
+              <path
+                d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"
+              ></path>
+              <path d="M4 2C2.8 3.7 2 5.7 2 8"></path>
+            </svg>
+            <h3>Failures should be visible</h3>
+            <p>
+              Blocked integrations stay blocked, health is surfaced, and missing
+              credentials or hardware proof are not silently reported as
+              success.
+            </p>
+          </article>
+        </div>
+      </section>
+      <section class="faq-section">
+        <div class="section-heading compact">
+          <p class="section-kicker">STRAIGHT ANSWERS</p>
+          <h2>Before you put it on air.</h2>
+        </div>
+        <div class="faq-list">
+          <details open="">
+            <summary>Can CivicCast run a complete PEG station?</summary>
+            <p>
+              That is the product scope, and the repository contains the
+              workflows across playout, scheduling, production, graphics,
+              captions, portal, archives, analytics, and reporting. The native
+              beta still needs real station headend proof before it should be
+              treated as field-proven for every unattended production
+              environment.
+            </p>
+          </details>
+          <details>
+            <summary>Is the AI really local?</summary>
+            <p>
+              It can be. CivicCast supports local Faster Whisper captioning and
+              local model workflows for summaries and translation. Optional
+              hosted providers also exist, but the core public-meeting workflow
+              is designed not to require them.
+            </p>
+          </details>
+          <details>
+            <summary>Is it really open source?</summary>
+            <p>
+              Yes. CivicCast code is licensed under Apache 2.0 and its
+              documentation under CC BY 4.0. External runtimes and optional
+              integrations retain their own licenses, and some hardware or
+              provider accounts remain station responsibilities.
+            </p>
+          </details>
+          <details>
+            <summary>Does it replace certified EAS equipment?</summary>
+            <p>
+              No. CivicCast can ingest and display CAP/IPAWS alert content in
+              software, but it is not an FCC Part 11 EAS device. Required EAS
+              relay remains the responsibility of the station or cable headend.
+            </p>
+          </details>
+          <details>
+            <summary>Can we download a production installer today?</summary>
+            <p>
+              The repository currently describes v1.0.0-beta.1 candidate #22 as
+              owner-held and not yet published. Teams can inspect and run the
+              source now; use the repository's release record - not an old
+              "latest" link - to determine when a verified installer is
+              available.
+            </p>
+          </details>
+        </div>
+      </section>
+      <section class="final-cta">
+        <div class="cta-signal" aria-hidden="true">
+          <span>P</span><span>E</span><span>G</span>
+        </div>
+        <div>
+          <p class="section-kicker light">
+            PUBLIC MEDIA SHOULD BE PUBLIC SOFTWARE
+          </p>
+          <h2>Help build the station<br />communities deserve.</h2>
+          <p>
+            Read the code. Challenge the claims. Run the beta. Bring the
+            hardware and field evidence that turns a serious open platform into
+            a proven public utility.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button primary light-button"
+              href="https://github.com/scottconverse/civiccast-native"
+              >Open the repository
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-arrow-right"
+                aria-hidden="true"
+              >
+                <path d="M5 12h14"></path>
+                <path d="m12 5 7 7-7 7"></path></svg></a
+            ><a
+              class="button dark-ghost"
+              href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md"
+              >Read the manual</a
+            >
           </div>
         </div>
       </section>
-
-      <section class="section" id="docs">
-        <div class="section-header">
-          <p class="kicker">Start here</p>
-          <div>
-            <h2>Pick the guide that matches the job.</h2>
-            <p class="intro">
-              New user, operator, records, and technical material are separated so people can find
-              the next useful step quickly.
-            </p>
-          </div>
+      <footer>
+        <a class="brand footer-brand" href="#top"
+          ><span class="brand-mark"
+            ><svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-radio"
+              aria-hidden="true"
+            >
+              <path d="M16.247 7.761a6 6 0 0 1 0 8.478"></path>
+              <path d="M19.075 4.933a10 10 0 0 1 0 14.134"></path>
+              <path d="M4.925 19.067a10 10 0 0 1 0-14.134"></path>
+              <path d="M7.753 16.239a6 6 0 0 1 0-8.478"></path>
+              <circle cx="12" cy="12" r="2"></circle></svg></span
+          ><span>CIVICCAST</span></a
+        >
+        <p>
+          Open-source civic broadcast software. Native Windows beta candidate.
+        </p>
+        <div>
+          <a href="https://github.com/scottconverse/civiccast-native">GitHub</a
+          ><a
+            href="https://github.com/scottconverse/civiccast-native/blob/main/FAQ.md"
+            >FAQ</a
+          ><a
+            href="https://github.com/scottconverse/civiccast-native/blob/main/LEGAL-NOTICES.md"
+            >Legal</a
+          >
         </div>
-        <div class="docs-grid">
-          <a class="doc" href="USER-MANUAL.pdf"><strong>User Manual (PDF)</strong><span>Plain-English product guide for the current beta; printable.</span></a>
-          <a class="doc" href="install-windows.html"><strong>Windows Install</strong><span>Setup expectations and when to ask for IT help.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/QUICKSTART-OPERATOR.md"><strong>Operator Quickstart</strong><span>Fastest path from a fresh install to a published meeting.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/meeting-operator-guide.md"><strong>Meeting Operator Guide</strong><span>Record, review, on-air graphics, live broadcast, and publish.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/records-clerk-guide.md"><strong>Records Clerk Guide</strong><span>Caption review, summaries, and publish approvals.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/admin-guide.md"><strong>Admin Guide</strong><span>Setup, recovery, and station configuration.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/API-REFERENCE.md"><strong>API Reference</strong><span>Developer docs and generated API contracts.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/technical-ops-reference.md"><strong>Technical Ops Reference</strong><span>Runbooks and technical detail for station IT.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native"><strong>GitHub Repo</strong><span>Source code, issues, and commit history.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md"><strong>3.0 Master Spec</strong><span>Long-term product vision, thesis, and build order.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/adoption/early-adopter-quickstart.md"><strong>Early Adopter</strong><span>Quickstart for teams evaluating this development beta.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/adoption/procurement-legal-brief.md"><strong>Procurement Brief</strong><span>Plain-English notes for procurement, records, and legal review.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/adoption/support-intake.md"><strong>Support Intake</strong><span>What to collect before opening a support request.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/adoption/release-policy.md"><strong>Release Policy</strong><span>How packaged releases and claims are handled.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/LEGAL-NOTICES.md"><strong>Legal Notices</strong><span>Trademark, non-affiliation, patent, and licensing boundaries.</span></a>
-          <a class="doc" href="https://github.com/scottconverse/civiccast-native/blob/main/BRANCHES.md"><strong>Branches &amp; Release Policy</strong><span>One product line, one branch, and where the retired WSL lane's history lives.</span></a>
-        </div>
-      </section>
+      </footer>
     </main>
-
-    <footer>
-      <div class="footer-inner">
-        <div>
-          <strong>CivicCast - v1.0.0-beta.1 native-Windows development candidate</strong><br />
-          Open-source PEG broadcast software. Apache 2.0 (code), CC BY 4.0 (docs).
-        </div>
-        <div>
-          <a href="https://github.com/scottconverse/civiccast-native">GitHub</a> -
-          <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md">3.0 Spec</a> -
-          <a href="https://github.com/scottconverse/civiccast-native/blob/main/LEGAL-NOTICES.md">Legal Notices</a> -
-          <a href="https://github.com/scottconverse/civiccast-native/blob/main/CHANGELOG.md">Changelog</a> -
-          <a href="https://github.com/scottconverse/civiccast-native/issues">Issues</a>
-        </div>
-      </div>
-    </footer>
   </body>
 </html>

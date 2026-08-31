@@ -23,21 +23,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-CURRENT_RELEASE_TAG = (
-    "v"
-    + (
-        (REPO / "civiccast" / "_version.py")
-        .read_text(encoding="utf-8")
-        .split('__version__ = "', 1)[1]
-        .split('"', 1)[0]
-    )
-)
+CURRENT_PUBLIC_CANDIDATE = "v1.0.0-beta.1"
 WITHDRAWN_RELEASE_TAG = "v1.0.0-rc13"
-
-# How the current line is described to the public. A surface that offers the
-# download must also name the framing, so a reader never sees a Download button
-# without the scope it ships under.
-CURRENT_RELEASE_FRAMING = "controlled beta"
 
 # Live, user-facing surfaces a PEG operator or their IT actually reads.
 LIVE_DOCS = [
@@ -165,25 +152,28 @@ def test_published_html_has_no_links_escaping_docroot(rel: str) -> None:
 
 def test_landing_page_has_one_coherent_current_release_posture() -> None:
     html = (REPO / "docs" / "index.html").read_text(encoding="utf-8")
-    current_release_link = f"releases/tag/{CURRENT_RELEASE_TAG}"
     assert f"releases/tag/{WITHDRAWN_RELEASE_TAG}" not in html
-    assert "withdrawn from beta use" in html.lower()
-    assert CURRENT_RELEASE_TAG in html
-    if current_release_link in html:
-        assert CURRENT_RELEASE_FRAMING in html.lower()
-    else:
-        assert "owner-held unpublished" in html.lower()
+    assert CURRENT_PUBLIC_CANDIDATE in html
+    assert "owner-held" in html.lower()
+    assert "not yet published" in html.lower()
+
+
+def test_landing_page_does_not_deny_completed_three_channel_soaks() -> None:
+    html = (REPO / "docs" / "index.html").read_text(encoding="utf-8").lower()
+    stale_claims = (
+        "has not yet completed a simultaneous three-channel unattended production soak",
+        "24-hour native windows multi-channel egress soak",
+        "final multi-channel soak",
+    )
+    assert not [claim for claim in stale_claims if claim in html]
 
 
 def test_readme_has_one_coherent_current_release_posture() -> None:
     text = (REPO / "README.md").read_text(encoding="utf-8")
     assert f"releases/tag/{WITHDRAWN_RELEASE_TAG}" not in text
-    assert "withdrawn from beta use" in text.lower()
-    assert CURRENT_RELEASE_TAG in text
-    if f"releases/tag/{CURRENT_RELEASE_TAG}" in text:
-        assert CURRENT_RELEASE_FRAMING in text.lower()
-    else:
-        assert "owner-held unpublished" in text.lower()
+    assert CURRENT_PUBLIC_CANDIDATE in text
+    assert "owner-held" in text.lower()
+    assert "not yet published" in text.lower()
 
 
 def test_landing_page_docs_are_not_raw_markdown() -> None:
@@ -197,8 +187,7 @@ def test_landing_page_has_no_withdrawn_release_download_cta() -> None:
     html = (REPO / "docs" / "index.html").read_text(encoding="utf-8")
     prims = re.findall(r'class="button primary"[^>]*>([^<]+)<', html)
     assert prims, "no primary buttons found"
-    assert f"Download {WITHDRAWN_RELEASE_TAG.rsplit('-', 1)[-1]}" not in prims
-    assert "Do not install rc13" in html
+    assert not any("download" in label.lower() for label in prims)
 
 
 def test_lpm_handoff_does_not_hardcode_a_stale_installer_hash() -> None:

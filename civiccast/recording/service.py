@@ -39,6 +39,7 @@ to a log line (the gate still trips — the operator just sees it in
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -163,6 +164,28 @@ class DropoutCheckResult(BaseModel):
     dropout_detected: bool
     reconnected: bool = False
     detail: str = ""
+
+
+class RecordingDrainResult(BaseModel):
+    """Outcome of :meth:`RecordingService.drain_in_flight` — the bounded,
+    best-effort graceful stop of in-flight recording jobs on app shutdown.
+
+    ``considered`` is every job found in an active state
+    (``arming``/``recording``/``finalizing``) at drain time. ``finalized``
+    reached a terminal ``done`` with a real asset; ``failed`` reached
+    ``failed`` (a torn/zero-byte capture, an ``arming`` job that never
+    recorded, or a per-job stop that raised); ``not_drained`` was left
+    untouched because the deadline elapsed first — those jobs stay in their
+    active state for the next boot's ``reconcile_orphans`` hook to fail
+    cleanly, exactly the pre-drain behaviour (never worse).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    considered: int = Field(ge=0)
+    finalized: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    not_drained: int = Field(ge=0)
 
 
 class CapturePipelineProtocol(Protocol):
@@ -821,6 +844,95 @@ class RecordingService:
         planned end. Wraps :meth:`RecordingStore.reconcile_orphaned_active_jobs`."""
         return self._store.reconcile_orphaned_active_jobs(now=self._clock())
 
+    def drain_in_flight(
+        self,
+        station_id: str,
+        *,
+        deadline_seconds: float,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> RecordingDrainResult:
+        """Shutdown hook: gracefully stop every in-flight recording job to a
+        finalized asset, bounded by ``deadline_seconds`` (best-effort, never
+        hangs shutdown).
+
+        This is the recording-side peer of the egress daemon's
+        ``stop_all_channels(deadline_seconds=...)`` drain. Without it, a
+        shutdown mid-recording lets process exit tear the capture down: the
+        ffmpeg child is killed (by the supervisor Job Object, or orphaned off
+        the supervisor), the partial ``.ts`` segment is never concatenated or
+        finalized, and the job sits ``recording`` until the next boot's
+        ``reconcile_orphans`` marks it ``failed`` — the capture up to the stop
+        moment is lost even though it is valid, flushed MPEG-TS on disk.
+
+        Each job is stopped through :meth:`stop_job`, which drives
+        ``pipeline.stop`` under the capture pipeline's per-instance
+        ``_job_lock``. That lock is the seam that makes this safe to run
+        alongside the scheduler poll thread's ``check_dropout``/``finalize``:
+        the two serialize on it, and whichever reaches the job first pops it
+        out of the pipeline's ``_active`` map — the loser then finds the job
+        already gone and no-ops rather than double-finalizing. It cannot
+        deadlock the poll thread: the lock is only ever held across bounded
+        in-memory state transitions (the unbounded ffmpeg concat/merge runs
+        outside it), and this method holds no lock of its own across the call.
+
+        Bounded + fail-open: the deadline is checked before each job (a
+        synchronous ``stop_job`` is not interruptible mid-flight, so the budget
+        caps how MANY jobs we drain, not a single hung stop — ``pipeline.stop``
+        carries its own 10s terminate grace and the concat runner its own
+        timeout). Any per-job failure is caught and counted, never propagated,
+        so one bad job never aborts the drain or blocks shutdown. Jobs not
+        reached fall through to ``reconcile_orphans`` on the next boot.
+        """
+        deadline = monotonic() + max(0.0, deadline_seconds)
+        considered = 0
+        finalized = 0
+        failed = 0
+        not_drained = 0
+        # Snapshot the in-flight set once. recording first (the captures worth
+        # saving), then finalizing (a window-end finalize the poll thread may
+        # have started), then arming (no live capture — stop_job resolves these
+        # to a clean 'failed' so they don't linger as orphans).
+        for state in ("recording", "finalizing", "arming"):
+            for job in self._store.list_jobs(
+                station_id, state=state, limit=self._max_jobs_per_tick
+            ):
+                considered += 1
+                if monotonic() >= deadline:
+                    not_drained += 1
+                    continue
+                try:
+                    result = self.stop_job(job.job_id)
+                except Exception:
+                    # A concurrent poll-thread finalize may have already driven
+                    # this job terminal (the _job_lock guarantees no corruption,
+                    # only that the loser's state transition can raise). Best
+                    # effort: log and count, never abort the drain.
+                    logger.exception(
+                        "recording.drain_in_flight stop_job raised for job_id=%s", job.job_id
+                    )
+                    failed += 1
+                    continue
+                if result.state == "done":
+                    finalized += 1
+                else:
+                    failed += 1
+        if considered:
+            logger.info(
+                "recording.drain_in_flight station_id=%s considered=%d finalized=%d "
+                "failed=%d not_drained=%d",
+                station_id,
+                considered,
+                finalized,
+                failed,
+                not_drained,
+            )
+        return RecordingDrainResult(
+            considered=considered,
+            finalized=finalized,
+            failed=failed,
+            not_drained=not_drained,
+        )
+
     def poll_active_recordings(self, station_id: str) -> int:
         """Item 6: poll every ``recording``-state job for a source dropout.
 
@@ -1211,6 +1323,7 @@ __all__ = [
     "AssetFinalizerProtocol",
     "CapturePipelineProtocol",
     "CaptureResult",
+    "RecordingDrainResult",
     "RecordingJobNotFoundError",
     "RecordingPipelineFailureError",
     "RecordingPipelineUnwiredError",

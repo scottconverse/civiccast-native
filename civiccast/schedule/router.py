@@ -60,6 +60,8 @@ from civiccast.schedule.ingest import (
     validate_ingest,
 )
 from civiccast.schedule.models import (
+    ASSET_STATE_RECORDED,
+    ASSET_STATE_VALIDATED,
     SCHEDULE_MODE_PREMIERE,
     SCHEDULE_STATE_PUBLISHED,
     AssetMetadataUpdate,
@@ -74,6 +76,14 @@ from civiccast.vod.models import AssetMetadata, public_manifest_reference
 from civiccast.vod.store import AssetAlreadyExistsError, AssetStore
 
 _PACKAGE_ADMISSION = threading.BoundedSemaphore(value=1)
+
+# Media that has passed ffprobe validation and carries a readable local source
+# file may be packaged for resident playback. Uploads land as ``validated``;
+# scheduled/live captures finalize as ``recorded`` (see recording/runtime.py and
+# live/finalization.py) — both run the same ffprobe + validate_ingest gate, so
+# both are safe to package. This mirrors ``_AIRABLE_ASSET_STATES`` in
+# schedule/commit_service.py, which already treats the two states together.
+_PACKAGEABLE_ASSET_STATES: tuple[str, ...] = (ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED)
 
 
 def get_asset_store(request: Request) -> AssetStore:
@@ -362,7 +372,7 @@ def get_staff_asset(
 @staff_router.post(
     "/assets/{asset_id}/package",
     response_model=StaffAssetRow,
-    summary="Package validated local media for resident playback",
+    summary="Package validated or recorded local media for resident playback",
     dependencies=[Depends(require_any_role("publish_operator", "setup_admin"))],
     responses={
         404: {"description": "Asset not found"},
@@ -375,7 +385,7 @@ async def package_staff_asset(
     asset_id: str,
     postgres_store: Any = Depends(get_postgres_store),
 ) -> StaffAssetRow:
-    """Encode one validated upload into the existing local HLS media service.
+    """Encode one validated or recorded asset into the local HLS media service.
 
     Packaging writes to a sibling staging directory and only swaps it into
     place after the multivariant manifest exists. The database is updated
@@ -392,12 +402,12 @@ async def package_staff_asset(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Asset not found: {asset_id}",
         )
-    if asset.state != "validated":
+    if asset.state not in _PACKAGEABLE_ASSET_STATES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Only validated media can be packaged. Wait for validation to finish or "
-                "correct the ingest failure, then try again."
+                "Only validated or recorded media can be packaged. Wait for validation "
+                "or the recording to finish, or correct the ingest failure, then try again."
             ),
         )
     upload_root = resolve_upload_root()
