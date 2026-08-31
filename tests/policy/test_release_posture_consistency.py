@@ -67,9 +67,7 @@ _RC_LINE_RETIRED_REASON = (
     "exercised against synthetic fixtures until an rc-numbered line "
     "exists again"
 )
-skip_if_rc_line_retired = pytest.mark.skipif(
-    CURRENT_RC is None, reason=_RC_LINE_RETIRED_REASON
-)
+skip_if_rc_line_retired = pytest.mark.skipif(CURRENT_RC is None, reason=_RC_LINE_RETIRED_REASON)
 
 # Curated active release surfaces â€” the union of the front doors, the
 # tester path, and the adoption/public copy this repo already treats as
