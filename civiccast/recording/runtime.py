@@ -431,6 +431,23 @@ class FfmpegScheduledCapturePipeline:
                 encoder_profile=encoder_profile,
                 loudness_regime=loudness_regime,
             ),
+            # Item 6 follow-up (real-capture proof, native Windows): without
+            # this, ffmpeg's mpegts muxer buffers ~256 KiB of output in the
+            # process's own memory before an OS-level write, and
+            # FfmpegProcessHandle.terminate() maps to Win32 TerminateProcess
+            # -- an unconditional kill with NO chance for ffmpeg to run its
+            # normal shutdown path (unlike POSIX SIGTERM, which ffmpeg traps
+            # to flush + exit cleanly). Measured on this box: an 8s capture
+            # at ~200kbps never crossed the first 256 KiB flush boundary, so
+            # `stop()`/`finalize()` always produced a 0-byte file --
+            # scheduled recording could not produce ANY asset shorter than
+            # that boundary, and any recording lost its unflushed tail
+            # regardless of length. `-flush_packets 1` makes the muxer write
+            # (and the OS see) each packet as it's produced, so a
+            # Windows-abrupt kill loses at most the packet in flight instead
+            # of up to a quarter-megabyte of the most recent capture.
+            "-flush_packets",
+            "1",
             "-f",
             "mpegts",
             str(output_path),
