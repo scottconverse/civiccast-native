@@ -192,24 +192,33 @@ test('approve sends the staff operator id and flips the state chip', async ({ pa
   await expect(page.getByText('Approved', { exact: true })).toBeVisible()
 })
 
-test('decline requires notes via the prompt and records them', async ({ page }) => {
+test('decline requires notes via the in-app dialog and records them', async ({ page }) => {
   const requests = await mockCgBoard(page)
   await openCgBoard(page)
 
-  // First prompt dismissed -> no request goes out.
-  page.once('dialog', async (dialog) => {
-    expect(dialog.message()).toContain('declined')
-    await dialog.dismiss()
-  })
   await page.getByRole('button', { name: 'Decline' }).click()
-  await page.waitForTimeout(100)
+  const dialog = page.getByRole('dialog', { name: 'Decline bulletin' })
+  await expect(dialog).toBeVisible()
+
+  // Submitting blank notes never dispatches a request -- it toasts and
+  // keeps the dialog open so the operator can fix it.
+  await dialog.getByRole('button', { name: 'Decline bulletin' }).click()
+  await expect(page.getByRole('alert')).toContainText('Enter a note before submitting')
+  expect(requests.patches).toEqual([])
+  await expect(dialog).toBeVisible()
+
+  // Cancelling leaves the bulletin untouched.
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toBeHidden()
   expect(requests.patches).toEqual([])
 
-  // Second prompt provides the required notes.
-  page.once('dialog', async (dialog) => {
-    await dialog.accept('Commercial content is not eligible.')
-  })
+  // Reopen and provide the required notes.
   await page.getByRole('button', { name: 'Decline' }).click()
+  const dialog2 = page.getByRole('dialog', { name: 'Decline bulletin' })
+  await dialog2.getByPlaceholder('Why is this bulletin declined? (Required.)').fill(
+    'Commercial content is not eligible.',
+  )
+  await dialog2.getByRole('button', { name: 'Decline bulletin' }).click()
   await expect.poll(() => requests.patches.length).toBe(1)
   expect(requests.patches[0].patch).toMatchObject({
     state: 'declined',

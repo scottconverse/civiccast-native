@@ -246,7 +246,7 @@ test.describe('schedule screen', () => {
     ).toBe(true)
   })
 
-  test('TEST-005 cancel flow requires and accepts browser confirmation', async ({
+  test('TEST-005 cancel flow requires and accepts confirmation via ConfirmDialog', async ({
     page,
   }) => {
     await replaceScheduleRoutes(page)
@@ -275,15 +275,13 @@ test.describe('schedule screen', () => {
     await navigateToSchedule(page)
     await page.getByRole('tab', { name: /^list$/i }).click()
 
-    let confirmMessage = ''
-    page.once('dialog', async (dialog) => {
-      confirmMessage = dialog.message()
-      await dialog.accept()
-    })
     await page.getByRole('button', { name: 'Cancel' }).click()
-    await expect.poll(() => confirmMessage).toBe(
-      'Cancel scheduled item for "Council Meeting"?',
-    )
+    const dialog = page.getByRole('alertdialog', {
+      name: 'Cancel scheduled item for "Council Meeting"?',
+    })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: 'Cancel scheduled item' }).click()
+    await expect(dialog).toBeHidden()
 
     await expect(page.getByText('Cancelled.')).toBeVisible()
   })

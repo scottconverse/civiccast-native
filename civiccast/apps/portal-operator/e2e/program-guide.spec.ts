@@ -251,15 +251,15 @@ test.describe('program guide screen', () => {
     const requests = await mockGuide(page)
     await navigateToGuide(page)
 
-    let confirmMessage = ''
-    page.once('dialog', async (dialog) => {
-      confirmMessage = dialog.message()
-      await dialog.accept()
-    })
     await page.getByRole('button', { name: 'Disable' }).click()
-    await expect
-      .poll(() => confirmMessage)
-      .toContain('Disable "City Council (Replay)"?')
+    const dialog = page.getByRole('alertdialog', { name: 'Disable "City Council (Replay)"?' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText(
+      'All future airings from this recurring slot are cancelled from the guide immediately.',
+    )
+    await dialog.getByRole('button', { name: 'Disable slot' }).click()
+    await expect(dialog).toBeHidden()
+
     await expect.poll(() => requests.disableCalls).toBe(1)
     await expect(page.getByText('Slot disabled.')).toBeVisible()
   })
