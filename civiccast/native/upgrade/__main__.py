@@ -65,7 +65,7 @@ from civiccast.native.upgrade.routing import (
     decide_route,
     default_installed_product_probe,
 )
-from civiccast.native.upgrade.seams import build_default_seams
+from civiccast.native.upgrade.seams import adapt_flat_installer_layout, build_default_seams
 from civiccast.native.upgrade.service_control import resolve_service_control_seams
 
 _EXIT_CODES: dict[UpgradePhase, int] = {
@@ -161,6 +161,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--database-url", required=True)
     parser.add_argument("--owner-run-id", required=True)
     parser.add_argument("--payload-source", required=True)
+    parser.add_argument(
+        "--flat-installer-layout",
+        action="store_true",
+        help="Use the NSIS product's already-staged <install-root>\\runtime payload "
+        "instead of the generic app/<version> junction layout.",
+    )
     parser.add_argument(
         "--migration-non-restorable",
         action="store_true",
@@ -407,6 +413,13 @@ def main(argv: list[str] | None = None) -> int:
             psql_command=[pg_clients["psql.exe"]],
         )
         seams = _guard_pg_client_binaries(seams, pg_clients)
+        if args.flat_installer_layout:
+            seams = adapt_flat_installer_layout(seams, context)
+            _log_engine_event(
+                log_path,
+                args.database_url,
+                "payload layout: flat installer runtime selected; no junction required",
+            )
         # BLOCKER #49: the D3 chain runs BEFORE D4 provisioning, so an
         # upgrade/reinstall whose previous service is absent or deliberately
         # quiesced by PREINSTALL (and therefore postgres is stopped) would

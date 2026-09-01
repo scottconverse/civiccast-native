@@ -72,6 +72,29 @@ def test_parser_accepts_full_arg_set(tmp_path) -> None:
     assert args.new_version == "1.1"
     assert args.migration_non_restorable is False
     assert args.operator_ack is None
+    assert hasattr(args, "flat_installer_layout"), (
+        "the CLI must model the NSIS product's real flat runtime layout explicitly"
+    )
+    assert args.flat_installer_layout is False
+
+
+def test_flat_layout_flag_adapts_the_production_seams(tmp_path, monkeypatch) -> None:
+    import civiccast.native.upgrade.__main__ as cli
+
+    adapted_install_roots: list[str] = []
+
+    def _adapt(seams, context):  # type: ignore[no-untyped-def]
+        adapted_install_roots.append(context.install_root)
+        return seams
+
+    def _stop(plan, context, seams):  # type: ignore[no-untyped-def]
+        raise RuntimeError("stop after seam assembly")
+
+    monkeypatch.setattr(cli, "adapt_flat_installer_layout", _adapt)
+    monkeypatch.setattr(cli, "run_upgrade", _stop)
+
+    assert cli.main([*_base_args(tmp_path), "--flat-installer-layout"]) == 40
+    assert adapted_install_roots == [str(tmp_path / "install")]
 
 
 def test_refused_non_restorable_maps_to_exit_30(tmp_path) -> None:

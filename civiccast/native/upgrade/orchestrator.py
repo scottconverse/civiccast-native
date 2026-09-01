@@ -193,7 +193,7 @@ def _drive_forward(journal: UpgradeJournal, seams: UpgradeSeams) -> UpgradeOutco
             journal = _persist(
                 journal,
                 UpgradePhase.TREE_LAID,
-                f"laid app tree and flipped junction to {new_target}",
+                f"payload target prepared and selected: {new_target}",
                 previous_junction_target=previous_target,
                 new_junction_target=new_target,
             )

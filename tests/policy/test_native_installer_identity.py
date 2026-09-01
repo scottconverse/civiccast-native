@@ -788,6 +788,7 @@ def test_bootstrap_postinstall_d3_invocation_uses_the_bridged_runtime_interprete
     assert "--payload-source" in postinstall
     payload_source_idx = postinstall.index("--payload-source")
     assert '"$INSTDIR\\runtime"' in postinstall[payload_source_idx : payload_source_idx + 60]
+    assert "--flat-installer-layout" in postinstall[payload_source_idx : payload_source_idx + 100]
 
 
 def test_bootstrap_d3_writes_machine_parseable_route_and_engine_evidence() -> None:

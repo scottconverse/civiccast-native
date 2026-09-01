@@ -35,6 +35,18 @@ installer asset and is not a public or production release.
 
 ### Fixed
 
+- **Made the D3 upgrade engine use the native installer's real flat runtime
+  layout.** The installer, Windows service, and station activation all use the
+  D2-verified `<install root>\runtime` payload, but D3 still tried to copy that
+  payload into an unused `app\<version>` tree and create a `current` junction.
+  Exact beta.1-to-beta.2 Gate A diagnostics proved the drain and verified
+  backup/restore drill, then rolled back before migration when Windows
+  Sandbox's mapped install volume rejected `mklink /J` with access denied.
+  The NSIS call now explicitly selects the flat-layout adapter: it verifies and
+  selects only the already-staged runtime while retaining D3's interlock,
+  quiescence, backup, migration, maintenance-health, rollback, and journal
+  gates. The generic versioned-tree/junction implementation remains available
+  and independently tested for callers that actually use that layout.
 - **Corrected a false-positive Job Object evidence claim inherited from the
   beta.1 tag.** The hosted Windows runner is itself contained by a foreign Job
   Object, so it cannot reproduce the clean SCM-launched supervisor topology;

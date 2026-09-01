@@ -33,6 +33,7 @@ round trips fire only on the elevated install host (the WP-5 live matrix).
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import shutil
 from collections.abc import Callable
@@ -199,6 +200,48 @@ def default_read_junction(context: UpgradeContext) -> Callable[[], str | None]:
         return junction.read_current_target(context.install_root)
 
     return _read
+
+
+def adapt_flat_installer_layout(
+    seams: UpgradeSeams,
+    context: UpgradeContext,
+) -> UpgradeSeams:
+    """Model the payload layout the production NSIS installer actually uses.
+
+    The bootstrap extracts and D2-verifies the live Python payload directly at
+    ``<install_root>\\runtime`` before it starts D3.  Service registration and
+    station activation also consume that flat path; they do not consume the
+    generic engine's ``app\\<version>`` / ``current`` junction convention.
+
+    Replacing only the three payload-selection seams keeps D3's safety-critical
+    writer drain, verified backup/restore drill, migration, health gate, and
+    journal intact.  The adapter deliberately refuses any target other than the
+    verified flat runtime, so it cannot silently turn into a general no-op.
+    """
+
+    runtime = (Path(context.install_root) / "runtime").resolve()
+
+    def _require_runtime() -> str:
+        if not runtime.is_dir():
+            raise RuntimeError(
+                f"flat runtime payload is missing after installer D2 verification: {runtime}"
+            )
+        return str(runtime)
+
+    def _select_runtime(target: str) -> None:
+        expected = _require_runtime()
+        if Path(target).resolve() != runtime:
+            raise RuntimeError(
+                "flat runtime payload selector refused an unexpected target: "
+                f"expected {expected}, got {target}"
+            )
+
+    return dataclasses.replace(
+        seams,
+        read_junction=_require_runtime,
+        lay_tree=lambda _new_version: _require_runtime(),
+        flip_junction=_select_runtime,
+    )
 
 
 def default_migrate(context: UpgradeContext) -> Callable[[], None]:

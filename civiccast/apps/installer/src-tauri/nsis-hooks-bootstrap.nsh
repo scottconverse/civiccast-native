@@ -868,7 +868,7 @@ Var CIVICCAST_TEARDOWN_EXIT
       --install-root "$INSTDIR" \
       --state-root  "$COMMONPROGRAMDATA\CivicCast\upgrade" \
       --database-url "$R2" --owner-run-id "$R1" \
-      --payload-source "$INSTDIR\runtime"'
+      --payload-source "$INSTDIR\runtime" --flat-installer-layout'
   Pop $0  ; engine exit code
   ; Machine-parseable Gate A evidence. The durable log is append-only, so the
   ; harness consumes the LAST matching line and thereby binds its verdict to
