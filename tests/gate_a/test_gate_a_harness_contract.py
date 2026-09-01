@@ -1274,9 +1274,10 @@ def test_upgrade_failure_evidence_captures_a_redacted_journal_and_engine_log() -
     assert "upgrade-journal.redacted.json" in driver
     assert "$journal.context.database_url = '<database-url-redacted>'" in driver
     assert "Copy-Item -LiteralPath $journalPath" not in driver
-    assert "Invoke-UpgradeEngineEvidenceCapture" in driver.split(
-        "Invoke-InstallProgressCapture -Phase 'post-install'", 1
-    )[1]
+    assert (
+        "Invoke-UpgradeEngineEvidenceCapture"
+        in driver.split("Invoke-InstallProgressCapture -Phase 'post-install'", 1)[1]
+    )
 
 
 def test_manual_gate_dispatch_can_run_only_the_cross_version_diagnostic_lane() -> None:
