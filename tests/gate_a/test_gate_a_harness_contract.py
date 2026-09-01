@@ -1167,19 +1167,43 @@ def test_clean_lane_flow_is_untouched_by_dirty_mode() -> None:
 # --------------------------------------------------------------------------
 
 
+def test_current_product_version_advances_past_the_pinned_previous_candidate() -> None:
+    baseline = json.loads(_UPGRADE_BASELINE.read_text(encoding="utf-8"))
+    current_version = (
+        (_REPO_ROOT / "civiccast" / "_version.py")
+        .read_text(encoding="utf-8")
+        .split('__version__ = "', 1)[1]
+        .split('"', 1)[0]
+    )
+    previous_version = baseline.get("product_version", current_version)
+
+    assert current_version != previous_version, (
+        "Gate A cannot prove an upgrade when the current and pinned previous "
+        f"product versions are both {current_version}; the installer routes "
+        "that case to SAME_VERSION_NO_OP."
+    )
+
+
 def test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob() -> None:
     baseline = json.loads(_UPGRADE_BASELINE.read_text(encoding="utf-8"))
-    assert baseline["schema_version"] == 1
+    assert baseline["schema_version"] == 2
     assert re.fullmatch(r"[0-9a-f]{40}", baseline["source_sha"])
     assert str(baseline["run_id"]).isdigit()
     assert str(baseline["gate_a_run_id"]).isdigit()
     assert baseline["run_id"] != baseline["gate_a_run_id"]
     assert baseline["candidate_label"]
+    assert re.fullmatch(r"[0-9a-f]{64}", baseline["installer_sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", baseline["station_index_sha256"])
+    assert baseline["product_version"]
 
     workflow = _read(_WORKFLOW)
     assert "sandbox-lab/upgrade-baseline.json" in workflow
     assert "previous_source_sha" in workflow
     assert "previous_run_id" in workflow
+    assert "previous_installer_sha256" in workflow
+    assert "previous_station_index_sha256" in workflow
+    assert "previous_product_version" in workflow
+    assert "Get-FileHash" in workflow
     assert "C:\\CivicCastTester\\kit-staging" in workflow
     assert "previous-kit-staging" in workflow
     assert "Previous full kit is absent" in workflow
@@ -1209,6 +1233,8 @@ def test_upgrade_mode_is_an_additive_dirty_lane_opt_in_and_uses_previous_payload
     assert "C:\\CivicCastPreviousPayload" in driver
     assert "PREVIOUS_INSTALLER_SHA256" in driver
     assert "CURRENT_INSTALLER_SHA256" in driver
+    assert "PREVIOUS_PRODUCT_VERSION" in driver
+    assert "CURRENT_PRODUCT_VERSION" in driver
     assert "UPGRADE_OVER_LIVE_REQUESTED=1" in driver
     assert "UPGRADE_CURRENT_INSTALL_EXIT" in driver
 

@@ -558,11 +558,17 @@ jobs:
         run: |
           $baselinePath = "sandbox-lab/upgrade-baseline.json"
           $baseline = Get-Content -LiteralPath $baselinePath -Raw | ConvertFrom-Json
-          if ($baseline.schema_version -ne 1) { throw "Unsupported upgrade baseline schema: $($baseline.schema_version)" }
+          if ($baseline.schema_version -ne 2) { throw "Unsupported upgrade baseline schema: $($baseline.schema_version)" }
           $previousSha = [string]$baseline.source_sha
           $previousRunId = [string]$baseline.run_id
+          $previousInstallerSha256 = [string]$baseline.installer_sha256
+          $previousStationIndexSha256 = [string]$baseline.station_index_sha256
+          $previousProductVersion = [string]$baseline.product_version
           if ($previousSha -notmatch '^[0-9a-f]{40}$' -or $previousRunId -notmatch '^\d+$') {
             throw "Invalid immutable previous candidate identity in $baselinePath"
+          }
+          if ($previousInstallerSha256 -notmatch '^[0-9a-f]{64}$' -or $previousStationIndexSha256 -notmatch '^[0-9a-f]{64}$' -or $previousProductVersion -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
+            throw "Invalid immutable previous candidate byte/version identity in $baselinePath"
           }
           if ($previousSha -eq "${{ steps.run_id.outputs.source_sha }}") {
             throw "Pinned previous source SHA equals the current candidate; this would be a same-candidate reinstall."
@@ -575,7 +581,10 @@ jobs:
           }
           "previous_source_sha=$previousSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "previous_run_id=$previousRunId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Host "Verified previous candidate: label=$($baseline.candidate_label) run_id=$previousRunId source_sha=$previousSha gate_a_run_id=$($baseline.gate_a_run_id)"
+          "previous_installer_sha256=$previousInstallerSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_station_index_sha256=$previousStationIndexSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_product_version=$previousProductVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Verified previous candidate: label=$($baseline.candidate_label) run_id=$previousRunId source_sha=$previousSha product_version=$previousProductVersion gate_a_run_id=$($baseline.gate_a_run_id)"
 
       - name: Require the pinned previous full kit from local staging
         shell: pwsh
@@ -588,9 +597,22 @@ jobs:
           $local = Join-Path "C:\CivicCastTester\kit-staging" $previousSha
           $targetRoot = "sandbox-lab/previous-kit-staging"
           $target = Join-Path $targetRoot $previousSha
-          $installer = Get-ChildItem -LiteralPath $local -Filter "*setup.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not (Test-Path (Join-Path $local "station\station-index.json")) -or -not $installer) {
+          $installers = @(Get-ChildItem -LiteralPath $local -Filter "*setup.exe" -File -ErrorAction SilentlyContinue)
+          $stationIndexPath = Join-Path $local "station\station-index.json"
+          if (-not (Test-Path $stationIndexPath) -or $installers.Count -ne 1) {
             throw "Previous full kit is absent or incomplete at $local; refusing to substitute a different candidate or partial artifact."
+          }
+          $installer = $installers[0]
+          $installerHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $stationIndexHash = (Get-FileHash -LiteralPath $stationIndexPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installerVersion = ([System.Diagnostics.FileVersionInfo]::GetVersionInfo($installer.FullName).ProductVersion).Trim()
+          $stationIndex = Get-Content -LiteralPath $stationIndexPath -Raw | ConvertFrom-Json
+          $stationVersion = [string]$stationIndex.manifest.product_version
+          $expectedInstallerHash = "${{ steps.upgrade_baseline.outputs.previous_installer_sha256 }}"
+          $expectedStationIndexHash = "${{ steps.upgrade_baseline.outputs.previous_station_index_sha256 }}"
+          $expectedVersion = "${{ steps.upgrade_baseline.outputs.previous_product_version }}"
+          if ($installerHash -ne $expectedInstallerHash -or $stationIndexHash -ne $expectedStationIndexHash -or $installerVersion -ne $expectedVersion -or $stationVersion -ne $expectedVersion) {
+            throw "Previous local kit identity mismatch: installer_sha256=$installerHash (expected $expectedInstallerHash), station_index_sha256=$stationIndexHash (expected $expectedStationIndexHash), installer_version=$installerVersion station_version=$stationVersion (expected $expectedVersion)."
           }
           New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
           if (Test-Path $target) {
@@ -598,7 +620,7 @@ jobs:
             if ($item.LinkType) { $item.Delete() } else { Remove-Item -LiteralPath $target -Recurse -Force }
           }
           New-Item -ItemType Junction -Path $target -Target $local | Out-Null
-          Write-Host "Pinned previous full kit: $target -> $local"
+          Write-Host "Pinned byte-verified previous full kit: $target -> $local (installer_sha256=$installerHash station_index_sha256=$stationIndexHash product_version=$expectedVersion)"
 
       - name: Run Gate A (dirty lane)
         id: gate_a_dirty

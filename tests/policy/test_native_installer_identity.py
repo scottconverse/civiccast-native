@@ -1959,6 +1959,25 @@ def test_preinstall_fails_closed_on_registered_service_without_old_bootstrap() -
     assert "!insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE}" in unsafe_region
 
 
+def test_preinstall_treats_only_scm_1060_as_a_definitive_fresh_install() -> None:
+    """An unreadable SCM result cannot be downgraded to "service absent".
+
+    Access denied, process-launch failure, plug-in errors, and every other
+    ambiguous result must stop before replacement work. Only Windows service
+    error 1060 is authoritative evidence that the service does not exist.
+    """
+    preinstall = _preinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
+    no_bootstrap = preinstall.split("${ElseIf} $R5 == 0", 1)[1]
+
+    fresh_branch, ambiguous_branch = no_bootstrap.split("${ElseIf} $R5 == 1060", 1)[1].split(
+        "${Else}", 1
+    )
+    assert "fresh install" in fresh_branch.lower()
+    assert "CIVICCAST_FAIL" not in fresh_branch
+    assert "classification inconclusive" in ambiguous_branch.lower()
+    assert "!insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE}" in ambiguous_branch
+
+
 def test_preinstall_normal_upgrade_has_no_uninstall_first_or_install_only_message() -> None:
     preinstall = _preinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
     executable = "\n".join(

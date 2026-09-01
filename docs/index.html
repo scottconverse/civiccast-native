@@ -34,8 +34,10 @@
     />
     <style>
       :root {
-        --ink: #102a2c;
-        --paper: #f4f1e8;
+        --cc-brand: #102a2c;
+        --cc-paper: #f4f1e8;
+        --ink: var(--cc-brand);
+        --paper: var(--cc-paper);
         --cream: #ebe5d8;
         --signal: #f05a3d;
         --cyan: #36b9b1;
@@ -1157,7 +1159,7 @@
         outline-offset: 4px;
       }
     </style>
-    <!-- The WSL/mainline version identity is fully retired: v1.0.0-beta.1 is now the single version across the product, installer and docs. It remains an owner-held unpublished candidate, not a public or production release. -->
+    <!-- The WSL/mainline version identity is fully retired: v1.0.0-beta.2 is now the single version across the product, installer and docs. It is the current owner-held unpublished candidate with no installer asset; it is not a public or production release. -->
   </head>
   <body>
     <a class="skip-link" href="#top">Skip to content</a>
@@ -2150,11 +2152,11 @@
           <details>
             <summary>Can we download a production installer today?</summary>
             <p>
-              The repository currently describes v1.0.0-beta.1 candidate #22 as
-              owner-held and not yet published. Teams can inspect and run the
-              source now; use the repository's release record - not an old
-              "latest" link - to determine when a verified installer is
-              available.
+              <code>v1.0.0-beta.2</code> is the current owner-held unpublished candidate.
+              No installer download is attached and it is not a public or
+              production release. Teams can inspect and run the source now; use
+              the repository's release record - not an old "latest" link - to
+              determine when a verified installer is available.
             </p>
           </details>
         </div>

@@ -516,8 +516,8 @@ def test_writers_active_probe_does_not_trust_ambiguous_stopped_state(
 def test_writers_active_probe_falls_through_to_pipe_when_service_registered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A service that IS registered must fall through unchanged to the
-    pre-existing pipe-based check (never short-circuited)."""
+    """A registered service that is not definitively stopped must fall through
+    unchanged to the pre-existing pipe-based check (never short-circuited)."""
 
     import civiccast.native.supervisor.control_client as control_client_module
     from civiccast.native.upgrade.service_control import _real_writers_active_probe
@@ -530,7 +530,10 @@ def test_writers_active_probe_falls_through_to_pipe_when_service_registered(
         control_client_module, "build_control_client", lambda **_kwargs: _FakeClient()
     )
 
-    result = _real_writers_active_probe(service_registered_probe=lambda _name: True)
+    result = _real_writers_active_probe(
+        service_registered_probe=lambda _name: True,
+        service_stopped_probe=lambda _name: False,
+    )
     assert result is True  # workers_permitted True => writers ARE active (not drained)
 
 
@@ -551,7 +554,10 @@ def test_writers_active_probe_falls_through_to_pipe_when_scm_ambiguous(
         control_client_module, "build_control_client", lambda **_kwargs: _FakeClient()
     )
 
-    result = _real_writers_active_probe(service_registered_probe=lambda _name: None)
+    result = _real_writers_active_probe(
+        service_registered_probe=lambda _name: None,
+        service_stopped_probe=lambda _name: False,
+    )
     assert result is False  # drained, via the pipe read, not the short-circuit
 
 

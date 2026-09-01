@@ -20,7 +20,6 @@ CURRENT_VERSION = (
 # The owner-held candidate identity. This is intentionally distinct from a
 # published-release claim: rc11 must remain unavailable until owner approval.
 HELD_CANDIDATE_TAG = f"v{CURRENT_VERSION}"
-WITHDRAWN_CANDIDATE_TAG = "v1.0.0-rc13"
 
 ACTIVE_RELEASE_SURFACES = [
     ROOT / "README.md",
@@ -85,7 +84,6 @@ def test_clean_windows_docs_require_docs_first_proof_step() -> None:
         "docs/tester/START-HERE.md",
         "INSTALL-WINDOWS.md",
         "docs/install/windows-release-trust.md",
-        f"docs/releases/{HELD_CANDIDATE_TAG}-verification.md",
     ]
 
     for target in required_targets:
@@ -117,29 +115,30 @@ def test_current_release_identity_is_consistent_across_runtime_and_installer() -
     ).read_text(encoding="utf-8")
 
 
-def test_front_door_docs_withdraw_rc13_from_new_installation() -> None:
-    """A failed clean-host candidate must disappear from every install path."""
-    front_door = [
-        ROOT / "README.md",
-        ROOT / "INSTALL-WINDOWS.md",
+def test_retired_wsl_install_docs_are_explicitly_historical() -> None:
+    """Old WSL instructions remain evidence, never native install guidance."""
+    retired_docs = [
+        ROOT / "docs" / "adoption" / "early-adopter-quickstart.md",
         ROOT / "docs" / "tester" / "START-HERE.md",
         ROOT / "docs" / "tester" / "lpm-beta-test-handoff.md",
     ]
-    for path in front_door:
+    for path in retired_docs:
         text = path.read_text(encoding="utf-8")
         lower = text.lower()
-        assert WITHDRAWN_CANDIDATE_TAG.lower() in lower
-        assert "do not install" in lower or "do not use" in lower
-        assert "withdrawn" in lower or "testing paused" in lower
+        assert "historical" in lower or "retired" in lower
+        assert "wsl2" in lower
+        assert "civiccast-native" in lower
 
 
-def test_readme_does_not_claim_invalid_clean_host_proof() -> None:
-    """The earlier lab-host success must not be presented as clean proof."""
+def test_readme_keeps_source_and_field_proof_distinct() -> None:
+    """Source and lab evidence must not be presented as field proof."""
     text = (ROOT / "README.md").read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
     # The false "nothing changed since rc6" claim must never return.
     assert "only installer unit tests and the version stamp changed" not in text
-    assert "not a valid clean-Windows proof" in text
-    assert "genuinely clean" in text
+    assert "not a public or production release" in normalized
+    assert "has no installer download attached" in normalized
+    assert "has not been proven against physical SDI" in normalized
 
 
 def test_architecture_doc_names_current_release() -> None:

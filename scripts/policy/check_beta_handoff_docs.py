@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,7 +77,11 @@ def check_beta_handoff_docs(docs_root: Path = REPO_ROOT / "docs") -> BetaHandoff
         for line_number, line in enumerate(text.splitlines(), start=1):
             lowered = line.lower()
             for term in BANNED_EXACT:
-                if term.lower() in lowered:
+                if re.search(
+                    rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])",
+                    line,
+                    re.IGNORECASE,
+                ):
                     findings.append(
                         BetaHandoffDocsFinding(
                             path=_display_path(path, docs_root),

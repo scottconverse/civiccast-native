@@ -1107,11 +1107,12 @@ shared resource that a doomed 3-hour second cycle should not occupy. It invokes
 `Run-GateA.ps1 -DirtyLane` with the pinned previous-kit directory and source
 SHA. The previous identity lives in `sandbox-lab/upgrade-baseline.json`; the
 workflow verifies its exact candidate-build run, source SHA, workflow name,
-and successful conclusion. Candidate #23's complete ~21 GB kit was retained
-only in `C:\CivicCastTester\kit-staging\<sha>` because that self-hosted build
-did not upload the large-kit artifact, so the lane fails closed if those exact
-local bytes are absent. It never substitutes newest/latest or a partial
-artifact.
+successful conclusion, installer SHA-256, signed station-index SHA-256, and
+product version. Candidate #22 (`1.0.0-rc18`) is the pinned older product
+version; its complete kit is retained in
+`C:\CivicCastTester\kit-staging\<sha>`. The lane fails closed if those exact
+local bytes are absent or mixed. The signed station index in turn pins every
+station pack hash. It never substitutes newest/latest or a partial artifact.
 
 `Run-GateA.ps1` threads `-DirtyMode` and `-UpgradeMode` into
 `Host-Launch-Sandbox-Test.ps1` (writes `DIRTY_MODE.txt` into `output\`, the
@@ -1129,8 +1130,11 @@ unchanged acceptance flow:
 3. **Record cluster identity** — `PG_VERSION` content + the pgdata
    directory's creation time, so phase 2 can prove the *same* cluster
    survived rather than a re-provisioned lookalike.
-4. **Prove version separation** — hash both setup executables and fail if the
-   SHA-256 identities are missing, malformed, or equal.
+4. **Prove version separation** -- hash both setup executables, read the old
+   install's authoritative `InstalledVersion`, read the current setup product
+   version, and fail if either byte identities or product versions are missing,
+   malformed, or equal. Equal versions would route D3 to `SAME_VERSION_NO_OP`
+   and therefore cannot count as upgrade proof.
 5. **Leave the old version live** — no harness-authored uninstall or manual
    service stop. This is the condition the current installer must own.
 

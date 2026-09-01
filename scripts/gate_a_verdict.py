@@ -527,9 +527,25 @@ def check_dirty_prep(output_dir: Path) -> CheckResult:
                 "previous and current installer SHA-256 identities are identical -- this is "
                 "a same-candidate reinstall, not a cross-version upgrade"
             )
+        previous_version = _dirty_line(text, "PREVIOUS_PRODUCT_VERSION")
+        current_version = _dirty_line(text, "CURRENT_PRODUCT_VERSION")
+        for label, value in (
+            ("PREVIOUS_PRODUCT_VERSION", previous_version),
+            ("CURRENT_PRODUCT_VERSION", current_version),
+        ):
+            if value is None or value.startswith("<"):
+                return _fail(
+                    f"DIRTY-PREP-RESULT.txt {label}={value or '<missing>'} "
+                    "(expected the installer product version)"
+                )
+        if previous_version == current_version:
+            return _fail(
+                "previous and current product versions are identical -- D3 would route "
+                "SAME_VERSION_NO_OP instead of exercising the upgrade lifecycle"
+            )
         return _pass(
-            "cross-version upgrade prepared: previous candidate installed live and installer "
-            "SHA-256 identities are distinct"
+            "cross-version upgrade prepared: previous candidate installed live; installer "
+            "SHA-256 and product-version identities are distinct"
         )
 
     expectations = {

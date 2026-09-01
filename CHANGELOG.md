@@ -13,6 +13,9 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+Current owner-held unpublished candidate: `v1.0.0-beta.2`. It has no tag or
+installer asset and is not a public or production release.
+
 ### Added
 
 - **Supported data-preserving install-over-existing upgrades for CivicCast
@@ -26,6 +29,17 @@ came across and what deliberately did not.
   if the two installers are the same bytes. The prior uninstall-remnant shape
   remains available as a separate manual harness mode and is never combined
   with cross-version evidence.
+
+### Fixed
+
+- **Corrected a false-positive Job Object evidence claim inherited from the
+  beta.1 tag.** The hosted Windows runner is itself contained by a foreign Job
+  Object, so it cannot reproduce the clean SCM-launched supervisor topology;
+  the added descendant-inheritance test failed on its own PR and on every
+  later Windows run. That never-green test and its "empirically proven" source
+  claim are removed. Real-Win32 direct-child assignment, no-breakaway limits,
+  and kill-on-close remain CI-covered; automatic descendant inheritance in the
+  installed service topology is source-wired but awaits clean-machine proof.
 
 ## [1.0.0-beta.1] - 2026-08-31
 
@@ -2212,7 +2226,7 @@ documented in `scottconverse/civiccast`, not here, and this repository does not
 produce it. Its full entry is in that repository's CHANGELOG.
 
 The native product line carries its own separate version in
-`civiccast/_native_version.py` — currently `1.0.0-beta.1`, owner-held and
+`civiccast/_native_version.py` -- currently `1.0.0-beta.2`, owner-held and
 unpublished. Whether a native-only repository should keep tracking the retired
 line's identity at all is an open decision for the owner; until it is made,
 both are recorded honestly rather than one being quietly retyped as the other.

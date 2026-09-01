@@ -709,6 +709,8 @@ def _write_upgrade_evidence(
     *,
     previous_installer_sha256: str = "a" * 64,
     current_installer_sha256: str = "b" * 64,
+    previous_product_version: str = "1.0.0-rc18",
+    current_product_version: str = "1.0.0-beta.2",
     current_install_exit: str = "0",
 ) -> None:
     prep = [
@@ -717,6 +719,8 @@ def _write_upgrade_evidence(
         "UPGRADE_OVER_LIVE_REQUESTED=1",
         f"PREVIOUS_INSTALLER_SHA256={previous_installer_sha256}",
         f"CURRENT_INSTALLER_SHA256={current_installer_sha256}",
+        f"PREVIOUS_PRODUCT_VERSION={previous_product_version}",
+        f"CURRENT_PRODUCT_VERSION={current_product_version}",
     ]
     (run_dir / "DIRTY-PREP-RESULT.txt").write_text("\n".join(prep) + "\n", encoding="utf-8")
     result = [
@@ -779,6 +783,23 @@ def test_cross_version_upgrade_lane_rejects_same_installer_as_not_cross_version(
     result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
 
     assert result["checks"]["dirty_prep"]["status"] == "FAIL"
+    assert "identical" in result["checks"]["dirty_prep"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_cross_version_upgrade_lane_rejects_same_product_version_as_no_op(
+    tmp_path: Path,
+) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(
+        run_dir,
+        previous_product_version="1.0.0-beta.1",
+        current_product_version="1.0.0-beta.1",
+    )
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+
+    assert result["checks"]["dirty_prep"]["status"] == "FAIL"
+    assert "SAME_VERSION_NO_OP" in result["checks"]["dirty_prep"]["detail"]
     assert "identical" in result["checks"]["dirty_prep"]["detail"]
     assert result["verdict"] == "FAIL"
 

@@ -422,7 +422,7 @@ jobs:
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1683 \
+            --floor 1692 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -547,7 +547,7 @@ jobs:
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 1877 \
+            --floor 1885 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit
@@ -636,4 +636,3 @@ jobs:
             --artifacts-dir claims-artifacts \
             --producer-results producer-results.json \
             --ci-safe-controls
-

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Policy: adoption docs stay complete and non-overclaiming."""
+"""Policy: native release front doors stay coherent and non-overclaiming.
+
+The filename is retained because CI and downstream tooling already invoke it.
+The v1.7/WSL2 adoption line is retired; this gate now protects the native-only
+repository's active release posture.
+"""
 
 from __future__ import annotations
 
@@ -25,52 +30,56 @@ CURRENT_RELEASE_TAG = (
 )
 
 REQUIRED_DOCS: dict[Path, tuple[str, ...]] = {
-    Path("docs/spec/release-plan-v1.7.md"): (
-        "early adoption candidate",
-        "not a Roku release",
-        "policy check",
-    ),
-    Path("docs/adoption/early-adopter-quickstart.md"): (
+    Path("README.md"): (
         CURRENT_RELEASE_TAG,
-        "Windows setup executable",
-        "SmartScreen",
-        "WSL2",
-        "verified publisher",
-        "source ZIP",
+        "owner-held unpublished candidate",
+        "no installer download",
+        "not a public or production release",
     ),
-    Path("docs/adoption/support-intake.md"): (
-        "support bundle",
-        "Security reports",
-        "Do not post passwords",
-        "Response Expectations",
+    Path("INSTALL-WINDOWS.md"): (
+        CURRENT_RELEASE_TAG,
+        "owner-held unpublished",
+        "no installer asset",
+        "not a public or production release",
     ),
-    Path("docs/adoption/procurement-legal-brief.md"): (
-        "not legal advice",
-        "Apache-2.0",
-        "CC BY 4.0",
-        "Data Ownership",
-        "Public Records And Retention",
-        "Accessibility Posture",
-        "AI Captions",
-        "incumbent platform",
+    Path("ARCHITECTURE.md"): (
+        CURRENT_RELEASE_TAG,
+        "owner-held unpublished",
+        "no installer download",
+        "not a public or production release",
     ),
-    Path("docs/adoption/release-policy.md"): (
-        "Source/runtime release",
-        "Packaged Windows release",
-        "exact Windows setup executable",
-        "SHA-256 checksum",
-        "Hardware Or Platform Claim",
-        "Do not hide unfinished work",
+    Path("SUPPORT.md"): (
+        CURRENT_RELEASE_TAG,
+        "owner-held unpublished",
+        "no installer asset",
+        "not a public or production release",
     ),
-    Path("docs/releases/v1.7-proof-bundle.md"): (
-        "v1.3.1",
-        "v1.4.0",
-        "v1.5.0",
-        "v1.6.0",
-        "Known Boundaries",
-        "Early-Adopter Decision Rule",
+    Path("docs/index.html"): (
+        CURRENT_RELEASE_TAG,
+        "owner-held unpublished candidate",
+        "no installer download",
+        "not a public or production release",
+        "Physical DeckLink SDI capture and acceptance",
+    ),
+    Path("docs/install-windows.html"): (
+        CURRENT_RELEASE_TAG,
+        "owner-held unpublished candidate",
+        "no public Windows installer",
+        "SHA-256",
+        "Authenticode",
+        "Physical DeckLink",
     ),
 }
+
+HISTORICAL_DOCS = (
+    Path("docs/adoption/early-adopter-quickstart.md"),
+    Path("docs/tester/START-HERE.md"),
+    Path("docs/tester/lpm-beta-test-handoff.md"),
+    Path("docs/tester/technical-walkthrough.md"),
+    Path("docs/tester/known-limitations.md"),
+    Path("docs/tester/SMARTSCREEN-WALKTHROUGH.md"),
+    Path("docs/install/windows-release-trust.md"),
+)
 
 PLACEHOLDER_PATTERN = re.compile(r"\b(?:TODO|TBD|fill in|placeholder)\b", re.IGNORECASE)
 OVERCLAIM_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -83,29 +92,24 @@ OVERCLAIM_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 
 def evaluate_v17_adoption_gate(root: Path) -> list[str]:
-    """Return v1.7 adoption-readiness violations."""
+    """Return native release-posture and adoption-surface violations."""
 
     root = root.resolve()
     violations: list[str] = []
-    release_url = f"https://github.com/scottconverse/civiccast/releases/tag/{CURRENT_RELEASE_TAG}"
-    readme_path = root / "README.md"
-    public_release = readme_path.exists() and release_url in readme_path.read_text(
-        encoding="utf-8", errors="ignore"
-    )
     for relative, required_phrases in REQUIRED_DOCS.items():
         path = root / relative
         if not path.exists():
-            violations.append(f"{relative.as_posix()}: missing required v1.7 readiness doc.")
+            violations.append(f"{relative.as_posix()}: missing required native release doc.")
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         if not text.strip():
-            violations.append(f"{relative.as_posix()}: required v1.7 readiness doc is empty.")
+            violations.append(f"{relative.as_posix()}: required native release doc is empty.")
             continue
         if PLACEHOLDER_PATTERN.search(text):
             violations.append(f"{relative.as_posix()}: contains placeholder language.")
-        lower_text = text.lower()
+        lower_text = " ".join(text.lower().split())
         for phrase in required_phrases:
-            if phrase.lower() not in lower_text:
+            if " ".join(phrase.lower().split()) not in lower_text:
                 violations.append(f"{relative.as_posix()}: missing required phrase {phrase!r}.")
         for pattern in OVERCLAIM_PATTERNS:
             if pattern.search(text):
@@ -113,23 +117,16 @@ def evaluate_v17_adoption_gate(root: Path) -> list[str]:
                     f"{relative.as_posix()}: contains overclaim pattern {pattern.pattern!r}."
                 )
 
-        if relative == Path("docs/adoption/early-adopter-quickstart.md"):
-            required_posture = (
-                "current controlled beta" if public_release else "unpublished repair candidate"
-            )
-            if required_posture not in lower_text:
-                violations.append(
-                    f"{relative.as_posix()}: missing coherent release posture {required_posture!r}."
-                )
-
-    index_path = root / "docs/index.html"
-    if index_path.exists():
-        index_text = index_path.read_text(encoding="utf-8", errors="ignore")
-        for relative in REQUIRED_DOCS:
-            if relative.as_posix().removeprefix("docs/") not in index_text:
-                violations.append(f"docs/index.html: missing link to {relative.as_posix()}.")
-    else:
-        violations.append("docs/index.html: missing docs index.")
+    for relative in HISTORICAL_DOCS:
+        path = root / relative
+        if not path.exists():
+            violations.append(f"{relative.as_posix()}: missing retained historical doc.")
+            continue
+        lower_text = " ".join(path.read_text(encoding="utf-8", errors="ignore").lower().split())
+        if "historical" not in lower_text and "retired" not in lower_text:
+            violations.append(f"{relative.as_posix()}: missing historical/retired classification.")
+        if "civiccast-native" not in lower_text:
+            violations.append(f"{relative.as_posix()}: does not distinguish the native repository.")
 
     return violations
 
@@ -138,11 +135,11 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(argv[0]).resolve() if argv else REPO_ROOT
     violations = evaluate_v17_adoption_gate(root)
     if violations:
-        print("V1.7 ADOPTION GATE: FAIL")
+        print("NATIVE ADOPTION GATE: FAIL")
         for violation in violations:
             print(f"- {violation}")
         return 1
-    print("V1.7 ADOPTION GATE: PASS")
+    print("NATIVE ADOPTION GATE: PASS")
     return 0
 
 

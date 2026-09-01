@@ -7,12 +7,15 @@
 > Postgres, and the media workers from a bundled runtime, at
 > `C:\Program Files\CivicCast (Native)\`.
 >
-> **The native line is an owner-held development candidate and is not yet
-> published** (per BRANCHES.md's "Release identity"). This page currently
-> documents the one thing that is real and testable pre-release: recovering
-> the operator-console setup handoff on an already-installed native station.
-> A full install/download walkthrough will be written once a native release
-> is published.
+> **Current native release posture:** `v1.0.0-beta.2` is the current
+> owner-held unpublished candidate. It has no installer asset and
+> is not a public or production release. This
+> page currently documents the one thing that is real and testable before an
+> installer is published: recovering the operator-console setup handoff on an
+> already-installed native station.
+> A full native install/download walkthrough will be written once an exact
+> installer, checksum, signature, and clean-machine proof are attached to the
+> same approved release.
 >
 > **Everything below this notice, up to "If The Operator Console Says
 > 'Could Not Read Setup State'," describes the retired public WSL2 line**

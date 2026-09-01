@@ -419,8 +419,11 @@ Var CIVICCAST_TEARDOWN_EXIT
   ${ElseIf} $R5 == 0
     !insertmacro CIVICCAST_STEP "preinstall: unsafe partial install (service registered but old bootstrap is missing)"
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "CivicCast (Native) setup found the CivicCastSupervisor service, but the existing CivicCast Native bootstrap is missing from $INSTDIR. Setup cannot safely prepare this partial installation for upgrade and stopped before replacing files. Do not delete $COMMONPROGRAMDATA\CivicCast; it contains the station's recordings, database, and settings. Repair or remove the broken application installation without deleting application data, then retry, or contact support with $COMMONPROGRAMDATA\CivicCast\install-progress.log."
-  ${Else}
+  ${ElseIf} $R5 == 1060
     !insertmacro CIVICCAST_STEP "preinstall: no existing install found; fresh install"
+  ${Else}
+    !insertmacro CIVICCAST_STEP "preinstall: SCM classification inconclusive (sc.exe exit $R5)"
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "CivicCast (Native) setup could not safely determine whether the CivicCastSupervisor service exists (service-query exit $R5). Only Windows service error 1060 definitively means the service is absent; every other query failure is treated as unsafe so setup cannot replace files beneath possible running writers. Setup stopped before replacing application files. Retry from an administrator account after resolving Windows Service Control Manager access, then contact support with $COMMONPROGRAMDATA\CivicCast\install-progress.log if the error persists."
   ${EndIf}
   ;
   ; The GUI bootstrap is not the Windows service and is outside the native

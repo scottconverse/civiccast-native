@@ -1699,8 +1699,10 @@ function Invoke-DirtyRemnantPrologue {
         }
         try { $previousInstallerHash = (Get-FileHash -LiteralPath $dirtyExe.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower() } catch { $previousInstallerHash = "<hash-error: $_>" }
         try { $currentInstallerHash = (Get-FileHash -LiteralPath $currentUpgradeExe.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower() } catch { $currentInstallerHash = "<hash-error: $_>" }
+        try { $currentProductVersion = ([System.Diagnostics.FileVersionInfo]::GetVersionInfo($currentUpgradeExe.FullName).ProductVersion).Trim() } catch { $currentProductVersion = "<version-error: $_>" }
         "PREVIOUS_INSTALLER_SHA256=$previousInstallerHash" | Add-Content -Path $prep -Encoding UTF8
         "CURRENT_INSTALLER_SHA256=$currentInstallerHash" | Add-Content -Path $prep -Encoding UTF8
+        "CURRENT_PRODUCT_VERSION=$currentProductVersion" | Add-Content -Path $prep -Encoding UTF8
         if ($previousInstallerHash -eq $currentInstallerHash) {
             "PHASE1_INSTALL_EXIT=-996 (previous and current installer identities are identical)" | Add-Content -Path $prep -Encoding UTF8
             return
@@ -1721,6 +1723,19 @@ function Invoke-DirtyRemnantPrologue {
     if ($phase1Exit -ne 0) {
         "DIRTY_PREP=FAIL (phase-1 install did not exit 0 -- continuing into the normal flow for forensics only)" | Add-Content -Path $prep -Encoding UTF8
         return
+    }
+
+    if ($script:UpgradeMode) {
+        try {
+            $previousProductVersion = (Get-ItemPropertyValue -LiteralPath 'HKLM:\Software\CivicCast\Native' -Name 'InstalledVersion' -ErrorAction Stop).Trim()
+        } catch {
+            $previousProductVersion = "<registry-error: $_>"
+        }
+        "PREVIOUS_PRODUCT_VERSION=$previousProductVersion" | Add-Content -Path $prep -Encoding UTF8
+        if ($previousProductVersion -eq $currentProductVersion) {
+            "DIRTY_PREP=FAIL (previous and current InstalledVersion identities are identical; D3 would route SAME_VERSION_NO_OP)" | Add-Content -Path $prep -Encoding UTF8
+            return
+        }
     }
 
     # P2. Plant operator uploads (install_layout.upload_dir =
