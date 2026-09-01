@@ -1017,7 +1017,10 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # selected its parent process as the alleged grandchild and was therefore
     # a false positive. Re-derived by real collection on this tree:
     # (1683, 1877) -> (1692, 1885).
-    assert (collect("not windows_only"), collect()) == (1692, 1885)
+    # The flat-installer-layout repair adds two platform-independent upgrade
+    # seam/CLI collection cases, so both lanes advance by two. Re-derived by
+    # real collection on this tree: (1692, 1885) -> (1694, 1887).
+    assert (collect("not windows_only"), collect()) == (1694, 1887)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
