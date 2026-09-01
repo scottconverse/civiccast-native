@@ -26,9 +26,12 @@ installer asset and is not a public or production release.
   existing station database. Gate A's dirty job now proves the operation
   against an immutable, hash-distinct previous candidate left live in the
   sandbox; it fails closed if the pinned prior build/kit identity is absent or
-  if the two installers are the same bytes. The prior uninstall-remnant shape
-  remains available as a separate manual harness mode and is never combined
-  with cross-version evidence.
+  if the two installers are the same bytes. It also requires the current
+  installer's durable D3 evidence to report the `UPGRADE` route with engine
+  exit 0, so the installer's successful `FRESH_INSTALL` and
+  `SAME_VERSION_NO_OP` routes cannot masquerade as cross-version proof. The
+  prior uninstall-remnant shape remains available as a separate manual harness
+  mode and is never combined with cross-version evidence.
 
 ### Fixed
 

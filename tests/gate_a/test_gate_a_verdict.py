@@ -712,6 +712,8 @@ def _write_upgrade_evidence(
     previous_product_version: str = "1.0.0-rc18",
     current_product_version: str = "1.0.0-beta.2",
     current_install_exit: str = "0",
+    d3_route: str = "UPGRADE",
+    d3_engine_exit: str = "0",
 ) -> None:
     prep = [
         "UPGRADE_MODE=1",
@@ -726,6 +728,8 @@ def _write_upgrade_evidence(
     result = [
         "UPGRADE_MODE=1",
         f"UPGRADE_CURRENT_INSTALL_EXIT={current_install_exit}",
+        f"D3_ROUTE={d3_route}",
+        f"D3_ENGINE_EXIT={d3_engine_exit}",
         "DIRTY_PGDATA_PRESERVED=1 detail=same cluster",
         "DIRTY_UPLOADS_PRESERVED=1",
         "DIRTY_ORPHAN_SEEDED=0",
@@ -811,6 +815,25 @@ def test_cross_version_upgrade_lane_requires_current_install_success(tmp_path: P
 
     assert result["checks"]["dirty_survival"]["status"] == "FAIL"
     assert "UPGRADE_CURRENT_INSTALL_EXIT=120" in result["checks"]["dirty_survival"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_cross_version_upgrade_lane_requires_d3_upgrade_route_and_engine_success(
+    tmp_path: Path,
+) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir, d3_route="FRESH_INSTALL", d3_engine_exit="11")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+
+    assert result["checks"]["dirty_survival"]["status"] == "FAIL"
+    assert "D3_ROUTE=FRESH_INSTALL" in result["checks"]["dirty_survival"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+    _write_upgrade_evidence(run_dir, d3_route="UPGRADE", d3_engine_exit="10")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+
+    assert result["checks"]["dirty_survival"]["status"] == "FAIL"
+    assert "D3_ENGINE_EXIT=10" in result["checks"]["dirty_survival"]["detail"]
     assert result["verdict"] == "FAIL"
 
 

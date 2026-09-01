@@ -950,6 +950,8 @@ function Save-Summary {
 # source once into memory, writing it out, and slicing the tail in memory
 # removes the read-after-write entirely.
 $script:InstallProgressCaptured = $false
+$script:D3Route = 'MISSING'
+$script:D3EngineExit = 'MISSING'
 function Invoke-InstallProgressCapture {
     param([string]$Phase)
     if ($script:InstallProgressCaptured) {
@@ -994,6 +996,17 @@ function Invoke-InstallProgressCapture {
         return
     }
     Save-Summary -Step "install-progress-read-$Phase"
+
+    # The log is append-only and may contain the previous candidate's D3 line
+    # from phase 1. Walk forward and retain the LAST structured breadcrumb,
+    # which is the current installer invocation captured immediately above.
+    foreach ($line in $lines) {
+        $d3Match = [regex]::Match($line, 'step d3-engine: evidence route=(UPGRADE|FRESH_INSTALL|SAME_VERSION_NO_OP) engine_exit=(-?\d+)')
+        if ($d3Match.Success) {
+            $script:D3Route = $d3Match.Groups[1].Value
+            $script:D3EngineExit = $d3Match.Groups[2].Value
+        }
+    }
 
     try {
         Set-Content -Path $progressLogCopy -Value $lines -Encoding UTF8
@@ -2450,6 +2463,8 @@ try {
         if ($script:UpgradeMode) {
             "UPGRADE_MODE=1" | Add-Content -Path $dirtyRes -Encoding UTF8
             "UPGRADE_CURRENT_INSTALL_EXIT=$($summary.installer_exit_code)" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "D3_ROUTE=$($script:D3Route)" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "D3_ENGINE_EXIT=$($script:D3EngineExit)" | Add-Content -Path $dirtyRes -Encoding UTF8
         }
         $pdRoot = Join-Path $env:ProgramData 'CivicCast'
 

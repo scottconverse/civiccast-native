@@ -1141,9 +1141,12 @@ unchanged acceptance flow:
 Then the **full normal acceptance flow runs the current setup directly over
 that live previous install** (upgrade quiescence/migration → activation →
 station-up → T2/T3/T4 → a 10-minute soak).
-After the station-up verdict the harness writes `DIRTY-RESULT.txt`: pgdata
-identity re-checked, upload hashes re-checked, and (when seeded) the
-supervisor log grepped for PR #80's orphaned-tier WARNING.
+After the station-up verdict the harness writes `DIRTY-RESULT.txt`: the last
+machine-parseable D3 breadcrumb from the append-only installer log is captured
+as `D3_ROUTE` and `D3_ENGINE_EXIT`, pgdata identity is re-checked, upload hashes
+are re-checked, and (when seeded) the supervisor log is grepped for PR #80's
+orphaned-tier WARNING. The last-match rule binds the evidence to the current
+installer, not the previous-candidate install earlier in the same sandbox run.
 
 The judge (`scripts/gate_a_verdict.py --lane dirty`) adds three checks on
 top of the unchanged clean set:
@@ -1151,7 +1154,7 @@ top of the unchanged clean set:
 | check | PASS means |
 | --- | --- |
 | `dirty_prep` | previous install exit 0, the live-upgrade request is explicit, and previous/current installer SHA-256 identities are valid and distinct |
-| `dirty_survival` | current install exit 0 and the SAME pgdata cluster plus byte-identical uploads survived install-over-existing and station-up |
+| `dirty_survival` | current install exit 0, D3 explicitly reported route `UPGRADE` with engine exit 0, and the SAME pgdata cluster plus byte-identical uploads survived install-over-existing and station-up; successful `FRESH_INSTALL` and `SAME_VERSION_NO_OP` routes fail this check |
 | `dirty_orphaned_tier` | `SKIP` with a loud not-covered reason in automated cross-version mode; this uninstall-only remnant shape is not authored during a live upgrade |
 
 The dirty job posts its full per-check verdict table to the workflow run

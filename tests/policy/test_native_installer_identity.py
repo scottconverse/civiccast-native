@@ -790,6 +790,14 @@ def test_bootstrap_postinstall_d3_invocation_uses_the_bridged_runtime_interprete
     assert '"$INSTDIR\\runtime"' in postinstall[payload_source_idx : payload_source_idx + 60]
 
 
+def test_bootstrap_d3_writes_machine_parseable_route_and_engine_evidence() -> None:
+    postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
+
+    assert "step d3-engine: evidence route=UPGRADE engine_exit=$0" in postinstall
+    assert "step d3-engine: evidence route=FRESH_INSTALL engine_exit=11" in postinstall
+    assert "step d3-engine: evidence route=SAME_VERSION_NO_OP engine_exit=12" in postinstall
+
+
 def test_bootstrap_postinstall_d3_exit_code_contract_is_preserved_exactly() -> None:
     """The retired block's 5-way exit-code contract (0 / 10 / 20 / 30 /
     unexpected) must survive the rehoming byte-for-byte in its branching

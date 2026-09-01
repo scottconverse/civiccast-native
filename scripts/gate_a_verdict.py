@@ -580,6 +580,18 @@ def check_dirty_survival(output_dir: Path) -> CheckResult:
                 "DIRTY-RESULT.txt "
                 f"UPGRADE_CURRENT_INSTALL_EXIT={current_exit or '<missing>'} (expected 0)"
             )
+        d3_route = _dirty_line(text, "D3_ROUTE")
+        if d3_route != "UPGRADE":
+            return _fail(
+                f"DIRTY-RESULT.txt D3_ROUTE={d3_route or '<missing>'} (expected UPGRADE); "
+                "FRESH_INSTALL and SAME_VERSION_NO_OP are successful installer routes but "
+                "do not prove a cross-version upgrade"
+            )
+        d3_engine_exit = _dirty_line(text, "D3_ENGINE_EXIT")
+        if d3_engine_exit != "0":
+            return _fail(
+                f"DIRTY-RESULT.txt D3_ENGINE_EXIT={d3_engine_exit or '<missing>'} (expected 0)"
+            )
     pg = _dirty_line(text, "DIRTY_PGDATA_PRESERVED")
     if pg != "1":
         return _fail(f"DIRTY-RESULT.txt DIRTY_PGDATA_PRESERVED={pg or '<missing>'} (expected 1)")
@@ -590,8 +602,8 @@ def check_dirty_survival(output_dir: Path) -> CheckResult:
         )
     if _dirty_line(text, "UPGRADE_MODE") == "1":
         return _pass(
-            "current installer completed over the live previous candidate; pgdata cluster "
-            "identity and planted uploads survived"
+            "current installer completed over the live previous candidate via D3 UPGRADE "
+            "with engine exit 0; pgdata cluster identity and planted uploads survived"
         )
     return _pass("pgdata cluster identity and planted uploads survived the reinstall")
 

@@ -870,6 +870,17 @@ Var CIVICCAST_TEARDOWN_EXIT
       --database-url "$R2" --owner-run-id "$R1" \
       --payload-source "$INSTDIR\runtime"'
   Pop $0  ; engine exit code
+  ; Machine-parseable Gate A evidence. The durable log is append-only, so the
+  ; harness consumes the LAST matching line and thereby binds its verdict to
+  ; the current installer rather than the baseline install earlier in the run.
+  ; Exit 11/12 are successful installer routes but are NOT upgrade proof.
+  ${If} $0 == 11
+    !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=FRESH_INSTALL engine_exit=11"
+  ${ElseIf} $0 == 12
+    !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=SAME_VERSION_NO_OP engine_exit=12"
+  ${Else}
+    !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=UPGRADE engine_exit=$0"
+  ${EndIf}
   ${If} $0 == 0
     DetailPrint "CivicCast (Native): install/upgrade committed."
   ${ElseIf} $0 == 11

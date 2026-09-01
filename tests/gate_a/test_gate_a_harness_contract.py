@@ -1115,6 +1115,8 @@ def test_dirty_evidence_filenames_agree_between_powershell_and_judge() -> None:
         "DIRTY_UPLOADS_PRESERVED",
         "DIRTY_ORPHAN_SEEDED",
         "DIRTY_ORPHAN_WARNING",
+        "D3_ROUTE",
+        "D3_ENGINE_EXIT",
     ):
         assert key in driver, f"the driver never writes {key}"
         assert key in judge_text, f"the judge never checks {key}"
@@ -1237,6 +1239,10 @@ def test_upgrade_mode_is_an_additive_dirty_lane_opt_in_and_uses_previous_payload
     assert "CURRENT_PRODUCT_VERSION" in driver
     assert "UPGRADE_OVER_LIVE_REQUESTED=1" in driver
     assert "UPGRADE_CURRENT_INSTALL_EXIT" in driver
+    assert "D3_ROUTE" in driver
+    assert "D3_ENGINE_EXIT" in driver
+    assert "D3_ROUTE" in _read(_JUDGE)
+    assert "D3_ENGINE_EXIT" in _read(_JUDGE)
 
     code = _code_only(driver).replace("\r\n", "\n")
     assert "if ($script:UpgradeMode)" in code
