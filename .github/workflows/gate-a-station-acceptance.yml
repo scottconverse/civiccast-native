@@ -67,6 +67,14 @@ on:
         description: "Workflow run id of the native-beta-candidate-artifacts run to judge"
         required: true
         type: string
+      lane:
+        description: "Run the full gate or the cross-version lane only (diagnostic rerun)"
+        required: true
+        type: choice
+        options:
+          - full
+          - cross-version-only
+        default: full
 
 concurrency:
   # Shared with native-beta-candidate-artifacts.yml's build_target:
@@ -90,7 +98,7 @@ jobs:
     # did not succeed -- there is no installable kit to judge in that case,
     # and a Gate A FAIL on top of an already-red candidate build would be
     # noise, not signal.
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.lane != 'cross-version-only') || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, windows, sandbox-lab]
     timeout-minutes: 180
     steps:
@@ -412,7 +420,7 @@ jobs:
   station-acceptance-dirty:
     name: Cross-version install-over-existing lane + verdict
     needs: station-acceptance
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ always() && ((github.event_name == 'workflow_dispatch' && (inputs.lane == 'cross-version-only' || needs.station-acceptance.result == 'success')) || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && needs.station-acceptance.result == 'success')) }}
     runs-on: [self-hosted, windows, sandbox-lab]
     timeout-minutes: 340
     steps:

@@ -1265,3 +1265,28 @@ def test_workflow_dirty_lane_supplies_the_previous_candidate_to_gate_a() -> None
     )
     assert "-PreviousKitDir" in dirty_line
     assert "-PreviousSourceSha" in dirty_line
+
+
+def test_upgrade_failure_evidence_captures_a_redacted_journal_and_engine_log() -> None:
+    driver = _read(_DRIVER)
+    assert "function Invoke-UpgradeEngineEvidenceCapture" in driver
+    assert "upgrade-engine.log" in driver
+    assert "upgrade-journal.redacted.json" in driver
+    assert "$journal.context.database_url = '<database-url-redacted>'" in driver
+    assert "Copy-Item -LiteralPath $journalPath" not in driver
+    assert "Invoke-UpgradeEngineEvidenceCapture" in driver.split(
+        "Invoke-InstallProgressCapture -Phase 'post-install'", 1
+    )[1]
+
+
+def test_manual_gate_dispatch_can_run_only_the_cross_version_diagnostic_lane() -> None:
+    workflow = _read(_WORKFLOW)
+    assert "lane:" in workflow
+    assert "cross-version-only" in workflow
+    clean_job = workflow.split("  station-acceptance:", 1)[1].split(
+        "  station-acceptance-dirty:", 1
+    )[0]
+    dirty_job = workflow.split("  station-acceptance-dirty:", 1)[1]
+    assert "inputs.lane != 'cross-version-only'" in clean_job
+    assert "always()" in dirty_job
+    assert "inputs.lane == 'cross-version-only'" in dirty_job

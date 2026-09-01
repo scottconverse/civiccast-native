@@ -1020,6 +1020,41 @@ function Invoke-InstallProgressCapture {
     Save-Summary -Step "install-progress-captured-$Phase"
 }
 
+function Invoke-UpgradeEngineEvidenceCapture {
+    # D3's durable log is already database-URL-redacted by the engine. The
+    # journal is not: its context contains the live credential, so never copy
+    # that file verbatim into the mapped evidence directory / CI artifact.
+    $stateRoot = Join-Path $env:ProgramData 'CivicCast\upgrade'
+    $destRoot = Join-Path $OutDir 'upgrade-engine'
+    try {
+        New-Item -ItemType Directory -Force -Path $destRoot | Out-Null
+        $engineLog = Join-Path $stateRoot 'upgrade-engine.log'
+        if (Test-Path -LiteralPath $engineLog) {
+            $size = (Get-Item -LiteralPath $engineLog -Force).Length
+            if ($size -le 16MB) {
+                Copy-Item -LiteralPath $engineLog -Destination (Join-Path $destRoot 'upgrade-engine.log') -Force
+            } else {
+                "upgrade-engine.log omitted: $size bytes exceeds 16 MB cap" |
+                    Set-Content -LiteralPath (Join-Path $destRoot 'upgrade-engine-log-omitted.txt') -Encoding UTF8
+            }
+        }
+
+        $journalPath = Join-Path $stateRoot 'upgrade-journal.json'
+        if (Test-Path -LiteralPath $journalPath) {
+            $journal = Get-Content -LiteralPath $journalPath -Raw -ErrorAction Stop | ConvertFrom-Json
+            if ($null -ne $journal.context -and $journal.context.PSObject.Properties.Name -contains 'database_url') {
+                $journal.context.database_url = '<database-url-redacted>'
+            }
+            $journal | ConvertTo-Json -Depth 20 |
+                Set-Content -LiteralPath (Join-Path $destRoot 'upgrade-journal.redacted.json') -Encoding UTF8
+        }
+    } catch {
+        "upgrade engine evidence capture failed: $_" |
+            Set-Content -LiteralPath (Join-Path $OutDir 'upgrade-engine-capture-error.txt') -Encoding UTF8
+    }
+    Save-Summary -Step 'upgrade-engine-evidence-captured'
+}
+
 # --------------------------------------------------------------------------
 # BOUNDED PROBE <gate-a-hoststore-wedge>
 #
@@ -2076,6 +2111,7 @@ try {
         # finalization block keeps a guarded second attempt for the case where
         # the installer wrote the log after this point.
         Invoke-InstallProgressCapture -Phase 'post-install'
+        Invoke-UpgradeEngineEvidenceCapture
         Sync-Transcript -Checkpoint 'post-install'
 
         # Give any late-writing child processes (service self-registration, log
