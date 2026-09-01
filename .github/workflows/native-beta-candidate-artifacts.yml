@@ -61,6 +61,13 @@ on:
           there is no persistent local box for Gate A to read from.
         type: boolean
         default: false
+      station_only:
+        description: >-
+          Recovery-only: build just the signed station bundle. This exists on
+          the temporary beta.1 recovery branch and is not part of the release
+          branch workflow.
+        type: boolean
+        default: false
   push:
     branches:
       - release/native-beta-1.0.0-beta.1-rc1
@@ -82,6 +89,7 @@ permissions:
 jobs:
   build-native-beta:
     name: Build and sign native-beta candidate assets
+    if: ${{ !inputs.station_only }}
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
     timeout-minutes: 180
     env:
@@ -1062,6 +1070,7 @@ jobs:
               --signing-key-id $env:PACK_SIGNING_KEY_ID `
               --product-version $env:STATION_PRODUCT_VERSION `
               --channel beta `
+              --created-epoch 1788193383 `
               --report artifacts/native-station-bundle/native-station-bundle-build-report.json
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
