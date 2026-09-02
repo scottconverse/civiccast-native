@@ -41,13 +41,33 @@ link, so this does not depend on a real cross-volume environment):
   path actually fires, not just that its code exists in source.
 
 Requires ``pwsh`` (PowerShell 7+, the same shell every Gate A workflow step
-uses) on PATH. Skips cleanly -- never fails the suite -- when it is absent,
-per the review's own instruction.
+uses) on PATH, AND a Windows host. Skips cleanly -- never fails the suite --
+when either is absent, per the review's own instruction.
+
+<gate-a-download-only-lane-review-3>: the ``pwsh``-only guard was not
+enough. GitHub's ``ubuntu-latest`` images ship PowerShell 7 preinstalled, so
+``shutil.which("pwsh")`` finds one there too, and this module's own driver
+scripts actually ran on the ``randomized-suite`` and ``Unit tests`` (both
+``ubuntu-latest``) CI lanes -- where they failed, not skipped, because the
+harness this module tests is Windows-only at the filesystem level:
+``Build-DownloadOnlyPayload.ps1``'s own ``Restore-DownloadOnlyKitDownload``
+creates an NTFS directory junction (``New-Item -ItemType Junction``), and
+this module's first driver template simulates the harness's ordinary
+``kit-download`` junction the same way to set up its fixture. NTFS
+junctions do not exist on Linux's ext4, so ``New-Item -ItemType Junction``
+throws there even under a real ``pwsh``, and the driver's nonzero exit
+surfaced as a hard test FAILURE (``AssertionError: driver script failed
+(exit 1)``), not a skip. The guard now also requires ``platform.system() ==
+"Windows"`` -- correct, not incidental: Gate A's download-only lane only
+ever runs on the project's self-hosted Windows sandbox-lab runner (see
+``docs/ops/gate-a.md``), so this module has nothing meaningful to prove on
+any other platform regardless of what shells happen to be installed there.
 """
 
 from __future__ import annotations
 
 import json
+import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -58,8 +78,22 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUILDER = _REPO_ROOT / "sandbox-lab" / "scripts" / "Build-DownloadOnlyPayload.ps1"
 
 _PWSH = shutil.which("pwsh")
+_IS_WINDOWS = platform.system() == "Windows"
 
-pytestmark = pytest.mark.skipif(_PWSH is None, reason="pwsh not found on PATH")
+if _PWSH is None:
+    _SKIP_REASON = "pwsh not found on PATH"
+elif not _IS_WINDOWS:
+    _SKIP_REASON = (
+        "Gate A's download-only lane builder is Windows-only (NTFS directory junctions, "
+        "created both by Build-DownloadOnlyPayload.ps1 itself and by this module's own "
+        "fixture setup) -- it cannot run on a non-Windows platform even when pwsh "
+        f"(PowerShell 7, preinstalled on many Linux CI images) is present; platform.system() "
+        f"reported {platform.system()!r}"
+    )
+else:
+    _SKIP_REASON = ""
+
+pytestmark = pytest.mark.skipif(_PWSH is None or not _IS_WINDOWS, reason=_SKIP_REASON)
 
 
 def test_builder_script_present() -> None:

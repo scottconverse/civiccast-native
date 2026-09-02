@@ -63,6 +63,16 @@ LONG_BY_DESIGN: dict[tuple[str, str], str] = {
         "two-phase ceiling, and the in-job timing contract (dirty 210 < 230 < job 340) is "
         "asserted by tests/gate_a so the ceiling cannot silently drift."
     ),
+    ("gate-a-station-acceptance.yml", "station-acceptance-download-only"): (
+        "2026-09-02: the download-only lane <gate-a-download-only-lane> reuses the dirty "
+        "lane's own two-phase cross-version upgrade shape byte-for-byte -- phase 1 installs "
+        "a pinned previous candidate from its full kit, phase 2 runs the current candidate's "
+        "setup.exe over it (from a filtered payload with no station\\, proving the "
+        "download-only install/upgrade path the K1 fix silently broke). Same two 170-minute-"
+        "class phases as station-acceptance-dirty above, so the same 340-minute ceiling "
+        "applies for the identical reason, and the identical in-job timing contract "
+        "(210 < 230 < job 340) is asserted by tests/gate_a/test_gate_a_harness_contract.py."
+    ),
     ("six-hour-soak.yml", "six-hour-soak"): (
         "the six-hour soak IS the test; a shorter ceiling would defeat its entire purpose"
     ),
