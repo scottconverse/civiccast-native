@@ -1337,6 +1337,27 @@ shared-sandbox wait -- the same numbers `tests/gate_a/
 test_gate_a_harness_contract.py` already asserts for the dirty lane, since
 they are the identical settings.
 
+### "Required" here is an owner decision, not (yet) a GitHub branch-protection setting
+
+This lane's job fails the CI run on a non-PASS verdict, unlike the clean and
+dirty lanes -- that is what "required for every release" (owner decision,
+2026-09-02) means in this file. It is **not** the same thing as GitHub
+**required status checks** on branch protection: a check that a repository's
+branch-protection rules do not name as required can be *skipped entirely*
+(the whole `gate-a-station-acceptance` workflow only triggers after a
+successful `native-beta-candidate-artifacts` run, or on manual dispatch) and
+GitHub will still allow the PR to merge, because a skipped check is not a
+failing check from branch protection's point of view. Per this repo's
+`CLAUDE.md`, "Owner gates" section, only Scott can add a check to branch
+protection's required-status-checks list, and no agent does this
+automatically. Until that step happens, a PR CAN merge without this lane
+having run at all -- its "required" status is enforced by the job failing
+loudly when it does run and by human process, not by a GitHub-mechanical
+gate. Add `station-acceptance-download-only` (and, per the existing
+Promotion rule below, the clean and dirty lanes once each earns it) to
+branch protection's required-status-checks list once it has been proven
+against real candidate builds.
+
 ## Promotion rule
 
 Gate A's workflow (`.github/workflows/gate-a-station-acceptance.yml`) is

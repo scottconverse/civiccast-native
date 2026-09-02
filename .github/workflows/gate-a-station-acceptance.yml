@@ -1110,6 +1110,61 @@ jobs:
             }
           }
 
+      - name: Unlink download-only payload junctions (never leave one for the next checkout)
+        if: always()
+        shell: pwsh
+        run: |
+          # <gate-a-download-only-lane-review> BLOCKER 1: belt-and-suspenders
+          # on top of Run-GateA.ps1's own try/finally (Restore-DownloadOnly-
+          # KitDownload / Remove-DownloadOnlyPayload), which already runs on
+          # every exit path of that script -- this step covers the case
+          # where the RUNNER ITSELF died between steps (job cancellation,
+          # runner crash, `timeout-minutes` kill) before Run-GateA.ps1's own
+          # finally could run. Same failure mode as the previous-kit
+          # junction above: a junction left under sandbox-lab\ survives to
+          # the next job's Checkout, whose `git clean -ffdx` walks through
+          # it and deletes the real target it points at.
+          #
+          # kit-download itself is never simply deleted here -- if it is
+          # still a junction pointing at the filtered payload (i.e.
+          # Run-GateA.ps1's own restore never ran), repoint it back to the
+          # real current kit under kit-staging\<sha>\ so a re-run of this
+          # step, or a human inspecting the workspace, finds the ordinary
+          # kit-download contract restored, not a dangling link.
+          $sha = "${{ steps.run_id.outputs.source_sha }}"
+          $realKit = if ($sha) { Join-Path "sandbox-lab/kit-staging" $sha } else { $null }
+
+          $kitDownload = "sandbox-lab/kit-download"
+          if (Test-Path $kitDownload) {
+            $item = Get-Item -LiteralPath $kitDownload -Force -ErrorAction SilentlyContinue
+            if ($item -and $item.LinkType) {
+              $target = @($item.Target) | Select-Object -First 1
+              if ($target -and $target -match '\\kit-download-filtered$') {
+                Write-Host "kit-download still points at the filtered payload ($target) -- Run-GateA.ps1's own cleanup did not run. Restoring."
+                $item.Delete()
+                if ($realKit -and (Test-Path $realKit)) {
+                  $realKitPhysical = (Resolve-Path $realKit).Path
+                  New-Item -ItemType Junction -Path $kitDownload -Target $realKitPhysical | Out-Null
+                  Write-Host "Restored kit-download -> $realKitPhysical"
+                } else {
+                  Write-Warning "Could not resolve the real current kit at '$realKit' to restore kit-download -- left unlinked rather than pointed at a possibly-stale target."
+                }
+              } else {
+                Write-Host "kit-download is a junction pointing at '$target' (not the filtered payload) -- left as-is."
+              }
+            }
+          }
+
+          $filteredPayload = "sandbox-lab/kit-download-filtered"
+          if (Test-Path $filteredPayload) {
+            Write-Host "Removing leftover filtered payload directory: $filteredPayload"
+            # Safe: New-DownloadOnlyPayload builds this tree from hard links
+            # and real directories only -- never a reparse point at any
+            # level -- so a plain recursive delete cannot walk through a
+            # junction and reach anything outside this tree.
+            Remove-Item -LiteralPath $filteredPayload -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Fail the job on a non-PASS verdict or harness error
         if: always()
         shell: pwsh

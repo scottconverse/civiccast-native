@@ -1321,6 +1321,26 @@ def test_workflow_carries_a_required_download_only_job() -> None:
     assert "runs-on: [self-hosted, windows, sandbox-lab]" in download_only_job
 
 
+def test_workflow_defensively_unlinks_download_only_junctions_before_failing_the_job() -> None:
+    """<gate-a-download-only-lane-review> BLOCKER 1: belt-and-suspenders on
+    top of Run-GateA.ps1's own try/finally -- covers the runner-died-
+    mid-job case (cancellation, crash, timeout-minutes kill) where that
+    script's own finally never got to run. Must appear, `if: always()`,
+    BEFORE the final "Fail the job" step -- same placement as the dirty
+    job's own "Unlink the pinned previous-kit junction" step."""
+    workflow = _read(_WORKFLOW)
+    download_only_job = _split_download_only_job(workflow)
+    unlink_at = download_only_job.index("name: Unlink download-only payload junctions")
+    fail_at = download_only_job.index("name: Fail the job on a non-PASS verdict or harness error")
+    assert unlink_at < fail_at, (
+        "the defensive unlink step must run before the fail-the-job step, like the dirty job's own"
+    )
+    unlink_step = download_only_job[unlink_at:fail_at]
+    assert "if: always()" in unlink_step
+    assert "kit-download-filtered" in unlink_step
+    assert "Remove-Item -LiteralPath $filteredPayload -Recurse -Force" in unlink_step
+
+
 def test_download_only_job_lane_input_option_and_bypass() -> None:
     workflow = _read(_WORKFLOW)
     assert "download-only-only" in workflow, (
@@ -1397,18 +1417,111 @@ def test_run_gate_a_exposes_download_only_lane_switch_and_requires_previous_kit(
     )
 
 
+_DOWNLOAD_ONLY_BUILDER = _SANDBOX_LAB / "scripts" / "Build-DownloadOnlyPayload.ps1"
+
+
 def test_run_gate_a_builds_a_filtered_payload_with_no_station_dir() -> None:
     text = _read(_RUN_GATE_A)
     assert "kit-download-filtered" in text
-    assert "New-Item -ItemType Junction -Path (Join-Path $filteredPayload 'packs')" in text
-    assert "Copy-Item -LiteralPath $installerExe.FullName" in text
-    assert "filtered payload unexpectedly contains station" in text, (
-        "the harness must refuse to run the lane if the filtered payload somehow carries station\\"
+    # <gate-a-download-only-lane-review> BLOCKER 2: the filtered payload's
+    # packs\ tree must never be built as a single junctioned directory --
+    # the builder is factored into its own dot-sourceable script (asserted
+    # below in test_download_only_payload_builder_never_uses_a_junction),
+    # and Run-GateA.ps1 itself must call into it rather than junctioning
+    # packs\ directly.
+    assert "New-Item -ItemType Junction -Path (Join-Path $filteredPayload 'packs')" not in text, (
+        "packs\\ must never be junctioned directly inside the mapped payload tree -- see "
+        "Build-DownloadOnlyPayload.ps1's New-DownloadOnlyPayload (hard links only)"
     )
+    assert ". (Join-Path $Root 'scripts\\Build-DownloadOnlyPayload.ps1')" in text
+    assert "New-DownloadOnlyPayload -KitPhysicalDir $kitPhysicalDir" in text
     # kit-download is repointed at the filtered directory -- no separate .wsb
     # mapping is needed since the template already maps kit-download ->
     # C:\CivicCastPayload.
     assert "New-Item -ItemType Junction -Path $kitDownload -Target $filteredPayload" in text
+
+
+def test_run_gate_a_cleans_up_the_filtered_payload_on_every_exit_path() -> None:
+    """<gate-a-download-only-lane-review> BLOCKER 1: the filtered payload and
+    the kit-download repoint must be undone on every exit path (success,
+    judge FAIL, BUSY/HARNESS_ERROR, or a thrown harness error), not left for
+    the next job's `git clean -ffdx` to walk through and delete the real
+    kit it's junctioned to -- exactly how a 26 GB pinned kit was already
+    lost once (see the dirty job's own "Unlink the pinned previous-kit
+    junction" step)."""
+    text = _read(_RUN_GATE_A)
+    # A script-scope try/finally wraps the rest of the script (steps 4-8):
+    # PowerShell `exit` inside a try unwinds through `finally` before the
+    # process actually terminates, so this covers every exit call in the
+    # script, not only a normal fall-through completion.
+    assert "\ntry {\n" in text or "\ntry {\r\n" in text
+    finally_block = text.rsplit("} finally {", 1)
+    assert len(finally_block) == 2, (
+        "expected exactly one script-scope try/finally wrapping steps 4-8"
+    )
+    cleanup_body = finally_block[1]
+    assert "if ($DownloadOnlyLane) {" in cleanup_body
+    assert (
+        "Restore-DownloadOnlyKitDownload -KitDownloadPath $kitDownload -KitPhysicalDir $kitPhysicalDir"
+        in cleanup_body
+    )
+    assert "Remove-DownloadOnlyPayload -PayloadDir $filteredPayload" in cleanup_body
+
+
+def test_download_only_payload_builder_script_exists_and_is_dot_sourceable() -> None:
+    assert _DOWNLOAD_ONLY_BUILDER.is_file(), f"builder script missing at {_DOWNLOAD_ONLY_BUILDER}"
+    text = _read(_DOWNLOAD_ONLY_BUILDER)
+    assert "function New-DownloadOnlyPayload" in text
+    assert "function Remove-DownloadOnlyPayload" in text
+    assert "function Restore-DownloadOnlyKitDownload" in text
+
+
+def test_download_only_payload_builder_never_uses_a_junction_inside_the_payload() -> None:
+    """<gate-a-download-only-lane-review> BLOCKER 2: Host-Launch-Sandbox-
+    Test.ps1's own Resolve-PhysicalPath resolves the OUTER MappedFolder
+    HostFolder through reparse points precisely because VSMB is not trusted
+    to traverse one -- a junction planted INSIDE the mapped tree (the
+    original packs\\ junction this review flagged) is exactly that failure
+    mode one level down. New-DownloadOnlyPayload (which builds the INSIDE
+    of the mapped payload tree) must hard-link every file instead, with a
+    Copy-Item fallback only, and must never call `New-Item -ItemType
+    Junction` or `-ItemType SymbolicLink` anywhere in its own body.
+
+    Restore-DownloadOnlyKitDownload is a DIFFERENT function -- it recreates
+    the OUTER kit-download junction (the same top-level mapping the harness
+    has always used, which Host-Launch-Sandbox-Test.ps1's own
+    Resolve-PhysicalPath already resolves through reparse points before
+    handing it to VSMB) and legitimately uses New-Item -ItemType Junction;
+    this test scopes its assertion to New-DownloadOnlyPayload's own body
+    only, not the whole file.
+    """
+    text = _read(_DOWNLOAD_ONLY_BUILDER)
+    builder_fn = text.split("function New-DownloadOnlyPayload", 1)[1].split(
+        "function Remove-DownloadOnlyPayload", 1
+    )[0]
+    assert "New-Item -ItemType HardLink" in builder_fn
+    assert "Copy-Item" in builder_fn
+    assert "-ItemType Junction" not in builder_fn
+    assert "-ItemType SymbolicLink" not in builder_fn
+    assert "filtered payload unexpectedly contains station" in builder_fn, (
+        "the builder must refuse to build a payload that ends up carrying station\\"
+    )
+
+
+def test_download_only_payload_cleanup_functions_never_throw_and_are_idempotent() -> None:
+    """Both cleanup functions are called from a `finally` block -- a cleanup
+    function that itself throws would mask the real verdict this script
+    already printed. Both must catch internally rather than propagate."""
+    text = _read(_DOWNLOAD_ONLY_BUILDER)
+    remove_fn = text.split("function Remove-DownloadOnlyPayload", 1)[1].split(
+        "function Restore-DownloadOnlyKitDownload", 1
+    )[0]
+    restore_fn = text.split("function Restore-DownloadOnlyKitDownload", 1)[1]
+    assert "try {" in remove_fn and "catch {" in remove_fn
+    assert "try {" in restore_fn and "catch {" in restore_fn
+    # Idempotent: repointing kit-download only happens when it is not
+    # already pointed at the real kit.
+    assert "if ($currentTarget -eq $KitPhysicalDir) { return }" in restore_fn
 
 
 def test_host_launcher_download_only_mode_requires_dirty_and_upgrade_mode() -> None:

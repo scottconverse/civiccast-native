@@ -403,39 +403,58 @@ Write-Step "kit-download -> $kitPhysicalDir (junction, physical target)"
 
 # --------------------------------------------------------------------------
 # 3b. DOWNLOAD-ONLY LANE <gate-a-download-only-lane>: repoint kit-download at
-#     a FILTERED payload directory containing ONLY setup.exe and packs\ --
-#     never station\ -- so phase 2's install (the current candidate, run by
-#     the unchanged normal acceptance flow against $PayloadDir =
+#     a FILTERED payload directory containing ONLY setup.exe and a
+#     HARD-LINKED packs\ tree -- never station\, never a reparse point at
+#     any level -- so phase 2's install (the current candidate, run by the
+#     unchanged normal acceptance flow against $PayloadDir =
 #     C:\CivicCastPayload, which the .wsb template already maps from
 #     kit-download\) must activate the station without a station\ directory
-#     beside setup.exe. Junction packs\ (the runtime packs, never copied --
-#     it can be tens of GB) and copy only the small setup.exe; NEVER modify
-#     the source kit itself. Phase 1 (the pinned previous candidate) is
-#     untouched by this: it installs from the separately mapped
-#     C:\CivicCastPreviousPayload (previous-kit-download\, below), which DOES
-#     carry a full station\ -- exactly like the plain -DirtyLane -UpgradeMode
-#     cross-version shape.
+#     beside setup.exe. NEVER modify the source kit itself. Phase 1 (the
+#     pinned previous candidate) is untouched by this: it installs from the
+#     separately mapped C:\CivicCastPreviousPayload (previous-kit-download\,
+#     below), which DOES carry a full station\ -- exactly like the plain
+#     -DirtyLane -UpgradeMode cross-version shape.
+#
+#     <gate-a-download-only-lane-review> BLOCKER 1/2 fixes:
+#       - The builder (New-DownloadOnlyPayload, sandbox-lab/scripts/
+#         Build-DownloadOnlyPayload.ps1) hard-links every packs\ file instead
+#         of junctioning the whole directory -- Host-Launch-Sandbox-Test.ps1
+#         resolves the OUTER MappedFolder HostFolder through reparse points
+#         precisely because VSMB is not trusted to traverse one; a junction
+#         planted INSIDE the mapped tree is exactly that failure mode one
+#         level down.
+#       - Cleanup (Remove-DownloadOnlyPayload / Restore-DownloadOnlyKitDownload)
+#         runs from the try/finally wrapping the REST of this script (steps 4
+#         through 8, below), so kit-download-filtered\ is removed and
+#         kit-download is restored to the real kit on EVERY exit path --
+#         success, FAIL, BUSY/HARNESS_ERROR, or a thrown harness error --
+#         never left behind for the next job's `git clean -ffdx` to walk
+#         through, the exact failure mode that already cost a 26 GB pinned
+#         kit once (see gate-a-station-acceptance.yml's dirty job, "Unlink
+#         the pinned previous-kit junction" step).
 # --------------------------------------------------------------------------
 
+$filteredPayload = Join-Path $Root 'kit-download-filtered'
+
+# --------------------------------------------------------------------------
+# Everything from here through the end of the script -- BUILDING the
+# filtered payload (download-only lane only) and steps 4-8 -- runs inside
+# one try/finally so the download-only lane's cleanup ALWAYS runs: on a
+# clean PASS, a judged FAIL, a BUSY/HARNESS_ERROR non-verdict, a thrown
+# harness error (including every Exit-HarnessError call below, which PS
+# `exit` unwinds through this finally before the process actually
+# terminates), AND a throw from New-DownloadOnlyPayload itself (e.g. a
+# missing packs\ directory, or the station\ sanity check) -- the payload
+# build runs first specifically so a failure THERE is also covered, not
+# just a failure downstream of it. For every other lane this finally is a
+# cheap no-op (guarded on $DownloadOnlyLane).
+# --------------------------------------------------------------------------
+try {
+
 if ($DownloadOnlyLane) {
-    $filteredPayload = Join-Path $Root 'kit-download-filtered'
-    if (Test-Path $filteredPayload) {
-        Remove-Item -LiteralPath $filteredPayload -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    New-Item -ItemType Directory -Force -Path $filteredPayload | Out-Null
-
-    Copy-Item -LiteralPath $installerExe.FullName -Destination (Join-Path $filteredPayload $installerExe.Name) -Force
-
-    $packsSourceDir = Join-Path $kitPhysicalDir 'packs'
-    if (-not (Test-Path $packsSourceDir)) {
-        Exit-HarnessError "-DownloadOnlyLane: no packs\ directory found at $packsSourceDir -- the current kit must carry runtime packs for a download-only install to side-load (the sandbox has no network)"
-    }
-    New-Item -ItemType Junction -Path (Join-Path $filteredPayload 'packs') -Target $packsSourceDir | Out-Null
-
-    $filteredStationDir = Join-Path $filteredPayload 'station'
-    if (Test-Path $filteredStationDir) {
-        Exit-HarnessError "-DownloadOnlyLane: filtered payload unexpectedly contains station\ at $filteredStationDir -- refusing to run the download-only lane against a payload that still carries a station directory"
-    }
+    . (Join-Path $Root 'scripts\Build-DownloadOnlyPayload.ps1')
+    $payloadResult = New-DownloadOnlyPayload -KitPhysicalDir $kitPhysicalDir -InstallerExePath $installerExe.FullName -PayloadDir $filteredPayload
+    Write-Step "DownloadOnlyLane: built filtered payload at $filteredPayload (installer=$($payloadResult.InstallerName), packs files=$($payloadResult.FileCount) [hard-linked=$($payloadResult.HardLinkCount), copied=$($payloadResult.CopyFallbackCount)], no station\)"
 
     if (Test-Path $kitDownload) {
         $kdItem = Get-Item $kitDownload -Force
@@ -446,7 +465,7 @@ if ($DownloadOnlyLane) {
         }
     }
     New-Item -ItemType Junction -Path $kitDownload -Target $filteredPayload | Out-Null
-    Write-Step "DownloadOnlyLane: kit-download -> $filteredPayload (filtered payload: setup.exe + packs\ only, no station\)"
+    Write-Step "DownloadOnlyLane: kit-download -> $filteredPayload (filtered payload: setup.exe + hard-linked packs\ only, no station\, no reparse points)"
 }
 
 # --------------------------------------------------------------------------
@@ -650,3 +669,17 @@ if ($judgeExit -eq 0) {
 }
 
 exit $judgeExit
+
+} finally {
+    # <gate-a-download-only-lane-review> BLOCKER 1: runs on EVERY exit path
+    # out of the try block above -- normal completion, every `exit` call
+    # inside it (PowerShell unwinds through `finally` before a script-scope
+    # `exit` actually terminates the process), and any thrown/unhandled
+    # error. Idempotent and never throws itself (both functions catch and
+    # warn internally) -- cleanup failing must never mask the real verdict
+    # this script already printed above.
+    if ($DownloadOnlyLane) {
+        Restore-DownloadOnlyKitDownload -KitDownloadPath $kitDownload -KitPhysicalDir $kitPhysicalDir
+        Remove-DownloadOnlyPayload -PayloadDir $filteredPayload
+    }
+}
