@@ -8300,7 +8300,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Adapters built from the station's durably configured, enabled CG feed sources. An empty adapters list is the normal state for a station that hasn't configured any feed yet -- add one in Board Designer -- never invented content.",
             "content": {
               "application/json": {
                 "schema": {
@@ -63377,6 +63377,18 @@
               }
             ],
             "title": "Logo Url"
+          },
+          "configured_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured At"
           }
         },
         "additionalProperties": false,
@@ -63388,7 +63400,7 @@
           "logo_text"
         ],
         "title": "ChannelBranding",
-        "description": "Public channel identity used by every app shell."
+        "description": "Public channel identity used by every app shell.\n\n``configured_at`` is an explicit stored fact, not a value comparison:\n``AppPlatformConfigStore.update_channel_branding()`` sets it to the\nwrite timestamp whenever an operator saves branding through Channel\nOps, regardless of what values they chose -- including values that\nhappen to equal the compile-time default profile (a plausible operator\nchoice, e.g. keeping the default color). A row seeded from the default\ntable (``_default_station_config()``) leaves this unset. Consumers that\nneed to tell \"an operator configured this\" from \"nobody has touched\nthis yet\" must read this field, not compare branding values against\n``civiccast.cable.channel.default_channel_profiles()`` -- a PR #132\nreview caught a value-comparison implementation of exactly that\ndistinction silently misclassifying a deliberate default-equal save as\nunconfigured."
       },
       "civiccast__app_platform__models__ChannelOutput": {
         "properties": {

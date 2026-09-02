@@ -332,9 +332,147 @@ def test_preview_renders_coming_up_interstitial(svc: tuple[CgBoardService, CgBoa
     assert [i["title"] for i in sched.content["items"]] == ["City Council"]
 
 
+# ---------------------------------------------------------------------------
+# upcoming() (WP-06 non-negotiable follow-up: the public snapshot's schedule
+# zone must read the same real program-log data these tests prove, never
+# invented events)
+# ---------------------------------------------------------------------------
+
+
+def test_upcoming_returns_empty_without_a_reader(svc: tuple[CgBoardService, CgBoardStore]) -> None:
+    service, _ = svc
+    assert service.upcoming("public") == []
+
+
+def test_upcoming_reads_the_wired_reader(svc: tuple[CgBoardService, CgBoardStore]) -> None:
+    _, store = svc
+    calls: list[tuple[str, datetime]] = []
+
+    def reader(channel_id: str, now: datetime) -> list[tuple[datetime, str]]:
+        calls.append((channel_id, now))
+        return [
+            (now + timedelta(hours=1), "City Council"),
+            (now + timedelta(hours=3), "Planning Board"),
+        ]
+
+    service = CgBoardService(store, clock=lambda: _NOW, upcoming_reader=reader)
+    result = service.upcoming("public")
+    assert [title for _, title in result] == ["City Council", "Planning Board"]
+    assert calls == [("public", _NOW)]
+
+
 def test_audit_lists_newest_first(svc: tuple[CgBoardService, CgBoardStore]) -> None:
     service, _ = svc
     service.create_board("public", template_id="standard-community-board", operator_id="op_a")
     service.add_zone("public", payload=_ticker(), operator_id="op_a")
     kinds = [e.event_kind for e in service.list_audit("public")]
     assert kinds == ["zone_added", "board_created"]  # monotonic clock -> newest first
+
+
+# ---------------------------------------------------------------------------
+# feed_catalog (WP-06: replaces the legacy deterministic build_feed_catalog())
+# ---------------------------------------------------------------------------
+
+_RSS_BODY = (
+    '<?xml version="1.0"?><rss><channel>'
+    "<item><title>Story A</title><guid>g-a</guid></item>"
+    "</channel></rss>"
+)
+
+
+def test_feed_catalog_empty_when_nothing_configured(
+    svc: tuple[CgBoardService, CgBoardStore],
+) -> None:
+    service, _ = svc
+    catalog = service.feed_catalog("public", fetch=lambda _url: _RSS_BODY)
+    assert catalog.channel_id == "public"
+    assert catalog.adapters == []
+    assert "example.invalid" not in catalog.model_dump_json()
+
+
+def test_feed_catalog_excludes_feed_not_bound_to_a_zone(
+    svc: tuple[CgBoardService, CgBoardStore],
+) -> None:
+    service, _ = svc
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    service.add_feed("public", payload=_rss_feed(), operator_id="op_a")
+    catalog = service.feed_catalog("public", fetch=lambda _url: _RSS_BODY)
+    # Registered but never assigned to a zone -> nothing to target yet.
+    assert catalog.adapters == []
+
+
+def test_feed_catalog_includes_feed_bound_to_a_zone(
+    svc: tuple[CgBoardService, CgBoardStore],
+) -> None:
+    service, _ = svc
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    feed = service.add_feed("public", payload=_rss_feed(), operator_id="op_a")
+    service.add_zone(
+        "public",
+        payload=ZoneInput(
+            region="lower",
+            zone_kind="ticker",
+            content_source="feed_adapter",
+            feed_source_id=feed.feed_source_id,
+        ),
+        operator_id="op_a",
+    )
+    catalog = service.feed_catalog("public", fetch=lambda _url: _RSS_BODY)
+    assert len(catalog.adapters) == 1
+    adapter = catalog.adapters[0]
+    assert adapter.adapter_id == feed.feed_source_id
+    assert adapter.source_url == feed.source_url
+    assert adapter.target_zone_kinds == ["ticker"]
+    assert [item.title for item in adapter.items] == ["Story A"]
+    assert all(item.approved for item in adapter.items)
+
+
+def test_feed_catalog_disabled_feed_excluded(svc: tuple[CgBoardService, CgBoardStore]) -> None:
+    service, _ = svc
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    feed = service.add_feed("public", payload=_rss_feed(), operator_id="op_a")
+    service.add_zone(
+        "public",
+        payload=ZoneInput(
+            region="lower",
+            zone_kind="ticker",
+            content_source="feed_adapter",
+            feed_source_id=feed.feed_source_id,
+        ),
+        operator_id="op_a",
+    )
+    service.update_feed(
+        "public", feed.feed_source_id, payload=FeedUpdateInput(enabled=False), operator_id="op_a"
+    )
+    catalog = service.feed_catalog("public", fetch=lambda _url: _RSS_BODY)
+    assert catalog.adapters == []
+
+
+def test_feed_catalog_approval_gated_zone_filters_to_approved_items_only(
+    svc: tuple[CgBoardService, CgBoardStore],
+) -> None:
+    service, _ = svc
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    feed = service.add_feed("public", payload=_rss_feed(), operator_id="op_a")
+    service.add_zone(
+        "public",
+        payload=ZoneInput(
+            region="lower",
+            zone_kind="ticker",
+            content_source="feed_adapter",
+            feed_source_id=feed.feed_source_id,
+            approval_required=True,
+        ),
+        operator_id="op_a",
+    )
+
+    # Nothing approved yet -> the gated adapter carries no items.
+    catalog = service.feed_catalog("public", fetch=lambda _url: _RSS_BODY)
+    assert len(catalog.adapters) == 1
+    assert catalog.adapters[0].items == []
+
+    service.approve_feed_item(
+        "public", feed_source_id=feed.feed_source_id, item_id="g-a", operator_id="op_a"
+    )
+    catalog = service.feed_catalog("public", fetch=lambda _url: _RSS_BODY)
+    assert [item.item_id for item in catalog.adapters[0].items] == ["g-a"]

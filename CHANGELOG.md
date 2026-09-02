@@ -579,6 +579,161 @@ kit (see the "Changed" entry below).
   and overlay CG paths are unchanged. Live video in a zone and board background
   audio are now labeled "coming in a future release"; the existing audio choice
   is disabled because the current renderer does not play it.
+- **The public CG feed catalog and portal display no longer expose four
+  hard-coded `example.invalid` RSS/iCal/weather/social rows as "configured"
+  station feeds** (`civiccast/cg/service.py`'s `build_feed_catalog()`, still
+  used only by tests and an explicit demo mode). `GET
+  /api/public/cg/channels/{channel_id}/feeds` and the `feed_catalog` field on
+  `GET .../display` now read the durable board/feed stack
+  (`CgBoardService.feed_catalog`, `CgFeedSource`, `CgBoardStore`,
+  `feed_fetcher.fetch_all`): only enabled feeds bound to an active board zone
+  are exposed, an approval-gated zone's items are filtered to
+  operator-approved item ids, and a station with nothing configured gets an
+  empty adapters list instead of invented content. The operator "Dynamic
+  feeds" panel (`CgBoardScreen.tsx`) now designs its own loading, configured,
+  empty ("No dynamic feeds are configured...Add an approved RSS, calendar,
+  weather, or permitted social source before using feed-driven CG zones."),
+  and failed states rather than always rendering the sample rows. The sample
+  catalog is available only with `CIVICCAST_CG_DEMO_FEEDS=1` explicitly set;
+  it is off by default in every shipping profile.
+- **WP-06 follow-up: the portal-display contract's ticker zone and approved
+  bulletins no longer carry sample content either.** `build_multi_zone_snapshot()`'s
+  static ticker zone always read "Library board meets tonight" / "Trail work
+  begins Monday", and `build_portal_display()`'s `approved_bulletins` field
+  always read the CA-3 sample queue (including an unfiltered `needs_changes`
+  submission) -- both unconditionally, regardless of what a station actually
+  configured. `GET .../display` now builds `approved_bulletins` through the
+  same durable-store + approved-state filter (`CgBulletinStore`,
+  `PostgresCgBulletinStore`) the standalone `GET .../bulletins` endpoint
+  already used, and rebuilds the snapshot's ticker zone from the already-
+  resolved feed catalog and approved bulletin queue
+  (`source: "durable-station-config"`), rather than static filler. A station
+  with no durable board/feed/bulletin configuration gets an empty,
+  `{"items": [], "empty": true}` ticker and an empty bulletin queue. The old
+  "Trail work begins Monday" string is fully retired -- it never reappears,
+  even under `CIVICCAST_CG_DEMO_FEEDS=1`, because it was static filler with
+  no backing store; demo mode composes the ticker from the same gated sample
+  feed/bulletin data the `/feeds` and `/bulletins` endpoints show.
+- **WP-06 non-negotiable follow-up: closed the last two unconditional-sample
+  paths on the public CG router.** The standalone `GET
+  /api/public/cg/channels/{channel_id}/snapshot` endpoint still called
+  `build_multi_zone_snapshot()` directly (the same static ticker sample
+  content the `/display` fix above already removed from the embedded
+  contract), and the no-store fallback on both `GET .../bulletins` (public)
+  and `GET /api/staff/cg/channels/{channel_id}/bulletins` (staff) returned
+  the CA-3 sample bulletin queue unconditionally -- with no
+  `CIVICCAST_CG_DEMO_FEEDS` gate at all -- whenever durable storage wasn't
+  wired. All three now resolve through the same shared
+  `_resolve_feed_catalog` / `_resolve_public_approved_bulletins` /
+  `_resolve_staff_bulletin_queue` / `_resolve_durable_snapshot` helpers the
+  `/feeds` and `/display` endpoints already use: durable data when a store
+  is wired, an honest empty result otherwise, and the sample catalog/queue
+  only under the explicit demo flag. The production-app-factory test now
+  enumerates every GET route `civiccast.cg.router.public_router` exposes
+  (via its own `.routes`, not a hand-maintained list) and asserts none of
+  the seven historical sample strings appear on any of them, so a future
+  endpoint can't reintroduce this defect unnoticed.
+- **WP-06 non-negotiable, closed for real this time: EVERY snapshot zone
+  (not just ticker) is now durable-data-or-honest-empty, on `/snapshot` and
+  `/display` alike.** PR #132 review caught that
+  `build_multi_zone_snapshot()`'s "coming up next" schedule zone still
+  returned an invented `"18:00 City Council"` / `"20:00 Planning Board"`
+  occurrence, `approved: true`, ungated, on every production response --
+  the earlier fix only ever touched the ticker zone. All six zone kinds are
+  now resolved from a real source or an honest label naming why: `ticker` /
+  `schedule` from the durable feed catalog, approved bulletin queue, and (a
+  new `CgBoardService.upcoming()` method) the SAME real program-log
+  occurrences the operator Schedule and Program Guide screens read;
+  `primary` from genuine, non-invented platform copy (the same text
+  `/idle` already returns); `logo` from the channel's real branding profile
+  (`civiccast.cable.channel.get_channel_profile()`, the same source the
+  audited board-preview render path already uses); `audio` as an honest
+  disabled-future-control state (WP-06 plan item 5) instead of a fake
+  active `"community-calendar-bed"` track; `alert` from the real EAS
+  overlay provider when wired and active, else honestly inactive. Only
+  `ticker` and `schedule` carry a demo sample, and only under
+  `CIVICCAST_CG_DEMO_FEEDS=1`; the other four zones are never demo-gated
+  because they were never sample data standing in for real configuration.
+  The production-app-factory sweep is hardened past a literal-string list
+  (which had already missed "City Council"/"Planning Board" once): it now
+  asserts every zone's `source` on every enumerated public route is one of
+  a fixed set of durable/honest values, so a brand-new invented string a
+  future change might introduce is caught by provenance, not by someone
+  remembering to add it to a list -- proven by a mutation that dropped the
+  `audio` zone's handling and confirmed the provenance test fails on the
+  reintroduced sample content while the literal-string sweep (with the
+  string removed from its list, to simulate a "never seen before" fake)
+  passes it through undetected.
+- **WP-06 non-negotiable, second review pass: corrected the logo zone's
+  "real branding profile" claim -- it wasn't one.** The entry above
+  described `civiccast.cable.channel.get_channel_profile()` as "the
+  channel's real branding profile"; PR #132's second review caught that
+  this is a compile-time default table (`logo_text="PUBLIC"`,
+  `color="#2458A6"` for every deployment's "public" channel, same as every
+  other CivicCast install) -- a generic default presented as station
+  identity, not real per-station data. The logo zone now sources the
+  station's real commissioned name (`resolve_station_display_name()` --
+  the same `station_name` the installer/first-admin setup persists and the
+  Station Profile screen edits) plus the channel's durable branding row in
+  `AppPlatformConfigStore` -- the SAME store instance the operator Channel
+  Ops screen already reads and writes. Because `AppPlatformConfigStore`
+  seeds a brand-new channel's branding row from that same compile-time
+  default table, a station that has never visited Channel Ops still has a
+  durable row whose values still equal the default -- so the zone compares
+  the durable row against the default and only reports `source:
+  "station-channel-branding"`, `configured: true` when an operator has
+  genuinely changed it. Otherwise it reports `source:
+  "channel-default-branding"`, `configured: false`, the real station name
+  and channel id, and an operator hint -- never the default table's
+  "PUBLIC"/"#2458A6" values. Proven with a fake/spy `AppPlatformConfigStore`
+  fixture carrying distinctive branding values (`"ZATV"` / `"#00AB66"`) and
+  a distinctive `CIVICCAST_STATION_NAME`: those exact values surface on
+  both `/snapshot` and `/display`, and the default table's values appear in
+  neither. **Residual, stated precisely per this review's request:**
+  per-channel branding IS a durable, operator-editable setting today (via
+  Channel Ops / `PATCH` through `AppPlatformConfigStore.update_channel_branding()`)
+  -- this fix reads the same row Channel Ops writes, it does not invent a
+  new store. What is *not* yet true: an out-of-the-box station's branding
+  row is seeded from the same static per-deployment default every other
+  CivicCast install starts with, so "configured" here means "an operator
+  has edited it since commissioning," not "every station's default identity
+  is already unique." A station that ships without ever visiting Channel Ops
+  will correctly show the honest not-configured state, never a silently
+  identical fake "PUBLIC" logo passed off as real.
+- **WP-06 non-negotiable, third re-review: "configured" is now an explicit
+  stored fact, not a value comparison.** The entry above derived
+  "configured" by comparing the durable branding row against the
+  compile-time default table; a PR #132 review reproduced live that an
+  operator who opens Channel Ops and explicitly saves branding equal to the
+  default -- a plausible choice, e.g. keeping the default color -- got
+  `configured: false`, a blank logo/color, and the "set this in Channel
+  Ops" hint: indistinguishable from never having visited the screen at all.
+  The same bug would recur in delayed form whenever a future release
+  changes the default table, silently reclassifying every station that had
+  saved the old default values as unconfigured. `ChannelBranding` gained a
+  `configured_at: datetime | None` field that
+  `AppPlatformConfigStore.update_channel_branding()` now stamps
+  unconditionally on every operator save, regardless of the values chosen
+  -- never derived by comparing against
+  `civiccast.cable.channel.default_channel_profiles()`. The CG logo zone
+  reports `configured: true` iff `configured_at` is set. A durable row
+  persisted before this field existed (whose branding already differs from
+  the default, a real prior customization, but whose `configured_at` is
+  unset because the field didn't exist yet) is still treated as configured
+  on read, so nobody loses their branding on upgrade -- only a row that is
+  BOTH unstamped AND value-equal to the default (the genuine
+  never-touched-Channel-Ops state) gets the honest fallback. Covered by
+  three new tests exercising the real write path end to end: (a) an
+  operator saves branding equal to the default -> `configured: true` and
+  the real (default-equal) values render; (b) a seeded row nobody has ever
+  saved -> `configured: false`, no default literals leak; (c) a pre-existing
+  row that differs from the default with `configured_at` unset (the
+  upgrade case) -> `configured: true`. Checked the store's persistence
+  (`app-platform-config.json`, a plain pydantic-validated JSON file with no
+  `schema_version` field or migration mechanism anywhere in the
+  `app_platform` module) and confirmed no version bump or migration is
+  needed: a new optional field with a default validates cleanly against
+  every pre-existing file on disk.
 - **Six hostile-review findings against WP-07's observed-readiness work
   (ADR 0025), fixed at their root.** **(1)** Closed a fail-open race: the
   takeover gate read a live source, ran an up-to-8s probe, then persisted the

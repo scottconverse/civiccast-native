@@ -3,16 +3,43 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from civiccast.app import create_app
+from civiccast.app_platform.router import get_app_platform_config_store
+from civiccast.app_platform.store import AppPlatformConfigStore
+from civiccast.cg.board_service import CgBoardService, FeedInput, ZoneInput
+from civiccast.cg.board_store import CgBoardStore
+from civiccast.cg.bulletin_store import PostgresCgBulletinStore
+from civiccast.cg.models import CgBulletinSubmission, EmergencyOverlay
+from civiccast.cg.router import (
+    get_cg_board_service,
+    get_cg_bulletin_store,
+    get_eas_overlay_provider,
+)
+from civiccast.cg.router import public_router as cg_public_router
+from civiccast.db import Base
 
 _STAFF_HEADERS = {"Authorization": "Bearer operator-token-a"}
 
 
 def test_multi_zone_snapshot_public_route(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.delenv("CIVICCAST_CG_DEMO_FEEDS", raising=False)
     client = TestClient(create_app())
 
     response = client.get("/api/public/cg/channels/public/snapshot")
@@ -30,10 +57,376 @@ def test_multi_zone_snapshot_public_route(monkeypatch: MonkeyPatch) -> None:
         "audio",
         "alert",
     }
+    # WP-06 non-negotiable follow-up: EVERY zone -- not just ticker -- is
+    # resolved the same way display.snapshot's is: durable data or an
+    # honestly-labeled default, never the static sample builder's zone
+    # content or its "rss"/"schedule"/"station-branding"/"operator"/
+    # "emergency" source markers.
+    zones_by_kind = {zone["kind"]: zone for zone in payload["zones"]}
+    ticker = zones_by_kind["ticker"]
+    assert ticker["content"] == {"items": [], "empty": True}
+    assert ticker["source"] == "durable-station-config"
+
+    schedule = zones_by_kind["schedule"]
+    assert schedule["content"] == {"items": [], "empty": True}
+    assert schedule["source"] == "durable-station-config"
+    assert "City Council" not in response.text
+    assert "Planning Board" not in response.text
+
+    primary = zones_by_kind["primary"]
+    assert primary["source"] == "platform-copy"
+    assert primary["content"]["headline"] == "CivicCast is ready"
+
+    # WP-06 non-negotiable, second review pass: an out-of-the-box station
+    # (the "public" channel's durable branding row still equals the
+    # compile-time default table -- nobody has visited Channel Ops yet) gets
+    # an honest "not configured" logo zone, never the default table's
+    # "PUBLIC"/"#2458A6" presented as though it were real station identity.
+    logo = zones_by_kind["logo"]
+    assert logo["source"] == "channel-default-branding"
+    assert logo["content"]["configured"] is False
+    assert logo["content"]["logo_text"] == ""
+    assert logo["content"]["color"] == ""
+    assert logo["content"]["channel_id"] == "public"
+    assert logo["content"]["station_name"]  # the real commissioned station name, never blank
+    assert logo["content"]["hint"]
+    assert "PUBLIC" not in response.text
+    assert "#2458A6" not in response.text
+
+    audio = zones_by_kind["audio"]
+    assert audio["source"] == "future-release-disabled"
+    assert audio["content"] == {"track": None, "duck_under_alerts": False, "disabled": True}
+    assert "community-calendar-bed" not in response.text
+
+    alert = zones_by_kind["alert"]
+    assert alert["source"] == "no-active-alert"
+    assert alert["content"]["active"] is False
 
 
-def test_feed_catalog_public_route(monkeypatch: MonkeyPatch) -> None:
+def test_multi_zone_snapshot_demo_mode_requires_explicit_env_flag(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_CG_DEMO_FEEDS", "1")
+    client = TestClient(create_app())
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+
+    assert response.status_code == 200
+    zones_by_kind = {zone["kind"]: zone for zone in response.json()["zones"]}
+    ticker = zones_by_kind["ticker"]
+    assert "Library board meets tonight" in ticker["content"]["items"]
+    assert "Community Arts Fair" in ticker["content"]["items"]
+    assert "Trail work begins Monday" not in response.text
+
+    # The schedule zone's demo sample is the ONLY zone the demo flag still
+    # affects -- primary/logo/audio/alert are real/honest unconditionally,
+    # never demo-gated (WP-06 non-negotiable follow-up).
+    schedule = zones_by_kind["schedule"]
+    assert [item["title"] for item in schedule["content"]["items"]] == [
+        "City Council",
+        "Planning Board",
+    ]
+    logo = zones_by_kind["logo"]
+    assert logo["source"] == "channel-default-branding"  # never demo-gated, always honest
+    audio = zones_by_kind["audio"]
+    assert audio["source"] == "future-release-disabled"
+
+
+def test_multi_zone_snapshot_durable_reflects_station_configuration(
+    _durable_factory: Callable[[], Session],
+) -> None:
+    app, service = _durable_public_app(_durable_factory)
+    bulletin_store = PostgresCgBulletinStore(_durable_factory)
+    app.dependency_overrides[get_cg_bulletin_store] = lambda: bulletin_store
+    client = TestClient(app)
+
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    feed = service.add_feed(
+        "public",
+        payload=FeedInput(
+            kind="rss",
+            label="City news",
+            source_url="https://city.example.gov/news.rss",
+            trust_tier="operator_curated",
+        ),
+        operator_id="op_a",
+    )
+    service.add_zone(
+        "public",
+        payload=ZoneInput(
+            region="lower",
+            zone_kind="ticker",
+            content_source="feed_adapter",
+            feed_source_id=feed.feed_source_id,
+        ),
+        operator_id="op_a",
+    )
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    ticker = next(z for z in response.json()["zones"] if z["kind"] == "ticker")
+    assert ticker["content"]["items"] == []  # feed has no cached items yet, but is bound
+
+    # The embedded display.snapshot agrees with the standalone endpoint.
+    display = client.get("/api/public/cg/channels/public/display")
+    display_ticker = next(z for z in display.json()["snapshot"]["zones"] if z["kind"] == "ticker")
+    assert display_ticker["content"] == ticker["content"]
+
+
+def test_multi_zone_snapshot_schedule_zone_reads_real_program_log(
+    _durable_factory: Callable[[], Session],
+) -> None:
+    # WP-06 non-negotiable follow-up: the schedule zone reads real program-log
+    # occurrences via CgBoardService.upcoming(), the same source the operator
+    # Schedule / Program Guide screens read -- never the "18:00 City
+    # Council" / "20:00 Planning Board" sample.
+    app = FastAPI()
+    app.include_router(cg_public_router)
+
+    def reader(_channel_id: str, now: datetime) -> list[tuple[datetime, str]]:
+        return [(now + timedelta(hours=1), "Zoning Board of Appeals")]
+
+    service = CgBoardService(CgBoardStore(_durable_factory), upcoming_reader=reader)
+    app.dependency_overrides[get_cg_board_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    schedule = next(z for z in response.json()["zones"] if z["kind"] == "schedule")
+    assert [item["title"] for item in schedule["content"]["items"]] == ["Zoning Board of Appeals"]
+    assert schedule["source"] == "durable-station-config"
+    assert "City Council" not in response.text
+    assert "Planning Board" not in response.text
+
+
+def test_multi_zone_snapshot_logo_zone_is_honest_for_an_unknown_channel(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    client = TestClient(create_app())
+
+    response = client.get("/api/public/cg/channels/totally-unknown-channel/snapshot")
+
+    assert response.status_code == 200
+    logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
+    assert logo["source"] == "channel-default-branding"
+    assert logo["content"] == {
+        "logo_text": "",
+        "color": "",
+        "station_name": logo["content"]["station_name"],  # asserted non-blank below
+        "channel_id": "totally-unknown-channel",
+        "configured": False,
+        "hint": "Set this channel's logo and color in Channel Ops.",
+    }
+    assert logo["content"]["station_name"]
+
+
+def test_multi_zone_snapshot_logo_zone_reflects_real_channel_ops_branding(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # WP-06 non-negotiable, second review pass: prove PROVENANCE, not just a
+    # label -- inject a fake/spy AppPlatformConfigStore whose branding values
+    # are distinctive (never appear in the compile-time default table), plus
+    # a distinctive station_name, and assert those EXACT values surface on
+    # the logo zone -- and that the default table's "PUBLIC"/"#2458A6"
+    # appear nowhere in the response.
+    from civiccast.app_platform.models import ChannelBranding, ChannelPublicConfig
+    from civiccast.cable.channel import get_channel_profile
+    from civiccast.installer.station_state import resolve_station_display_name
+
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_STATION_NAME", "Zorkville Municipal Access")
+
+    default_profile = get_channel_profile("public")
+    assert default_profile is not None
+
+    class _SpyAppPlatformStore:
+        """A fake store standing in for AppPlatformConfigStore -- returns
+        distinctive branding values a real operator edit in Channel Ops
+        would produce, never the compile-time default table's values."""
+
+        def read_channel(self, channel_id: str) -> ChannelPublicConfig | None:
+            assert channel_id == "public"
+            return ChannelPublicConfig(
+                channel_id="public",
+                slug="public",
+                kind=default_profile.kind,
+                branding=ChannelBranding(
+                    display_name="Zorkville Access TV",
+                    short_name="ZATV",
+                    color="#00AB66",
+                    logo_text="ZATV",
+                ),
+                programming_rules=[],
+                fallback_behavior=default_profile.fallback_behavior,
+                live_state_url="/x",
+                schedule_feed_url="/x",
+                vod_catalog_url="/x",
+                cg_feed_url="/x",
+                app_targets=["web_pwa"],
+            )
+
+    app = create_app()
+    app.dependency_overrides[get_app_platform_config_store] = lambda: _SpyAppPlatformStore()
+    client = TestClient(app)
+
+    assert resolve_station_display_name() == "Zorkville Municipal Access"
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
+    assert logo["source"] == "station-channel-branding"
+    assert logo["content"] == {
+        "logo_text": "ZATV",
+        "color": "#00AB66",
+        "station_name": "Zorkville Municipal Access",
+        "channel_id": "public",
+        "configured": True,
+    }
+
+    display = client.get("/api/public/cg/channels/public/display")
+    display_logo = next(z for z in display.json()["snapshot"]["zones"] if z["kind"] == "logo")
+    assert display_logo["content"] == logo["content"]
+
+    # The distinctive spy values surfaced; the compile-time default table's
+    # values never leaked into either response.
+    assert "PUBLIC" not in response.text
+    assert "#2458A6" not in response.text
+    assert "PUBLIC" not in display.text
+    assert "#2458A6" not in display.text
+
+
+def _real_app_platform_store(tmp_path: Path) -> AppPlatformConfigStore:
+    return AppPlatformConfigStore(tmp_path / "app-platform-config.json")
+
+
+def test_multi_zone_snapshot_logo_zone_end_to_end_channel_ops_save_equal_to_default(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # PR #132 second re-review, case (a): a REAL AppPlatformConfigStore (not
+    # a spy), exercised through the real Channel Ops write path
+    # (update_channel_branding), saving branding equal to the compile-time
+    # default -- must report configured=true with the real values, never
+    # the "channel-default-branding" fallback.
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    store = _real_app_platform_store(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_app_platform_config_store] = lambda: store
+    client = TestClient(app, headers=_STAFF_HEADERS)
+
+    save = client.patch(
+        "/api/staff/app/channels/public/branding",
+        json={
+            "display_name": "Public Channel",
+            "short_name": "Public",
+            "color": "#2458A6",
+            "logo_text": "PUBLIC",
+        },
+    )
+    assert save.status_code == 200
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
+    assert logo["source"] == "station-channel-branding"
+    assert logo["content"]["configured"] is True
+    assert logo["content"]["logo_text"] == "PUBLIC"
+    assert logo["content"]["color"] == "#2458A6"
+
+
+def test_multi_zone_snapshot_logo_zone_end_to_end_seeded_row_never_saved(
+    tmp_path: Path,
+) -> None:
+    # PR #132 second re-review, case (b): a REAL AppPlatformConfigStore that
+    # nobody has ever PATCHed -- its "public" channel row is seeded straight
+    # from the compile-time default table and configured_at is unset. Must
+    # report configured=false and never leak the default table's literals.
+    store = _real_app_platform_store(tmp_path)
+    app = FastAPI()
+    app.include_router(cg_public_router)
+    app.dependency_overrides[get_app_platform_config_store] = lambda: store
+    client = TestClient(app)
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
+    assert logo["source"] == "channel-default-branding"
+    assert logo["content"]["configured"] is False
+    assert logo["content"]["logo_text"] == ""
+    assert logo["content"]["color"] == ""
+    assert "PUBLIC" not in response.text
+    assert "#2458A6" not in response.text
+
+
+def test_multi_zone_snapshot_logo_zone_end_to_end_upgrade_row_predates_configured_at(
+    tmp_path: Path,
+) -> None:
+    # PR #132 second re-review, case (c): a durable row persisted BEFORE
+    # configured_at existed, whose branding already differs from the
+    # compile-time default (a real prior operator customization) but whose
+    # configured_at is unset because the field didn't exist yet when it was
+    # saved. Must still report configured=true -- an upgrade must never
+    # silently demote a real customization to "not configured".
+    config_path = tmp_path / "app-platform-config.json"
+    seed_store = AppPlatformConfigStore(config_path)
+    config = seed_store.read_config()
+    raw = json.loads(config.model_dump_json())
+    for channel in raw["channels"]:
+        if channel["channel_id"] == "public":
+            # A real prior customization (differs from the default table)
+            # with no configured_at key at all -- exactly what a row
+            # written before this field existed looks like on disk.
+            channel["branding"]["logo_text"] = "Legacy Custom Logo"
+            channel["branding"]["color"] = "#010203"
+            channel["branding"].pop("configured_at", None)
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    upgraded_store = AppPlatformConfigStore(config_path)
+    app = FastAPI()
+    app.include_router(cg_public_router)
+    app.dependency_overrides[get_app_platform_config_store] = lambda: upgraded_store
+    client = TestClient(app)
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
+    assert logo["source"] == "station-channel-branding"
+    assert logo["content"]["configured"] is True
+    assert logo["content"]["logo_text"] == "Legacy Custom Logo"
+    assert logo["content"]["color"] == "#010203"
+
+
+def test_multi_zone_snapshot_alert_zone_reflects_a_real_active_eas_overlay(
+    _durable_factory: Callable[[], Session],
+) -> None:
+    app, _ = _durable_public_app(_durable_factory)
+    overlay = EmergencyOverlay(
+        overlay_id="ov-1",
+        severity="warning",
+        title="Boil water notice",
+        message="A boil water notice is in effect for this service area.",
+        instructions="Boil tap water before drinking or cooking.",
+        cellular_fallback_enabled=True,
+    )
+    app.dependency_overrides[get_eas_overlay_provider] = lambda: (
+        lambda channel_id: overlay if channel_id == "public" else None
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    alert = next(z for z in response.json()["zones"] if z["kind"] == "alert")
+    assert alert["source"] == "eas-overlay"
+    assert alert["content"]["active"] is True
+    assert alert["content"]["message"] == "A boil water notice is in effect for this service area."
+
+
+def test_feed_catalog_public_route_is_empty_by_default(monkeypatch: MonkeyPatch) -> None:
+    # WP-06: production (and ephemeral/no-DB mode without the explicit demo
+    # flag) must never invent example.invalid feeds -- a station that hasn't
+    # configured anything gets an honest, empty, actionable catalog.
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.delenv("CIVICCAST_CG_DEMO_FEEDS", raising=False)
     client = TestClient(create_app())
 
     response = client.get("/api/public/cg/channels/public/feeds")
@@ -41,13 +434,356 @@ def test_feed_catalog_public_route(monkeypatch: MonkeyPatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["channel_id"] == "public"
+    assert payload["adapters"] == []
+    assert payload["proof_boundary"] == "configured-feed-adapters-to-approved-cg-zone-items"
+    assert "example.invalid" not in response.text
+
+
+def test_feed_catalog_demo_mode_requires_explicit_env_flag(monkeypatch: MonkeyPatch) -> None:
+    # The sample RSS/iCal/weather/social adapters only appear when an operator
+    # has explicitly opted into the demo flag -- never by default.
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_CG_DEMO_FEEDS", "1")
+    client = TestClient(create_app())
+
+    response = client.get("/api/public/cg/channels/public/feeds")
+
+    assert response.status_code == 200
+    payload = response.json()
     assert {adapter["kind"] for adapter in payload["adapters"]} == {
         "rss",
         "ical",
         "weather",
         "social",
     }
-    assert payload["proof_boundary"] == "configured-feed-adapters-to-approved-cg-zone-items"
+    assert "example.invalid" in response.text
+
+
+@pytest.fixture
+def _durable_factory() -> Iterator[Callable[[], Session]]:
+    engine = create_engine(
+        "sqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with engine.connect() as conn:
+        with contextlib.suppress(Exception):
+            conn.exec_driver_sql("ATTACH DATABASE ':memory:' AS civiccast")
+        Base.metadata.create_all(conn)
+        conn.commit()
+
+    @contextmanager
+    def _factory() -> Iterator[Session]:
+        sess = Session(bind=engine)
+        try:
+            yield sess
+        finally:
+            sess.close()
+
+    try:
+        yield _factory
+    finally:
+        engine.dispose()
+
+
+def _durable_public_app(factory: Callable[[], Session]) -> tuple[FastAPI, CgBoardService]:
+    app = FastAPI()
+    app.include_router(cg_public_router)
+    service = CgBoardService(CgBoardStore(factory))
+    app.dependency_overrides[get_cg_board_service] = lambda: service
+    return app, service
+
+
+def test_feed_catalog_durable_reflects_station_configuration(
+    _durable_factory: Callable[[], Session],
+) -> None:
+    app, service = _durable_public_app(_durable_factory)
+    client = TestClient(app)
+
+    # Nothing configured yet -> empty, actionable catalog (never sample rows).
+    empty = client.get("/api/public/cg/channels/public/feeds")
+    assert empty.status_code == 200
+    assert empty.json()["adapters"] == []
+
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    feed = service.add_feed(
+        "public",
+        payload=FeedInput(
+            kind="rss",
+            label="City news",
+            source_url="https://city.example.gov/news.rss",
+            trust_tier="operator_curated",
+        ),
+        operator_id="op_a",
+    )
+    service.add_zone(
+        "public",
+        payload=ZoneInput(
+            region="lower",
+            zone_kind="ticker",
+            content_source="feed_adapter",
+            feed_source_id=feed.feed_source_id,
+        ),
+        operator_id="op_a",
+    )
+
+    configured = client.get("/api/public/cg/channels/public/feeds")
+    assert configured.status_code == 200
+    payload = configured.json()
+    assert len(payload["adapters"]) == 1
+    assert payload["adapters"][0]["source_url"] == "https://city.example.gov/news.rss"
+    assert "example.invalid" not in configured.text
+
+    # The portal display contract's embedded feed_catalog agrees.
+    display = client.get("/api/public/cg/channels/public/display")
+    assert display.status_code == 200
+    assert display.json()["feed_catalog"]["adapters"][0]["adapter_id"] == feed.feed_source_id
+    assert "example.invalid" not in display.text
+
+
+def test_portal_display_durable_ticker_and_bulletins(
+    _durable_factory: Callable[[], Session],
+) -> None:
+    app, service = _durable_public_app(_durable_factory)
+    bulletin_store = PostgresCgBulletinStore(_durable_factory)
+    app.dependency_overrides[get_cg_bulletin_store] = lambda: bulletin_store
+    client = TestClient(app)
+
+    # Nothing configured yet -> empty ticker + empty bulletins, never sample
+    # content (WP-06 follow-up).
+    empty = client.get("/api/public/cg/channels/public/display")
+    assert empty.status_code == 200
+    empty_payload = empty.json()
+    assert empty_payload["approved_bulletins"]["submissions"] == []
+    empty_ticker = next(z for z in empty_payload["snapshot"]["zones"] if z["kind"] == "ticker")
+    assert empty_ticker["content"] == {"items": [], "empty": True}
+
+    # Configure a real ticker-bound feed + an approved ticker bulletin.
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    feed = service.add_feed(
+        "public",
+        payload=FeedInput(
+            kind="rss",
+            label="City news",
+            source_url="https://city.example.gov/news.rss",
+            trust_tier="operator_curated",
+        ),
+        operator_id="op_a",
+    )
+    service.add_zone(
+        "public",
+        payload=ZoneInput(
+            region="lower",
+            zone_kind="ticker",
+            content_source="feed_adapter",
+            feed_source_id=feed.feed_source_id,
+        ),
+        operator_id="op_a",
+    )
+    bulletin_store.create(
+        "public",
+        CgBulletinSubmission(
+            submission_id="sub-1",
+            organization="Friends of the Library",
+            submitter_label="Jamie R.",
+            title="Book sale this Saturday",
+            message="Come by the library annex 9am-2pm.",
+            target_zone_kind="ticker",
+            state="accepted",
+            approved_by_operator="op_a",
+        ),
+    )
+    bulletin_store.create(
+        "public",
+        CgBulletinSubmission(
+            submission_id="sub-2",
+            organization="Neighborhood Group",
+            submitter_label="Volunteer",
+            title="Should not appear -- not yet approved",
+            message="Pending review.",
+            target_zone_kind="ticker",
+            state="submitted",
+        ),
+    )
+
+    configured = client.get("/api/public/cg/channels/public/display")
+    assert configured.status_code == 200
+    payload = configured.json()
+    assert [s["submission_id"] for s in payload["approved_bulletins"]["submissions"]] == ["sub-1"]
+    ticker = next(z for z in payload["snapshot"]["zones"] if z["kind"] == "ticker")
+    assert ticker["content"]["items"] == ["Book sale this Saturday"]
+    assert "empty" not in ticker["content"]
+    assert ticker["source"] == "durable-station-config"
+    assert "example.invalid" not in configured.text
+    assert "Library board meets tonight" not in configured.text
+    assert "Trail work begins Monday" not in configured.text
+
+    # The standalone /bulletins endpoint agrees with the embedded field.
+    bulletins = client.get("/api/public/cg/channels/public/bulletins")
+    assert bulletins.status_code == 200
+    assert [s["submission_id"] for s in bulletins.json()["submissions"]] == ["sub-1"]
+
+
+def test_portal_display_demo_mode_requires_explicit_env_flag(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_CG_DEMO_FEEDS", "1")
+    client = TestClient(create_app())
+
+    response = client.get("/api/public/cg/channels/public/display")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["approved_bulletins"]["submissions"], "demo mode keeps the CA-3 sample bulletin"
+    ticker = next(z for z in payload["snapshot"]["zones"] if z["kind"] == "ticker")
+    # Demo mode composes the ticker from the same sample feeds/bulletins the
+    # /feeds and /bulletins endpoints show under the flag -- never the old
+    # unconditional static "Trail work begins Monday" filler, which is fully
+    # retired regardless of the flag.
+    assert "Library board meets tonight" in ticker["content"]["items"]
+    assert "Community Arts Fair" in ticker["content"]["items"]
+    assert "example.invalid" in response.text
+    assert "Trail work begins Monday" not in response.text
+
+
+_SAMPLE_STRINGS = (
+    "example.invalid",
+    "Library board meets tonight",
+    "Trail work begins Monday",
+    "Community Arts Fair",
+    "Neighborhood cleanup",
+    "No active weather alerts",
+    "Parks department posted a trail update",
+    "City Council",
+    "Planning Board",
+    "community-calendar-bed",
+    "#2458A6",
+)
+
+# WP-06 non-negotiable, hardened: the literal-string sweep above is only as
+# good as the list of historical strings someone remembered to write down --
+# it already missed the schedule zone's "City Council"/"Planning Board"
+# sample once. This allowlist instead names every zone `source` a
+# non-demo production response may legitimately carry; anything else,
+# including a brand-new fake string nobody has seen yet, fails the
+# provenance sweep below.
+_HONEST_ZONE_SOURCES = frozenset(
+    {
+        "durable-station-config",  # ticker, schedule: durable feeds/bulletins/program-log
+        "platform-copy",  # primary: genuine, non-invented product messaging
+        "station-channel-branding",  # logo: a real operator-configured Channel Ops row
+        "channel-default-branding",  # logo: honest "not yet configured" state
+        "future-release-disabled",  # audio: disabled future control (plan item 5)
+        "eas-overlay",  # alert: a real active EAS overlay
+        "no-active-alert",  # alert: honestly inactive
+    }
+)
+
+
+def _zones_from_payload(payload: object) -> list[dict[str, object]]:
+    """Find every zone dict in a route's JSON payload -- a top-level "zones"
+    list (/snapshot) or a nested "snapshot": {"zones": [...]} (/display) --
+    so the provenance sweep covers both without caring which route it is."""
+
+    if not isinstance(payload, dict):
+        return []
+    zones = payload.get("zones")
+    if isinstance(zones, list):
+        return [zone for zone in zones if isinstance(zone, dict)]
+    snapshot = payload.get("snapshot")
+    if isinstance(snapshot, dict) and isinstance(snapshot.get("zones"), list):
+        return [zone for zone in snapshot["zones"] if isinstance(zone, dict)]
+    return []
+
+
+def _public_get_routes() -> list[tuple[str, str]]:
+    """Enumerate every GET route the public CG router exposes, substituting a
+    concrete channel_id for the {channel_id} path param.
+
+    Programmatic, not a hand-maintained list: a future endpoint added to
+    civiccast.cg.router.public_router is automatically picked up by the
+    production-factory sweep below without anyone remembering to add it."""
+
+    routes: list[tuple[str, str]] = []
+    for route in cg_public_router.routes:
+        if not isinstance(route, APIRoute) or "GET" not in route.methods:
+            continue
+        path = route.path.format(channel_id="public")
+        routes.append((route.name, path))
+    return routes
+
+
+def test_public_cg_router_route_enumeration_finds_the_full_surface() -> None:
+    # Guards the enumeration helper itself: if this ever drops to a
+    # suspiciously small number, the sweep below is silently covering less
+    # than it claims to.
+    names = {name for name, _ in _public_get_routes()}
+    assert names == {
+        "idle_page",
+        "emergency_overlay",
+        "multi_zone_snapshot",
+        "feed_catalog",
+        "template_library",
+        "public_bulletins",
+        "hls_render_plan",
+        "hls_manifest",
+        "overlay_contract",
+        "portal_display",
+    }
+
+
+def test_production_app_factory_exposes_no_example_feed(monkeypatch: MonkeyPatch) -> None:
+    """Done-means (WP-06 + follow-ups): the production app factory never
+    surfaces sample example.invalid feed content, sample bulletin content, or
+    the old static sample ticker strings as configured/approved station data,
+    on ANY GET route the public CG router exposes -- enumerated
+    programmatically so a future endpoint cannot be missed."""
+
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.delenv("CIVICCAST_CG_DEMO_FEEDS", raising=False)
+    client = TestClient(create_app())
+
+    routes = _public_get_routes()
+    assert routes, "route enumeration must find at least the known public CG surface"
+    for name, path in routes:
+        # route.path already carries the router's own "/api/public/cg" prefix
+        # (confirmed against civiccast.cg.router.public_router's routes).
+        response = client.get(path)
+        assert response.status_code == 200, f"{name} ({path}) returned {response.status_code}"
+        for sample in _SAMPLE_STRINGS:
+            assert sample not in response.text, f"{name} ({path}) leaked {sample!r}"
+
+
+def test_production_app_factory_never_shows_invented_zone_content(monkeypatch: MonkeyPatch) -> None:
+    """WP-06 non-negotiable, hardened per PR #132 review: assert every zone's
+    ``source`` on every enumerated public route is a durable/honest value
+    (``_HONEST_ZONE_SOURCES``) rather than only checking for seven historical
+    literal strings -- so a brand-new invented string a future change might
+    introduce is caught by provenance, not by someone remembering to add it
+    to a list. See test_production_app_factory_exposes_no_example_feed above
+    for the complementary literal-string sweep."""
+
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.delenv("CIVICCAST_CG_DEMO_FEEDS", raising=False)
+    client = TestClient(create_app())
+
+    zones_checked = 0
+    for name, path in _public_get_routes():
+        response = client.get(path)
+        assert response.status_code == 200
+        try:
+            payload = response.json()
+        except ValueError:
+            continue  # non-JSON response (e.g. the HLS manifest text)
+        for zone in _zones_from_payload(payload):
+            zones_checked += 1
+            source = zone.get("source")
+            assert source in _HONEST_ZONE_SOURCES, (
+                f"{name} ({path}) zone {zone.get('zone_id')!r} (kind "
+                f"{zone.get('kind')!r}) has a non-honest source {source!r}"
+            )
+    # Both /snapshot and /display carry all 6 zone kinds -> at least 12 checked.
+    assert zones_checked >= 12, "expected to check zones on both /snapshot and /display"
 
 
 def test_template_library_and_portal_display_routes(monkeypatch: MonkeyPatch) -> None:
@@ -64,7 +800,14 @@ def test_template_library_and_portal_display_routes(monkeypatch: MonkeyPatch) ->
     display_payload = display.json()
     assert display_payload["snapshot"]["template"]["template_id"] == "standard-community-board"
     assert display_payload["template_library"]["templates"]
-    assert display_payload["approved_bulletins"]["approved_zone_items"]
+    # WP-06 follow-up: ephemeral/no-DB mode without the demo flag now returns
+    # an honest empty bulletin queue and ticker zone, never the CA-3 sample
+    # "arts-fair" bulletin as though it were a real approved submission.
+    assert display_payload["approved_bulletins"]["approved_zone_items"] == []
+    assert display_payload["approved_bulletins"]["submissions"] == []
+    ticker = next(z for z in display_payload["snapshot"]["zones"] if z["kind"] == "ticker")
+    assert ticker["content"]["items"] == []
+    assert ticker["content"]["empty"] is True
     assert display_payload["render_plan"]["manifest_url"].endswith("/stream.m3u8")
 
     alternate = client.get(
@@ -74,10 +817,36 @@ def test_template_library_and_portal_display_routes(monkeypatch: MonkeyPatch) ->
     assert alternate.json()["snapshot"]["template"]["template_id"] == "schedule-forward-board"
 
 
-def test_bulletins_routes_separate_public_approved_view_from_staff_queue(
+def test_bulletins_routes_are_empty_by_default_without_the_demo_flag(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # WP-06 non-negotiable follow-up: the no-store fallback on BOTH the
+    # public and staff bulletin routes used to return the CA-3 sample queue
+    # unconditionally, even to a staff session with no durable storage wired.
+    # Neither may invent content by default.
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.delenv("CIVICCAST_CG_DEMO_FEEDS", raising=False)
+    client = TestClient(create_app())
+
+    public = client.get("/api/public/cg/channels/public/bulletins")
+    staff = client.get("/api/staff/cg/channels/public/bulletins", headers=_STAFF_HEADERS)
+
+    assert public.status_code == 200
+    public_payload = public.json()
+    assert public_payload["submissions"] == []
+    assert public_payload["approved_zone_items"] == []
+    assert (
+        public_payload["proof_boundary"] == "approved-community-bulletins-to-public-cg-zone-items"
+    )
+    assert staff.status_code == 200
+    assert staff.json()["submissions"] == []
+
+
+def test_bulletins_routes_separate_public_approved_view_from_staff_queue_in_demo_mode(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_CG_DEMO_FEEDS", "1")
     client = TestClient(create_app())
 
     public = client.get("/api/public/cg/channels/public/bulletins")

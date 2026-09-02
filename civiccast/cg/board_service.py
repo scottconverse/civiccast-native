@@ -35,8 +35,22 @@ from civiccast.cg.board_models import (
 from civiccast.cg.board_resolver import ResolvedBoard
 from civiccast.cg.board_runtime import build_board_snapshot_from_store
 from civiccast.cg.board_store import CgBoardStore
-from civiccast.cg.feed_fetcher import FeedFetch, default_http_fetch, fetch_feed_items
-from civiccast.cg.models import CgFeedItem, FeedKind, FeedTrustTier, TemplateRegion, ZoneKind
+from civiccast.cg.feed_fetcher import (
+    FeedCache,
+    FeedFetch,
+    default_http_fetch,
+    fetch_all,
+    fetch_feed_items,
+)
+from civiccast.cg.models import (
+    CgFeedAdapter,
+    CgFeedCatalog,
+    CgFeedItem,
+    FeedKind,
+    FeedTrustTier,
+    TemplateRegion,
+    ZoneKind,
+)
 
 __all__ = [
     "BoardNotFoundError",
@@ -168,6 +182,11 @@ class CgBoardService:
         # for the "coming up next" interstitial (CG depth, DC-CG4). None when the
         # program log is unavailable (preview then shows a plain schedule zone).
         self._upcoming_reader = upcoming_reader
+        # Long-lived per-service feed cache (WP-06): the public feed catalog is
+        # polled on a UI interval, so this reuses each feed's own TTL
+        # (refresh_seconds) instead of hitting the network on every request --
+        # the same pattern bulletin_filler.py uses for the on-air path.
+        self._feed_cache = FeedCache()
 
     # -- ids + audit -------------------------------------------------------
 
@@ -435,6 +454,91 @@ class CgBoardService:
         return [
             item.model_copy(update={"approved": item.item_id in approved_ids}) for item in items
         ]
+
+    def upcoming(self, channel_id: str) -> list[tuple[datetime, str]]:
+        """Return the channel's next program-log occurrences (starts_at, title)
+        from the same real program-log data the "coming up next" preview zone
+        (DC-CG4) and the operator Schedule / Program Guide screens read
+        (``upcoming_reader``, wired to ``PostgresProgramLogStore`` in
+        production -- see ``civiccast.app._cg_upcoming_reader``). WP-06
+        non-negotiable follow-up: the public snapshot's schedule zone must
+        source real occurrences here, never invented events. Empty when no
+        reader is wired (e.g. ephemeral/no-DB mode)."""
+
+        if self._upcoming_reader is None:
+            return []
+        return self._upcoming_reader(channel_id, self._clock())
+
+    def feed_catalog(
+        self, channel_id: str, *, fetch: FeedFetch = default_http_fetch
+    ) -> CgFeedCatalog:
+        """Build the public feed catalog from durable, enabled feed sources.
+
+        WP-06: replaces the legacy deterministic ``build_feed_catalog()``
+        (four hard-coded ``example.invalid`` adapters). Only feeds bound to at
+        least one zone on the channel's active board are exposed -- a feed
+        registered but not yet assigned to a zone has nothing to target, and
+        ``CgFeedAdapter`` requires at least one target zone kind. Items from an
+        approval-gated zone are filtered to operator-approved item ids only
+        (S6 approval gate). A station with no board, no feeds, or no zone
+        bindings yet returns an empty catalog -- the router renders that as an
+        actionable empty state, never as invented content.
+
+        Uses the service's long-lived ``FeedCache`` so a UI polling this on an
+        interval reuses each feed's own ``refresh_seconds`` TTL instead of
+        re-fetching every network feed on every request (mirrors
+        ``egress.bulletin_filler``'s on-air fetch pattern).
+        """
+
+        now = self._clock()
+        feeds = self._store.list_feeds(channel_id, enabled_only=True)
+        board = self._store.get_active_board(channel_id)
+        zones = self._store.list_zones(board.board_id) if board is not None else []
+
+        target_kinds: dict[str, list[ZoneKind]] = {}
+        approval_required: set[str] = set()
+        for zone in zones:
+            if zone.content_source != "feed_adapter" or not zone.feed_source_id:
+                continue
+            kinds = target_kinds.setdefault(zone.feed_source_id, [])
+            if zone.zone_kind not in kinds:
+                kinds.append(zone.zone_kind)
+            if zone.approval_required:
+                approval_required.add(zone.feed_source_id)
+
+        fetched = fetch_all(feeds, self._store, fetch=fetch, now=now, cache=self._feed_cache)
+
+        adapters: list[CgFeedAdapter] = []
+        for feed in feeds:
+            target = target_kinds.get(feed.feed_source_id)
+            if not target:
+                # Registered but not bound to any zone -- nothing to expose in
+                # the catalog contract yet (an adapter needs >=1 target zone).
+                continue
+            items = list(fetched.get(feed.feed_source_id, []))
+            if feed.feed_source_id in approval_required:
+                approved_ids = self._store.list_approved_item_ids(
+                    channel_id=channel_id, feed_source_id=feed.feed_source_id
+                )
+                items = [item for item in items if item.item_id in approved_ids]
+            adapters.append(
+                CgFeedAdapter(
+                    adapter_id=feed.feed_source_id,
+                    kind=feed.kind,
+                    label=feed.label,
+                    source_url=feed.source_url,
+                    trust_tier=feed.trust_tier,
+                    refresh_seconds=feed.refresh_seconds,
+                    target_zone_kinds=target,
+                    items=[item.model_copy(update={"approved": True}) for item in items],
+                )
+            )
+        return CgFeedCatalog(
+            generated_at=now.replace(microsecond=0),
+            channel_id=channel_id,
+            adapters=adapters,
+            proof_boundary="configured-feed-adapters-to-approved-cg-zone-items",
+        )
 
     def _audit_channel_event(
         self,
