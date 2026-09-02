@@ -18,6 +18,19 @@ same registry and cannot disagree about configuration readiness (plan item
 8). It never performs a network call or write -- ``describe_provider`` is
 documented side-effect-free, and this module only adds read-only lookups on
 top of it.
+
+One exception as of owner decision 2026-09-02: real subscriber notification
+sends (mail/webhook fan-out on publish) are deferred to a future release
+(implementation parked on ``feat/publish-real-subscriber-delivery``, not
+merged). ``describe_surface_readiness("subscriber-notifications", ...)``
+below still returns :func:`_subscriber_readiness`'s real per-channel
+verdict and is still directly unit-tested
+(``tests/publish/test_provider_readiness.py``), but
+``civiccast.publish.service`` no longer calls it for that surface --
+service.py answers a fixed "coming soon" readiness instead so preflight,
+approval, and the dashboard always agree that nothing is sent yet,
+regardless of provider configuration. This function stays correct and ready
+for the parked branch to route back through it.
 """
 
 from __future__ import annotations

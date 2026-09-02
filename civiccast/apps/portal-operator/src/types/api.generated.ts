@@ -3380,7 +3380,7 @@ export interface PublishSurfaceStatus {
   id: string
   label: string
   kind: 'canonical' | 'archive' | 'reach' | 'record' | 'audience'
-  state: 'blocked' | 'not_configured' | 'pending' | 'running' | 'succeeded' | 'failed' | 'overridden'
+  state: 'blocked' | 'not_configured' | 'coming_soon' | 'pending' | 'running' | 'succeeded' | 'failed' | 'overridden'
   required?: boolean
   approval?: 'pending' | 'approved' | 'overridden'
   url?: string | null

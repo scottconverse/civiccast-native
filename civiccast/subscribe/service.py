@@ -294,11 +294,23 @@ def dispatch_notifications(
     )
 
 
-def subscription_rss(target_type: str, target_id: str, items: list[RssItem]) -> str:
+def subscription_rss(
+    target_type: str, target_id: str, items: list[RssItem], *, base_url: str = ""
+) -> str:
+    """Render the public subscription RSS feed.
+
+    ``base_url`` is the station's real public base URL (see
+    ``civiccast.subscribe.router._resolve_public_base_url``) -- never an
+    invented host. When it is empty (nothing configured and the request
+    could not be trusted as the station's own host), the feed's channel
+    link is relative (``/{target_type}/{target_id}``) rather than a
+    fabricated absolute URL.
+    """
     label = "Channel" if target_type == "channel" else "Meeting body"
+    link = f"{base_url}/{target_type}/{target_id}" if base_url else f"/{target_type}/{target_id}"
     return render_rss(
         title=f"CivicCast {label} {target_id}",
-        link=f"https://portal.example/{target_type}/{target_id}",
+        link=link,
         description="Public CivicCast recording notifications. RSS has no stored PII.",
         items=items,
     )

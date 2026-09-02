@@ -87,6 +87,51 @@ def test_rss_endpoint_returns_xml(client: TestClient) -> None:
     assert '<rss version="2.0">' in response.text
 
 
+def test_rss_endpoint_serves_an_honest_empty_feed_with_no_invented_items(
+    client: TestClient,
+) -> None:
+    """This route used to serve a single fabricated "Example CivicCast
+    recording" <item> with a https://portal.example/watch/... link on every
+    request -- indistinguishable from a real published recording to any
+    reader or aggregator. There is no published-recording resolver wired to
+    this route yet, so it must serve an honest, valid, empty feed instead of
+    inventing one."""
+    response = client.get("/api/public/subscribe/rss/channel/government.xml")
+    body = response.text
+
+    assert response.status_code == 200
+    # No fabricated <item> at all -- and specifically none carrying the old
+    # invented watch link or title.
+    assert "<item>" not in body
+    assert "/watch/government" not in body
+    assert "Example CivicCast recording" not in body
+    # No invented host anywhere in the document, including the feed's own
+    # <link> (civiccast/subscribe/router.py's _resolve_public_base_url must
+    # never fall back to a fabricated https://portal.example host).
+    assert "portal.example" not in body
+    # Still a valid, well-formed RSS 2.0 document with zero items.
+    assert "<channel>" in body
+    assert "<title>" in body
+    assert "<link>" in body
+    assert "<description>" in body
+
+
+def test_rss_feed_link_uses_the_configured_real_public_base_url(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When an operator has configured CIVICCAST_PUBLIC_BASE_URL (the same
+    env var civiccast.activitypub.config falls back to for its own real
+    public address), the feed's <link> uses it instead of the request's own
+    host or any invented placeholder."""
+    monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", "https://watch.example-station.org")
+
+    response = client.get("/api/public/subscribe/rss/channel/government.xml")
+
+    assert response.status_code == 200
+    assert "<link>https://watch.example-station.org/channel/government</link>" in response.text
+    assert "portal.example" not in response.text
+
+
 def test_staff_dispatch_sends_confirmed_subscriber(client: TestClient) -> None:
     signup = client.post(
         "/api/public/subscribe/email",
