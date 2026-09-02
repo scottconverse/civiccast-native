@@ -1032,7 +1032,15 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # build roots; no pack metadata embeds its build path). Both lanes
     # advance by two. Re-derived by real collection on this tree:
     # (1695, 1888) -> (1697, 1890).
-    assert (collect("not windows_only"), collect()) == (1697, 1890)
+    # feat/installer-embeds-station-index (2026-09-02): the installer now
+    # embeds the signed station index and the tiny `core` pack, and
+    # scripts/build_native_bootstrap.py grew a fail-closed gate on them
+    # (validate_embedded_station_resources). Six platform-independent cases in
+    # tests/native/test_native_bootstrap_builder.py cover that gate. Rebased
+    # onto PR #127's own floor (1697, 1890) after that PR landed first, and
+    # re-derived by an actual `--collect-only` run on this POST-REBASE tree,
+    # NOT by adding six to it: (1697, 1890) -> (1703, 1896).
+    assert (collect("not windows_only"), collect()) == (1703, 1896)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

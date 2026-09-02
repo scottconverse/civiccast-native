@@ -504,6 +504,14 @@ failed at `d4-activate-station` with *"a signed station bundle
 `C:\CivicCastPayload\station`"* — after the same step had succeeded on the
 same staged kit in run 6.
 
+> **Dialog text note (2026-09-02).** The sentence quoted above is what run 7
+> actually said and is preserved verbatim as evidence. It is no longer the
+> text `d4-activate-station` emits: the step now resolves the index from
+> `$EXEDIR\station\station-index.json` first and falls back to an embedded
+> `$INSTDIR\station\station-index.json`, and only fails when neither exists.
+> Run 7's failure mode — the kit's `station\` directory unreadable across the
+> VSMB transport — still fails the install, just through the second dialog.
+
 ### The measurement
 
 Every mapped folder in the VM — `C:\CivicCastPayload` (the ~21 GB kit the

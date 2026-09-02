@@ -946,3 +946,140 @@ def test_native_beta_candidate_workflow_contract_rejects_a_kit_missing_the_quick
         _assert_kit_carries_the_quickstart_card(
             mutated_workflow["jobs"]["assemble-native-beta-kit"]
         )
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-02 (owner decision): setup.exe embeds the signed station index and
+# the tiny `core` pack (tauri.native.conf.json bundle.resources) so a
+# download-only install/upgrade can activate. Those two files come from
+# build-native-station-bundle, so the producer/consumer edge is now a real
+# `needs:` and a real fetch -- and it must stay CHEAP: the full bundle
+# artifact is ~18.6 GB and actions/download-artifact has no file-level
+# filter, so the two files ship as their own small artifact.
+# ---------------------------------------------------------------------------
+
+
+def _assert_embedded_station_handoff(workflow: dict[str, object]) -> None:
+    producer = workflow["jobs"]["build-native-station-bundle"]
+    consumer = workflow["jobs"]["build-native-beta"]
+
+    needs = consumer["needs"]
+    needs = [needs] if isinstance(needs, str) else list(needs)
+    assert "build-native-station-bundle" in needs, (
+        "build-native-beta embeds files build-native-station-bundle produces; "
+        "without needs:, the two jobs race and the installer builds against "
+        "whatever happens to be on disk"
+    )
+
+    producer_steps = {step["name"]: step for step in producer["steps"]}
+    stage = producer_steps["Stage the installer-embedded station resources"]["run"]
+    assert '@("station-index.json", "core.ccpack")' in stage
+    assert "the installer cannot embed it" in stage, (
+        "the producer must fail closed with a message naming the consumer's need"
+    )
+
+    embed_upload = producer_steps["Upload the installer-embedded station resources"]
+    assert embed_upload["uses"] == "actions/upload-artifact@v4"
+    assert embed_upload["with"]["name"] == "native-station-embed-${{ github.sha }}"
+    assert embed_upload["with"]["if-no-files-found"] == "error"
+    assert embed_upload["with"]["retention-days"] == "1"
+    # Unconditional on EVERY lane, unlike the ~18.6 GB full-bundle upload
+    # below it: the hosted lane's build-native-beta has no local mirror to
+    # read, so an `if:` here would break the hosted lane outright.
+    assert "if" not in embed_upload, (
+        "the small embed artifact must upload on every lane -- the hosted "
+        "consumer has no local mirror fallback"
+    )
+
+    full_upload = producer_steps["Upload the native station bundle artifact"]
+    assert "if" in full_upload, "the ~18.6 GB bundle upload must stay lane-gated"
+
+    consumer_steps = {step["name"]: step for step in consumer["steps"]}
+    download = consumer_steps["Download the embedded station index and core pack (hosted)"]
+    assert download["uses"] == "actions/download-artifact@v4"
+    assert download["with"]["name"] == "native-station-embed-${{ github.sha }}"
+    assert download["if"] == "env.BUILD_TARGET != 'self-hosted'", (
+        "self-hosted reads build-native-station-bundle's local mirror instead "
+        "of downloading; downloading there is the transfer cost the "
+        "build_target input exists to avoid"
+    )
+    assert download["with"]["name"] != "native-station-bundle-${{ github.sha }}", (
+        "must not pull the ~18.6 GB full-bundle artifact to obtain two tiny files"
+    )
+
+    staging_name = "Stage the embedded station index and core pack for the Tauri build"
+    staging = consumer_steps[staging_name]["run"]
+    # Same mirror, located the same defensive way, as assemble-native-beta-kit.
+    assert 'Join-Path $env:CANDIDATE_ROOT "station-bundle"' in staging
+    assert '@("station-index.json", "core.ccpack")' in staging
+    assert '$destination = "civiccast/apps/installer/src-tauri/resources/station"' in staging, (
+        "must stage at the exact bundle.resources source path tauri.native.conf.json declares"
+    )
+    assert "throw" in staging, "the staging step must fail closed on a missing input"
+
+    step_names = [step["name"] for step in consumer["steps"]]
+    bootstrap_name = "Build the native bootstrap with the release trust root"
+    assert step_names.index(download["name"]) < step_names.index(staging_name)
+    assert step_names.index(staging_name) < step_names.index(bootstrap_name), (
+        "the resources must be on disk before the Tauri build reads them"
+    )
+    # The clean-source guard runs earlier and is pinned as a consecutive
+    # triple by _assert_fail_closed_pack_guard; staging must stay after it
+    # (resources/ is gitignored, but ordering keeps that fact non-load-bearing).
+    assert step_names.index("Assert clean source tree before pack build") < step_names.index(
+        staging_name
+    )
+
+
+def test_native_beta_candidate_workflow_embeds_the_station_index_from_its_producer() -> None:
+    _, workflow = _workflow()
+    _assert_embedded_station_handoff(workflow)
+
+
+def test_native_beta_candidate_workflow_contract_rejects_an_unordered_station_embed() -> None:
+    """Dropping the `needs:` edge must fail this contract, not pass quietly:
+    without it the installer job can start before the station bundle exists
+    and build a setup.exe with no embedded index at all."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace("    needs: build-native-station-bundle\n", "", 1)
+    assert mutated != text, "test's expected literal has drifted from the workflow"
+
+    mutated_workflow = yaml.load(mutated, Loader=yaml.BaseLoader)
+    with pytest.raises((AssertionError, KeyError)):
+        _assert_embedded_station_handoff(mutated_workflow)
+
+
+def test_native_beta_candidate_workflow_contract_rejects_a_full_bundle_download_for_two_files() -> (
+    None
+):
+    """The cheap-fetch invariant, mutation-tested: repointing the consumer at
+    the ~18.6 GB full-bundle artifact must fail, not merely be slower."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace(
+        "          name: native-station-embed-${{ github.sha }}\n          path: station-embed\n",
+        "          name: native-station-bundle-${{ github.sha }}\n          path: station-embed\n",
+        1,
+    )
+    assert mutated != text, "test's expected literal has drifted from the workflow"
+
+    mutated_workflow = yaml.load(mutated, Loader=yaml.BaseLoader)
+    with pytest.raises(AssertionError):
+        _assert_embedded_station_handoff(mutated_workflow)
+
+
+def test_native_beta_candidate_workflow_kit_assembly_is_unchanged_by_the_embed() -> None:
+    r"""The USB kit is the air-gapped station's whole world: the embed must be
+    additive. assemble-native-beta-kit must still depend on BOTH jobs and
+    still co-locate the FULL station bundle (index + every component pack) at
+    .\station\ next to setup.exe."""
+    _, workflow = _workflow()
+    kit = workflow["jobs"]["assemble-native-beta-kit"]
+
+    assert sorted(kit["needs"]) == ["build-native-beta", "build-native-station-bundle"]
+    colocate = {step["name"]: step for step in kit["steps"]}[
+        "Co-locate the installer and station bundle into one kit"
+    ]["run"]
+    assert "Copy-Item -Path (Join-Path $bundleDir '*') -Destination $kitStation -Recurse" in (
+        colocate
+    ), "the kit must still carry the WHOLE signed bundle, not just the embedded two files"
+    assert "Kit assembly: the co-located station bundle carries no component packs" in colocate

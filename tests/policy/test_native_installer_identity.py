@@ -349,6 +349,94 @@ def test_bootstrap_postinstall_activates_the_flat_station_and_fails_loud_on_erro
     )
 
 
+def test_bootstrap_postinstall_resolves_the_station_index_kit_first_then_embedded() -> None:
+    """2026-09-02 owner decision: a DOWNLOAD-ONLY install/upgrade of setup.exe
+    alone must still find a signed station index, because the installer now
+    EMBEDS one (bundle.resources -> $INSTDIR\\station\\station-index.json, pinned
+    by test_native_bootstrap_embeds_only_the_two_tiny_station_resources below).
+
+    The resolution order is load-bearing in BOTH directions:
+
+      (a) $EXEDIR\\station\\station-index.json must be tried FIRST, so an
+          air-gapped station installing from the USB kit
+          (assemble-native-beta-kit's layout) behaves exactly as it did before
+          this change -- the kit's index wins, and its component packs sit
+          beside it in the same media directory that
+          native_distribution.rs::acquire_station_distribution derives from the
+          index path;
+      (b) $INSTDIR\\station\\station-index.json is the fallback, never the
+          preference -- preferring it would silently ignore the bundle an
+          operator deliberately carried to the machine on a stick.
+
+    And the fail-closed branch must survive: only when NEITHER path exists.
+    A silent skip here is the exact shape that produced K1."""
+    postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
+    executable = "\n".join(
+        line for line in postinstall.splitlines() if not line.strip().startswith(";")
+    )
+
+    exedir_import = '--civiccast-import-station "$EXEDIR\\station\\station-index.json"'
+    instdir_import = '--civiccast-import-station "$INSTDIR\\station\\station-index.json"'
+    assert exedir_import in executable, "the USB-kit side-load path must still be imported"
+    assert instdir_import in executable, (
+        "the embedded copy at $INSTDIR\\station must be a real import path, not just a comment"
+    )
+    assert executable.index(exedir_import) < executable.index(instdir_import), (
+        "the kit's own station bundle must win over the embedded index -- an "
+        "air-gapped station that carried a bundle to the machine must keep "
+        "using it"
+    )
+
+    # The existence checks that actually implement the order, not just two
+    # invocations sitting near each other.
+    exedir_probe = 'IfFileExists "$EXEDIR\\station\\station-index.json"'
+    instdir_probe = 'IfFileExists "$INSTDIR\\station\\station-index.json"'
+    assert exedir_probe in executable
+    assert instdir_probe in executable
+    assert executable.index(exedir_probe) < executable.index(instdir_probe)
+
+    # Both sources must be observable in install-progress.log -- the whole
+    # point of naming which one was used is post-mortem diagnosis of an
+    # install nobody watched.
+    assert '!insertmacro CIVICCAST_STEP "step d4-activate-station: source EXEDIR' in executable
+    assert '!insertmacro CIVICCAST_STEP "step d4-activate-station: source INSTDIR' in executable
+
+    activation_block = postinstall.split("--civiccast-activate-station", 1)[1].split(
+        '!insertmacro CIVICCAST_STEP "step d4-service-registration', 1
+    )[0]
+    assert activation_block.count("!insertmacro CIVICCAST_FAIL") == 2, (
+        "exactly two fail-closed branches: neither index present, and a "
+        "present index whose activation failed"
+    )
+    assert "${CIVICCAST_EXIT_D4_ACTIVATION}" in activation_block
+    assert "!insertmacro CIVICCAST_ALERT" not in activation_block
+
+
+def test_native_bootstrap_embeds_only_the_two_tiny_station_resources() -> None:
+    """The embedded-index fix must not become a hole in the "no embedded
+    multi-gigabyte payload, ever" rule that
+    scripts/build_native_bootstrap.py::validate_native_bootstrap_config
+    enforces. Exactly three resources, and the two station entries must land
+    under a `station/` subdirectory so the hook's $INSTDIR\\station\\... probe
+    finds them (Tauri maps resource VALUES relative to the install root)."""
+    resources = _deep_merge(_load(BASE_CONFIG), _load(NATIVE_CONFIG))["bundle"]["resources"]
+
+    assert resources == {
+        "resources/vc_redist.x64.exe": "vc_redist.x64.exe",
+        "resources/station/station-index.json": "station/station-index.json",
+        "resources/station/core.ccpack": "station/core.ccpack",
+    }, "bundle.resources must carry the VC++ prerequisite plus exactly the two tiny station files"
+
+    # No pack other than `core` may be embedded. `core`'s payload is a
+    # placeholder NOTICE (build_native_station_bundle.py::
+    # _core_placeholder_sources); every real component pack is multi-gigabyte
+    # model bytes and belongs in the kit or the per-SHA cache.
+    embedded_packs = [value for value in resources.values() if value.endswith(".ccpack")]
+    assert embedded_packs == ["station/core.ccpack"], (
+        f"only the placeholder `core` pack may be embedded, found {embedded_packs}"
+    )
+
+
 def test_bootstrap_postinstall_verifies_the_extracted_pack_tree_not_the_retired_embedded_runtime_path() -> (
     None
 ):

@@ -43,6 +43,31 @@ installer asset and is not a public or production release.
   digest gets that stale pack. The identity constants are bumped only when the
   reviewed model set itself changes.
 
+- **The installer now carries its own signed station index, so a
+  downloaded-alone `setup.exe` can activate a station.** `setup.exe` embeds
+  the signed `station-index.json` and the ~1.5 KB placeholder `core.ccpack`
+  as Tauri `bundle.resources`, laying them down at `$INSTDIR\station\`. The
+  `d4-activate-station` install step resolves the index from
+  `$EXEDIR\station\station-index.json` first — so an air-gapped station
+  installing from the USB kit behaves exactly as before, using the kit's own
+  bundle and its co-located component packs — and falls back to the embedded
+  copy only when no kit bundle is beside `setup.exe`. It still fails the
+  install loudly when neither exists, and its failure dialog no longer tells
+  the operator to "publish one alongside the installer", a remedy only the
+  build pipeline can perform. The multi-gigabyte model packs are still never
+  embedded: `scripts/build_native_bootstrap.py` gates the resource map
+  exactly, gates each embedded file under 1 MB, and fails the build when the
+  index's `product_version`/`compatible_core` do not equal the product
+  version the activation CLI verifies against. In CI, `build-native-beta` now
+  `needs: build-native-station-bundle` and fetches those two files from a
+  small dedicated artifact (never the ~18.6 GB bundle) or, on the self-hosted
+  lane, from that job's local mirror. The assembled USB kit is unchanged and
+  still carries the full signed bundle at `.\station\`. This is the half that
+  puts a signed index on the machine; the model packs that index names come
+  from the per-SHA cache described in the entry above, so a download-only
+  *upgrade* completes and a download-only *first* install still fails closed —
+  a machine with no cache has never held those packs.
+
 - **Supported data-preserving install-over-existing upgrades for CivicCast
   (Native).** Setup now invokes the already-installed bootstrap's production
   native service quiescence before replacing application files, aborts before mutation
