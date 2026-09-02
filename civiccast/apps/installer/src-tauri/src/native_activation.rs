@@ -79,13 +79,23 @@ where
         distribution,
         install_root,
         |pack, destination| {
+            // Station model packs carry a deliberately stable identity so an
+            // activated station can reuse its cached packs across product
+            // versions -- see
+            // `native_distribution::pack_identity_expectations`. The pack's
+            // signature, component id and outer SHA-256 are still checked.
+            let (expected_product_version, expected_compatible_core) =
+                native_distribution::pack_identity_expectations(
+                    &distribution.index,
+                    &pack.component,
+                );
             let verified = native_packs::verify_and_extract_pack(
                 &pack.cached_path,
                 destination,
                 trust,
                 Some(&pack.component),
-                Some(&distribution.index.product_version),
-                Some(&distribution.index.compatible_core),
+                expected_product_version,
+                expected_compatible_core,
             )?;
             if verified.sha256 != pack.outer_sha256 {
                 return Err(format!(
@@ -467,6 +477,24 @@ fn promote_staging(staging: &Path, target: &Path) -> Result<(), String> {
     }
 }
 
+/// Whether `pack`'s own signed manifest declares the identity the index
+/// requires of it. The rule is
+/// [`native_distribution::pack_identity_expectations`]'s, not a second one:
+/// station MODEL packs are pinned by the signed index's SHA-256 + byte
+/// count (already checked by the caller) and carry a stable cross-version
+/// identity so a download-only upgrade can reuse this station's cached
+/// packs, so their version pair is not compared; `core`, and every
+/// component of a channel index, must still match the index exactly.
+fn pack_identity_is_consistent(distribution: &AcquiredDistribution, pack: &AcquiredPack) -> bool {
+    let (expected_product_version, expected_compatible_core) =
+        native_distribution::pack_identity_expectations(&distribution.index, &pack.component);
+    // Same `expected.is_some_and(|value| value != observed)` shape
+    // `native_distribution::verify_distribution_bytes` uses: `None` skips the
+    // comparison, `Some` demands equality.
+    !expected_product_version.is_some_and(|value| value != pack.verified.product_version)
+        && !expected_compatible_core.is_some_and(|value| value != pack.verified.compatible_core)
+}
+
 fn validate_complete_distribution(distribution: &AcquiredDistribution) -> Result<(), String> {
     if distribution.index.kind != "channel-index" && distribution.index.kind != "station-index" {
         return Err("Native station distribution kind is invalid.".to_string());
@@ -511,8 +539,7 @@ fn validate_complete_distribution(distribution: &AcquiredDistribution) -> Result
             || acquired_pack.outer_sha256 != index_pack.sha256
             || acquired_pack.verified.sha256 != index_pack.sha256
             || acquired_pack.verified.component != index_pack.component
-            || acquired_pack.verified.product_version != distribution.index.product_version
-            || acquired_pack.verified.compatible_core != distribution.index.compatible_core
+            || !pack_identity_is_consistent(distribution, acquired_pack)
             || acquired_pack.verified.signing_key_id != distribution.index.signing_key_id
         {
             return Err(format!(
@@ -536,8 +563,7 @@ fn validate_complete_distribution(distribution: &AcquiredDistribution) -> Result
                     || acquired_pack.outer_sha256 != index_pack.sha256
                     || acquired_pack.verified.sha256 != index_pack.sha256
                     || acquired_pack.verified.component != index_pack.component
-                    || acquired_pack.verified.product_version != distribution.index.product_version
-                    || acquired_pack.verified.compatible_core != distribution.index.compatible_core
+                    || !pack_identity_is_consistent(distribution, acquired_pack)
                     || acquired_pack.verified.signing_key_id != distribution.index.signing_key_id
                 {
                     return Err(format!(
@@ -879,13 +905,23 @@ where
         install_root,
         distribution,
         |pack, destination| {
+            // Station model packs carry a deliberately stable identity so an
+            // activated station can reuse its cached packs across product
+            // versions -- see
+            // `native_distribution::pack_identity_expectations`. The pack's
+            // signature, component id and outer SHA-256 are still checked.
+            let (expected_product_version, expected_compatible_core) =
+                native_distribution::pack_identity_expectations(
+                    &distribution.index,
+                    &pack.component,
+                );
             let verified = native_packs::verify_and_extract_pack(
                 &pack.cached_path,
                 destination,
                 trust,
                 Some(&pack.component),
-                Some(&distribution.index.product_version),
-                Some(&distribution.index.compatible_core),
+                expected_product_version,
+                expected_compatible_core,
             )?;
             if verified.sha256 != pack.outer_sha256 {
                 return Err(format!(
@@ -1040,8 +1076,8 @@ mod tests {
     use super::{
         activate_flat_station_with, compose_ollama_model_store, flat_activation_already_matches,
         promote_staging, stage_distribution_with, station_manifest_value,
-        validate_staged_runtime_layout, OPTIONAL_VERIFIED_IF_PRESENT_RUNTIME_FILES,
-        REQUIRED_STAGED_RUNTIME_FILES,
+        validate_complete_distribution, validate_staged_runtime_layout,
+        OPTIONAL_VERIFIED_IF_PRESENT_RUNTIME_FILES, REQUIRED_STAGED_RUNTIME_FILES,
     };
     use crate::native_distribution::{
         AcquiredDistribution, AcquiredPack, DistributionPack, VerifiedDistribution,
@@ -1077,6 +1113,21 @@ mod tests {
         root
     }
 
+    /// The identity a station-index pack of `component` declares in its own
+    /// signed manifest: the per-version product version for `core`, the
+    /// stable cross-version `station-models-1` for every MODEL pack -- what
+    /// `scripts/build_native_station_bundle.py` actually emits, and what
+    /// `native_distribution::pack_identity_expectations` exempts from the
+    /// version check so a download-only upgrade can reuse this station's
+    /// cached packs.
+    fn station_pack_identity(component: &str) -> &'static str {
+        if component == "core" {
+            "1.0.0-rc15"
+        } else {
+            "station-models-1"
+        }
+    }
+
     fn acquired() -> AcquiredDistribution {
         let mut index_packs = Vec::new();
         let mut acquired_packs = Vec::new();
@@ -1099,8 +1150,8 @@ mod tests {
                     path: PathBuf::from(format!("{component}.ccpack")),
                     sha256: sha,
                     component: component.to_string(),
-                    product_version: "1.0.0-rc15".to_string(),
-                    compatible_core: "1.0.0-rc15".to_string(),
+                    product_version: station_pack_identity(component).to_string(),
+                    compatible_core: station_pack_identity(component).to_string(),
                     signing_key_id: "test-key".to_string(),
                     file_count: 1,
                     total_bytes: 1,
@@ -1153,8 +1204,8 @@ mod tests {
                 path: PathBuf::from(format!("{component}.ccpack")),
                 sha256: sha,
                 component: component.to_string(),
-                product_version: "1.0.0-rc15".to_string(),
-                compatible_core: "1.0.0-rc15".to_string(),
+                product_version: station_pack_identity(component).to_string(),
+                compatible_core: station_pack_identity(component).to_string(),
                 signing_key_id: "test-key".to_string(),
                 file_count: 1,
                 total_bytes: 1,
@@ -1167,6 +1218,48 @@ mod tests {
             },
         });
         distribution
+    }
+
+    #[test]
+    fn station_model_packs_keep_their_stable_identity_while_core_stays_pinned_to_the_product_version(
+    ) {
+        // `acquired()` now models what the publisher really emits: `core`
+        // declares 1.0.0-rc15, every MODEL pack declares `station-models-1`.
+        // That distribution must validate -- the packs are pinned by the
+        // signed index's SHA-256 and byte count, which is what lets an
+        // activated station reuse its cached packs on a download-only
+        // upgrade (see `native_distribution::pack_identity_expectations`).
+        let distribution = acquired();
+        validate_complete_distribution(&distribution)
+            .expect("stable-identity model packs must validate against a station index");
+
+        // `core` is genuinely per-version and stays pinned.
+        let mut wrong_core = acquired();
+        for pack in &mut wrong_core.packs {
+            if pack.component == "core" {
+                pack.verified.product_version = "9.9.9-not-this-product".to_string();
+                pack.verified.compatible_core = "9.9.9-not-this-product".to_string();
+            }
+        }
+        let error = validate_complete_distribution(&wrong_core)
+            .expect_err("core must stay pinned to the index's product version");
+        assert!(
+            error.contains("core"),
+            "the refusal must name the offending component, got: {error}"
+        );
+
+        // The exemption is station-only: the same pack set delivered as an
+        // ONLINE channel index is refused, because an online acquisition has
+        // no cache-reuse story to serve.
+        let mut online = acquired();
+        online.index.kind = "channel-index".to_string();
+        let error = validate_complete_distribution(&online).expect_err(
+            "a channel index must keep the strict per-version check for every component",
+        );
+        assert!(
+            error.contains("captions-floor"),
+            "the refusal must name the first offending component, got: {error}"
+        );
     }
 
     #[test]

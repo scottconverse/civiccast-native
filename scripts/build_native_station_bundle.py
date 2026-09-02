@@ -89,6 +89,24 @@ canonical-JSON signing, same station-index URL-emptiness rule
 (``native_distribution.rs::validate_urls``: a station (air-gapped) index
 carries NO network locations, ever), just parameterized on THIS script's own
 (correct, current) component set rather than the stale one.
+
+## Two identities, deliberately
+
+``station-index.json`` and the per-version ``core`` placeholder carry
+``--product-version`` / ``--compatible-core`` -- the real product identity.
+Every MODEL pack instead carries the STABLE
+:data:`STATION_MODEL_PACK_PRODUCT_VERSION` /
+:data:`STATION_MODEL_PACK_COMPATIBLE_CORE` pair (see their own docs), so the
+same reviewed model set produces byte-identical packs, and therefore
+identical SHA-256s, from one product candidate to the next. That is what
+lets a download-only upgrade (``setup.exe`` with no ``station\`` folder
+beside it) reuse the ~21 GB of model packs an activated station already
+holds in ``<install root>\packs\.station-cache\packs\<sha256>.ccpack``.
+The trust that replaces version equality is the signed index itself: it
+pins every pack by SHA-256 and byte count, and the consumer re-verifies both
+plus the pack's own signature and component id
+(``native_distribution.rs::pack_identity_expectations`` and
+``copy_station_pack_to_cache``'s cache fallback).
 """
 
 from __future__ import annotations
@@ -154,6 +172,19 @@ DISTRIBUTION_PRODUCT: Final[str] = "civiccast-native"
 
 class StationBundleBuildError(RuntimeError):
     """The signed native station bundle could not be built."""
+
+
+#: Identity stamped into every MODEL pack (everything except the per-version
+#: ``core`` placeholder). Deliberately NOT the product version: the model set
+#: is reviewed and pinned by ``native-windows-ollama-models.lock.json`` and
+#: the caption-tier lock, so its packs are byte-identical from one candidate
+#: to the next and the signed station index pins them by outer SHA-256. That
+#: is what lets an already-activated station reuse its cached model packs on
+#: a download-only upgrade (``native_distribution.rs::pack_identity_expectations``
+#: and ``copy_station_pack_to_cache``'s cache fallback). Bump ONLY when the
+#: reviewed model set itself changes.
+STATION_MODEL_PACK_PRODUCT_VERSION = "station-models-1"
+STATION_MODEL_PACK_COMPATIBLE_CORE = "station-models-1"
 
 
 def require_allowed_signing_key(key_id: str, *, allow_development_key: bool) -> None:
@@ -538,8 +569,8 @@ def build_station_bundle(
             build_native_pack(
                 output=output,
                 component=component,
-                product_version=product_version,
-                compatible_core=compatible_core,
+                product_version=STATION_MODEL_PACK_PRODUCT_VERSION,
+                compatible_core=STATION_MODEL_PACK_COMPATIBLE_CORE,
                 sources=sources,
                 signing_private_key=signing_private_key,
                 signing_key_id=signing_key_id,

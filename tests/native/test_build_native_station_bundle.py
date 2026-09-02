@@ -218,8 +218,8 @@ def test_captions_floor_pack_round_trips_through_verify_native_pack(tmp_path: Pa
     builder.build_native_pack(
         output=output,
         component="captions-floor",
-        product_version="1.0.0-rc15",
-        compatible_core="1.0.0-rc15",
+        product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+        compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
         sources=sources,
         signing_private_key=key,
         signing_key_id="development-test-key",
@@ -229,8 +229,8 @@ def test_captions_floor_pack_round_trips_through_verify_native_pack(tmp_path: Pa
         output,
         public_key=key.public_key(),
         expected_component="captions-floor",
-        expected_product_version="1.0.0-rc15",
-        expected_compatible_core="1.0.0-rc15",
+        expected_product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+        expected_compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
         expected_signing_key_id="development-test-key",
     )
     assert result.component == "captions-floor"
@@ -463,8 +463,8 @@ def test_ollama_model_component_pack_passes_verification_against_a_matching_revi
     builder.build_native_pack(
         output=output,
         component="summary-gemma4-12b",
-        product_version="1.0.0-rc15",
-        compatible_core="1.0.0-rc15",
+        product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+        compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
         sources=sources,
         signing_private_key=key,
         signing_key_id="development-test-key",
@@ -475,8 +475,8 @@ def test_ollama_model_component_pack_passes_verification_against_a_matching_revi
         output,
         public_key=key.public_key(),
         expected_component="summary-gemma4-12b",
-        expected_product_version="1.0.0-rc15",
-        expected_compatible_core="1.0.0-rc15",
+        expected_product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+        expected_compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
         expected_signing_key_id="development-test-key",
     )
     assert result.component == "summary-gemma4-12b"
@@ -548,6 +548,67 @@ def test_build_station_bundle_succeeds_with_matching_provenance_for_every_ollama
         "translation-translategemma-4b",
     ):
         assert (output_dir / f"{component}.ccpack").is_file()
+
+    # The identity split this publisher exists to produce: the INDEX and the
+    # per-version `core` placeholder carry the real product version, every
+    # MODEL pack carries the stable `station-models-1` identity so the same
+    # reviewed model set keeps the same SHA-256 from one candidate to the
+    # next -- which is what lets an already-activated station reuse its
+    # per-SHA pack cache on a download-only upgrade. The Rust side of this
+    # rule is `native_distribution::pack_identity_expectations`.
+    assert result["product_version"] == "1.0.0-rc15", (
+        "the build report records the INDEX identity, not the model packs'"
+    )
+    assert result["compatible_core"] == "1.0.0-rc15"
+
+    key = _dev_key()
+    core = verify_native_pack(
+        output_dir / "core.ccpack",
+        public_key=key.public_key(),
+        expected_component="core",
+        expected_product_version="1.0.0-rc15",
+        expected_compatible_core="1.0.0-rc15",
+        expected_signing_key_id="development-test-key",
+    )
+    assert core.product_version == "1.0.0-rc15"
+    for component in (
+        "captions-floor",
+        "summary-gemma4-12b",
+        "summary-gemma4-e4b",
+        "translation-translategemma-4b",
+    ):
+        verified = verify_native_pack(
+            output_dir / f"{component}.ccpack",
+            public_key=key.public_key(),
+            expected_component=component,
+            expected_product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+            expected_compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
+            expected_signing_key_id="development-test-key",
+        )
+        assert verified.product_version == "station-models-1", component
+        assert verified.compatible_core == "station-models-1", component
+
+    # The signed index still pins every pack by SHA-256 + byte count -- the
+    # trust that replaces the version equality the model packs no longer
+    # carry.
+    envelope = json.loads((output_dir / builder.STATION_INDEX_FILENAME).read_bytes())
+    entries = {entry["component"]: entry for entry in envelope["manifest"]["packs"]}
+    assert envelope["manifest"]["product_version"] == "1.0.0-rc15"
+    for component, entry in entries.items():
+        pack_bytes = (output_dir / entry["filename"]).read_bytes()
+        assert entry["sha256"] == hashlib.sha256(pack_bytes).hexdigest(), component
+        assert entry["bytes"] == len(pack_bytes), component
+
+
+def test_station_model_pack_identity_constants_are_stable_and_not_the_product_version() -> None:
+    """These two constants ARE the trust boundary: they must not track the
+    product version, or every candidate re-signs ~21 GB of model packs, their
+    SHA-256s change, and no activated station can reuse its cache on a
+    download-only upgrade. Bumping them is a deliberate act (the reviewed
+    model set changed), so the value is pinned here rather than derived."""
+
+    assert builder.STATION_MODEL_PACK_PRODUCT_VERSION == "station-models-1"
+    assert builder.STATION_MODEL_PACK_COMPATIBLE_CORE == "station-models-1"
 
 
 # ---------------------------------------------------------------------------

@@ -1020,7 +1020,13 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # The flat-installer-layout repair adds two platform-independent upgrade
     # seam/CLI collection cases, so both lanes advance by two. Re-derived by
     # real collection on this tree: (1692, 1885) -> (1694, 1887).
-    assert (collect("not windows_only"), collect()) == (1694, 1887)
+    # feat/station-models-reuse-across-versions: the station bundle publisher's
+    # stable MODEL-pack identity adds one platform-independent case pinning the
+    # two identity constants (the Rust-side proofs live in
+    # native_distribution.rs / native_activation.rs and do not collect here), so
+    # both lanes advance by one. Re-derived by real collection on this tree:
+    # (1694, 1887) -> (1695, 1888).
+    assert (collect("not windows_only"), collect()) == (1695, 1888)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
