@@ -1865,6 +1865,12 @@ def create_app() -> FastAPI:
         return resolve_stored_cdn_adapter()
 
     app.state.resolve_cdn_adapter = _resolve_cdn_adapter
+    # WP-03: one provider registry per app instance, read by both Publish
+    # preflight and approval (civiccast.publish.router.get_provider_registry)
+    # so they can never disagree about a surface's real-provider readiness.
+    # Registration is side-effect-free (civiccast.platform.providers docstring);
+    # this never touches the network or a credential store on its own.
+    app.state.provider_registry = default_registry()
     # Surge switch is off unless CIVICCAST_LIVE_SURGE_THRESHOLD is set AND durable
     # storage is ready (it needs an egress store to resolve live dirs). The
     # durable-storage branch below replaces this when both hold.

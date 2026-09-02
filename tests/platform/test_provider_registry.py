@@ -99,7 +99,14 @@ class TestExtensionPoint:
 class TestPublishResolvesThroughRegistry:
     def test_approve_publish_uses_injected_registry(self) -> None:
         """The publish workflow's archive/reach clients come from the
-        registry seam, not hard-instantiated classes (Stage C)."""
+        registry seam, not hard-instantiated classes (Stage C).
+
+        WP-03: approval only resolves the provider kinds the operator
+        actually selected -- resolving local_nas/youtube here too (the old
+        behavior) would let an unrelated, unselected provider's
+        misconfiguration block an internet-archive-only approval, which the
+        WP-03 plan (item 9) forbids.
+        """
 
         from datetime import UTC, datetime
 
@@ -139,6 +146,8 @@ class TestPublishResolvesThroughRegistry:
             registry=registry,
         )
 
-        assert {"internet_archive", "local_nas", "youtube"} <= set(resolved_kinds)
+        assert set(resolved_kinds) == {"internet_archive"}, (
+            "only the selected surface's provider kind should be resolved"
+        )
         surface = next(s for s in record.surfaces if s.id == "internet-archive")
         assert surface.state == "succeeded"
