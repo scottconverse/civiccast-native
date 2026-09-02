@@ -16,6 +16,91 @@ came across and what deliberately did not.
 Current owner-held unpublished candidate: `v1.0.0-beta.2`. It has no tag or
 installer asset and is not a public or production release.
 
+### Added
+
+- **WP-11 item 1 — Recording form accessibility.** Every field-validation
+  message on the operator Scheduled Recording form
+  (`apps/portal-operator/src/screens/RecordingScreen.tsx`) now has a stable
+  id, and the offending control (or, for the weekday checkboxes, the
+  `role="group"` wrapper) carries `aria-invalid` and `aria-describedby`
+  pointing at it. A failed submit moves keyboard/screen-reader focus to the
+  first invalid control in field order (slug -> name -> source -> recurrence
+  -> duration -> encoder profile) instead of leaving focus on the "Create
+  schedule" button or the form heading. Covered by new unit assertions in
+  `RecordingScreen.test.tsx` that read the real `aria-invalid` /
+  `aria-describedby` DOM attributes and `document.activeElement` (not just
+  the visible copy), and by two new `e2e/a11y.spec.ts` cases that exercise
+  the same flow with axe-core against a real browser render. That axe scan
+  also caught a pre-existing `color-contrast` defect (serious) on `main`:
+  every plain-surface validation/notice span in this form used
+  `var(--cc-warn)` text on the section's `var(--cc-surface)` background
+  (~3.8:1 in light theme, under the 4.5:1 AA floor for normal text) — never
+  axe-scanned before this PR added the first Recording-screen a11y
+  coverage. Switched to `var(--cc-err)` (~6.2:1) for every such span in the
+  file, not just the four the CI run happened to render simultaneously.
+
+- **WP-11 item 2 — Lower-third help copy.** Channel Ops' lower-third-banner
+  control (`GraphicsOverlayPanel` in
+  `apps/portal-operator/src/screens/ChannelOpsScreen.tsx`) no longer calls
+  itself a "station bug graphics overlay" — that's a different broadcast
+  graphic (the corner logo) from the lower-third text banner this control
+  actually edits. The copy now says plainly that the change lands on the
+  selected channel's lower-third banner on the next pipeline build or a
+  scheduled swap, and does not hot-change an already-live pipeline. Pinned
+  by a new focused test in `ChannelOpsScreen.test.tsx`.
+
+- **WP-11 item 3 — CivicSuite/CivicClerk bridge truth card.** `AgendasScreen`
+  now shows a disabled "CivicSuite event bridge — coming in a future
+  release" card beside the existing agenda-import configuration
+  (`ExternalImportSection`), with no executable configuration fields. The
+  card states the real distinction: CivicCast's manual/public CivicClerk
+  agenda importer (also Legistar, PrimeGov, and a generic portal crawler)
+  already works today and is unchanged; the CivicSuite event bridge is a
+  separate, not-yet-built authenticated integration that would receive a
+  jurisdiction's meeting lifecycle events automatically and send published
+  recording links back to CivicClerk. A new regression suite in
+  `AgendasScreen.test.tsx` asserts the working importer and the future
+  bridge are never conflated.
+
+- **WP-11 item 4 — Podcast "coming soon" card (owner decision 2026-09-02).**
+  The operator Publish dashboard's podcast surface row
+  (`apps/portal-operator/src/screens/PublishDashboardScreen.tsx`) is now
+  always a neutral "Coming in a future release" card, regardless of the
+  state/health this asset's row happens to carry: no red error framing, no
+  "Approve this surface" checkbox, no retry button, and it is excluded from
+  the pre-checked/submittable surface set an "Approve and Publish selected"
+  click sends. The message text is aligned with the preflight API's
+  `health="unknown"` copy ("Podcast is not available yet; it is coming in a
+  future release."). Backend behavior is unchanged (WP-03/#129 already
+  reports podcast preflight as not-available) — this closes the gap where
+  the dashboard's own asset-listing surface still defaulted podcast to a
+  selectable `state="pending"` row that could be checked and submitted.
+  Four new tests in `PublishDashboardScreen.test.tsx` cover the neutral
+  card, the missing checkbox, the never-red-even-if-backend-reports-failed
+  case, and that approval excludes podcast from `approved_surface_ids`.
+
+- **WP-11 item 5 — Publish preflight in the UI (gap found in review of
+  #129).** The operator Publish screen never called `GET
+  .../assets/{id}/preflight`, so an operator could select a surface with
+  missing/invalid real-provider configuration and only find out from the
+  approval 409 after clicking. `PublishDashboardScreen.tsx` now shows a
+  per-surface readiness panel (`getPublishPreflight`, new hand-curated
+  `PublishPreflightResponse`/`PublishPreflightCheck` types in
+  `types/publish.ts` mirroring PR #129's backend models) for every asset,
+  before the approve action: loading state, ready/not-ready per surface
+  with the API's own safe next-step text, the podcast future-release
+  surface (never rendered "not ready"), and a load error with a retry
+  action. "Approve and Publish selected" now also stays disabled while any
+  SELECTED real (non-future) surface's readiness check reports
+  `health="error"`; a still-loading or failed readiness fetch adds no new
+  block of its own (approval's existing 409 refusal remains the real
+  backstop). Six new tests in `PublishDashboardScreen.test.tsx` cover
+  ready/not-ready/future/load-error-with-retry and the approve-disabled
+  gate; `e2e/publish-dashboard.spec.ts` gained a default preflight route
+  mock plus a dedicated not-ready-blocks-approve case (Playwright was not
+  run in this session — say so rather than claiming a run that didn't
+  happen).
+
 ### Changed
 
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
@@ -239,6 +324,82 @@ installer asset and is not a public or production release.
   to backend-specific FFmpeg arguments and fails closed when it is missing or
   the source kind does not match. The LPM hardware mock lab proves the exact
   DeckLink SDI and DirectShow HDMI argument boundary used by production.
+- **Recorded-Spanish captions — a published recording now carries an
+  operator-reviewed Spanish caption track alongside English, and cannot
+  publish without one** (owner requirement; Longmont is ~30% Latino and
+  Spanish captions on published recordings are a hard requirement; live
+  real-time Spanish is out of scope). The offline caption job
+  (`civiccast/captions/vod_job.py`) becomes two-phase: once an operator
+  approves the English caption cues, the approved English is translated to
+  Spanish through the same operator-selected translation tier the live tap
+  uses (local TranslateGemma by default, via `build_translator`), and the
+  Spanish cues are queued for their **own** operator review pass (spec §4.2,
+  operator review before publish — the Spanish text is AI output too). Only
+  when both review passes are complete are both tracks attached in a single
+  manifest rewrite: English default, a new `es`/"Spanish" secondary. The
+  public player already renders one caption button per manifest subtitle
+  track, so the Spanish option appears with no front-end change; the operator
+  console's review queue gains an EN/ES language badge and a language filter.
+  A new `language` column on `caption_review_items` (migration
+  `0083_caption_review_language`, default/backfill `en`) keeps the two review
+  passes cleanly separated on a shared asset. Spanish review rows are created
+  `low_confidence=False` — they are a deterministic transform of
+  human-approved English with no ASR audio to retain, so the low-confidence
+  audio-evidence approval gate cannot deadlock them.
+
+  Spanish is **required, not a setting**: there is no supported configuration
+  in which a caption-eligible recording completes with only English. The
+  `CIVICCAST_OFFLINE_CAPTION_SPANISH` switch is retired — a false value now
+  stops startup with an error naming the variable rather than quietly
+  publishing English-only recordings. The two ways the Spanish leg can come up
+  empty are both blocked and operator-actionable instead of green: a station
+  with no translation runtime records an attempt with a remediation on the job
+  row (and ultimately `failed`, reason intact) rather than shipping English;
+  an operator who rejects every Spanish cue leaves the job in
+  `awaiting_review` with a remediation, retry budget untouched, until they
+  edit or approve a Spanish cue — review decisions are not terminal, so that
+  move is really available. A recording whose *English* pass approved nothing
+  still completes uncaptioned, because there is no English track to hold it
+  for either.
+
+- **A captioned recording served through a CDN now actually gets its caption
+  tracks.** Caption attach rewrites the multivariant manifest and writes the
+  WebVTT tracks on local disk; for a package that was already pushed to a CDN
+  before caption review finished, the copy residents watch kept the
+  pre-caption manifest, and the job called itself complete anyway. The offline
+  caption worker now re-publishes the rewritten manifest, both segmented
+  caption tracks, and both flat sidecars to the same key prefix the package
+  was published under, through the same `upload_package_files` helper the
+  finalization worker publishes with (extracted from
+  `LiveFinalizationWorker._upload_package` and shared, so the manifest still
+  uploads **last** and a resident can never fetch a manifest naming a track
+  the CDN does not have). Only the caption artifacts are re-uploaded — the
+  video renditions are byte-identical and can be gigabytes. A republish
+  failure fails the job with the provider's message on the row rather than
+  completing it. Nothing is uploaded when no CDN is configured, or when the
+  recorded manifest URL for that package is not the configured CDN's URL for
+  it — which is how a locally served package, or one from a CDN the station
+  has since replaced, avoids having caption files pushed to a prefix whose
+  video segments were never uploaded. Proven against a mock CDN adapter, not a
+  live CDN account.
+
+- **A live-finalized recording can now be captioned.** CivicCast resolves an
+  asset's packaged video through two different conventions — a live-finalized
+  recording packages to `<recording>/<live_session_id>-hls/` (recorded on its
+  finalization job), an uploaded one to `.civiccast-packages/<asset_id>` under
+  the media storage root — and the caption path only ever knew the second. A
+  live recording would therefore transcribe and fill the review queue, then
+  fail every attempt to attach the reviewed track to a package directory that
+  was never written. The caption path now checks the finalization job's
+  manifest first and falls back to the upload convention, matching the
+  media-serving path's *live-finalized* precedence. It does not match that
+  path's upload branch: it resolves the standard
+  `.civiccast-packages/<asset_id>` location only, so a legacy pre-rc14 package
+  at `<file_path>/hls` is still not found and publishing such an asset stays
+  blocked (known gap; affects only stations upgraded across rc14 that still
+  hold pre-rc14 packages). This also means a station that broadcasts live but
+  has no media storage root configured is no longer refused permission to
+  publish: it has somewhere to write the caption track after all.
 
 ### Fixed
 
@@ -268,6 +429,47 @@ installer asset and is not a public or production release.
   and overlay CG paths are unchanged. Live video in a zone and board background
   audio are now labeled "coming in a future release"; the existing audio choice
   is disabled because the current renderer does not play it.
+- **Removed the Facility Router's hard-coded `government` channel.** Every
+  channel-dependent action (scheduled-take preview, overlay preview, and the
+  later L-bar command) now requires the operator to pick a currently
+  configured channel from a new "Target channel" picker
+  (`FacilityRouterScreen.tsx`), loaded through the same channel-profile API
+  and cache key Channel Ops and Live Room already use
+  (`listChannelProfiles`/`['channel-profiles']`) rather than a new endpoint.
+  A single configured channel auto-selects but still shows in the picker; two
+  or more require an explicit pick; the picker clears the selection and any
+  stale overlay/schedule preview if the chosen channel disappears from the
+  configured list; and both actions are disabled with a plain reason
+  ("Choose a channel before scheduling a take.", "Choose a channel before
+  previewing an overlay.", the no-channels-configured message, the load-error
+  message, or "Scheduling a take and previewing overlays require the meeting
+  operator role.") until a valid channel and role are in place. Manual
+  crosspoint preview (endpoint/source/destination) is unchanged and does not
+  take a channel_id. `FacilityRouterScreen.test.tsx` covers no-channel,
+  one-channel (auto-selected), multiple-channel (explicit pick required),
+  stale-selection, load-error, read-only-role, and mobile-viewport states;
+  `e2e/facility-router.spec.ts` is updated for the new channel picker and
+  role.
+
+### Security
+
+- **Triaged and allowlisted a new nltk pathsec-bypass advisory
+  (`PYSEC-2026-3740` / CVE-2026-81726 / GHSA-8mgp-746c-j5xp).** `pip-audit`
+  started flagging `nltk 3.10.3` (a transitive dependency of `crawl4ai`,
+  pulled in only by the optional `agenda-js-import` extra behind
+  `civiccast/agenda_import/js_portal.py`) for a sandbox bypass in
+  `TransitionParser.train()`/`.parse()`, `AveragedPerceptron.save()`/`.load()`,
+  `PerceptronTagger.save_to_json()`, and `save_maxent_params()`, which use raw
+  `open()` on caller-controlled paths instead of nltk's guarded `pathsec`
+  helpers. No fix version exists upstream as of this review (`pip-audit`
+  reports empty `fix_versions`). `civiccast/` never imports `nltk` directly,
+  and `js_portal.py`'s `crawler.arun()` call passes no `chunking_strategy`/
+  `extraction_strategy`, so crawl4ai's only nltk touchpoint
+  (`chunking_strategy.py`'s `sent_tokenize` punkt tokenizer) is never
+  exercised — none of the five vulnerable model-persistence APIs are
+  reachable from any code path in this repo. Documented in
+  `security/pip-audit-allowlist.json` with a review-by date of 2026-10-01;
+  re-check when nltk ships a fix.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

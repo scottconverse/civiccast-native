@@ -3,7 +3,7 @@
 """Durable per-delivery subscriber-notification outcomes (WP-05).
 
 Revision ID: 0085_notification_delivery_outcomes
-Revises: 0082_egress_graphics_overlay
+Revises: 0083_caption_review_language
 Create Date: 2026-09-01
 
 ``approve_publish`` used to report the subscriber-notifications surface
@@ -43,14 +43,14 @@ reads that absence as ``unverified`` (never as green evidence) rather than
 this migration inventing receipts for sends that never happened --
 see ``civiccast.publish.service.build_publish_asset_status``.
 
-Revision numbers are repo-global. ``alembic heads`` at authoring time was
-``0082_egress_graphics_overlay``, so this parents there. The plan sequences
-this file as ``0085`` after WP-04's ``0084_podcast_publish_jobs`` and PR #131's
-``0083_caption_review_language``; NEITHER HAS MERGED YET, so the id keeps its
-planned ``0085`` slot while ``down_revision`` points at the real current head.
-RE-PARENT ``down_revision`` onto ``0084`` (or ``0083``) when those land -- the
-single-head guard in ``tests/db/test_migration_graph_guards.py`` fails loudly
-if that re-parenting is missed.
+Revision numbers are repo-global. This parents on
+``0083_caption_review_language`` (PR #131, WP-02), the single ``alembic heads``
+at merge time. The plan sequenced this file as ``0085`` after WP-04's
+``0084_podcast_publish_jobs``, which has not landed; the id keeps its planned
+slot so WP-04 can take ``0084`` without renumbering, and the ``0084`` gap is
+deliberate rather than a missing migration. The single-head guard in
+``tests/db/test_migration_graph_guards.py`` fails loudly if a later branch
+forks the chain.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0085_notification_delivery_outcomes"
-down_revision = "0082_egress_graphics_overlay"
+down_revision = "0083_caption_review_language"
 branch_labels = None
 depends_on = None
 

@@ -60,6 +60,9 @@ async function mockReviewBackend(
   const roles = options.roles ?? ['records_clerk']
   let approvalFailuresRemaining = options.approvalFailures ?? 0
   const approvalBodies: unknown[] = []
+  // Every review-items URL the screen asked for, so a test can prove the
+  // language filter is applied by the SERVER rather than in the browser.
+  const listRequestUrls: string[] = []
   await page.route('**/api/staff/auth/me', async (route) => {
     await route.fulfill({
       status: 200,
@@ -76,7 +79,11 @@ async function mockReviewBackend(
   await page.route('**/api/staff/assets', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) })
   })
-  await page.route('**/api/staff/captions/review-items', async (route) => {
+  // Trailing * so the route still matches once the screen appends the
+  // server-side language filter (?language=es). A single * does not cross a
+  // '/', so this stays distinct from the /*/approve|edit|reject routes below.
+  await page.route('**/api/staff/captions/review-items*', async (route) => {
+    listRequestUrls.push(route.request().url())
     if (options.delayList) await new Promise((resolve) => setTimeout(resolve, 500))
     if (options.failList) {
       await route.fulfill({
@@ -128,7 +135,23 @@ async function mockReviewBackend(
     await route.fulfill({ status: 200, contentType: 'audio/wav', body: retainedWav })
   })
 
-  return { approvalBodies }
+  return { approvalBodies, listRequestUrls }
+}
+
+// The review queue has two tablists -- status and language -- so an unscoped
+// getByRole('tab', { name }) is ambiguous ('All' also matches 'All languages').
+// Scope every tab click to the tablist it belongs to, which both fixes the
+// ambiguity and makes each step say which filter it means.
+function statusTab(page: import('@playwright/test').Page, name: string) {
+  return page
+    .getByRole('tablist', { name: 'Caption review filter' })
+    .getByRole('tab', { name })
+}
+
+function languageTab(page: import('@playwright/test').Page, name: string) {
+  return page
+    .getByRole('tablist', { name: 'Caption review language filter' })
+    .getByRole('tab', { name })
 }
 
 async function openReview(page: import('@playwright/test').Page) {
@@ -156,12 +179,12 @@ test.describe('caption review queue', () => {
     await page.getByRole('button', { name: 'Save edit' }).click()
     await expect(page.getByText('Edited')).toBeVisible()
 
-    await page.getByRole('tab', { name: 'Edited' }).click()
+    await statusTab(page, 'Edited').click()
     await expect(page.getByText('motion carries unanimously')).toBeVisible()
 
     await playAndAcknowledgeEvidence(page)
     await page.getByRole('button', { name: 'Approve' }).click()
-    await page.getByRole('tab', { name: 'Approved' }).click()
+    await statusTab(page, 'Approved').click()
     await expect(page.getByLabel('Reviewed text for review-1')).toHaveValue('motion carries unanimously')
 
     await page
@@ -169,7 +192,7 @@ test.describe('caption review queue', () => {
       .filter({ has: page.getByLabel('Reviewed text for review-1') })
       .getByRole('button', { name: 'Reject' })
       .click()
-    await page.getByRole('tab', { name: 'Rejected' }).click()
+    await statusTab(page, 'Rejected').click()
     await expect(page.getByLabel('Reviewed text for review-1')).toHaveValue('motion carries')
   })
 
@@ -227,7 +250,7 @@ test.describe('caption review queue', () => {
     await openReview(page)
     await playAndAcknowledgeEvidence(page)
     await page.getByRole('button', { name: 'Approve' }).click()
-    await page.getByRole('tab', { name: 'Approved' }).click()
+    await statusTab(page, 'Approved').click()
     await expect(page.getByLabel('Reviewed text for review-1')).toHaveValue('motion carries')
     expect(backend.approvalBodies).toEqual([
       expect.objectContaining({ low_confidence_acknowledged: true }),
@@ -239,10 +262,58 @@ test.describe('caption review queue', () => {
   test('search and keyboard tabs filter results', async ({ page }) => {
     await mockReviewBackend(page)
     await openReview(page)
-    await page.getByRole('tab', { name: 'All' }).press('Enter')
+    await statusTab(page, 'All').press('Enter')
     await page.getByLabel('Search caption review').fill('parks')
     await expect(page.getByLabel('Reviewed text for review-2')).toHaveValue('parks board adjourned')
     await expect(page.getByLabel('Reviewed text for review-1')).toBeHidden()
+  })
+
+  test('the language filter is applied by the server, not the browser', async ({ page }) => {
+    // A meeting's caption queue is one row per cue in TWO languages, so a long
+    // session is thousands of rows; fetching them all to show one language was
+    // work the API already knows how to avoid. This pins that clicking a
+    // language tab actually narrows the REQUEST.
+    const backend = await mockReviewBackend(page)
+    await openReview(page)
+    expect(backend.listRequestUrls.at(-1)).not.toContain('language=')
+
+    await languageTab(page, 'Spanish').click()
+    await expect
+      .poll(() => backend.listRequestUrls.at(-1))
+      .toContain('language=es')
+
+    await languageTab(page, 'English').click()
+    await expect
+      .poll(() => backend.listRequestUrls.at(-1))
+      .toContain('language=en')
+
+    // Back to All: the language is part of the query key, so this is a cache
+    // hit -- both rows return with NO new request at all. That is the point of
+    // keying it rather than re-filtering a payload we should not have fetched.
+    const requestsBeforeReturn = backend.listRequestUrls.length
+    await languageTab(page, 'All languages').click()
+    // review-1 is the pending row, which the default status filter shows.
+    await expect(page.getByLabel('Reviewed text for review-1')).toBeVisible()
+    expect(backend.listRequestUrls).toHaveLength(requestsBeforeReturn)
+    // And the very first request -- the unfiltered one -- never sent the param.
+    expect(backend.listRequestUrls[0]).not.toContain('language=')
+  })
+
+  test('the two filter tablists are distinguishable to assistive tech', async ({ page }) => {
+    // Two tablists on one screen: an axe/screen-reader user must be able to
+    // tell "All" (status) from "All languages" apart, and the active language
+    // tab's count must not run into its name ("All languages2").
+    await mockReviewBackend(page)
+    await openReview(page)
+
+    await expect(statusTab(page, 'All')).toHaveCount(1)
+    await expect(languageTab(page, 'All languages')).toHaveCount(1)
+    await expect(languageTab(page, 'All languages')).toHaveAccessibleName(
+      'All languages, 2 shown',
+    )
+    await languageTab(page, 'Spanish').click()
+    // Inactive tabs carry the bare label, with no count glued on.
+    await expect(languageTab(page, 'All languages')).toHaveAccessibleName('All languages')
   })
 
   test('keeps caption review read-only without records clerk role', async ({ page }) => {

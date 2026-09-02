@@ -176,6 +176,60 @@ def test_app_factory_wires_translation_provider_into_tap_worker(
     assert provider.model_tag == "translategemma:4b"
 
 
+def test_app_factory_wires_translation_provider_factory_into_offline_caption_worker(
+    durable_app_env: Path,
+) -> None:
+    """Recorded-Spanish (VOD): the offline caption worker must get a
+
+    translation provider factory so the recorded-Spanish leg can run, and
+    the leg must be on by default. Mirrors the LIVE tap assertion above,
+    except the offline worker builds the translator lazily per attempt
+    (nothing queued -> no model load), so the wiring proof is the factory,
+    not an eagerly-built provider.
+    """
+
+    from civiccast.app import create_app
+    from civiccast.translate.ollama import OllamaSpanishTranslator
+
+    app = create_app()
+    worker = getattr(app.state, "offline_caption_worker", None)
+    assert worker is not None, "create_app() must build the offline caption worker"
+    # Spanish is on by default for the native station requirement.
+    assert worker._settings.spanish_enabled is True
+    assert worker._settings.spanish_target_language == "es"
+    # The factory is wired but not yet invoked (no model loaded at startup).
+    assert worker._translation_provider is None
+    assert worker._translation_provider_factory is not None
+    provider = worker._translation_provider_factory()
+    assert isinstance(provider, OllamaSpanishTranslator)
+    assert provider.model_tag == "translategemma:4b"
+
+
+def test_app_factory_wires_the_caption_cdn_republisher(durable_app_env: Path) -> None:
+    """A CDN-served recording must get its caption tracks, not just the local copy.
+
+    ``attach_reviewed_captions`` rewrites the LOCAL package. Without this
+    seam wired, a station with ``CIVICCAST_CDN_PROVIDER`` set would mark the
+    caption job complete while residents watching through the CDN still got
+    the pre-caption manifest. The republisher is built unconditionally and
+    resolves the adapter per call, so turning a CDN on later needs no
+    restart -- and it is a no-op when no CDN is configured.
+    """
+
+    from civiccast.app import create_app
+    from civiccast.captions.cdn_republish import VodPackageCdnRepublisher
+
+    app = create_app()
+    worker = getattr(app.state, "offline_caption_worker", None)
+    assert worker is not None, "create_app() must build the offline caption worker"
+    republisher = worker._cdn_republisher
+    assert isinstance(republisher, VodPackageCdnRepublisher)
+    # The adapter provider is app.state.resolve_cdn_adapter, the same seam
+    # the surge switch and finalization worker resolve through -- with no
+    # CDN configured in this environment it resolves to None.
+    assert republisher._adapter_provider() is None
+
+
 def test_native_station_startup_enables_caption_tap_feed_and_decode_back_proof(
     durable_app_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

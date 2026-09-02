@@ -353,6 +353,174 @@ describe('RecordingScreen form validation', () => {
   })
 })
 
+// --- Screen-reader-oriented validation wiring (WP-11 item 1) ---------------
+//
+// Every validation message needs a stable id; the offending control (or
+// group) needs aria-invalid + aria-describedby pointing at that id; and a
+// failed submit must move keyboard/screen-reader focus to the FIRST invalid
+// control, not just the form heading. These assertions read the real DOM
+// attributes rather than only the visible copy, so a regression that drops
+// the wiring (but leaves the message text in place) still fails here.
+
+describe('RecordingScreen validation accessibility wiring', () => {
+  it('focuses the slug field and wires aria-invalid/aria-describedby on an empty submit', async () => {
+    const { findByRole, findByLabelText } = renderScreen()
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+
+    const slug = (await findByLabelText(/Schedule ID \(slug\)/i)) as HTMLInputElement
+    await waitFor(() => expect(document.activeElement).toBe(slug))
+    expect(slug.getAttribute('aria-invalid')).toBe('true')
+
+    const describedBy = slug.getAttribute('aria-describedby')
+    expect(describedBy).toBeTruthy()
+    const message = document.getElementById(describedBy as string)
+    expect(message).toBeTruthy()
+    expect(message?.getAttribute('role')).toBe('alert')
+    expect(message?.textContent).toMatch(/Slug required/i)
+  })
+
+  it('focuses the Name field (not the slug field) when only Name is invalid', async () => {
+    const { findByLabelText, findByRole } = renderScreen()
+    // Grab the Name field handle before any error renders: once the error
+    // span mounts inside the same <label>, the label's accessible name is
+    // "Name" + the error text concatenated, so an exact-match query against
+    // it after submission is unreliable. The element identity is stable
+    // across the state update (React doesn't remount it), so the handle
+    // grabbed now stays valid for the assertions below.
+    const name = (await findByLabelText(/^Name$/i)) as HTMLInputElement
+    fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
+      target: { value: 'late-news' },
+    })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+
+    await waitFor(() => expect(document.activeElement).toBe(name))
+    expect(name.getAttribute('aria-invalid')).toBe('true')
+    const describedBy = name.getAttribute('aria-describedby')
+    expect(document.getElementById(describedBy as string)?.textContent).toMatch(
+      /Name is required/i,
+    )
+  })
+
+  it('focuses the URI field and marks it invalid when a network source is missing its URI', async () => {
+    const { findByLabelText, findByRole } = renderScreen()
+    fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
+      target: { value: 'late-news' },
+    })
+    fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
+    fireEvent.change(await findByLabelText(/Source kind/i), { target: { value: 'rtsp' } })
+    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+      target: { value: '2026-06-20T19:00' },
+    })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+
+    const uri = (await findByLabelText(/^URI$/i)) as HTMLInputElement
+    await waitFor(() => expect(document.activeElement).toBe(uri))
+    expect(uri.getAttribute('aria-invalid')).toBe('true')
+    const describedBy = uri.getAttribute('aria-describedby')
+    expect(document.getElementById(describedBy as string)?.textContent).toMatch(
+      /URI is required/i,
+    )
+  })
+
+  it('focuses the first weekday checkbox and marks the Weekdays group invalid when none is checked', async () => {
+    const { findByLabelText, findByRole } = renderScreen()
+    fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
+      target: { value: 'late-news' },
+    })
+    fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
+    fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
+    fireEvent.change(await findByLabelText(/Recurrence/i), { target: { value: 'weekly' } })
+    // Don't tick any weekdays. Set a valid time so only the weekdays-error surfaces.
+    fireEvent.change(await findByLabelText(/Time \(HH:MM UTC\)/i), {
+      target: { value: '19:00' },
+    })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+
+    const mondayCheckbox = (await findByLabelText(/Weekly day Mon/i)) as HTMLInputElement
+    await waitFor(() => expect(document.activeElement).toBe(mondayCheckbox))
+
+    const group = await findByRole('group', { name: /Weekdays/i })
+    expect(group.getAttribute('aria-invalid')).toBe('true')
+    const describedBy = group.getAttribute('aria-describedby')
+    expect(describedBy).toBeTruthy()
+    const message = document.getElementById(describedBy as string)
+    expect(message?.getAttribute('role')).toBe('alert')
+    expect(message?.textContent).toMatch(/Pick at least one weekday/i)
+  })
+
+  it('focuses the weekly time field and marks it invalid when the time format is bad', async () => {
+    const { findByLabelText, findByRole } = renderScreen()
+    fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
+      target: { value: 'late-news' },
+    })
+    fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
+    fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
+    fireEvent.change(await findByLabelText(/Recurrence/i), { target: { value: 'weekly' } })
+    fireEvent.click(await findByLabelText(/Weekly day Mon/i))
+    fireEvent.change(await findByLabelText(/Time \(HH:MM UTC\)/i), {
+      target: { value: 'not-a-time' },
+    })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+
+    const time = (await findByLabelText(/Time \(HH:MM UTC\)/i)) as HTMLInputElement
+    await waitFor(() => expect(document.activeElement).toBe(time))
+    expect(time.getAttribute('aria-invalid')).toBe('true')
+    const describedBy = time.getAttribute('aria-describedby')
+    expect(document.getElementById(describedBy as string)?.textContent).toMatch(
+      /Time must be HH:MM/i,
+    )
+  })
+
+  it('focuses the duration field when it is the only invalid field', async () => {
+    const { findByLabelText, findByRole } = renderScreen()
+    fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
+      target: { value: 'late-news' },
+    })
+    fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
+    fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
+    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+      target: { value: '2026-06-20T19:00' },
+    })
+    fireEvent.change(await findByLabelText(/Duration \(HH:MM:SS\)/i), {
+      target: { value: 'not-a-duration' },
+    })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+
+    const duration = (await findByLabelText(/Duration \(HH:MM:SS\)/i)) as HTMLInputElement
+    await waitFor(() => expect(document.activeElement).toBe(duration))
+    expect(duration.getAttribute('aria-invalid')).toBe('true')
+    const describedBy = duration.getAttribute('aria-describedby')
+    expect(document.getElementById(describedBy as string)?.textContent).toMatch(
+      /Duration must be HH:MM:SS/i,
+    )
+  })
+
+  it('clears aria-invalid once the field is corrected and resubmitted successfully', async () => {
+    const { findByLabelText, findByRole } = renderScreen()
+    // Grab every handle before the first (all-fields-empty) submit: once
+    // errors render inside these labels, exact-match label queries against
+    // them become unreliable (see the Name-field test above). Element
+    // identity survives the state update, so the handles stay valid.
+    const slug = (await findByLabelText(/Schedule ID \(slug\)/i)) as HTMLInputElement
+    const name = (await findByLabelText(/^Name$/i)) as HTMLInputElement
+    const inputId = (await findByLabelText(/Input ID/i)) as HTMLInputElement
+    const start = (await findByLabelText(/Start \(UTC\)/i)) as HTMLInputElement
+
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+    expect(slug.getAttribute('aria-invalid')).toBe('true')
+
+    fireEvent.change(slug, { target: { value: 'late-news' } })
+    fireEvent.change(name, { target: { value: 'Late News' } })
+    fireEvent.change(inputId, { target: { value: 'sdi-1' } })
+    fireEvent.change(start, { target: { value: '2026-06-20T19:00' } })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+
+    await waitFor(() => expect(vi.mocked(createRecordingSchedule)).toHaveBeenCalled())
+    expect(slug.getAttribute('aria-invalid')).toBeNull()
+    expect(slug.getAttribute('aria-describedby')).toBeNull()
+  })
+})
+
 // --- 2-step delete confirm --------------------------------------------------
 
 describe('RecordingScreen delete confirm', () => {

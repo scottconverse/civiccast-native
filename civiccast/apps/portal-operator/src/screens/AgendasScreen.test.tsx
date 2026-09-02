@@ -634,3 +634,44 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
     ).toBeTruthy()
   })
 })
+
+// WP-11 item 3 (owner directive): a regression test so the working
+// CivicClerk/Legistar/PrimeGov agenda importer and the not-yet-built
+// CivicSuite event bridge are never conflated on this screen.
+describe('AgendasScreen CivicSuite bridge card', () => {
+  it('shows the CivicSuite bridge as a future-release card beside the working importer, with no configuration fields', async () => {
+    const { findByLabelText, findByText, queryByRole } = renderScreen()
+
+    // The real importer is still present, selectable, and includes civicclerk.
+    const source = (await findByLabelText('External agenda source')) as HTMLSelectElement
+    const optionValues = Array.from(source.options).map((o) => o.value)
+    expect(optionValues).toContain('civicclerk')
+
+    // The future card is present, named distinctly, and explicit that it's
+    // not built yet.
+    expect(
+      await findByText(/CivicSuite event bridge — coming in a future release/i),
+    ).toBeTruthy()
+    expect(
+      await findByText(/authenticated connection to a jurisdiction.s CivicSuite account/i),
+    ).toBeTruthy()
+    expect(await findByText(/send published recording links back to CivicClerk/i)).toBeTruthy()
+
+    // No executable configuration for the future bridge: nothing named
+    // "CivicSuite" is an actual form control an operator could fill in.
+    expect(queryByRole('button', { name: /civicsuite/i })).toBeNull()
+    expect(queryByRole('textbox', { name: /civicsuite/i })).toBeNull()
+    expect(queryByRole('combobox', { name: /civicsuite/i })).toBeNull()
+  })
+
+  it('keeps the working importer heading distinct from the future-bridge heading', async () => {
+    const { findByText } = renderScreen()
+    // Both headings render, and neither absorbed the other's copy: the
+    // working importer's own heading says nothing about CivicSuite, and the
+    // future card's heading says nothing about the working import flow.
+    const importerHeading = await findByText('Import from an external agenda system')
+    expect(importerHeading.textContent).not.toMatch(/CivicSuite/i)
+    const bridgeHeading = await findByText(/CivicSuite event bridge — coming in a future release/i)
+    expect(bridgeHeading.textContent).not.toMatch(/Import from an external agenda system/i)
+  })
+})

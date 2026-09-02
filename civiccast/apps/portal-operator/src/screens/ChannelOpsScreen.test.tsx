@@ -107,6 +107,31 @@ function graphicsOverlayState(overrides: Partial<GraphicsOverlayStateResponse> =
 }
 
 describe('GraphicsOverlayPanel', () => {
+  // WP-11 item 2 (audit UX-007): pin the help copy so it can't regress back
+  // to "station bug graphics overlay" (a different broadcast graphic from
+  // the lower-third this control actually edits) and stays explicit that
+  // the change lands on the channel's next pipeline build or a scheduled
+  // swap, never as a hot-change to an already-live pipeline.
+  it('explains next-build/scheduled-swap timing and never says "station bug"', () => {
+    const { getByText, queryByText } = render(
+      <GraphicsOverlayPanel
+        channelId="public"
+        state={graphicsOverlayState()}
+        loadError={null}
+        saving={false}
+        canEdit
+        saveError={null}
+        onSave={() => {}}
+      />,
+    )
+    expect(
+      getByText(
+        'Changes this channel’s lower-third banner on the next pipeline build or scheduled swap. It does not hot-change an already-live pipeline.',
+      ),
+    ).toBeTruthy()
+    expect(queryByText(/station bug/i)).toBeNull()
+  })
+
   it('reflects the returned/persisted enabled state in the toggle and badge', () => {
     const { getByText, getByDisplayValue, queryByText } = render(
       <GraphicsOverlayPanel

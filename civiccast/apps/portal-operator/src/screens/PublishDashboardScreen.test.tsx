@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import type { StaffIdentityResponse } from '../types/api.generated'
 import type {
   PublishDashboardResponse,
+  PublishPreflightResponse,
   PublishSurfaceState,
   PublishSurfaceStatus,
 } from '../types/publish'
@@ -20,6 +21,7 @@ vi.mock('../api/client', () => ({
     }
   },
   approvePublishAsset: vi.fn(),
+  getPublishPreflight: vi.fn(),
   getStaffIdentity: vi.fn(),
   listPublishAssets: vi.fn(),
   retryPublishSurface: vi.fn(),
@@ -28,6 +30,7 @@ vi.mock('../api/client', () => ({
 import {
   ApiError,
   approvePublishAsset,
+  getPublishPreflight,
   getStaffIdentity,
   listPublishAssets,
   retryPublishSurface,
@@ -92,6 +95,80 @@ function renderScreen() {
   )
 }
 
+// Reused by both the WP-11 item 4 (podcast future card) and item 5
+// (readiness panel) suites: an asset with a real approvable Portal surface
+// plus the podcast future surface, so preflight tests can exercise a
+// "future" check alongside a "real" one on the same asset.
+function podcastDashboard(
+  podcastOverrides: { state?: PublishSurfaceState; health?: 'ok' | 'warning' | 'error' | 'unknown' } = {},
+): PublishDashboardResponse {
+  return {
+    summary: {
+      total_assets: 1,
+      draft: 1,
+      portal_live: 0,
+      archive_verified: 0,
+      degraded: 0,
+      needs_operator_action: 0,
+    },
+    assets: [
+      {
+        asset_id: 'sample-asset',
+        title: 'Sample asset',
+        dashboard_state: 'draft',
+        dashboard_label: 'Draft',
+        canonical_public: false,
+        archive_verified: false,
+        reach_degraded: false,
+        needs_operator_action: false,
+        public_record_required: true,
+        published_at: null,
+        surfaces: [
+          {
+            id: 'portal',
+            label: 'Portal',
+            kind: 'canonical',
+            state: 'pending',
+            approval: 'pending',
+            required: true,
+            url: null,
+            last_attempt_at: null,
+            completed_at: null,
+            health: 'unknown',
+            message: 'Ready.',
+            next_step: 'Approve publish.',
+          },
+          {
+            id: 'podcast',
+            label: 'Podcast episode',
+            kind: 'audience',
+            state: podcastOverrides.state ?? 'pending',
+            approval: 'pending',
+            required: false,
+            url: null,
+            last_attempt_at: null,
+            completed_at: null,
+            health: podcastOverrides.health ?? 'unknown',
+            message: 'Podcast RSS is an audience surface generated after operator approval.',
+            next_step: 'Approve podcast generation or leave it pending for later audio review.',
+          },
+        ],
+      },
+    ],
+  }
+}
+
+function preflight(
+  checks: PublishPreflightResponse['checks'],
+  assetId = 'sample-asset',
+): PublishPreflightResponse {
+  return {
+    asset_id: assetId,
+    ready: checks.every((check) => check.health === 'ok' || !check.required),
+    checks,
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getStaffIdentity).mockResolvedValue({
@@ -99,6 +176,24 @@ beforeEach(() => {
     operator_display_name: 'Dana',
     roles: ['publish_operator'],
   } as StaffIdentityResponse)
+  // Default: every surface reads ready, so pre-existing tests that don't
+  // care about WP-11 item 5's readiness panel see a clean state.
+  vi.mocked(getPublishPreflight).mockImplementation(async (assetId: string) =>
+    preflight(
+      [
+        {
+          id: 'portal',
+          label: 'Portal',
+          kind: 'canonical',
+          required: true,
+          health: 'ok',
+          message: 'Portal manifest is packaged and ready.',
+          next_step: 'Approve portal publication when review is complete.',
+        },
+      ],
+      assetId,
+    ),
+  )
 })
 
 describe('PublishDashboardScreen safety feedback', () => {
@@ -571,5 +666,220 @@ describe('PublishDashboardScreen state vocabulary', () => {
     const { findByText } = renderScreen()
 
     expect(await findByText(/Showing the first 1 of 500/i)).toBeTruthy()
+  })
+})
+
+// WP-11 item 4 (owner decision 2026-09-02). The dashboard listing's own
+// build_initial_surfaces() gives the podcast row state="pending",
+// health="unknown" -- exactly what a normal, selectable, approvable surface
+// looks like. Left alone that renders a checked "Approve this surface" box
+// the operator's "Approve and Publish selected" click would submit, which
+// the backend's real approve_publish() podcast branch currently answers
+// with a fabricated https://portal.example/... "success" URL. The frontend
+// fix is to always special-case this surface into a neutral, non-selectable
+// card, regardless of what state/health this particular listing row
+// happens to carry.
+describe('PublishDashboardScreen podcast future-release card (WP-11 item 4)', () => {
+  it('shows the podcast surface as a neutral future-release card with the API-aligned message', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    const { findByText } = renderScreen()
+
+    expect(await findByText('Coming in a future release')).toBeTruthy()
+    expect(
+      await findByText('Podcast is not available yet; it is coming in a future release.'),
+    ).toBeTruthy()
+  })
+
+  it('never renders an "Approve this surface" checkbox for podcast', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    const { findByText, queryAllByLabelText } = renderScreen()
+
+    await findByText('Podcast episode')
+    // Only the Portal surface's checkbox should exist -- podcast never gets
+    // one, so approving the asset can never silently include it.
+    expect(queryAllByLabelText(/Approve this surface/i)).toHaveLength(1)
+  })
+
+  it('never renders podcast in error red, even if a future backend change reports it as failed/error', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(
+      podcastDashboard({ state: 'failed', health: 'error' }),
+    )
+    const { findByText, queryByText } = renderScreen()
+
+    // Still the neutral future-release framing, not a red "Failed" state or
+    // a "Retry this surface" button.
+    expect(await findByText('Coming in a future release')).toBeTruthy()
+    expect(
+      await findByText('Podcast is not available yet; it is coming in a future release.'),
+    ).toBeTruthy()
+    expect(queryByText('Retry this surface')).toBeNull()
+  })
+
+  it('excludes podcast from the pre-checked/submittable surface set so approval can never report a fake podcast success', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    vi.mocked(approvePublishAsset).mockResolvedValue({} as never)
+    const { findByRole } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
+
+    await waitFor(() =>
+      expect(approvePublishAsset).toHaveBeenCalledWith(
+        'sample-asset',
+        expect.objectContaining({ approved_surface_ids: ['portal'] }),
+      ),
+    )
+  })
+})
+
+// WP-11 item 5 (gap found in review of #129): the operator Publish screen
+// never called GET .../preflight before this. These tests cover the four
+// states a real preflight fetch can produce: ready, not-ready (with the
+// API's own safe next-action text), future (podcast, never red), and a load
+// error with retry -- plus that "Approve and Publish selected" stays
+// disabled while a SELECTED real surface reads not-ready.
+describe('PublishDashboardScreen publish preflight panel', () => {
+  it('shows a ready surface with its API message', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    vi.mocked(getPublishPreflight).mockResolvedValue(
+      preflight([
+        {
+          id: 'portal',
+          label: 'Portal',
+          kind: 'canonical',
+          required: true,
+          health: 'ok',
+          message: 'Portal manifest is packaged and ready.',
+          next_step: 'Approve portal publication when review is complete.',
+        },
+      ]),
+    )
+    const { findByText, findByRole } = renderScreen()
+
+    expect(await findByText('Readiness check')).toBeTruthy()
+    expect(await findByText('Ready')).toBeTruthy()
+    expect(await findByText('Portal manifest is packaged and ready.')).toBeTruthy()
+    expect(
+      await findByText('Approve portal publication when review is complete.'),
+    ).toBeTruthy()
+
+    const publish = await findByRole('button', { name: 'Approve and Publish selected' })
+    expect(publish.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('shows a not-ready surface with the API safe next-action text and disables Approve', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    vi.mocked(getPublishPreflight).mockResolvedValue(
+      preflight([
+        {
+          id: 'portal',
+          label: 'Portal',
+          kind: 'canonical',
+          required: true,
+          health: 'error',
+          credential_reference: 'CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real',
+          message: 'Portal cannot publish: DATABASE_URL is not configured.',
+          next_step: 'Fix the CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real configuration, then rerun preflight.',
+        },
+      ]),
+    )
+    const { findByText, findByRole } = renderScreen()
+
+    expect(await findByText('Not ready')).toBeTruthy()
+    expect(
+      await findByText('Portal cannot publish: DATABASE_URL is not configured.'),
+    ).toBeTruthy()
+    expect(
+      await findByText(
+        'Fix the CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real configuration, then rerun preflight.',
+      ),
+    ).toBeTruthy()
+
+    const publish = await findByRole('button', { name: 'Approve and Publish selected' })
+    await waitFor(() => expect(publish.hasAttribute('disabled')).toBe(true))
+    expect(
+      await findByText(/failed its readiness check.*DATABASE_URL is not configured/i),
+    ).toBeTruthy()
+  })
+
+  it('shows the podcast surface as "Future release", never "Not ready", even if its check reports error', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    vi.mocked(getPublishPreflight).mockResolvedValue(
+      preflight([
+        {
+          id: 'portal',
+          label: 'Portal',
+          kind: 'canonical',
+          required: true,
+          health: 'ok',
+          message: 'Portal manifest is packaged and ready.',
+          next_step: 'Approve portal publication when review is complete.',
+        },
+        {
+          id: 'podcast',
+          label: 'Podcast episode',
+          kind: 'audience',
+          required: false,
+          health: 'error',
+          message: 'Podcast is not available yet; it is coming in a future release.',
+          next_step: 'No action required.',
+        },
+      ]),
+    )
+    const { findByText, findAllByText } = renderScreen()
+
+    // Both the surface card (item 4) and the readiness panel (item 5) show
+    // the same neutral message for podcast -- confirm at least the
+    // readiness panel's copy, scoped to that section.
+    expect(await findByText('Future release')).toBeTruthy()
+    const matches = await findAllByText(
+      'Podcast is not available yet; it is coming in a future release.',
+    )
+    expect(matches.length).toBeGreaterThanOrEqual(1)
+
+    // The readiness panel never labels podcast "Not ready", regardless of
+    // the health value its own check carries.
+    const panel = (await findByText('Readiness check')).closest('section')
+    expect(panel).toBeTruthy()
+    expect(within(panel as HTMLElement).queryByText('Not ready')).toBeNull()
+    expect(
+      within(panel as HTMLElement).getByText(
+        'Podcast is not available yet; it is coming in a future release.',
+      ),
+    ).toBeTruthy()
+  })
+
+  it('shows a load error with a retry action, and does not itself block Approve', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    vi.mocked(getPublishPreflight).mockRejectedValue(
+      new ApiError('Request failed: 503', 503, 'Durable storage is not ready.'),
+    )
+    const { findByText, findByRole } = renderScreen()
+
+    expect(await findByText('Durable storage is not ready.')).toBeTruthy()
+    const retry = await findByRole('button', { name: 'Retry readiness check' })
+    expect(retry).toBeTruthy()
+
+    // Loading/errored readiness adds no NEW block: approval's own 409 is
+    // still the real backstop, so a slow/broken readiness fetch alone can't
+    // prevent an otherwise-valid publish.
+    const publish = await findByRole('button', { name: 'Approve and Publish selected' })
+    expect(publish.hasAttribute('disabled')).toBe(false)
+
+    vi.mocked(getPublishPreflight).mockResolvedValue(
+      preflight([
+        {
+          id: 'portal',
+          label: 'Portal',
+          kind: 'canonical',
+          required: true,
+          health: 'ok',
+          message: 'Portal manifest is packaged and ready.',
+          next_step: 'Approve portal publication when review is complete.',
+        },
+      ]),
+    )
+    fireEvent.click(retry)
+    expect(await findByText('Ready')).toBeTruthy()
   })
 })

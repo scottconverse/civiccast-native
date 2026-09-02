@@ -136,3 +136,24 @@ export interface PublishDashboardResponse {
   summary: PublishDashboardSummary
   assets: PublishAssetStatus[]
 }
+
+// WP-11 item 5: mirrors civiccast/publish/models.py's PublishPreflightCheck
+// / PublishPreflightResponse (PR #129), the same shape the generated
+// api.generated.ts carries. Hand-curated here (like every other Publish
+// type in this file) so the Publish screens can import from one place.
+export interface PublishPreflightCheck {
+  id: string
+  label: string
+  kind: PublishSurfaceKind
+  required: boolean
+  health: 'ok' | 'warning' | 'error' | 'unknown'
+  credential_reference?: string | null
+  message: string
+  next_step: string
+}
+
+export interface PublishPreflightResponse {
+  asset_id: string
+  ready: boolean
+  checks: PublishPreflightCheck[]
+}

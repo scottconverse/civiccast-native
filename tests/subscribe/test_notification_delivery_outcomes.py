@@ -39,7 +39,7 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 _WP05_TABLES = {"notification_delivery_outcomes", "notification_delivery_attempts"}
 _PRIOR_TABLE = "subscription_webhook_retries"
 _REVISION = "0085_notification_delivery_outcomes"
-_PARENT = "0082_egress_graphics_overlay"
+_PARENT = "0083_caption_review_language"
 
 
 def _cfg(url: str) -> Config:
@@ -62,12 +62,13 @@ def test_alembic_graph_still_has_exactly_one_head() -> None:
     heads = tuple(ScriptDirectory.from_config(_cfg("sqlite://")).get_heads())
     assert heads == (_REVISION,), (
         f"expected the single head to be {_REVISION}; got {sorted(heads)}. "
-        "If WP-04's 0084 or PR #131's 0083 has landed, re-parent 0085's "
-        "down_revision onto the new head."
+        "Re-parent the newest migration onto the single current head before "
+        "merging -- two heads break `alembic upgrade head`, which is the "
+        "installer's own storage-setup path."
     )
 
 
-def test_0085_parent_is_the_current_head_at_authoring_time() -> None:
+def test_0085_parents_on_the_caption_language_migration() -> None:
     script = ScriptDirectory.from_config(_cfg("sqlite://"))
     revision = script.get_revision(_REVISION)
     assert revision.down_revision == _PARENT

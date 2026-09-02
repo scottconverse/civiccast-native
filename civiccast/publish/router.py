@@ -165,11 +165,91 @@ def get_caption_job_store(request: Request) -> OfflineCaptionJobStore | None:
     )
 
 
+class CaptionJobNotQueueableError(Exception):
+    """A recording's caption job could not be queued.
+
+    Carries the operator-facing *cause* clause only; the route wraps it in
+    :data:`CAPTION_JOB_UNQUEUEABLE_DETAIL`, which supplies the rest of the
+    sentence and the reassurance that nothing was published.
+    """
+
+
+#: Raised as the 409 body when a recording cannot have its caption job
+#: queued. Publication is what starts the caption obligation, so approving
+#: publication while knowing the obligation cannot even be *recorded* is the
+#: one outcome this route must not produce.
+CAPTION_JOB_UNQUEUEABLE_DETAIL = (
+    "Publish blocked: CivicCast cannot queue this recording's caption job, so approving "
+    "would put it on the public record with no path to the captions the law requires. "
+    "Nothing was published. Cause: {cause} Fix that and approve again."
+)
+
+
+def _resolve_caption_package_dir(
+    asset_id: str,
+    finalization_worker: Any,
+) -> Path | None:
+    """Resolve where this asset's HLS package actually lives.
+
+    Two packaging conventions exist and only one of them is under the upload
+    root, so asking ``resolve_vod_package_dir`` alone gets a LIVE-finalized
+    recording wrong:
+
+    * **live-finalized** -- ``LiveFinalizationWorker._package_once`` writes to
+      ``<recording_path.parent>/<live_session_id>-hls/`` and records the
+      manifest on the finalization job. Nothing about it is under
+      ``CIVICCAST_UPLOAD_DIR``, and a station broadcasting live may not have
+      an upload root configured at all.
+    * **uploaded** -- ``.civiccast-packages/<asset_id>`` under the upload root.
+
+    Live is checked first, through the same ``finalization_worker.get_status``
+    seam :func:`_resolve_local_recording` already uses. This closes the "a
+    live-finalized recording would transcribe but fail to attach" follow-up in
+    docs/ops/background-workers.md -- and, now that a missing package
+    directory blocks approval rather than merely failing stage two later, it
+    is what keeps a live station with no upload root from being told it cannot
+    publish.
+
+    **How far the agreement with the media-serving path actually goes.** The
+    *live-finalized precedence* matches
+    ``civiccast.stream.media_router._package_dir_for_asset``: the finalization
+    job's manifest path wins there too. The upload branch does NOT match. That
+    function additionally checks the asset's ``manifest_url`` suffix, verifies
+    the resolved directory is contained by the package root and the package
+    root by the upload root, and requires ``playlist.m3u8`` to exist -- and,
+    failing all that, falls back to the legacy pre-rc14 shared
+    ``<file_path>/hls`` location. This resolver does none of that: it returns
+    the standard ``.civiccast-packages/<asset_id>`` path from
+    ``resolve_vod_package_dir`` without existence or containment checks.
+
+    Known gap, stated rather than papered over: a **legacy pre-rc14 package**
+    living at ``<file_path>/hls`` is not resolved here, so the caption gate
+    would refuse to queue -- and therefore block publish -- for such an asset
+    even though the media router can still serve it. The blast radius is
+    stations upgraded across rc14 that still hold pre-rc14 packages; new
+    packaging never writes that path. Close it by resolving through a shared
+    helper if that population turns out to matter.
+    """
+
+    if finalization_worker is not None:
+        try:
+            job_status = finalization_worker.get_status(asset_id)
+        except Exception:  # pragma: no cover - unwired/ephemeral worker
+            job_status = None
+        manifest_path = getattr(job_status, "local_package_manifest_path", None)
+        if manifest_path:
+            return Path(manifest_path).resolve().parent
+    return resolve_vod_package_dir(asset_id)
+
+
 def _queue_offline_captions(
     caption_job_store: OfflineCaptionJobStore | None,
     staff_asset: StaffAssetRow,
+    *,
+    finalization_worker: Any = None,
+    require_published: bool = True,
 ) -> None:
-    """Queue captioning for a recording that just became public (K3).
+    """Queue captioning for a recording that is becoming public (K3).
 
     Publishing is the trigger because "captioned published files" is the
     legal obligation the offline caption path exists to meet — the moment
@@ -178,39 +258,56 @@ def _queue_offline_captions(
     files every cue in the operator review queue; nothing reaches the
     resident-facing package until an operator has decided on it.
 
-    Deliberately best-effort: captioning is asynchronous work that trails
-    publication, so a queueing failure is logged and the publish response
-    still reflects what actually published. The operator sees the gap on
-    the caption review queue, and re-approving the asset re-queues it.
+    **Raises** :class:`CaptionJobNotQueueableError` when the job cannot be
+    queued. It used to swallow every failure and log, on the reasoning that
+    captioning trails publication and must not fail the publish. The half of
+    that reasoning which is still true — captioning trails publication, and a
+    public record must not wait days for caption review — is preserved by
+    when this runs, not by ignoring its result: the approval route calls it
+    *before* approving, so the operator gets a controlled 409 naming the
+    cause and nothing is published, rather than a public recording with no
+    caption job and only a line in a log file to say so.
+
+    ``require_published=False`` is that pre-approval call: the asset has not
+    been marked public yet, so the ``published_at`` check must not veto it.
+    The trade is explicit — if the approval that follows then fails, the
+    asset has a queued caption job it did not need yet. That is bounded and
+    harmless: the job is idempotent per asset (so the operator's retry reuses
+    it rather than transcribing twice), and the worker publishes nothing on
+    its own — it fills the review queue and waits for an operator either way.
+    A public recording with no caption job is not similarly recoverable,
+    because nothing afterwards goes looking for one.
     """
 
-    if caption_job_store is None or staff_asset.published_at is None:
+    if require_published and staff_asset.published_at is None:
         return
     source_path = Path(staff_asset.file_path) if staff_asset.file_path else None
-    # KNOWN FOLLOW-UP (out of CivicCast One v1 scope, owner-approved to
-    # defer -- see "Known follow-ups" in docs/ops/background-workers.md):
-    # resolve_vod_package_dir only knows the UPLOAD packaging convention
-    # (.civiccast-packages/<asset_id> under the upload root). A
-    # LIVE-finalized recording packages to a different, unrelated path
-    # instead (<recording_path.parent>/<live_session_id>-hls/, recorded on
-    # LiveFinalizationJob.local_package_manifest_path -- see
-    # civiccast.live.finalization_worker.LiveFinalizationWorker
-    # ._package_once and civiccast.stream.media_router
-    # ._package_dir_for_asset, which already knows to prefer it). One v1
-    # only reaches this function from an uploaded-and-published asset (LIVE
-    # broadcast is deferred keystone K4), so that mismatch is unreachable
-    # today: transcription (stage one) doesn't need the package directory
-    # and would still succeed, but attach (stage two) would fail every
-    # retry against a package directory that was never written, and the
-    # job would land in `failed` with the recording permanently
-    # uncaptioned. Fix when K4 lands: mirror media_router's fallback here.
-    package_dir = resolve_vod_package_dir(staff_asset.asset_id)
-    if source_path is None or package_dir is None:
+    if source_path is None:
+        # Not caption-eligible: there is no local recording to transcribe, so
+        # no caption job is owed and none can be queued. This is the one skip
+        # that stays a skip -- blocking here would stop an operator publishing
+        # an asset CivicCast never had the media for, which is a different
+        # thing entirely from a recording whose captions cannot be arranged.
         _LOG.info(
-            "Skipped offline captioning for %s: no local source file or upload storage.",
+            "No offline caption job for %s: the asset has no local recording file.",
             staff_asset.asset_id,
         )
         return
+    if caption_job_store is None:
+        raise CaptionJobNotQueueableError(
+            "this station has no caption job store configured, which usually means "
+            "durable storage is unavailable — check Settings > System health."
+        )
+    # Live-finalized packages are NOT under the upload root; see
+    # _resolve_caption_package_dir, which mirrors media_router's precedence.
+    package_dir = _resolve_caption_package_dir(staff_asset.asset_id, finalization_worker)
+    if package_dir is None:
+        raise CaptionJobNotQueueableError(
+            "CivicCast cannot work out where this recording's packaged video lives, so "
+            "there is nowhere to write its caption track. A live recording resolves this "
+            "from its finalization job; an uploaded one needs the media storage location "
+            "set in Setup."
+        )
     try:
         enqueue_offline_caption_job(
             caption_job_store,
@@ -218,10 +315,9 @@ def _queue_offline_captions(
             source_path=source_path,
             package_dir=package_dir,
         )
-    except Exception:
-        _LOG.exception(
-            "Published %s but could not queue its offline captions.", staff_asset.asset_id
-        )
+    except Exception as exc:
+        _LOG.exception("Could not queue offline captions for %s.", staff_asset.asset_id)
+        raise CaptionJobNotQueueableError(f"queueing the caption job failed ({exc}).") from exc
 
 
 def get_activitypub_store(request: Request) -> ActivityPubStore:
@@ -371,6 +467,28 @@ def approve_publish_asset(
                 "Run the packager or fix ingest before approving publish."
             ),
         )
+    # Two gates stand in front of approval, and both must pass before any
+    # surface publishes. They are ordered caption-first deliberately.
+    #
+    # WP-02: publication is what starts the caption obligation, and the public
+    # record must not wait days for caption review (so publish-first stays) --
+    # but a station that cannot even record the obligation must not publish at
+    # all. Queueing here means there is no window in which a recording is
+    # public with no caption job: either both happen or neither does, and the
+    # operator gets a 409 naming the cause instead of a green publish and a
+    # line in a log file.
+    try:
+        _queue_offline_captions(
+            caption_job_store,
+            staff_asset,
+            finalization_worker=finalization_worker,
+            require_published=False,
+        )
+    except CaptionJobNotQueueableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=CAPTION_JOB_UNQUEUEABLE_DETAIL.format(cause=str(exc)),
+        ) from exc
     try:
         record = approve_publish(
             asset=staff_asset,
@@ -385,6 +503,19 @@ def approve_publish_asset(
     except PublishConfigurationError as exc:
         # WP-03: a selected surface's real-provider config is missing/invalid
         # -- a controlled 409 before any side effect, never an uncaught 500.
+        #
+        # Interaction with the caption gate above, stated because WP-03 makes
+        # this path routine rather than rare: reaching here means the caption
+        # job WAS queued and then nothing published. That is deliberate and
+        # self-correcting, not a leak. enqueue_offline_caption_job is
+        # idempotent per asset, so when the operator fixes the provider
+        # configuration and approves again the same job is reused -- any
+        # transcription it already did is reused too, not repeated. The
+        # alternative ordering (validate providers, then queue captions) would
+        # need this route to re-run approve_publish's own readiness gate
+        # itself, and a gate evaluated in two places is a gate that drifts.
+        # One gate, one owner; a queued job for an unpublished asset costs a
+        # review-queue row that the retry consumes.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
@@ -396,7 +527,6 @@ def approve_publish_asset(
         staff_asset=staff_asset,
         record=record,
     )
-    _queue_offline_captions(caption_job_store, staff_asset)
     status_response = build_publish_asset_status(staff_asset, record)
     broker_client.publish(build_publish_approved_event(status_response))
     activitypub_config = http_request.app.state.activitypub_config
@@ -439,6 +569,10 @@ def retry_publish_asset_surface(
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
     delivery_store: NotificationDeliveryStore | None = Depends(get_notification_delivery_store),
     target_lookup: ChannelAssociationLookup | None = Depends(get_publication_target_lookup),
+    # Same seam the approve route uses: a portal retry that makes a
+    # LIVE-finalized recording public has to resolve its package directory
+    # from the finalization job, not from the upload convention.
+    finalization_worker: Any = Depends(get_live_finalization_worker),
 ) -> PublishAssetStatus:
     """Retry a single surface without changing the rest of the publish run."""
     asset_store = _require_asset_store(postgres_store)
@@ -509,5 +643,28 @@ def retry_publish_asset_surface(
         surface.id == "portal" and surface.state == "succeeded" for surface in record.surfaces
     )
     if surface_id == "portal" and portal_became_public:
-        _queue_offline_captions(caption_job_store, staff_asset)
+        # This retry is what made the recording public, so it carries the
+        # same obligation as a first approval. It cannot be pre-checked the
+        # way approval is -- the recording is already public by the time we
+        # know the retry succeeded -- so the failure is surfaced rather than
+        # swallowed: a public recording with no caption job and nothing but a
+        # log line is the exact silence this route is not allowed to produce.
+        # The message says plainly that the portal publish DID succeed, so
+        # the operator does not read the 409 as "nothing happened", and
+        # retrying the portal surface again after the fix is safe because the
+        # enqueue is idempotent per asset.
+        try:
+            _queue_offline_captions(
+                caption_job_store, staff_asset, finalization_worker=finalization_worker
+            )
+        except CaptionJobNotQueueableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "The portal retry succeeded and this recording is now public, but "
+                    "CivicCast could not queue its caption job, so no captions are on "
+                    f"the way. Cause: {exc} Fix that and retry the portal surface again "
+                    "to start captioning."
+                ),
+            ) from exc
     return build_publish_asset_status(staff_asset, record)
