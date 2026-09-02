@@ -278,6 +278,26 @@ installer asset and is not a public or production release.
   `e2e/facility-router.spec.ts` is updated for the new channel picker and
   role.
 
+### Security
+
+- **Triaged and allowlisted a new nltk pathsec-bypass advisory
+  (`PYSEC-2026-3740` / CVE-2026-81726 / GHSA-8mgp-746c-j5xp).** `pip-audit`
+  started flagging `nltk 3.10.3` (a transitive dependency of `crawl4ai`,
+  pulled in only by the optional `agenda-js-import` extra behind
+  `civiccast/agenda_import/js_portal.py`) for a sandbox bypass in
+  `TransitionParser.train()`/`.parse()`, `AveragedPerceptron.save()`/`.load()`,
+  `PerceptronTagger.save_to_json()`, and `save_maxent_params()`, which use raw
+  `open()` on caller-controlled paths instead of nltk's guarded `pathsec`
+  helpers. No fix version exists upstream as of this review (`pip-audit`
+  reports empty `fix_versions`). `civiccast/` never imports `nltk` directly,
+  and `js_portal.py`'s `crawler.arun()` call passes no `chunking_strategy`/
+  `extraction_strategy`, so crawl4ai's only nltk touchpoint
+  (`chunking_strategy.py`'s `sent_tokenize` punkt tokenizer) is never
+  exercised — none of the five vulnerable model-persistence APIs are
+  reachable from any code path in this repo. Documented in
+  `security/pip-audit-allowlist.json` with a review-by date of 2026-10-01;
+  re-check when nltk ships a fix.
+
 ## [1.0.0-beta.1] - 2026-08-31
 
 First tagged release of the native-Windows CivicCast line — owner-held, not
