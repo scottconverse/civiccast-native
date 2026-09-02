@@ -2,12 +2,25 @@
 # Copyright (c) The CivicCast Authors
 <#
 .SYNOPSIS
-Download and verify CivicCast Windows release-candidate artifacts.
+Download and verify CivicCast Windows release artifacts.
 
 .DESCRIPTION
-Fetches the release artifact manifest plus the Windows tester package and/or
-clean-Windows proof kit from a GitHub Release. Downloaded assets are verified
-against the SHA-256 values in the release manifest before extraction or use.
+Two asset-set families are supported:
+
+  NativeCandidate (default when -Repository is scottconverse/civiccast-native):
+    the native beta-candidate release shape published by
+    scripts/release/publish_beta_candidate.py -- SHA256SUMS.txt, setup.exe,
+    setup.exe.sidecar.json, and (with -IncludePacks) every *.ccpack runtime
+    pack. setup.exe and every pack are verified against SHA256SUMS.txt; the
+    sidecar is verified by its own sha256 field matching SHA256SUMS.txt's
+    setup.exe line. The asset names here are pinned against the publisher's
+    constants by tests/policy/test_windows_release_downloader.py so the two
+    cannot drift.
+
+  ProofKit / TesterPackage / All (the retired WSL2 rc line's shape): fetch the
+    release-artifacts manifest plus the tester package and/or proof kit,
+    verified against the manifest's SHA-256 values (falling back to the
+    GitHub asset digest for files the manifest does not list).
 #>
 
 [CmdletBinding()]
@@ -15,13 +28,29 @@ param(
   [string]$Repository = "scottconverse/civiccast-native",
   [string]$Tag = "v1.0.0-beta.2",
   [string]$Version = "1.0.0-beta.2",
-  [ValidateSet("ProofKit", "TesterPackage", "All")]
-  [string]$AssetSet = "ProofKit",
+  [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
+  [string]$AssetSet = "",
+  [switch]$IncludePacks,
   [string]$Destination = "C:\CivicCastProof",
   [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
+
+# Asset naming contract shared with scripts/release/publish_beta_candidate.py
+# (SETUP_ASSET_NAME / SHA256SUMS_ASSET_NAME / SIDECAR_SUFFIX / PACK_SUFFIX).
+$NativeSetupName = "setup.exe"
+$NativeSumsName = "SHA256SUMS.txt"
+$NativeSidecarSuffix = ".sidecar.json"
+$NativePackSuffix = ".ccpack"
+
+if ([string]::IsNullOrWhiteSpace($AssetSet)) {
+  if ($Repository -eq "scottconverse/civiccast-native") {
+    $AssetSet = "NativeCandidate"
+  } else {
+    $AssetSet = "ProofKit"
+  }
+}
 
 function Write-Step {
   param([string]$Message)
@@ -121,37 +150,106 @@ function Assert-Sha256 {
   Write-Step "Verified SHA-256 for $Path"
 }
 
-New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+function Read-Sha256Sums {
+  # Parse the standard `<hash>  <filename>` lines publish_beta_candidate.py
+  # writes into a filename -> lowercase-hash table.
+  param([string]$Path)
 
-$manifestName = "civiccast-$Version-release-artifacts-manifest.json"
-$proofKitName = "civiccast-$Version-clean-windows-proof-kit.zip"
-$testerPackageName = "civiccast-$Version-windows-tester-package.zip"
+  $table = @{}
+  foreach ($line in Get-Content -LiteralPath $Path) {
+    if ($line -match '^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$') {
+      $table[$Matches[2]] = $Matches[1].ToLowerInvariant()
+    }
+  }
+  if ($table.Count -eq 0) {
+    throw "$Path contains no parsable '<sha256>  <filename>' lines."
+  }
+  return $table
+}
+
+New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 
 $release = Get-Release -Repository $Repository -Tag $Tag
 
-$manifestAsset = Get-ReleaseAsset -Release $release -Name $manifestName
-$manifestPath = Join-Path $Destination $manifestName
-Save-ReleaseAsset -Asset $manifestAsset -Target $manifestPath
-$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+if ($AssetSet -eq "NativeCandidate") {
+  # 1. SHA256SUMS.txt first: it is the hash authority for everything else.
+  #    It is itself verified against the GitHub asset digest when one is
+  #    available (there is no higher local authority for it).
+  $sumsAsset = Get-ReleaseAsset -Release $release -Name $NativeSumsName
+  $sumsPath = Join-Path $Destination $NativeSumsName
+  Save-ReleaseAsset -Asset $sumsAsset -Target $sumsPath
+  if ($sumsAsset.digest -and $sumsAsset.digest -match '^sha256:([0-9a-fA-F]{64})$') {
+    Assert-Sha256 -Path $sumsPath -ExpectedHash $Matches[1]
+  } else {
+    Write-Step "$NativeSumsName has no GitHub asset digest to check against; trusting the downloaded copy as the hash authority"
+  }
+  $sums = Read-Sha256Sums -Path $sumsPath
 
-$requestedAssets = @()
-if ($AssetSet -in @("ProofKit", "All")) {
-  $requestedAssets += $proofKitName
-}
-if ($AssetSet -in @("TesterPackage", "All")) {
-  $requestedAssets += $testerPackageName
-}
+  # 2. setup.exe, verified against SHA256SUMS.txt.
+  if (-not $sums.ContainsKey($NativeSetupName)) {
+    throw "$NativeSumsName does not list $NativeSetupName; refusing to trust the installer."
+  }
+  $setupAsset = Get-ReleaseAsset -Release $release -Name $NativeSetupName
+  $setupPath = Join-Path $Destination $NativeSetupName
+  Save-ReleaseAsset -Asset $setupAsset -Target $setupPath
+  Assert-Sha256 -Path $setupPath -ExpectedHash $sums[$NativeSetupName]
 
-foreach ($name in $requestedAssets) {
-  $asset = Get-ReleaseAsset -Release $release -Name $name
-  $target = Join-Path $Destination $name
-  Save-ReleaseAsset -Asset $asset -Target $target
-  $expectedHash = Get-ExpectedSha256 -Manifest $manifest -Asset $asset -FileName $name
-  Assert-Sha256 -Path $target -ExpectedHash $expectedHash
+  # 3. The sidecar: its sha256 field must equal SHA256SUMS.txt's setup.exe
+  #    line (the same bytes described two independent ways).
+  $sidecarName = "$NativeSetupName$NativeSidecarSuffix"
+  $sidecarAsset = Get-ReleaseAsset -Release $release -Name $sidecarName
+  $sidecarPath = Join-Path $Destination $sidecarName
+  Save-ReleaseAsset -Asset $sidecarAsset -Target $sidecarPath
+  $sidecar = Get-Content -LiteralPath $sidecarPath -Raw | ConvertFrom-Json
+  if ([string]$sidecar.sha256 -ne $sums[$NativeSetupName]) {
+    throw "$sidecarName sha256 '$($sidecar.sha256)' does not match $NativeSumsName's $NativeSetupName entry '$($sums[$NativeSetupName])'."
+  }
+  Write-Step "Verified $sidecarName agrees with $NativeSumsName"
 
-  if ($name -eq $proofKitName) {
-    Write-Step "Extracting clean Windows proof kit to $Destination"
-    Expand-Archive -LiteralPath $target -DestinationPath $Destination -Force
+  # 4. Optionally every *.ccpack runtime pack, each verified against SHA256SUMS.txt.
+  if ($IncludePacks) {
+    $packAssets = @($release.assets | Where-Object { $_.name -like "*$NativePackSuffix" })
+    if ($packAssets.Count -eq 0) {
+      throw "-IncludePacks was requested but release '$Tag' carries no $NativePackSuffix assets."
+    }
+    foreach ($packAsset in $packAssets) {
+      if (-not $sums.ContainsKey($packAsset.name)) {
+        throw "$NativeSumsName does not list $($packAsset.name); refusing to trust that pack."
+      }
+      $packPath = Join-Path $Destination $packAsset.name
+      Save-ReleaseAsset -Asset $packAsset -Target $packPath
+      Assert-Sha256 -Path $packPath -ExpectedHash $sums[$packAsset.name]
+    }
+  }
+} else {
+  $manifestName = "civiccast-$Version-release-artifacts-manifest.json"
+  $proofKitName = "civiccast-$Version-clean-windows-proof-kit.zip"
+  $testerPackageName = "civiccast-$Version-windows-tester-package.zip"
+
+  $manifestAsset = Get-ReleaseAsset -Release $release -Name $manifestName
+  $manifestPath = Join-Path $Destination $manifestName
+  Save-ReleaseAsset -Asset $manifestAsset -Target $manifestPath
+  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+
+  $requestedAssets = @()
+  if ($AssetSet -in @("ProofKit", "All")) {
+    $requestedAssets += $proofKitName
+  }
+  if ($AssetSet -in @("TesterPackage", "All")) {
+    $requestedAssets += $testerPackageName
+  }
+
+  foreach ($name in $requestedAssets) {
+    $asset = Get-ReleaseAsset -Release $release -Name $name
+    $target = Join-Path $Destination $name
+    Save-ReleaseAsset -Asset $asset -Target $target
+    $expectedHash = Get-ExpectedSha256 -Manifest $manifest -Asset $asset -FileName $name
+    Assert-Sha256 -Path $target -ExpectedHash $expectedHash
+
+    if ($name -eq $proofKitName) {
+      Write-Step "Extracting clean Windows proof kit to $Destination"
+      Expand-Archive -LiteralPath $target -DestinationPath $Destination -Force
+    }
   }
 }
 

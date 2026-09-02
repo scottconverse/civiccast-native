@@ -97,13 +97,44 @@ first failure:
    `[Unreleased]` CHANGELOG section, an asset table with size + SHA-256,
    plain-English install/upgrade instructions, the SmartScreen note, and the
    beta-candidate boundary statement).
-7. **Publish or dry-run** -- without `--dry-run`: creates and pushes an
-   annotated tag on `--source-sha`, publishes a GitHub **prerelease** with
-   every asset, re-fetches the release and verifies every asset's reported
-   size matches the local file, then updates
-   `docs/releases/release-truth.yaml` (adding the new entry at the given
-   `--truth-status`, flipping the previous `current` entry to `superseded`
-   when the new one becomes `current`) and prints a summary of the edit.
+7. **Pre-flight the asset set** -- every asset (setup.exe, each pack,
+   SHA256SUMS.txt, the sidecar) must be under GitHub's documented 2 GiB
+   per-file release-asset cap. The complete set is printed with sizes.
+   Anything at or over the cap refuses BEFORE any remote mutation. (Also a
+   pre-flight, first of all: `gh auth status` must succeed.)
+8. **Publish or dry-run** -- without `--dry-run`, in an order that can never
+   leave an orphan tag (no `git tag`/`git push` is ever run by hand):
+   1. `gh release create <tag> --draft --target <source-sha> --prerelease
+      --title ... --notes-file ... <every asset>` -- a **draft** creates no
+      tag. If this fails, the (possibly partial) draft is deleted
+      best-effort and the run refuses.
+   2. `gh release view <tag> --json assets,isDraft` -- every expected asset
+      must be present with a size matching the local file, and the release
+      must still be a draft. On ANY mismatch the draft is deleted
+      (`gh release delete <tag> --yes`) and the run refuses: nothing is left
+      behind, because a draft has no tag.
+   3. `gh release edit <tag> --draft=false` -- the single step that creates
+      the public tag, atomically with its verified release. If this fails
+      the draft is deliberately NOT deleted (un-draft may have partially
+      applied server-side); the run refuses loudly and you inspect the
+      release on GitHub and publish or delete it by hand.
+   4. Only then: update `docs/releases/release-truth.yaml` (adding the new
+      entry at the given `--truth-status`, flipping the previous `current`
+      entry to `superseded` when the new one becomes `current`) and print a
+      summary of the edit.
+
+   GitHub's un-draft creates a lightweight tag at `--source-sha`. No policy
+   check in this repository requires an annotated tag, so none is made.
+
+### Failure and rollback map
+
+| failed step | what exists afterwards | what the script does | what you do |
+| --- | --- | --- | --- |
+| gh auth / layout / version / signature / Gate A / pre-flight | nothing remote | refuses | fix the cause, re-run |
+| `gh release create --draft` | maybe a partial draft, no tag | best-effort `gh release delete`, refuses | confirm no draft remains on GitHub, re-run |
+| draft verification (missing asset / size mismatch / not a draft) | draft, no tag | `gh release delete`, refuses | confirm no draft remains, investigate the asset, re-run |
+| `gh release edit --draft=false` | verified draft, tag state uncertain | refuses, does NOT delete | open the release on GitHub; publish it by hand if it is intact, otherwise delete it |
+| `release-truth.yaml` update | public prerelease + tag, manifest not updated | refuses | edit `release-truth.yaml` by hand to match what is live |
 
 `--truth-status staging` for a first publish under review; flip a later
 publish to `--truth-status current` once you're ready for it to be the

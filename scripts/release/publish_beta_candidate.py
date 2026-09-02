@@ -35,9 +35,13 @@ Usage::
 ``--dry-run`` writes the rendered notes, sidecar, and SHA256SUMS.txt to
 ``artifacts/release/<tag>/`` and touches no GitHub or git remote state at
 all -- no tag, no push, no mutating ``gh`` call. Without ``--dry-run`` it
-creates and pushes an annotated tag, publishes the GitHub prerelease with
-all assets, verifies the upload, and updates
-``docs/releases/release-truth.yaml``.
+publishes in an order that can never leave an orphan tag: pre-flight every
+asset under GitHub's 2 GiB cap, create the release as a DRAFT targeting
+``--source-sha`` with all assets (a draft has no tag), verify every asset's
+name and size on the fetched draft (deleting the draft on any mismatch),
+then un-draft it -- the one step that creates the public tag, atomically
+with its release -- and finally update ``docs/releases/release-truth.yaml``.
+No ``git tag``/``git push`` is ever run by hand.
 """
 
 from __future__ import annotations
@@ -57,6 +61,19 @@ sys.path.insert(0, str(REPO_ROOT))
 from scripts.render_release_notes import render_native_beta_candidate_notes  # noqa: E402
 
 DEFAULT_REPOSITORY = "scottconverse/civiccast-native"
+# GitHub's documented per-file release-asset cap is 2 GiB
+# (docs.github.com "Managing releases in a repository": "Each file included
+# in a release must be under 2 GiB"). Enforced as a pre-flight BEFORE any
+# remote mutation so a >= 2 GiB pack can never surface as a half-created
+# release.
+GITHUB_ASSET_LIMIT_BYTES = 2 * 1024**3
+# Release asset naming contract. scripts/download_windows_release_artifacts.ps1's
+# NativeCandidate mode and tests/policy/test_windows_release_downloader.py pin
+# the downloader's literals against THESE constants so the two cannot drift.
+SETUP_ASSET_NAME = "setup.exe"
+SHA256SUMS_ASSET_NAME = "SHA256SUMS.txt"
+SIDECAR_SUFFIX = ".sidecar.json"
+PACK_SUFFIX = ".ccpack"
 GATE_A_LANES: tuple[str, ...] = ("clean", "dirty", "download-only")
 GATE_A_ARTIFACT_NAMES: dict[str, str] = {
     "clean": "gate-a-verdict-{run_id}",
@@ -100,10 +117,6 @@ def run_gh(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
     return run_command(["gh", *args], **kwargs)
 
 
-def run_git(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-    return run_command(["git", *args], **kwargs)
-
-
 # ---------------------------------------------------------------------------
 # (a) Layout + version verification
 # ---------------------------------------------------------------------------
@@ -117,14 +130,14 @@ def verify_layout(kit_dir: Path) -> tuple[Path, list[Path]]:
     if not kit_dir.is_dir():
         raise PublishError(f"kit-dir does not exist or is not a directory: {kit_dir}")
 
-    setup = kit_dir / "setup.exe"
+    setup = kit_dir / SETUP_ASSET_NAME
     if not setup.is_file():
         raise PublishError(f"kit-dir is missing setup.exe: {setup}")
 
     packs_dir = kit_dir / "packs"
     if not packs_dir.is_dir():
         raise PublishError(f"kit-dir is missing a packs\\ directory: {packs_dir}")
-    packs = sorted(packs_dir.glob("*.ccpack"))
+    packs = sorted(packs_dir.glob(f"*{PACK_SUFFIX}"))
     if not packs:
         raise PublishError(f"packs\\ directory has no *.ccpack files: {packs_dir}")
 
@@ -365,45 +378,79 @@ def render_notes(
 # ---------------------------------------------------------------------------
 # (f) Publish (or dry-run)
 # ---------------------------------------------------------------------------
-def write_dry_run_artifacts(
-    *,
-    out_dir: Path,
-    notes: str,
-    sidecar: dict[str, Any],
-    sidecar_filename: str,
-    sha256sums: str,
-) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "RELEASE-NOTES.md").write_text(notes, encoding="utf-8", newline="\n")
-    (out_dir / sidecar_filename).write_text(
-        json.dumps(sidecar, indent=2) + "\n", encoding="utf-8", newline="\n"
-    )
-    (out_dir / "SHA256SUMS.txt").write_text(sha256sums, encoding="utf-8", newline="\n")
+def verify_gh_auth() -> None:
+    """Refuse before anything else if `gh` has no working GitHub login.
 
+    Every later step (Gate A artifact download, draft create, verify,
+    un-draft) goes through `gh`; an unauthenticated CLI would otherwise
+    surface as a confusing mid-flow failure.
+    """
 
-def create_and_push_tag(*, tag: str, source_sha: str, message: str) -> None:
-    proc = run_git(["tag", "-a", tag, source_sha, "-m", message])
+    proc = run_gh(["auth", "status"])
     if proc.returncode != 0:
         raise PublishError(
-            f"could not create annotated tag {tag} on {source_sha}: "
-            f"{(proc.stderr or proc.stdout or '').strip()}"
-        )
-    proc = run_git(["push", "origin", tag])
-    if proc.returncode != 0:
-        raise PublishError(
-            f"could not push tag {tag} to origin: "
+            "gh is not authenticated (`gh auth status` failed) -- run "
+            "`gh auth login` before publishing: "
             f"{(proc.stderr or proc.stdout or '').strip()}"
         )
 
 
-def publish_release(
+def preflight_asset_limits(asset_paths: list[Path]) -> None:
+    """Refuse BEFORE any remote mutation if any asset is >= GitHub's 2 GiB cap.
+
+    Prints the complete asset set (name + bytes) so the operator sees exactly
+    what would be uploaded.
+    """
+
+    print("publish_beta_candidate: release asset set (pre-flight):")
+    oversize: list[str] = []
+    for path in asset_paths:
+        size = path.stat().st_size
+        flag = "  OVERSIZE" if size >= GITHUB_ASSET_LIMIT_BYTES else ""
+        print(f"  {path.name}  {size:,} bytes{flag}")
+        if size >= GITHUB_ASSET_LIMIT_BYTES:
+            oversize.append(f"{path.name} ({size:,} bytes)")
+    if oversize:
+        raise PublishError(
+            "asset(s) at or above GitHub's 2 GiB per-file release-asset cap "
+            f"({GITHUB_ASSET_LIMIT_BYTES:,} bytes); refusing before any remote "
+            f"mutation: {', '.join(oversize)}"
+        )
+
+
+def _gh_error(proc: subprocess.CompletedProcess[str]) -> str:
+    return (proc.stderr or proc.stdout or "").strip()
+
+
+def delete_draft_release(*, repository: str, tag: str) -> bool:
+    """Best-effort delete of a draft release. Returns True on success.
+
+    A draft release has no tag, so deleting it leaves nothing behind. Never
+    raises: this runs on an already-failing path, and the original failure
+    is what must be reported.
+    """
+
+    proc = run_gh(["release", "delete", tag, "-R", repository, "--yes"])
+    return proc.returncode == 0
+
+
+def create_draft_release(
     *,
     repository: str,
     tag: str,
+    source_sha: str,
     title: str,
     notes_file: Path,
     asset_paths: list[Path],
 ) -> None:
+    """Create the release as a DRAFT targeting source_sha, with every asset.
+
+    A draft creates NO tag. The public tag is created atomically with the
+    release only when `undraft_release` flips `--draft=false`, so a failure
+    anywhere before that leaves no orphan tag. On failure here the (possibly
+    partially created) draft is deleted best-effort and the failure raised.
+    """
+
     proc = run_gh(
         [
             "release",
@@ -411,6 +458,9 @@ def publish_release(
             tag,
             "-R",
             repository,
+            "--draft",
+            "--target",
+            source_sha,
             "--prerelease",
             "--title",
             title,
@@ -420,48 +470,78 @@ def publish_release(
         ]
     )
     if proc.returncode != 0:
+        deleted = delete_draft_release(repository=repository, tag=tag)
+        cleanup = "draft deleted" if deleted else "no draft to delete / delete failed"
         raise PublishError(
-            f"gh release create failed for {tag}: "
-            f"{(proc.stderr or proc.stdout or '').strip()}"
+            f"gh release create (draft) failed for {tag}; {cleanup}; no tag was "
+            f"created: {_gh_error(proc)}"
         )
 
 
-def verify_published_assets(
-    *, repository: str, tag: str, asset_paths: list[Path]
-) -> None:
-    """Re-fetch the release and assert every expected asset is present with
-    a matching size. Assets already uploaded stay uploaded on any mismatch
-    here -- this only fails loudly, it never attempts to auto-rollback a
-    partial release.
+def verify_draft_assets(*, repository: str, tag: str, asset_paths: list[Path]) -> None:
+    """Fetch the draft and assert it is still a draft and every expected
+    asset is present with a matching size. On ANY mismatch the draft is
+    deleted (best-effort) and the mismatch raised -- no tag exists yet, so
+    nothing is left behind.
     """
 
-    proc = run_gh(["release", "view", tag, "-R", repository, "--json", "assets"])
+    proc = run_gh(["release", "view", tag, "-R", repository, "--json", "assets,isDraft"])
     if proc.returncode != 0:
+        delete_draft_release(repository=repository, tag=tag)
         raise PublishError(
-            f"could not re-fetch release {tag} to verify assets: "
-            f"{(proc.stderr or proc.stdout or '').strip()}"
+            f"could not fetch draft release {tag} to verify assets (draft deleted): "
+            f"{_gh_error(proc)}"
         )
     try:
         payload = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        raise PublishError(f"gh release view returned non-JSON output: {exc}") from exc
+        delete_draft_release(repository=repository, tag=tag)
+        raise PublishError(
+            f"gh release view returned non-JSON output (draft deleted): {exc}"
+        ) from exc
 
+    problems: list[str] = []
+    if payload.get("isDraft") is not True:
+        problems.append("release is not a draft (isDraft != true) -- refusing to continue")
     remote_by_name = {a["name"]: a for a in payload.get("assets", [])}
     for local_path in asset_paths:
         remote = remote_by_name.get(local_path.name)
         if remote is None:
-            raise PublishError(
-                f"release {tag} is missing expected asset {local_path.name!r} "
-                "after upload (asset(s) already uploaded stay uploaded; fix "
-                "the release by hand, do not re-run blindly)."
-            )
+            problems.append(f"missing asset {local_path.name!r}")
+            continue
         local_size = local_path.stat().st_size
         remote_size = remote.get("size")
         if remote_size != local_size:
-            raise PublishError(
-                f"uploaded asset {local_path.name!r} size mismatch: local "
-                f"{local_size} bytes, GitHub reports {remote_size} bytes."
+            problems.append(
+                f"asset {local_path.name!r} size mismatch: local {local_size} bytes, "
+                f"GitHub reports {remote_size} bytes"
             )
+    if problems:
+        deleted = delete_draft_release(repository=repository, tag=tag)
+        cleanup = "draft deleted, no tag created" if deleted else "DRAFT DELETE FAILED -- remove it by hand"
+        raise PublishError(
+            f"draft release {tag} failed asset verification ({cleanup}): "
+            + "; ".join(problems)
+        )
+
+
+def undraft_release(*, repository: str, tag: str) -> None:
+    """Flip the verified draft to a public prerelease. This is the single
+    step that creates the public tag, atomically with the release.
+
+    On failure the draft is deliberately NOT deleted: un-draft may have
+    partially applied server-side and deleting could remove a now-public
+    release. Report loudly instead.
+    """
+
+    proc = run_gh(["release", "edit", tag, "-R", repository, "--draft=false"])
+    if proc.returncode != 0:
+        raise PublishError(
+            f"gh release edit --draft=false failed for {tag}; the verified DRAFT "
+            "is left in place (not deleted, since un-draft may have partially "
+            "applied) -- inspect it on GitHub and either publish or delete it by "
+            f"hand: {_gh_error(proc)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +649,9 @@ def _run(args: argparse.Namespace) -> None:
     source_sha: str = args.source_sha
     repository: str = args.repository
 
+    print("publish_beta_candidate: verifying gh authentication")
+    verify_gh_auth()
+
     print(f"publish_beta_candidate: verifying kit layout at {kit_dir}")
     setup, packs = verify_layout(kit_dir)
 
@@ -592,7 +675,23 @@ def _run(args: argparse.Namespace) -> None:
     all_files = [setup, *packs]
     sha256sums = build_sha256sums(all_files)
     sidecar = build_sidecar(setup, signed=True)
-    sidecar_filename = f"{setup.name}.sidecar.json"
+    sidecar_filename = f"{setup.name}{SIDECAR_SUFFIX}"
+
+    # SHA256SUMS.txt and the sidecar are release assets too. Write them to the
+    # local out_dir FIRST (local files only -- no remote state) so the asset
+    # table below can carry their real bytes/hash, and so the pre-flight size
+    # check covers the complete asset set. Same in dry-run and live mode.
+    out_dir = repo_root / "artifacts" / "release" / tag
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sidecar_path = out_dir / sidecar_filename
+    sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8", newline="\n")
+    sha256sums_path = out_dir / SHA256SUMS_ASSET_NAME
+    sha256sums_path.write_text(sha256sums, encoding="utf-8", newline="\n")
+    asset_paths = [setup, *packs, sha256sums_path, sidecar_path]
+
+    # Pre-flight: every asset under GitHub's 2 GiB cap, full set listed --
+    # BEFORE any remote mutation, in dry-run and live mode alike.
+    preflight_asset_limits(asset_paths)
 
     changelog_path = repo_root / "CHANGELOG.md"
     changelog_text = (
@@ -600,10 +699,8 @@ def _run(args: argparse.Namespace) -> None:
     )
     asset_table = [
         {"filename": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)}
-        for path in all_files
+        for path in asset_paths
     ]
-    # SHA256SUMS.txt and the sidecar are release assets too -- include them in
-    # the rendered table (their own bytes/hash, computed after they exist).
     notes = render_notes(
         tag=tag,
         source_sha=source_sha,
@@ -615,25 +712,22 @@ def _run(args: argparse.Namespace) -> None:
         assets=asset_table,
     )
 
-    out_dir = repo_root / "artifacts" / "release" / tag
+    notes_file = out_dir / "RELEASE-NOTES.md"
+    notes_file.write_text(notes, encoding="utf-8", newline="\n")
+    title = f"CivicCast {tag} (Beta Candidate)"
+    asset_names = " ".join(p.name for p in asset_paths)
+
     if args.dry_run:
-        print(f"publish_beta_candidate: DRY RUN -- writing artifacts to {out_dir}")
-        write_dry_run_artifacts(
-            out_dir=out_dir,
-            notes=notes,
-            sidecar=sidecar,
-            sidecar_filename=sidecar_filename,
-            sha256sums=sha256sums,
-        )
-        print("publish_beta_candidate: DRY RUN -- would create/push tag:")
-        print(f"  git tag -a {tag} {source_sha} -m 'CivicCast {tag}'")
-        print(f"  git push origin {tag}")
-        print("publish_beta_candidate: DRY RUN -- would publish GitHub prerelease:")
-        print(f"  gh release create {tag} -R {repository} --prerelease "
-              f"--title 'CivicCast {tag} (Beta Candidate)' "
-              f"--notes-file {out_dir / 'RELEASE-NOTES.md'} "
-              f"{setup.name} {' '.join(p.name for p in packs)} "
-              f"SHA256SUMS.txt {sidecar_filename}")
+        print(f"publish_beta_candidate: DRY RUN -- artifacts written to {out_dir}")
+        print("publish_beta_candidate: DRY RUN -- would publish, in this order "
+              "(no tag is ever pushed by hand; un-draft creates it atomically):")
+        print(f"  1. gh release create {tag} -R {repository} --draft --target {source_sha} "
+              f"--prerelease --title '{title}' --notes-file {notes_file} {asset_names}")
+        print(f"  2. gh release view {tag} -R {repository} --json assets,isDraft  "
+              "(verify every asset name + size; on mismatch: gh release delete "
+              f"{tag} --yes, refuse)")
+        print(f"  3. gh release edit {tag} -R {repository} --draft=false  "
+              "(creates the public tag with the release)")
         print("publish_beta_candidate: DRY RUN -- would update release-truth.yaml:")
         truth_summary = _dry_run_truth_summary(
             repo_root=repo_root, tag=tag, status=args.truth_status
@@ -642,32 +736,27 @@ def _run(args: argparse.Namespace) -> None:
         print("publish_beta_candidate: DRY RUN complete. No GitHub or git remote state touched.")
         return
 
-    # ---- Live path (never exercised by this agent in this task; see the
-    # module docstring and the task's Testing boundary). ----
-    out_dir.mkdir(parents=True, exist_ok=True)
-    notes_file = out_dir / "RELEASE-NOTES.md"
-    notes_file.write_text(notes, encoding="utf-8", newline="\n")
-    sidecar_path = out_dir / sidecar_filename
-    sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8", newline="\n")
-    sha256sums_path = out_dir / "SHA256SUMS.txt"
-    sha256sums_path.write_text(sha256sums, encoding="utf-8", newline="\n")
-
-    print(f"publish_beta_candidate: creating and pushing tag {tag}")
-    create_and_push_tag(tag=tag, source_sha=source_sha, message=f"CivicCast {tag}")
-
-    asset_paths = [setup, *packs, sha256sums_path, sidecar_path]
-    print(f"publish_beta_candidate: publishing GitHub prerelease {tag}")
-    publish_release(
+    # ---- Live path (never exercised by this agent against real GitHub; see
+    # the module docstring and the task's Testing boundary). Order is
+    # draft -> verify -> un-draft so that no public tag can exist without its
+    # verified release: a draft has no tag, and un-draft creates the tag
+    # atomically with the release. ----
+    print(f"publish_beta_candidate: creating DRAFT release {tag} targeting {source_sha}")
+    create_draft_release(
         repository=repository,
         tag=tag,
-        title=f"CivicCast {tag} (Beta Candidate)",
+        source_sha=source_sha,
+        title=title,
         notes_file=notes_file,
         asset_paths=asset_paths,
     )
 
-    print("publish_beta_candidate: verifying published assets")
-    verify_published_assets(repository=repository, tag=tag, asset_paths=asset_paths)
-    print("publish_beta_candidate: all assets present with matching sizes")
+    print("publish_beta_candidate: verifying draft assets (name + size)")
+    verify_draft_assets(repository=repository, tag=tag, asset_paths=asset_paths)
+    print("publish_beta_candidate: all assets present on the draft with matching sizes")
+
+    print(f"publish_beta_candidate: un-drafting {tag} (creates the public tag + prerelease)")
+    undraft_release(repository=repository, tag=tag)
 
     truth_path = repo_root / "docs" / "releases" / "release-truth.yaml"
     truth_notes = (
