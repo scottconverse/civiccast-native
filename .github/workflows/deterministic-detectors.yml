@@ -70,22 +70,17 @@ jobs:
           python-version: "3.12"
 
       - name: Install media test prerequisites
-        timeout-minutes: 10
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # See the matching step in ci-test.yml for the full rationale: bare
-          # apt-get waits on the runner's unattended-upgrades dpkg lock
-          # forever, and on 2026-08-19 wedged THIS workflow for 3h49m on the
-          # release branch. Bound the lock wait, the network, and the step.
-          APT=(sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3)
-          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-            timeout 300 "${APT[@]}" update
-            timeout 300 "${APT[@]}" install -y ffmpeg
-          fi
-          if ! command -v tsp >/dev/null 2>&1; then
-            timeout 300 "${APT[@]}" install -y tsduck || echo '::warning::tsduck not installable; TS-relay splice test will skip'
-          fi
+        # Shared with ci-test.yml's "Unit tests" job -- see
+        # scripts/ci/install_media_test_prerequisites.sh for the full
+        # rationale (dpkg-lock wait + slow-mirror handling, both confirmed
+        # hosted-runner failure modes with real job-ID evidence in the
+        # script's header comment, including this job's own 2026-09-02
+        # failures). timeout-minutes raised from 10: the script's own
+        # internal per-apt-call timeouts (8 min each, up to 3 calls) need
+        # headroom to actually run to completion on a slow mirror rather
+        # than being killed by the step wrapper first.
+        timeout-minutes: 30
+        run: bash scripts/ci/install_media_test_prerequisites.sh
 
       - name: Install project (dev)
         # --no-extra agenda-js-import: mirrors ci-test.yml's own "Install
