@@ -142,7 +142,7 @@ def _run_with_env(pytester: pytest.Pytester, env: dict[str, str]) -> pytest.RunR
     os.environ.update(env)
     try:
         return pytester.runpytest_subprocess(
-            "-p", "no:cacheprovider", "-p", "no:randomly", "-c", os.devnull, "-q"
+            "-p", "no:cacheprovider", "-p", "no:randomly", "-p", "no:mutmut", "-c", os.devnull, "-q"
         )
     finally:
         for name, value in saved.items():

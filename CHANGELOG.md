@@ -155,6 +155,45 @@ installer asset and is not a public or production release.
 
 ### Fixed
 
+- **`test_guard_fails_a_test_that_writes_real_state` no longer collides with
+  mutmut in CI.** `tests/test_hermetic_state_guard.py` spawns a nested pytest
+  subprocess via `pytester` to prove the hermetic-state teardown guard fails
+  closed; that nested invocation already disabled `cacheprovider` and
+  `randomly` but not `mutmut`, so in the `mutation-report` CI job (and the
+  `deterministic-detectors` check that reads it, where the pinned
+  `mutmut==3.6.0` package is installed alongside pytest) the nested run could
+  pick up mutmut's pytest integration and abort at fixture setup with
+  `FileNotFoundError: Could not figure out where the code to mutate is`,
+  reported as an unexpected error alongside the guard's own expected error --
+  seen identically on three unrelated branches/PRs (run 33628558134, PR #130,
+  PR #131). Added `-p no:mutmut` next to the existing `-p no:cacheprovider -p
+  no:randomly` flags on the nested `runpytest_subprocess` call. Swept the
+  rest of `tests/` for other `pytester`/nested-pytest invocations that could
+  hit the same collision; this is the only one.
+
+- **`test_ac1_verifier_green_on_registered_claims_at_head` no longer
+  depends on the job's own CI re-run attempt number.**
+  `tests/policy/test_claims_evidence.py`'s AC1 fixture writes synthetic
+  producer meta hardcoding `"run_attempt": "1"`, but the verifier under
+  test (`scripts/policy/check_claims_evidence.py`) reads the real
+  `GITHUB_RUN_ATTEMPT` from the inherited CI environment whenever
+  `--run-attempt` isn't passed on the CLI (it wasn't) — so on any CI
+  re-run attempt (`GITHUB_RUN_ATTEMPT=2`) this positive test failed its
+  own CC-WS3-004 exact-artifact-routing check with `VIOLATION: producer
+  'test': meta run_attempt '1' != this workflow run's run_attempt '2'
+  (prior-attempt artifact — CC-WS3-004)` — seen on `randomized-suite` job
+  100290734871, run 33641309663 attempt 2, seed 1070036697. The test now
+  pins `GITHUB_RUN_ATTEMPT` (and, belt-and-suspenders, `GITHUB_RUN_ID`) via
+  `monkeypatch.setenv` to match the meta it writes, so the outcome no
+  longer depends on the job's real attempt number. The CC-WS3-004 check
+  itself is unweakened: a new negative twin,
+  `test_ac1_verifier_red_when_meta_run_attempt_mismatches_env`, reuses the
+  same real-registry CLI entry point with a deliberately mismatched
+  `GITHUB_RUN_ATTEMPT` and asserts the verifier still exits 1 naming
+  `run_attempt`/`CC-WS3-004`. Verified locally with `GITHUB_RUN_ATTEMPT=2`
+  set in the shell — both AC1 tests, and the full 121-test
+  `test_claims_evidence.py` suite, pass.
+
 - **Publish preflight and approval now read the same real provider registry
   (WP-03; audit findings QA-001 and the readiness portion of ENG-001).**
   Preflight used to answer from an unrelated deterministic mock credential
