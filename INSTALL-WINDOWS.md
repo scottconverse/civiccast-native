@@ -27,7 +27,23 @@
 > from this repository. It is kept as historical reference, not as
 > current install instructions for this repository.
 
-> **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
+> **CURRENT (native line): no downloadable release is published yet.** The
+> owner-held candidate is `v1.0.0-beta.2` (unpublished; no installer asset).
+> The previously issued `v1.0.0-beta.1` tag was **USB-delivered only** and
+> carries no GitHub Release assets either. When a beta candidate is first
+> published with downloadable assets, it appears as a **prerelease** at
+> <https://github.com/scottconverse/civiccast-native/releases> under the
+> `v1.0.0-beta.N` tag family -- watch that page, not `scottconverse/civiccast`
+> (the retired, separate WSL2-line repository) and not any `v1.0.0-rcNN` tag,
+> which belongs to that other repository. See
+> [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
+> the authored release-state record. Everything below this notice that
+> mentions `v1.0.0-rc18` or `scottconverse/civiccast` describes the retired
+> WSL2 line and is historical evidence only, not the current native install
+> path.
+
+> **HISTORICAL (retired WSL2 line): `v1.0.0-rc18` was the published controlled
+> beta on that other line.** Its
 > installer is built from the gate-cleared `main`, Authenticode-signed, and proven
 > on a genuinely clean Windows host. rc17 remains the rollback target but carries
 > the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
@@ -93,7 +109,7 @@ Before running the installer, read these in order:
 2. This Windows install page
 3. [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
 4. [CivicCast v1.0.0-rc18 Candidate Verification](docs/releases/v1.0.0-rc18-verification.md)
-5. [CivicCast v1.0.0-rc13 Incident Record](docs/releases/v1.0.0-rc13-verification.md)
+5. [CivicCast v1.0.0-rc13 Incident Record](docs/releases/v1.0.0-rc13-verification.md) (rc13 is withdrawn; superseded by rc14)
 
 Record in the clean-machine proof report that each document was opened and read.
 If the docs and the installer/proof package disagree about version, filename,

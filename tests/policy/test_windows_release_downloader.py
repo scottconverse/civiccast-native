@@ -61,3 +61,31 @@ def test_downloader_falls_back_to_release_asset_digest_when_unlisted() -> None:
         source.index("function Get-ManifestEntry") : source.index("function Get-ExpectedSha256")
     ]
     assert "throw" not in manifest_entry_fn
+
+
+def test_native_candidate_mode_asset_names_match_the_publisher() -> None:
+    """The downloader's NativeCandidate mode must name exactly the assets
+    scripts/release/publish_beta_candidate.py uploads, pinned against that
+    script's own constants so a rename on either side fails here.
+    """
+    from scripts.release import publish_beta_candidate as publisher
+
+    source = DOWNLOADER.read_text(encoding="utf-8")
+
+    assert '"NativeCandidate"' in source
+    assert f'$NativeSetupName = "{publisher.SETUP_ASSET_NAME}"' in source
+    assert f'$NativeSumsName = "{publisher.SHA256SUMS_ASSET_NAME}"' in source
+    assert f'$NativeSidecarSuffix = "{publisher.SIDECAR_SUFFIX}"' in source
+    assert f'$NativePackSuffix = "{publisher.PACK_SUFFIX}"' in source
+    # Default repository is the native repo, and the native mode is the
+    # default there; the rc-line modes are kept for the old repository.
+    assert '$Repository = "scottconverse/civiccast-native"' in source
+    assert 'if ($Repository -eq "scottconverse/civiccast-native") {' in source
+    assert '$AssetSet = "NativeCandidate"' in source
+    assert "[switch]$IncludePacks" in source
+    # Every native asset is hash-verified against SHA256SUMS.txt, and the
+    # sidecar cross-checked against the same setup.exe line.
+    assert "function Read-Sha256Sums" in source
+    assert "Assert-Sha256 -Path $setupPath -ExpectedHash $sums[$NativeSetupName]" in source
+    assert "Assert-Sha256 -Path $packPath -ExpectedHash $sums[$packAsset.name]" in source
+    assert "[string]$sidecar.sha256 -ne $sums[$NativeSetupName]" in source

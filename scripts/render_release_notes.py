@@ -92,6 +92,101 @@ def render_release_notes(manifest: dict[str, Any], tag: str) -> str:
     return "\n".join(lines)
 
 
+def render_native_beta_candidate_notes(
+    *,
+    tag: str,
+    source_sha: str,
+    build_run_url: str,
+    gate_a_run_url: str,
+    lane_verdicts: dict[str, str],
+    changelog_unreleased: str,
+    assets: list[dict[str, Any]],
+    smartscreen_note: str,
+) -> str:
+    """Render the GitHub release body for a native-Windows beta-candidate.
+
+    Separate from :func:`render_release_notes` (the WSL2-line renderer) on
+    purpose -- the native-beta-candidate publish path
+    (``scripts/release/publish_beta_candidate.py``) ships a different asset
+    set (an installer whose name does not carry the old
+    ``-windows-setup.exe`` suffix convention, plus per-component ``.ccpack``
+    runtime packs, never a proof kit or tester-package zip) and a Gate A
+    three-lane verdict, neither of which the WSL2-line renderer's manifest
+    shape can express. Reusing that function's asset-suffix matching would
+    either silently drop every native asset or require faking filenames to
+    match a naming convention this line does not use -- so this is an
+    additive function in the same module (not a duplicate implementation)
+    that the publish script imports and calls.
+
+    ``lane_verdicts`` maps Gate A lane name (``clean``, ``dirty``,
+    ``download-only``) to its verdict string (expected ``PASS`` -- the
+    caller is responsible for having already refused to publish on anything
+    else; this function only renders what it is given).
+
+    ``assets`` is a list of ``{"filename": str, "bytes": int, "sha256":
+    str}`` dicts, one per uploaded release asset, in upload order.
+    """
+
+    if not source_sha:
+        raise ValueError("source_sha is empty; cannot render Source identity.")
+    if not assets:
+        raise ValueError("no release assets given; cannot render an asset table.")
+
+    lines = [
+        f"# CivicCast {tag.lstrip('v')} (Beta Candidate)",
+        "",
+        "> **This is a beta candidate, not a production release.** It has "
+        "passed automated Gate A station-acceptance (clean install, "
+        "cross-version upgrade, and download-only upgrade lanes) but has "
+        "NOT had a human acceptance pass. Treat findings as expected; report "
+        "them rather than assuming the release is broken.",
+        "",
+        "## Source identity",
+        "",
+        f"- Commit: {source_sha}",
+        f"- Tag: {tag}",
+        f"- Build run: {build_run_url}",
+        f"- Gate A run: {gate_a_run_url}",
+        "",
+        "## Gate A verdict (all three lanes required PASS)",
+        "",
+        "| lane | verdict |",
+        "| --- | --- |",
+    ]
+    for lane in ("clean", "dirty", "download-only"):
+        if lane in lane_verdicts:
+            lines.append(f"| {lane} | {lane_verdicts[lane]} |")
+    lines += [
+        "",
+        "## What changed",
+        "",
+        changelog_unreleased.strip() or "(no [Unreleased] CHANGELOG entry found)",
+        "",
+        "## Install / upgrade",
+        "",
+        "Download `setup.exe`; if you already have CivicCast installed just "
+        "run it -- your recordings, database and AI models are kept. "
+        "First-time installs need the USB model bundle (the AI-model "
+        "runtime is not a download asset on this release -- see "
+        "INSTALL-WINDOWS.md).",
+        "",
+        "## SmartScreen note",
+        "",
+        smartscreen_note.strip(),
+        "",
+        "## Assets",
+        "",
+        "| asset | size | SHA-256 |",
+        "| --- | --- | --- |",
+    ]
+    for asset in assets:
+        size = asset.get("bytes")
+        size_display = f"{int(size):,} bytes" if isinstance(size, int) else "?"
+        lines.append(f"| {asset['filename']} | {size_display} | {asset['sha256']} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
