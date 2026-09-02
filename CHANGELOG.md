@@ -50,7 +50,7 @@ installer asset and is not a public or production release.
   probe, and a source edited between the operator's ingest plan and the Take
   fails closed. Stale, failed, and never-probed sources create no takeover
   audit row, queue no command, and cannot change air.
-- **The `credentials_handle` column is no longer a dead surface.**
+- **The `credentials_handle` column is no longer a dead surface for reading.**
   `civiccast/live/secrets.py` resolves it through the station's OS credential
   store at execution time -- per probe, so rotating a passphrase takes effect on
   the next check without a restart -- and, for playout, carries the *handle*
@@ -62,7 +62,20 @@ installer asset and is not a public or production release.
   Authenticated RTSP and RTMP shapes are rejected with explicit operator copy
   and a disabled UI control, because neither FFmpeg protocol accepts a
   password anywhere except inside the address. Missing or unreadable secrets
-  fail the probe closed; every probe detail is secret-redacted.
+  fail the probe closed; every probe detail is secret-redacted. **Readable
+  handle contract only; no write path yet:** `save_live_source_secret` has no
+  caller anywhere in the product (no route, CLI, or UI writes an SRT
+  passphrase into the OS credential store), so a live source's stored secret
+  can only be set today by a caller reaching into `civiccast.live.secrets`
+  directly. There is also an open per-user-vault-vs-LocalSystem gap: `keyring`
+  on Windows is the signed-in user's own per-user vault, while the CivicCast
+  supervisor service is registered and runs as `LocalSystem`
+  (`civiccast/apps/installer/src-tauri/src/native_service_registration.rs`),
+  so a secret saved from an interactive operator session would not
+  necessarily be visible to the service process that actually needs it at
+  probe/playout time. See ADR 0025's "Known gaps" section for the two
+  resolution options under consideration (write from the service process, or
+  a machine-scoped credential store).
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
   central autouse fixture (`tests/conftest.py`, helpers in
   `tests/support/hermetic_state.py`) now points every state, lock, upload,
@@ -200,6 +213,40 @@ installer asset and is not a public or production release.
   and overlay CG paths are unchanged. Live video in a zone and board background
   audio are now labeled "coming in a future release"; the existing audio choice
   is disabled because the current renderer does not play it.
+- **Six hostile-review findings against WP-07's observed-readiness work
+  (ADR 0025), fixed at their root.** **(1)** Closed a fail-open race: the
+  takeover gate read a live source, ran an up-to-8s probe, then persisted the
+  verdict by id alone -- a PATCH that repointed the endpoint inside that
+  window got silently overwritten with "ready" derived from the OLD address.
+  `LiveSourceStore.record_probe_observation` now accepts the `row_version`
+  and endpoint that were actually probed and raises a new
+  `LiveSourceProbeConflictError` (refusing the write) when either moved;
+  `LiveSourceReadinessService.verify_for_takeover` and `.probe` both carry
+  their pre-probe read through and fail closed on conflict (409 from the
+  probe API), never silently overwriting a fresher edit's `never_probed`.
+  **(2)** `source_endpoints.normalize_endpoint` only inspected the query
+  string for a passphrase and re-emitted the URL fragment unchanged, so
+  `srt://host:9000#passphrase=hunter2` was accepted and persisted in
+  plaintext; any non-empty fragment is now rejected outright for every
+  URL-type source. **(3)** `readiness_state` clamped a negative observation
+  age to zero, so a backwards clock correction left a source reading "ready"
+  for the whole span of the jump; an observation timestamped more than 5s
+  ahead of "now" now reads `stale`. **(4)** In the Live Room: the Probe
+  button now checks the same `meeting_operator`/`setup_admin` role the
+  backend requires (with an explanatory line when hidden); the source list
+  polls at most every 10s so a stale pill goes stale on screen instead of
+  outliving the 30s TTL silently; switching a source's type away from SRT
+  now clears the credential field's state (not just its display), so an old
+  handle cannot be resubmitted after switching back; and a 409 on save now
+  reloads the row and tells the operator, instead of resending the same
+  stale `row_version` forever. **(5)** Fixed a stale ADR filename citation in
+  `source_endpoints.py`. **(6)** Documented, rather than built: ADR 0025
+  gained a "Known gaps" section, and the CHANGELOG's "credentials_handle is
+  no longer a dead surface" entry now says plainly that this is a readable
+  handle contract with no write path yet (`save_live_source_secret` has zero
+  callers anywhere in the product) and that a per-user `keyring` vault vs. the
+  `LocalSystem`-registered supervisor service is an open gap, not a solved
+  one.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

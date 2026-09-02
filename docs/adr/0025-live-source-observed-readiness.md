@@ -188,3 +188,52 @@ libsrt build echoing the option it was handed back through stderr.
   for the duration of the probe. That is the narrowest channel FFmpeg offers;
   the alternative (a URL query parameter) would additionally reach logs, ingest
   plans, and proof output.
+
+## Known gaps
+
+Found during hostile review of the WP-07 implementation. Recorded here rather
+than left implicit, because "the credential surface is closed" reads as a
+finished claim and it is not -- it is a finished *read* path with no *write*
+path behind it yet.
+
+- **`save_live_source_secret` has no caller.** `civiccast/live/secrets.py`
+  defines the function that would write an SRT passphrase into the OS
+  credential store under a `credentials_handle`, and D7 above documents the
+  resolve-at-execution-time read path that consumes it. But no route, CLI
+  command, or operator-facing UI calls it. An operator can type a
+  `credentials_handle` into the Live Room's Edit source form and CivicCast
+  will persist and echo it back, resolve it per probe, and pass it to the
+  engine at takeover -- but the *secret itself* (the passphrase string) has no
+  way into the credential store today except a caller reaching into
+  `civiccast.live.secrets` directly (a Python REPL, a one-off script, or a
+  future admin tool). This is a real gap, not a cosmetic one: a station
+  cannot actually configure SRT authentication through any surface it ships
+  today.
+- **Per-user keyring vault vs. LocalSystem service account.** `keyring` on
+  Windows backs onto the signed-in user's own per-user credential vault (DPAPI
+  scoped to that Windows account). The CivicCast supervisor is registered and
+  runs as `LocalSystem`
+  (`civiccast/apps/installer/src-tauri/src/native_service_registration.rs`),
+  a different security principal with its own (or no) per-user vault. Even
+  once a write path exists, a secret saved from an interactive operator's
+  desktop session is not guaranteed to be readable by the service process
+  that actually opens the SRT source at takeover time -- the two may be
+  running as different Windows identities. This has not been proven either
+  way on a real station; it needs to be checked (or designed around) before
+  any write path ships, not discovered by a station operator whose passphrase
+  silently fails to resolve at gavel time.
+
+  Two resolution options, neither implemented:
+
+  1. **Write from the service process.** Route the write through an
+     authenticated request to the running supervisor (which already runs as
+     `LocalSystem`), so the secret is written by the same identity that will
+     later read it back. Keeps `keyring`, changes who calls `set_password`.
+  2. **A machine-scoped credential store.** Replace (or front) `keyring` for
+     this namespace with a store that is not tied to a specific Windows user
+     session -- e.g. DPAPI with the machine-scope flag, or Windows Credential
+     Manager's generic (not per-user-Vault) machine store -- so the identity
+     that wrote the secret does not matter.
+
+  Either option is a follow-up task with its own design and test surface, not
+  a change made under this ADR.
