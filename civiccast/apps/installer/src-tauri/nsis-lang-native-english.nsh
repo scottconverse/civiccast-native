@@ -55,4 +55,4 @@ LangString webview2DownloadSuccess ${LANG_ENGLISH} "WebView2 bootstrapper downlo
 LangString webview2Downloading ${LANG_ENGLISH} "Downloading WebView2 bootstrapper..."
 LangString webview2InstallError ${LANG_ENGLISH} "Error: Installing WebView2 failed with exit code $1"
 LangString webview2InstallSuccess ${LANG_ENGLISH} "WebView2 installed successfully"
-LangString deleteAppData ${LANG_ENGLISH} "Also delete this account's saved installer settings (your recordings, database and settings in C:\ProgramData\CivicCast are always kept)."
+LangString deleteAppData ${LANG_ENGLISH} "Also delete this account's saved installer settings (your recordings, database and settings in C:\ProgramData\CivicCast always stay on this computer)."
