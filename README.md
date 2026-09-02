@@ -22,6 +22,15 @@ this README describes
 candidate #22 on `main` (commit `73fd258`), the state a technical reviewer
 would find by checking out this repository today.
 
+This version number and the release a tester can actually install are two
+different axes: `v1.0.0-beta.2` above is the code's own version identity as
+of this commit (what `main` reports right now), while `v1.0.0-beta.1` in
+"Install and run" below is the separate, already-published release a tester
+downloads or receives -- the same relationship as a project's `main` branch
+being ahead of its latest tagged release. `v1.0.0-beta.1` will stay the
+release to install until `v1.0.0-beta.2` (or later) is itself published with
+downloadable assets and this file's own version line above moves again.
+
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
 ## What's proven in this candidate

@@ -1,7 +1,7 @@
 # macOS Installation Posture
 
 Date: 2026-05-22
-Last reviewed: 2026-07-23 against rc18 — status confirmed.
+Last reviewed: 2026-07-23 (retired WSL2-line rc18); status unchanged for the native Windows line.
 
 Status: no supported public macOS package in the current beta.
 

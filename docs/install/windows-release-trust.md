@@ -64,24 +64,24 @@ be distributed as a public beta.
 ## Verify The Download With PowerShell
 
 1. From the exact tagged GitHub Release, obtain these matching files and
-   keep them together in one folder:
-   - `civiccast-<version>-windows-setup.exe`
-   - `civiccast-<version>-windows-setup.exe.sidecar.json`
+   keep them together in one folder (these are the exact asset names the
+   publisher uploads -- there is no version number in the filename):
+   - `setup.exe`
+   - `setup.exe.sidecar.json`
    - `SHA256SUMS.txt`
+   - any `*.ccpack` runtime pack(s) your install needs
    Use the exact release page, not a draft, an older prerelease, or a
    generic "latest" link.
 2. Open PowerShell in the download folder.
 3. Compute the local hash:
 
 ```powershell
-$Version = "REPLACE-WITH-RELEASE-VERSION"
-Get-FileHash ".\civiccast-$Version-windows-setup.exe" -Algorithm SHA256
+Get-FileHash .\setup.exe -Algorithm SHA256
 ```
 
-4. Compare the `Hash` value with the SHA-256 value recorded for that filename
-   in `SHA256SUMS.txt`, and cross-check it against the matching
-   `civiccast-<version>-windows-setup.exe.sidecar.json` file. All three
-   values must match exactly.
+4. Compare the `Hash` value with the SHA-256 value recorded for `setup.exe`
+   in `SHA256SUMS.txt`, and cross-check it against `setup.exe.sidecar.json`'s
+   own `sha256` field. All three values must match exactly.
 
 If they do not match, quarantine the package and request a replacement proof
 bundle from the owner. Do not run an installer with a mismatched hash.
@@ -97,8 +97,8 @@ setup executable and sidecar in the same folder:
 
 ```powershell
 uv run civiccast installer verify-package `
-  --artifact ".\civiccast-$Version-windows-setup.exe" `
-  --sidecar ".\civiccast-$Version-windows-setup.exe.sidecar.json" `
+  --artifact ".\setup.exe" `
+  --sidecar ".\setup.exe.sidecar.json" `
   --json
 ```
 
@@ -114,8 +114,7 @@ Each release must say whether the Windows setup executable is Authenticode
 signed. If it is signed, verify the signature in PowerShell:
 
 ```powershell
-$Version = "REPLACE-WITH-RELEASE-VERSION"
-Get-AuthenticodeSignature ".\civiccast-$Version-windows-setup.exe" | Format-List
+Get-AuthenticodeSignature .\setup.exe | Format-List
 ```
 
 For a handoff that says the installer is signed, expected good output has
