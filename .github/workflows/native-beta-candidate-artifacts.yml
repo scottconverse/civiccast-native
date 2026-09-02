@@ -118,57 +118,21 @@ jobs:
         if: env.BUILD_TARGET == 'self-hosted'
         shell: pwsh
         run: |
-          # Two local roots on this box, both keyed by <sha>, pruned here and
-          # -- since this job gained `needs: build-native-station-bundle` --
-          # in that job too, which now runs FIRST and writes ~18.6 GB into
-          # C:\CivicCastTester\candidates\<sha>\station-bundle before this
-          # job starts. Pruning in both places keeps the reclaim ahead of the
-          # write on either ordering; both prunes keep the current sha, so
-          # running twice per dispatch is idempotent, not destructive:
-          #   - C:\CivicCastTester\candidates\<sha>\ -- intermediate mirrors
-          #     written by this job, build-native-station-bundle, and
-          #     assemble-native-beta-kit (candidate\, station-bundle\).
-          #   - C:\CivicCastTester\kit-staging\<sha>\ -- the FINAL flat kit
-          #     assemble-native-beta-kit writes there, which is the exact
-          #     path/layout gate-a-station-acceptance.yml's "Reuse a locally
-          #     pre-staged kit" step reads via Test-Path + a junction (never a
-          #     copy), never pruned from that side.
-          # Safe to prune stale shas from either root here: this job's own
-          # "sandbox-lab" concurrency group (shared with gate-a-station-
-          # acceptance.yml) guarantees no Gate A run is reading either root
-          # while a self-hosted build is executing. Without this, every
-          # self-hosted dispatch would add another ~20-40 GB across the two
-          # roots that never gets reclaimed -- keep only the sha this run is
-          # building.
-          $currentSha = "${{ github.sha }}"
-          # The cross-version upgrade lane (gate-a-station-acceptance.yml,
-          # "Require the pinned previous full kit from local staging") installs
-          # the IMMUTABLE previous candidate from
-          # C:\CivicCastTester\kit-staging\<previous sha> and fails closed if
-          # it is absent. Pruning it here is exactly what emptied that lane
-          # three times on 2026-09-02 (runs 33592973903 and the two after).
-          # Keep the baseline's sha alongside this build's own.
-          $keep = @($currentSha)
-          $baselinePath = "sandbox-lab/upgrade-baseline.json"
-          if (Test-Path -LiteralPath $baselinePath) {
-            $baseline = Get-Content -LiteralPath $baselinePath -Raw | ConvertFrom-Json
-            if ([string]$baseline.source_sha -match '^[0-9a-f]{40}$') {
-              $keep += [string]$baseline.source_sha
-              Write-Host "Keeping pinned previous candidate kit: $($baseline.source_sha) ($($baseline.candidate_label))"
-            }
-          }
-          foreach ($root in @("C:\CivicCastTester\candidates", "C:\CivicCastTester\kit-staging")) {
-            if (Test-Path -LiteralPath $root) {
-              Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $keep -notcontains $_.Name } |
-                ForEach-Object {
-                  Write-Host "Removing stale local candidate: $($_.FullName)"
-                  Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            } else {
-              New-Item -ItemType Directory -Force -Path $root | Out-Null
-            }
-          }
+          # ONE implementation of the prune + its keep-list, shared with
+          # build-native-station-bundle's identical step (which now runs FIRST
+          # -- this job gained `needs: build-native-station-bundle` -- and
+          # writes ~18.6 GB into C:\CivicCastTester\candidates\<sha>\station-
+          # bundle before this job starts, so the reclaim has to happen ahead
+          # of that write too). The keep-list is NOT duplicated inline in the
+          # two steps: PR #124's fix (keep the pinned previous-candidate kit
+          # sandbox-lab/upgrade-baseline.json names, or the cross-version
+          # upgrade lane fails closed with an empty kit-staging) has to hold in
+          # BOTH jobs, and a hand-copied second copy is exactly how that
+          # regression comes back -- a reviewer caught precisely that on this
+          # branch before it merged. See the script's own header for the two
+          # roots, the concurrency-safety argument, and the #124 history.
+          pwsh -NoProfile -File scripts/ci/prune_local_candidate_roots.ps1 -CurrentSha "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw "Local candidate prune failed (exit $LASTEXITCODE)." }
 
       - name: Bind reviewed MSVC install location
         shell: pwsh
@@ -994,33 +958,28 @@ jobs:
           }
           Write-Host "build_target=$buildTarget upload_large_artifacts=$uploadLarge candidate_root=$candidateRoot"
 
-      # Same prune, same two roots, same keep-this-sha rule as
-      # build-native-beta's own step -- repeated here because this job now
-      # runs FIRST on the self-hosted lane (build-native-beta gained
+      # The SAME script build-native-beta's own prune step runs, not a second
+      # copy of the logic. This job prunes because it now runs FIRST on the
+      # self-hosted lane (build-native-beta gained
       # `needs: build-native-station-bundle`) and writes the largest single
-      # mirror on the box (~18.6 GB). Without a prune ahead of that write, a
-      # dispatch would add the new sha's bundle on top of every stale sha
-      # still present and only reclaim them later, in build-native-beta.
-      # Idempotent: both prunes keep the current sha and delete only others,
-      # and the shared "sandbox-lab" concurrency group guarantees no Gate A
-      # run is reading either root while this job executes.
+      # mirror on the box (~18.6 GB); without a prune ahead of that write, a
+      # dispatch stacks the new sha's bundle on top of every stale sha and
+      # only reclaims them later, in build-native-beta.
+      #
+      # It MUST use the shared keep-list, not a keep-only-this-sha prune: the
+      # cross-version upgrade lane installs the immutable previous candidate
+      # from C:\CivicCastTester\kit-staging\<sandbox-lab/upgrade-baseline.json
+      # source_sha> and fails closed when it is absent (PR #124). This step
+      # running FIRST makes that especially load-bearing -- a keep-only-this-
+      # sha prune here would delete the pinned kit before build-native-beta's
+      # correct prune ever got the chance to keep it. Running the prune twice
+      # per dispatch is idempotent: both calls compute the same keep-list.
       - name: Prune stale local candidate builds (self-hosted only, keep this sha)
         if: env.BUILD_TARGET == 'self-hosted'
         shell: pwsh
         run: |
-          $currentSha = "${{ github.sha }}"
-          foreach ($root in @("C:\CivicCastTester\candidates", "C:\CivicCastTester\kit-staging")) {
-            if (Test-Path -LiteralPath $root) {
-              Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -ne $currentSha } |
-                ForEach-Object {
-                  Write-Host "Removing stale local candidate: $($_.FullName)"
-                  Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            } else {
-              New-Item -ItemType Directory -Force -Path $root | Out-Null
-            }
-          }
+          pwsh -NoProfile -File scripts/ci/prune_local_candidate_roots.ps1 -CurrentSha "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw "Local candidate prune failed (exit $LASTEXITCODE)." }
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0

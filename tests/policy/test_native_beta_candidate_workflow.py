@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1083,3 +1086,201 @@ def test_native_beta_candidate_workflow_kit_assembly_is_unchanged_by_the_embed()
         colocate
     ), "the kit must still carry the WHOLE signed bundle, not just the embedded two files"
     assert "Kit assembly: the co-located station bundle carries no component packs" in colocate
+
+
+# ---------------------------------------------------------------------------
+# PR #124 fixed the build job's prune to keep the pinned previous-candidate
+# kit named by sandbox-lab/upgrade-baseline.json -- the cross-version upgrade
+# lane installs that kit from C:\CivicCastTester\kit-staging\<its source_sha>
+# and fails closed when it is absent (it was emptied three times on
+# 2026-09-02). feat/installer-embeds-station-index then added a SECOND
+# self-hosted prune, in build-native-station-bundle, which now runs first --
+# and its first draft carried a hand-copied keep-only-this-sha list that would
+# have deleted the pinned kit before the fixed prune ever ran. A reviewer
+# caught it. These tests exist so the next copy cannot.
+# ---------------------------------------------------------------------------
+
+PRUNE_SCRIPT = Path("scripts/ci/prune_local_candidate_roots.ps1")
+PRUNE_STEP_NAME = "Prune stale local candidate builds (self-hosted only, keep this sha)"
+PRUNING_JOBS = ("build-native-beta", "build-native-station-bundle")
+PRUNE_INVOCATION = (
+    "          pwsh -NoProfile -File scripts/ci/prune_local_candidate_roots.ps1"
+    ' -CurrentSha "${{ github.sha }}"\n'
+    '          if ($LASTEXITCODE -ne 0) { throw "Local candidate prune failed'
+    ' (exit $LASTEXITCODE)." }\n'
+)
+
+
+def _prune_steps(workflow: dict[str, object]) -> dict[str, dict[str, object]]:
+    found: dict[str, dict[str, object]] = {}
+    for job_name in PRUNING_JOBS:
+        steps = [
+            step for step in workflow["jobs"][job_name]["steps"] if step["name"] == PRUNE_STEP_NAME
+        ]
+        assert len(steps) == 1, (
+            f"{job_name} must carry exactly one prune step named {PRUNE_STEP_NAME!r}, "
+            f"found {len(steps)}"
+        )
+        found[job_name] = steps[0]
+    return found
+
+
+def _assert_every_prune_keeps_the_pinned_baseline(workflow: dict[str, object]) -> None:
+    script = PRUNE_SCRIPT.read_text(encoding="utf-8")
+    # The keep-list lives in ONE place, and that place reads the baseline.
+    assert "sandbox-lab/upgrade-baseline.json" in script, (
+        "the shared prune must read the pinned previous-candidate baseline; without it "
+        "the cross-version upgrade lane installs from an empty kit-staging and fails closed"
+    )
+    assert "source_sha" in script
+    assert "$keep" in script
+
+    for job_name, step in _prune_steps(workflow).items():
+        run = step["run"]
+        assert step["if"] == "env.BUILD_TARGET == 'self-hosted'", (
+            f"{job_name}'s prune must stay self-hosted-only -- a hosted runner has no "
+            "C:\\CivicCastTester roots to prune"
+        )
+        # Every prune step reaches the baseline through the shared script.
+        assert "scripts/ci/prune_local_candidate_roots.ps1" in run, (
+            f"{job_name}'s prune must call the shared script, not re-implement the keep-list"
+        )
+        assert '-CurrentSha "${{ github.sha }}"' in run
+        assert "Local candidate prune failed" in run, (
+            f"{job_name}'s prune must fail the job when the script fails, not continue on a "
+            "silently unpruned box"
+        )
+        # And must NOT carry its own copy of the deletion logic. This is the
+        # assertion that actually catches the regression: an inline
+        # Remove-Item loop here is a second keep-list by definition.
+        assert "Remove-Item" not in run, (
+            f"{job_name}'s prune must not delete anything inline -- deletion belongs to the "
+            "shared script so the #124 keep-list cannot be forked"
+        )
+        assert "-ne $currentSha" not in run, (
+            f"{job_name}'s prune carries a keep-only-this-sha filter, which is exactly the "
+            "PR #124 regression: it deletes the pinned previous-candidate kit"
+        )
+
+
+def test_native_beta_candidate_workflow_prunes_never_delete_the_pinned_baseline_kit() -> None:
+    _, workflow = _workflow()
+    _assert_every_prune_keeps_the_pinned_baseline(workflow)
+
+
+def test_native_beta_candidate_workflow_contract_rejects_an_inline_keep_only_this_sha_prune() -> (
+    None
+):
+    """Mutation guard: reinstating the hand-copied keep-only-this-sha prune in
+    the station-bundle job must fail this contract."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    inline = (
+        '          $currentSha = "${{ github.sha }}"\n'
+        '          foreach ($root in @("C:\\CivicCastTester\\candidates")) {\n'
+        "            Get-ChildItem -LiteralPath $root -Directory |\n"
+        "              Where-Object { $_.Name -ne $currentSha } |\n"
+        "              ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }\n"
+        "          }\n"
+    )
+    assert text.count(PRUNE_INVOCATION) == 2, (
+        "test's expected literal has drifted from the workflow"
+    )
+    # Mutate the SECOND occurrence (build-native-station-bundle's).
+    head, _, tail = text.rpartition(PRUNE_INVOCATION)
+    mutated = head + inline + tail
+
+    mutated_workflow = yaml.load(mutated, Loader=yaml.BaseLoader)
+    with pytest.raises(AssertionError):
+        _assert_every_prune_keeps_the_pinned_baseline(mutated_workflow)
+
+
+def _run_prune(*arguments: str) -> subprocess.CompletedProcess[str]:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("pwsh is not available on this host; the prune script cannot be executed")
+    return subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(Path.cwd() / PRUNE_SCRIPT), *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_prune_script_keeps_the_current_and_baseline_shas_and_deletes_the_rest(
+    tmp_path: Path,
+) -> None:
+    """Behavioural, not textual: actually RUN the shared prune against a
+    scratch tree. The #124 regression was a behaviour (the pinned kit got
+    deleted), and only executing the keep-list proves it does not recur."""
+    current = "a" * 40
+    baseline_sha = "b" * 40
+    stale = "c" * 40
+
+    baseline = tmp_path / "upgrade-baseline.json"
+    baseline.write_text(
+        json.dumps({"source_sha": baseline_sha, "candidate_label": "candidate-test"}),
+        encoding="utf-8",
+    )
+
+    roots = []
+    for root_name in ("candidates", "kit-staging"):
+        root = tmp_path / root_name
+        for sha in (current, baseline_sha, stale):
+            (root / sha).mkdir(parents=True)
+            (root / sha / "marker.txt").write_text(sha, encoding="utf-8")
+        roots.append(root)
+
+    completed = _run_prune(
+        "-CurrentSha",
+        current,
+        "-BaselinePath",
+        str(baseline),
+        "-Roots",
+        f"{roots[0]};{roots[1]}",
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    for root in roots:
+        assert (root / current).is_dir(), "the sha being built must survive"
+        assert (root / baseline_sha).is_dir(), (
+            "the pinned previous-candidate kit must survive -- deleting it is the PR #124 "
+            f"regression; script output:\n{completed.stdout}"
+        )
+        assert not (root / stale).exists(), "a stale sha must be reclaimed"
+    assert baseline_sha in completed.stdout
+
+
+def test_prune_script_keeps_only_the_current_sha_when_the_baseline_is_unreadable(
+    tmp_path: Path,
+) -> None:
+    """Fail-safe direction: an absent or malformed baseline must prune LESS,
+    never more, and must never abort the build job."""
+    current = "a" * 40
+    stale = "c" * 40
+    root = tmp_path / "kit-staging"
+    for sha in (current, stale):
+        (root / sha).mkdir(parents=True)
+
+    malformed = tmp_path / "upgrade-baseline.json"
+    malformed.write_text("{not json", encoding="utf-8")
+
+    for baseline_path in (malformed, tmp_path / "absent.json"):
+        completed = _run_prune(
+            "-CurrentSha", current, "-BaselinePath", str(baseline_path), "-Roots", str(root)
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert (root / current).is_dir()
+
+    assert not (root / stale).exists()
+
+
+def test_prune_script_refuses_a_current_sha_that_is_not_a_sha(tmp_path: Path) -> None:
+    """`-CurrentSha` is interpolated from ${{ github.sha }}. Validate it rather
+    than trusting it: a non-sha keep-list would prune every real directory."""
+    root = tmp_path / "kit-staging"
+    (root / ("a" * 40)).mkdir(parents=True)
+
+    completed = _run_prune("-CurrentSha", "not-a-sha", "-Roots", str(root))
+
+    assert completed.returncode != 0
+    assert (root / ("a" * 40)).is_dir(), "a refused prune must delete nothing"
