@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import type {
+  RecordingInputPreset,
   RecordingJob,
   RecordingJobState,
   RecordingSchedule,
@@ -33,6 +34,7 @@ vi.mock('../api/client', () => ({
   deleteRecordingSchedule: vi.fn(),
   recordNow: vi.fn(),
   listRecordingJobs: vi.fn(),
+  listRecordingInputPresets: vi.fn(),
   stopRecordingJob: vi.fn(),
 }))
 
@@ -42,6 +44,7 @@ import {
   deleteRecordingSchedule,
   getStaffIdentity,
   listRecordingJobs,
+  listRecordingInputPresets,
   listRecordingSchedules,
   recordNow,
   stopRecordingJob,
@@ -123,6 +126,18 @@ beforeEach(() => {
   vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
   vi.mocked(listRecordingSchedules).mockResolvedValue([])
   vi.mocked(listRecordingJobs).mockResolvedValue([])
+  vi.mocked(listRecordingInputPresets).mockResolvedValue([
+    {
+      preset_id: 'sdi-1',
+      label: 'DeckLink SDI 1',
+      source_kind: 'sdi',
+      backend: 'decklink',
+      device_name: 'DeckLink SDI 4K',
+      audio_device_name: null,
+      format_code: null,
+      origin: 'detected',
+    } satisfies RecordingInputPreset,
+  ])
   vi.mocked(createRecordingSchedule).mockImplementation(async (payload) =>
     schedule({
       schedule_id: payload.schedule_id,
@@ -652,6 +667,78 @@ describe('RecordingScreen UX-5 source kind optgroups', () => {
       g.getAttribute('label'),
     )
     expect(groups).toEqual(['Live inputs', 'Network streams'])
+  })
+})
+
+describe('RecordingScreen capture-card presets', () => {
+  it('shows only presets for the selected SDI or HDMI source kind', async () => {
+    vi.mocked(listRecordingInputPresets).mockResolvedValue([
+      {
+        preset_id: 'decklink-2', label: 'DeckLink channel 2', source_kind: 'sdi',
+        backend: 'decklink', device_name: 'DeckLink Duo 2 (2)', audio_device_name: null,
+        format_code: 'Hp60', origin: 'configured',
+      },
+      {
+        preset_id: 'cam-link', label: 'Cam Link HDMI', source_kind: 'hdmi',
+        backend: 'dshow', device_name: 'Cam Link HDMI', audio_device_name: null,
+        format_code: null, origin: 'detected',
+      },
+    ])
+    const { findByLabelText, findByRole, queryByRole } = renderScreen()
+    const input = await findByLabelText(/Input ID/i)
+    expect(await findByRole('option', { name: /DeckLink channel 2/i })).toBeTruthy()
+    expect(queryByRole('option', { name: /Cam Link HDMI/i })).toBeNull()
+
+    fireEvent.change(await findByLabelText(/Source kind/i), { target: { value: 'hdmi' } })
+    expect(queryByRole('option', { name: /DeckLink channel 2/i })).toBeNull()
+    expect(queryByRole('option', { name: /Cam Link HDMI/i })).toBeTruthy()
+    expect(input.tagName).toBe('SELECT')
+  })
+
+  it('clears a chosen SDI preset when the source kind switches to HDMI', async () => {
+    vi.mocked(listRecordingInputPresets).mockResolvedValue([
+      {
+        preset_id: 'decklink-2', label: 'DeckLink channel 2', source_kind: 'sdi',
+        backend: 'decklink', device_name: 'DeckLink Duo 2 (2)', audio_device_name: null,
+        format_code: 'Hp60', origin: 'configured',
+      },
+      {
+        preset_id: 'cam-link', label: 'Cam Link HDMI', source_kind: 'hdmi',
+        backend: 'dshow', device_name: 'Cam Link HDMI', audio_device_name: null,
+        format_code: null, origin: 'detected',
+      },
+    ])
+    const { findByLabelText, findByRole, findByText, queryByText } = renderScreen()
+    await findByRole('option', { name: /DeckLink channel 2/i })
+    fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'decklink-2' } })
+    expect(((await findByLabelText(/Input ID/i)) as HTMLSelectElement).value).toBe('decklink-2')
+
+    fireEvent.change(await findByLabelText(/Source kind/i), { target: { value: 'hdmi' } })
+    const input = (await findByLabelText(/Input ID/i)) as HTMLSelectElement
+    expect(input.value).toBe('')
+    expect(queryByText(/Saved input unavailable/i)).toBeNull()
+
+    fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), { target: { value: 'hdmi-meeting' } })
+    fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'HDMI meeting' } })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+    expect(await findByText(/Input ID is required for live sources/i)).toBeTruthy()
+    expect(createRecordingSchedule).not.toHaveBeenCalled()
+  })
+
+  it('fails visibly when no selected-kind capture input exists', async () => {
+    vi.mocked(listRecordingInputPresets).mockResolvedValue([])
+    const { findByLabelText, findByText } = renderScreen()
+    const input = (await findByLabelText(/Input ID/i)) as HTMLSelectElement
+    expect(input.disabled).toBe(true)
+    expect(await findByText(/No SDI capture input was detected or configured/i)).toBeTruthy()
+  })
+
+  it('keeps NDI as a manually named network input', async () => {
+    const { findByLabelText } = renderScreen()
+    fireEvent.change(await findByLabelText(/Source kind/i), { target: { value: 'ndi' } })
+    const input = (await findByLabelText(/Input ID/i)) as HTMLInputElement
+    expect(input.tagName).toBe('INPUT')
+    expect(input.placeholder).toBe('studio-ndi')
   })
 })
 

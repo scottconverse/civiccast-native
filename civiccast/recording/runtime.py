@@ -151,6 +151,7 @@ class FfmpegScheduledCapturePipeline:
         settings: ScheduledRecordingSettings | None = None,
         ffmpeg_starter: Callable[..., FfmpegProcessHandle] = start_ffmpeg,
         ffmpeg_runner: Callable[..., Any] = run_ffmpeg,
+        hardware_input_args_resolver: Callable[[RecordingSource], list[str] | None] | None = None,
         stall_polls_before_dropout: int = _STALL_POLLS_BEFORE_DROPOUT,
         max_reconnect_attempts: int = _MAX_RECONNECT_ATTEMPTS,
     ) -> None:
@@ -158,6 +159,7 @@ class FfmpegScheduledCapturePipeline:
         self._settings = settings or ScheduledRecordingSettings.from_env()
         self._ffmpeg_starter = ffmpeg_starter
         self._ffmpeg_runner = ffmpeg_runner
+        self._hardware_input_args_resolver = hardware_input_args_resolver
         self._stall_polls_before_dropout = stall_polls_before_dropout
         self._max_reconnect_attempts = max_reconnect_attempts
         self._active: dict[str, _ActiveCapture] = {}
@@ -577,11 +579,23 @@ class FfmpegScheduledCapturePipeline:
             case "ndi":
                 return ["-f", "libndi_newtek", "-i", source.input_id]
             case "sdi" | "hdmi":
-                # Hardware devices are operator-named ffmpeg inputs. The exact
-                # dshow/avfoundation/v4l2 prefix remains station-specific, but the
-                # source id is validated upstream and is passed as one argv token.
-                # Not a network I/O path, so no connect/read timeout applies here.
-                return ["-i", source.input_id]
+                # The schedule stores a stable CivicCast preset id, not an
+                # operator-authored FFmpeg fragment. The resolver owns the
+                # platform-specific boundary (DeckLink, DirectShow, etc.) and
+                # returns an argv list, so no shell or parse-launch string is
+                # ever constructed from browser input.
+                resolved = (
+                    self._hardware_input_args_resolver(source)
+                    if self._hardware_input_args_resolver is not None
+                    else None
+                )
+                if not resolved:
+                    raise RuntimeError(
+                        f"Recording input preset {source.input_id!r} is not available for "
+                        f"{source.kind.upper()}. Open Recording and select a detected or "
+                        "configured input preset."
+                    )
+                return list(resolved)
             case _:
                 raise RuntimeError(f"Unsupported scheduled recording source kind {source.kind!r}.")
 

@@ -177,6 +177,11 @@ CHECK_CATALOG: dict[str, CheckDefinition] = {
         "simulated-proven",
         "Signal-unlocked state remains station-device evidence pending.",
     ),
+    "recording-decklink-preset-argv": _check(
+        "api-fixture",
+        "api-contract-proven",
+        "A configured DeckLink SDI recording preset resolves to exact FFmpeg input arguments.",
+    ),
     "ndi-source-present": _check(
         "stateful-simulator",
         "simulated-proven",
@@ -304,6 +309,11 @@ CHECK_CATALOG: dict[str, CheckDefinition] = {
         "stateful-simulator",
         "simulated-proven",
         "USB capture identity is preserved across the vMix input mapping.",
+    ),
+    "recording-dshow-preset-argv": _check(
+        "api-fixture",
+        "api-contract-proven",
+        "A configured DirectShow HDMI recording preset resolves to exact FFmpeg input arguments.",
     ),
     "usb-capture-deck-not-playing": _check(
         "stateful-simulator",

@@ -33,6 +33,16 @@ installer asset and is not a public or production release.
   prior uninstall-remnant shape remains available as a separate manual harness
   mode and is never combined with cross-version evidence.
 
+- **Real SDI/HDMI input selection for scheduled recording.** CivicCast now
+  discovers DeckLink inputs and Windows DirectShow video-capture devices through
+  the installed FFmpeg runtime, accepts explicit station presets through
+  `CIVICCAST_RECORDING_INPUT_PRESETS_JSON`, exposes the resulting catalog at
+  `GET /api/staff/recording/input-presets`, and makes operators choose a real
+  detected/configured input. The capture pipeline resolves that stable preset
+  to backend-specific FFmpeg arguments and fails closed when it is missing or
+  the source kind does not match. The LPM hardware mock lab proves the exact
+  DeckLink SDI and DirectShow HDMI argument boundary used by production.
+
 ### Fixed
 
 - **Made the D3 upgrade engine use the native installer's real flat runtime
@@ -55,6 +65,12 @@ installer asset and is not a public or production release.
   claim are removed. Real-Win32 direct-child assignment, no-breakaway limits,
   and kill-on-close remain CI-covered; automatic descendant inheritance in the
   installed service topology is source-wired but awaits clean-machine proof.
+
+- **Stopped presenting unfinished CG media controls as working features.** The
+  existing text, schedule, feed, image/logo, ticker, alert, preview, filler,
+  and overlay CG paths are unchanged. Live video in a zone and board background
+  audio are now labeled "coming in a future release"; the existing audio choice
+  is disabled because the current renderer does not play it.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

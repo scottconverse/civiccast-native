@@ -25,8 +25,10 @@ from sqlalchemy.pool import StaticPool
 
 from civiccast.auth.models import OperatorIdentity
 from civiccast.db import Base
+from civiccast.recording.input_presets import RecordingInputPreset, RecordingInputPresetCatalog
 from civiccast.recording.models import RecordingSource
 from civiccast.recording.router import (
+    get_recording_input_catalog,
     get_recording_service,
     get_recording_store,
     staff_router,
@@ -168,6 +170,11 @@ def _schedule_payload(
 
 
 class TestUnwired:
+    def test_input_presets_503_when_catalog_missing(self):
+        client = _client()
+        r = client.get("/api/staff/recording/input-presets")
+        assert r.status_code == 503
+
     def test_list_schedules_503_when_store_missing(self):
         client = _client(wire_store=False)
         r = client.get("/api/staff/recording/schedules")
@@ -249,6 +256,32 @@ class TestUnwired:
 
 
 class TestRoles:
+    def test_support_admin_can_read_input_presets(self):
+        app, _store, _service = _build(scopes=("support_admin",))
+        app.dependency_overrides[get_recording_input_catalog] = lambda: RecordingInputPresetCatalog(
+            [
+                RecordingInputPreset(
+                    preset_id="decklink-main",
+                    label="DeckLink main",
+                    source_kind="sdi",
+                    backend="decklink",
+                    device_name="DeckLink Duo 2 (1)",
+                )
+            ],
+            ffmpeg_runner=lambda _args: None,
+        )
+        r = TestClient(app).get("/api/staff/recording/input-presets")
+        assert r.status_code == 200
+        assert r.json()[0]["preset_id"] == "decklink-main"
+
+    def test_publish_operator_cannot_read_input_presets(self):
+        app, _store, _service = _build(scopes=_FORBIDDEN_SCOPES)
+        app.dependency_overrides[get_recording_input_catalog] = lambda: RecordingInputPresetCatalog(
+            [], ffmpeg_runner=lambda _args: None
+        )
+        r = TestClient(app).get("/api/staff/recording/input-presets")
+        assert r.status_code == 403
+
     def test_unauthenticated_is_401(self):
         client = _client(scopes=None)
         r = client.get("/api/staff/recording/schedules")

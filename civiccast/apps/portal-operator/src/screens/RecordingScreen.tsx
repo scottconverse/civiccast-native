@@ -53,6 +53,7 @@ import {
   deleteRecordingSchedule,
   getStaffIdentity,
   listRecordingJobs,
+  listRecordingInputPresets,
   listRecordingSchedules,
   recordNow,
   stopRecordingJob,
@@ -60,6 +61,7 @@ import {
 } from '../api/client'
 import type {
   RecordingJob,
+  RecordingInputPreset,
   RecordingJobState,
   RecordingSchedule,
   RecordingScheduleInput,
@@ -295,6 +297,12 @@ function RecordingBody({ canWrite }: { canWrite: boolean }) {
     retry: false,
   })
 
+  const inputPresetsQuery = useQuery<RecordingInputPreset[]>({
+    queryKey: ['recording-input-presets'],
+    queryFn: () => listRecordingInputPresets(false),
+    retry: false,
+  })
+
   // Jobs filter — the screen owns this; the query key includes the filter so
   // react-query refetches when the operator narrows. We don't push the filter
   // into the URL (sister screens like AssetsScreen also keep filters in
@@ -462,6 +470,20 @@ function RecordingBody({ canWrite }: { canWrite: boolean }) {
                 ? apiMessage(updateMut.error, 'Could not update schedule.')
                 : null
           }
+          inputPresets={inputPresetsQuery.data ?? []}
+          inputPresetsLoading={inputPresetsQuery.isLoading}
+          inputPresetsError={
+            inputPresetsQuery.isError
+              ? apiMessage(inputPresetsQuery.error, 'Could not inspect capture devices.')
+              : null
+          }
+          refreshingInputPresets={inputPresetsQuery.isFetching}
+          onRefreshInputPresets={() => {
+            void qc.fetchQuery({
+              queryKey: ['recording-input-presets'],
+              queryFn: () => listRecordingInputPresets(true),
+            })
+          }}
           onCancelEdit={() => setEditingId(null)}
           onSubmit={(payload, isUpdate) => {
             if (isUpdate && editingSchedule) {
@@ -792,14 +814,23 @@ interface ValidationErrors {
   encoder_profile?: string
 }
 
-function validateForm(state: ScheduleFormState): ValidationErrors {
+function validateForm(
+  state: ScheduleFormState,
+  inputPresets: readonly RecordingInputPreset[] = [],
+): ValidationErrors {
   const errs: ValidationErrors = {}
   if (!state.schedule_id.trim() || !/^[a-z0-9][a-z0-9-]*$/.test(state.schedule_id.trim())) {
     errs.schedule_id = 'Slug required: lowercase letters, digits, hyphens.'
   }
   if (!state.name.trim()) errs.name = 'Name is required.'
   if ((LIVE_SOURCE_KINDS as readonly string[]).includes(state.source_kind)) {
-    if (!state.input_id.trim()) errs.source = 'Input ID is required for live sources.'
+    const inputId = state.input_id.trim()
+    const knownPreset = inputPresets.find((preset) => preset.preset_id === inputId)
+    if (!inputId) {
+      errs.source = 'Input ID is required for live sources.'
+    } else if (knownPreset && knownPreset.source_kind !== state.source_kind) {
+      errs.source = `Input "${inputId}" is an ${knownPreset.source_kind.toUpperCase()} input; choose an ${state.source_kind.toUpperCase()} input.`
+    }
   } else {
     if (!state.uri.trim()) errs.source = 'URI is required for network streams.'
   }
@@ -825,12 +856,22 @@ function ScheduleForm({
   editing,
   submitting,
   submitError,
+  inputPresets,
+  inputPresetsLoading,
+  inputPresetsError,
+  refreshingInputPresets,
+  onRefreshInputPresets,
   onCancelEdit,
   onSubmit,
 }: {
   editing: RecordingSchedule | null
   submitting: boolean
   submitError: string | null
+  inputPresets: RecordingInputPreset[]
+  inputPresetsLoading: boolean
+  inputPresetsError: string | null
+  refreshingInputPresets: boolean
+  onRefreshInputPresets: () => void
   onCancelEdit: () => void
   onSubmit: (
     payload: RecordingScheduleInput | RecordingScheduleUpdate,
@@ -870,10 +911,14 @@ function ScheduleForm({
     headingRef.current?.focus()
   }, [])
 
-  const errors = validateForm(state)
+  const errors = validateForm(state, inputPresets)
   const hasErrors = Object.keys(errors).length > 0
   const isUpdate = editing != null
   const isLive = (LIVE_SOURCE_KINDS as readonly string[]).includes(state.source_kind)
+  const isHardwareInput = state.source_kind === 'sdi' || state.source_kind === 'hdmi'
+  const matchingInputPresets = inputPresets.filter(
+    (preset) => preset.source_kind === state.source_kind,
+  )
 
   const handleSubmit = () => {
     setShowErrors(true)
@@ -1005,9 +1050,16 @@ function ScheduleForm({
           <select
             id={idKind}
             value={state.source_kind}
-            onChange={(e) =>
-              setState((s) => ({ ...s, source_kind: e.target.value as RecordingSourceKind }))
-            }
+            onChange={(e) => {
+              const nextKind = e.target.value as RecordingSourceKind
+              // A preset id belongs to exactly one source kind; carrying it across a
+              // kind change would schedule a mismatched input the resolver rejects.
+              setState((s) =>
+                s.source_kind === nextKind
+                  ? s
+                  : { ...s, source_kind: nextKind, input_id: '' },
+              )
+            }}
             className="rounded-md px-2 py-1.5"
             style={INPUT_STYLE}
           >
@@ -1028,14 +1080,63 @@ function ScheduleForm({
           </select>
         </label>
 
-        {isLive ? (
+        {isHardwareInput ? (
+          <label htmlFor={idInput} className="grid gap-1 text-xs">
+            <span style={{ color: 'var(--cc-ink-3)' }}>Input ID</span>
+            <select
+              id={idInput}
+              value={state.input_id}
+              onChange={(e) => setState((s) => ({ ...s, input_id: e.target.value }))}
+              disabled={inputPresetsLoading || matchingInputPresets.length === 0}
+              className="rounded-md px-2 py-1.5"
+              style={INPUT_STYLE}
+            >
+              <option value="">
+                {inputPresetsLoading
+                  ? 'Looking for capture devices…'
+                  : matchingInputPresets.length === 0
+                    ? `No ${state.source_kind.toUpperCase()} inputs available`
+                    : `Choose an ${state.source_kind.toUpperCase()} input`}
+              </option>
+              {state.input_id && !matchingInputPresets.some((p) => p.preset_id === state.input_id) && (
+                <option value={state.input_id} disabled>
+                  Saved input unavailable: {state.input_id}
+                </option>
+              )}
+              {matchingInputPresets.map((preset) => (
+                <option key={preset.preset_id} value={preset.preset_id}>
+                  {preset.label} ({preset.origin})
+                </option>
+              ))}
+            </select>
+            {inputPresetsError && (
+              <span role="alert" style={{ color: 'var(--cc-warn)' }}>
+                {inputPresetsError}
+              </span>
+            )}
+            {!inputPresetsLoading && !inputPresetsError && matchingInputPresets.length === 0 && (
+              <span style={{ color: 'var(--cc-warn)' }}>
+                No {state.source_kind.toUpperCase()} capture input was detected or configured.
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onRefreshInputPresets}
+              disabled={refreshingInputPresets}
+              className="justify-self-start rounded-md px-2 py-1 text-xs"
+              style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+            >
+              {refreshingInputPresets ? 'Inspecting devices…' : 'Inspect capture devices'}
+            </button>
+          </label>
+        ) : isLive ? (
           <label htmlFor={idInput} className="grid gap-1 text-xs">
             <span style={{ color: 'var(--cc-ink-3)' }}>Input ID</span>
             <input
               id={idInput}
               type="text"
               value={state.input_id}
-              placeholder="sdi-1"
+              placeholder="studio-ndi"
               onChange={(e) => setState((s) => ({ ...s, input_id: e.target.value }))}
               className="rounded-md px-2 py-1.5"
               style={INPUT_STYLE}

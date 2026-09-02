@@ -125,13 +125,58 @@ def test_device_sources_carry_no_network_timeout_flag(
 ) -> None:
     """Device sources are local hardware inputs, not network I/O — no
     connect/read timeout applies and none should be added."""
-    pipeline = _make_pipeline(tmp_path)
+    pipeline = _make_pipeline(
+        tmp_path,
+        hardware_input_args_resolver=(
+            (lambda source: ["-f", "decklink", "-i", source.input_id])
+            if kind in {"sdi", "hdmi"}
+            else None
+        ),
+    )
     source = RecordingSource(kind=kind, **kwargs)
 
     args = pipeline._input_args(source)
 
     assert "-timeout" not in args
     assert "-rw_timeout" not in args
+
+
+def test_sdi_preset_resolves_to_decklink_capture_args(tmp_path: Path) -> None:
+    """An SDI schedule stores a stable preset id, never a raw FFmpeg device string."""
+    pipeline = _make_pipeline(tmp_path)
+    pipeline._hardware_input_args_resolver = lambda source: [
+        "-f",
+        "decklink",
+        "-i",
+        "DeckLink Duo 2 (2)",
+    ]
+
+    args = pipeline._input_args(RecordingSource(kind="sdi", input_id="decklink-duo2-ch2"))
+
+    assert args == ["-f", "decklink", "-i", "DeckLink Duo 2 (2)"]
+
+
+def test_hdmi_preset_resolves_to_directshow_capture_args(tmp_path: Path) -> None:
+    """A Windows HDMI capture preset maps to DirectShow's explicit video input."""
+    pipeline = _make_pipeline(tmp_path)
+    pipeline._hardware_input_args_resolver = lambda source: [
+        "-f",
+        "dshow",
+        "-i",
+        "video=Cam Link HDMI",
+    ]
+
+    args = pipeline._input_args(RecordingSource(kind="hdmi", input_id="cam-link-hdmi"))
+
+    assert args == ["-f", "dshow", "-i", "video=Cam Link HDMI"]
+
+
+def test_sdi_hdmi_without_a_known_preset_fail_closed(tmp_path: Path) -> None:
+    pipeline = _make_pipeline(tmp_path)
+    pipeline._hardware_input_args_resolver = lambda source: None
+
+    with pytest.raises(RuntimeError, match=r"(?i)recording input preset"):
+        pipeline._input_args(RecordingSource(kind="sdi", input_id="made-up-input"))
 
 
 class _ScriptedHandle:

@@ -59,10 +59,11 @@ Migration `0056_scheduled_recording` adds `recording_schedules` + `recording_job
 
 ## 4. API surface
 
-Eight endpoints total (the CRUD-per-id triple expands to GET/PATCH/DELETE):
+Nine endpoints total (the CRUD-per-id triple expands to GET/PATCH/DELETE):
 
 ```
 GET     /api/staff/recording/schedules                            # list schedules
+GET     /api/staff/recording/input-presets                        # detected/configured SDI + HDMI inputs
 POST    /api/staff/recording/schedules                            # create schedule
 GET     /api/staff/recording/schedules/{id}                       # read schedule
 PATCH   /api/staff/recording/schedules/{id}                       # update schedule
@@ -79,6 +80,10 @@ without parsing source — this is over-delivery vs the "Roles: ..." line below.
 
 ## 5. Operator UI
 - **Recording schedules** (`/portal-operator/recording`): create/edit a schedule (source, recurrence, window, encoder, target series, custom fields), "Record now" button.
+- **SDI/HDMI source picker:** lists only inputs found by FFmpeg device
+  discovery or explicitly declared in `CIVICCAST_RECORDING_INPUT_PRESETS_JSON`.
+  It shows an unavailable state instead of accepting an arbitrary device name;
+  NDI remains a manually named network input.
 - **Job history/live** table: state, duration, bytes, link to the produced asset; stop control on running jobs.
 - Phone-first; accessible per S20.
 
@@ -98,9 +103,21 @@ without parsing source — this is over-delivery vs the "Roles: ..." line below.
 | DC-4 | Finalize produces an `Asset` + readiness identical in shape to a watch-folder ingest (S7), with target-series + custom-field stamps applied. | contract→lab |
 | DC-5 | Overlap on the same input → second job `skipped` with reason; disk-full → `failed` + alert. | contract |
 | DC-6 | Ingest loudness regime (S11) is applied during capture. | lab |
-| DC-7 | SDI/HDMI input capture works once hardware is present (rung-3-adjacent; network-stream capture is the rung-2 bar). | lab→(SDI when hw) |
+| DC-7 | SDI/HDMI presets resolve to exact DeckLink/DirectShow FFmpeg input arguments and unknown/mismatched presets fail closed. The LPM mock lab covers both backends; a physical signal remains station-device evidence. | contract+mock-lab→(signal when hw) |
 
-Proof tier: **contract → lab** (SDI input proof rides the S15 SDI hardware proof).
+Proof tier: **contract → mock lab** for software through the FFmpeg/card API
+boundary. Physical signal lock remains station-device evidence and is not a
+software completion dependency.
+
+### SDI/HDMI input configuration
+
+At startup CivicCast asks its installed FFmpeg runtime for DeckLink sources and
+Windows DirectShow video devices. Stations can also supply stable labels,
+connector-specific source kinds, a DeckLink `format_code`, and a companion
+DirectShow audio device with `CIVICCAST_RECORDING_INPUT_PRESETS_JSON`. Explicit
+configuration wins over an auto-detected row with the same `preset_id`. The
+scheduled capture pipeline never executes a device string typed by an operator;
+it resolves the selected preset to a structured argument list.
 
 ## 8. Test plan
 Unit: recurrence/window expansion, arm/validate, overlap + disk-full + source-fail handling. API: all endpoints + role gating. E2E: create schedule → record-now a test stream → see asset in library. Coverage >80%; audit 0/0/0/0/0.

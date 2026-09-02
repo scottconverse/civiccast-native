@@ -38,7 +38,7 @@ from civiccast.recording.models import (
     RecordingSource,
     RecurrenceSpec,
 )
-from civiccast.recording.router import get_recording_service
+from civiccast.recording.router import get_recording_input_catalog, get_recording_service
 from civiccast.recording.runtime import (
     FfmpegScheduledCapturePipeline,
     RecordingAlertSink,
@@ -86,14 +86,18 @@ def test_create_app_wires_scheduled_recording_runtime(monkeypatch, tmp_path: Pat
     monkeypatch.setenv("CIVICCAST_ALERTING", "off")
     monkeypatch.setenv("CIVICCAST_BULLETIN_EXPIRY", "off")
     monkeypatch.setenv("CIVICCAST_SCHEDULED_RECORDING", "off")
+    monkeypatch.setenv("CIVICCAST_TESTER_OPS_STATE_PATH", str(tmp_path / "tester-ops-state.json"))
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
 
     from civiccast.app import create_app
 
     app = create_app()
     service = app.dependency_overrides[get_recording_service]()
+    catalog = app.dependency_overrides[get_recording_input_catalog]()
 
     assert isinstance(service, RecordingService)
     assert isinstance(service._pipeline, FfmpegScheduledCapturePipeline)
+    assert service._pipeline._hardware_input_args_resolver == catalog.resolve_args
     assert isinstance(service._finalizer, ScheduledRecordingAssetFinalizer)
     assert isinstance(service._alert_sink, RecordingAlertSink)
     assert app.state.scheduled_recording_worker is not None

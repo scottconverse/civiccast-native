@@ -212,8 +212,10 @@ export function ZoneForm({
           <span style={{ color: 'var(--cc-ink-3)' }}>Zone kind</span>
           <select aria-label="Zone kind" value={zoneKind} onChange={(e) => setZoneKind(e.target.value as ZoneInput['zone_kind'])} className="rounded-md px-2 py-1.5" style={fieldStyle}>
             {ZONE_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {humanize(k)}
+              <option key={k} value={k} disabled={k === 'audio'}>
+                {k === 'audio'
+                  ? 'Board background audio — coming in a future release'
+                  : humanize(k)}
               </option>
             ))}
           </select>
@@ -228,6 +230,27 @@ export function ZoneForm({
             ))}
           </select>
         </label>
+        <div
+          className="grid gap-2 rounded-md p-3 text-xs sm:col-span-2 sm:grid-cols-2"
+          style={insetStyle}
+          aria-label="Future CG options"
+        >
+          <div>
+            <div className="font-semibold">Live video in a zone — coming in a future release</div>
+            <p className="m-0 mt-1" style={{ color: 'var(--cc-ink-3)' }}>
+              A future release will let a board region show a live camera or program source. The
+              current CG renderer continues to support its existing text, schedule, feed, image,
+              logo, ticker, and alert zones.
+            </p>
+          </div>
+          <div>
+            <div className="font-semibold">Board background audio — coming in a future release</div>
+            <p className="m-0 mt-1" style={{ color: 'var(--cc-ink-3)' }}>
+              A future release will let a channel mix a managed audio bed under its bulletin board.
+              This option is disabled because the current renderer does not play it.
+            </p>
+          </div>
+        </div>
         {needsFeed && (
           <label className="grid gap-1 text-xs">
             <span style={{ color: 'var(--cc-ink-3)' }}>Feed source</span>
