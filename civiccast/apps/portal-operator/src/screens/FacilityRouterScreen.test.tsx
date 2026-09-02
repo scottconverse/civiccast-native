@@ -277,7 +277,7 @@ describe('FacilityRouterScreen when the channel list fails to load', () => {
 
 // --- State 6: permissions (read-only role) ----------------------------------
 
-describe('FacilityRouterScreen for an operator without the meeting_operator role', () => {
+describe('FacilityRouterScreen for an operator without the meeting_operator or setup_admin role', () => {
   it('disables scheduled take and overlay actions with a role-specific message, but keeps manual preview available', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
     vi.mocked(listChannelProfiles).mockResolvedValue([channel({ channel_id: 'government' })])
@@ -286,13 +286,60 @@ describe('FacilityRouterScreen for an operator without the meeting_operator role
     await findByDisplayValue('Government Channel (government)')
 
     await waitFor(() => {
-      expect(getAllByText(/require the meeting operator role/).length).toBeGreaterThan(0)
+      expect(getAllByText(/require the meeting operator or setup admin role/).length).toBeGreaterThan(0)
     })
     expect((getByText('Preview scheduled take') as HTMLButtonElement).disabled).toBe(true)
     expect((getByText('Preview L-bar and squeezeback') as HTMLButtonElement).disabled).toBe(true)
     // Manual crosspoint preview is facility-path scoped and stays available.
     const manualButton = getByText('Preview take') as HTMLButtonElement
     expect(manualButton.disabled).toBe(false)
+  })
+
+  it('allows a setup_admin (without meeting_operator) to operate, matching ChannelOpsScreen -- Live Room stays the meeting_operator-only outlier', async () => {
+    // PR #130 review: this screen's role gate now aligns with
+    // ChannelOpsScreen's takeover/config gate (meeting_operator OR
+    // setup_admin), not Live Room's meeting_operator-only pattern.
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    vi.mocked(listChannelProfiles).mockResolvedValue([channel({ channel_id: 'government' })])
+    const { findByDisplayValue, getByText, queryByText } = renderScreen()
+
+    await findByDisplayValue('Government Channel (government)')
+
+    await waitFor(() => {
+      expect((getByText('Preview scheduled take') as HTMLButtonElement).disabled).toBe(false)
+      expect((getByText('Preview L-bar and squeezeback') as HTMLButtonElement).disabled).toBe(false)
+    })
+    expect(queryByText(/require the meeting operator or setup admin role/)).toBeNull()
+  })
+})
+
+// --- Permission check: fail closed while identity is still loading ---------
+
+describe('FacilityRouterScreen while staff identity is still loading', () => {
+  it('keeps scheduled take and overlay actions disabled (with a checking-permissions reason) until identity resolves, then enables them', async () => {
+    let resolveIdentity: (value: StaffIdentityResponse) => void = () => {}
+    vi.mocked(getStaffIdentity).mockReturnValue(
+      new Promise((resolve) => {
+        resolveIdentity = resolve
+      }),
+    )
+    vi.mocked(listChannelProfiles).mockResolvedValue([channel({ channel_id: 'government' })])
+    const { findByDisplayValue, getAllByText, getByText } = renderScreen()
+
+    // The channel resolves (auto-selected, single channel) well before
+    // identity does -- the buttons must stay disabled on that gap, not
+    // briefly enable because channelActionDisabledReason returned null.
+    await findByDisplayValue('Government Channel (government)')
+    expect((getByText('Preview scheduled take') as HTMLButtonElement).disabled).toBe(true)
+    expect((getByText('Preview L-bar and squeezeback') as HTMLButtonElement).disabled).toBe(true)
+    expect(getAllByText('Checking your permissions...').length).toBe(2)
+
+    resolveIdentity(identity(['meeting_operator']))
+
+    await waitFor(() => {
+      expect((getByText('Preview scheduled take') as HTMLButtonElement).disabled).toBe(false)
+      expect((getByText('Preview L-bar and squeezeback') as HTMLButtonElement).disabled).toBe(false)
+    })
   })
 })
 
@@ -408,5 +455,47 @@ describe('ScheduledTakePanel / OverlayPlanPanel disabled reasons', () => {
     expect(queryByText('Choose a channel before scheduling a take.')).toBeNull()
     fireEvent.click(button)
     expect(onPreview).toHaveBeenCalledTimes(1)
+  })
+
+  it('links the disabled scheduled-take button to its reason via aria-describedby, and marks the reason aria-live=polite', () => {
+    const { getByText } = render(
+      <ScheduledTakePanel
+        plan={null}
+        busy={false}
+        error={null}
+        disabledReason="Choose a channel before scheduling a take."
+        onPreview={() => {}}
+      />,
+    )
+    const button = getByText('Preview scheduled take') as HTMLButtonElement
+    const reason = getByText('Choose a channel before scheduling a take.')
+    expect(reason.id).toBeTruthy()
+    expect(button.getAttribute('aria-describedby')).toBe(reason.id)
+    expect(reason.getAttribute('aria-live')).toBe('polite')
+  })
+
+  it('links the disabled overlay button to its reason via aria-describedby, and marks the reason aria-live=polite', () => {
+    const { getByText } = render(
+      <OverlayPlanPanel
+        plan={null}
+        busy={false}
+        error={null}
+        disabledReason="Choose a channel before previewing an overlay."
+        onPreview={() => {}}
+      />,
+    )
+    const button = getByText('Preview L-bar and squeezeback') as HTMLButtonElement
+    const reason = getByText('Choose a channel before previewing an overlay.')
+    expect(reason.id).toBeTruthy()
+    expect(button.getAttribute('aria-describedby')).toBe(reason.id)
+    expect(reason.getAttribute('aria-live')).toBe('polite')
+  })
+
+  it('does not set aria-describedby when the button is enabled (no reason element to point to)', () => {
+    const { getByText } = render(
+      <ScheduledTakePanel plan={null} busy={false} error={null} disabledReason={null} onPreview={() => {}} />,
+    )
+    const button = getByText('Preview scheduled take') as HTMLButtonElement
+    expect(button.hasAttribute('aria-describedby')).toBe(false)
   })
 })

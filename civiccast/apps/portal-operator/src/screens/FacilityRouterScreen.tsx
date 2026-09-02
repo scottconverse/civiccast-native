@@ -37,7 +37,8 @@ const NO_CHANNELS_CONFIGURED =
   'No channels are configured yet. Configure a channel in Channel Ops before scheduling a take or previewing overlays.'
 const CHANNELS_LOAD_ERROR = 'Configured channels could not load. Scheduled take and overlay actions are unavailable until they do.'
 const CHANNEL_PERMISSION_MESSAGE =
-  'Scheduling a take and previewing overlays require the meeting operator role.'
+  'Scheduling a take and previewing overlays require the meeting operator or setup admin role.'
+const CHECKING_PERMISSIONS_MESSAGE = 'Checking your permissions...'
 
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? fallback
@@ -436,6 +437,7 @@ export function OverlayPlanPanel({
         type="button"
         onClick={onPreview}
         disabled={busy || disabledReason != null}
+        aria-describedby={disabledReason != null && !busy ? 'overlay-disabled-reason' : undefined}
         className="rounded-md px-3 py-2 text-sm font-semibold"
         style={{
           background: busy || disabledReason != null ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
@@ -446,7 +448,7 @@ export function OverlayPlanPanel({
         {busy ? 'Previewing overlay...' : 'Preview L-bar and squeezeback'}
       </button>
       {disabledReason != null && !busy && (
-        <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+        <div id="overlay-disabled-reason" aria-live="polite" className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
           {disabledReason}
         </div>
       )}
@@ -574,6 +576,7 @@ export function ScheduledTakePanel({
         type="button"
         onClick={onPreview}
         disabled={busy || disabledReason != null}
+        aria-describedby={disabledReason != null && !busy ? 'scheduled-take-disabled-reason' : undefined}
         className="rounded-md px-3 py-2 text-sm font-semibold"
         style={{
           background: busy || disabledReason != null ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
@@ -584,7 +587,7 @@ export function ScheduledTakePanel({
         {busy ? 'Previewing schedule...' : 'Preview scheduled take'}
       </button>
       {disabledReason != null && !busy && (
-        <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+        <div id="scheduled-take-disabled-reason" aria-live="polite" className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
           {disabledReason}
         </div>
       )}
@@ -645,8 +648,13 @@ export function FacilityRouterScreen() {
     queryFn: getStaffIdentity,
     retry: false,
   })
+  // Aligned with ChannelOpsScreen's takeover/config gate (meeting_operator OR
+  // setup_admin may operate) rather than Live Room's meeting_operator-only
+  // pattern, which is the outlier, per PR #130 review.
   const canOperateChannel =
-    staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'meeting_operator')
+    staffIdentityQuery.isSuccess &&
+    (hasOperatorRole(staffIdentityQuery.data, 'meeting_operator') ||
+      hasOperatorRole(staffIdentityQuery.data, 'setup_admin'))
 
   function selectChannel(channelId: string) {
     setSelectedChannelId(channelId)
@@ -688,7 +696,12 @@ export function FacilityRouterScreen() {
     if (channelsQuery.isError) return CHANNELS_LOAD_ERROR
     if (channelsQuery.isSuccess && channels.length === 0) return NO_CHANNELS_CONFIGURED
     if (!selectedChannelId) return kind === 'take' ? CHOOSE_CHANNEL_FOR_TAKE : CHOOSE_CHANNEL_FOR_OVERLAY
-    if (staffIdentityQuery.isSuccess && !canOperateChannel) return CHANNEL_PERMISSION_MESSAGE
+    // Fail closed while identity is still loading (or errored) instead of
+    // briefly enabling a privileged action before the role is known -- the
+    // backend role gate still enforces, but the button must never appear
+    // actionable in that gap. PR #130 review.
+    if (!staffIdentityQuery.isSuccess) return CHECKING_PERMISSIONS_MESSAGE
+    if (!canOperateChannel) return CHANNEL_PERMISSION_MESSAGE
     return null
   }
 
