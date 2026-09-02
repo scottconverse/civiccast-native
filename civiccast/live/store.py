@@ -555,8 +555,11 @@ class LiveSourceStore:
 
         Raises :class:`LiveSourceNotFoundError` when the row is gone and
         :class:`LiveSourceConcurrencyError` when ``expected_row_version`` does
-        not match. ``row_version`` is bumped on every applied edit so a second
-        operator's stale PATCH is refused rather than silently winning.
+        not match, OR when a *different* commit lands between this method's
+        own read of the row and its own write -- see the compare-and-swap
+        note below. ``row_version`` is bumped on every applied edit so a
+        second operator's stale PATCH is refused rather than silently
+        winning.
 
         Endpoint/type validation is NOT re-implemented here: the merged
         (existing + requested) source type and endpoint are re-run through
@@ -564,6 +567,19 @@ class LiveSourceStore:
         ``normalize_endpoint``, so changing only the source type of an
         existing row is checked against that row's stored endpoint rather than
         being accepted because the request body did not mention the endpoint.
+
+        **Compare-and-swap, not read-then-write.** An earlier version of this
+        method read the row, mutated the ORM object's attributes, and
+        committed -- which checks ``expected_row_version`` against the value
+        it read, but leaves a window between that read and the eventual
+        ``UPDATE`` for a *different* concurrent commit to land unnoticed
+        (hostile-review finding N1). The write below is a single
+        ``UPDATE ... WHERE live_source_id = ? AND row_version = ?`` statement,
+        where the version is the one this call just read: the database
+        performs the check-and-write atomically, so there is no window at
+        all, whether or not the caller supplied its own
+        ``expected_row_version``. ``rowcount == 0`` means the row changed (or
+        was deleted) between the read above and this statement.
         """
         with self._session_factory() as session:
             row = session.execute(
@@ -581,6 +597,7 @@ class LiveSourceStore:
                     actual=row.row_version,
                 )
 
+            read_version = row.row_version
             changed = payload.changed_fields()
             source_type = payload.source_type if "source_type" in changed else row.source_type
             endpoint_url = (
@@ -599,30 +616,54 @@ class LiveSourceStore:
             normalized_endpoint = normalize_endpoint(source_type, endpoint_url)
             check_credential_shape(source_type, credentials_handle)
 
-            row.source_type = source_type
-            row.endpoint_url = normalized_endpoint
-            row.credentials_handle = credentials_handle
+            setters: dict[str, object] = {
+                "source_type": source_type,
+                "endpoint_url": normalized_endpoint,
+                "credentials_handle": credentials_handle,
+                "row_version": int(read_version or 1) + 1,
+            }
             if "channel_id" in changed and payload.channel_id is not None:
-                row.channel_id = payload.channel_id
+                setters["channel_id"] = payload.channel_id
             if "name" in changed and payload.name is not None:
-                row.name = payload.name
+                setters["name"] = payload.name
 
             if payload.invalidates_readiness():
-                # Immediately, in this same transaction. A row whose address
+                # Immediately, in this same statement. A row whose address
                 # just changed has never been probed at its new address, and
                 # anything that reads it between now and the next probe --
                 # including a takeover -- must see that.
-                row.probe_state = PROBE_STATE_NEVER_PROBED
-                row.probe_observed_at = None
-                row.probe_detail = None
-                row.probe_error_code = None
+                setters["probe_state"] = PROBE_STATE_NEVER_PROBED
+                setters["probe_observed_at"] = None
+                setters["probe_detail"] = None
+                setters["probe_error_code"] = None
                 # probe_last_success_at is deliberately NOT cleared: "this
                 # camera last worked at 09:41" stays true and useful history
                 # even though it no longer counts as readiness.
-            row.row_version = int(row.row_version or 1) + 1
+
+            result = session.execute(
+                update(LiveSource)
+                .where(LiveSource.live_source_id == live_source_id)
+                .where(LiveSource.row_version == read_version)
+                .values(**setters)
+            )
+            matched: int = result.rowcount  # type: ignore[attr-defined]
+            if matched == 0:
+                session.rollback()
+                current = session.execute(
+                    select(LiveSource).where(LiveSource.live_source_id == live_source_id)
+                ).scalar_one_or_none()
+                if current is None:
+                    raise LiveSourceNotFoundError(live_source_id)
+                raise LiveSourceConcurrencyError(
+                    live_source_id,
+                    expected=read_version,
+                    actual=current.row_version,
+                )
             session.commit()
-            session.refresh(row)
-            return LiveSourceResponse.model_validate(row)
+            updated = session.execute(
+                select(LiveSource).where(LiveSource.live_source_id == live_source_id)
+            ).scalar_one()
+            return LiveSourceResponse.model_validate(updated)
 
     def record_probe_observation(
         self,
@@ -644,34 +685,69 @@ class LiveSourceStore:
         ``expected_row_version`` / ``expected_endpoint_url`` are the version and
         endpoint the caller actually probed, read at the top of its call before
         the (up to several seconds long) probe ran. When either is supplied and
-        no longer matches the row, the write is refused with
+        no longer matches the row at write time, the write is refused with
         :class:`LiveSourceProbeConflictError` rather than persisted: an
         operator's PATCH landing in that window (re-pointing the endpoint, or
         any other edit) must not be silently overwritten by a verdict about the
         address that used to be there. This is the guard against the
         probe-then-persist race the takeover gate and the explicit "Check
         source" action both go through.
+
+        **Compare-and-swap, not read-then-write** (hostile-review finding
+        N1, same defect class as :meth:`update`). The version/endpoint
+        expectations are carried directly in the ``UPDATE``'s own ``WHERE``
+        clause rather than checked against a prior ``SELECT`` and then
+        written separately -- the database performs the check-and-write as
+        one atomic statement, so there is no read-then-write window at all,
+        not even the narrow one between this method's own read and its own
+        write.
         """
+        setters: dict[str, object] = {
+            "probe_state": PROBE_STATE_READY if ok else PROBE_STATE_FAILED,
+            "probe_observed_at": observed_at,
+            "probe_detail": (detail or None) if detail is None else detail[:_MAX_PROBE_DETAIL],
+            "probe_error_code": error_code,
+        }
+        if ok:
+            setters["probe_last_success_at"] = observed_at
+
         with self._session_factory() as session:
+            stmt = update(LiveSource).where(LiveSource.live_source_id == live_source_id)
+            if expected_row_version is not None:
+                stmt = stmt.where(LiveSource.row_version == expected_row_version)
+            if expected_endpoint_url is not None:
+                stmt = stmt.where(LiveSource.endpoint_url == expected_endpoint_url)
+            result = session.execute(stmt.values(**setters))
+            matched: int = result.rowcount  # type: ignore[attr-defined]
+            if matched == 0:
+                session.rollback()
+                current = session.execute(
+                    select(LiveSource).where(LiveSource.live_source_id == live_source_id)
+                ).scalar_one_or_none()
+                if current is None:
+                    raise LiveSourceNotFoundError(live_source_id)
+                # Distinguish which expectation actually broke, for the
+                # conflict reason -- version wins when both were supplied and
+                # both moved, since a version change already implies "this is
+                # not the row I read."
+                if expected_row_version is not None and current.row_version != expected_row_version:
+                    reason = "row_version_changed"
+                elif (
+                    expected_endpoint_url is not None
+                    and current.endpoint_url != expected_endpoint_url
+                ):
+                    reason = "endpoint_changed"
+                else:
+                    # Neither expectation was supplied (or both still match,
+                    # e.g. some other column changed underneath a caller that
+                    # gave no expectations at all) -- name it generically
+                    # rather than guessing.
+                    reason = "row_changed"
+                raise LiveSourceProbeConflictError(live_source_id, reason=reason)
+            session.commit()
             row = session.execute(
                 select(LiveSource).where(LiveSource.live_source_id == live_source_id)
-            ).scalar_one_or_none()
-            if row is None:
-                raise LiveSourceNotFoundError(live_source_id)
-            if expected_row_version is not None and row.row_version != expected_row_version:
-                session.rollback()
-                raise LiveSourceProbeConflictError(live_source_id, reason="row_version_changed")
-            if expected_endpoint_url is not None and row.endpoint_url != expected_endpoint_url:
-                session.rollback()
-                raise LiveSourceProbeConflictError(live_source_id, reason="endpoint_changed")
-            row.probe_state = PROBE_STATE_READY if ok else PROBE_STATE_FAILED
-            row.probe_observed_at = observed_at
-            row.probe_detail = (detail or None) if detail is None else detail[:_MAX_PROBE_DETAIL]
-            row.probe_error_code = error_code
-            if ok:
-                row.probe_last_success_at = observed_at
-            session.commit()
-            session.refresh(row)
+            ).scalar_one()
             return LiveSourceResponse.model_validate(row)
 
 

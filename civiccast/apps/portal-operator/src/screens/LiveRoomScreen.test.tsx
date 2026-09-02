@@ -446,6 +446,30 @@ describe('LiveRoomScreen source edit form', () => {
     // not the display.
     expect(restoredField.value).toBe('')
   })
+
+  it('shows what the server now has next to a field that conflicts, without touching the typed value (reviewer N2)', () => {
+    const original = source({ name: 'Council Cam', endpoint_url: 'rtmp://127.0.0.1/live/a' })
+    render(
+      <SourceEditForm
+        source={original}
+        conflict={source({
+          name: 'Council Cam',
+          endpoint_url: 'rtmp://127.0.0.1/live/b',
+        })}
+        onCancel={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    )
+
+    // The name matches on both sides -- no comparison line for it.
+    expect(screen.queryByText(/Server now has: Council Cam/)).toBeNull()
+    // The endpoint conflicts -- shown for comparison, form field unchanged.
+    expect(screen.getByText('Server now has: rtmp://127.0.0.1/live/b')).not.toBeNull()
+    expect((screen.getByLabelText('Stream address') as HTMLInputElement).value).toBe(
+      'rtmp://127.0.0.1/live/a',
+    )
+    expect(screen.getByText(/Someone else saved a change to this source first/i)).not.toBeNull()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -538,10 +562,32 @@ describe('LiveRoomScreen probe-button role gate (finding: Probe button rendered 
 })
 
 describe('LiveRoomScreen readiness poll (finding: sourcesQuery never re-fetches)', () => {
-  it('re-fetches live sources on its own, at most every 10s, so a stale pill goes stale on screen', async () => {
+  it('re-fetches live sources on its own, at most every 10s, and the stale-pill text on screen actually flips (reviewer N3/N4)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
-    vi.mocked(listLiveSources).mockResolvedValue([source({ name: 'Council Cam' })])
+    // First fetch: freshly checked and delivering. Second (and every later)
+    // fetch: the same source has aged past the readiness TTL. A call-count
+    // assertion alone would pass even if the poll fired but the new data
+    // never reached the screen -- asserting the rendered chip text actually
+    // flips is what proves the fix closes reviewer N3 (the refetch must be
+    // visible, not just observable on the mock).
+    vi.mocked(listLiveSources)
+      .mockResolvedValueOnce([
+        source({
+          name: 'Council Cam',
+          readiness: 'ready',
+          probe_state: 'ready',
+          observation_age_seconds: 5,
+        }),
+      ])
+      .mockResolvedValue([
+        source({
+          name: 'Council Cam',
+          readiness: 'stale',
+          probe_state: 'ready',
+          observation_age_seconds: 900,
+        }),
+      ])
 
     renderLiveRoomScreen()
 
@@ -550,8 +596,13 @@ describe('LiveRoomScreen readiness poll (finding: sourcesQuery never re-fetches)
     // real wall-clock time elapsing during that settle already counts toward
     // the fake clock, so asserting an exact call count here is not reliable.
     await screen.findByRole('radio', { name: /Council Cam/i })
+    expect(screen.getAllByText('Delivering').length).toBeGreaterThan(0)
     const before = vi.mocked(listLiveSources).mock.calls.length
 
+    // The interval this asserts (10_100ms > 10s) must agree with the
+    // component's actual refetchInterval and with this test's own name --
+    // reviewer N4 caught a prior 8s/10s/"10s" three-way mismatch between the
+    // code, its comment, and this test.
     await act(async () => {
       vi.advanceTimersByTime(10_100)
     })
@@ -559,18 +610,22 @@ describe('LiveRoomScreen readiness poll (finding: sourcesQuery never re-fetches)
     await waitFor(() =>
       expect(vi.mocked(listLiveSources).mock.calls.length).toBeGreaterThan(before),
     )
+    await waitFor(() => expect(screen.getAllByText('Needs re-check').length).toBeGreaterThan(0))
+    expect(screen.queryByText('Delivering')).toBeNull()
     vi.useRealTimers()
   })
 })
 
 describe('LiveRoomScreen edit-conflict reload (finding: 409 resends the same stale row_version forever)', () => {
-  it('on 409, reloads the row and tells the operator, instead of the generic failure text', async () => {
+  it('on 409, keeps the operator\'s typed edit, shows what the server now has, and the retry carries the fresh row_version (reviewer N2)', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
     const original = source({ name: 'Council Cam', row_version: 1 })
     vi.mocked(listLiveSources).mockResolvedValue([original])
-    vi.mocked(updateLiveSource).mockRejectedValueOnce(
-      new ApiError('Request failed: 409 Conflict', 409, 'row changed'),
-    )
+    vi.mocked(updateLiveSource)
+      .mockRejectedValueOnce(new ApiError('Request failed: 409 Conflict', 409, 'row changed'))
+      .mockResolvedValueOnce(
+        source({ name: 'Chamber Cam', row_version: 3, live_source_id: 'sample-source' }),
+      )
     const reloaded = source({
       name: 'Council Cam',
       row_version: 2,
@@ -590,11 +645,28 @@ describe('LiveRoomScreen edit-conflict reload (finding: 409 resends the same sta
 
     await screen.findByText(/someone else changed this source/i)
     expect(vi.mocked(getLiveSourceById)).toHaveBeenCalledWith('sample-source')
-    // The reloaded row's fresh endpoint is now what the (remounted) form
-    // shows -- the operator is reviewing the CURRENT row, not resubmitting
-    // blind against the version that just lost the race.
+
+    // The operator's typed edit survives the 409 -- it is NOT replaced with
+    // whatever the server now has. Discarding it was the exact bug this
+    // fixes: an earlier version remounted the form on the fresh row here,
+    // silently losing "Chamber Cam".
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Chamber Cam')
+    // The endpoint was never touched by the operator, so it still reads the
+    // ORIGINAL value they loaded -- not the reloaded row's value either.
     expect((screen.getByLabelText('Stream address') as HTMLInputElement).value).toBe(
-      'rtmp://127.0.0.1/live/reloaded',
+      original.endpoint_url,
     )
+    // What conflicted is shown for comparison instead.
+    expect(screen.getByText(`Server now has: ${reloaded.endpoint_url}`)).not.toBeNull()
+
+    // Retrying the save must carry the fresh row_version (2), not the
+    // original stale one (1) that just 409'd -- resending the stale version
+    // would just 409 again forever.
+    fireEvent.click(screen.getByRole('button', { name: 'Save source' }))
+    await waitFor(() => expect(vi.mocked(updateLiveSource)).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(updateLiveSource).mock.calls[1]).toEqual([
+      'sample-source',
+      { name: 'Chamber Cam', expected_row_version: 2 },
+    ])
   })
 })

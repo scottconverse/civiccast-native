@@ -26,14 +26,14 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 import civiccast.live.models
 import civiccast.schedule.models  # noqa: F401  (owns the SQLite ATTACH hook)
 from civiccast.db import Base, bind_engine, reset_engine
-from civiccast.live.models import LiveSourceCreate, LiveSourceUpdate
+from civiccast.live.models import LiveSource, LiveSourceCreate, LiveSourceUpdate
 from civiccast.live.store import (
     LiveSourceConcurrencyError,
     LiveSourceNotFoundError,
@@ -364,3 +364,69 @@ class TestOptimisticConcurrency:
         store.update("council-encoder", LiveSourceUpdate(name="One"))
         edited = store.update("council-encoder", LiveSourceUpdate(name="Two"))
         assert edited.name == "Two"
+
+    def test_a_commit_landing_between_this_calls_own_read_and_write_is_refused(
+        self, store: LiveSourceStore
+    ) -> None:
+        """The true CAS test (hostile-review finding N1), not just the
+        caller-supplied ``expected_row_version`` check above.
+
+        A read-then-write ``update()`` -- read the row, mutate the ORM
+        object, commit -- checks ``expected_row_version`` against what it
+        read, but leaves a window between that read and its own eventual
+        write for a *different* concurrent commit to land unnoticed, even
+        when the caller supplied no ``expected_row_version`` at all. That
+        window cannot be demonstrated by calling ``update()`` twice in
+        sequence (the second call's own read would simply see the first
+        call's committed result and everything would look consistent); it
+        has to be demonstrated by injecting a second, independently
+        committed write *inside* one ``update()`` call, between its read and
+        its write.
+
+        SQLite's default pool for ``sqlite:///:memory:`` keeps every
+        `Session` on this engine talking to the same in-process database (as
+        long as they stay on this thread), so a second session opened here
+        and committed mid-call is a genuine second writer, not a no-op --
+        this demonstrates the real race, not just the rowcount-0 branch in
+        isolation.
+        """
+        _create(store)
+        original_execute = Session.execute
+        racing_write_committed = {"done": False}
+
+        def _racing_execute(self_session, statement, *args, **kwargs):  # type: ignore[no-untyped-def]
+            result = original_execute(self_session, statement, *args, **kwargs)
+            # `update()`'s very first database call inside the patched block
+            # below is its own SELECT of the row (to read row_version and the
+            # current field values it needs to merge). Firing the race right
+            # after that first call -- and never again -- lands a second,
+            # independently committed write exactly in the window between
+            # `update()`'s read and its own CAS'd UPDATE statement.
+            if not racing_write_committed["done"]:
+                racing_write_committed["done"] = True
+                with store._session_factory() as racing_session:  # type: ignore[attr-defined]
+                    racing_session.execute(
+                        update(LiveSource)
+                        .where(LiveSource.live_source_id == "council-encoder")
+                        .values(name="Renamed by a concurrent commit", row_version=2)
+                    )
+                    racing_session.commit()
+            return result
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(Session, "execute", _racing_execute)
+            with pytest.raises(LiveSourceConcurrencyError) as exc:
+                store.update(
+                    "council-encoder",
+                    LiveSourceUpdate(endpoint_url="srt://0.0.0.0:9999?mode=listener"),
+                )
+
+        assert exc.value.expected == 1
+        assert exc.value.actual == 2
+        # The racing commit's write survived; this call's own edit, computed
+        # from the row it read BEFORE the race, must not have overwritten it.
+        current = store.get("council-encoder")
+        assert current is not None
+        assert current.name == "Renamed by a concurrent commit"
+        assert current.endpoint_url == "srt://0.0.0.0:9000?mode=listener"
+        assert current.row_version == 2

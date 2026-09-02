@@ -489,15 +489,25 @@ export function SourceReadinessDetail({
  * probed: the server clears readiness on those edits, so the operator loses
  * their "delivering" state and has to check again. Saying so up front is the
  * difference between an informed edit and a surprise at gavel time.
+ *
+ * `conflict` is the row a 409 revealed the server actually holds now (WP-07
+ * hostile-review finding N2). It is display-only: the fields below keep
+ * whatever the operator already typed (that is the whole point -- a 409
+ * must not silently discard work in progress) and `conflict`'s values are
+ * shown alongside the ones that actually differ, so the operator can see
+ * what changed and decide what to do, rather than either losing their edit
+ * or blindly overwriting someone else's.
  */
 export function SourceEditForm({
   source,
+  conflict,
   onCancel,
   onSave,
   saving,
   error,
 }: {
   source: LiveSourceResponse
+  conflict?: LiveSourceResponse | null
   onCancel: () => void
   onSave: (payload: LiveSourceUpdate) => void
   saving?: boolean
@@ -550,6 +560,11 @@ export function SourceEditForm({
             className="rounded-md px-2 py-2 text-sm"
             style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
           />
+          {conflict && conflict.name !== source.name ? (
+            <p className="m-0 text-[11px]" style={{ color: 'var(--cc-warn)' }}>
+              Server now has: {conflict.name}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="source-edit-type" className="text-xs font-semibold">
@@ -577,6 +592,11 @@ export function SourceEditForm({
               </option>
             ))}
           </select>
+          {conflict && conflict.source_type !== source.source_type ? (
+            <p className="m-0 text-[11px]" style={{ color: 'var(--cc-warn)' }}>
+              Server now has: {SOURCE_TYPE_LABEL[conflict.source_type]}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="source-edit-endpoint" className="text-xs font-semibold">
@@ -599,6 +619,11 @@ export function SourceEditForm({
               ? 'The NDI source name exactly as the sender advertises it on the station network.'
               : 'Do not include a username or password. CivicCast will not store a password inside an address.'}
           </p>
+          {conflict && conflict.endpoint_url !== source.endpoint_url ? (
+            <p className="cc-mono m-0 text-[11px]" style={{ color: 'var(--cc-warn)' }}>
+              Server now has: {conflict.endpoint_url}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="source-edit-credential" className="text-xs font-semibold">
@@ -627,8 +652,25 @@ export function SourceEditForm({
               : source.credentials_unsupported_reason ??
                 'This source type cannot use a stored credential.'}
           </p>
+          {conflict && conflict.credentials_handle !== source.credentials_handle ? (
+            <p className="m-0 text-[11px]" style={{ color: 'var(--cc-warn)' }}>
+              Server now has: {conflict.credentials_handle || '(no stored credential)'}
+            </p>
+          ) : null}
         </div>
       </div>
+      {conflict ? (
+        <p
+          className="m-0 mt-3 rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink-2)' }}
+          role="status"
+        >
+          Someone else saved a change to this source first. Your typed changes
+          above were kept -- compare them with the "Server now has" lines and
+          save again when you're ready; saving will overwrite the server's
+          current values with what's shown above.
+        </p>
+      ) : null}
       {invalidatesReadiness ? (
         <p
           className="m-0 mt-3 rounded-md p-2 text-xs"
@@ -1009,6 +1051,12 @@ export function LiveRoomScreen() {
   const queryClient = useQueryClient()
   const [editingSource, setEditingSource] = useState<LiveSourceResponse | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
+  // The server's current row when a 409 reveals a conflicting concurrent
+  // edit -- display-only (WP-07 hostile-review finding N2). The operator's
+  // typed field values must survive a 409, so this is never applied over
+  // `editingSource`; it's shown alongside the fields that differ so the
+  // operator can compare before deciding to save over it.
+  const [editConflict, setEditConflict] = useState<LiveSourceResponse | null>(null)
   const channelsQuery = useQuery({
     queryKey: ['channel-profiles'],
     queryFn: listChannelProfiles,
@@ -1026,7 +1074,7 @@ export function LiveRoomScreen() {
     // takeover, silently telling the operator something the takeover gate no
     // longer believes. Polling at most every 10s keeps the display honest
     // without re-listing sources on every render.
-    refetchInterval: 8_000,
+    refetchInterval: 10_000,
   })
   const sourceSetupQuery = useQuery({
     queryKey: ['source-setup'],
@@ -1139,23 +1187,32 @@ export function LiveRoomScreen() {
     },
     onSuccess: () => {
       setEditError(null)
+      setEditConflict(null)
       setEditingSource(null)
       refreshReadiness()
     },
     onError: async (err) => {
       // A 409 means someone else's edit landed first, and the form was still
       // holding the row_version that PATCH was built from. Resending the
-      // same payload would just 409 again forever -- reload the row (its new
-      // row_version included) so the next save has a real chance, and say so
-      // rather than showing the same generic failure text a real validation
-      // error would show.
+      // same payload would just 409 again forever, so the next save needs
+      // the current row_version -- but the operator's typed field values
+      // must survive this, not be silently discarded and replaced with
+      // whatever the server now has (hostile-review finding N2: an earlier
+      // version of this fix remounted the form on the fresh row, which threw
+      // away work in progress the moment two edits raced). Only
+      // `row_version` advances on `editingSource`; every other field the
+      // operator typed is untouched, and the fresh row is kept separately in
+      // `editConflict` purely for the "Server now has" comparison text.
       if (err instanceof ApiError && err.status === 409 && editingSource) {
         try {
           const fresh = await getLiveSourceById(editingSource.live_source_id)
-          setEditingSource(fresh)
+          setEditConflict(fresh)
+          setEditingSource((prev) =>
+            prev ? { ...prev, row_version: fresh.row_version } : prev,
+          )
           setEditError(
             'Someone else changed this source while you were editing it. ' +
-              'CivicCast reloaded it below — review the current values and save again.',
+              "Your changes were kept — compare them with what the server now has, then save again.",
           )
         } catch (reloadErr) {
           setEditError(apiMessage(reloadErr, 'Could not save the source.'))
@@ -1239,6 +1296,7 @@ export function LiveRoomScreen() {
               onCheck={(id) => probeMutation.mutate(id)}
               onEdit={(source) => {
                 setEditError(null)
+                setEditConflict(null)
                 setEditingSource(source)
               }}
               checkingId={probeMutation.isPending ? probeMutation.variables : null}
@@ -1247,15 +1305,19 @@ export function LiveRoomScreen() {
             />
             {editingSource ? (
               <SourceEditForm
-                // Remount when the edited row itself changes (a 409-driven
-                // reload swaps `editingSource` for the fresh row) so the
-                // form's local field state re-initializes from the new
-                // values instead of continuing to show what was on screen
-                // before the conflict.
-                key={`${editingSource.live_source_id}:${editingSource.row_version}`}
+                // Keyed on the source id ONLY, deliberately not on
+                // row_version: remounting on a 409's row_version bump would
+                // reset the form's local field state back to the (now
+                // fresh-but-not-what-the-operator-typed) source prop,
+                // discarding whatever they'd typed (hostile-review finding
+                // N2). This key remounts only when editing switches to a
+                // genuinely different source.
+                key={editingSource.live_source_id}
                 source={editingSource}
+                conflict={editConflict}
                 onCancel={() => {
                   setEditError(null)
+                  setEditConflict(null)
                   setEditingSource(null)
                 }}
                 onSave={(payload) => editMutation.mutate(payload)}
