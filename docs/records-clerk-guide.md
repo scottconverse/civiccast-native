@@ -32,6 +32,35 @@ When reviewing captions:
 If captions publish before review, the public surface should label them as
 auto-generated.
 
+### English and Spanish are two passes
+
+A published recording carries **both** an English and a Spanish caption
+track. The review queue shows an **EN** or **ES** badge on every row and has
+a language filter above the list, because the two are reviewed separately:
+
+1. **English first.** Approve or edit the English cues as above. Nothing is
+   published yet.
+2. **Spanish next.** Once English is fully decided, CivicCast translates the
+   cues you approved and files the Spanish text as its own set of rows, with
+   the same approve / edit / reject choices. The Spanish text is machine
+   output too, so it gets a real review — not a rubber stamp.
+
+The recording publishes with both tracks or neither. Two consequences worth
+knowing before you start:
+
+- **Rejecting every Spanish cue does not publish English on its own.** The
+  recording is held and the caption job says why. Edit the Spanish rows with
+  the correct wording instead — a rejected row can still be edited — and
+  publication continues by itself.
+- **A Spanish cue is never blocked on audio evidence.** It is a translation of
+  text you already approved, not a guess about what someone said, so the
+  low-confidence audio check that can gate an English cue does not apply.
+
+If Spanish rows never appear after you finish the English pass, the station's
+translation model is missing or broken. The caption job records that on the
+job, and a technical admin fixes it under **Settings → AI Models →
+Translation** or with `civiccast doctor`.
+
 ## Summary Review
 
 CivicCast summaries are sourced. A number, vote, dollar amount, date, or named

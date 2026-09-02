@@ -235,7 +235,7 @@ Neither way the Spanish leg can come up empty publishes English alone:
   operator-facing remediation on `last_error` ("CivicCast has no translation
   model available to produce the required Spanish track…"), retries on the
   normal backoff, and lands in `failed` — with that same reason on the row —
-  if the runtime is never repaired. Fix it in **Settings → AI models →
+  if the runtime is never repaired. Fix it in **Settings → AI Models →
   Translation**, or run `civiccast doctor`.
 * **The operator rejected every Spanish cue.** The job stays in
   `awaiting_review` with a remediation on `last_error` and does **not** burn

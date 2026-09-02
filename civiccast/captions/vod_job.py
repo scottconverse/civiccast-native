@@ -112,7 +112,7 @@ MISSING_TRANSLATOR_REMEDIATION = (
     "This recording's English captions are approved, but CivicCast has no translation "
     "model available to produce the required Spanish track, so the recording cannot "
     "finish publishing. Install or repair the station's translation model (Settings > "
-    "AI models > Translation) and run 'civiccast doctor'; the job retries on its own."
+    "AI Models > Translation) and run 'civiccast doctor'; the job retries on its own."
 )
 
 #: Put on the job row when the operator rejected every Spanish cue. English
