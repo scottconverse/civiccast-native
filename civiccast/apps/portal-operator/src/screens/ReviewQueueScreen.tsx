@@ -570,6 +570,13 @@ export function ReviewQueueScreen() {
                 type="button"
                 role="tab"
                 aria-selected={active}
+                // Without this the count renders straight into the accessible
+                // name and a screen reader announces "All languages2". The
+                // label spells out what the number counts; the visible span is
+                // hidden from assistive tech so it is not read twice.
+                aria-label={
+                  active ? `${item.label}, ${items.length} shown` : item.label
+                }
                 onClick={() => setLanguageFilter(item.id)}
                 className="min-h-8 rounded-md px-3 py-2 text-xs font-medium"
                 style={{
@@ -580,7 +587,11 @@ export function ReviewQueueScreen() {
               >
                 {item.label}
                 {active && (
-                  <span className="ml-1.5" style={{ color: 'var(--cc-brand-ink)' }}>
+                  <span
+                    aria-hidden="true"
+                    className="ml-1.5"
+                    style={{ color: 'var(--cc-brand-ink)' }}
+                  >
                     {items.length}
                   </span>
                 )}
