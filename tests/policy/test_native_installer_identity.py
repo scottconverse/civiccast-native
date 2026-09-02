@@ -788,6 +788,15 @@ def test_bootstrap_postinstall_d3_invocation_uses_the_bridged_runtime_interprete
     assert "--payload-source" in postinstall
     payload_source_idx = postinstall.index("--payload-source")
     assert '"$INSTDIR\\runtime"' in postinstall[payload_source_idx : payload_source_idx + 60]
+    assert "--flat-installer-layout" in postinstall[payload_source_idx : payload_source_idx + 100]
+
+
+def test_bootstrap_d3_writes_machine_parseable_route_and_engine_evidence() -> None:
+    postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
+
+    assert "step d3-engine: evidence route=UPGRADE engine_exit=$0" in postinstall
+    assert "step d3-engine: evidence route=FRESH_INSTALL engine_exit=11" in postinstall
+    assert "step d3-engine: evidence route=SAME_VERSION_NO_OP engine_exit=12" in postinstall
 
 
 def test_bootstrap_postinstall_d3_exit_code_contract_is_preserved_exactly() -> None:
@@ -1885,146 +1894,112 @@ def test_caption_floor_tier_binding_matches_across_python_and_rust() -> None:
 
 
 # ---------------------------------------------------------------------------
-# INSTALL-ONLY REFUSAL (owner decision, 2026-07-30 beta): the installer must
-# REFUSE loudly, before any destructive PREINSTALL action, when a LIVE
-# existing install is detected. The documented update path is: uninstall
-# (which preserves the database cluster, its HKLM DatabaseUrl credential, and
-# InstalledVersion) -> run the new installer -> the fresh install adopts the
-# preserved data and D3 upgrades the schema from the TRUE old version. These
-# tests pin: the refusal condition itself; that it runs before the
-# service-stop / tree-rebuild work; that it uses CIVICCAST_FAIL with the
-# reserved 120 exit code; and -- the invariant this whole feature would be
-# pointless without -- that the refusal condition never references
-# InstalledVersion or DatabaseUrl, both of which deliberately SURVIVE
-# uninstall and would otherwise refuse the documented update path itself.
+# INSTALL-OVER-EXISTING UPGRADE (2026-08-31 finalization floor): setup must
+# accept a healthy live install, invoke the OLD bootstrap's already-proven
+# native service-stop before Tauri or pack staging replaces anything, and only
+# continue after the service is confirmed stopped. The quiesce operation must
+# preserve service registration plus InstalledVersion and DatabaseUrl so D3
+# still routes the run through backup/migration/rollback as a real upgrade.
+# A service registration with no bootstrap, or any nonzero stop result,
+# remains a fail-closed condition carrying a distinct installer exit code.
 # ---------------------------------------------------------------------------
 
 
-def test_preinstall_refuses_a_live_existing_install_before_any_destructive_step() -> None:
-    """The refusal must be the FIRST thing NSIS_HOOK_PREINSTALL does -- strictly
-    before the pre-existing service-stop step (which itself precedes the
-    taskkill/tree-rebuild work) -- so a refused machine is left completely
-    untouched. Also pins that CIVICCAST_FAIL (which sets an error level AND
-    aborts, per test_bootstrap_postinstall_every_failure_branch_actually_
-    fails_the_install's measured NSIS behavior) is what raises it, carrying
-    the reserved CIVICCAST_EXIT_INSTALL_OVER_EXISTING (120) code."""
+def test_preinstall_quiesces_a_live_install_without_erasing_upgrade_identity() -> None:
+    """A normal existing install is an upgrade input, not an automatic refusal.
+
+    The OLD bootstrap must run its production service-stop command before
+    taskkill or any later tree work. It must not run uninstall teardown: that
+    command deletes InstalledVersion and DatabaseUrl and unregisters the
+    service, causing D3 to misroute this live upgrade as a fresh install.
+    """
     hooks_text = NATIVE_HOOKS.read_text(encoding="utf-8")
     preinstall = _preinstall_block(hooks_text)
 
-    assert re.search(
-        r"^!define CIVICCAST_EXIT_INSTALL_OVER_EXISTING\s+120$", hooks_text, re.MULTILINE
-    ), "expected CIVICCAST_EXIT_INSTALL_OVER_EXISTING to be reserved at exactly 120"
-
-    assert "${CIVICCAST_EXIT_INSTALL_OVER_EXISTING}" in preinstall, (
-        "expected the refusal to fail through CIVICCAST_EXIT_INSTALL_OVER_EXISTING in PREINSTALL"
+    assert re.search(r"^!define CIVICCAST_EXIT_UPGRADE_QUIESCE\s+120$", hooks_text, re.MULTILINE), (
+        "expected CIVICCAST_EXIT_UPGRADE_QUIESCE to be reserved at exactly 120"
     )
-    assert preinstall.count("!insertmacro CIVICCAST_FAIL") >= 1, (
-        "expected the refusal to route through CIVICCAST_FAIL (sets an error level AND aborts)"
-    )
+    assert "CIVICCAST_EXIT_INSTALL_OVER_EXISTING" not in hooks_text
 
-    # Ordering: the refusal check (both its FileExists gate and its SCM query)
-    # must precede the pre-existing service-stop step, which itself precedes
-    # taskkill -- i.e. the refusal is the FIRST thing this macro does.
-    service_stop_marker = "preinstall: stop native service (if a prior install exists)"
-    refusal_fail_idx = preinstall.index("${CIVICCAST_EXIT_INSTALL_OVER_EXISTING}")
-    service_stop_idx = preinstall.index(service_stop_marker)
+    classify_idx = preinstall.index("preinstall: classify existing install for upgrade")
+    stop_idx = preinstall.index("--civiccast-stop-native-service")
     taskkill_idx = preinstall.index("taskkill.exe")
+    assert classify_idx < stop_idx < taskkill_idx, (
+        "the old bootstrap must quiesce registered native state before the GUI stop "
+        "or any generated/postinstall tree replacement can begin"
+    )
+    assert "--civiccast-teardown-native-state" not in preinstall
+    assert '${FileExists} "$INSTDIR\\CivicCast Native.exe"' in preinstall
+    assert "preinstall: existing install service stop returned $0" in preinstall
 
-    assert refusal_fail_idx < service_stop_idx < taskkill_idx, (
-        "the install-only refusal must be checked before the service-stop step, "
-        "which must itself precede taskkill -- a refused machine must be left untouched"
+
+def test_preinstall_quiesce_failure_aborts_instead_of_continuing_into_tree_work() -> None:
+    """A failed or ambiguous old-service stop cannot be advisory.
+
+    Continuing would let the generated installer and pack stage overwrite
+    binaries beneath running writers. The nonzero branch must fail through
+    CIVICCAST_FAIL before taskkill/tree work.
+    """
+    preinstall = _preinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
+    quiesce_region = preinstall.split("--civiccast-stop-native-service", 1)[1].split(
+        "taskkill.exe", 1
+    )[0]
+
+    assert "${If} $0 != 0" in quiesce_region
+    assert "!insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE}" in quiesce_region
+    assert "continuing anyway" not in quiesce_region.lower(), (
+        "a nonzero native service-stop result must never be logged and ignored"
     )
 
 
-def test_preinstall_refusal_checks_both_the_install_tree_and_the_scm_registration() -> None:
-    """The two honest 'live install' signals: the install tree present at
-    $INSTDIR (the exact FileExists check the pre-existing service-stop step
-    already uses), and the CivicCastSupervisor service registered in the SCM
-    (via `sc query`, never winreg -- mirrors the identical SCM-not-registry
-    precedent civiccast.native.win_probes._default_wsl_service_present
-    already set for 'is this Windows service registered at all')."""
+def test_preinstall_fails_closed_on_registered_service_without_old_bootstrap() -> None:
+    """The service-only partial-install shape cannot be safely auto-upgraded.
+
+    With no old bootstrap there is no trusted teardown command to invoke, so
+    setup must refuse before replacement work and name the repair condition.
+    """
     preinstall = _preinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
 
-    assert preinstall.count('${FileExists} "$INSTDIR\\CivicCast Native.exe"') >= 1, (
-        "expected the refusal to check for the install tree via the same "
-        "FileExists signal the service-stop step already uses"
-    )
     assert (
         "sc.exe" in preinstall and "query" in preinstall and "CivicCastSupervisor" in preinstall
-    ), "expected the refusal to query the SCM for the CivicCastSupervisor service registration"
-
-    # Both checks must independently reach CIVICCAST_FAIL with the reserved code.
-    fail_token = "${CIVICCAST_EXIT_INSTALL_OVER_EXISTING}"
-    assert preinstall.count(fail_token) >= 2, (
-        "expected BOTH the install-tree check and the SCM-registration check "
-        "to independently fail with CIVICCAST_EXIT_INSTALL_OVER_EXISTING"
-    )
+    ), "expected preinstall classification to query the real SCM registration"
+    unsafe_region = preinstall.split("${ElseIf} $R5 == 0", 1)[1].split("${Else}", 1)[0]
+    assert "bootstrap is missing" in unsafe_region.lower()
+    assert "!insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE}" in unsafe_region
 
 
-def test_preinstall_refusal_never_keys_on_installed_version_or_database_url() -> None:
-    """The invariant that makes the documented update path possible at all:
-    InstalledVersion and DatabaseUrl BOTH deliberately survive uninstall (see
-    the D3 engine's own reads of them further down in POSTINSTALL) -- they
-    are exactly the reinstall-over-preserved-data signal the D3 upgrade
-    engine depends on. A refusal condition that consulted either would refuse
-    the documented update path itself the moment it started working (a
-    correctly-preserved marker would make every legitimate reinstall look
-    'live' forever). This test isolates the refusal's OWN condition region
-    (from the top of PREINSTALL to the pre-existing 'no live existing
-    install found' marker immediately after it), strips comment lines (the
-    header prose above legitimately NAMES both values while explaining why
-    the refusal must avoid them -- only EXECUTABLE NSIS statements are
-    forbidden from referencing them, matching this file's established
-    prose-vs-executable convention, e.g.
-    test_native_teardown_invocation_lives_in_preuninstall_not_postuninstall),
-    and asserts neither name appears in the executable lines at all -- not
-    merely that the fail message omits them."""
+def test_preinstall_treats_only_scm_1060_as_a_definitive_fresh_install() -> None:
+    """An unreadable SCM result cannot be downgraded to "service absent".
+
+    Access denied, process-launch failure, plug-in errors, and every other
+    ambiguous result must stop before replacement work. Only Windows service
+    error 1060 is authoritative evidence that the service does not exist.
+    """
     preinstall = _preinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
+    no_bootstrap = preinstall.split("${ElseIf} $R5 == 0", 1)[1]
 
-    refusal_region_raw = preinstall.split(
-        "preinstall: no live existing install found -- proceeding", 1
-    )[0]
-    refusal_region = "\n".join(
-        line for line in refusal_region_raw.splitlines() if not line.strip().startswith(";")
+    fresh_branch, ambiguous_branch = no_bootstrap.split("${ElseIf} $R5 == 1060", 1)[1].split(
+        "${Else}", 1
     )
-
-    assert "InstalledVersion" not in refusal_region, (
-        "the install-only refusal must never reference InstalledVersion -- it "
-        "survives uninstall by design and keying on it would refuse the "
-        "documented update path itself"
-    )
-    assert "DatabaseUrl" not in refusal_region, (
-        "the install-only refusal must never reference DatabaseUrl -- it "
-        "survives uninstall by design and keying on it would refuse the "
-        "documented update path itself"
-    )
+    assert "fresh install" in fresh_branch.lower()
+    assert "CIVICCAST_FAIL" not in fresh_branch
+    assert "classification inconclusive" in ambiguous_branch.lower()
+    assert "!insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE}" in ambiguous_branch
 
 
-def test_preinstall_refusal_message_names_the_uninstall_first_update_path() -> None:
-    """The operator-facing text itself must say what to do: an existing
-    install is present, uninstall first from Windows Settings, and that the
-    recorded data/database will be preserved and adopted."""
+def test_preinstall_normal_upgrade_has_no_uninstall_first_or_install_only_message() -> None:
     preinstall = _preinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
+    executable = "\n".join(
+        line for line in preinstall.splitlines() if not line.strip().startswith(";")
+    ).lower()
 
-    refusal_call = preinstall.split(
-        "!insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_INSTALL_OVER_EXISTING}", 1
-    )[1]
-    # Only need the first refusal's message text for this check.
-    first_message = refusal_call.split("\n", 1)[0]
-
-    assert "install-only" in first_message.lower()
-    assert "uninstall" in first_message.lower()
-    assert "settings" in first_message.lower()
-    assert "preserved" in first_message.lower()
-    assert "adopted" in first_message.lower()
+    assert "install-only" not in executable
+    assert "does not support installing over" not in executable
+    assert "uninstall civiccast (native) first" not in executable
 
 
-def test_preinstall_refusal_is_covered_by_the_reserved_exit_code_invariants() -> None:
-    """Sanity cross-check against the pre-existing distinctness/reservation
-    test: CIVICCAST_EXIT_INSTALL_OVER_EXISTING must be present, distinct from
-    every other CIVICCAST_EXIT_* code, and outside the reserved contract-code
-    band -- exercised directly here (not just transitively) so a future
-    refactor of the shared test cannot silently stop covering 120."""
+def test_upgrade_quiesce_is_covered_by_the_reserved_exit_code_invariants() -> None:
+    """The fail-closed quiesce path keeps code 120 distinct and actionable."""
     hooks_text = NATIVE_HOOKS.read_text(encoding="utf-8")
     codes = {
         name: int(value)
@@ -2034,10 +2009,10 @@ def test_preinstall_refusal_is_covered_by_the_reserved_exit_code_invariants() ->
             re.MULTILINE,
         )
     }
-    assert codes.get("CIVICCAST_EXIT_INSTALL_OVER_EXISTING") == 120
+    assert codes.get("CIVICCAST_EXIT_UPGRADE_QUIESCE") == 120
     reserved = {0, 10, 20, 30, 40, 70, 73, 75, 76, 79, 81}
     other_codes = {
-        name: code for name, code in codes.items() if name != "CIVICCAST_EXIT_INSTALL_OVER_EXISTING"
+        name: code for name, code in codes.items() if name != "CIVICCAST_EXIT_UPGRADE_QUIESCE"
     }
     assert 120 not in other_codes.values(), "120 collides with an existing installer exit code"
     assert 120 not in reserved, "120 collides with a reserved product/D3 contract code"
@@ -2619,7 +2594,7 @@ def test_delete_app_data_text_matches_what_the_uninstaller_actually_leaves_untou
     match = re.search(r'LangString deleteAppData \$\{LANG_ENGLISH\} "([^"]*)"', lang_text)
     assert match is not None
     rewritten = match.group(1)
-    assert "always stay" in rewritten or "never remove" in rewritten, (
+    assert any(phrase in rewritten for phrase in ("always stay", "always kept", "never remove")), (
         "the checkbox text must affirmatively state that CivicCast data is preserved, "
         "matching the uninstaller's actual preserve-data behavior"
     )
@@ -3156,21 +3131,15 @@ def test_postuninstall_removes_the_start_menu_and_desktop_shortcuts() -> None:
     )
 
 
-def test_pack_delivery_failure_tells_operator_to_uninstall_before_retry() -> None:
-    """Sandbox adversarial scenario B (2026-08-08): a corrupted .ccpack aborts
-    POSTINSTALL with CIVICCAST_EXIT_PACK_DELIVERY (110). But Tauri has already
-    written its ARP entry and $INSTDIR\\CivicCast Native.exe before this hook
-    runs, and CIVICCAST_FAIL deliberately does NOT retract them (its header:
-    the uninstaller is the only discoverable way to clean a half-installed
-    machine, and wait_native_uninstall_cleanup.ps1 keys on that ARP
-    DisplayName). NSIS_HOOK_PREINSTALL then detects "a live existing install"
-    from exactly that exe and refuses with 120. Measured end-to-end: run 1
-    (corrupt pack) -> 110, run 2 (good pack, same machine, following the old
-    instruction verbatim) -> 120, service absent both times.
+def test_pack_delivery_failure_tells_operator_to_correct_the_kit_and_retry() -> None:
+    """A partial install is now a supported retry/repair input.
 
-    The leftover is correct by design. The failure TEXT was not: it said "then
-    run setup again", sending the operator into a guaranteed refusal. It must
-    name the uninstall step and say why."""
+    PREINSTALL safely tears down any registered native state before another
+    attempt, so telling the operator to uninstall first would reintroduce an
+    unnecessary destructive-looking step and contradict install-over-existing.
+    The message must instead name the bad side-load, direct retry, and the
+    ProgramData preservation boundary.
+    """
     hooks_text = NATIVE_HOOKS.read_text(encoding="utf-8")
     fail_line = next(
         line
@@ -3178,18 +3147,9 @@ def test_pack_delivery_failure_tells_operator_to_uninstall_before_retry() -> Non
         if "CIVICCAST_FAIL ${CIVICCAST_EXIT_PACK_DELIVERY}" in line
     )
 
-    assert "Uninstall CivicCast (Native) from Windows Settings" in fail_line, (
-        "the pack-delivery failure message must tell the operator to uninstall "
-        "the partial install before retrying; PREINSTALL refuses otherwise"
-    )
-    assert "refuse to install over it" in fail_line, (
-        "the message must say WHY the uninstall is needed, not add an unexplained step"
-    )
-    assert "preserved by uninstall" in fail_line, (
-        "an operator told to uninstall mid-failure must be told their recorded "
-        "data and database survive it, or they will reasonably refuse to do it"
-    )
-    # Negative control: the pre-fix wording routed straight into exit 120.
-    assert "is in), then run setup again." not in fail_line, (
-        "reverting to the direct-retry wording reintroduces the exit-120 trap"
-    )
+    assert "put them in a 'packs' folder next to the installer" in fail_line
+    assert "Run setup again" in fail_line
+    assert "recordings, database, and settings" in fail_line
+    assert "were not deleted" in fail_line
+    assert "Uninstall CivicCast (Native)" not in fail_line
+    assert "refuse to install over" not in fail_line

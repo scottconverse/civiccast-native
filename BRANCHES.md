@@ -46,6 +46,8 @@ not scratch.
 
 ## Release identity
 
-`v1.0.0-beta.1` is an owner-held development candidate. It is **not published**.
-Tags, releases and publication are owner-only decisions; agents never create or
-move a tag.
+`v1.0.0-beta.2` is the current owner-held unpublished development candidate.
+It has no installer asset and is **not a public or production release**. The
+previous `v1.0.0-beta.1` owner-published prerelease tag also has no installer
+asset. Tags, releases and publication are owner-only decisions; agents never
+create or move a tag.

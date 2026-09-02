@@ -311,7 +311,7 @@ def _real_service_registered_probe(
     """Is ``service_name`` registered in the Service Control Manager at all --
     a question distinct from whether it is REACHABLE over the D7 control pipe.
 
-    CRITICAL fix (install-only-refusal WP, 2026-07-30): after a real uninstall
+    CRITICAL fix (upgrade-routing WP, 2026-07-30): after a real uninstall
     (NSIS_HOOK_PREUNINSTALL's ``--civiccast-teardown-native-state`` call
     removes the service registration), the reinstall's D3 drain used to see
     every pipe-connect attempt fail with a transport error and land in the
@@ -351,11 +351,57 @@ def _real_service_registered_probe(
     return None
 
 
+def _real_service_stopped_probe(
+    service_name: str = SERVICE_NAME,
+    *,
+    query_status: Callable[[str], Any] | None = None,
+    stopped_state: int | None = None,
+) -> bool | None:
+    """Return whether SCM definitively reports ``service_name`` STOPPED.
+
+    Install-over-existing quiesces the old supervisor before any tree work but
+    deliberately keeps the service registered: that registration is D3's
+    product-existence signal. Once stopped, its authenticated control pipe is
+    correctly offline, so a pipe-only drain probe would otherwise wait for a
+    status reply that cannot arrive and roll the upgrade back.
+
+    The SCM status is the authoritative process-lifecycle answer here. ``True``
+    means STOPPED (or definitively absent), ``False`` means a concrete other
+    service state, and ``None`` means the query could not be trusted. Imports
+    stay lazy so this module remains importable on non-Windows CI hosts.
+    """
+
+    if query_status is None:
+        try:
+            import win32service  # type: ignore[import-untyped]
+            import win32serviceutil  # type: ignore[import-untyped]
+        except ImportError:
+            return None
+        query_status = win32serviceutil.QueryServiceStatus
+        stopped_state = win32service.SERVICE_STOPPED
+    if stopped_state is None:
+        return None
+
+    try:
+        status = query_status(service_name)
+    except Exception as exc:  # pywintypes.error is available only on Windows
+        if getattr(exc, "winerror", None) == _ERROR_SERVICE_DOES_NOT_EXIST:
+            return True
+        return None
+
+    try:
+        current_state = int(status[1])
+    except (IndexError, TypeError, ValueError):
+        return None
+    return current_state == stopped_state
+
+
 def _real_writers_active_probe(
     pipe_name: str = CONTROL_PIPE_NAME,
     *,
     service_name: str = SERVICE_NAME,
     service_registered_probe: Callable[[str], bool | None] | None = None,
+    service_stopped_probe: Callable[[str], bool | None] | None = None,
 ) -> bool | None:
     """Read the running supervisor's status over the D7 control pipe and classify
     whether writers are active. The control CLIENT verifies the server's pipe
@@ -363,18 +409,17 @@ def _real_writers_active_probe(
     any transport error is an unreadable status -> ``None`` (fail-closed).
     Lazily imported so this module loads on Linux.
 
-    CRITICAL fix (install-only-refusal WP, 2026-07-30): before ever touching
+    CRITICAL fix (upgrade-routing WP, 2026-07-30): before ever touching
     the pipe, ask whether the service is registered in the SCM at all
     (:func:`_real_service_registered_probe`). A DEFINITE "not registered"
     (``False``) means writers cannot possibly be running -- return ``False``
     (drained) immediately, without a single pipe round trip. Any other SCM
-    answer (the service IS registered, or the SCM query itself is ambiguous,
-    ``None``) falls through to the EXACT pre-existing pipe-based check below,
-    unchanged: a service that still exists but is merely unreachable over the
-    pipe must keep returning ``None``, fail-closed, exactly as before this
-    fix. This is what makes the documented update path (uninstall -> the
-    service is gone from the SCM -> reinstall) drain immediately instead of
-    burning the whole budget and rolling back."""
+    answer next receives an authoritative SCM state query. A DEFINITE STOPPED
+    answer also returns ``False``: install-over-existing intentionally keeps
+    registration and upgrade identity while quiescing the old process tree.
+    Every running, transitional, or ambiguous state still falls through to
+    the authenticated control-pipe check and remains fail-closed on an
+    unreadable pipe."""
 
     probe = (
         service_registered_probe
@@ -382,6 +427,12 @@ def _real_writers_active_probe(
         else _real_service_registered_probe
     )
     if probe(service_name) is False:
+        return False
+
+    stopped_probe = (
+        service_stopped_probe if service_stopped_probe is not None else _real_service_stopped_probe
+    )
+    if stopped_probe(service_name) is True:
         return False
 
     from civiccast.native.supervisor.control_client import (
@@ -445,7 +496,7 @@ def _real_scm_start(service_name: str = SERVICE_NAME) -> None:
     imports pywin32 (Windows-only)."""
 
     import pywintypes
-    import win32serviceutil  # type: ignore[import-untyped]
+    import win32serviceutil
 
     try:
         win32serviceutil.StartService(service_name)

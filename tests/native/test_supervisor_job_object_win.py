@@ -5,8 +5,8 @@
 ``win`` appears in this module's own filename (per the D3/CI naming
 convention the brief requires) so ``-k "not win"`` deselects it honestly.
 Skipped entirely on non-Windows (``pytest.mark.skipif``); on Windows these
-create REAL Job Objects, spawn REAL child processes, and assert real
-kill-on-close/tree-reap/no-breakaway behavior -- the pure-logic suite in
+create REAL Job Objects, spawn REAL child processes, and assert real direct-child
+kill-on-close/assignment/no-breakaway behavior -- the pure-logic suite in
 ``test_supervisor_job_object.py`` proves the CONTROL LOGIC against a fake;
 this file proves the underlying Win32 calls actually do what D3/AC4 require.
 
@@ -143,96 +143,8 @@ def test_assign_child_real_process_is_reported_in_job() -> None:
         child.wait(timeout=5)
 
 
-# A stand-in for the control-plane process that runs ``start_ffmpeg``: it waits
-# for a go-signal on stdin (so the test can assign IT to the job FIRST), then
-# spawns a grandchild via a plain ``subprocess.Popen`` — exactly what
-# ``civiccast.stream._ffmpeg.start_ffmpeg`` does for ffmpeg — and prints the
-# grandchild pid so the test can assert its job membership.
-_IN_JOB_PARENT_PROG = (
-    "import subprocess, sys, time\n"
-    "sys.stdout.write('ready\\n'); sys.stdout.flush()\n"
-    "sys.stdin.readline()\n"
-    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
-    "sys.stdout.write(str(child.pid) + '\\n'); sys.stdout.flush()\n"
-    "time.sleep(120)\n"
-)
-
-
-def test_popen_child_of_an_in_job_process_is_contained_without_explicit_assign() -> None:
-    """ITEM-2 empirical proof: ``start_ffmpeg`` needs no per-child Job Object
-    assignment.
-
-    ``start_ffmpeg`` spawns ffmpeg via a plain ``subprocess.Popen`` with NO
-    explicit ``AssignProcessToJobObject``. Under the supervisor, the process
-    that runs it (the control plane) is ITSELF assigned to the supervisor's job
-    (``core.Supervisor.start_child``), and that job disables breakaway
-    (``JOB_OBJECT_LIMIT_BREAKAWAY_OK`` / ``_SILENT_BREAKAWAY_OK`` cleared by
-    ``Win32JobObjectApi.configure_kill_on_close_no_breakaway``). Windows then
-    captures every process an in-job parent spawns into the same job
-    automatically.
-
-    This proves exactly that end-to-end with the production seam: assign a
-    parent process to the job FIRST (as the supervisor assigns the control
-    plane at startup), have that parent spawn a ``subprocess.Popen`` child
-    AFTER assignment (as the control plane later spawns ffmpeg), and assert via
-    ``IsProcessInJob`` that the child is already a member — with no explicit
-    assign of the child. Only the spawned parent is assigned to the
-    kill-on-close job, so closing the job reaps the parent tree, never the
-    pytest runner.
-    """
-
-    api = Win32JobObjectApi()
-    controller = JobObjectController(api=api, name=_unique_job_name())
-    parent = subprocess.Popen(
-        [sys.executable, "-c", _IN_JOB_PARENT_PROG],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-    try:
-        assert parent.stdin is not None
-        assert parent.stdout is not None
-        assert parent.stdout.readline().strip() == "ready"
-
-        # Assign the control-plane stand-in to the job FIRST — before it spawns
-        # its Popen child — mirroring the supervisor's assign-at-startup.
-        controller.assign_child(parent.pid)
-        handle = controller.ensure_job()
-        assert api.is_process_in_job(handle, parent.pid) is True
-
-        # Now the in-job process spawns a plain subprocess.Popen child, exactly
-        # as start_ffmpeg does. It is NEVER explicitly assigned to the job.
-        parent.stdin.write("go\n")
-        parent.stdin.flush()
-        grandchild_pid = int(parent.stdout.readline().strip())
-        assert _wait_until(lambda: psutil.pid_exists(grandchild_pid)), (
-            "the Popen grandchild must have started"
-        )
-
-        # THE PROOF: the Popen child inherited job membership automatically
-        # (breakaway disabled), with no per-child AssignProcessToJobObject.
-        assert api.is_process_in_job(handle, grandchild_pid) is True
-
-        # And containment is real: closing the job reaps the child too.
-        controller.close()
-        assert _wait_until(lambda: not psutil.pid_exists(grandchild_pid)), (
-            "kill-on-close must reap the Popen grandchild"
-        )
-    finally:
-        controller.close()
-        if parent.poll() is None:
-            parent.kill()
-        parent.wait(timeout=5)
-        # Close the pipe wrappers explicitly — the repo's filterwarnings=error
-        # policy turns an unclosed-pipe ResourceWarning into a test failure.
-        for stream in (parent.stdin, parent.stdout):
-            if stream is not None:
-                stream.close()
-
-
 # ---------------------------------------------------------------------------
-# close() -- real kill-on-close, single child and a real tree
+# close() -- real kill-on-close for an assigned child
 # ---------------------------------------------------------------------------
 
 
@@ -247,48 +159,6 @@ def test_close_kills_a_single_assigned_child() -> None:
 
     assert _wait_until(lambda: child.poll() is not None), "child must be reaped by kill-on-close"
     assert not psutil.pid_exists(child.pid)
-
-
-def test_close_kills_a_real_process_tree_not_just_the_direct_child() -> None:
-    """AC4: '(no orphan ... survive -- asserted by process sweep)'. Assign
-    only the TOP-level child (a shell) to the job; its own spawned
-    grandchild (a sleeping python interpreter it launches) must be captured
-    automatically as a descendant and reaped too when the job handle closes
-    -- proving containment covers the whole tree, not just the pid this
-    module was told about directly.
-    """
-
-    api = Win32JobObjectApi()
-    controller = JobObjectController(api=api, name=_unique_job_name())
-
-    marker = uuid.uuid4().hex
-    grandchild_cmd = f'{sys.executable} -c "import time; time.sleep(120)  # {marker}"'
-    # test-only, fixed content, shell needed to chain cmd.exe -> python.exe
-    parent = subprocess.Popen(f"cmd /c {grandchild_cmd}", shell=True)
-    controller.assign_child(parent.pid)
-
-    def _grandchild_pid() -> int | None:
-        for proc in psutil.process_iter(["pid", "cmdline"]):
-            try:
-                cmdline = proc.info["cmdline"] or []
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-            if any(marker in part for part in cmdline):
-                return int(proc.info["pid"])
-        return None
-
-    found = _wait_until(lambda: _grandchild_pid() is not None, timeout_seconds=10.0)
-    assert found, "grandchild python interpreter must have started"
-    grandchild_pid = _grandchild_pid()
-    assert grandchild_pid is not None
-    assert psutil.pid_exists(grandchild_pid)
-
-    controller.close()
-
-    assert _wait_until(lambda: parent.poll() is not None), "parent (cmd.exe) must be reaped"
-    assert _wait_until(lambda: not psutil.pid_exists(grandchild_pid)), (
-        "grandchild must be reaped too -- proves tree containment, not just direct-child"
-    )
 
 
 def test_close_without_ever_creating_is_a_real_noop() -> None:

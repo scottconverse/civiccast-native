@@ -343,12 +343,13 @@
 !define CIVICCAST_EXIT_D4_SERVICE           118
 !define CIVICCAST_EXIT_D4_FIREWALL          119
 
-; INSTALL-ONLY REFUSAL (owner decision, 2026-07-30 beta): the sole code in
-; this band NOT raised from POSTINSTALL -- it fires from NSIS_HOOK_PREINSTALL,
-; before any destructive step, when a live existing install is detected. See
-; that macro's header comment for the two honest signals this checks and why
-; InstalledVersion/DatabaseUrl are deliberately never consulted.
-!define CIVICCAST_EXIT_INSTALL_OVER_EXISTING 120
+; UPGRADE QUIESCE: the sole code in this band NOT raised from POSTINSTALL.
+; It fires from NSIS_HOOK_PREINSTALL before any destructive step when an
+; existing-install upgrade could not prove the old native service was fully
+; stopped before replacement work. Kept at the former refusal
+; code so deployment tooling still sees the same distinct failure band, but
+; a healthy existing install no longer triggers it.
+!define CIVICCAST_EXIT_UPGRADE_QUIESCE       120
 
 ; D2 re-verification of the third required component pack,
 ; native-ffmpeg-runtime. Given its own code rather than folded into
@@ -387,98 +388,48 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; where it appears in the section body); see CIVICCAST_ADDSIZE_PACKS_KB's
   ; own definition and derivation near the top of this file.
   AddSize ${CIVICCAST_ADDSIZE_PACKS_KB}
-  ; INSTALL-ONLY REFUSAL (owner decision, 2026-07-30 beta): this beta ships
-  ; install-only -- running the installer over an existing LIVE install must
-  ; REFUSE loudly, before any destructive PREINSTALL action (before the
-  ; service-stop / tree-rebuild work below), so a refused machine is left
-  ; completely untouched. The documented update path is: uninstall (which
-  ; preserves the database cluster, its HKLM DatabaseUrl credential, and
-  ; InstalledVersion) -> run the new installer -> the fresh install adopts
-  ; the preserved data and the D3 engine below upgrades the schema from the
-  ; TRUE old version.
+  ; INSTALL-OVER-EXISTING UPGRADE (finalization floor, 2026-08-31). A healthy
+  ; live install is now an upgrade INPUT, not a refusal. Before Tauri's
+  ; generated section or pack staging replaces any file, run the OLD
+  ; bootstrap's production service-stop command. It gracefully stops the
+  ; supervisor and its children while deliberately PRESERVING its service
+  ; registration plus HKLM InstalledVersion and DatabaseUrl. D3 needs those
+  ; exact signals to classify this as an upgrade and run its verified backup,
+  ; migration, maintenance health gate, and rollback contract. The uninstall
+  ; teardown command is forbidden here because it removes all three signals.
   ;
-  ; "Live" is proven by TWO signals, chosen because the uninstall teardown
-  ; provably clears BOTH on a successful uninstall (see
-  ; NSIS_HOOK_PREUNINSTALL / NSIS_HOOK_POSTUNINSTALL below for the code that
-  ; does the clearing):
-  ;   * $INSTDIR\CivicCast Native.exe existing -- the EXACT SAME FileExists
-  ;     check the service-stop step immediately below already uses to detect
-  ;     "a prior install exists". NSIS_HOOK_POSTUNINSTALL's recursive
-  ;     `RMDir /r "$INSTDIR"` (itself gated on the teardown having confirmed
-  ;     the service actually stopped -- see that macro) is the ONE thing that
-  ;     removes this exe, so its presence here means either no uninstall ever
-  ;     ran, or the last one was blocked/incomplete -- either way, a live
-  ;     install.
-  ;   * the CivicCastSupervisor service being registered in the SCM at all
-  ;     (checked via `sc query`: exit 0 == registered in ANY run state, 1060
-  ;     == ERROR_SERVICE_DOES_NOT_EXIST == provably not registered). This is
-  ;     the identical SCM-not-winreg pattern
-  ;     civiccast.native.win_probes._default_wsl_service_present already uses
-  ;     for the same "is this Windows service actually registered" question,
-  ;     now also reused by the Python D3 drain's writers-active probe (see
-  ;     civiccast/native/upgrade/service_control.py's
-  ;     _real_service_registered_probe, the update-path drain fix landed
-  ;     alongside this refusal gate). NSIS_HOOK_PREUNINSTALL's
-  ;     `--civiccast-teardown-native-state` call is what unregisters the
-  ;     service on a real uninstall.
-  ;
-  ; DELIBERATELY DOES NOT key on InstalledVersion or DatabaseUrl: both HKLM
-  ; values under Software\CivicCast\Native SURVIVE uninstall BY DESIGN (they
-  ; are exactly the reinstall-over-preserved-data signal the D3 engine below
-  ; depends on) -- refusing on either would refuse the documented update path
-  ; itself, the one thing this gate must never do.
-  !insertmacro CIVICCAST_STEP "preinstall: checking for a live existing install (install-only refusal)"
-  ${If} ${FileExists} "$INSTDIR\CivicCast Native.exe"
-    !insertmacro CIVICCAST_STEP "preinstall: REFUSED (install tree present at $INSTDIR)"
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_INSTALL_OVER_EXISTING} "An existing CivicCast (Native) installation is present on this machine. This beta is install-only and does not support installing over a live install.$\r$\n$\r$\nTo update: uninstall CivicCast (Native) first from Windows Settings > Apps. Your recorded data and database are preserved by uninstall and will be adopted by the new installation. Then run this installer again."
-  ${EndIf}
+  ; Fail closed at this boundary: a nonzero service stop means replacement work
+  ; cannot prove writers are gone. A service registration with no old
+  ; bootstrap is also unsafe because the trusted teardown authority is
+  ; missing. In either case CIVICCAST_FAIL aborts before taskkill/tree work.
+  ; ProgramData markers never select the branch; they survive by design.
+  !insertmacro CIVICCAST_STEP "preinstall: classify existing install for upgrade"
   nsExec::ExecToLog '"$SYSDIR\sc.exe" query CivicCastSupervisor'
-  Pop $0
-  ${If} $0 == 0
-    !insertmacro CIVICCAST_STEP "preinstall: REFUSED (CivicCastSupervisor service is registered in the SCM)"
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_INSTALL_OVER_EXISTING} "An existing CivicCast (Native) installation is present on this machine (the CivicCastSupervisor service is registered). This beta is install-only and does not support installing over a live install.$\r$\n$\r$\nTo update: uninstall CivicCast (Native) first from Windows Settings > Apps. Your recorded data and database are preserved by uninstall and will be adopted by the new installation. Then run this installer again."
-  ${EndIf}
-  !insertmacro CIVICCAST_STEP "preinstall: no live existing install found -- proceeding"
-  ;
-  ; CRITICAL fix (2026-07-30 Sandbox audit): nothing previously stopped the
-  ; CivicCastSupervisor LocalSystem service before the D3 install/upgrade
-  ; engine and D4 pack extraction delete and rebuild $INSTDIR\runtime and
-  ; $INSTDIR\packs\...\payload -- the service's own pythonservice.exe (and its
-  ; long-lived postgres.exe child) run FROM that tree, so a
-  ; rebuild while it is still running can delete a binary out from under a
-  ; live process. Stop it here, BEFORE the existing taskkill of the GUI exe.
-  ; Only attempted when a prior install actually left the exe behind -- on a
-  ; genuinely first-ever install there is nothing to stop yet, and running
-  ; this against a not-yet-installed product is the normal, expected case
-  ; (native_service_registration::stop_native_service is itself idempotent,
-  ; but the exe existence check avoids even trying on a fresh machine).
-  ; A nonzero result here is breadcrumbed and does NOT abort on its own.
-  ;
-  ; This used to claim "the taskkill below and the D3 engine's own quiescence
-  ; checks are the remaining safety nets." A 2026-07-30 adversarial audit
-  ; refuted that, and it is not a safety net that belongs here:
-  ;   * the taskkill targets "CivicCast Native.exe" (the GUI/bootstrap exe),
-  ;     never pythonservice.exe / postgres.exe;
-  ;   * the D3 engine's quiescence check runs in POSTINSTALL, AFTER
-  ;     --civiccast-stage-packs has already rebuilt the tree it would protect.
-  ; The real enforcement lives at the destructive seam itself, in Rust:
-  ; native_pack_staging::ensure_pack_extracted cannot delete an extracted tree
-  ; without a TreeRebuildAuthority proving the service is stopped, so a failure
-  ; here surfaces as a loud refusal at the step that would actually do damage
-  ; rather than as a silent continue.
-  !insertmacro CIVICCAST_STEP "preinstall: stop native service (if a prior install exists)"
+  Pop $R5
   ${If} ${FileExists} "$INSTDIR\CivicCast Native.exe"
-    DetailPrint "Stopping the CivicCast (Native) supervisor service before install/upgrade..."
+    DetailPrint "Preparing the existing CivicCast (Native) installation for a data-preserving upgrade..."
+    !insertmacro CIVICCAST_STEP "preinstall: existing install found; native service stop begin"
     nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-stop-native-service'
     Pop $0
-    !insertmacro CIVICCAST_STEP "preinstall: stop native service returned $0"
+    !insertmacro CIVICCAST_STEP "preinstall: existing install service stop returned $0"
     ${If} $0 != 0
-      DetailPrint "CivicCast (Native): stopping the supervisor service before install returned exit $0 -- continuing anyway (see the installer log above)."
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "CivicCast (Native) setup found an existing installation but could not safely stop its native service (service-stop exit $0). Setup stopped before replacing application files. Its service registration, upgrade identity, recordings, database, and settings were not deleted. Retry after resolving the service error; if it persists, contact support with $COMMONPROGRAMDATA\CivicCast\install-progress.log."
     ${EndIf}
+    !insertmacro CIVICCAST_STEP "preinstall: existing service confirmed stopped; upgrade identity preserved for D3"
+  ${ElseIf} $R5 == 0
+    !insertmacro CIVICCAST_STEP "preinstall: unsafe partial install (service registered but old bootstrap is missing)"
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "CivicCast (Native) setup found the CivicCastSupervisor service, but the existing CivicCast Native bootstrap is missing from $INSTDIR. Setup cannot safely prepare this partial installation for upgrade and stopped before replacing files. Do not delete $COMMONPROGRAMDATA\CivicCast; it contains the station's recordings, database, and settings. Repair or remove the broken application installation without deleting application data, then retry, or contact support with $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+  ${ElseIf} $R5 == 1060
+    !insertmacro CIVICCAST_STEP "preinstall: no existing install found; fresh install"
   ${Else}
-    !insertmacro CIVICCAST_STEP "preinstall: stop native service SKIPPED (no prior install found)"
+    !insertmacro CIVICCAST_STEP "preinstall: SCM classification inconclusive (sc.exe exit $R5)"
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "CivicCast (Native) setup could not safely determine whether the CivicCastSupervisor service exists (service-query exit $R5). Only Windows service error 1060 definitively means the service is absent; every other query failure is treated as unsafe so setup cannot replace files beneath possible running writers. Setup stopped before replacing application files. Retry from an administrator account after resolving Windows Service Control Manager access, then contact support with $COMMONPROGRAMDATA\CivicCast\install-progress.log if the error persists."
   ${EndIf}
-  ; DELTA-M-02 fix (2026-08-02, rewalk-de3aaf6f): this step used to run
+  ;
+  ; The GUI bootstrap is not the Windows service and is outside the native
+  ; service-stop above. Stop it only after service quiescence is proven, before the
+  ; generated installer replaces the executable. DELTA-M-02 (2026-08-02):
+  ; this step used to run
   ; taskkill.exe UNCONDITIONALLY, even on a genuinely fresh install where
   ; "$INSTDIR\CivicCast Native.exe" does not exist yet -- there is no prior
   ; bootstrap process to stop. nsExec::ExecToLog echoes a child's stdout/
@@ -648,21 +599,11 @@ Var CIVICCAST_TEARDOWN_EXIT
     ; authority's, never a copy this hook could let drift.
     !insertmacro CIVICCAST_STEP "step stage-packs: child reported: $1"
     DetailPrint "CivicCast (Native): required native component pack delivery FAILED (exit $0) — see the installer log above for the exact missing component(s)."
-    ; The retry instruction MUST name the uninstall step. Measured 2026-08-08
-    ; (Sandbox adversarial scenario B, evidence
-    ; .civiccast-sandbox-preflight\adversarial\evidence\adv-retry-result.json):
-    ; a corrupted pack aborts here with 110, but Tauri has already written its
-    ; ARP entry and $INSTDIR\CivicCast Native.exe at installer.nsi:649/670-689,
-    ; before this hook runs -- and CIVICCAST_FAIL deliberately does NOT retract
-    ; them (see its header: the uninstaller is the only discoverable way to
-    ; clean a half-installed machine, and the cleanup watcher keys on that ARP
-    ; DisplayName). NSIS_HOOK_PREINSTALL then detects "a live existing install"
-    ; by testing for exactly that exe. So an operator who followed the previous
-    ; wording -- "then run setup again" -- got refused with exit 120 and no
-    ; explanation of the contradiction. Run 1 exit 110, run 2 exit 120, service
-    ; absent both times. The leftover is correct by design; only this text was
-    ; wrong.
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_PACK_DELIVERY} "CivicCast (Native) setup could not obtain a required native component pack.$\r$\n$\r$\nThe component pack file(s) are published alongside this installer -- on the same release page, or on the same distribution medium you got setup from.$\r$\n$\r$\nTo retry:$\r$\n  1. Obtain the required .ccpack file(s) and put them in a 'packs' folder next to the installer (the same folder this setup .exe is in).$\r$\n  2. Uninstall CivicCast (Native) from Windows Settings > Apps. This failed attempt left a partial installation behind, and setup will refuse to install over it. Your recorded data and database in $COMMONPROGRAMDATA\CivicCast are preserved by uninstall.$\r$\n  3. Run setup again.$\r$\n$\r$\nSee the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact missing component(s)."
+    ; Retrying a partial install is now supported: PREINSTALL invokes the old
+    ; bootstrap's fail-closed native service-stop before replacing anything. Do
+    ; not tell the operator to uninstall first; correct the side-load and run
+    ; setup again. ProgramData remains outside every pack-delivery operation.
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_PACK_DELIVERY} "CivicCast (Native) setup could not obtain a required native component pack.$\r$\n$\r$\nThe component pack file(s) are published alongside this installer -- on the same release page, or on the same distribution medium you got setup from.$\r$\n$\r$\nTo retry:$\r$\n  1. Obtain the required .ccpack file(s) and put them in a 'packs' folder next to the installer (the same folder this setup .exe is in).$\r$\n  2. Run setup again. Setup safely prepares the partial installation before retrying.$\r$\n$\r$\nYour recordings, database, and settings in $COMMONPROGRAMDATA\CivicCast were not deleted.$\r$\n$\r$\nSee the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact missing component(s)."
   ${Else}
     ; SUCCESS: $1 is the informational JSON manifest report. Log it in full
     ; (support needs it) but show the operator a short, honest, human line
@@ -909,7 +850,7 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; the piece that broke. The engine decides BEFORE it builds any seam or
   ; touches the database, keying on whether a product actually EXISTS (SCM
   ; registration of CivicCastSupervisor -- the same signal NSIS_HOOK_PREINSTALL's
-  ; install-only refusal above already uses, and the only tracked D4 item that
+  ; upgrade classification above already uses, and the only tracked D4 item that
   ; is both created by install and removed by uninstall). It reports the route
   ; through exit codes 11/12 below.
   ;
@@ -927,8 +868,19 @@ Var CIVICCAST_TEARDOWN_EXIT
       --install-root "$INSTDIR" \
       --state-root  "$COMMONPROGRAMDATA\CivicCast\upgrade" \
       --database-url "$R2" --owner-run-id "$R1" \
-      --payload-source "$INSTDIR\runtime"'
+      --payload-source "$INSTDIR\runtime" --flat-installer-layout'
   Pop $0  ; engine exit code
+  ; Machine-parseable Gate A evidence. The durable log is append-only, so the
+  ; harness consumes the LAST matching line and thereby binds its verdict to
+  ; the current installer rather than the baseline install earlier in the run.
+  ; Exit 11/12 are successful installer routes but are NOT upgrade proof.
+  ${If} $0 == 11
+    !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=FRESH_INSTALL engine_exit=11"
+  ${ElseIf} $0 == 12
+    !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=SAME_VERSION_NO_OP engine_exit=12"
+  ${Else}
+    !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=UPGRADE engine_exit=$0"
+  ${EndIf}
   ${If} $0 == 0
     DetailPrint "CivicCast (Native): install/upgrade committed."
   ${ElseIf} $0 == 11
@@ -1542,9 +1494,9 @@ Var CIVICCAST_TEARDOWN_EXIT
   ;
   ; The machine is left with a preserved multi-gigabyte tree, a still-running
   ; service, and NO product exe and NO uninstaller -- so neither
-  ; --civiccast-repair nor a second Uninstall can be run, and the install-only
-  ; refusal gate in NSIS_HOOK_PREINSTALL (exit 120, which keys on that exact
-  ; exe and on the still-registered service) then refuses every future install.
+  ; --civiccast-repair nor a second Uninstall can be run, and the former
+  ; PREINSTALL policy (exit 120, which keyed on that exact exe and on the
+  ; still-registered service) then refused every future install.
   ; A retention gate whose own precondition destroys the tools needed to act on
   ; it is not fail-closed; it is a dead end.
   ;

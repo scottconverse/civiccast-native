@@ -196,6 +196,11 @@ Write-Marker -Name '_LOCALOUT.marker' -Content "local_out_dir=$OutDir ship_dir=$
 # numbers are untouched: without DIRTY_MODE.txt nothing in this block changes
 # any value.
 $script:DirtyMode = Test-Path (Join-Path $OutDir 'DIRTY_MODE.txt')
+$script:UpgradeMode = Test-Path (Join-Path $OutDir 'UPGRADE_MODE.txt')
+if ($script:UpgradeMode -and -not $script:DirtyMode) {
+    Write-Marker -Name '_INVALID-UPGRADE-MODE.marker' -Content 'UPGRADE_MODE.txt requires DIRTY_MODE.txt'
+    throw 'UPGRADE_MODE.txt requires DIRTY_MODE.txt'
+}
 if ($script:DirtyMode) {
     if ($MaxScriptMinutes -lt 210) { $MaxScriptMinutes = 210 }
     Write-Marker -Name '_DIRTY-MODE.marker' -Content "dirty_mode=1 max_script_minutes=$MaxScriptMinutes detected_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
@@ -945,6 +950,8 @@ function Save-Summary {
 # source once into memory, writing it out, and slicing the tail in memory
 # removes the read-after-write entirely.
 $script:InstallProgressCaptured = $false
+$script:D3Route = 'MISSING'
+$script:D3EngineExit = 'MISSING'
 function Invoke-InstallProgressCapture {
     param([string]$Phase)
     if ($script:InstallProgressCaptured) {
@@ -990,6 +997,17 @@ function Invoke-InstallProgressCapture {
     }
     Save-Summary -Step "install-progress-read-$Phase"
 
+    # The log is append-only and may contain the previous candidate's D3 line
+    # from phase 1. Walk forward and retain the LAST structured breadcrumb,
+    # which is the current installer invocation captured immediately above.
+    foreach ($line in $lines) {
+        $d3Match = [regex]::Match($line, 'step d3-engine: evidence route=(UPGRADE|FRESH_INSTALL|SAME_VERSION_NO_OP) engine_exit=(-?\d+)')
+        if ($d3Match.Success) {
+            $script:D3Route = $d3Match.Groups[1].Value
+            $script:D3EngineExit = $d3Match.Groups[2].Value
+        }
+    }
+
     try {
         Set-Content -Path $progressLogCopy -Value $lines -Encoding UTF8
     } catch {
@@ -1000,6 +1018,41 @@ function Invoke-InstallProgressCapture {
     $summary.install_progress_log_tail = [string[]]@($lines | Select-Object -Last 80)
     $script:InstallProgressCaptured = $true
     Save-Summary -Step "install-progress-captured-$Phase"
+}
+
+function Invoke-UpgradeEngineEvidenceCapture {
+    # D3's durable log is already database-URL-redacted by the engine. The
+    # journal is not: its context contains the live credential, so never copy
+    # that file verbatim into the mapped evidence directory / CI artifact.
+    $stateRoot = Join-Path $env:ProgramData 'CivicCast\upgrade'
+    $destRoot = Join-Path $OutDir 'upgrade-engine'
+    try {
+        New-Item -ItemType Directory -Force -Path $destRoot | Out-Null
+        $engineLog = Join-Path $stateRoot 'upgrade-engine.log'
+        if (Test-Path -LiteralPath $engineLog) {
+            $size = (Get-Item -LiteralPath $engineLog -Force).Length
+            if ($size -le 16MB) {
+                Copy-Item -LiteralPath $engineLog -Destination (Join-Path $destRoot 'upgrade-engine.log') -Force
+            } else {
+                "upgrade-engine.log omitted: $size bytes exceeds 16 MB cap" |
+                    Set-Content -LiteralPath (Join-Path $destRoot 'upgrade-engine-log-omitted.txt') -Encoding UTF8
+            }
+        }
+
+        $journalPath = Join-Path $stateRoot 'upgrade-journal.json'
+        if (Test-Path -LiteralPath $journalPath) {
+            $journal = Get-Content -LiteralPath $journalPath -Raw -ErrorAction Stop | ConvertFrom-Json
+            if ($null -ne $journal.context -and $journal.context.PSObject.Properties.Name -contains 'database_url') {
+                $journal.context.database_url = '<database-url-redacted>'
+            }
+            $journal | ConvertTo-Json -Depth 20 |
+                Set-Content -LiteralPath (Join-Path $destRoot 'upgrade-journal.redacted.json') -Encoding UTF8
+        }
+    } catch {
+        "upgrade engine evidence capture failed: $_" |
+            Set-Content -LiteralPath (Join-Path $OutDir 'upgrade-engine-capture-error.txt') -Encoding UTF8
+    }
+    Save-Summary -Step 'upgrade-engine-evidence-captured'
 }
 
 # --------------------------------------------------------------------------
@@ -1624,7 +1677,9 @@ function Test-TsProof {
 # top of this file). Everything here happens BEFORE the normal acceptance
 # flow, which then runs unchanged against the remnant-carrying box:
 #
-#   P1. Install the candidate once (same silent command as the normal flow).
+#   P1. Install either the pinned previous candidate (upgrade mode) or the
+#       current candidate (legacy remnant mode), using the same silent
+#       command as the normal flow.
 #       The install-time provision creates a REAL PostgreSQL cluster at
 #       %ProgramData%\CivicCast\data\pgdata -- not a hand-faked seed.
 #   P2. Plant operator data: two media files into
@@ -1671,12 +1726,35 @@ function Invoke-DirtyRemnantPrologue {
     $pd = Join-Path $env:ProgramData 'CivicCast'
     $installRoot = 'C:\CivicCastHostStore\install'
 
-    # P1. Phase-1 install.
-    $dirtyExe = Get-ChildItem -Path $PayloadDir -Filter '*setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    # P1. Phase-1 install. Cross-version mode uses the separately mapped,
+    # immutable previous full kit; legacy remnant mode keeps the historical
+    # same-candidate install/uninstall shape.
+    $phase1Payload = if ($script:UpgradeMode) { 'C:\CivicCastPreviousPayload' } else { $PayloadDir }
+    $dirtyExe = Get-ChildItem -Path $phase1Payload -Filter '*setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $dirtyExe) {
-        "PHASE1_INSTALL_EXIT=-999 (no *setup.exe found in $PayloadDir)" | Add-Content -Path $prep -Encoding UTF8
+        "PHASE1_INSTALL_EXIT=-999 (no *setup.exe found in $phase1Payload)" | Add-Content -Path $prep -Encoding UTF8
         Save-Summary -Step 'dirty-prep-no-installer'
         return
+    }
+    if ($script:UpgradeMode) {
+        $currentUpgradeExe = Get-ChildItem -Path $PayloadDir -Filter '*setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+        "UPGRADE_MODE=1" | Add-Content -Path $prep -Encoding UTF8
+        "UPGRADE_OVER_LIVE_REQUESTED=1" | Add-Content -Path $prep -Encoding UTF8
+        if (-not $currentUpgradeExe) {
+            "CURRENT_INSTALLER_SHA256=<missing>" | Add-Content -Path $prep -Encoding UTF8
+            "PHASE1_INSTALL_EXIT=-999 (no current *setup.exe found in $PayloadDir)" | Add-Content -Path $prep -Encoding UTF8
+            return
+        }
+        try { $previousInstallerHash = (Get-FileHash -LiteralPath $dirtyExe.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower() } catch { $previousInstallerHash = "<hash-error: $_>" }
+        try { $currentInstallerHash = (Get-FileHash -LiteralPath $currentUpgradeExe.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower() } catch { $currentInstallerHash = "<hash-error: $_>" }
+        try { $currentProductVersion = ([System.Diagnostics.FileVersionInfo]::GetVersionInfo($currentUpgradeExe.FullName).ProductVersion).Trim() } catch { $currentProductVersion = "<version-error: $_>" }
+        "PREVIOUS_INSTALLER_SHA256=$previousInstallerHash" | Add-Content -Path $prep -Encoding UTF8
+        "CURRENT_INSTALLER_SHA256=$currentInstallerHash" | Add-Content -Path $prep -Encoding UTF8
+        "CURRENT_PRODUCT_VERSION=$currentProductVersion" | Add-Content -Path $prep -Encoding UTF8
+        if ($previousInstallerHash -eq $currentInstallerHash) {
+            "PHASE1_INSTALL_EXIT=-996 (previous and current installer identities are identical)" | Add-Content -Path $prep -Encoding UTF8
+            return
+        }
     }
     Enter-ShipperQuiesce -Reason 'dirty-lane-phase1-install' -MaxMinutes 120
     Save-Summary -Step 'dirty-prep-phase1-install-begin'
@@ -1693,6 +1771,19 @@ function Invoke-DirtyRemnantPrologue {
     if ($phase1Exit -ne 0) {
         "DIRTY_PREP=FAIL (phase-1 install did not exit 0 -- continuing into the normal flow for forensics only)" | Add-Content -Path $prep -Encoding UTF8
         return
+    }
+
+    if ($script:UpgradeMode) {
+        try {
+            $previousProductVersion = (Get-ItemPropertyValue -LiteralPath 'HKLM:\Software\CivicCast\Native' -Name 'InstalledVersion' -ErrorAction Stop).Trim()
+        } catch {
+            $previousProductVersion = "<registry-error: $_>"
+        }
+        "PREVIOUS_PRODUCT_VERSION=$previousProductVersion" | Add-Content -Path $prep -Encoding UTF8
+        if ($previousProductVersion -eq $currentProductVersion) {
+            "DIRTY_PREP=FAIL (previous and current InstalledVersion identities are identical; D3 would route SAME_VERSION_NO_OP)" | Add-Content -Path $prep -Encoding UTF8
+            return
+        }
     }
 
     # P2. Plant operator uploads (install_layout.upload_dir =
@@ -1723,6 +1814,19 @@ function Invoke-DirtyRemnantPrologue {
         "PGDATA_PRESENT_AFTER_PHASE1=0 (no cluster at $pgdata after a phase-1 install that exited 0)" | Add-Content -Path $prep -Encoding UTF8
     }
     Save-Summary -Step 'dirty-prep-pgdata-recorded'
+
+    if ($script:UpgradeMode) {
+        # Leave the previous candidate installed and running. The normal
+        # acceptance flow below now invokes the current setup directly over
+        # this live install; the installer owns graceful quiescence/migration.
+        "dirty_prep_finished_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Add-Content -Path $prep -Encoding UTF8
+        Save-Summary -Step 'dirty-prep-cross-version-live'
+        return
+    }
+
+    if (-not $script:UpgradeMode) {
+        Write-Marker -Name '_DIRTY-LEGACY-REMNANT.marker' -Content 'legacy uninstall-remnant path selected'
+    }
 
     # P4. Stop the service (bounded poll), then run the real uninstaller.
     try { & sc.exe stop CivicCastSupervisor 2>&1 | Out-Null } catch {}
@@ -1946,7 +2050,7 @@ try {
         #    (SetErrorLevel + Abort) makes the process exit code a real, meaningful
         #    signal of which postinstall step failed (110=pack delivery,
         #    111/112/121/122=D2 verify, 116-119=D4 provision/service/firewall,
-        #    120=install-over-existing refusal, 123=D4 activation [K1], etc).
+        #    120=upgrade quiesce failure, 123=D4 activation [K1], etc).
         # /D= sets the NSIS install directory to the WRITABLE host-mapped folder
         # (C:\CivicCastHostStore\install, backed by the host's 1.2TB) so the WHOLE
         # install -- stage-packs, provision (which creates the dependencies/
@@ -2007,6 +2111,7 @@ try {
         # finalization block keeps a guarded second attempt for the case where
         # the installer wrote the log after this point.
         Invoke-InstallProgressCapture -Phase 'post-install'
+        Invoke-UpgradeEngineEvidenceCapture
         Sync-Transcript -Checkpoint 'post-install'
 
         # Give any late-writing child processes (service self-registration, log
@@ -2176,7 +2281,7 @@ try {
 
     # 5. CivicCastSupervisor service state -- Get-Service (typed) and raw
     #    sc.exe query / qc (matches exactly what the installer's own
-    #    PREINSTALL refusal-gate check does: "sc query CivicCastSupervisor",
+    #    PREINSTALL upgrade classification does: "sc query CivicCastSupervisor",
     #    exit 0 = registered, 1060 = ERROR_SERVICE_DOES_NOT_EXIST = not
     #    registered). None of these three calls block/wait.
     $svc = Get-Service -Name 'CivicCastSupervisor' -ErrorAction SilentlyContinue
@@ -2381,7 +2486,8 @@ try {
 
     # 5b-dirty. DIRTY-LANE SURVIVAL VERIFY <gate-a-dirty-lane>. Only in dirty
     # mode, right after the station-up verdict: prove the operator data the
-    # prologue planted before the uninstall/reinstall cycle survived it, and
+    # prologue planted before the upgrade or legacy uninstall/reinstall cycle
+    # survived it, and
     # (when the orphaned large-v3 remnant was seeded) that PR #80's
     # orphaned-tier fallback actually FIRED -- the supervisor log must carry
     # its WARNING, proving the remnant was detected and degraded rather than
@@ -2390,6 +2496,12 @@ try {
     if ($script:DirtyMode) {
         $dirtyRes = Join-Path $OutDir 'DIRTY-RESULT.txt'
         "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $dirtyRes -Encoding UTF8
+        if ($script:UpgradeMode) {
+            "UPGRADE_MODE=1" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "UPGRADE_CURRENT_INSTALL_EXIT=$($summary.installer_exit_code)" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "D3_ROUTE=$($script:D3Route)" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "D3_ENGINE_EXIT=$($script:D3EngineExit)" | Add-Content -Path $dirtyRes -Encoding UTF8
+        }
         $pdRoot = Join-Path $env:ProgramData 'CivicCast'
 
         # pgdata: the SAME cluster, not a re-provisioned lookalike.

@@ -3,7 +3,7 @@
   "info": {
     "title": "CivicCast",
     "description": "Open-source, self-hostable civic broadcast platform. This is the umbrella API surface; per-module routers mount under it. Error contract (audit QA-005): the `detail` field's SHAPE varies by error class - a string for domain errors (404/409/503), an object for structured conflicts (409 with version fields), and an array of field errors for validation failures (422, FastAPI standard). Integrators should branch on status code first, then on the type of `detail`.",
-    "version": "1.0.0-beta.1"
+    "version": "1.0.0-beta.2"
   },
   "paths": {
     "/health": {
@@ -1778,8 +1778,8 @@
         "tags": [
           "staff"
         ],
-        "summary": "Package validated local media for resident playback",
-        "description": "Encode one validated upload into the existing local HLS media service.\n\nPackaging writes to a sibling staging directory and only swaps it into\nplace after the multivariant manifest exists. The database is updated\nlast, so residents never receive a manifest URL for a partial package.",
+        "summary": "Package validated or recorded local media for resident playback",
+        "description": "Encode one validated or recorded asset into the local HLS media service.\n\nPackaging writes to a sibling staging directory and only swaps it into\nplace after the multivariant manifest exists. The database is updated\nlast, so residents never receive a manifest URL for a partial package.",
         "operationId": "package_staff_asset_api_staff_assets__asset_id__package_post",
         "parameters": [
           {

@@ -16,25 +16,6 @@ CURRENT_RELEASE_TAG = (
     )
 )
 
-PUBLIC_SURFACES = (
-    "README.md",
-    "INSTALL-WINDOWS.md",
-    "ARCHITECTURE.md",
-    "CAPABILITIES.md",
-    "FAQ.md",
-    "SUPPORT.md",
-    "docs/index.html",
-    "docs/install-windows.html",
-    "docs/adoption/early-adopter-quickstart.md",
-    "docs/adoption/release-policy.md",
-    "docs/tester/START-HERE.md",
-    "docs/tester/lpm-beta-test-handoff.md",
-    "docs/tester/technical-walkthrough.md",
-    "docs/tester/known-limitations.md",
-    "docs/tester/SMARTSCREEN-WALKTHROUGH.md",
-    "docs/install/windows-release-trust.md",
-)
-
 FRONT_DOORS = (
     "README.md",
     "INSTALL-WINDOWS.md",
@@ -45,66 +26,34 @@ FRONT_DOORS = (
 )
 
 
-def _is_public_release(root: Path = ROOT) -> bool:
-    readme = (root / "README.md").read_text(encoding="utf-8")
-    return (
-        f"https://github.com/scottconverse/civiccast/releases/tag/{CURRENT_RELEASE_TAG}" in readme
-    )
-
-
 def test_current_candidate_surfaces_match_the_release_posture() -> None:
-    release_url = f"https://github.com/scottconverse/civiccast/releases/tag/{CURRENT_RELEASE_TAG}"
-    release_link_surfaces = (
-        "README.md",
-        "INSTALL-WINDOWS.md",
-        "ARCHITECTURE.md",
-        "SUPPORT.md",
-        "docs/index.html",
-        "docs/install-windows.html",
-        "docs/adoption/early-adopter-quickstart.md",
-        "docs/tester/START-HERE.md",
-        "docs/tester/lpm-beta-test-handoff.md",
-        "docs/tester/technical-walkthrough.md",
-        "docs/tester/known-limitations.md",
-        "docs/tester/SMARTSCREEN-WALKTHROUGH.md",
-        "docs/install/windows-release-trust.md",
-    )
-    for relative in release_link_surfaces:
+    for relative in FRONT_DOORS:
         text = (ROOT / relative).read_text(encoding="utf-8")
+        normalized = " ".join(text.lower().split())
         assert CURRENT_RELEASE_TAG in text, relative
-        if not _is_public_release():
-            assert release_url not in text, relative
-            assert any(
-                marker in text.lower()
-                for marker in ("unpublished", "not approved", "no approved", "testing paused")
-            ), relative
+        assert "owner-held unpublished candidate" in normalized, relative
+        assert "no installer" in normalized or "no public installer" in normalized, relative
+        assert "not a public or production release" in normalized, relative
 
 
 def test_front_doors_name_the_current_candidate_state() -> None:
     for relative in FRONT_DOORS:
-        text = (ROOT / relative).read_text(encoding="utf-8").lower()
+        text = " ".join((ROOT / relative).read_text(encoding="utf-8").lower().split())
         assert CURRENT_RELEASE_TAG.lower() in text, relative
-        if _is_public_release():
-            assert "public" in text and "beta" in text, relative
-        else:
-            assert any(
-                marker in text
-                for marker in ("unpublished", "not approved", "no approved", "testing paused")
-            ), relative
+        assert "owner-held unpublished candidate" in text, relative
+        assert "not a public or production release" in text, relative
 
 
 def test_front_doors_do_not_offer_an_unproven_candidate_download() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     install_html = (ROOT / "docs/install-windows.html").read_text(encoding="utf-8")
-    exact = f"https://github.com/scottconverse/civiccast/releases/tag/{CURRENT_RELEASE_TAG}"
-    if not _is_public_release():
-        assert exact not in readme
-        assert exact not in install_html
     assert "releases/latest" not in readme
     assert "releases/latest" not in install_html
+    assert "no installer" in readme.lower()
+    assert "no public windows installer download" in install_html.lower()
 
 
-def test_linked_tester_docs_hold_current_candidate_for_proof() -> None:
+def test_retired_tester_docs_do_not_masquerade_as_native_proof() -> None:
     selected = (
         "docs/tester/lpm-beta-test-handoff.md",
         "docs/tester/technical-walkthrough.md",
@@ -113,13 +62,10 @@ def test_linked_tester_docs_hold_current_candidate_for_proof() -> None:
         "docs/install/windows-release-trust.md",
     )
     joined = "\n".join((ROOT / relative).read_text(encoding="utf-8") for relative in selected)
-    assert CURRENT_RELEASE_TAG in joined
-    if not _is_public_release():
-        assert (
-            f"https://github.com/scottconverse/civiccast/releases/tag/{CURRENT_RELEASE_TAG}"
-            not in joined
-        )
-        assert "unpublished" in joined.lower() or "not approved" in joined.lower()
+    lower = joined.lower()
+    assert "retired" in lower or "historical" in lower
+    assert "wsl2" in lower
+    assert "civiccast-native" in lower
 
 
 def test_migration_reference_docs_name_the_actual_head() -> None:

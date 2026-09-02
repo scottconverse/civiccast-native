@@ -409,6 +409,32 @@ def test_service_registered_probe_queries_pinned_sc_exe_with_the_service_name() 
     assert seen[0][1:] == ["query", "CivicCastSupervisor"]
 
 
+def test_service_stopped_probe_classifies_authoritative_scm_states() -> None:
+    from civiccast.native.upgrade.service_control import _real_service_stopped_probe
+
+    assert (
+        _real_service_stopped_probe(
+            query_status=lambda _name: (0, 1, 0, 0, 0, 0, 0), stopped_state=1
+        )
+        is True
+    )
+    assert (
+        _real_service_stopped_probe(
+            query_status=lambda _name: (0, 4, 0, 0, 0, 0, 0), stopped_state=1
+        )
+        is False
+    )
+
+
+def test_service_stopped_probe_keeps_unreadable_status_ambiguous() -> None:
+    from civiccast.native.upgrade.service_control import _real_service_stopped_probe
+
+    def unreadable(_name: str) -> tuple[int, ...]:
+        raise OSError("SCM query failed")
+
+    assert _real_service_stopped_probe(query_status=unreadable, stopped_state=1) is None
+
+
 # ---------------------------------------------------------------------------
 # _real_writers_active_probe's SCM short-circuit (install-only-refusal WP):
 # a definite service-absent SCM answer must return False WITHOUT ever
@@ -441,11 +467,57 @@ def test_writers_active_probe_returns_false_immediately_when_service_absent(
     assert result is False
 
 
+def test_writers_active_probe_returns_false_immediately_when_registered_service_is_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Install-over-existing stops the old service but deliberately preserves
+    its registration so routing still recognizes a real upgrade. A definitive
+    SCM STOPPED state is therefore quiescent and must not fall through to the
+    now-offline control pipe."""
+
+    import civiccast.native.supervisor.control_client as control_client_module
+    from civiccast.native.upgrade.service_control import _real_writers_active_probe
+
+    def _must_not_be_called(**_kwargs: object) -> None:
+        raise AssertionError("the control pipe must not be touched for an SCM-STOPPED service")
+
+    monkeypatch.setattr(control_client_module, "build_control_client", _must_not_be_called)
+
+    result = _real_writers_active_probe(
+        service_registered_probe=lambda _name: True,
+        service_stopped_probe=lambda _name: True,
+    )
+    assert result is False
+
+
+def test_writers_active_probe_does_not_trust_ambiguous_stopped_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a definitive STOPPED answer may short-circuit. An unreadable SCM
+    state remains fail-closed and must use the authenticated control pipe."""
+
+    import civiccast.native.supervisor.control_client as control_client_module
+    from civiccast.native.upgrade.service_control import _real_writers_active_probe
+
+    class _FakeClient:
+        def status(self) -> dict[str, object]:
+            return {"v": 1, "cmd": "status", "result": "ok", "data": {"workers_permitted": True}}
+
+    monkeypatch.setattr(
+        control_client_module, "build_control_client", lambda **_kwargs: _FakeClient()
+    )
+    result = _real_writers_active_probe(
+        service_registered_probe=lambda _name: True,
+        service_stopped_probe=lambda _name: None,
+    )
+    assert result is True
+
+
 def test_writers_active_probe_falls_through_to_pipe_when_service_registered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A service that IS registered must fall through unchanged to the
-    pre-existing pipe-based check (never short-circuited)."""
+    """A registered service that is not definitively stopped must fall through
+    unchanged to the pre-existing pipe-based check (never short-circuited)."""
 
     import civiccast.native.supervisor.control_client as control_client_module
     from civiccast.native.upgrade.service_control import _real_writers_active_probe
@@ -458,7 +530,10 @@ def test_writers_active_probe_falls_through_to_pipe_when_service_registered(
         control_client_module, "build_control_client", lambda **_kwargs: _FakeClient()
     )
 
-    result = _real_writers_active_probe(service_registered_probe=lambda _name: True)
+    result = _real_writers_active_probe(
+        service_registered_probe=lambda _name: True,
+        service_stopped_probe=lambda _name: False,
+    )
     assert result is True  # workers_permitted True => writers ARE active (not drained)
 
 
@@ -479,7 +554,10 @@ def test_writers_active_probe_falls_through_to_pipe_when_scm_ambiguous(
         control_client_module, "build_control_client", lambda **_kwargs: _FakeClient()
     )
 
-    result = _real_writers_active_probe(service_registered_probe=lambda _name: None)
+    result = _real_writers_active_probe(
+        service_registered_probe=lambda _name: None,
+        service_stopped_probe=lambda _name: False,
+    )
     assert result is False  # drained, via the pipe read, not the short-circuit
 
 

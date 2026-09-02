@@ -23,10 +23,10 @@
 # floor that runs on every candidate build, not a replacement for either.
 #
 # DIRTY LANE <gate-a-dirty-lane>: a second job (station-acceptance-dirty,
-# below) reruns the same acceptance against a box carrying REMNANTS of a
-# previous install -- the harness installs the candidate, plants operator
-# data, really uninstalls it, optionally seeds an orphaned caption tier, and
-# reinstalls. See that job's own header and docs/ops/gate-a.md, "Dirty lane".
+# below) installs a pinned previous candidate, plants operator data, leaves
+# that version live, then runs the current setup directly over it. Exact
+# previous/current installer hashes and data survival are judged fail-closed.
+# See that job's own header and docs/ops/gate-a.md, "Dirty lane".
 #
 # STATUS: informational only. It reports its verdict on every candidate but
 # does NOT block merges or releases until the owner promotes it to a required
@@ -67,6 +67,14 @@ on:
         description: "Workflow run id of the native-beta-candidate-artifacts run to judge"
         required: true
         type: string
+      lane:
+        description: "Run the full gate or the cross-version lane only (diagnostic rerun)"
+        required: true
+        type: choice
+        options:
+          - full
+          - cross-version-only
+        default: full
 
 concurrency:
   # Shared with native-beta-candidate-artifacts.yml's build_target:
@@ -90,7 +98,7 @@ jobs:
     # did not succeed -- there is no installable kit to judge in that case,
     # and a Gate A FAIL on top of an already-red candidate build would be
     # noise, not signal.
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.lane != 'cross-version-only') || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, windows, sandbox-lab]
     timeout-minutes: 180
     steps:
@@ -410,9 +418,9 @@ jobs:
   # wait window -- asserted by tests/gate_a/test_gate_a_harness_contract.py.
   # ==========================================================================
   station-acceptance-dirty:
-    name: Dirty-box remnant lane (uninstall-remnant reinstall) + verdict
+    name: Cross-version install-over-existing lane + verdict
     needs: station-acceptance
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ always() && ((github.event_name == 'workflow_dispatch' && (inputs.lane == 'cross-version-only' || needs.station-acceptance.result == 'success')) || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && needs.station-acceptance.result == 'success')) }}
     runs-on: [self-hosted, windows, sandbox-lab]
     timeout-minutes: 340
     steps:
@@ -550,6 +558,78 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}
 
+      - name: Resolve and verify immutable previous candidate
+        id: upgrade_baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $baselinePath = "sandbox-lab/upgrade-baseline.json"
+          $baseline = Get-Content -LiteralPath $baselinePath -Raw | ConvertFrom-Json
+          if ($baseline.schema_version -ne 2) { throw "Unsupported upgrade baseline schema: $($baseline.schema_version)" }
+          $previousSha = [string]$baseline.source_sha
+          $previousRunId = [string]$baseline.run_id
+          $previousInstallerSha256 = [string]$baseline.installer_sha256
+          $previousStationIndexSha256 = [string]$baseline.station_index_sha256
+          $previousProductVersion = [string]$baseline.product_version
+          if ($previousSha -notmatch '^[0-9a-f]{40}$' -or $previousRunId -notmatch '^\d+$') {
+            throw "Invalid immutable previous candidate identity in $baselinePath"
+          }
+          if ($previousInstallerSha256 -notmatch '^[0-9a-f]{64}$' -or $previousStationIndexSha256 -notmatch '^[0-9a-f]{64}$' -or $previousProductVersion -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
+            throw "Invalid immutable previous candidate byte/version identity in $baselinePath"
+          }
+          if ($previousSha -eq "${{ steps.run_id.outputs.source_sha }}") {
+            throw "Pinned previous source SHA equals the current candidate; this would be a same-candidate reinstall."
+          }
+          $runJson = & gh run view $previousRunId -R "scottconverse/civiccast-native" --json headSha,workflowName,conclusion,status 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "Could not verify pinned previous candidate run ${previousRunId}: $runJson" }
+          $run = $runJson | ConvertFrom-Json
+          if ($run.headSha -ne $previousSha -or $run.workflowName -ne 'native-beta-candidate-artifacts' -or $run.conclusion -ne 'success') {
+            throw "Pinned previous candidate identity mismatch: expected sha=$previousSha workflow=native-beta-candidate-artifacts conclusion=success; got sha=$($run.headSha) workflow=$($run.workflowName) conclusion=$($run.conclusion)"
+          }
+          "previous_source_sha=$previousSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_run_id=$previousRunId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_installer_sha256=$previousInstallerSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_station_index_sha256=$previousStationIndexSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_product_version=$previousProductVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Verified previous candidate: label=$($baseline.candidate_label) run_id=$previousRunId source_sha=$previousSha product_version=$previousProductVersion gate_a_run_id=$($baseline.gate_a_run_id)"
+
+      - name: Require the pinned previous full kit from local staging
+        shell: pwsh
+        run: |
+          # Candidate #23 was built on the self-hosted runner with large-kit
+          # upload disabled. Its complete, already-verified kit is retained
+          # in the runner's local staging mirror; the small candidate artifact
+          # is not a substitute for these bytes. Fail closed if it is absent.
+          $previousSha = "${{ steps.upgrade_baseline.outputs.previous_source_sha }}"
+          $local = Join-Path "C:\CivicCastTester\kit-staging" $previousSha
+          $targetRoot = "sandbox-lab/previous-kit-staging"
+          $target = Join-Path $targetRoot $previousSha
+          $installers = @(Get-ChildItem -LiteralPath $local -Filter "*setup.exe" -File -ErrorAction SilentlyContinue)
+          $stationIndexPath = Join-Path $local "station\station-index.json"
+          if (-not (Test-Path $stationIndexPath) -or $installers.Count -ne 1) {
+            throw "Previous full kit is absent or incomplete at $local; refusing to substitute a different candidate or partial artifact."
+          }
+          $installer = $installers[0]
+          $installerHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $stationIndexHash = (Get-FileHash -LiteralPath $stationIndexPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installerVersion = ([System.Diagnostics.FileVersionInfo]::GetVersionInfo($installer.FullName).ProductVersion).Trim()
+          $stationIndex = Get-Content -LiteralPath $stationIndexPath -Raw | ConvertFrom-Json
+          $stationVersion = [string]$stationIndex.manifest.product_version
+          $expectedInstallerHash = "${{ steps.upgrade_baseline.outputs.previous_installer_sha256 }}"
+          $expectedStationIndexHash = "${{ steps.upgrade_baseline.outputs.previous_station_index_sha256 }}"
+          $expectedVersion = "${{ steps.upgrade_baseline.outputs.previous_product_version }}"
+          if ($installerHash -ne $expectedInstallerHash -or $stationIndexHash -ne $expectedStationIndexHash -or $installerVersion -ne $expectedVersion -or $stationVersion -ne $expectedVersion) {
+            throw "Previous local kit identity mismatch: installer_sha256=$installerHash (expected $expectedInstallerHash), station_index_sha256=$stationIndexHash (expected $expectedStationIndexHash), installer_version=$installerVersion station_version=$stationVersion (expected $expectedVersion)."
+          }
+          New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
+          if (Test-Path $target) {
+            $item = Get-Item -LiteralPath $target -Force
+            if ($item.LinkType) { $item.Delete() } else { Remove-Item -LiteralPath $target -Recurse -Force }
+          }
+          New-Item -ItemType Junction -Path $target -Target $local | Out-Null
+          Write-Host "Pinned byte-verified previous full kit: $target -> $local (installer_sha256=$installerHash station_index_sha256=$stationIndexHash product_version=$expectedVersion)"
+
       - name: Run Gate A (dirty lane)
         id: gate_a_dirty
         shell: pwsh
@@ -561,7 +641,7 @@ jobs:
           # test_gate_a_harness_contract.py). -SoakMinutes 10 keeps the total
           # two-install-cycle run inside that bound; the clean lane already
           # soaked this same candidate for 20.
-          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DirtyLane -SoakMinutes 10 -TimeoutMinutes 230
+          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DirtyLane -PreviousKitDir "sandbox-lab/previous-kit-staging/${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -PreviousSourceSha "${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -SoakMinutes 10 -TimeoutMinutes 230
           $exitCode = $LASTEXITCODE
           "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           $latest = Get-ChildItem -Path "sandbox-lab/evidence" -Directory -Recurse -ErrorAction SilentlyContinue |
@@ -580,7 +660,7 @@ jobs:
           # (including the SKIP status of any uncovered remnant shape) on the
           # run's front page, not just inside an artifact.
           $evidenceDir = "${{ steps.gate_a_dirty.outputs.evidence_dir }}"
-          $lines = @("## Gate A dirty lane (uninstall-remnant reinstall)", "")
+          $lines = @("## Gate A dirty lane (cross-version install over existing)", "")
           $verdictPath = if ($evidenceDir) { Join-Path $evidenceDir 'gate-a-verdict.json' } else { $null }
           if ($verdictPath -and (Test-Path $verdictPath)) {
             try {
@@ -624,6 +704,29 @@ jobs:
           path: ${{ steps.gate_a_dirty.outputs.evidence_dir }}
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Unlink the pinned previous-kit junction (never leave it for the next checkout)
+        if: always()
+        shell: pwsh
+        run: |
+          # The junction under sandbox-lab/previous-kit-staging points INTO the
+          # runner's durable C:\CivicCastTester\kit-staging\<previous sha>. Left
+          # behind, the next run's actions/checkout `git clean -ffdx` walks
+          # through it and deletes the real pinned kit (observed 2026-09-02:
+          # candidate #23's 26 GB kit vanished after run 33584290436, and the
+          # next cross-version lane failed closed on "previous full kit is
+          # absent"). Remove ONLY the link, never the target.
+          $root = "sandbox-lab/previous-kit-staging"
+          if (Test-Path $root) {
+            Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue | ForEach-Object {
+              if ($_.LinkType) {
+                Write-Host "Unlinking previous-kit junction: $($_.FullName) -> $($_.Target)"
+                $_.Delete()
+              } else {
+                Write-Warning "Not a junction, leaving in place for inspection: $($_.FullName)"
+              }
+            }
+          }
 
       - name: Fail the job on a non-PASS verdict or harness error
         if: always()
