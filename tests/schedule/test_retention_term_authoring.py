@@ -125,6 +125,50 @@ class TestAssetMetadataUpdateTermValidation:
         with pytest.raises(ValidationError):
             AssetMetadataUpdate(expected_version=1, retention_term_unit="fortnights", retention_term_value=1)
 
+    def test_value_past_the_absolute_max_rejected_at_pydantic_layer(self) -> None:
+        # Coordinator-directed fix (follow-up commit, MAJOR finding 1):
+        # the Field(le=...) bound rejects an absurd/overflow-risk value at
+        # request-parse time, before any custom validator or the store
+        # ever runs.
+        from civiccast.schedule.retention_terms import RETENTION_TERM_VALUE_ABSOLUTE_MAX
+
+        with pytest.raises(ValidationError):
+            AssetMetadataUpdate(
+                expected_version=1,
+                retention_term_unit="days",
+                retention_term_value=RETENTION_TERM_VALUE_ABSOLUTE_MAX + 1,
+            )
+        with pytest.raises(ValidationError):
+            AssetMetadataUpdate(
+                expected_version=1, retention_term_unit="days", retention_term_value=10**9
+            )
+
+    def test_value_at_the_per_unit_boundary_accepted_one_past_rejected(self) -> None:
+        from civiccast.schedule.retention_terms import max_value_for_unit
+
+        boundary = max_value_for_unit("years")
+        assert boundary is not None
+        AssetMetadataUpdate(
+            expected_version=1, retention_term_unit="years", retention_term_value=boundary
+        )  # does not raise
+        with pytest.raises(ValidationError, match="exceeds the maximum"):
+            AssetMetadataUpdate(
+                expected_version=1,
+                retention_term_unit="years",
+                retention_term_value=boundary + 1,
+            )
+
+    # Note: `bool` rejection (MINOR finding 3) is proven at the
+    # civiccast.schedule.retention_terms.validate_term layer
+    # (tests/schedule/test_retention_terms.py::TestValidateTermRejectsNonInteger)
+    # rather than here -- Pydantic v2's lax `int` field coerces `True`/
+    # `False` to `1`/`0` before this class's own `_retention_term_shape`
+    # validator (or `validate_term` underneath it) ever sees the value,
+    # so a bool submitted over the API becomes an ordinary valid int by
+    # the time any custom validation runs. `validate_term` still rejects
+    # an actual `bool` object reaching it directly (a future non-Pydantic
+    # caller, or a store that bypasses the model).
+
 
 # ---------------------------------------------------------------------------
 # TestStoreAuthorTerm
@@ -255,6 +299,115 @@ class TestStoreAuthorTerm:
             )
 
 
+class TestStoreRefusesLegacyOnlyPatchAgainstConvertedRow:
+    """Coordinator-directed fix (follow-up commit, MAJOR finding 2): a
+    legacy-only PATCH (retention_policy/retention_until, no
+    retention_term_unit -- the only shape Pydantic allows once a row is
+    already converted, since the two contracts can't mix in one payload)
+    against an already-converted row must be refused outright, not
+    silently applied (which would desync retention_policy/retention_until
+    from the authored retention_term_unit/value/anchor until the next
+    term edit silently clobbered it back)."""
+
+    def test_legacy_policy_only_patch_refused_on_converted_row(self, session_factory) -> None:
+        anchor = datetime(2026, 1, 1, tzinfo=UTC)
+        _seed_asset(session_factory, "d1", retention_anchor_at=anchor)
+        store = PostgresAssetStore(session_factory)
+        authored = store.update_metadata(
+            "d1",
+            AssetMetadataUpdate(
+                expected_version=1, retention_term_unit="days", retention_term_value=30
+            ),
+        )
+
+        with pytest.raises(ValueError, match="value/unit/forever retention"):
+            store.update_metadata(
+                "d1",
+                AssetMetadataUpdate(
+                    expected_version=authored.version, retention_policy=RETENTION_PERMANENT
+                ),
+            )
+
+    def test_legacy_until_only_patch_refused_on_converted_row(self, session_factory) -> None:
+        anchor = datetime(2026, 1, 1, tzinfo=UTC)
+        _seed_asset(session_factory, "d2", retention_anchor_at=anchor)
+        store = PostgresAssetStore(session_factory)
+        authored = store.update_metadata(
+            "d2", AssetMetadataUpdate(expected_version=1, retention_term_unit="forever")
+        )
+
+        with pytest.raises(ValueError, match="value/unit/forever retention"):
+            store.update_metadata(
+                "d2",
+                AssetMetadataUpdate(
+                    expected_version=authored.version,
+                    retention_until=datetime(2030, 1, 1, tzinfo=UTC),
+                ),
+            )
+
+    def test_refused_patch_does_not_desync_the_row(self, session_factory) -> None:
+        # The refused PATCH must not have partially applied -- re-reading
+        # the row afterward shows the authored term/deadline untouched.
+        anchor = datetime(2026, 1, 1, tzinfo=UTC)
+        _seed_asset(session_factory, "d3", retention_anchor_at=anchor)
+        store = PostgresAssetStore(session_factory)
+        authored = store.update_metadata(
+            "d3",
+            AssetMetadataUpdate(
+                expected_version=1, retention_term_unit="days", retention_term_value=30
+            ),
+        )
+
+        with pytest.raises(ValueError):
+            store.update_metadata(
+                "d3",
+                AssetMetadataUpdate(
+                    expected_version=authored.version, retention_policy=RETENTION_PERMANENT
+                ),
+            )
+
+        row = store.get_staff_row("d3")
+        assert row is not None
+        assert row.retention_term_unit == "days"
+        assert row.retention_term_value == 30
+        assert row.retention_policy == RETENTION_DEFAULT
+        assert row.retention_until == anchor + timedelta(days=30)
+        assert row.version == authored.version, "the refused PATCH must not bump version either"
+
+    def test_legacy_only_patch_still_allowed_on_a_never_converted_row(
+        self, session_factory
+    ) -> None:
+        # The guard is scoped to already-converted rows only -- an
+        # ordinary legacy row keeps working exactly as before.
+        _seed_asset(session_factory, "d4", retention_policy="meeting")
+        store = PostgresAssetStore(session_factory)
+        result = store.update_metadata(
+            "d4",
+            AssetMetadataUpdate(expected_version=1, retention_policy=RETENTION_PERMANENT),
+        )
+        assert result.retention_policy == RETENTION_PERMANENT
+        assert result.retention_term_unit is None
+
+    def test_term_edit_on_a_converted_row_still_works(self, session_factory) -> None:
+        # The guard must not block the actually-supported path: a new
+        # term PATCH against an already-converted row.
+        anchor = datetime(2026, 1, 1, tzinfo=UTC)
+        _seed_asset(session_factory, "d5", retention_anchor_at=anchor)
+        store = PostgresAssetStore(session_factory)
+        first = store.update_metadata(
+            "d5",
+            AssetMetadataUpdate(
+                expected_version=1, retention_term_unit="days", retention_term_value=30
+            ),
+        )
+        second = store.update_metadata(
+            "d5",
+            AssetMetadataUpdate(expected_version=first.version, retention_term_unit="forever"),
+        )
+        assert second.retention_term_unit == "forever"
+        assert second.retention_policy == RETENTION_PERMANENT
+
+
 # ---------------------------------------------------------------------------
 # TestPublishUnpublishRepublishAnchor
 # ---------------------------------------------------------------------------
@@ -347,3 +500,91 @@ class TestRetentionWorkerIntegration:
             session_factory, settings=RetentionWorkerSettings(mode="inline", poll_seconds=3600.0)
         )
         assert worker.run_once(now=_NOW) == []
+
+
+# ---------------------------------------------------------------------------
+# TestRouterNeverReturns500ForRetentionTermErrors
+# ---------------------------------------------------------------------------
+
+
+class TestRouterNeverReturns500ForRetentionTermErrors:
+    """Coordinator-directed fix (follow-up commit, MAJOR finding 1):
+    ``PATCH /api/staff/assets/{asset_id}`` must map every retention-term
+    validation failure -- including one that would have raised
+    ``OverflowError`` before this fix -- to a 422, never an uncaught 500.
+    Also covers MAJOR finding 2's router-level surface (the store's
+    refusal on a legacy-only PATCH against an already-converted row)."""
+
+    def test_huge_value_is_a_422_at_the_request_body_layer_never_500(self) -> None:
+        # The primary path: FastAPI's own Pydantic request-body validation
+        # (the Field(le=...) bound) rejects this before the route function
+        # -- and therefore the store -- is ever reached.
+        from fastapi.testclient import TestClient
+
+        from civiccast.app import create_app
+
+        app = create_app()
+        with TestClient(app, headers={"Authorization": "Bearer operator-token-a"}) as client:
+            response = client.patch(
+                "/api/staff/assets/abc-123",
+                json={
+                    "expected_version": 1,
+                    "retention_term_unit": "days",
+                    "retention_term_value": 10**9,
+                },
+            )
+        assert response.status_code == 422
+        assert response.status_code != 500
+
+    def test_store_raising_overflow_error_still_maps_to_422_not_500(self) -> None:
+        # Defense-in-depth path: even if a value somehow reached the store
+        # and its arithmetic raised OverflowError directly, the router's
+        # except clause must still produce a 422, not fall through to an
+        # unhandled 500.
+        from unittest.mock import MagicMock
+
+        from fastapi.testclient import TestClient
+
+        from civiccast.app import create_app
+        from civiccast.schedule.router import get_postgres_store
+
+        app = create_app()
+        mock_store = MagicMock()
+        mock_store.update_metadata.side_effect = OverflowError("date value out of range")
+        app.dependency_overrides[get_postgres_store] = lambda: mock_store
+        with TestClient(app, headers={"Authorization": "Bearer operator-token-a"}) as client:
+            response = client.patch(
+                "/api/staff/assets/abc-123",
+                json={
+                    "expected_version": 1,
+                    "retention_term_unit": "days",
+                    "retention_term_value": 1,
+                },
+            )
+        assert response.status_code == 422
+        assert response.status_code != 500
+
+    def test_legacy_only_patch_on_converted_row_is_422_not_500(self) -> None:
+        from unittest.mock import MagicMock
+
+        from fastapi.testclient import TestClient
+
+        from civiccast.app import create_app
+        from civiccast.schedule.router import get_postgres_store
+
+        app = create_app()
+        mock_store = MagicMock()
+        mock_store.update_metadata.side_effect = ValueError(
+            "Asset abc-123 already uses the value/unit/forever retention contract "
+            "(retention_term_unit='days'); the legacy retention_policy/retention_until "
+            "fields can no longer be edited directly."
+        )
+        app.dependency_overrides[get_postgres_store] = lambda: mock_store
+        with TestClient(app, headers={"Authorization": "Bearer operator-token-a"}) as client:
+            response = client.patch(
+                "/api/staff/assets/abc-123",
+                json={"expected_version": 1, "retention_policy": "permanent"},
+            )
+        assert response.status_code == 422
+        assert response.status_code != 500
+        assert "value/unit/forever" in response.json()["detail"]

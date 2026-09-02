@@ -468,6 +468,36 @@ class PostgresAssetStore:
                                 f"asset's duration of {row.duration_seconds}s."
                             )
                     row.chapters_json = json.dumps([c.model_dump() for c in chapters])
+            # Coordinator-directed fix (follow-up commit, MAJOR finding 2):
+            # a legacy-only PATCH (retention_policy/retention_until, no
+            # retention_term_unit) against a row already authored under
+            # the new value/unit/forever contract used to write the
+            # legacy columns directly, silently desyncing them from the
+            # authored term/anchor -- the next term edit would then
+            # recompute retention_until from the anchor and clobber
+            # whatever the legacy-only PATCH had just set, and in the
+            # meantime retention_policy/retention_until would disagree
+            # with retention_term_unit/retention_term_value. Refused
+            # outright rather than silently accepted or silently
+            # rerouted: AssetMetadataUpdate's own validator already
+            # forbids retention_term_unit and retention_policy/
+            # retention_until in the SAME payload, so if we're here with
+            # a legacy field set, this payload carries no
+            # retention_term_unit -- and if the row is already converted,
+            # the client needs to say so explicitly by submitting a new
+            # term, not the legacy pair.
+            touches_legacy_retention = (
+                "retention_policy" in data and data["retention_policy"] is not None
+            ) or ("retention_until" in data)
+            if touches_legacy_retention and row.retention_term_unit is not None:
+                raise ValueError(
+                    f"Asset {asset_id} already uses the value/unit/forever retention "
+                    f"contract (retention_term_unit={row.retention_term_unit!r}); the "
+                    "legacy retention_policy/retention_until fields can no longer be "
+                    "edited directly. Submit a new retention_term_unit (and "
+                    "retention_term_value, or 'forever') to change this asset's "
+                    "retention term."
+                )
             if "retention_policy" in data and data["retention_policy"] is not None:
                 row.retention_policy = data["retention_policy"]
             if "retention_until" in data:

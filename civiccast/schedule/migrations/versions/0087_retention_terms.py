@@ -19,10 +19,11 @@ dependency on WP-07's live-source work (finalization plan section 6,
 WP-08's own "Dependency" line). This file therefore chains
 ``down_revision`` to the real base it was built against
 (``0082_egress_graphics_overlay``) and says so plainly rather than citing
-a revision this worktree cannot see. Re-parenting onto the true ``0086``
-head (renumbering ``down_revision`` only -- this file's own id and content
-do not change) is expected at integration time, per WP-08's PR description
-and the coordinator's re-parent instruction.
+a revision this worktree cannot see. This migration WILL be re-parented
+onto the real ``0086`` head by a separate, coordinator-directed commit at
+integration time -- that follow-up renumbers ``down_revision`` only; no
+other change to this file (columns, backfill, constraints, upgrade/
+downgrade bodies) is expected as part of that re-parent.
 
 Adds three columns to ``assets``, additive to the existing
 ``retention_policy``/``retention_until`` pair (unchanged; the enforcement

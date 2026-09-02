@@ -66,6 +66,46 @@ RetentionTermUnit = Literal["days", "weeks", "months", "years", "forever"]
 LEGACY_SHORT_SUGGESTED_VALUE = 30
 LEGACY_SHORT_SUGGESTED_UNIT: RetentionTermUnit = "days"
 
+# Coordinator-directed fix (follow-up commit, MAJOR finding 1): an
+# unbounded ``retention_term_value`` let ``timedelta(days=value)`` /
+# ``timedelta(weeks=value)`` raise :class:`OverflowError` for a large
+# enough integer -- a type the router only mapped from ``ValueError``, so
+# it fell through to an uncaught 500 instead of a 422. A documented,
+# generous ceiling closes that: 200 years, expressed per unit with a
+# safety margin (366 days/year, 53 weeks/year, 12 months/year) so the
+# bound never rejects a legitimate long-but-finite public-records term
+# while still keeping every unit's arithmetic comfortably inside
+# ``timedelta``'s own range (max ~2.7 million years) -- no unit can ever
+# reach ``OverflowError`` through this bound. Enforced here (the single
+# source of truth for both the Pydantic-level ``AssetMetadataUpdate``
+# validator and this module's own arithmetic), not just at the API
+# boundary, so a caller that bypasses Pydantic (the ephemeral store, a
+# future direct caller) still cannot construct an overflow-prone term.
+MAX_RETENTION_YEARS = 200
+_RETENTION_TERM_MAX_VALUE: dict[str, int] = {
+    RETENTION_TERM_UNIT_DAYS: MAX_RETENTION_YEARS * 366,
+    RETENTION_TERM_UNIT_WEEKS: MAX_RETENTION_YEARS * 53,
+    RETENTION_TERM_UNIT_MONTHS: MAX_RETENTION_YEARS * 12,
+    RETENTION_TERM_UNIT_YEARS: MAX_RETENTION_YEARS,
+}
+
+
+# The largest per-unit ceiling above (days, at 366 days * 200 years) --
+# a single outer sanity bound usable as a Pydantic ``Field(le=...)`` on
+# ``retention_term_value`` before any unit-specific check runs, so a
+# wildly out-of-range value (a typo, a hostile client) is rejected by
+# FastAPI's own request-body validation without ever reaching a custom
+# validator, the store, or the arithmetic layer.
+RETENTION_TERM_VALUE_ABSOLUTE_MAX = max(_RETENTION_TERM_MAX_VALUE.values())
+
+
+def max_value_for_unit(unit: str) -> int | None:
+    """The largest accepted ``value`` for ``unit``, or ``None`` for ``forever``
+    (which never carries one) or an unrecognized unit (``validate_term``
+    is the source of truth for unit membership; this returns ``None``
+    rather than raising so callers can probe without a try/except)."""
+    return _RETENTION_TERM_MAX_VALUE.get(unit)
+
 
 def resolve_station_zoneinfo(tz_name: str | None) -> ZoneInfo | None:
     """Best-effort IANA zone lookup for a station timezone name.
@@ -101,7 +141,12 @@ def validate_term(unit: str, value: int | None) -> None:
     """Raise :class:`ValueError` if ``(unit, value)`` is not a valid term.
 
     ``forever`` must carry no value; every finite unit must carry a
-    positive integer value.
+    positive integer value no larger than that unit's
+    :data:`MAX_RETENTION_YEARS`-derived ceiling (coordinator-directed
+    fix, MAJOR finding 1 -- see the ceiling table's comment above for
+    why). ``bool`` is deliberately rejected even though it is a Python
+    ``int`` subclass (coordinator-directed fix, MINOR finding 3) --
+    ``True``/``False`` are never a meaningful retention length.
     """
     if unit not in RETENTION_TERM_UNITS:
         raise ValueError(
@@ -111,9 +156,19 @@ def validate_term(unit: str, value: int | None) -> None:
         if value is not None:
             raise ValueError("retention term value must be omitted when unit is 'forever'")
         return
-    if value is None or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(
             f"retention term value must be a positive integer for unit {unit!r}, got {value!r}"
+        )
+    if value <= 0:
+        raise ValueError(
+            f"retention term value must be a positive integer for unit {unit!r}, got {value!r}"
+        )
+    max_value = _RETENTION_TERM_MAX_VALUE[unit]
+    if value > max_value:
+        raise ValueError(
+            f"retention term value {value} exceeds the maximum of {max_value} {unit} "
+            f"({MAX_RETENTION_YEARS} years)"
         )
 
 

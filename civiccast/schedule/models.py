@@ -42,6 +42,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from civiccast.db import Base
+from civiccast.schedule.retention_terms import (
+    RETENTION_TERM_VALUE_ABSOLUTE_MAX as _RETENTION_TERM_VALUE_ABSOLUTE_MAX,
+)
 from civiccast.schedule.retention_terms import validate_term as _validate_retention_term
 from civiccast.vod.models import AssetMetadata as VodAssetMetadata
 from civiccast.vod.models import _enforce_https_manifest, _normalize_meeting_body
@@ -394,7 +397,17 @@ class AssetMetadataUpdate(BaseModel):
     # cannot be sent as an explicit ``null``: there is no "clear back to
     # legacy" operation in this contract.
     retention_term_unit: RetentionTermUnitValue | None = None
-    retention_term_value: int | None = Field(default=None, ge=1)
+    # Coordinator-directed fix (follow-up commit, MAJOR finding 1): the
+    # outer ``le=`` bound is the largest of the per-unit ceilings in
+    # ``civiccast.schedule.retention_terms`` (200 years' worth of days) --
+    # it rejects an absurd/overflow-risk value at the request-body layer,
+    # before the tighter per-unit bound in ``_retention_term_shape`` below
+    # (via ``validate_term``) even runs. Both together mean no value can
+    # ever reach ``compute_retention_until``'s ``timedelta`` arithmetic in
+    # a range that could raise ``OverflowError``.
+    retention_term_value: int | None = Field(
+        default=None, ge=1, le=_RETENTION_TERM_VALUE_ABSOLUTE_MAX
+    )
 
     @field_validator("description")
     @classmethod

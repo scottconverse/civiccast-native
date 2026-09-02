@@ -19,9 +19,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from civiccast.schedule.retention_terms import (
+    MAX_RETENTION_YEARS,
     RETENTION_TERM_UNITS,
+    RETENTION_TERM_VALUE_ABSOLUTE_MAX,
     add_calendar_months,
     compute_retention_until,
+    max_value_for_unit,
     validate_term,
 )
 
@@ -50,6 +53,82 @@ class TestValidateTerm:
 
     def test_every_documented_unit_is_covered(self) -> None:
         assert set(RETENTION_TERM_UNITS) == {"days", "weeks", "months", "years", "forever"}
+
+
+class TestValidateTermMaxBound:
+    """Coordinator-directed fix (follow-up commit, MAJOR finding 1): an
+    unbounded value let ``timedelta`` arithmetic raise ``OverflowError``,
+    which the router only mapped from ``ValueError`` -> uncaught 500."""
+
+    @pytest.mark.parametrize("unit", ["days", "weeks", "months", "years"])
+    def test_value_at_the_documented_boundary_is_accepted(self, unit: str) -> None:
+        boundary = max_value_for_unit(unit)
+        assert boundary is not None
+        validate_term(unit, boundary)  # does not raise
+
+    @pytest.mark.parametrize("unit", ["days", "weeks", "months", "years"])
+    def test_value_one_past_the_boundary_is_rejected(self, unit: str) -> None:
+        boundary = max_value_for_unit(unit)
+        assert boundary is not None
+        with pytest.raises(ValueError, match="exceeds the maximum"):
+            validate_term(unit, boundary + 1)
+
+    def test_huge_value_is_rejected_never_reaches_arithmetic(self) -> None:
+        # A value large enough that a naive `timedelta(days=value)` would
+        # raise OverflowError -- validate_term must reject it long before
+        # compute_retention_until ever builds a timedelta.
+        with pytest.raises(ValueError, match="exceeds the maximum"):
+            validate_term("days", 10**9)
+        with pytest.raises(ValueError, match="exceeds the maximum"):
+            compute_retention_until(
+                anchor_at=datetime(2026, 1, 1, tzinfo=UTC),
+                unit="days",
+                value=10**9,
+                station_tz_name="UTC",
+            )
+
+    def test_forever_has_no_max(self) -> None:
+        assert max_value_for_unit("forever") is None
+
+    def test_unknown_unit_has_no_max(self) -> None:
+        assert max_value_for_unit("fortnights") is None
+
+    def test_absolute_max_is_the_largest_per_unit_ceiling(self) -> None:
+        per_unit = {u: max_value_for_unit(u) for u in ("days", "weeks", "months", "years")}
+        assert max(per_unit.values()) == RETENTION_TERM_VALUE_ABSOLUTE_MAX
+
+    def test_ceilings_derive_from_the_documented_200_year_bound(self) -> None:
+        assert MAX_RETENTION_YEARS == 200
+        assert max_value_for_unit("years") == 200
+        assert max_value_for_unit("months") == 200 * 12
+        assert max_value_for_unit("weeks") == 200 * 53
+        assert max_value_for_unit("days") == 200 * 366
+
+
+class TestValidateTermRejectsNonInteger:
+    """Coordinator-directed fix (follow-up commit, MINOR finding 3):
+    ``bool`` is a Python ``int`` subclass, so an unguarded ``isinstance``/
+    comparison check would silently accept ``True``/``False`` as a
+    retention length."""
+
+    @pytest.mark.parametrize("unit", ["days", "weeks", "months", "years"])
+    def test_bool_value_rejected(self, unit: str) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_term(unit, True)
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_term(unit, False)
+
+    @pytest.mark.parametrize("unit", ["days", "weeks", "months", "years"])
+    def test_float_value_rejected(self, unit: str) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_term(unit, 1.5)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_term(unit, 3.0)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("unit", ["days", "weeks", "months", "years"])
+    def test_string_value_rejected(self, unit: str) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_term(unit, "30")  # type: ignore[arg-type]
 
 
 class TestAddCalendarMonths:

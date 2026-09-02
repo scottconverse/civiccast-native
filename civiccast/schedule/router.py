@@ -596,10 +596,17 @@ def update_asset_metadata(
                 "published_schedule_item_ids": exc.published_schedule_item_ids,
             },
         ) from exc
-    except ValueError as exc:
+    except (ValueError, OverflowError) as exc:
         # QA-012: chapter past duration. Pydantic-level errors return 422
         # naturally; this is the cross-field validation that needed a DB
-        # lookup.
+        # lookup. OverflowError (coordinator-directed fix, follow-up
+        # commit, MAJOR finding 1): a bounded retention_term_value should
+        # never let civiccast.schedule.retention_terms.compute_retention_until's
+        # timedelta arithmetic overflow anymore (the Pydantic ``le=`` bound
+        # and this module's own per-unit ceiling both close that off
+        # before it can happen), but this stays a defense-in-depth catch
+        # rather than trusting the bound to be the only thing standing
+        # between a large integer and an uncaught 500.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
