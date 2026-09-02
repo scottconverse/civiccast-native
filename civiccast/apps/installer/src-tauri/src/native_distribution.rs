@@ -280,6 +280,80 @@ pub fn verify_distribution_bytes(
     })
 }
 
+/// The station MODEL components -- the ones whose packs carry
+/// `scripts/build_native_station_bundle.py`'s stable
+/// `STATION_MODEL_PACK_PRODUCT_VERSION` identity rather than the product
+/// version. Derived from the existing component constants, never retyped:
+/// [`REQUIRED_COMPONENTS`] minus its leading `core` (the per-version
+/// placeholder), plus `native_activation::OPTIONAL_COMPONENTS`
+/// (`captions-large-v3`).
+///
+/// This is an ALLOWLIST on purpose, not "everything except `core`". A
+/// future non-model component added to a station bundle -- a config pack, a
+/// license pack, anything genuinely per-version -- must keep the exact
+/// version contract by DEFAULT, and only be added here deliberately, by
+/// someone who has also made its bytes reproducible across candidates.
+/// `station_model_components_are_derived_from_the_component_constants`
+/// pins the `core`-is-first assumption this slice relies on.
+fn is_station_model_component(component: &str) -> bool {
+    REQUIRED_COMPONENTS[1..].contains(&component)
+        || crate::native_activation::OPTIONAL_COMPONENTS.contains(&component)
+}
+
+/// What a component pack's OWN signed manifest must declare for
+/// `product_version` / `compatible_core`, given the signed index that
+/// references it. `None` means "do not compare that field" -- never "do not
+/// verify this pack": the pack's signature, component id, outer SHA-256 and
+/// outer byte count are checked in every case.
+///
+/// A **station index** (the air-gapped `$EXEDIR\station` side-load) pins
+/// each MODEL pack ([`is_station_model_component`]) by the SHA-256 and byte
+/// count in the index the trust root signed. Those packs are built with a
+/// deliberately stable identity
+/// (`scripts/build_native_station_bundle.py`'s
+/// `STATION_MODEL_PACK_PRODUCT_VERSION` / `STATION_MODEL_PACK_COMPATIBLE_CORE`)
+/// and with reproducible bytes, so the same reviewed model set hashes
+/// identically from one product candidate to the next. That is what lets an
+/// already-activated station reuse the ~21 GB of model packs already
+/// sitting in its per-SHA cache
+/// (`<install root>\packs\.station-cache\packs\<sha256>.ccpack`) on a
+/// download-only upgrade whose `setup.exe` ships with no `station\` folder
+/// beside it -- see [`copy_station_pack_to_cache`]'s cache fallback.
+///
+/// **What this gives up, stated plainly.** The declared version pair was a
+/// second, independent tripwire: a publisher who signed a NEW index that
+/// referenced a pack built in a STALE era would previously have been caught
+/// by the version mismatch. That tripwire is gone for model packs. What
+/// remains is the SHA-256 the publisher themselves chose and signed into
+/// the index -- so a publisher holding the trust-root key who points a new
+/// index at an old pack's digest gets exactly that old pack, silently and
+/// by construction. The residual protection is that the digest is signed
+/// (nobody outside the key holder can substitute bytes) and that the
+/// reviewed model lock still gates the three Ollama components' contents;
+/// what is NOT protected is the key holder's own mistake about WHICH
+/// reviewed era a digest belongs to. Bumping
+/// `STATION_MODEL_PACK_PRODUCT_VERSION` when the reviewed model set changes
+/// is what keeps that mistake visible, and it is a human discipline, not a
+/// machine check.
+///
+/// `core` keeps the strict per-version check on both kinds of index, so
+/// does any component not on the model allowlist, and a **channel index**
+/// keeps it for every component: an online acquisition has no reuse story
+/// to serve and the index's version pair is the bootstrap's own
+/// expectation.
+pub fn pack_identity_expectations<'a>(
+    index: &'a VerifiedDistribution,
+    component: &str,
+) -> (Option<&'a str>, Option<&'a str>) {
+    if index.kind == "station-index" && is_station_model_component(component) {
+        return (None, None);
+    }
+    (
+        Some(index.product_version.as_str()),
+        Some(index.compatible_core.as_str()),
+    )
+}
+
 pub fn download_pack_with<F>(
     pack: &DistributionPack,
     cache_root: &Path,
@@ -437,12 +511,14 @@ where
     let mut acquired = Vec::with_capacity(index.packs.len());
     for pack in &index.packs {
         let cached_path = obtain(pack)?;
+        let (expected_product_version, expected_compatible_core) =
+            pack_identity_expectations(&index, &pack.component);
         let verified = native_packs::verify_pack(
             &cached_path,
             trust,
             Some(&pack.component),
-            Some(&index.product_version),
-            Some(&index.compatible_core),
+            expected_product_version,
+            expected_compatible_core,
         )?;
         if verified.sha256 != pack.sha256 {
             return Err(format!(
@@ -608,6 +684,44 @@ fn retain_verified_index(
     Ok(destination)
 }
 
+/// The download-only-upgrade fallback for [`copy_station_pack_to_cache`]:
+/// serve `pack` from this station's per-SHA cache when its bytes are not
+/// beside the installer. Fails closed, naming BOTH paths, unless the cache
+/// entry is byte-identical to what the signed index pins and independently
+/// re-verifies as a signed pack for this component.
+fn station_pack_from_cache(
+    pack: &DistributionPack,
+    missing_media_path: &Path,
+    cache_root: &Path,
+    trust: &PackTrust,
+) -> Result<PathBuf, String> {
+    let cached = cache_root.join(format!("{}.ccpack", pack.sha256));
+    let refuse = || {
+        format!(
+            "Native station component pack {} is not beside the installer at {} \
+             and is not already cached on this station at {}.",
+            pack.component,
+            missing_media_path.display(),
+            cached.display()
+        )
+    };
+    if !cached.is_file() || !file_matches(&cached, pack.bytes, &pack.sha256)? {
+        return Err(refuse());
+    }
+    // The bytes hash to what the index pins; now prove they are a real,
+    // trust-root-signed pack for THIS component (not merely a file with a
+    // convenient name). Identity expectations are deliberately not asserted
+    // here -- see [`pack_identity_expectations`]; `acquire_verified_distribution`
+    // applies the right pair for the index kind immediately after.
+    let (verified, _archive) =
+        native_packs::open_and_verify_pack(&cached, trust, Some(&pack.component), None, None)
+            .map_err(|_| refuse())?;
+    if verified.sha256 != pack.sha256 {
+        return Err(refuse());
+    }
+    Ok(cached)
+}
+
 fn copy_station_pack_to_cache(
     pack: &DistributionPack,
     media_root: &Path,
@@ -617,6 +731,18 @@ fn copy_station_pack_to_cache(
     fs::create_dir_all(cache_root)
         .map_err(|error| format!("Could not create native pack cache: {error}"))?;
     let source = media_root.join(&pack.filename);
+    if !source.exists() {
+        // A download-only upgrade: `setup.exe` arrived with no `station\`
+        // folder beside it, so this pack's bytes are not on the media. An
+        // already-activated station still holds them in its per-SHA cache
+        // (the packs are identity-stable across candidates -- see
+        // [`pack_identity_expectations`]), so serve them from there. NEVER
+        // on the strength of the file merely existing: the cache entry must
+        // match the signed index's byte count AND SHA-256, and must itself
+        // re-open and re-verify as a signed pack for this component whose
+        // outer digest is the one the index pins.
+        return station_pack_from_cache(pack, &source, cache_root, trust);
+    }
     let canonical_source = source
         .canonicalize()
         .map_err(|error| format!("Could not resolve station component pack: {error}"))?;
@@ -1027,6 +1153,7 @@ fn write_canonical_json(value: &Value, output: &mut String) -> Result<(), String
 mod tests {
     use super::{
         download_pack_with, verify_distribution_bytes, DistributionPack, TransferResponse,
+        VerifiedDistribution,
     };
     use crate::native_packs::PackTrust;
     use base64::engine::general_purpose::STANDARD as BASE64;
@@ -1396,6 +1523,29 @@ mod tests {
         component: &str,
         payload: &[(&str, &[u8])],
     ) -> (u64, String) {
+        build_signed_pack_with_identity(
+            pack_path,
+            signing_key,
+            component,
+            "1.0.0-rc15",
+            "1.0.0-rc15",
+            payload,
+        )
+    }
+
+    /// Same pack, with the identity pair spelled out -- the shape
+    /// `scripts/build_native_station_bundle.py` actually emits, where MODEL
+    /// packs declare the stable `station-models-1` identity and only `core`
+    /// carries the product version. See
+    /// [`super::pack_identity_expectations`].
+    fn build_signed_pack_with_identity(
+        pack_path: &std::path::Path,
+        signing_key: &SigningKey,
+        component: &str,
+        product_version: &str,
+        compatible_core: &str,
+        payload: &[(&str, &[u8])],
+    ) -> (u64, String) {
         let mut files_json = Vec::new();
         let mut total_bytes = 0_u64;
         for (name, bytes) in payload {
@@ -1410,8 +1560,8 @@ mod tests {
             "schema_version": 1,
             "product": "civiccast-native",
             "component": component,
-            "product_version": "1.0.0-rc15",
-            "compatible_core": "1.0.0-rc15",
+            "product_version": product_version,
+            "compatible_core": compatible_core,
             "signing_key_id": "development-test-key",
             "file_count": payload.len(),
             "total_bytes": total_bytes,
@@ -1593,10 +1743,30 @@ mod tests {
             ),
         ];
 
+        // The identity split the publisher actually emits: `core` carries the
+        // product version, every MODEL pack carries the stable
+        // `station-models-1` identity (see
+        // `super::pack_identity_expectations`). Building the fixture this way
+        // means the acquisition below only reaches the reviewed-model-lock
+        // gate if `acquire_verified_distribution` really applies the
+        // station-index exemption -- a hard-coded index version pair would
+        // stop it earlier, at captions-floor, with a version mismatch.
         let mut pack_entries = Vec::new();
         for (component, filename, payload) in components {
             let pack_path = media_root.join(filename);
-            let (bytes, sha256) = build_signed_pack(&pack_path, &key, component, payload);
+            let (product_version, compatible_core) = if component == "core" {
+                ("1.0.0-rc15", "1.0.0-rc15")
+            } else {
+                ("station-models-1", "station-models-1")
+            };
+            let (bytes, sha256) = build_signed_pack_with_identity(
+                &pack_path,
+                &key,
+                component,
+                product_version,
+                compatible_core,
+                payload,
+            );
             pack_entries.push(pack_entry(component, bytes, &sha256));
         }
         let (_manifest, envelope_bytes) = publisher_shaped_envelope(&key, pack_entries);
@@ -1622,6 +1792,10 @@ mod tests {
             "expected the acquisition to fail specifically at the reviewed-model-lock \
              gate, got: {error}"
         );
+        assert!(
+            !error.contains("version mismatch") && !error.contains("compatible core mismatch"),
+            "a station index must not pin its MODEL packs to the product version, got: {error}"
+        );
         // core and captions-floor -- which carry no reviewed-model-lock
         // coupling -- must have been cached before the gate was ever
         // reached, proving THEY round-tripped through real
@@ -1635,5 +1809,504 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).expect("clean roundtrip root");
+    }
+
+    #[test]
+    fn station_index_accepts_a_model_pack_with_the_stable_identity_but_still_pins_core_to_the_product_version(
+    ) {
+        // The trust-boundary change itself: a station index published for
+        // product 1.0.0-rc15 references MODEL packs that declare the stable
+        // cross-version identity `station-models-1` (what
+        // `scripts/build_native_station_bundle.py` emits, so the same
+        // reviewed model set keeps the same SHA-256 across candidates and an
+        // activated station can reuse its ~21 GB per-SHA cache). Those packs
+        // must verify; `core` -- which really is per-version -- must still be
+        // refused when its declared version is not the index's.
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        let trust = PackTrust {
+            key_id: "development-test-key".to_string(),
+            public_key: key.verifying_key(),
+        };
+        let (index_bytes, _) = signed_index("station-index");
+        let index = verify_distribution_bytes(
+            &index_bytes,
+            &trust,
+            Some("station-index"),
+            Some("beta"),
+            Some("1.0.0-rc15"),
+            Some("1.0.0-rc15"),
+        )
+        .expect("station index must verify");
+
+        // The rule, stated: model packs are unpinned on version, core is not.
+        assert_eq!(
+            super::pack_identity_expectations(&index, "captions-floor"),
+            (None, None)
+        );
+        assert_eq!(
+            super::pack_identity_expectations(&index, "core"),
+            (Some("1.0.0-rc15"), Some("1.0.0-rc15"))
+        );
+
+        let root =
+            std::env::temp_dir().join(format!("civiccast-station-identity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create identity fixture root");
+
+        // captions-floor declaring `station-models-1` against a 1.0.0-rc15
+        // index: accepted, because the index pins it by SHA-256 + bytes.
+        let floor_path = root.join("captions-floor.ccpack");
+        build_signed_pack_with_identity(
+            &floor_path,
+            &key,
+            "captions-floor",
+            "station-models-1",
+            "station-models-1",
+            &[(
+                "models/faster-whisper-medium/model.bin",
+                b"floor-model-bytes",
+            )],
+        );
+        let (floor_version, floor_core) =
+            super::pack_identity_expectations(&index, "captions-floor");
+        let verified = crate::native_packs::verify_pack(
+            &floor_path,
+            &trust,
+            Some("captions-floor"),
+            floor_version,
+            floor_core,
+        )
+        .expect(
+            "a stable-identity model pack must verify against a product-versioned station index",
+        );
+        assert_eq!(verified.product_version, "station-models-1");
+
+        // core declaring the WRONG version: still refused, on the same index.
+        let core_path = root.join("core.ccpack");
+        build_signed_pack_with_identity(
+            &core_path,
+            &key,
+            "core",
+            "9.9.9-not-this-product",
+            "9.9.9-not-this-product",
+            &[("NOTICE.txt", b"placeholder-only")],
+        );
+        let (core_version, core_core) = super::pack_identity_expectations(&index, "core");
+        let error = crate::native_packs::verify_pack(
+            &core_path,
+            &trust,
+            Some("core"),
+            core_version,
+            core_core,
+        )
+        .expect_err("core must stay pinned to the index's product version");
+        assert!(
+            error.contains("version mismatch"),
+            "expected a version-mismatch refusal for core, got: {error}"
+        );
+
+        // The exemption is station-only: an ONLINE channel index keeps the
+        // strict per-version check for every component.
+        let (channel_bytes, _) = signed_index("channel-index");
+        let channel_index = verify_distribution_bytes(
+            &channel_bytes,
+            &trust,
+            Some("channel-index"),
+            Some("beta"),
+            Some("1.0.0-rc15"),
+            Some("1.0.0-rc15"),
+        )
+        .expect("channel index must verify");
+        assert_eq!(
+            super::pack_identity_expectations(&channel_index, "captions-floor"),
+            (Some("1.0.0-rc15"), Some("1.0.0-rc15"))
+        );
+
+        std::fs::remove_dir_all(&root).expect("clean identity fixture root");
+    }
+
+    #[test]
+    fn a_station_pack_absent_from_the_media_is_served_from_the_cache_but_never_on_trust() {
+        // The download-only upgrade: setup.exe arrives with NO `station\`
+        // folder beside it, so the pack's bytes are not on the media. An
+        // already-activated station holds them in its per-SHA cache and must
+        // be able to reuse them -- but only after the cached bytes are
+        // re-hashed against the signed index AND re-verified as a signed
+        // pack. A corrupt cache entry is refused, naming both places looked.
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        let trust = PackTrust {
+            key_id: "development-test-key".to_string(),
+            public_key: key.verifying_key(),
+        };
+        let root = std::env::temp_dir().join(format!(
+            "civiccast-station-cache-fallback-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let media_root = root.join("station");
+        let cache_root = root.join("cache").join("packs");
+        std::fs::create_dir_all(&media_root).expect("create empty media root");
+        std::fs::create_dir_all(&cache_root).expect("create pack cache");
+
+        // Build the pack somewhere else entirely, then seed it into the cache
+        // under its SHA -- exactly the state a previous activation leaves
+        // behind. The media directory stays empty.
+        let staged = root.join("previously-activated.ccpack");
+        let (bytes, sha256) = build_signed_pack_with_identity(
+            &staged,
+            &key,
+            "captions-floor",
+            "station-models-1",
+            "station-models-1",
+            &[(
+                "models/faster-whisper-medium/model.bin",
+                b"floor-model-bytes",
+            )],
+        );
+        let cached = cache_root.join(format!("{sha256}.ccpack"));
+        std::fs::copy(&staged, &cached).expect("seed the per-SHA cache");
+        std::fs::remove_file(&staged).expect("remove the staged copy");
+
+        let pack = DistributionPack {
+            component: "captions-floor".to_string(),
+            filename: "captions-floor.ccpack".to_string(),
+            bytes,
+            sha256: sha256.clone(),
+            required: true,
+            urls: Vec::new(),
+        };
+        assert!(
+            !media_root.join(&pack.filename).exists(),
+            "the fixture must model a download-only upgrade: nothing beside the installer"
+        );
+
+        let served = super::copy_station_pack_to_cache(&pack, &media_root, &cache_root, &trust)
+            .expect("an absent media pack must be served from this station's verified cache");
+        assert_eq!(served, cached);
+
+        // Corrupt the cache entry: same name, different bytes. Existence is
+        // never trust -- the refusal must name BOTH places that were looked.
+        std::fs::write(&cached, b"this is not the pack you cached").expect("corrupt the cache");
+        let error = super::copy_station_pack_to_cache(&pack, &media_root, &cache_root, &trust)
+            .expect_err("a corrupt cache entry must never be served");
+        assert!(
+            error.contains("not beside the installer")
+                && error.contains("not already cached on this station"),
+            "the refusal must name both the missing media path and the cache path, got: {error}"
+        );
+        assert!(
+            error.contains("captions-floor.ccpack") && error.contains(&sha256),
+            "the refusal must name the actual paths, got: {error}"
+        );
+
+        // And with nothing cached at all: the same fail-closed refusal.
+        std::fs::remove_file(&cached).expect("clear the cache entry");
+        let error = super::copy_station_pack_to_cache(&pack, &media_root, &cache_root, &trust)
+            .expect_err("an uncached, unshipped pack must fail closed");
+        assert!(
+            error.contains("not beside the installer")
+                && error.contains("not already cached on this station"),
+            "expected the same both-places refusal, got: {error}"
+        );
+
+        std::fs::remove_dir_all(&root).expect("clean cache-fallback root");
+    }
+
+    #[test]
+    fn station_model_components_are_derived_from_the_component_constants() {
+        // `is_station_model_component` slices REQUIRED_COMPONENTS[1..] to
+        // drop the per-version `core` placeholder. If `core` ever stops
+        // being first, that slice would silently exempt it and pin a real
+        // model pack instead -- so the assumption is pinned here rather than
+        // trusted.
+        assert_eq!(
+            super::REQUIRED_COMPONENTS[0],
+            "core",
+            "core must stay first in REQUIRED_COMPONENTS: the model allowlist slices it off"
+        );
+        for component in &super::REQUIRED_COMPONENTS[1..] {
+            assert!(
+                super::is_station_model_component(component),
+                "{component} must be treated as a station model component"
+            );
+        }
+        for component in crate::native_activation::OPTIONAL_COMPONENTS {
+            assert!(
+                super::is_station_model_component(component),
+                "{component} must be treated as a station model component"
+            );
+        }
+        assert!(!super::is_station_model_component("core"));
+    }
+
+    #[test]
+    fn a_station_index_component_outside_the_model_allowlist_keeps_the_exact_version_contract() {
+        // The exemption is an allowlist, not "anything except core". A
+        // future non-model component in a station bundle -- a config pack, a
+        // license pack, anything genuinely per-version -- must keep the
+        // exact-version contract until someone deliberately adds it to the
+        // allowlist AND makes its bytes reproducible.
+        let index = VerifiedDistribution {
+            sha256: "ab".repeat(32),
+            kind: "station-index".to_string(),
+            channel: "beta".to_string(),
+            product_version: "1.0.0-rc15".to_string(),
+            compatible_core: "1.0.0-rc15".to_string(),
+            signing_key_id: "development-test-key".to_string(),
+            created_epoch: 1_700_000_000,
+            packs: Vec::new(),
+        };
+
+        for component in ["station-config", "native-app-payload", "some-future-pack"] {
+            assert_eq!(
+                super::pack_identity_expectations(&index, component),
+                (Some("1.0.0-rc15"), Some("1.0.0-rc15")),
+                "{component} is not a reviewed model pack and must stay pinned to the \
+                 index's product version"
+            );
+        }
+        // ...while the reviewed model set stays exempt on the same index.
+        assert_eq!(
+            super::pack_identity_expectations(&index, "captions-large-v3"),
+            (None, None)
+        );
+    }
+
+    /// Best-effort file symlink. Returns false when this host refuses to
+    /// create one (a Windows box without the Create Symbolic Links right --
+    /// the same condition `tests/installer/test_native_distribution.py`
+    /// skips on), so a symlink-shaped test can degrade to a junction (see
+    /// [`try_junction`]) instead of failing for an unrelated reason.
+    fn try_symlink_file(target: &std::path::Path, link: &std::path::Path) -> bool {
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        }
+        #[cfg(not(windows))]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+    }
+
+    /// Best-effort directory JUNCTION at `link`. Unlike a symlink, a
+    /// junction needs no special privilege on Windows, so this is the
+    /// reparse-point shape that can actually be planted by an unprivileged
+    /// attacker -- or left behind by a botched uninstall -- on the machines
+    /// this installer runs on. `target` need not exist: `mklink /J` happily
+    /// creates a DANGLING junction, which is exactly the media-directory
+    /// case worth proving. `std` cannot create one, hence the shell out.
+    #[cfg(windows)]
+    fn try_junction(target: &std::path::Path, link: &std::path::Path) -> bool {
+        std::process::Command::new("cmd")
+            .arg("/c")
+            .arg("mklink")
+            .arg("/J")
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+            && std::fs::symlink_metadata(link).is_ok()
+    }
+
+    #[cfg(not(windows))]
+    fn try_junction(target: &std::path::Path, link: &std::path::Path) -> bool {
+        // No junctions off Windows; a symlink is the equivalent shape.
+        try_symlink_file(target, link)
+    }
+
+    /// Remove a planted link/junction/file at `path` without caring which
+    /// shape it is: a junction is a directory entry (`remove_dir`), a file
+    /// symlink is not (`remove_file`).
+    fn remove_planted_link(path: &std::path::Path) {
+        if std::fs::remove_file(path).is_ok() {
+            return;
+        }
+        std::fs::remove_dir(path).expect("remove the planted link");
+    }
+
+    #[test]
+    fn a_planted_link_or_directory_at_the_cache_path_is_never_served() {
+        // "Cached" must mean a real, regular, signed pack file whose bytes
+        // hash to what the signed index pins -- never merely "something
+        // exists at that path". A directory or a link planted at
+        // <cache>/<sha>.ccpack must fail closed, even when the link's target
+        // is itself a perfectly valid pack.
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        let trust = PackTrust {
+            key_id: "development-test-key".to_string(),
+            public_key: key.verifying_key(),
+        };
+        let root = std::env::temp_dir().join(format!(
+            "civiccast-station-cache-link-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let media_root = root.join("station");
+        let cache_root = root.join("cache").join("packs");
+        std::fs::create_dir_all(&media_root).expect("create empty media root");
+        std::fs::create_dir_all(&cache_root).expect("create pack cache");
+
+        let real_pack = root.join("elsewhere.ccpack");
+        let (bytes, sha256) = build_signed_pack_with_identity(
+            &real_pack,
+            &key,
+            "captions-floor",
+            "station-models-1",
+            "station-models-1",
+            &[(
+                "models/faster-whisper-medium/model.bin",
+                b"floor-model-bytes",
+            )],
+        );
+        let pack = DistributionPack {
+            component: "captions-floor".to_string(),
+            filename: "captions-floor.ccpack".to_string(),
+            bytes,
+            sha256: sha256.clone(),
+            required: true,
+            urls: Vec::new(),
+        };
+        let cached = cache_root.join(format!("{sha256}.ccpack"));
+
+        // (a) A DIRECTORY at the cache path (portable; no symlink privilege
+        // needed). This is also the shape a stray junction leaves behind.
+        std::fs::create_dir(&cached).expect("plant a directory at the cache path");
+        let error = super::copy_station_pack_to_cache(&pack, &media_root, &cache_root, &trust)
+            .expect_err("a directory at the cache path must never be served");
+        assert!(
+            error.contains("not already cached on this station"),
+            "expected the fail-closed both-places refusal, got: {error}"
+        );
+        std::fs::remove_dir(&cached).expect("clear the planted directory");
+
+        // (b) A JUNCTION at the cache path. This is the reparse point an
+        // UNPRIVILEGED process can actually plant on Windows (no Create
+        // Symbolic Links right needed), so unlike the symlink case below it
+        // really runs on a stock developer/CI box.
+        let junction_target = root.join("junction-target");
+        std::fs::create_dir_all(&junction_target).expect("create junction target");
+        assert!(
+            try_junction(&junction_target, &cached),
+            "a junction must be plantable without privilege; if this host refuses, the \
+             cache-path fail-closed check would go unproven"
+        );
+        let error = super::copy_station_pack_to_cache(&pack, &media_root, &cache_root, &trust)
+            .expect_err("a junction at the cache path must never be served");
+        assert!(
+            error.contains("not already cached on this station"),
+            "expected the fail-closed both-places refusal, got: {error}"
+        );
+        assert!(
+            std::fs::symlink_metadata(&cached).is_ok(),
+            "the refusal must not have quietly replaced the planted junction"
+        );
+        remove_planted_link(&cached);
+
+        // (c) A SYMLINK at the cache path whose target IS a valid pack.
+        // Only runs where symlink creation is permitted; (a) and (b) already
+        // prove the path is not trusted for merely existing.
+        if try_symlink_file(&real_pack, &cached) {
+            let error = super::copy_station_pack_to_cache(&pack, &media_root, &cache_root, &trust)
+                .expect_err("a link at the cache path must never be served, even to a valid pack");
+            assert!(
+                !error.is_empty(),
+                "the refusal must carry an operator-readable reason"
+            );
+            assert!(
+                std::fs::symlink_metadata(&cached)
+                    .expect("the planted link must still be there")
+                    .file_type()
+                    .is_symlink(),
+                "the refusal must not have quietly replaced the planted link"
+            );
+            remove_planted_link(&cached);
+        }
+
+        std::fs::remove_dir_all(&root).expect("clean cache-link root");
+    }
+
+    #[test]
+    fn a_dangling_media_link_is_not_served_and_falls_through_to_the_verified_cache() {
+        // A dangling `<component>.ccpack` link in the media directory is not
+        // a pack. It must never be served as one; the run falls through to
+        // the per-SHA cache, which is re-verified in full (bytes, digest,
+        // signature, component) before anything is served -- and fails
+        // closed, naming both places, when that cache cannot satisfy it.
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        let trust = PackTrust {
+            key_id: "development-test-key".to_string(),
+            public_key: key.verifying_key(),
+        };
+        let root = std::env::temp_dir().join(format!(
+            "civiccast-station-media-link-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let media_root = root.join("station");
+        let cache_root = root.join("cache").join("packs");
+        std::fs::create_dir_all(&media_root).expect("create media root");
+        std::fs::create_dir_all(&cache_root).expect("create pack cache");
+
+        let staged = root.join("previously-activated.ccpack");
+        let (bytes, sha256) = build_signed_pack_with_identity(
+            &staged,
+            &key,
+            "captions-floor",
+            "station-models-1",
+            "station-models-1",
+            &[(
+                "models/faster-whisper-medium/model.bin",
+                b"floor-model-bytes",
+            )],
+        );
+        let pack = DistributionPack {
+            component: "captions-floor".to_string(),
+            filename: "captions-floor.ccpack".to_string(),
+            bytes,
+            sha256: sha256.clone(),
+            required: true,
+            urls: Vec::new(),
+        };
+
+        // A DANGLING link where the media pack would be. A symlink where the
+        // host permits one; otherwise a dangling JUNCTION, which needs no
+        // privilege -- so this shape is genuinely exercised everywhere, not
+        // quietly skipped.
+        let media_pack = media_root.join(&pack.filename);
+        let dangling_target = root.join("this-target-does-not-exist");
+        assert!(
+            try_symlink_file(&dangling_target, &media_pack)
+                || try_junction(&dangling_target, &media_pack),
+            "neither a symlink nor a junction could be planted; the dangling-media-entry \
+             case would go unproven"
+        );
+        assert!(
+            std::fs::symlink_metadata(&media_pack).is_ok(),
+            "the planted dangling entry must exist as a directory entry"
+        );
+
+        // With nothing usable in the cache: fail closed naming both places.
+        // Critically NOT "resolved the link and served whatever it pointed at".
+        let error = super::copy_station_pack_to_cache(&pack, &media_root, &cache_root, &trust)
+            .expect_err("a dangling media link must never be served as a pack");
+        assert!(
+            error.contains("not beside the installer")
+                && error.contains("not already cached on this station"),
+            "expected the both-places refusal, got: {error}"
+        );
+
+        // Now seed the cache properly: the run is served from the CACHE, and
+        // never from the media path the dangling link occupies.
+        let cached = cache_root.join(format!("{sha256}.ccpack"));
+        std::fs::copy(&staged, &cached).expect("seed the per-SHA cache");
+        let served = super::copy_station_pack_to_cache(&pack, &media_root, &cache_root, &trust)
+            .expect("the verified cache must satisfy a pack whose media entry is a dangling link");
+        assert_eq!(served, cached);
+        assert_ne!(served, media_pack);
+
+        std::fs::remove_dir_all(&root).expect("clean media-link root");
     }
 }

@@ -89,6 +89,39 @@ canonical-JSON signing, same station-index URL-emptiness rule
 (``native_distribution.rs::validate_urls``: a station (air-gapped) index
 carries NO network locations, ever), just parameterized on THIS script's own
 (correct, current) component set rather than the stale one.
+
+## Two identities, deliberately
+
+``station-index.json`` and the per-version ``core`` placeholder carry
+``--product-version`` / ``--compatible-core`` -- the real product identity.
+Every MODEL pack instead carries the STABLE
+:data:`STATION_MODEL_PACK_PRODUCT_VERSION` /
+:data:`STATION_MODEL_PACK_COMPATIBLE_CORE` pair (see their own docs).
+
+Cache reuse depends on a REPRODUCIBILITY property, not merely on that pair:
+the same reviewed model set must produce byte-identical packs, and therefore
+identical SHA-256s, from one product candidate to the next AND from one
+build machine to the next. Nothing path-dependent, timestamped, or
+build-host-derived may enter a pack -- the payload is keyed by POSIX
+RELATIVE path (:func:`_collect_tree_sources`), the ZIP entries carry a fixed
+timestamp (``native_packs._zip_info``), and the signed ``metadata`` dict
+carries only reviewed-lock provenance. This is a property the build
+ENFORCES and the test suite CHECKS
+(``tests/native/test_build_native_station_bundle.py::
+test_model_packs_are_byte_identical_when_built_from_different_roots``), not
+one to assume: an absolute ``source_root`` path in the signed metadata
+already broke it once, and hosted and self-hosted runners in the candidate
+workflow do not share a workspace path.
+
+Reproducibility plus the stable identity pair is what lets a download-only
+upgrade (``setup.exe`` with no ``station\`` folder beside it) reuse the
+~21 GB of model packs an activated station already holds in
+``<install root>\packs\.station-cache\packs\<sha256>.ccpack``.
+The trust that replaces version equality is the signed index itself: it
+pins every pack by SHA-256 and byte count, and the consumer re-verifies both
+plus the pack's own signature and component id
+(``native_distribution.rs::pack_identity_expectations`` and
+``copy_station_pack_to_cache``'s cache fallback).
 """
 
 from __future__ import annotations
@@ -154,6 +187,24 @@ DISTRIBUTION_PRODUCT: Final[str] = "civiccast-native"
 
 class StationBundleBuildError(RuntimeError):
     """The signed native station bundle could not be built."""
+
+
+#: Identity stamped into every MODEL pack (everything except the per-version
+#: ``core`` placeholder). Deliberately NOT the product version: the model set
+#: is reviewed and pinned by ``native-windows-ollama-models.lock.json`` and
+#: the caption-tier lock, and the signed station index pins each pack by
+#: outer SHA-256, so nothing is bought by re-stamping them per candidate.
+#: Holding this pair fixed is NECESSARY but not SUFFICIENT for cache reuse:
+#: the pack bytes must also be reproducible across build machines (see this
+#: module's "Two identities, deliberately" section and the
+#: ``test_model_packs_are_byte_identical_when_built_from_different_roots``
+#: test that enforces it). Together they let an already-activated station
+#: reuse its cached model packs on a download-only upgrade
+#: (``native_distribution.rs::pack_identity_expectations`` and
+#: ``copy_station_pack_to_cache``'s cache fallback). Bump ONLY when the
+#: reviewed model set itself changes.
+STATION_MODEL_PACK_PRODUCT_VERSION = "station-models-1"
+STATION_MODEL_PACK_COMPATIBLE_CORE = "station-models-1"
 
 
 def require_allowed_signing_key(key_id: str, *, allow_development_key: bool) -> None:
@@ -339,8 +390,18 @@ def _ollama_model_pack_metadata(component: str, root: Path) -> dict[str, object]
             f"being built: {component!r}"
         )
 
+    # Path-independent BY CONTRACT: this dict is signed into the pack
+    # manifest, so anything derived from ``root`` (an absolute build-input
+    # path that differs between a hosted runner's workspace and a
+    # self-hosted one) would make the pack's SHA-256 depend on WHERE it was
+    # built, and every station's cached copy would miss. A ``source_root``
+    # key used to be here and did exactly that. Only reviewed-lock
+    # provenance belongs here -- the same three fields
+    # ``native_packs._validate_ollama_model_contract`` and
+    # ``native_packs.rs::validate_ollama_model_contract`` check.
+    # ``test_model_packs_are_byte_identical_when_built_from_different_roots``
+    # is the enforcement.
     return {
-        "source_root": str(root),
         "model_name": model_name,
         "manifest_sha256": manifest_sha256,
         "ollama_runtime_version": ollama_runtime_version,
@@ -527,19 +588,31 @@ def build_station_bundle(
             # translation-translategemma-4b) are checked by
             # native_packs._validate_ollama_model_contract, which requires
             # model_name/manifest_sha256/ollama_runtime_version metadata --
-            # a bare {"source_root": ...} (fine for captions-floor, which has
-            # no such contract branch) fails that gate immediately with
-            # "missing model_name metadata". See _ollama_model_pack_metadata.
+            # empty metadata (fine for captions-floor, which has no such
+            # contract branch) fails that gate immediately with "missing
+            # model_name metadata". See _ollama_model_pack_metadata.
+            #
+            # NOTHING derived from `root` goes in here. This dict is signed
+            # into the pack manifest, so a build-input path would make the
+            # pack's SHA-256 depend on the builder's filesystem -- and the
+            # candidate workflow builds on both hosted and self-hosted
+            # runners, whose workspaces differ. A `source_root` key used to
+            # be here and did exactly that, silently defeating the per-SHA
+            # cache reuse this bundle's stable model identity exists to
+            # enable. captions-floor therefore carries NO metadata at all:
+            # its component id, payload digests and tier layout are already
+            # in the signed manifest, so a path adds no provenance the
+            # manifest lacks.
             metadata = (
                 _ollama_model_pack_metadata(component, root)
                 if component in OLLAMA_MODEL_COMPONENTS
-                else {"source_root": str(root)}
+                else {}
             )
             build_native_pack(
                 output=output,
                 component=component,
-                product_version=product_version,
-                compatible_core=compatible_core,
+                product_version=STATION_MODEL_PACK_PRODUCT_VERSION,
+                compatible_core=STATION_MODEL_PACK_COMPATIBLE_CORE,
                 sources=sources,
                 signing_private_key=signing_private_key,
                 signing_key_id=signing_key_id,

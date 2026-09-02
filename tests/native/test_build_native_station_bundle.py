@@ -218,8 +218,8 @@ def test_captions_floor_pack_round_trips_through_verify_native_pack(tmp_path: Pa
     builder.build_native_pack(
         output=output,
         component="captions-floor",
-        product_version="1.0.0-rc15",
-        compatible_core="1.0.0-rc15",
+        product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+        compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
         sources=sources,
         signing_private_key=key,
         signing_key_id="development-test-key",
@@ -229,8 +229,8 @@ def test_captions_floor_pack_round_trips_through_verify_native_pack(tmp_path: Pa
         output,
         public_key=key.public_key(),
         expected_component="captions-floor",
-        expected_product_version="1.0.0-rc15",
-        expected_compatible_core="1.0.0-rc15",
+        expected_product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+        expected_compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
         expected_signing_key_id="development-test-key",
     )
     assert result.component == "captions-floor"
@@ -419,7 +419,13 @@ def test_ollama_model_pack_metadata_extracts_the_fields_the_contract_requires(
     assert metadata["model_name"] == "gemma4-12b"
     assert metadata["manifest_sha256"] == model["manifest_sha256"]
     assert metadata["ollama_runtime_version"] == "0.30.6"
-    assert metadata["source_root"] == str(root)
+    # Path-independent BY CONTRACT -- this dict is signed into the pack
+    # manifest, so a build-input path would make the pack's SHA-256 depend on
+    # the builder's filesystem and defeat every station's cache reuse. A
+    # `source_root` key used to be here; it must not come back.
+    assert set(metadata) == {"model_name", "manifest_sha256", "ollama_runtime_version"}
+    assert not any("root" in str(value) for value in metadata.values()), metadata
+    assert str(root) not in json.dumps(metadata)
 
 
 def test_ollama_model_pack_metadata_fails_loud_when_provenance_is_missing(tmp_path: Path) -> None:
@@ -463,8 +469,8 @@ def test_ollama_model_component_pack_passes_verification_against_a_matching_revi
     builder.build_native_pack(
         output=output,
         component="summary-gemma4-12b",
-        product_version="1.0.0-rc15",
-        compatible_core="1.0.0-rc15",
+        product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+        compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
         sources=sources,
         signing_private_key=key,
         signing_key_id="development-test-key",
@@ -475,8 +481,8 @@ def test_ollama_model_component_pack_passes_verification_against_a_matching_revi
         output,
         public_key=key.public_key(),
         expected_component="summary-gemma4-12b",
-        expected_product_version="1.0.0-rc15",
-        expected_compatible_core="1.0.0-rc15",
+        expected_product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+        expected_compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
         expected_signing_key_id="development-test-key",
     )
     assert result.component == "summary-gemma4-12b"
@@ -548,6 +554,67 @@ def test_build_station_bundle_succeeds_with_matching_provenance_for_every_ollama
         "translation-translategemma-4b",
     ):
         assert (output_dir / f"{component}.ccpack").is_file()
+
+    # The identity split this publisher exists to produce: the INDEX and the
+    # per-version `core` placeholder carry the real product version, every
+    # MODEL pack carries the stable `station-models-1` identity so the same
+    # reviewed model set keeps the same SHA-256 from one candidate to the
+    # next -- which is what lets an already-activated station reuse its
+    # per-SHA pack cache on a download-only upgrade. The Rust side of this
+    # rule is `native_distribution::pack_identity_expectations`.
+    assert result["product_version"] == "1.0.0-rc15", (
+        "the build report records the INDEX identity, not the model packs'"
+    )
+    assert result["compatible_core"] == "1.0.0-rc15"
+
+    key = _dev_key()
+    core = verify_native_pack(
+        output_dir / "core.ccpack",
+        public_key=key.public_key(),
+        expected_component="core",
+        expected_product_version="1.0.0-rc15",
+        expected_compatible_core="1.0.0-rc15",
+        expected_signing_key_id="development-test-key",
+    )
+    assert core.product_version == "1.0.0-rc15"
+    for component in (
+        "captions-floor",
+        "summary-gemma4-12b",
+        "summary-gemma4-e4b",
+        "translation-translategemma-4b",
+    ):
+        verified = verify_native_pack(
+            output_dir / f"{component}.ccpack",
+            public_key=key.public_key(),
+            expected_component=component,
+            expected_product_version=builder.STATION_MODEL_PACK_PRODUCT_VERSION,
+            expected_compatible_core=builder.STATION_MODEL_PACK_COMPATIBLE_CORE,
+            expected_signing_key_id="development-test-key",
+        )
+        assert verified.product_version == "station-models-1", component
+        assert verified.compatible_core == "station-models-1", component
+
+    # The signed index still pins every pack by SHA-256 + byte count -- the
+    # trust that replaces the version equality the model packs no longer
+    # carry.
+    envelope = json.loads((output_dir / builder.STATION_INDEX_FILENAME).read_bytes())
+    entries = {entry["component"]: entry for entry in envelope["manifest"]["packs"]}
+    assert envelope["manifest"]["product_version"] == "1.0.0-rc15"
+    for component, entry in entries.items():
+        pack_bytes = (output_dir / entry["filename"]).read_bytes()
+        assert entry["sha256"] == hashlib.sha256(pack_bytes).hexdigest(), component
+        assert entry["bytes"] == len(pack_bytes), component
+
+
+def test_station_model_pack_identity_constants_are_stable_and_not_the_product_version() -> None:
+    """These two constants ARE the trust boundary: they must not track the
+    product version, or every candidate re-signs ~21 GB of model packs, their
+    SHA-256s change, and no activated station can reuse its cache on a
+    download-only upgrade. Bumping them is a deliberate act (the reviewed
+    model set changed), so the value is pinned here rather than derived."""
+
+    assert builder.STATION_MODEL_PACK_PRODUCT_VERSION == "station-models-1"
+    assert builder.STATION_MODEL_PACK_COMPATIBLE_CORE == "station-models-1"
 
 
 # ---------------------------------------------------------------------------
@@ -641,3 +708,142 @@ def test_build_station_index_with_captions_large_v3_present_sorts_it_after_the_r
     entries = manifest["packs"]
     assert entries[-1]["component"] == "captions-large-v3"
     assert entries[-1]["required"] is False
+
+
+# ---------------------------------------------------------------------------
+# Reproducibility: the property the whole cross-version cache-reuse design
+# rests on. The stable station-models-1 identity is necessary but NOT
+# sufficient -- if a pack's bytes depend on WHERE it was built, its SHA-256
+# differs between the candidate workflow's hosted and self-hosted runners,
+# the signed index never matches what the station cached, and reuse silently
+# never fires. An absolute `source_root` path in the signed metadata broke
+# exactly this. This test is the enforcement.
+# ---------------------------------------------------------------------------
+
+
+def _bundle_from_root(
+    parent: Path, *, output_name: str, models: dict[str, dict[str, object]]
+) -> dict[str, object]:
+    """One complete `build_station_bundle` run whose every build input lives
+    under `parent` -- so two calls with different `parent`s differ in nothing
+    but absolute paths."""
+
+    parent.mkdir(parents=True, exist_ok=True)
+    floor_root = _write_tree(
+        parent / "captions-floor",
+        {
+            "models/faster-whisper-medium/config.json": b"floor-config",
+            "models/faster-whisper-medium/model.bin": b"floor-model-bytes",
+            "models/faster-whisper-medium/tokenizer.json": b"floor-tokenizer",
+            "models/faster-whisper-medium/vocabulary.txt": b"floor-vocab",
+            "self-test/jfk.wav": b"floor-self-test-audio",
+        },
+    )
+    return builder.build_station_bundle(
+        output_dir=parent / output_name,
+        captions_floor_root=floor_root,
+        gemma4_12b_root=_write_ollama_model_root(
+            parent, model_name="gemma4-12b", model=models["gemma4-12b"]
+        ),
+        gemma4_e4b_root=_write_ollama_model_root(
+            parent, model_name="gemma4-e4b", model=models["gemma4-e4b"]
+        ),
+        translategemma_4b_root=_write_ollama_model_root(
+            parent, model_name="translategemma-4b", model=models["translategemma-4b"]
+        ),
+        captions_large_v3_root=None,
+        signing_private_key=_dev_key(),
+        signing_key_id="development-test-key",
+        product_version="1.0.0-rc15",
+        compatible_core=None,
+        channel="beta",
+        created_epoch=1_700_000_000,
+    )
+
+
+def test_model_packs_are_byte_identical_when_built_from_different_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two real `build_station_bundle` runs over identical inputs staged at
+    DIFFERENT absolute paths must produce the same SHA-256 for every pack.
+    Without this, the stable `station-models-1` identity buys nothing: the
+    per-SHA cache on an activated station is keyed by exactly these digests,
+    and the candidate workflow builds on hosted and self-hosted runners whose
+    workspace paths differ."""
+
+    models = _write_test_ollama_lock(tmp_path)
+    monkeypatch.setattr(native_packs, "OLLAMA_MODEL_LOCK_PATH", models["_lock_path"])
+
+    first = _bundle_from_root(tmp_path / "build-a", output_name="station", models=models)
+    # A deliberately different depth AND leaf name, not just a sibling --
+    # the failure mode was an absolute path embedded verbatim.
+    second = _bundle_from_root(
+        tmp_path / "nested" / "deeper" / "build-b-with-a-longer-name",
+        output_name="station-out",
+        models=models,
+    )
+
+    first_packs: dict[str, dict[str, object]] = first["packs"]  # type: ignore[assignment]
+    second_packs: dict[str, dict[str, object]] = second["packs"]  # type: ignore[assignment]
+    assert set(first_packs) == set(second_packs)
+
+    mismatched = {
+        component: (first_packs[component]["sha256"], second_packs[component]["sha256"])
+        for component in first_packs
+        if first_packs[component]["sha256"] != second_packs[component]["sha256"]
+    }
+    assert not mismatched, (
+        "these packs are not reproducible across build roots, so no station could ever "
+        f"reuse its cached copy: {mismatched}"
+    )
+
+    # `core` is reproducible too: it embeds the PRODUCT VERSION (identical
+    # here by construction), never a build path. It would legitimately differ
+    # only across product versions -- which is the whole reason it is excluded
+    # from the model allowlist.
+    assert first_packs["core"]["sha256"] == second_packs["core"]["sha256"]
+
+    # Byte counts agree as well -- the signed index pins both.
+    for component in first_packs:
+        assert first_packs[component]["bytes"] == second_packs[component]["bytes"], component
+
+    # And therefore the signed station index itself is byte-identical: it
+    # carries only component ids, filenames, byte counts and digests.
+    first_index = Path(str(first["station_index"])).read_bytes()
+    second_index = Path(str(second["station_index"])).read_bytes()
+    assert first_index == second_index
+
+
+def test_no_signed_pack_metadata_carries_a_build_input_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The specific regression: read every built pack's SIGNED manifest back
+    and prove no metadata value mentions the build root. A digest comparison
+    alone would pass if two runs happened to share a path prefix, so this
+    checks the mechanism directly."""
+
+    models = _write_test_ollama_lock(tmp_path)
+    monkeypatch.setattr(native_packs, "OLLAMA_MODEL_LOCK_PATH", models["_lock_path"])
+    parent = tmp_path / "build-root-with-a-distinctive-name"
+    result = _bundle_from_root(parent, output_name="station", models=models)
+
+    key = _dev_key()
+    output_dir = Path(str(result["output_dir"]))
+    for component in result["packs"]:  # type: ignore[attr-defined]
+        expected_version = (
+            "1.0.0-rc15" if component == "core" else builder.STATION_MODEL_PACK_PRODUCT_VERSION
+        )
+        verified = verify_native_pack(
+            output_dir / f"{component}.ccpack",
+            public_key=key.public_key(),
+            expected_component=component,
+            expected_product_version=expected_version,
+            expected_compatible_core=expected_version,
+            expected_signing_key_id="development-test-key",
+        )
+        rendered = json.dumps(verified.metadata, sort_keys=True)
+        assert "build-root-with-a-distinctive-name" not in rendered, (
+            f"{component} pack metadata embeds its build path: {rendered}"
+        )
+        assert str(parent) not in rendered, component
+        assert "source_root" not in verified.metadata, component
