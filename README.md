@@ -242,7 +242,7 @@ displays CAP/IPAWS and never claims "EAS-compliant").
 - [3.0 Master Spec](docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md)
 - [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml)
 - [Legal Notices](LEGAL-NOTICES.md)
-- [GitHub Discussions](https://github.com/scottconverse/civiccast/discussions)
+- [GitHub Discussions](https://github.com/scottconverse/civiccast-native/discussions)
 
 ## Contributing
 
