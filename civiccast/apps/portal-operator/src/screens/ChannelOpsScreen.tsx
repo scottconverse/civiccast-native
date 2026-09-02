@@ -998,7 +998,16 @@ export function GraphicsOverlayPanel({
       </div>
       <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
         {channelId
-          ? 'Sets the station bug graphics overlay for this channel’s next pipeline build (a fresh start or a scheduled content swap). Does not hot-change an already-live broadcast’s on-screen text.'
+          ? // WP-11 item 2 (audit UX-007): the old copy called this a
+            // "station bug graphics overlay" -- station bug and lower-third
+            // are different graphics in broadcast terminology, and the copy
+            // never said when the change actually takes effect. Name the
+            // control by what the operator is editing and be explicit about
+            // timing: this writes the desired text/state, and the running
+            // GStreamer pipeline only picks it up on its next build (a
+            // fresh channel start) or a scheduled content swap -- it does
+            // not hot-change an already-live pipeline's on-screen text.
+            'Changes this channel’s lower-third banner on the next pipeline build or scheduled swap. It does not hot-change an already-live pipeline.'
           : 'Select a channel to edit its lower-third banner.'}
       </div>
 

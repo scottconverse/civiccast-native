@@ -265,6 +265,7 @@ import type {
   PublishApprovalRequest,
   PublishAssetStatus,
   PublishDashboardResponse,
+  PublishPreflightResponse,
   PublishRetryRequest,
 } from '../types/publish'
 import type {
@@ -1028,6 +1029,16 @@ export function downloadSupportBundle(bundleId: string): Promise<Blob> {
 
 export function listPublishAssets(): Promise<PublishDashboardResponse> {
   return request<PublishDashboardResponse>('/api/staff/publish/assets')
+}
+
+/** GET /api/staff/publish/assets/{id}/preflight (PR #129) -- the same
+ * non-secret, side-effect-free per-surface readiness approval reads
+ * (civiccast.publish.readiness), so the panel this backs can never promise
+ * something approval then refuses. */
+export function getPublishPreflight(assetId: string): Promise<PublishPreflightResponse> {
+  return request<PublishPreflightResponse>(
+    `/api/staff/publish/assets/${encodeURIComponent(assetId)}/preflight`,
+  )
 }
 
 export function approvePublishAsset(
