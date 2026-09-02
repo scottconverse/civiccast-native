@@ -12,6 +12,8 @@ import {
 import { hasOperatorRole } from '../auth/roles'
 import {
   CAPTION_STATUS_META,
+  captionLanguageMeta,
+  captionLanguageOf,
   type CaptionReviewItemResponse,
   type CaptionReviewStatus,
 } from '../types/captions'
@@ -25,6 +27,28 @@ const FILTERS: ReadonlyArray<{ id: FilterId; label: string }> = [
   { id: 'approved', label: 'Approved' },
   { id: 'rejected', label: 'Rejected' },
 ]
+
+type LanguageFilterId = 'all' | 'en' | 'es'
+
+const LANGUAGE_FILTERS: ReadonlyArray<{ id: LanguageFilterId; label: string }> = [
+  { id: 'all', label: 'All languages' },
+  { id: 'en', label: 'English' },
+  { id: 'es', label: 'Spanish' },
+]
+
+function LanguageBadge({ language }: { language: string }) {
+  const meta = captionLanguageMeta(language)
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
+      style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+      title={`${meta.label} caption review`}
+      aria-label={`${meta.label} caption review`}
+    >
+      {meta.code}
+    </span>
+  )
+}
 
 const EMPTY_ITEMS: CaptionReviewItemResponse[] = []
 
@@ -260,6 +284,7 @@ export function ReviewCard({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <LanguageBadge language={captionLanguageOf(item)} />
           {item.low_confidence && (
             <span
               className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
@@ -387,15 +412,24 @@ export function ReviewCard({
 
 export function ReviewQueueScreen() {
   const [filter, setFilter] = useState<FilterId>('pending')
+  const [languageFilter, setLanguageFilter] = useState<LanguageFilterId>('all')
   const [search, setSearch] = useState('')
   const [approvalFailureGenerations, setApprovalFailureGenerations] = useState<
     Record<string, number>
   >({})
   const queryClient = useQueryClient()
 
+  // The language filter is applied by the API (`?language=`), not by
+  // discarding rows in the browser. A meeting's caption queue is one row per
+  // cue in TWO languages, so a long council session is thousands of rows;
+  // fetching all of them to show one language's worth was work the server
+  // already knows how to avoid. The language is part of the query key, so
+  // switching tabs is a cached, cancellable fetch rather than a re-filter of
+  // a payload we should not have asked for.
   const query = useQuery<CaptionReviewItemResponse[], Error>({
-    queryKey: ['caption-review-items'],
-    queryFn: () => listCaptionReviewItems(),
+    queryKey: ['caption-review-items', languageFilter],
+    queryFn: () =>
+      listCaptionReviewItems(languageFilter === 'all' ? {} : { language: languageFilter }),
     retry: false,
   })
   const staffIdentityQuery = useQuery({
@@ -455,6 +489,12 @@ export function ReviewQueueScreen() {
     })
   }, [filter, items, search])
 
+  // Only the selected language is fetched now, so a per-language count for
+  // the tabs the operator is NOT looking at would be a number we do not
+  // have. The active tab carries the count it can honestly show; the others
+  // carry none rather than a stale or invented one.
+  const spanishTabIsEmpty = languageFilter === 'es' && query.isSuccess && items.length === 0
+
   const busy =
     approveMutation.isPending || editMutation.isPending || rejectMutation.isPending
   const mutationError =
@@ -512,6 +552,60 @@ export function ReviewQueueScreen() {
             )
           })}
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 px-6">
+        <span
+          className="text-[10px] font-semibold uppercase tracking-wider"
+          style={{ color: 'var(--cc-ink-3)' }}
+        >
+          Language
+        </span>
+        <div role="tablist" aria-label="Caption review language filter" className="flex flex-wrap gap-2">
+          {LANGUAGE_FILTERS.map((item) => {
+            const active = item.id === languageFilter
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                // Without this the count renders straight into the accessible
+                // name and a screen reader announces "All languages2". The
+                // label spells out what the number counts; the visible span is
+                // hidden from assistive tech so it is not read twice.
+                aria-label={
+                  active ? `${item.label}, ${items.length} shown` : item.label
+                }
+                onClick={() => setLanguageFilter(item.id)}
+                className="min-h-8 rounded-md px-3 py-2 text-xs font-medium"
+                style={{
+                  background: active ? 'var(--cc-brand)' : 'transparent',
+                  color: active ? 'var(--cc-brand-ink)' : 'var(--cc-ink-2)',
+                  border: '1px solid var(--cc-line)',
+                }}
+              >
+                {item.label}
+                {active && (
+                  <span
+                    aria-hidden="true"
+                    className="ml-1.5"
+                    style={{ color: 'var(--cc-brand-ink)' }}
+                  >
+                    {items.length}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+        {spanishTabIsEmpty && (
+          <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+            Spanish cues appear here after English captions are approved and translated. The
+            recording is public immediately; captions attach after review — both languages
+            together, never English alone.
+          </span>
+        )}
       </div>
 
       {staffIdentityQuery.isSuccess && !canReview && (

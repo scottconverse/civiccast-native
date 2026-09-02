@@ -17911,6 +17911,7 @@
           "captions"
         ],
         "summary": "List caption review queue items",
+        "description": "List review-queue rows.\n\n``language`` scopes to one review pass -- ``en`` (English transcription)\nor ``es`` (recorded-Spanish translation). Omitted, both are returned so\nthe operator console can render the language badge and filter\nclient-side; the parameter lets a caller fetch just one queue directly.",
         "operationId": "list_review_items_api_staff_captions_review_items_get",
         "parameters": [
           {
@@ -17949,6 +17950,22 @@
                 }
               ],
               "title": "Status Filter"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Language"
             }
           }
         ],
@@ -27084,7 +27101,7 @@
           "publish"
         ],
         "summary": "Check v0.7 publish readiness before operator approval",
-        "description": "Return portal, Internet Archive, NAS, and YouTube readiness checks.",
+        "description": "Return portal, Internet Archive, NAS, YouTube, and subscriber readiness.\n\nReads through the real provider registry (WP-03): every check here is the\nsame non-secret, side-effect-free readiness ``approve_publish`` uses, so\nthis response and what approval would actually do cannot disagree.",
         "operationId": "get_publish_preflight_api_staff_publish_assets__asset_id__preflight_get",
         "parameters": [
           {
@@ -35673,6 +35690,13 @@
           "cue": {
             "$ref": "#/components/schemas/CaptionCue"
           },
+          "language": {
+            "type": "string",
+            "maxLength": 12,
+            "minLength": 2,
+            "title": "Language",
+            "default": "en"
+          },
           "reviewer_note": {
             "anyOf": [
               {
@@ -35708,6 +35732,11 @@
           },
           "cue": {
             "$ref": "#/components/schemas/CaptionCue"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
           },
           "status": {
             "type": "string",

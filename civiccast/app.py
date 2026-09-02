@@ -101,6 +101,7 @@ from civiccast.auth.store import PostgresStaffTokenStore
 from civiccast.auth.tokens import validate_staff_token_config
 from civiccast.cable.router import public_router as cable_public_router
 from civiccast.cable.router import staff_router as cable_staff_router
+from civiccast.captions.cdn_republish import VodPackageCdnRepublisher
 from civiccast.captions.persistence import (
     PostgresCaptionReviewStore,
     PostgresOfflineCaptionJobStore,
@@ -171,6 +172,7 @@ from civiccast.installer.storage import (
     load_managed_database_url,
     load_managed_upload_dir,
 )
+from civiccast.live.cdn_targets import build_asset_cdn_package_target_lookup
 from civiccast.live.contribution.bridge import NullVdoNinjaBridge, UrlVdoNinjaBridge
 from civiccast.live.contribution.coprocess import (
     ContributionCoprocessSettings,
@@ -1315,6 +1317,28 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # caption tier and inherits the hardware-adaptive device the native
         # station runtime published into the environment (PR #398).
         runtime_factory=lambda: build_caption_runtime(_build_ai_model_service(session_factory)),
+        # Recorded-Spanish leg: a published recording carries an
+        # operator-reviewed Spanish track alongside English (owner
+        # requirement). Mirrors the LIVE tap's translation wiring above
+        # (build_translator at the CaptionTapWorker construction) -- the
+        # operator-selected translation tier (local TranslateGemma by
+        # default). Built lazily per attempt, same reason as the runtime
+        # factory: a station with nothing queued never loads the model.
+        translation_provider_factory=lambda: build_translator(
+            _build_ai_model_service(session_factory)
+        ),
+        # Caption attach rewrites the LOCAL manifest. When this asset's
+        # package is served to residents through a CDN, that copy still has
+        # the pre-caption manifest, so the reviewed EN/ES tracks and the
+        # rewritten manifest are pushed back to the same prefix the package
+        # was published under. No-op (returns None) on a station with no CDN
+        # configured, or for a package this station never CDN-published.
+        cdn_republisher=VodPackageCdnRepublisher(
+            # Resolved per call so setup-wizard credentials entered after
+            # startup take effect, same seam the surge switch uses.
+            lambda: app.state.resolve_cdn_adapter(),
+            build_asset_cdn_package_target_lookup(session_factory),
+        ),
         settings=offline_caption_settings,
     )
     app.state.offline_caption_worker = offline_caption_worker
@@ -1867,6 +1891,12 @@ def create_app() -> FastAPI:
         return resolve_stored_cdn_adapter()
 
     app.state.resolve_cdn_adapter = _resolve_cdn_adapter
+    # WP-03: one provider registry per app instance, read by both Publish
+    # preflight and approval (civiccast.publish.router.get_provider_registry)
+    # so they can never disagree about a surface's real-provider readiness.
+    # Registration is side-effect-free (civiccast.platform.providers docstring);
+    # this never touches the network or a credential store on its own.
+    app.state.provider_registry = default_registry()
     # Surge switch is off unless CIVICCAST_LIVE_SURGE_THRESHOLD is set AND durable
     # storage is ready (it needs an egress store to resolve live dirs). The
     # durable-storage branch below replaces this when both hold.

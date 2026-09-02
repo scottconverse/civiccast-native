@@ -1,10 +1,13 @@
 # CivicCast Roadmap
 
-> **Current public release: `v1.0.0-rc18`** — download it from the
-> [v1.0.0-rc18 GitHub release](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18).
-> rc18 is the audit-remediation release on top of rc17; its exact installer was
-> verified and run on a genuinely clean Windows host. See the
-> [rc18 verification record](releases/v1.0.0-rc18-verification.md).
+> **Current release:** `v1.0.0-beta.1` (USB-delivered); `v1.0.0-beta.2` is
+> the current owner-held unpublished candidate and is intended to be the
+> first downloadable one. See
+> [`docs/releases/release-truth.yaml`](releases/release-truth.yaml) for the
+> authored release-state record. (The `v1.0.0-rc18` release named on this
+> page below was the retired, separate WSL2 line's -- repository
+> `scottconverse/civiccast`, not this repository -- last published release;
+> its GitHub release page and verification record are not present here.)
 >
 > **About the numbering on this page:** the `0.1.0` / `0.2.x` / `0.3.x` labels below are
 > *capability rungs* on the road to a 1.0 general release — they are not the version you
@@ -18,7 +21,7 @@ dependency — each step generally needs the one before it.
 This roadmap describes intent and sequence, not committed dates. Rung numbers advance
 as each step lands and passes its own verification.
 
-## Now — rung 0.1.0 (shipping as `v1.0.0-rc18`)
+## Now -- rung 0.1.0 (shipped as `v1.0.0-rc18` on the retired WSL2 line)
 
 The proven operator core, plus public video viewing working out of the box:
 
@@ -36,8 +39,9 @@ The proven operator core, plus public video viewing working out of the box:
 **Known limits at this rung:** viewing is proven at small-to-moderate audience sizes served
 directly from the station's own machine, not yet load-tested at large scale; agenda
 import and migration from other systems is not yet automated; disaster-recovery failover
-is partial (backup write/read/delete and a scoped database restore drill are proven — see
-the [rc18 verification record](releases/v1.0.0-rc18-verification.md) — but automatic
+is partial (backup write/read/delete and a scoped database restore drill were proven on
+the retired WSL2 line's rc18 -- that verification record is not present in this
+repository -- but automatic
 failover that keeps a channel on air through a hardware failure is not yet built); archive/tape
 workflows and broad third-party audio hardware support are not yet built out.
 

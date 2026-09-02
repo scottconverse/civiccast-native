@@ -32,6 +32,62 @@ When reviewing captions:
 If captions publish before review, the public surface should label them as
 auto-generated.
 
+### When captions actually appear
+
+Approving publish makes the recording public straight away — residents and
+the press can watch it before anyone has reviewed a single caption cue. That
+is deliberate: a public record must not wait days on caption review.
+
+**The recording is public immediately; captions attach after review — both
+languages together, never English alone.** So the caption queue is not a gate
+on publication, it is a gate on *captions*: until you finish both passes, the
+recording is public and uncaptioned, and when you finish, both tracks appear
+at once.
+
+CivicCast will not approve a publish it cannot queue a caption job for. If
+approval fails with a message about the caption job, nothing was published —
+fix what the message names and approve again.
+
+### English and Spanish are two passes
+
+A published recording carries **both** an English and a Spanish caption
+track. The review queue shows an **EN** or **ES** badge on every row and has
+a language filter above the list, because the two are reviewed separately:
+
+1. **English first.** Approve or edit the English cues as above. Nothing is
+   published yet.
+2. **Spanish next.** Once English is fully decided, CivicCast translates the
+   cues you approved and files the Spanish text as its own set of rows, with
+   the same approve / edit / reject choices. The Spanish text is machine
+   output too, so it gets a real review — not a rubber stamp.
+
+The recording publishes with both tracks or neither. Two consequences worth
+knowing before you start:
+
+- **Rejecting every Spanish cue does not attach English on its own.** The
+  caption job is held and says why. Edit the Spanish rows with the correct
+  wording instead — a rejected row can still be edited — and the tracks
+  attach by themselves.
+- **Rejecting every English cue does not finish the job either.** With no
+  English there is nothing to translate and no track in either language, so
+  the job is held the same way. Fix the English cues; if the audio is
+  genuinely unusable, ask a technical admin to cancel the caption job rather
+  than leaving it held.
+- **A Spanish cue is never blocked on audio evidence.** It is a translation of
+  text you already approved, not a guess about what someone said, so the
+  low-confidence audio check that can gate an English cue does not apply.
+- **Revising an English cue after the Spanish pass re-queues Spanish for that
+  cue.** A fresh Spanish row appears for the corrected wording and waits for
+  your approval; the old translation is left in the queue as a record but is
+  never published. Only the cue you changed comes back — the rest of the
+  Spanish pass stands. So a late English correction is always safe: the two
+  languages cannot drift apart.
+
+If Spanish rows never appear after you finish the English pass, the station's
+translation model is missing or broken. The caption job records that on the
+job, and a technical admin fixes it under **Settings → AI Models →
+Translation** or with `civiccast doctor`.
+
 ## Summary Review
 
 CivicCast summaries are sourced. A number, vote, dollar amount, date, or named

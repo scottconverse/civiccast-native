@@ -267,6 +267,7 @@ import type {
   PublishApprovalRequest,
   PublishAssetStatus,
   PublishDashboardResponse,
+  PublishPreflightResponse,
   PublishRetryRequest,
 } from '../types/publish'
 import type {
@@ -1030,6 +1031,16 @@ export function downloadSupportBundle(bundleId: string): Promise<Blob> {
 
 export function listPublishAssets(): Promise<PublishDashboardResponse> {
   return request<PublishDashboardResponse>('/api/staff/publish/assets')
+}
+
+/** GET /api/staff/publish/assets/{id}/preflight (PR #129) -- the same
+ * non-secret, side-effect-free per-surface readiness approval reads
+ * (civiccast.publish.readiness), so the panel this backs can never promise
+ * something approval then refuses. */
+export function getPublishPreflight(assetId: string): Promise<PublishPreflightResponse> {
+  return request<PublishPreflightResponse>(
+    `/api/staff/publish/assets/${encodeURIComponent(assetId)}/preflight`,
+  )
 }
 
 export function approvePublishAsset(
@@ -2041,6 +2052,7 @@ export function listRecordingTargets(): Promise<RecordingTargetResponse[]> {
 export interface ListCaptionReviewParams {
   asset_id?: string
   status_filter?: CaptionReviewStatus
+  language?: string
 }
 
 export function listCaptionReviewItems(
@@ -2049,6 +2061,7 @@ export function listCaptionReviewItems(
   const qs = new URLSearchParams()
   if (params.asset_id) qs.set('asset_id', params.asset_id)
   if (params.status_filter) qs.set('status_filter', params.status_filter)
+  if (params.language) qs.set('language', params.language)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   return request<CaptionReviewItemResponse[]>(
     `/api/staff/captions/review-items${suffix}`,

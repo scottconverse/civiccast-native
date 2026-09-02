@@ -180,6 +180,42 @@ class TestContract:
         approved = store.list(status="approved")
         assert [row.review_item_id for row in approved] == ["review-c"]
 
+    def test_language_defaults_to_en_and_scopes_the_list(
+        self, store: PostgresCaptionReviewStore
+    ) -> None:
+        """Recorded-Spanish: en/es rows share an asset_id but list separately.
+
+        Existing callers create rows with no ``language``, which must persist
+        (and round-trip) as ``en`` -- the durable default the 0083 migration
+        backfills. A Spanish row created with ``language='es'`` on the same
+        asset must be reachable ONLY through the ``es`` filter, so the two
+        review passes never mix on a shared asset.
+        """
+
+        _create(store, "en-row", asset_id="council-x")
+        store.create(
+            CaptionReviewItemCreate(
+                review_item_id="es-row",
+                asset_id="council-x",
+                cue=_cue("cue-es"),
+                language="es",
+            )
+        )
+
+        # Default persists and round-trips as en.
+        assert store.get("en-row").language == "en"  # type: ignore[union-attr]
+        assert store.get("es-row").language == "es"  # type: ignore[union-attr]
+
+        english = store.list(asset_id="council-x", language="en")
+        spanish = store.list(asset_id="council-x", language="es")
+        assert [row.review_item_id for row in english] == ["en-row"]
+        assert [row.review_item_id for row in spanish] == ["es-row"]
+        # Unfiltered by language still returns both.
+        assert {row.review_item_id for row in store.list(asset_id="council-x")} == {
+            "en-row",
+            "es-row",
+        }
+
     def test_approve_keeps_prior_edit_text(self, store: PostgresCaptionReviewStore) -> None:
         _create(store)
         store.edit(

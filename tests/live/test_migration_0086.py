@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 
 _REVISION = "0086_live_source_probe_state"
-_PRIOR_HEAD = "0082_egress_graphics_overlay"
+_PRIOR_HEAD = "0083_caption_review_language"
 _COLS = {
     "probe_state",
     "probe_observed_at",
@@ -54,11 +54,11 @@ def _columns(url: str, table: str) -> set[str]:
 def test_single_head() -> None:
     """One head, and it is this revision.
 
-    The integration plan sequences 0083/0084/0085 ahead of 0086; none had
-    merged to main when this branch was cut, so this revision parents on the
-    single head ``alembic heads`` reported at authoring time. If a sibling
-    package lands first, re-parent ``down_revision`` -- this assertion is what
-    makes that a loud failure rather than a silent second head.
+    WP-05 (0085) is parked by owner decision and will not land; 0084 never
+    materialized. #131 merged 0083_caption_review_language to main, so this
+    revision parents on 0083 -- the sole other head at merge time. This
+    assertion is what makes a future second head a loud failure rather than a
+    silent one.
     """
     script = ScriptDirectory.from_config(_cfg("sqlite://"))
     heads = list(script.get_heads())

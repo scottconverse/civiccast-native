@@ -3,7 +3,7 @@
 """Persist observed readiness on every configured live source.
 
 Revision ID: 0086_live_source_probe_state
-Revises: 0082_egress_graphics_overlay
+Revises: 0083_caption_review_language
 Create Date: 2026-09-02
 
 WP-07 / audit ENG-003. ``live_sources`` rows used to be treated as ``ready``
@@ -33,14 +33,14 @@ the deliberately conservative direction: an already-configured source becomes
 "nobody has looked yet" rather than inheriting a readiness claim nothing ever
 verified.
 
-Revision numbers are repo-global. ``alembic heads`` at authoring time reported
-exactly one head, ``0082_egress_graphics_overlay``, so this parents on it. The
-integration plan sequences ``0083_caption_review_language`` /
-``0084_podcast_publish_jobs`` / ``0085_notification_delivery_outcomes`` ahead
-of this revision; none of them had merged to ``main`` when this branch was
-cut, so ``down_revision`` must be re-parented onto whichever of them lands
-first before this package integrates. Nothing else in this file changes when
-that re-parenting happens -- the columns are additive and independent.
+Revision numbers are repo-global. At authoring time ``alembic heads`` reported
+one head, ``0082_egress_graphics_overlay``; the integration plan sequenced
+``0083_caption_review_language`` / ``0084_podcast_publish_jobs`` /
+``0085_notification_delivery_outcomes`` ahead of this revision, pending on
+which of them landed to `main` first. WP-05 (0085) is parked by owner
+decision and will not land. ``#131`` merged ``0083_caption_review_language``
+to ``main`` (0084 never materialized), so this revision parents on
+``0083_caption_review_language`` -- the sole other head at merge time.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0086_live_source_probe_state"
-down_revision = "0082_egress_graphics_overlay"
+down_revision = "0083_caption_review_language"
 branch_labels = None
 depends_on = None
 

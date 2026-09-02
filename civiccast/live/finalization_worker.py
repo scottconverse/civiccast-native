@@ -32,6 +32,7 @@ from urllib.parse import quote
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from civiccast.live.cdn_targets import live_package_cdn_prefix
 from civiccast.live.finalization import FinalizationResult, LiveRecordingFinalizer
 from civiccast.live.models import (
     FAILURE_CODE_CDN_UPLOAD_FAILED,
@@ -59,6 +60,7 @@ from civiccast.live.recording_paths import (
 from civiccast.schedule.ingest import FfprobeResult, run_ffprobe
 from civiccast.schedule.models import Asset
 from civiccast.stream.cdn import CDNAdapter
+from civiccast.stream.cdn.package_upload import upload_package_files
 from civiccast.stream.packager import VodPackageResult, pack_vod_asset
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
@@ -881,15 +883,13 @@ class LiveFinalizationWorker:
         """
         assert self._cdn_adapter is not None  # guarded by the caller
         package_dir = manifest_path.parent
-        prefix = f"live/{quote(live_session_id)}"
-        files = sorted(path for path in package_dir.rglob("*") if path.is_file())
-        for path in files:
-            if path == manifest_path:
-                continue
-            key = f"{prefix}/{path.relative_to(package_dir).as_posix()}"
-            self._cdn_adapter.upload_file(path, key)
-        manifest_key = f"{prefix}/{manifest_path.relative_to(package_dir).as_posix()}"
-        return self._cdn_adapter.upload_file(manifest_path, manifest_key)
+        return upload_package_files(
+            self._cdn_adapter,
+            package_dir=package_dir,
+            prefix=live_package_cdn_prefix(live_session_id),
+            files=(path for path in package_dir.rglob("*") if path.is_file()),
+            manifest_path=manifest_path,
+        )
 
     def _servable_manifest_url(self, live_session_id: str, *, asset_id: str) -> str:
         """URL the portal can fetch this asset's manifest from right now.
