@@ -20,8 +20,15 @@ import pytest
 import scripts.release.publish_beta_candidate as m
 
 SOURCE_SHA = "a" * 40
-TAG = "v1.0.0-beta.2"
-VERSION = "1.0.0-beta.2"
+# publish_beta_candidate.verify_version_identity fail-closed-compares this
+# tag against the REAL, live civiccast._native_version.__version__ (see
+# get_native_source_version()) -- not a fixture/mock -- so these constants
+# must track the repo's actual current version or every publish-path test
+# refuses with a version-identity mismatch that has nothing to do with what
+# each test is actually exercising. Bump alongside civiccast/_version.py and
+# civiccast/_native_version.py.
+TAG = "v1.0.0-beta.3"
+VERSION = "1.0.0-beta.3"
 
 
 def _write_kit(kit_dir: Path, *, with_packs: bool = True, with_station: bool = True) -> Path:
