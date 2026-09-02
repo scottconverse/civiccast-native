@@ -16,6 +16,21 @@ came across and what deliberately did not.
 Current owner-held unpublished candidate: `v1.0.0-beta.2`. It has no tag or
 installer asset and is not a public or production release.
 
+### Changed
+
+- **Ordinary tests can no longer touch the operator's real CivicCast state.** A
+  central autouse fixture (`tests/conftest.py`, helpers in
+  `tests/support/hermetic_state.py`) now points every state, lock, upload,
+  managed-storage, egress, TSDuck, certificate and secrets default beneath the
+  test's own temporary root, and a teardown guard fails any test that creates,
+  rewrites or deletes a file under the real `%LOCALAPPDATA%\CivicCast` or
+  `~/.civiccast`. The few tests that verify the installed-path contract itself
+  opt out with `@pytest.mark.installed_paths` (they still get the guard).
+  Proven by running the app-factory suites with the real `%LOCALAPPDATA%`
+  pointed at an unwritable location. Seventeen test env-var names misspelled
+  `CIVICAST_` (so their "worker off" and state-path settings never applied)
+  are corrected.
+
 ### Added
 
 - **A download-only upgrade can reuse the AI model packs an activated station

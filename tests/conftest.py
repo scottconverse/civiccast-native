@@ -7,8 +7,23 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
+
+from tests.support.hermetic_state import (
+    INSTALLED_PATHS_MARKER,
+    changed_entries,
+    hermetic_environment,
+    real_state_roots,
+    snapshot,
+)
+
+#: The operator's real CivicCast state roots, resolved from the environment as
+#: it was BEFORE any fixture redirected it. Module-level on purpose: the
+#: hermetic fixture below rewrites LOCALAPPDATA per test, so resolving lazily
+#: would guard the temp copy instead of the real one.
+_REAL_STATE_ROOTS: tuple[Path, ...] = real_state_roots(os.environ)
 
 
 def pytest_configure() -> None:
@@ -17,6 +32,54 @@ def pytest_configure() -> None:
     os.environ.setdefault("CIVICCAST_ALLOW_DETERMINISTIC_STAFF_TOKEN", "1")
     os.environ.setdefault("CIVICCAST_ALLOW_DETERMINISTIC_SUBSCRIBE_SECRETS", "1")
     os.environ.setdefault("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_civiccast_state(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[None]:
+    """Point every CivicCast state default beneath this test's ``tmp_path``.
+
+    ``create_app()`` and the installer/egress/caption modules resolve their
+    default state, lock, upload, managed-storage, egress, TSDuck, certificate
+    and secrets locations from ``%LOCALAPPDATA%``, the XDG roots, or
+    ``~/.civiccast``. Before this fixture existed, any test that built the
+    production app without overriding each of those wrote a real
+    ``civiccast.sqlite3``, lock files and secrets into the developer's own
+    profile (and broke outright on a runner where that profile is read-only).
+
+    Tests that deliberately verify the installed-path contract opt out with
+    ``@pytest.mark.installed_paths``; they still get the write guard below.
+    A test may still override any single variable itself -- its own
+    ``monkeypatch.setenv`` runs after this fixture and wins.
+
+    The teardown half is the guard: if the test (or the product code it
+    exercised) created, removed or rewrote anything under the REAL state
+    roots, the test fails at teardown naming the paths. That is what keeps an
+    unknown resolver, or a hard-coded path, from silently editing the
+    operator's station.
+    """
+
+    # A private MonkeyPatch, not the shared ``monkeypatch`` fixture: requesting
+    # that fixture would make it tear down AFTER this one, so a test's own
+    # ``monkeypatch.setattr(os, "name", "posix")`` would still be in force
+    # while the guard below walks the real Windows roots.
+    patch = pytest.MonkeyPatch()
+    if request.node.get_closest_marker(INSTALLED_PATHS_MARKER) is None:
+        for name, value in hermetic_environment(tmp_path).items():
+            patch.setenv(name, value)
+    before = snapshot(_REAL_STATE_ROOTS)
+    try:
+        yield
+    finally:
+        patch.undo()
+    changed = changed_entries(before, snapshot(_REAL_STATE_ROOTS))
+    if changed:
+        listed = "\n  ".join(changed)
+        pytest.fail(
+            "test touched the operator's real CivicCast state instead of tmp_path "
+            f"(add the '{INSTALLED_PATHS_MARKER}' marker only if that is the contract "
+            f"under test, and never write there):\n  {listed}",
+            pytrace=False,
+        )
 
 
 @pytest.fixture(autouse=True)

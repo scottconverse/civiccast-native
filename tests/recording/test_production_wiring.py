@@ -55,14 +55,14 @@ _NOW = datetime(2026, 6, 23, 17, 0, tzinfo=UTC)
 
 
 def _quiet_unrelated_workers(monkeypatch) -> None:
-    monkeypatch.setenv("CIVICAST_FINALIZATION_WORKER", "off")
-    monkeypatch.setenv("CIVICAST_ACTIVITYPUB_WORKER", "off")
-    monkeypatch.setenv("CIVICAST_RETENTION_WORKER", "off")
-    monkeypatch.setenv("CIVICAST_WEBHOOK_RETRY", "off")
-    monkeypatch.setenv("CIVICAST_PROGRAM_LOG", "off")
-    monkeypatch.setenv("CIVICAST_AUTOSCHEDULE", "off")
-    monkeypatch.setenv("CIVICAST_ALERTING", "off")
-    monkeypatch.setenv("CIVICAST_BULLETIN_EXPIRY", "off")
+    monkeypatch.setenv("CIVICCAST_FINALIZATION_WORKER", "off")
+    monkeypatch.setenv("CIVICCAST_ACTIVITYPUB_WORKER", "off")
+    monkeypatch.setenv("CIVICCAST_RETENTION_WORKER", "off")
+    monkeypatch.setenv("CIVICCAST_WEBHOOK_RETRY", "off")
+    monkeypatch.setenv("CIVICCAST_PROGRAM_LOG", "off")
+    monkeypatch.setenv("CIVICCAST_AUTOSCHEDULE", "off")
+    monkeypatch.setenv("CIVICCAST_ALERTING", "off")
+    monkeypatch.setenv("CIVICCAST_BULLETIN_EXPIRY", "off")
 
 
 def _scheduled_supervisor(app):
@@ -76,7 +76,7 @@ def _scheduled_supervisor(app):
 def test_create_app_wires_scheduled_recording_runtime(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'app.db'}")
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
-    monkeypatch.setenv("CIVICAST_AUTH_ACK", "1")
+    monkeypatch.setenv("CIVICCAST_AUTH_ACK", "1")
     monkeypatch.setenv("CIVICCAST_FINALIZATION_WORKER", "off")
     monkeypatch.setenv("CIVICCAST_ACTIVITYPUB_WORKER", "off")
     monkeypatch.setenv("CIVICCAST_RETENTION_WORKER", "off")
@@ -86,8 +86,8 @@ def test_create_app_wires_scheduled_recording_runtime(monkeypatch, tmp_path: Pat
     monkeypatch.setenv("CIVICCAST_ALERTING", "off")
     monkeypatch.setenv("CIVICCAST_BULLETIN_EXPIRY", "off")
     monkeypatch.setenv("CIVICCAST_SCHEDULED_RECORDING", "off")
-    monkeypatch.setenv("CIVICCAST_TESTER_OPS_STATE_PATH", str(tmp_path / "tester-ops-state.json"))
-    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    # State/lock/upload roots are redirected by the autouse hermetic fixture in
+    # tests/conftest.py, which also fails this test if it touches real state.
 
     from civiccast.app import create_app
 
@@ -107,10 +107,10 @@ def test_create_app_wires_scheduled_recording_runtime(monkeypatch, tmp_path: Pat
 
 def test_scheduled_recording_worker_starts_with_app_lifespan(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'app.db'}")
-    monkeypatch.setenv("CIVICAST_AUTH_ACK", "1")
+    monkeypatch.setenv("CIVICCAST_AUTH_ACK", "1")
     _quiet_unrelated_workers(monkeypatch)
-    monkeypatch.setenv("CIVICAST_SCHEDULED_RECORDING", "inline")
-    monkeypatch.setenv("CIVICAST_SCHEDULED_RECORDING_POLL_SECONDS", "0.01")
+    monkeypatch.setenv("CIVICCAST_SCHEDULED_RECORDING", "inline")
+    monkeypatch.setenv("CIVICCAST_SCHEDULED_RECORDING_POLL_SECONDS", "0.01")
 
     started = threading.Event()
 
@@ -192,10 +192,10 @@ def _native_control_plane_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("CIVICCAST_MANAGED_STORAGE_DIR", str(tmp_path / "managed"))
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
-    monkeypatch.setenv("CIVICAST_AUTH_ACK", "1")
+    monkeypatch.setenv("CIVICCAST_AUTH_ACK", "1")
     monkeypatch.setenv("CIVICCAST_AUTH_ACK", "1")
     monkeypatch.setenv("CIVICCAST_SCHEDULED_RECORDING", "off")
-    monkeypatch.setenv("CIVICAST_SCHEDULED_RECORDING", "off")
+    monkeypatch.setenv("CIVICCAST_SCHEDULED_RECORDING", "off")
     _quiet_unrelated_workers(monkeypatch)
     for name in (
         "CIVICCAST_FINALIZATION_WORKER",
