@@ -73,10 +73,21 @@ def test_multi_zone_snapshot_public_route(monkeypatch: MonkeyPatch) -> None:
     assert primary["source"] == "platform-copy"
     assert primary["content"]["headline"] == "CivicCast is ready"
 
+    # WP-06 non-negotiable, second review pass: an out-of-the-box station
+    # (the "public" channel's durable branding row still equals the
+    # compile-time default table -- nobody has visited Channel Ops yet) gets
+    # an honest "not configured" logo zone, never the default table's
+    # "PUBLIC"/"#2458A6" presented as though it were real station identity.
     logo = zones_by_kind["logo"]
-    assert logo["source"] == "channel-branding-profile"
-    assert logo["content"]["logo_text"] == "PUBLIC"  # the "public" channel's real branding profile
-    assert logo["content"]["color"] == "#2458A6"
+    assert logo["source"] == "channel-default-branding"
+    assert logo["content"]["configured"] is False
+    assert logo["content"]["logo_text"] == ""
+    assert logo["content"]["color"] == ""
+    assert logo["content"]["channel_id"] == "public"
+    assert logo["content"]["station_name"]  # the real commissioned station name, never blank
+    assert logo["content"]["hint"]
+    assert "PUBLIC" not in response.text
+    assert "#2458A6" not in response.text
 
     audio = zones_by_kind["audio"]
     assert audio["source"] == "future-release-disabled"
@@ -111,7 +122,7 @@ def test_multi_zone_snapshot_demo_mode_requires_explicit_env_flag(monkeypatch: M
         "Planning Board",
     ]
     logo = zones_by_kind["logo"]
-    assert logo["source"] == "channel-branding-profile"
+    assert logo["source"] == "channel-default-branding"  # never demo-gated, always honest
     audio = zones_by_kind["audio"]
     assert audio["source"] == "future-release-disabled"
 
@@ -193,8 +204,92 @@ def test_multi_zone_snapshot_logo_zone_is_honest_for_an_unknown_channel(
 
     assert response.status_code == 200
     logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
-    assert logo["source"] == "channel-profile-not-found"
-    assert logo["content"] == {"logo_text": "", "color": ""}
+    assert logo["source"] == "channel-default-branding"
+    assert logo["content"] == {
+        "logo_text": "",
+        "color": "",
+        "station_name": logo["content"]["station_name"],  # asserted non-blank below
+        "channel_id": "totally-unknown-channel",
+        "configured": False,
+        "hint": "Set this channel's logo and color in Channel Ops.",
+    }
+    assert logo["content"]["station_name"]
+
+
+def test_multi_zone_snapshot_logo_zone_reflects_real_channel_ops_branding(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # WP-06 non-negotiable, second review pass: prove PROVENANCE, not just a
+    # label -- inject a fake/spy AppPlatformConfigStore whose branding values
+    # are distinctive (never appear in the compile-time default table), plus
+    # a distinctive station_name, and assert those EXACT values surface on
+    # the logo zone -- and that the default table's "PUBLIC"/"#2458A6"
+    # appear nowhere in the response.
+    from civiccast.app_platform.models import ChannelBranding, ChannelPublicConfig
+    from civiccast.app_platform.router import get_app_platform_config_store
+    from civiccast.cable.channel import get_channel_profile
+    from civiccast.installer.station_state import resolve_station_display_name
+
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_STATION_NAME", "Zorkville Municipal Access")
+
+    default_profile = get_channel_profile("public")
+    assert default_profile is not None
+
+    class _SpyAppPlatformStore:
+        """A fake store standing in for AppPlatformConfigStore -- returns
+        distinctive branding values a real operator edit in Channel Ops
+        would produce, never the compile-time default table's values."""
+
+        def read_channel(self, channel_id: str) -> ChannelPublicConfig | None:
+            assert channel_id == "public"
+            return ChannelPublicConfig(
+                channel_id="public",
+                slug="public",
+                kind=default_profile.kind,
+                branding=ChannelBranding(
+                    display_name="Zorkville Access TV",
+                    short_name="ZATV",
+                    color="#00AB66",
+                    logo_text="ZATV",
+                ),
+                programming_rules=[],
+                fallback_behavior=default_profile.fallback_behavior,
+                live_state_url="/x",
+                schedule_feed_url="/x",
+                vod_catalog_url="/x",
+                cg_feed_url="/x",
+                app_targets=["web_pwa"],
+            )
+
+    app = create_app()
+    app.dependency_overrides[get_app_platform_config_store] = lambda: _SpyAppPlatformStore()
+    client = TestClient(app)
+
+    assert resolve_station_display_name() == "Zorkville Municipal Access"
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
+    assert logo["source"] == "station-channel-branding"
+    assert logo["content"] == {
+        "logo_text": "ZATV",
+        "color": "#00AB66",
+        "station_name": "Zorkville Municipal Access",
+        "channel_id": "public",
+        "configured": True,
+    }
+
+    display = client.get("/api/public/cg/channels/public/display")
+    display_logo = next(z for z in display.json()["snapshot"]["zones"] if z["kind"] == "logo")
+    assert display_logo["content"] == logo["content"]
+
+    # The distinctive spy values surfaced; the compile-time default table's
+    # values never leaked into either response.
+    assert "PUBLIC" not in response.text
+    assert "#2458A6" not in response.text
+    assert "PUBLIC" not in display.text
+    assert "#2458A6" not in display.text
 
 
 def test_multi_zone_snapshot_alert_zone_reflects_a_real_active_eas_overlay(
@@ -458,6 +553,7 @@ _SAMPLE_STRINGS = (
     "City Council",
     "Planning Board",
     "community-calendar-bed",
+    "#2458A6",
 )
 
 # WP-06 non-negotiable, hardened: the literal-string sweep above is only as
@@ -471,8 +567,8 @@ _HONEST_ZONE_SOURCES = frozenset(
     {
         "durable-station-config",  # ticker, schedule: durable feeds/bulletins/program-log
         "platform-copy",  # primary: genuine, non-invented product messaging
-        "channel-branding-profile",  # logo: the channel's real branding profile
-        "channel-profile-not-found",  # logo: honest "no profile" state
+        "station-channel-branding",  # logo: a real operator-configured Channel Ops row
+        "channel-default-branding",  # logo: honest "not yet configured" state
         "future-release-disabled",  # audio: disabled future control (plan item 5)
         "eas-overlay",  # alert: a real active EAS overlay
         "no-active-alert",  # alert: honestly inactive

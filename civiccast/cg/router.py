@@ -13,6 +13,8 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from civiccast.app_platform.router import get_app_platform_config_store
+from civiccast.app_platform.store import AppPlatformConfigStore
 from civiccast.auth.roles import require_any_role
 from civiccast.cable.channel import get_channel_profile
 from civiccast.cg.board_resolver import coming_up_next
@@ -41,6 +43,7 @@ from civiccast.cg.service import (
     build_portal_display,
     build_template_library,
 )
+from civiccast.installer.station_state import resolve_station_display_name
 
 public_router = APIRouter(prefix="/api/public/cg", tags=["public", "cg"])
 staff_router = APIRouter(prefix="/api/staff/cg", tags=["staff", "cg"])
@@ -169,28 +172,76 @@ def _honest_primary_zone(zone: CgZone) -> CgZone:
     )
 
 
-def _durable_logo_zone(zone: CgZone, channel_id: str) -> CgZone:
-    """Source the logo zone from the channel's real branding profile --
-    the SAME civiccast.cable.channel.get_channel_profile() lookup the
-    audited board-preview render path (board_router._preview_branding)
-    already uses as this codebase's one channel-identity source. This is
-    not new invented content: it is the identity the real on-air preview
-    already shows, not a separate fabricated "PUBLIC" label."""
+def _durable_logo_zone(
+    zone: CgZone, channel_id: str, app_platform_store: AppPlatformConfigStore
+) -> CgZone:
+    """Source the logo zone from real per-station data (PR #132 review,
+    second pass): the station's own commissioned identity
+    (``resolve_station_display_name()`` -- the SAME ``station_name`` the
+    installer/first-admin setup persists and the Station Profile screen
+    edits) plus the channel's durable branding row in
+    ``AppPlatformConfigStore`` -- the SAME store instance the operator
+    Channel Ops screen reads and writes
+    (``civiccast.app_platform.router.get_app_platform_config_store``).
 
-    profile = get_channel_profile(channel_id)
-    if profile is None:
+    ``AppPlatformConfigStore`` seeds a brand-new channel's branding row from
+    ``civiccast.cable.channel.default_channel_profiles()`` -- the exact
+    compile-time table (``logo_text="PUBLIC"``, ``color="#2458A6"`` for
+    every deployment's "public" channel) the first pass of this fix wrongly
+    called "the real branding profile." A station that has never edited
+    Channel Ops branding therefore still has a durable row, but its values
+    still equal the compile-time default -- so this compares the durable
+    row against that same default and only calls the zone "configured" when
+    an operator has genuinely changed it. Otherwise the honest
+    "channel-default-branding" fallback carries the real station_name and
+    channel_id (never the default table's "PUBLIC"/"#2458A6") plus an
+    operator hint, and ``configured: false``.
+    """
+
+    station_name = resolve_station_display_name()
+    durable_channel = app_platform_store.read_channel(channel_id)
+    default_profile = get_channel_profile(channel_id)
+
+    customized = False
+    if durable_channel is not None:
+        if default_profile is None:
+            # No compile-time default exists for this channel_id at all --
+            # the durable row can only be here because an operator created
+            # it, so it is configured by construction.
+            customized = True
+        else:
+            durable_branding = durable_channel.branding
+            default_branding = default_profile.branding
+            customized = (
+                durable_branding.display_name != default_branding.display_name
+                or durable_branding.short_name != default_branding.short_name
+                or durable_branding.color != default_branding.color
+                or durable_branding.logo_text != default_branding.logo_text
+            )
+
+    if customized and durable_channel is not None:
         return zone.model_copy(
             update={
-                "source": "channel-profile-not-found",
-                "content": {"logo_text": "", "color": ""},
+                "source": "station-channel-branding",
+                "content": {
+                    "logo_text": durable_channel.branding.logo_text,
+                    "color": durable_channel.branding.color,
+                    "station_name": station_name,
+                    "channel_id": channel_id,
+                    "configured": True,
+                },
             }
         )
     return zone.model_copy(
         update={
-            "source": "channel-branding-profile",
+            "source": "channel-default-branding",
             "content": {
-                "logo_text": profile.branding.logo_text,
-                "color": profile.branding.color,
+                "logo_text": "",
+                "color": "",
+                "station_name": station_name,
+                "channel_id": channel_id,
+                "configured": False,
+                "hint": "Set this channel's logo and color in Channel Ops.",
             },
         }
     )
@@ -355,6 +406,7 @@ def _resolve_durable_snapshot(
     *,
     service: Any,
     eas_provider: EmergencyOverlayProvider | None,
+    app_platform_store: AppPlatformConfigStore,
 ) -> MultiZoneCgSnapshot:
     """Build the multi-zone snapshot with EVERY zone sourced from durable
     station data or honestly marked otherwise (WP-06 non-negotiable: no
@@ -370,7 +422,11 @@ def _resolve_durable_snapshot(
       durable service is wired) the historical sample.
     * ``primary``: genuine platform copy (the same text ``/idle`` returns),
       never demo-gated -- it isn't a stand-in for real configuration.
-    * ``logo``: the channel's real branding profile.
+    * ``logo``: the station's real commissioned name plus the channel's
+      durable branding row (``AppPlatformConfigStore``, the SAME store
+      Channel Ops uses), or an honest "not yet configured" state naming the
+      real station/channel -- never the compile-time default table's
+      "PUBLIC"/"#2458A6" as though it were station identity.
     * ``audio``: an honest disabled-future-control state (WP-06 plan item 5).
     * ``alert``: the real EAS overlay when wired and active, else honestly
       inactive.
@@ -401,7 +457,7 @@ def _resolve_durable_snapshot(
         elif zone.kind == "primary":
             zones.append(_honest_primary_zone(zone))
         elif zone.kind == "logo":
-            zones.append(_durable_logo_zone(zone, channel_id))
+            zones.append(_durable_logo_zone(zone, channel_id, app_platform_store))
         elif zone.kind == "audio":
             zones.append(_honest_audio_zone(zone))
         elif zone.kind == "alert":
@@ -476,6 +532,7 @@ def multi_zone_snapshot(
     service: Any = Depends(get_cg_board_service),
     bulletin_store: Any = Depends(get_cg_bulletin_store),
     eas_provider: EmergencyOverlayProvider | None = Depends(get_eas_overlay_provider),
+    app_platform_store: AppPlatformConfigStore = Depends(get_app_platform_config_store),
 ) -> MultiZoneCgSnapshot:
     # WP-06 non-negotiable follow-up: this standalone endpoint used to call
     # build_multi_zone_snapshot() directly, which always carried the static
@@ -485,7 +542,13 @@ def multi_zone_snapshot(
     feeds = _resolve_feed_catalog(service, channel_id)
     bulletins = _resolve_public_approved_bulletins(bulletin_store, channel_id)
     return _resolve_durable_snapshot(
-        channel_id, template_id, feeds, bulletins, service=service, eas_provider=eas_provider
+        channel_id,
+        template_id,
+        feeds,
+        bulletins,
+        service=service,
+        eas_provider=eas_provider,
+        app_platform_store=app_platform_store,
     )
 
 
@@ -678,6 +741,7 @@ def portal_display(
     service: Any = Depends(get_cg_board_service),
     bulletin_store: Any = Depends(get_cg_bulletin_store),
     eas_provider: EmergencyOverlayProvider | None = Depends(get_eas_overlay_provider),
+    app_platform_store: AppPlatformConfigStore = Depends(get_app_platform_config_store),
 ) -> CgPortalDisplay:
     # WP-06 + follow-ups: feed_catalog, approved_bulletins, and every zone of
     # the snapshot are resolved the same way their standalone endpoints above
@@ -692,7 +756,13 @@ def portal_display(
     feeds = _resolve_feed_catalog(service, channel_id)
     bulletins = _resolve_public_approved_bulletins(bulletin_store, channel_id)
     snapshot = _resolve_durable_snapshot(
-        channel_id, template_id, feeds, bulletins, service=service, eas_provider=eas_provider
+        channel_id,
+        template_id,
+        feeds,
+        bulletins,
+        service=service,
+        eas_provider=eas_provider,
+        app_platform_store=app_platform_store,
     )
 
     return display.model_copy(

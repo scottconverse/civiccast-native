@@ -221,6 +221,42 @@ installer asset and is not a public or production release.
   reintroduced sample content while the literal-string sweep (with the
   string removed from its list, to simulate a "never seen before" fake)
   passes it through undetected.
+- **WP-06 non-negotiable, second review pass: corrected the logo zone's
+  "real branding profile" claim -- it wasn't one.** The entry above
+  described `civiccast.cable.channel.get_channel_profile()` as "the
+  channel's real branding profile"; PR #132's second review caught that
+  this is a compile-time default table (`logo_text="PUBLIC"`,
+  `color="#2458A6"` for every deployment's "public" channel, same as every
+  other CivicCast install) -- a generic default presented as station
+  identity, not real per-station data. The logo zone now sources the
+  station's real commissioned name (`resolve_station_display_name()` --
+  the same `station_name` the installer/first-admin setup persists and the
+  Station Profile screen edits) plus the channel's durable branding row in
+  `AppPlatformConfigStore` -- the SAME store instance the operator Channel
+  Ops screen already reads and writes. Because `AppPlatformConfigStore`
+  seeds a brand-new channel's branding row from that same compile-time
+  default table, a station that has never visited Channel Ops still has a
+  durable row whose values still equal the default -- so the zone compares
+  the durable row against the default and only reports `source:
+  "station-channel-branding"`, `configured: true` when an operator has
+  genuinely changed it. Otherwise it reports `source:
+  "channel-default-branding"`, `configured: false`, the real station name
+  and channel id, and an operator hint -- never the default table's
+  "PUBLIC"/"#2458A6" values. Proven with a fake/spy `AppPlatformConfigStore`
+  fixture carrying distinctive branding values (`"ZATV"` / `"#00AB66"`) and
+  a distinctive `CIVICCAST_STATION_NAME`: those exact values surface on
+  both `/snapshot` and `/display`, and the default table's values appear in
+  neither. **Residual, stated precisely per this review's request:**
+  per-channel branding IS a durable, operator-editable setting today (via
+  Channel Ops / `PATCH` through `AppPlatformConfigStore.update_channel_branding()`)
+  -- this fix reads the same row Channel Ops writes, it does not invent a
+  new store. What is *not* yet true: an out-of-the-box station's branding
+  row is seeded from the same static per-deployment default every other
+  CivicCast install starts with, so "configured" here means "an operator
+  has edited it since commissioning," not "every station's default identity
+  is already unique." A station that ships without ever visiting Channel Ops
+  will correctly show the honest not-configured state, never a silently
+  identical fake "PUBLIC" logo passed off as real.
 
 ## [1.0.0-beta.1] - 2026-08-31
 
