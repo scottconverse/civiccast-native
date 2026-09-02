@@ -2003,6 +2003,7 @@ export function listRecordingTargets(): Promise<RecordingTargetResponse[]> {
 export interface ListCaptionReviewParams {
   asset_id?: string
   status_filter?: CaptionReviewStatus
+  language?: string
 }
 
 export function listCaptionReviewItems(
@@ -2011,6 +2012,7 @@ export function listCaptionReviewItems(
   const qs = new URLSearchParams()
   if (params.asset_id) qs.set('asset_id', params.asset_id)
   if (params.status_filter) qs.set('status_filter', params.status_filter)
+  if (params.language) qs.set('language', params.language)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   return request<CaptionReviewItemResponse[]>(
     `/api/staff/captions/review-items${suffix}`,
