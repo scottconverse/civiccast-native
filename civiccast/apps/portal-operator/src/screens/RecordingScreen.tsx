@@ -901,6 +901,19 @@ function ScheduleForm({
   const idTarget = useId()
   const idEnabled = useId()
 
+  // WP-11 item 1: a stable id per validation message so the offending
+  // control's `aria-describedby` can point at it. One id per field group —
+  // the source field and the recurrence field each render exactly one
+  // visible error span regardless of which sub-control (select vs input,
+  // one-shot vs weekly) produced it.
+  const idSlugError = useId()
+  const idNameError = useId()
+  const idSourceError = useId()
+  const idRecurrenceError = useId()
+  const idWeekdaysGroupLabel = useId()
+  const idDurationError = useId()
+  const idEncoderError = useId()
+
   // UX-10: when the form switches mode (create ↔ edit), move keyboard focus
   // to the heading and let screen-readers announce the new mode via the
   // `role="status"` live region. The form is keyed on `schedule_id` at the
@@ -911,6 +924,20 @@ function ScheduleForm({
     headingRef.current?.focus()
   }, [])
 
+  // WP-11 item 1: refs for the "first invalid control" focus target on a
+  // failed submit. `sourceControlRef` is shared by the three mutually
+  // exclusive source controls (hardware-input select, live-input text, URI
+  // text) since exactly one renders at a time. `weekdaysGroupRef` targets
+  // the wrapping group so we can hand focus to its first checkbox.
+  const slugRef = useRef<HTMLInputElement | null>(null)
+  const nameRef = useRef<HTMLInputElement | null>(null)
+  const sourceControlRef = useRef<HTMLSelectElement | HTMLInputElement | null>(null)
+  const oneShotStartRef = useRef<HTMLInputElement | null>(null)
+  const weekdaysGroupRef = useRef<HTMLDivElement | null>(null)
+  const weeklyTimeRef = useRef<HTMLInputElement | null>(null)
+  const durationRef = useRef<HTMLInputElement | null>(null)
+  const encoderRef = useRef<HTMLInputElement | null>(null)
+
   const errors = validateForm(state, inputPresets)
   const hasErrors = Object.keys(errors).length > 0
   const isUpdate = editing != null
@@ -920,9 +947,50 @@ function ScheduleForm({
     (preset) => preset.source_kind === state.source_kind,
   )
 
+  // WP-11 item 1: move focus to the first invalid control, in the same
+  // top-to-bottom order the form renders fields, so a screen-reader user (or
+  // anyone tabbing) lands directly on the thing to fix instead of the form
+  // heading. `errors.recurrence` is one combined message covering three
+  // different physical controls (one-shot start / weekday group / weekly
+  // time) — re-derive which one actually failed from the live form state.
+  const focusFirstInvalid = () => {
+    if (errors.schedule_id) {
+      slugRef.current?.focus()
+      return
+    }
+    if (errors.name) {
+      nameRef.current?.focus()
+      return
+    }
+    if (errors.source) {
+      sourceControlRef.current?.focus()
+      return
+    }
+    if (errors.recurrence) {
+      if (state.recurrence_kind === 'one_shot') {
+        oneShotStartRef.current?.focus()
+      } else if (!state.weekly_days.some(Boolean)) {
+        weekdaysGroupRef.current?.querySelector('input')?.focus()
+      } else {
+        weeklyTimeRef.current?.focus()
+      }
+      return
+    }
+    if (errors.duration) {
+      durationRef.current?.focus()
+      return
+    }
+    if (errors.encoder_profile) {
+      encoderRef.current?.focus()
+    }
+  }
+
   const handleSubmit = () => {
     setShowErrors(true)
-    if (hasErrors) return
+    if (hasErrors) {
+      focusFirstInvalid()
+      return
+    }
     const durationSeconds = parseDurationHMS(state.duration_text)
     if (durationSeconds == null) return
     const source: RecordingSource = isLive
@@ -1015,6 +1083,7 @@ function ScheduleForm({
         <label htmlFor={idSlug} className="grid gap-1 text-xs">
           <span style={{ color: 'var(--cc-ink-3)' }}>Schedule ID (slug)</span>
           <input
+            ref={slugRef}
             id={idSlug}
             type="text"
             value={state.schedule_id}
@@ -1023,15 +1092,20 @@ function ScheduleForm({
             onChange={(e) => setState((s) => ({ ...s, schedule_id: e.target.value }))}
             className="rounded-md px-2 py-1.5"
             style={INPUT_STYLE}
+            aria-invalid={showErrors && Boolean(errors.schedule_id) ? true : undefined}
+            aria-describedby={showErrors && errors.schedule_id ? idSlugError : undefined}
           />
           {showErrors && errors.schedule_id && (
-            <span style={{ color: 'var(--cc-warn)' }}>{errors.schedule_id}</span>
+            <span id={idSlugError} role="alert" style={{ color: 'var(--cc-warn)' }}>
+              {errors.schedule_id}
+            </span>
           )}
         </label>
 
         <label htmlFor={idName} className="grid gap-1 text-xs">
           <span style={{ color: 'var(--cc-ink-3)' }}>Name</span>
           <input
+            ref={nameRef}
             id={idName}
             type="text"
             value={state.name}
@@ -1039,9 +1113,13 @@ function ScheduleForm({
             onChange={(e) => setState((s) => ({ ...s, name: e.target.value }))}
             className="rounded-md px-2 py-1.5"
             style={INPUT_STYLE}
+            aria-invalid={showErrors && Boolean(errors.name) ? true : undefined}
+            aria-describedby={showErrors && errors.name ? idNameError : undefined}
           />
           {showErrors && errors.name && (
-            <span style={{ color: 'var(--cc-warn)' }}>{errors.name}</span>
+            <span id={idNameError} role="alert" style={{ color: 'var(--cc-warn)' }}>
+              {errors.name}
+            </span>
           )}
         </label>
 
@@ -1084,12 +1162,17 @@ function ScheduleForm({
           <label htmlFor={idInput} className="grid gap-1 text-xs">
             <span style={{ color: 'var(--cc-ink-3)' }}>Input ID</span>
             <select
+              ref={(el) => {
+                sourceControlRef.current = el
+              }}
               id={idInput}
               value={state.input_id}
               onChange={(e) => setState((s) => ({ ...s, input_id: e.target.value }))}
               disabled={inputPresetsLoading || matchingInputPresets.length === 0}
               className="rounded-md px-2 py-1.5"
               style={INPUT_STYLE}
+              aria-invalid={showErrors && Boolean(errors.source) ? true : undefined}
+              aria-describedby={showErrors && errors.source ? idSourceError : undefined}
             >
               <option value="">
                 {inputPresetsLoading
@@ -1133,6 +1216,9 @@ function ScheduleForm({
           <label htmlFor={idInput} className="grid gap-1 text-xs">
             <span style={{ color: 'var(--cc-ink-3)' }}>Input ID</span>
             <input
+              ref={(el) => {
+                sourceControlRef.current = el
+              }}
               id={idInput}
               type="text"
               value={state.input_id}
@@ -1140,12 +1226,17 @@ function ScheduleForm({
               onChange={(e) => setState((s) => ({ ...s, input_id: e.target.value }))}
               className="rounded-md px-2 py-1.5"
               style={INPUT_STYLE}
+              aria-invalid={showErrors && Boolean(errors.source) ? true : undefined}
+              aria-describedby={showErrors && errors.source ? idSourceError : undefined}
             />
           </label>
         ) : (
           <label htmlFor={idUri} className="grid gap-1 text-xs">
             <span style={{ color: 'var(--cc-ink-3)' }}>URI</span>
             <input
+              ref={(el) => {
+                sourceControlRef.current = el
+              }}
               id={idUri}
               type="text"
               value={state.uri}
@@ -1153,11 +1244,18 @@ function ScheduleForm({
               onChange={(e) => setState((s) => ({ ...s, uri: e.target.value }))}
               className="rounded-md px-2 py-1.5"
               style={INPUT_STYLE}
+              aria-invalid={showErrors && Boolean(errors.source) ? true : undefined}
+              aria-describedby={showErrors && errors.source ? idSourceError : undefined}
             />
           </label>
         )}
         {showErrors && errors.source && (
-          <span className="text-xs sm:col-span-2" style={{ color: 'var(--cc-warn)' }}>
+          <span
+            id={idSourceError}
+            role="alert"
+            className="text-xs sm:col-span-2"
+            style={{ color: 'var(--cc-warn)' }}
+          >
             {errors.source}
           </span>
         )}
@@ -1185,12 +1283,15 @@ function ScheduleForm({
           <label htmlFor={idStart} className="grid gap-1 text-xs">
             <span style={{ color: 'var(--cc-ink-3)' }}>Start (UTC)</span>
             <input
+              ref={oneShotStartRef}
               id={idStart}
               type="datetime-local"
               value={state.one_shot_start}
               onChange={(e) => setState((s) => ({ ...s, one_shot_start: e.target.value }))}
               className="rounded-md px-2 py-1.5"
               style={INPUT_STYLE}
+              aria-invalid={showErrors && Boolean(errors.recurrence) ? true : undefined}
+              aria-describedby={showErrors && errors.recurrence ? idRecurrenceError : undefined}
             />
             {/* UX-2: the browser renders datetime-local in the OPERATOR's
                 local zone, but we store + send the value as UTC. Show a
@@ -1206,8 +1307,25 @@ function ScheduleForm({
             )}
           </label>
         ) : (
-          <div className="grid gap-1 text-xs">
-            <span style={{ color: 'var(--cc-ink-3)' }}>Weekdays</span>
+          <div
+            ref={weekdaysGroupRef}
+            role="group"
+            aria-labelledby={idWeekdaysGroupLabel}
+            aria-invalid={
+              showErrors && Boolean(errors.recurrence) && !state.weekly_days.some(Boolean)
+                ? true
+                : undefined
+            }
+            aria-describedby={
+              showErrors && Boolean(errors.recurrence) && !state.weekly_days.some(Boolean)
+                ? idRecurrenceError
+                : undefined
+            }
+            className="grid gap-1 text-xs"
+          >
+            <span id={idWeekdaysGroupLabel} style={{ color: 'var(--cc-ink-3)' }}>
+              Weekdays
+            </span>
             {/* UX-11: presets save 4+ tab/space presses for the common
                 weekday / weekend / every-day cases. */}
             <div className="flex flex-wrap gap-1.5">
@@ -1290,6 +1408,7 @@ function ScheduleForm({
             <label htmlFor={idTime} className="grid gap-1 text-xs">
               <span style={{ color: 'var(--cc-ink-3)' }}>Time (HH:MM UTC)</span>
               <input
+                ref={weeklyTimeRef}
                 id={idTime}
                 type="text"
                 value={state.weekly_time}
@@ -1297,6 +1416,16 @@ function ScheduleForm({
                 onChange={(e) => setState((s) => ({ ...s, weekly_time: e.target.value }))}
                 className="rounded-md px-2 py-1.5"
                 style={INPUT_STYLE}
+                aria-invalid={
+                  showErrors && Boolean(errors.recurrence) && state.weekly_days.some(Boolean)
+                    ? true
+                    : undefined
+                }
+                aria-describedby={
+                  showErrors && Boolean(errors.recurrence) && state.weekly_days.some(Boolean)
+                    ? idRecurrenceError
+                    : undefined
+                }
               />
               {/* UX-2: live local-time echo of the typed UTC time. */}
               {state.weekly_time && (
@@ -1344,7 +1473,12 @@ function ScheduleForm({
           )
         })()}
         {showErrors && errors.recurrence && (
-          <span className="text-xs sm:col-span-2" style={{ color: 'var(--cc-warn)' }}>
+          <span
+            id={idRecurrenceError}
+            role="alert"
+            className="text-xs sm:col-span-2"
+            style={{ color: 'var(--cc-warn)' }}
+          >
             {errors.recurrence}
           </span>
         )}
@@ -1352,6 +1486,7 @@ function ScheduleForm({
         <label htmlFor={idDuration} className="grid gap-1 text-xs">
           <span style={{ color: 'var(--cc-ink-3)' }}>Duration (HH:MM:SS)</span>
           <input
+            ref={durationRef}
             id={idDuration}
             type="text"
             value={state.duration_text}
@@ -1359,9 +1494,13 @@ function ScheduleForm({
             onChange={(e) => setState((s) => ({ ...s, duration_text: e.target.value }))}
             className="rounded-md px-2 py-1.5"
             style={INPUT_STYLE}
+            aria-invalid={showErrors && Boolean(errors.duration) ? true : undefined}
+            aria-describedby={showErrors && errors.duration ? idDurationError : undefined}
           />
           {showErrors && errors.duration && (
-            <span style={{ color: 'var(--cc-warn)' }}>{errors.duration}</span>
+            <span id={idDurationError} role="alert" style={{ color: 'var(--cc-warn)' }}>
+              {errors.duration}
+            </span>
           )}
         </label>
 
@@ -1374,6 +1513,7 @@ function ScheduleForm({
         <label htmlFor={idEncoder} className="grid gap-1 text-xs">
           <span style={{ color: 'var(--cc-ink-3)' }}>Quality preset (encoder profile)</span>
           <input
+            ref={encoderRef}
             id={idEncoder}
             type="text"
             list={idEncoderList}
@@ -1381,6 +1521,10 @@ function ScheduleForm({
             onChange={(e) => setState((s) => ({ ...s, encoder_profile: e.target.value }))}
             className="rounded-md px-2 py-1.5"
             style={INPUT_STYLE}
+            aria-invalid={showErrors && Boolean(errors.encoder_profile) ? true : undefined}
+            aria-describedby={
+              showErrors && errors.encoder_profile ? idEncoderError : undefined
+            }
           />
           <datalist id={idEncoderList}>
             {ENCODER_PROFILE_SUGGESTIONS.map((slug) => (
@@ -1392,7 +1536,9 @@ function ScheduleForm({
             admin for the full list of available presets.
           </span>
           {showErrors && errors.encoder_profile && (
-            <span style={{ color: 'var(--cc-warn)' }}>{errors.encoder_profile}</span>
+            <span id={idEncoderError} role="alert" style={{ color: 'var(--cc-warn)' }}>
+              {errors.encoder_profile}
+            </span>
           )}
         </label>
 

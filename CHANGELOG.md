@@ -16,6 +16,22 @@ came across and what deliberately did not.
 Current owner-held unpublished candidate: `v1.0.0-beta.2`. It has no tag or
 installer asset and is not a public or production release.
 
+### Added
+
+- **WP-11 item 1 — Recording form accessibility.** Every field-validation
+  message on the operator Scheduled Recording form
+  (`apps/portal-operator/src/screens/RecordingScreen.tsx`) now has a stable
+  id, and the offending control (or, for the weekday checkboxes, the
+  `role="group"` wrapper) carries `aria-invalid` and `aria-describedby`
+  pointing at it. A failed submit moves keyboard/screen-reader focus to the
+  first invalid control in field order (slug -> name -> source -> recurrence
+  -> duration -> encoder profile) instead of leaving focus on the "Create
+  schedule" button or the form heading. Covered by new unit assertions in
+  `RecordingScreen.test.tsx` that read the real `aria-invalid` /
+  `aria-describedby` DOM attributes and `document.activeElement` (not just
+  the visible copy), and by two new `e2e/a11y.spec.ts` cases that exercise
+  the same flow with axe-core against a real browser render.
+
 ### Changed
 
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
