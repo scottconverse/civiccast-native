@@ -443,7 +443,7 @@ export function SourceReadinessDetail({
             style={{
               background: 'var(--cc-surface-3)',
               border: '1px solid var(--cc-line)',
-              color: 'var(--cc-ink-1)',
+              color: 'var(--cc-ink)',
               opacity: checking ? 0.6 : 1,
             }}
           >
@@ -693,7 +693,7 @@ export function SourceEditForm({
           className="rounded-md px-3 py-1.5 text-xs font-semibold"
           style={{
             background: 'var(--cc-accent)',
-            color: 'var(--cc-on-accent)',
+            color: 'var(--cc-accent-ink)',
             opacity: saving ? 0.6 : 1,
           }}
         >
