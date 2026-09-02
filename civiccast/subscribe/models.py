@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from civiccast.db import Base
@@ -108,6 +108,13 @@ class NotificationPayload(BaseModel):
     podcast_url: str | None = None
     summary: str | None = None
     published_at: datetime
+    #: Per-recipient one-click unsubscribe link, carrying that subscription's
+    #: own signed token. Every notice must offer a way out: it goes in the mail
+    #: body AND the ``List-Unsubscribe`` header, and rides in the webhook JSON
+    #: so a webhook subscriber can stop notices without contacting the station.
+    #: ``None`` only when the station has no public web address configured, in
+    #: which case there is no link to any station route at all.
+    unsubscribe_url: str | None = None
 
 
 class NotificationDelivery(BaseModel):
@@ -134,6 +141,11 @@ class NotificationDispatchResponse(BaseModel):
     asset_id: str
     sent: int
     failed: int
+    #: Recipients this run did NOT contact because a durable delivery outcome
+    #: already showed them as delivered for this publication (WP-05). Counting
+    #: them as ``sent`` would let a re-approval that sent nothing look like a
+    #: fresh successful fan-out.
+    skipped: int = 0
     deliveries: list[NotificationDelivery]
 
 
@@ -183,6 +195,149 @@ class SubscriptionWebhookRetry(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
+
+
+# ---------------------------------------------------------------------------
+# WP-05: durable per-delivery notification outcomes.
+#
+# Publish used to report the subscriber-notifications surface "succeeded" as
+# soon as it had BUILT a payload -- nothing was ever sent, and nothing was ever
+# recorded. These rows are the receipt that makes the surface state an
+# observation instead of an assertion.
+#
+# PII rule for both tables: stable ids only. The subscription id is a salted
+# digest (``civiccast.subscribe.service._subscription_id``); the email address
+# and webhook URL stay sealed in ``subscriptions.encrypted_subscriber_handle``
+# and are never copied here, nor is any secret or signature. ``detail`` is a
+# short redacted operator sentence, never an exception string that could carry
+# a recipient (see ``civiccast.publish.notifications.redact_delivery_detail``).
+# ---------------------------------------------------------------------------
+
+NotificationDeliveryOutcomeValue = Literal["pending", "sent", "failed", "queued"]
+
+NotificationTransport = SubscriptionChannel
+
+
+class NotificationDeliveryOutcomeRecord(BaseModel):
+    """One logical delivery: publication x subscription x target x transport.
+
+    ``delivery_key`` deliberately does NOT include the attempt number -- it is
+    the duplicate-send guard, so every retry of the same recipient must land on
+    the same row (WP-05 plan item 4). Numbered attempts live beneath it in
+    :class:`NotificationDeliveryAttemptRecord`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_key: Annotated[str, Field(min_length=1, max_length=80)]
+    publication_id: Annotated[str, Field(min_length=1, max_length=200)]
+    asset_id: Annotated[str, Field(min_length=1, max_length=160)]
+    subscription_id: Annotated[str, Field(min_length=1, max_length=160)]
+    target_type: SubscriptionTargetType
+    target_id: Annotated[str, Field(min_length=1, max_length=120)]
+    transport: NotificationTransport
+    outcome: NotificationDeliveryOutcomeValue
+    attempts: Annotated[int, Field(ge=0)] = 0
+    error_code: Annotated[str, Field(max_length=80)] | None = None
+    detail: Annotated[str, Field(max_length=500)] = ""
+    retry_id: Annotated[str, Field(max_length=120)] | None = None
+    #: While set and in the future, one caller owns this in-flight delivery and
+    #: no other may send it. Cleared when an attempt records its result. A row
+    #: whose lease has expired without a result is recoverable -- the sending
+    #: process died mid-send -- and the next caller may take it over.
+    lease_expires_at: datetime | None = None
+    first_attempted_at: datetime | None = None
+    last_attempted_at: datetime | None = None
+    succeeded_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotificationDeliveryAttemptRecord(BaseModel):
+    """One numbered attempt beneath a logical delivery."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_key: Annotated[str, Field(min_length=1, max_length=80)]
+    attempt_number: Annotated[int, Field(ge=1)]
+    attempted_at: datetime
+    outcome: NotificationDeliveryOutcomeValue
+    error_code: Annotated[str, Field(max_length=80)] | None = None
+    detail: Annotated[str, Field(max_length=500)] = ""
+    retry_id: Annotated[str, Field(max_length=120)] | None = None
+
+
+class NotificationDeliveryOutcome(Base):
+    """Durable logical-delivery row (migration ``0085``).
+
+    The UNIQUE constraint over the logical identity -- not the primary key
+    alone -- is the concurrency/idempotency guard the plan requires: two
+    approvals racing on the same recording cannot create two rows for the same
+    recipient, so the second one observes the first's outcome instead of
+    sending a duplicate notice.
+    """
+
+    __tablename__ = "notification_delivery_outcomes"
+    __table_args__ = (
+        UniqueConstraint(
+            "publication_id",
+            "subscription_id",
+            "target_type",
+            "target_id",
+            "transport",
+            name="notification_delivery_outcomes_logical_key",
+        ),
+    )
+
+    delivery_key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    publication_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    asset_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    subscription_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    transport: Mapped[str] = mapped_column(String(20), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    # Links a queued webhook delivery back to its retry-queue row so the
+    # dead-letter/backoff outcome stays visible from the publish run.
+    retry_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    #: In-flight lease. See NotificationDeliveryOutcomeRecord.lease_expires_at.
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    first_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    succeeded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+
+class NotificationDeliveryAttempt(Base):
+    """One numbered attempt beneath a :class:`NotificationDeliveryOutcome`."""
+
+    __tablename__ = "notification_delivery_attempts"
+
+    delivery_key: Mapped[str] = mapped_column(
+        String(80),
+        ForeignKey("civiccast.notification_delivery_outcomes.delivery_key", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    retry_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
 
 class RssItem(BaseModel):

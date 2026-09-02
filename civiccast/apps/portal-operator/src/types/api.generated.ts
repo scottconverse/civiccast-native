@@ -2694,6 +2694,7 @@ export interface NotificationDispatchResponse {
   asset_id: string
   sent: number
   failed: number
+  skipped?: number
   deliveries: Array<NotificationDelivery>
 }
 
@@ -2704,6 +2705,7 @@ export interface NotificationPayload {
   podcast_url?: string | null
   summary?: string | null
   published_at: string
+  unsubscribe_url?: string | null
 }
 
 export interface NowNextState {
@@ -3349,6 +3351,31 @@ export interface PublishDashboardSummary {
   needs_operator_action: number
 }
 
+export interface PublishNotificationDeliveryRow {
+  subscription_id: string
+  channel: 'email' | 'webhook'
+  target_type: 'channel' | 'meeting_body'
+  target_id: string
+  outcome: 'pending' | 'sent' | 'failed' | 'queued'
+  attempts: number
+  error_code?: string | null
+  detail?: string
+  retry_id?: string | null
+  last_attempted_at?: string | null
+}
+
+export interface PublishNotificationSummary {
+  publication_id: string
+  intended: number
+  sent: number
+  failed: number
+  queued: number
+  pending: number
+  targets?: Array<string>
+  deliveries_truncated?: boolean
+  deliveries?: Array<PublishNotificationDeliveryRow>
+}
+
 export interface PublishPreflightCheck {
   id: string
   label: string
@@ -3380,7 +3407,7 @@ export interface PublishSurfaceStatus {
   id: string
   label: string
   kind: 'canonical' | 'archive' | 'reach' | 'record' | 'audience'
-  state: 'blocked' | 'not_configured' | 'pending' | 'running' | 'succeeded' | 'failed' | 'overridden'
+  state: 'blocked' | 'not_configured' | 'pending' | 'running' | 'succeeded' | 'partial' | 'unverified' | 'failed' | 'overridden'
   required?: boolean
   approval?: 'pending' | 'approved' | 'overridden'
   url?: string | null
@@ -3394,6 +3421,7 @@ export interface PublishSurfaceStatus {
   next_step: string
   override_justification?: string | null
   simulated?: boolean
+  notification_summary?: PublishNotificationSummary | null
 }
 
 export interface R2ConciergeRequest {

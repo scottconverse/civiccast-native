@@ -118,6 +118,103 @@ installer asset and is not a public or production release.
 
 ### Fixed
 
+- **Publish now actually sends subscriber notices, and the public subscription
+  RSS carries real records instead of an invented example (WP-05; audit
+  findings ENG-001, UX-003, TEST-001, QA-003, DOC-004).** `approve_publish()`
+  used to build a notification payload, mark the subscriber-notifications
+  surface `succeeded`, and stop -- it never called
+  `civiccast.subscribe.service.dispatch_notifications()`, so no resident was
+  ever contacted and a green surface was the only thing an operator saw.
+  Separately, `/api/public/subscribe/rss/{target_type}/{target_id}.xml`
+  emitted one fabricated item ("Example CivicCast recording", linking to
+  `https://portal.example/watch/...`) on every station, for every target, in
+  production.
+
+  Both now route through one canonical publication-target resolver
+  (`civiccast/publish/targets.py`). `StaffAssetRow` has no `channel_id`, so
+  the channel is derived from the live-finalization association, else the
+  schedule association, else the station profile's `default_channel_id`; the
+  asset's `meeting_body` adds a second target, and a resident subscribed
+  through both targets is deduplicated to one recipient. Delivery reuses the
+  shipped SMTP and HMAC-signed webhook adapters, the encrypted subscriber
+  store, and the webhook retry/backoff/dead-letter queue -- none of it is
+  reimplemented -- and now resolves those adapters through the same provider
+  registry publish preflight reports readiness for.
+
+  New migration `0085_notification_delivery_outcomes` adds
+  `notification_delivery_outcomes` (one logical delivery per publication x
+  subscription x target x transport) and `notification_delivery_attempts`
+  (numbered attempts beneath it, foreign-keyed with `ON DELETE CASCADE`).
+  Two mechanisms together make a double send impossible: the UNIQUE constraint
+  on the logical identity settles the INSERT race, and a `lease_expires_at`
+  column settles the already-exists race -- a caller may send only when the
+  store *grants* it the lease, so two approvals racing on the same recording
+  cannot both be cleared. (Gating on "not already sent" alone was itself a
+  double send: both callers read the same freshly-inserted `pending` row.) A
+  lease that lapses without a recorded result means the sender died mid-send,
+  and the delivery becomes recoverable rather than stuck. Re-approval mails
+  nobody twice; an explicit retry means "reach every confirmed subscriber not
+  yet sent", so it re-attempts failed and queued deliveries *and* reaches a
+  resident who confirmed after the original approval. Every recipient and
+  transport is caught and persisted independently, SMTP included, so one
+  exception can neither erase earlier receipts nor stop later recipients; a
+  receipt store that cannot be written reports `failed` with "Delivery receipts
+  could not be written, so no notices were sent" rather than a clean run. Rows
+  carry stable ids, channel, timestamps, outcome/error code, retry id and a
+  redacted detail only -- never an email address, webhook URL, secret or
+  signature; failure text is scrubbed before it is stored or logged.
+
+  **Every notice now carries an unsubscribe link.** The payload gains a
+  per-recipient `unsubscribe_url` built from that subscription's existing
+  signed token; it appears in the mail body, in RFC 2369 `List-Unsubscribe`
+  and RFC 8058 `List-Unsubscribe-Post` headers, and in the webhook JSON.
+  `POST /api/public/subscribe/unsubscribe` is added for the one-click flow
+  (the GET route is unchanged for a human click). The headers are emitted
+  verbatim through a dedicated mail policy -- Python's default `EmailMessage`
+  policy RFC 2047 q-encodes an unrecognised long header, which produces a
+  `List-Unsubscribe` no mail client will parse. A queued webhook retry stores
+  the notice *without* the token and re-attaches it at send time. Resident
+  notices also no longer print "Podcast: Not posted" on every message.
+
+  Readiness and delivery now count the same recipients: preflight and the
+  approval pre-check evaluate the asset's resolved targets instead of a
+  hardcoded `channel/government`, so a meeting-body recording's subscribers
+  are visible to both. The podcast surface uses the resolved channel too.
+  `POST /api/staff/subscribe/dispatch-test` requires an explicit target and
+  refuses with 409 when a real mail or webhook provider is configured -- a
+  route named "test" must not reach a resident, and it writes no receipt.
+  When the mail/webhook adapters are the shipped mocks, the surface is badged
+  `simulated` and is never green, matching the Internet Archive and YouTube
+  surfaces.
+
+  The closed publish-surface vocabulary gains `partial` and `unverified`, and
+  the surface state is derived from the stored receipts in the precedence
+  `succeeded` > `partial` > `pending` > `failed` > `not_configured`, so a
+  delivery still owned by the retry worker cannot read as terminally failed
+  and a fan-out with one dead recipient cannot read as fully successful. A
+  safe per-delivery summary is persisted on the publish run for the dashboard.
+  Historical `succeeded` subscriber-notification rows have no delivery
+  receipt, because none was ever written; they are presented as `unverified`
+  rather than as green evidence, and the nightly publish-soak evidence record
+  is annotated accordingly. The operator dashboard shows `partial` as a
+  warning and `unverified` as needing attention (never the neutral "nothing
+  happened here" dot), offers a retry on both, and renders the per-delivery
+  list -- counts, then the rows that still need attention -- where the copy
+  says "open the delivery list".
+
+  The public RSS now reads actual published records through the same resolver,
+  builds links from the configured `public_base_url` and the real
+  `#/watch/{asset_id}` route, and returns a valid, configured, EMPTY feed when
+  a station has published nothing. With no `public_base_url` set it falls back
+  to the request's own origin **only** when the Host is loopback, the
+  station's own hostname/addresses, or listed in `CIVICCAST_TRUSTED_HOSTS`;
+  any other Host gets a 503 naming the operator setting to fix, because there
+  is no `TrustedHostMiddleware` and a public feed must never echo a
+  caller-supplied hostname into its links. The feed reads one bounded page of
+  the newest published rows and is served with a five-minute `Cache-Control`.
+  Podcast is not selectable in this beta, so notices are portal-only and carry
+  no podcast URL.
+
 - **Publish preflight and approval now read the same real provider registry
   (WP-03; audit findings QA-001 and the readiness portion of ENG-001).**
   Preflight used to answer from an unrelated deterministic mock credential

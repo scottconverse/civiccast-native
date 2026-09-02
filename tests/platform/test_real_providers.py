@@ -270,7 +270,11 @@ class TestSmtpMailbox:
         assert server.data is not None
         assert "Subject: New CivicCast recording: Council Meeting" in server.data
         assert "Watch: https://portal.example/watch/meeting-42" in server.data
-        assert "Podcast: Not posted" in server.data
+        # WP-05: a notice with no episode omits the podcast line entirely.
+        # "Podcast: Not posted" went to every resident on every notice and read
+        # as a broken promise about a surface this beta does not offer.
+        assert "Podcast:" not in server.data
+        assert "Not posted" not in server.data
 
     def test_confirmation_subject_and_body_match_the_local_mailbox(self) -> None:
         server = _LoopbackSmtpServer()

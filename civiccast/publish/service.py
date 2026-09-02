@@ -39,16 +39,20 @@ from civiccast.publish.models import (
     PublishSurfaceKindValue,
     PublishSurfaceStatus,
 )
+from civiccast.publish.notifications import deliver_publication_notifications
 from civiccast.publish.readiness import (
     FUTURE_SURFACE_IDS,
-    SUBSCRIBER_TARGET_ID,
-    SUBSCRIBER_TARGET_TYPE,
     SurfaceReadiness,
     describe_surface_readiness,
 )
 from civiccast.publish.store import PublishStore
+from civiccast.publish.targets import (
+    DEFAULT_CHANNEL_ID_FALLBACK,
+    ChannelAssociationLookup,
+    resolve_publication_targets,
+)
 from civiccast.schedule.models import StaffAssetRow
-from civiccast.subscribe.models import NotificationPayload
+from civiccast.subscribe.outcome_store import NotificationDeliveryStore
 from civiccast.subscribe.store import SubscribeStore
 
 PUBLIC_RECORD_POLICIES = {"meeting", "permanent"}
@@ -269,12 +273,18 @@ def _surface_readiness(
     *,
     registry: ProviderRegistry,
     subscribe_store: SubscribeStore | None,
+    subscribe_targets: Sequence[tuple[str, str]],
 ) -> SurfaceReadiness | None:
     """Real readiness for one surface, or ``None`` for a non-provider surface.
 
     The single readiness source shared by :func:`build_publish_preflight` and
     :func:`approve_publish` (WP-03 plan item 8: preflight and approval read
     the same current registry configuration so they cannot disagree).
+
+    WP-05 extends that agreement to the RECIPIENT set: ``subscribe_targets``
+    is the asset's resolved publication targets, so readiness counts exactly
+    the subscribers delivery would contact -- including meeting-body ones the
+    old hardcoded ``channel/government`` target could never see.
     """
 
     if surface.id in FUTURE_SURFACE_IDS:
@@ -284,8 +294,18 @@ def _surface_readiness(
         label=surface.label,
         registry=registry,
         subscribe_store=subscribe_store,
-        subscribe_target_type=SUBSCRIBER_TARGET_TYPE,
-        subscribe_target_id=SUBSCRIBER_TARGET_ID,
+        subscribe_targets=subscribe_targets,
+    )
+
+
+def _target_pairs(
+    asset: StaffAssetRow, lookup: ChannelAssociationLookup | None
+) -> tuple[tuple[str, str], ...]:
+    """The asset's resolved publication targets as ``(type, id)`` pairs."""
+
+    return tuple(
+        (target.target_type, target.target_id)
+        for target in resolve_publication_targets(asset, lookup=lookup)
     )
 
 
@@ -294,6 +314,7 @@ def build_publish_preflight(
     *,
     registry: ProviderRegistry | None = None,
     subscribe_store: SubscribeStore | None = None,
+    target_lookup: ChannelAssociationLookup | None = None,
 ) -> PublishPreflightResponse:
     """Return approval readiness for every v0.7 publish surface.
 
@@ -305,6 +326,7 @@ def build_publish_preflight(
     never raises.
     """
     resolved_registry = registry if registry is not None else default_registry()
+    subscribe_targets = _target_pairs(asset, target_lookup)
     checks: list[PublishPreflightCheck] = []
     for surface in build_initial_surfaces(asset):
         if surface.id == "portal":
@@ -330,7 +352,10 @@ def build_publish_preflight(
             )
             continue
         readiness = _surface_readiness(
-            surface, registry=resolved_registry, subscribe_store=subscribe_store
+            surface,
+            registry=resolved_registry,
+            subscribe_store=subscribe_store,
+            subscribe_targets=subscribe_targets,
         )
         if readiness is None:
             # No provider dependency for this surface (e.g. the Cable file
@@ -428,6 +453,7 @@ def _blocked_selected_surfaces(
     overrides: dict[str, str],
     registry: ProviderRegistry,
     subscribe_store: SubscribeStore | None,
+    subscribe_targets: Sequence[tuple[str, str]],
 ) -> dict[str, SurfaceReadiness]:
     """Readiness failures among the surfaces the operator actually selected.
 
@@ -448,8 +474,7 @@ def _blocked_selected_surfaces(
             label=surface.label,
             registry=registry,
             subscribe_store=subscribe_store,
-            subscribe_target_type=SUBSCRIBER_TARGET_TYPE,
-            subscribe_target_id=SUBSCRIBER_TARGET_ID,
+            subscribe_targets=subscribe_targets,
         )
         if readiness is not None and not readiness.healthy:
             blocked[surface.id] = readiness
@@ -464,6 +489,9 @@ def approve_publish(
     registry: ProviderRegistry | None = None,
     media_path: Path | None = None,
     subscribe_store: SubscribeStore | None = None,
+    delivery_store: NotificationDeliveryStore | None = None,
+    target_lookup: ChannelAssociationLookup | None = None,
+    notification_retry_only: bool = False,
 ) -> PublishRunRecord:
     """Approve and execute the publish surfaces.
 
@@ -486,6 +514,12 @@ def approve_publish(
     correctly-configured provider marks only that surface ``failed``
     (retryable via the existing per-surface retry) instead of failing the
     whole approval.
+
+    WP-05: ``delivery_store`` keeps the durable per-recipient notification
+    receipts, ``target_lookup`` resolves the asset's channel from the
+    schedule/live association, and ``notification_retry_only`` is set by
+    :func:`retry_publish_surface` so an explicit retry re-attempts only
+    deliveries that already exist and are not yet observed sent.
     """
     at = datetime.now(UTC)
     payload = f"{asset.asset_id}:{asset.title}".encode()
@@ -496,12 +530,18 @@ def approve_publish(
         else {surface.id for surface in build_initial_surfaces(asset)}
     )
     resolved_registry = registry if registry is not None else default_registry()
+    # One resolution per approval, shared by the readiness pre-check, the
+    # podcast channel, and the subscriber fan-out, so all three agree.
+    publication_targets = resolve_publication_targets(asset, lookup=target_lookup)
     blocked = _blocked_selected_surfaces(
         asset,
         approved_ids=approved_ids,
         overrides=overrides,
         registry=resolved_registry,
         subscribe_store=subscribe_store,
+        subscribe_targets=[
+            (target.target_type, target.target_id) for target in publication_targets
+        ],
     )
     if blocked:
         raise PublishConfigurationError(blocked)
@@ -661,10 +701,23 @@ def approve_publish(
                     }
                 )
         elif surface.id == "podcast":
+            # WP-05 removes the hardcoded "government" channel here: the
+            # episode belongs to the channel the asset actually publishes to,
+            # resolved once for this approval. Everything else about this
+            # branch is unchanged -- WP-04 owns the real podcast path and the
+            # remaining placeholder URLs below.
+            podcast_channel_id = next(
+                (
+                    target.target_id
+                    for target in publication_targets
+                    if target.target_type == "channel"
+                ),
+                DEFAULT_CHANNEL_ID_FALLBACK,
+            )
             episode = create_podcast_episode(
                 PodcastEpisodeCreate(
                     asset_id=asset.asset_id,
-                    channel_id="government",
+                    channel_id=podcast_channel_id,
                     title=asset.title,
                     portal_url=asset.manifest_url
                     or f"https://portal.example/watch/{asset.asset_id}",
@@ -686,25 +739,34 @@ def approve_publish(
                 }
             )
         elif surface.id == "subscriber-notifications":
-            notification_payload = NotificationPayload(
+            # WP-05: this branch used to build a payload, mark the surface
+            # "succeeded" and stop -- no subscriber was ever contacted. It now
+            # runs the real fan-out through the existing SMTP/webhook adapters
+            # and reports the state its durable delivery receipts show.
+            outcome = deliver_publication_notifications(
                 asset_id=asset.asset_id,
                 title=asset.title,
-                portal_url=asset.manifest_url or f"https://portal.example/watch/{asset.asset_id}",
-                podcast_url="https://portal.example/podcast/government.xml",
-                summary=f"New CivicCast recording published: {asset.title}.",
                 published_at=at,
+                targets=publication_targets,
+                manifest_url=asset.manifest_url,
+                subscribe_store=subscribe_store,
+                delivery_store=delivery_store,
+                registry=resolved_registry,
+                retry_only=notification_retry_only,
             )
             updated = surface.model_copy(
                 update={
-                    "state": "succeeded",
+                    "state": outcome.state,
                     "approval": "approved",
-                    "health": "ok",
+                    "health": outcome.health,
                     "completed_at": at,
-                    "message": (
-                        "Subscriber notification payload prepared for "
-                        f"{notification_payload.title}."
-                    ),
-                    "next_step": "Use the subscription dispatch proof to verify local mailbox/webhook delivery.",
+                    "message": outcome.message,
+                    "next_step": outcome.next_step,
+                    # Badged exactly like a simulated Internet Archive or
+                    # YouTube surface: a mock adapter accepted the notice and
+                    # nobody received it (GauntletGate TW-1).
+                    "simulated": outcome.simulated,
+                    "notification_summary": outcome.summary,
                 }
             )
         elif surface.id == CABLE_PACKAGE_SURFACE_ID:
@@ -788,6 +850,8 @@ def retry_publish_surface(
     store: PublishStore,
     registry: ProviderRegistry | None = None,
     subscribe_store: SubscribeStore | None = None,
+    delivery_store: NotificationDeliveryStore | None = None,
+    target_lookup: ChannelAssociationLookup | None = None,
 ) -> PublishRunRecord:
     """Retry one surface while preserving the rest of the publish run.
 
@@ -814,6 +878,13 @@ def retry_publish_surface(
         store=InMemoryPublishStoreProxy(previous),
         registry=registry,
         subscribe_store=subscribe_store,
+        delivery_store=delivery_store,
+        target_lookup=target_lookup,
+        # WP-05 plan item 6: an explicit retry re-attempts only deliveries that
+        # already exist and are failed/queued/pending. It never contacts a
+        # recipient already observed sent, and never starts a delivery the
+        # original run did not intend.
+        notification_retry_only=True,
     )
     updated_surface = next(surface for surface in retried.surfaces if surface.id == surface_id)
     old_retry_count = previous_by_id.get(surface_id, updated_surface).retry_count
@@ -872,6 +943,41 @@ class InMemoryPublishStoreProxy:
         return record
 
 
+#: Reach/audience states that mean "this did not fully reach its audience".
+_DEGRADED_REACH_STATES = frozenset({"failed", "partial", "unverified"})
+
+
+def _normalized_notification_surface(surface: PublishSurfaceStatus) -> PublishSurfaceStatus:
+    """Downgrade a receipt-less historical ``succeeded`` notice row to ``unverified``.
+
+    Every ``subscriber-notifications`` row written before WP-05 says
+    ``succeeded`` because the old code marked it so after merely building a
+    payload -- no notice was sent and no receipt exists. Those rows are real
+    history, so they are not rewritten in the database; they are *presented*
+    as ``unverified`` (plan item 10) so a green pill can never stand in for
+    delivery that cannot be shown to have happened.
+    """
+
+    if surface.id != "subscriber-notifications":
+        return surface
+    if surface.state != "succeeded" or surface.notification_summary is not None:
+        return surface
+    return surface.model_copy(
+        update={
+            "state": "unverified",
+            "health": "warning",
+            "message": (
+                "This publish run recorded subscriber notices as sent, but it kept no "
+                "delivery receipt, so the station cannot show that anyone was notified."
+            ),
+            "next_step": (
+                "Retry the subscriber notifications surface to send and record real "
+                "deliveries for this recording."
+            ),
+        }
+    )
+
+
 def _dashboard_state(
     *,
     surfaces: list[PublishSurfaceStatus],
@@ -887,7 +993,10 @@ def _dashboard_state(
     archive_verified = bool(archive) and all(
         surface.state in {"succeeded", "overridden"} for surface in archive
     )
-    reach_failed = any(surface.state == "failed" for surface in reach)
+    # WP-05: a fan-out surface that only partly delivered, or whose success has
+    # no receipt behind it, is degraded reach -- not "Complete". Rolling either
+    # into the green path is precisely the lie this work package removes.
+    reach_failed = any(surface.state in _DEGRADED_REACH_STATES for surface in reach)
 
     if portal.state == "blocked":
         return "preflight_blocked", "Preflight blocked"
@@ -911,7 +1020,10 @@ def build_publish_asset_status(
     record: PublishRunRecord | None = None,
 ) -> PublishAssetStatus:
     public_record_required = _is_public_record(asset)
-    surfaces = record.surfaces if record is not None else build_initial_surfaces(asset)
+    surfaces = [
+        _normalized_notification_surface(surface)
+        for surface in (record.surfaces if record is not None else build_initial_surfaces(asset))
+    ]
     dashboard_state, dashboard_label = _dashboard_state(
         surfaces=surfaces,
         public_record_required=public_record_required,
@@ -926,7 +1038,8 @@ def build_publish_asset_status(
         surface.state in {"succeeded", "overridden"} for surface in archive_surfaces
     )
     reach_degraded = canonical_public and any(
-        surface.kind == "reach" and surface.state == "failed" for surface in surfaces
+        surface.kind in {"reach", "audience"} and surface.state in _DEGRADED_REACH_STATES
+        for surface in surfaces
     )
     needs_operator_action = any(
         surface.required and surface.state in {"blocked", "failed"} for surface in surfaces

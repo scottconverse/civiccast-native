@@ -612,6 +612,15 @@ Unsubscribe using a signed one-click link.
 - Request body: none
 - Responses: 200 `SubscriptionConfirmResponse`
 
+### `POST /api/public/subscribe/unsubscribe`
+
+One-click unsubscribe (RFC 8058).
+
+- Access: public
+- Parameters: `token` (query, required): `string`
+- Request body: none
+- Responses: 200 `SubscriptionConfirmResponse`
+
 ### `POST /api/public/subscribe/webhook`
 
 Start webhook subscription opt-in.
@@ -4178,12 +4187,12 @@ Preview a streaming overlay compositor plan.
 
 ### `POST /api/staff/subscribe/dispatch-test`
 
-Dispatch deterministic local v0.8 subscription notifications.
+Dispatch a simulated subscription notification for local proof.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
-- Parameters: `target_type` (query, optional): `string`; `target_id` (query, optional): `string`
+- Parameters: `target_type` (query, required): `'channel' | 'meeting_body'`; `target_id` (query, required): `string`
 - Request body: `NotificationPayload`
-- Responses: 200 `NotificationDispatchResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+- Responses: 200 `NotificationDispatchResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 409 A real mail or webhook provider is configured; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `POST /api/staff/summaries/generate`
 
@@ -7147,6 +7156,7 @@ rule (S13 §5.1).
 - `deliveries` (required): `Array<NotificationDelivery>`
 - `failed` (required): `number`
 - `sent` (required): `number`
+- `skipped` (optional): `number`
 
 ### `NotificationPayload`
 
@@ -7156,6 +7166,7 @@ rule (S13 §5.1).
 - `published_at` (required): `string`
 - `summary` (optional): `string | null`
 - `title` (required): `string`
+- `unsubscribe_url` (optional): `string | null`
 
 ### `NowNextState`
 
@@ -7802,6 +7813,31 @@ rule (S13 §5.1).
 - `portal_live` (required): `number`
 - `total_assets` (required): `number`
 
+### `PublishNotificationDeliveryRow`
+
+- `attempts` (required): `number`
+- `channel` (required): `'email' | 'webhook'`
+- `detail` (optional): `string`
+- `error_code` (optional): `string | null`
+- `last_attempted_at` (optional): `string | null`
+- `outcome` (required): `'pending' | 'sent' | 'failed' | 'queued'`
+- `retry_id` (optional): `string | null`
+- `subscription_id` (required): `string`
+- `target_id` (required): `string`
+- `target_type` (required): `'channel' | 'meeting_body'`
+
+### `PublishNotificationSummary`
+
+- `deliveries` (optional): `Array<PublishNotificationDeliveryRow>`
+- `deliveries_truncated` (optional): `boolean`
+- `failed` (required): `number`
+- `intended` (required): `number`
+- `pending` (required): `number`
+- `publication_id` (required): `string`
+- `queued` (required): `number`
+- `sent` (required): `number`
+- `targets` (optional): `Array<string>`
+
 ### `PublishPreflightCheck`
 
 - `credential_reference` (optional): `string | null`
@@ -7840,12 +7876,13 @@ rule (S13 §5.1).
 - `last_attempt_at` (optional): `string | null`
 - `message` (required): `string`
 - `next_step` (required): `string`
+- `notification_summary` (optional): `PublishNotificationSummary | null`
 - `override_justification` (optional): `string | null`
 - `path` (optional): `string | null`
 - `required` (optional): `boolean`
 - `retry_count` (optional): `number`
 - `simulated` (optional): `boolean`
-- `state` (required): `'blocked' | 'not_configured' | 'pending' | 'running' | 'succeeded' | 'failed' | 'overridden'`
+- `state` (required): `'blocked' | 'not_configured' | 'pending' | 'running' | 'succeeded' | 'partial' | 'unverified' | 'failed' | 'overridden'`
 - `url` (optional): `string | null`
 - `verification_hash` (optional): `string | null`
 

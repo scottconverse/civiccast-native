@@ -89,6 +89,11 @@ function StatePill({ asset }: { asset: PublishAssetStatus }) {
   )
 }
 
+// A surface that half-delivered, or whose success has no receipt behind it,
+// must not wear the neutral "nothing happened here" dot -- that is how a
+// partly-delivered fan-out reads as fine at a glance. `partial` is a warning
+// (some of it worked, some did not) and `unverified` needs attention (the run
+// claims success it cannot show).
 function SurfaceDot({ surface }: { surface: PublishSurfaceStatus }) {
   const tone = FUTURE_SURFACE_IDS.has(surface.id)
     ? // Always neutral, regardless of the row's own state/health -- never
@@ -99,9 +104,13 @@ function SurfaceDot({ surface }: { surface: PublishSurfaceStatus }) {
       ? { bg: 'var(--cc-ok-soft)', fg: 'var(--cc-ink)', symbol: 'OK' }
       : surface.state === 'failed' || surface.state === 'blocked'
         ? { bg: 'var(--cc-err-soft)', fg: 'var(--cc-ink)', symbol: '!' }
-        : surface.state === 'running' || surface.state === 'pending'
-          ? { bg: 'var(--cc-info-soft)', fg: 'var(--cc-ink)', symbol: '...' }
-          : { bg: 'var(--cc-surface-3)', fg: 'var(--cc-ink-3)', symbol: '-' }
+        : surface.state === 'partial'
+          ? { bg: 'var(--cc-warn-soft)', fg: 'var(--cc-ink)', symbol: '~' }
+          : surface.state === 'unverified'
+            ? { bg: 'var(--cc-warn-soft)', fg: 'var(--cc-ink)', symbol: '?' }
+            : surface.state === 'running' || surface.state === 'pending'
+              ? { bg: 'var(--cc-info-soft)', fg: 'var(--cc-ink)', symbol: '...' }
+              : { bg: 'var(--cc-surface-3)', fg: 'var(--cc-ink-3)', symbol: '-' }
 
   return (
     <span
@@ -111,6 +120,70 @@ function SurfaceDot({ surface }: { surface: PublishSurfaceStatus }) {
     >
       {tone.symbol}
     </span>
+  )
+}
+
+// The states an operator can act on from this row. `partial` and `unverified`
+// join `failed` because both mean "there is delivery work still owed".
+const RETRYABLE_SURFACE_STATES: string[] = ['failed', 'partial', 'unverified']
+
+const DELIVERY_OUTCOME_LABEL: Readonly<Record<string, string>> = {
+  sent: 'Delivered',
+  failed: 'Could not be delivered',
+  queued: 'Trying again',
+  pending: 'Not attempted',
+}
+
+/**
+ * The per-delivery receipt behind a subscriber-notifications surface.
+ *
+ * The surface copy says "open the delivery list"; this is that list. Counts
+ * come first because they explain the aggregate state, then the rows that
+ * still need attention -- never the recipient, which the API deliberately
+ * never carries.
+ */
+function NotificationDeliveryList({
+  summary,
+}: {
+  summary: NonNullable<PublishSurfaceStatus['notification_summary']>
+}) {
+  const unresolved = summary.deliveries.filter((row) => row.outcome !== 'sent')
+  return (
+    <div
+      className="mt-2 rounded-md px-2 py-1.5 text-[11px]"
+      style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+    >
+      <div className="font-semibold" style={{ color: 'var(--cc-ink)' }}>
+        Subscriber delivery
+      </div>
+      <div className="mt-0.5">
+        {summary.sent} of {summary.intended} delivered
+        {summary.queued > 0 && `, ${summary.queued} trying again`}
+        {summary.failed > 0 && `, ${summary.failed} could not be delivered`}
+        {summary.pending > 0 && `, ${summary.pending} not attempted`}
+        {summary.targets.length > 0 && ` (${summary.targets.join(', ')})`}
+      </div>
+      {unresolved.length === 0 ? (
+        <div className="mt-1">Every notice has a delivery receipt.</div>
+      ) : (
+        <ul className="mt-1 grid gap-0.5">
+          {unresolved.map((row) => (
+            <li key={`${row.subscription_id}:${row.channel}`} className="cc-mono text-[10px]">
+              {DELIVERY_OUTCOME_LABEL[row.outcome] ?? stateLabel(row.outcome)} — {row.channel} to{' '}
+              {row.target_type} {row.target_id}, {row.attempts}{' '}
+              {row.attempts === 1 ? 'try' : 'tries'}
+              {row.error_code && ` (${row.error_code})`}
+            </li>
+          ))}
+        </ul>
+      )}
+      {summary.deliveries_truncated && (
+        <div className="mt-1">
+          Showing the first {summary.deliveries.length} of {summary.intended}. The full
+          record is kept with the publish run.
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -195,9 +268,13 @@ function SurfaceRow({
               className="mt-2 rounded-md px-2 py-1.5 text-[11px] font-semibold"
               style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)', border: '1px solid var(--cc-warn)' }}
             >
-              Simulated — nothing was actually archived. This is not the legal
-              archive copy. Ask an admin to enable the real provider.
+              {surface.id === 'subscriber-notifications'
+                ? 'Simulated — no notice actually left this station. Nobody was contacted. Ask an admin to enable the real mail or webhook provider.'
+                : 'Simulated — nothing was actually archived. This is not the legal archive copy. Ask an admin to enable the real provider.'}
             </div>
+          )}
+          {surface.notification_summary && (
+            <NotificationDeliveryList summary={surface.notification_summary} />
           )}
           {(surface.url || surface.path || surface.verification_hash) && (
             <div className="cc-mono mt-2 grid gap-1 text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
@@ -269,7 +346,7 @@ function SurfaceRow({
             )}
           </div>
         )}
-        {!isFutureSurface && surface.state === 'failed' && (
+        {!isFutureSurface && RETRYABLE_SURFACE_STATES.includes(surface.state) && (
           <button
             type="button"
             disabled={disabled || !canPublish}
@@ -281,7 +358,7 @@ function SurfaceRow({
               border: '1px solid var(--cc-line)',
             }}
           >
-            Retry this surface
+            {surface.state === 'unverified' ? 'Send and record now' : 'Retry this surface'}
           </button>
         )}
       </div>
