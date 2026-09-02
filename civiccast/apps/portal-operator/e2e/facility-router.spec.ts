@@ -62,6 +62,21 @@ const panel = {
   ],
 }
 
+const channels = [
+  {
+    channel_id: 'government',
+    slug: 'government',
+    kind: 'government',
+    branding: {
+      display_name: 'Government Channel',
+      short_name: 'Gov',
+      color: '#123456',
+      logo_text: 'G',
+    },
+    fallback_behavior: 'slate',
+  },
+]
+
 async function mockFacilityRouter(page: import('@playwright/test').Page) {
   const requests: Array<Record<string, unknown>> = []
   const scheduleRequests: Array<Record<string, unknown>> = []
@@ -75,8 +90,15 @@ async function mockFacilityRouter(page: import('@playwright/test').Page) {
         operator_display_name: 'Operator',
         token_id: 'token',
         scopes: ['operator'],
-        roles: ['broadcast_operator'],
+        roles: ['broadcast_operator', 'meeting_operator'],
       }),
+    })
+  })
+  await page.route('**/api/staff/cable/channels', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(channels),
     })
   })
   await page.route('**/api/staff/facility/router-inventory', async (route) => {
@@ -187,6 +209,12 @@ test('operator previews a facility router take without hardware send', async ({ 
 
   await expect(page.getByRole('heading', { name: 'Facility router' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Main SDI matrix/ })).toBeVisible()
+
+  // With exactly one configured channel, the target-channel picker
+  // auto-selects it but still shows the pick (WP-09) -- scheduled take and
+  // overlay actions carry this channel id, not a hard-coded default.
+  await expect(page.getByLabel('Target channel')).toHaveValue('government')
+
   await page.getByRole('button', { name: /Council to air/ }).click()
 
   await expect.poll(() => requests.length).toBe(1)
@@ -236,8 +264,15 @@ test('facility router screen shows API failures as operator alerts', async ({ pa
         operator_display_name: 'Operator',
         token_id: 'token',
         scopes: ['operator'],
-        roles: ['broadcast_operator'],
+        roles: ['broadcast_operator', 'meeting_operator'],
       }),
+    })
+  })
+  await page.route('**/api/staff/cable/channels', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(channels),
     })
   })
   await page.route('**/api/staff/facility/router-inventory', async (route) => {
