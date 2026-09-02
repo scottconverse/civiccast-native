@@ -705,6 +705,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Unlink the pinned previous-kit junction (never leave it for the next checkout)
+        if: always()
+        shell: pwsh
+        run: |
+          # The junction under sandbox-lab/previous-kit-staging points INTO the
+          # runner's durable C:\CivicCastTester\kit-staging\<previous sha>. Left
+          # behind, the next run's actions/checkout `git clean -ffdx` walks
+          # through it and deletes the real pinned kit (observed 2026-09-02:
+          # candidate #23's 26 GB kit vanished after run 33584290436, and the
+          # next cross-version lane failed closed on "previous full kit is
+          # absent"). Remove ONLY the link, never the target.
+          $root = "sandbox-lab/previous-kit-staging"
+          if (Test-Path $root) {
+            Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue | ForEach-Object {
+              if ($_.LinkType) {
+                Write-Host "Unlinking previous-kit junction: $($_.FullName) -> $($_.Target)"
+                $_.Delete()
+              } else {
+                Write-Warning "Not a junction, leaving in place for inspection: $($_.FullName)"
+              }
+            }
+          }
+
       - name: Fail the job on a non-PASS verdict or harness error
         if: always()
         shell: pwsh
