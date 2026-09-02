@@ -594,29 +594,65 @@ export function BulletinModerationPanel({ channelId }: { channelId: string }) {
   )
 }
 
-function FeedPanel({ display }: { display: CgPortalDisplay | undefined }) {
+export function FeedPanel({
+  display,
+  isLoading,
+  isError,
+  error,
+}: {
+  display: CgPortalDisplay | undefined
+  isLoading: boolean
+  isError: boolean
+  error: unknown
+}) {
   const adapters = display?.feed_catalog.adapters ?? []
   return (
     <section className="min-w-0 rounded-md p-4" style={panelStyle}>
       <h2 className="m-0 text-lg font-semibold">Dynamic feeds</h2>
-      <div className="mt-3 grid gap-2">
-        {adapters.map((adapter) => (
-          <div key={adapter.adapter_id} className="rounded-md p-3 text-sm" style={insetStyle}>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold">{adapter.label}</span>
-              <span className="cc-mono rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
-                {adapter.kind}
-              </span>
+
+      {isLoading && (
+        <div className="mt-3 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Loading configured feeds…
+        </div>
+      )}
+
+      {isError && (
+        <div
+          role="alert"
+          className="mt-3 rounded-md p-3 text-xs"
+          style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+        >
+          {apiMessage(error, 'Could not load configured feeds.')}
+        </div>
+      )}
+
+      {!isLoading && !isError && adapters.length === 0 && (
+        <EmptyState
+          headline="No dynamic feeds are configured."
+          body="Add an approved RSS, calendar, weather, or permitted social source before using feed-driven CG zones."
+        />
+      )}
+
+      {!isLoading && !isError && adapters.length > 0 && (
+        <div className="mt-3 grid gap-2">
+          {adapters.map((adapter) => (
+            <div key={adapter.adapter_id} className="rounded-md p-3 text-sm" style={insetStyle}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold">{adapter.label}</span>
+                <span className="cc-mono rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
+                  {adapter.kind}
+                </span>
+              </div>
+              <div className="cc-mono mt-1 break-all text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+                {adapter.source_url}
+              </div>
+              <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+                {adapter.target_zone_kinds.join(', ')} / refresh {Math.round(adapter.refresh_seconds / 60)} min
+              </div>
             </div>
-            <div className="cc-mono mt-1 break-all text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-              {adapter.source_url}
-            </div>
-            <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-              {adapter.target_zone_kinds.join(', ')} / refresh {Math.round(adapter.refresh_seconds / 60)} min
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   )
 }
@@ -721,7 +757,12 @@ export function CgBoardScreen() {
         <LayoutPreview template={activeTemplate} display={display} />
         <div className="grid min-w-0 content-start gap-4">
           <OutputPanel display={display} />
-          <FeedPanel display={display} />
+          <FeedPanel
+            display={display}
+            isLoading={displayQuery.isLoading}
+            isError={displayQuery.isError}
+            error={displayQuery.error}
+          />
           <BulletinModerationPanel channelId={channelId} />
         </div>
       </div>

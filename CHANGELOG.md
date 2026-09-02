@@ -136,6 +136,23 @@ installer asset and is not a public or production release.
   and overlay CG paths are unchanged. Live video in a zone and board background
   audio are now labeled "coming in a future release"; the existing audio choice
   is disabled because the current renderer does not play it.
+- **The public CG feed catalog and portal display no longer expose four
+  hard-coded `example.invalid` RSS/iCal/weather/social rows as "configured"
+  station feeds** (`civiccast/cg/service.py`'s `build_feed_catalog()`, still
+  used only by tests and an explicit demo mode). `GET
+  /api/public/cg/channels/{channel_id}/feeds` and the `feed_catalog` field on
+  `GET .../display` now read the durable board/feed stack
+  (`CgBoardService.feed_catalog`, `CgFeedSource`, `CgBoardStore`,
+  `feed_fetcher.fetch_all`): only enabled feeds bound to an active board zone
+  are exposed, an approval-gated zone's items are filtered to
+  operator-approved item ids, and a station with nothing configured gets an
+  empty adapters list instead of invented content. The operator "Dynamic
+  feeds" panel (`CgBoardScreen.tsx`) now designs its own loading, configured,
+  empty ("No dynamic feeds are configured...Add an approved RSS, calendar,
+  weather, or permitted social source before using feed-driven CG zones."),
+  and failed states rather than always rendering the sample rows. The sample
+  catalog is available only with `CIVICCAST_CG_DEMO_FEEDS=1` explicitly set;
+  it is off by default in every shipping profile.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

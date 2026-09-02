@@ -32,7 +32,7 @@ import {
   getStaffIdentity,
   moderateCgBulletin,
 } from '../api/client'
-import { BulletinModerationPanel, LayoutPreview, OutputPanel } from './CgBoardScreen'
+import { BulletinModerationPanel, FeedPanel, LayoutPreview, OutputPanel } from './CgBoardScreen'
 
 // vitest config has no global afterEach, so testing-library's auto-cleanup
 // never registers -- unmount each render so body-scoped queries don't see
@@ -43,6 +43,24 @@ const TEMPLATE: CgTemplate = {
   template_id: 'tpl-board-v1',
   label: 'Fullscreen board with ticker',
   regions: [{ region: 'main', zone_kind: 'primary', order: 0 }],
+}
+
+const FEED_CATALOG = {
+  generated_at: '2026-08-06T12:00:00Z',
+  channel_id: 'public',
+  adapters: [
+    {
+      adapter_id: 'cgfeed_a1',
+      kind: 'rss',
+      label: 'City news',
+      source_url: 'https://city.example.gov/news.rss',
+      trust_tier: 'operator_curated',
+      refresh_seconds: 900,
+      target_zone_kinds: ['ticker'],
+      items: [],
+    },
+  ],
+  proof_boundary: 'configured-feed-adapters-to-approved-cg-zone-items',
 }
 
 const DISPLAY = {
@@ -57,6 +75,7 @@ const DISPLAY = {
     portal_render_path: '/var/civiccast/portal/public/board.json',
     proof_boundary: 'S6 V1',
   },
+  feed_catalog: FEED_CATALOG,
   render_plan: {
     channel_id: 'public',
     snapshot_url: 'https://cdn.example.org/public/snapshot.json',
@@ -101,6 +120,58 @@ describe('OutputPanel', () => {
     expect(getByText('/var/civiccast/portal/public/board.json')).toBeTruthy()
     expect(getByText('https://cdn.example.org/public/live.m3u8')).toBeTruthy()
     expect(getByText('https://cdn.example.org/public/overlay.json')).toBeTruthy()
+  })
+})
+
+// WP-06: the Dynamic feeds panel used to always render a deterministic
+// sample catalog (four example.invalid adapters) with no loading, empty, or
+// failed state of its own. It now reads the durable feed catalog and must
+// design each of those states honestly.
+describe('FeedPanel', () => {
+  it('shows loading copy while the catalog is loading', () => {
+    const { getByText } = render(
+      <FeedPanel display={undefined} isLoading isError={false} error={undefined} />,
+    )
+    expect(getByText('Loading configured feeds…')).toBeTruthy()
+  })
+
+  it('shows an actionable empty state when the station has configured no feeds', () => {
+    const { getByText } = render(
+      <FeedPanel
+        display={{ ...DISPLAY, feed_catalog: { ...FEED_CATALOG, adapters: [] } }}
+        isLoading={false}
+        isError={false}
+        error={undefined}
+      />,
+    )
+    expect(getByText('No dynamic feeds are configured.')).toBeTruthy()
+    expect(
+      getByText(
+        'Add an approved RSS, calendar, weather, or permitted social source before using feed-driven CG zones.',
+      ),
+    ).toBeTruthy()
+  })
+
+  it('lists each configured adapter once the catalog has loaded', () => {
+    const { getByText } = render(
+      <FeedPanel display={DISPLAY} isLoading={false} isError={false} error={undefined} />,
+    )
+    expect(getByText('City news')).toBeTruthy()
+    expect(getByText('https://city.example.gov/news.rss')).toBeTruthy()
+    expect(getByText('rss')).toBeTruthy()
+  })
+
+  it('shows an error message and never the sample catalog when the fetch fails', () => {
+    const { getByRole, queryByText } = render(
+      <FeedPanel
+        display={undefined}
+        isLoading={false}
+        isError
+        error={new Error('Network error')}
+      />,
+    )
+    expect(getByRole('alert').textContent).toContain('Network error')
+    expect(queryByText('example.invalid', { exact: false })).toBeNull()
   })
 })
 

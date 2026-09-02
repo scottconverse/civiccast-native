@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -49,6 +50,43 @@ def get_cg_bulletin_store() -> Any:
     None (ephemeral/no-DB mode) keeps the deterministic mock queue so demo
     runs and contract tests behave exactly as before CA-3.
     """
+
+
+def get_cg_board_service() -> Any:
+    """DI seam: the app factory overrides this with the durable CgBoardService.
+
+    WP-06: the public feed catalog / portal display read station-configured
+    feeds through this seam instead of the legacy deterministic
+    ``build_feed_catalog()``. None (ephemeral/no-DB mode, or a fresh app
+    factory that hasn't wired durable storage) means no durable board
+    configuration exists yet -- callers fall back to an empty catalog (or, if
+    explicitly demo-gated, the sample catalog) rather than inventing content.
+
+    Typed ``Any`` (not ``CgBoardService``) to avoid importing
+    ``civiccast.cg.board_service`` -- and its egress/ffmpeg-adjacent import
+    chain via ``board_router`` -- into this lighter public-router module.
+    """
+
+
+def _cg_demo_feeds_enabled() -> bool:
+    """True only when CIVICCAST_CG_DEMO_FEEDS=1 is explicitly set.
+
+    Never on by default in a shipping profile (WP-06 item 4). Set this in a
+    demo/dev environment to keep the four sample RSS/iCal/weather/social
+    adapters (with example.invalid URLs) available for screenshots and manual
+    walkthroughs when no station has configured real feeds yet.
+    """
+
+    return os.environ.get("CIVICCAST_CG_DEMO_FEEDS") == "1"
+
+
+def _empty_feed_catalog(channel_id: str) -> CgFeedCatalog:
+    return CgFeedCatalog(
+        generated_at=datetime.now(UTC).replace(microsecond=0),
+        channel_id=channel_id,
+        adapters=[],
+        proof_boundary="configured-feed-adapters-to-approved-cg-zone-items",
+    )
 
 
 class BulletinCreate(BaseModel):
@@ -172,9 +210,32 @@ def multi_zone_snapshot(
     "/channels/{channel_id}/feeds",
     response_model=CgFeedCatalog,
     summary="Read configured CG dynamic feed adapters",
+    responses={
+        200: {
+            "description": (
+                "Adapters built from the station's durably configured, "
+                "enabled CG feed sources. An empty adapters list is the "
+                "normal state for a station that hasn't configured any feed "
+                "yet -- add one in Board Designer -- never invented content."
+            )
+        },
+    },
 )
-def feed_catalog(channel_id: str = "public") -> CgFeedCatalog:
-    return build_feed_catalog(channel_id=channel_id)
+def feed_catalog(
+    channel_id: str = "public",
+    service: Any = Depends(get_cg_board_service),
+) -> CgFeedCatalog:
+    # WP-06: production reads durable station configuration through the board
+    # service (see CgBoardService.feed_catalog). The deterministic
+    # example.invalid sample catalog only appears when the app factory hasn't
+    # wired durable storage (ephemeral/no-DB mode) AND an operator has
+    # explicitly opted into CIVICCAST_CG_DEMO_FEEDS=1; otherwise a station
+    # with nothing configured gets an honest empty catalog, not sample rows.
+    if service is not None:
+        return cast(CgFeedCatalog, service.feed_catalog(channel_id))
+    if _cg_demo_feeds_enabled():
+        return build_feed_catalog(channel_id=channel_id)
+    return _empty_feed_catalog(channel_id)
 
 
 @public_router.get(
@@ -346,5 +407,18 @@ def overlay_contract(channel_id: str = "public") -> CgOverlayContract:
 def portal_display(
     channel_id: str = "public",
     template_id: str | None = None,
+    service: Any = Depends(get_cg_board_service),
 ) -> CgPortalDisplay:
-    return build_portal_display(channel_id=channel_id, template_id=template_id)
+    # WP-06: the ``feed_catalog`` field is the only part of this contract this
+    # work package touches -- it's assembled the same way the standalone
+    # /feeds endpoint above is, so the two never disagree. The snapshot,
+    # template library, bulletin queue, render plan, and overlay contract are
+    # unchanged (out of scope here; they don't carry example.invalid content).
+    display = build_portal_display(channel_id=channel_id, template_id=template_id)
+    if service is not None:
+        feeds = cast(CgFeedCatalog, service.feed_catalog(channel_id))
+    elif _cg_demo_feeds_enabled():
+        feeds = display.feed_catalog
+    else:
+        feeds = _empty_feed_catalog(channel_id)
+    return display.model_copy(update={"feed_catalog": feeds})

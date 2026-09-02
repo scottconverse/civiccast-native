@@ -119,6 +119,7 @@ from civiccast.cg.board_service import CgBoardService
 from civiccast.cg.board_store import CgBoardStore
 from civiccast.cg.bulletin_expiry_worker import BulletinExpirySettings, BulletinExpiryWorker
 from civiccast.cg.bulletin_store import PostgresCgBulletinStore
+from civiccast.cg.router import get_cg_board_service as get_cg_feed_board_service
 from civiccast.cg.router import get_cg_bulletin_store, get_eas_overlay_provider
 from civiccast.cg.router import public_router as cg_public_router
 from civiccast.cg.router import staff_router as cg_staff_router
@@ -2590,6 +2591,11 @@ def _wire_durable_stores(app: FastAPI) -> None:
 
     app.dependency_overrides[get_cg_bulletin_store] = _resolve_cg_bulletin_store
     app.dependency_overrides[get_cg_board_service] = _resolve_cg_board_service
+    # WP-06: the public feed catalog / portal display (civiccast.cg.router)
+    # defines its own lighter DI seam of the same name to avoid pulling
+    # board_router's egress/ffmpeg import chain into the public router --
+    # both seams resolve to the same durable CgBoardService instance factory.
+    app.dependency_overrides[get_cg_feed_board_service] = _resolve_cg_board_service
     app.dependency_overrides[get_program_log_store] = _resolve_program_log_store
     app.dependency_overrides[get_program_log_materializer] = _resolve_program_log_materializer
     app.dependency_overrides[get_program_log_asset_titler] = _resolve_program_log_asset_titler
