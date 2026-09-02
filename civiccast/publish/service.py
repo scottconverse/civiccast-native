@@ -39,6 +39,7 @@ from civiccast.publish.models import (
     PublishSurfaceKindValue,
     PublishSurfaceStatus,
 )
+from civiccast.publish.notifications import deliver_publication_notifications
 from civiccast.publish.readiness import (
     FUTURE_SURFACE_IDS,
     SUBSCRIBER_TARGET_ID,
@@ -47,8 +48,12 @@ from civiccast.publish.readiness import (
     describe_surface_readiness,
 )
 from civiccast.publish.store import PublishStore
+from civiccast.publish.targets import (
+    ChannelAssociationLookup,
+    resolve_publication_targets,
+)
 from civiccast.schedule.models import StaffAssetRow
-from civiccast.subscribe.models import NotificationPayload
+from civiccast.subscribe.outcome_store import NotificationDeliveryStore
 from civiccast.subscribe.store import SubscribeStore
 
 PUBLIC_RECORD_POLICIES = {"meeting", "permanent"}
@@ -464,6 +469,9 @@ def approve_publish(
     registry: ProviderRegistry | None = None,
     media_path: Path | None = None,
     subscribe_store: SubscribeStore | None = None,
+    delivery_store: NotificationDeliveryStore | None = None,
+    target_lookup: ChannelAssociationLookup | None = None,
+    notification_retry_only: bool = False,
 ) -> PublishRunRecord:
     """Approve and execute the publish surfaces.
 
@@ -486,6 +494,12 @@ def approve_publish(
     correctly-configured provider marks only that surface ``failed``
     (retryable via the existing per-surface retry) instead of failing the
     whole approval.
+
+    WP-05: ``delivery_store`` keeps the durable per-recipient notification
+    receipts, ``target_lookup`` resolves the asset's channel from the
+    schedule/live association, and ``notification_retry_only`` is set by
+    :func:`retry_publish_surface` so an explicit retry re-attempts only
+    deliveries that already exist and are not yet observed sent.
     """
     at = datetime.now(UTC)
     payload = f"{asset.asset_id}:{asset.title}".encode()
@@ -686,25 +700,30 @@ def approve_publish(
                 }
             )
         elif surface.id == "subscriber-notifications":
-            notification_payload = NotificationPayload(
+            # WP-05: this branch used to build a payload, mark the surface
+            # "succeeded" and stop -- no subscriber was ever contacted. It now
+            # runs the real fan-out through the existing SMTP/webhook adapters
+            # and reports the state its durable delivery receipts show.
+            outcome = deliver_publication_notifications(
                 asset_id=asset.asset_id,
                 title=asset.title,
-                portal_url=asset.manifest_url or f"https://portal.example/watch/{asset.asset_id}",
-                podcast_url="https://portal.example/podcast/government.xml",
-                summary=f"New CivicCast recording published: {asset.title}.",
                 published_at=at,
+                targets=resolve_publication_targets(asset, lookup=target_lookup, channel_id=None),
+                manifest_url=asset.manifest_url,
+                subscribe_store=subscribe_store,
+                delivery_store=delivery_store,
+                registry=resolved_registry,
+                retry_only=notification_retry_only,
             )
             updated = surface.model_copy(
                 update={
-                    "state": "succeeded",
+                    "state": outcome.state,
                     "approval": "approved",
-                    "health": "ok",
+                    "health": outcome.health,
                     "completed_at": at,
-                    "message": (
-                        "Subscriber notification payload prepared for "
-                        f"{notification_payload.title}."
-                    ),
-                    "next_step": "Use the subscription dispatch proof to verify local mailbox/webhook delivery.",
+                    "message": outcome.message,
+                    "next_step": outcome.next_step,
+                    "notification_summary": outcome.summary,
                 }
             )
         elif surface.id == CABLE_PACKAGE_SURFACE_ID:
@@ -788,6 +807,8 @@ def retry_publish_surface(
     store: PublishStore,
     registry: ProviderRegistry | None = None,
     subscribe_store: SubscribeStore | None = None,
+    delivery_store: NotificationDeliveryStore | None = None,
+    target_lookup: ChannelAssociationLookup | None = None,
 ) -> PublishRunRecord:
     """Retry one surface while preserving the rest of the publish run.
 
@@ -814,6 +835,13 @@ def retry_publish_surface(
         store=InMemoryPublishStoreProxy(previous),
         registry=registry,
         subscribe_store=subscribe_store,
+        delivery_store=delivery_store,
+        target_lookup=target_lookup,
+        # WP-05 plan item 6: an explicit retry re-attempts only deliveries that
+        # already exist and are failed/queued/pending. It never contacts a
+        # recipient already observed sent, and never starts a delivery the
+        # original run did not intend.
+        notification_retry_only=True,
     )
     updated_surface = next(surface for surface in retried.surfaces if surface.id == surface_id)
     old_retry_count = previous_by_id.get(surface_id, updated_surface).retry_count
@@ -872,6 +900,41 @@ class InMemoryPublishStoreProxy:
         return record
 
 
+#: Reach/audience states that mean "this did not fully reach its audience".
+_DEGRADED_REACH_STATES = frozenset({"failed", "partial", "unverified"})
+
+
+def _normalized_notification_surface(surface: PublishSurfaceStatus) -> PublishSurfaceStatus:
+    """Downgrade a receipt-less historical ``succeeded`` notice row to ``unverified``.
+
+    Every ``subscriber-notifications`` row written before WP-05 says
+    ``succeeded`` because the old code marked it so after merely building a
+    payload -- no notice was sent and no receipt exists. Those rows are real
+    history, so they are not rewritten in the database; they are *presented*
+    as ``unverified`` (plan item 10) so a green pill can never stand in for
+    delivery that cannot be shown to have happened.
+    """
+
+    if surface.id != "subscriber-notifications":
+        return surface
+    if surface.state != "succeeded" or surface.notification_summary is not None:
+        return surface
+    return surface.model_copy(
+        update={
+            "state": "unverified",
+            "health": "warning",
+            "message": (
+                "This publish run recorded subscriber notices as sent, but it kept no "
+                "delivery receipt, so the station cannot show that anyone was notified."
+            ),
+            "next_step": (
+                "Retry the subscriber notifications surface to send and record real "
+                "deliveries for this recording."
+            ),
+        }
+    )
+
+
 def _dashboard_state(
     *,
     surfaces: list[PublishSurfaceStatus],
@@ -887,7 +950,10 @@ def _dashboard_state(
     archive_verified = bool(archive) and all(
         surface.state in {"succeeded", "overridden"} for surface in archive
     )
-    reach_failed = any(surface.state == "failed" for surface in reach)
+    # WP-05: a fan-out surface that only partly delivered, or whose success has
+    # no receipt behind it, is degraded reach -- not "Complete". Rolling either
+    # into the green path is precisely the lie this work package removes.
+    reach_failed = any(surface.state in _DEGRADED_REACH_STATES for surface in reach)
 
     if portal.state == "blocked":
         return "preflight_blocked", "Preflight blocked"
@@ -911,7 +977,10 @@ def build_publish_asset_status(
     record: PublishRunRecord | None = None,
 ) -> PublishAssetStatus:
     public_record_required = _is_public_record(asset)
-    surfaces = record.surfaces if record is not None else build_initial_surfaces(asset)
+    surfaces = [
+        _normalized_notification_surface(surface)
+        for surface in (record.surfaces if record is not None else build_initial_surfaces(asset))
+    ]
     dashboard_state, dashboard_label = _dashboard_state(
         surfaces=surfaces,
         public_record_required=public_record_required,
@@ -926,7 +995,8 @@ def build_publish_asset_status(
         surface.state in {"succeeded", "overridden"} for surface in archive_surfaces
     )
     reach_degraded = canonical_public and any(
-        surface.kind == "reach" and surface.state == "failed" for surface in surfaces
+        surface.kind in {"reach", "audience"} and surface.state in _DEGRADED_REACH_STATES
+        for surface in surfaces
     )
     needs_operator_action = any(
         surface.required and surface.state in {"blocked", "failed"} for surface in surfaces

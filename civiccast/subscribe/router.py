@@ -5,13 +5,22 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
-from typing import cast
+from datetime import datetime
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from civiccast.auth.roles import require_any_role
+from civiccast.installer.station_state import resolve_station_display_name
 from civiccast.platform.stores import resolve_app_store
+from civiccast.publish.notifications import watch_url_for_asset
+from civiccast.publish.targets import (
+    ChannelAssociationLookup,
+    resolve_public_base_url,
+    resolve_publication_targets,
+    resolve_station_default_channel_id,
+)
+from civiccast.schedule.models import StaffAssetRow
 from civiccast.subscribe.models import (
     NotificationDispatchResponse,
     NotificationPayload,
@@ -21,6 +30,7 @@ from civiccast.subscribe.models import (
     SubscriptionSignupRequest,
     SubscriptionWebhookRequest,
 )
+from civiccast.subscribe.outcome_store import NotificationDeliveryStore
 from civiccast.subscribe.rate_limit import SubscribeRateLimiter
 from civiccast.subscribe.secrets import SubscriptionSecrets, load_subscription_secrets
 from civiccast.subscribe.service import (
@@ -41,6 +51,45 @@ def get_subscribe_store(request: Request) -> SubscribeStore:
     return cast(
         SubscribeStore, resolve_app_store(request, "subscribe_store", surface="Subscribe store")
     )
+
+
+def get_notification_delivery_store(request: Request) -> NotificationDeliveryStore | None:
+    """Resolve the durable subscriber-notification receipt store, or ``None``.
+
+    ``None`` (an app instance without durable storage) does not disable
+    delivery: ``deliver_publication_notifications`` falls back to a
+    process-local guard. It does mean receipts do not outlive the process,
+    which is why the durable store is wired wherever storage exists.
+
+    Defined here rather than in ``civiccast.publish.router`` because the public
+    RSS feed needs the sibling target lookup and ``publish.router`` already
+    imports this module -- one definition, and the import direction stays
+    publish -> subscribe.
+    """
+
+    return cast(
+        "NotificationDeliveryStore | None",
+        resolve_app_store(
+            request, "notification_delivery_store", surface="Notification delivery store"
+        ),
+    )
+
+
+def get_publication_target_lookup(request: Request) -> ChannelAssociationLookup | None:
+    """Resolve the schedule/live channel association for the target resolver."""
+
+    return cast(
+        "ChannelAssociationLookup | None",
+        resolve_app_store(
+            request, "publication_target_lookup", surface="Publication target lookup"
+        ),
+    )
+
+
+def get_rss_asset_store(request: Request) -> Any:
+    """Resolve the asset store the public RSS feed reads published records from."""
+
+    return resolve_app_store(request, "asset_store", surface="Asset store")
 
 
 def get_subscribe_secrets(request: Request) -> SubscriptionSecrets:
@@ -142,28 +191,111 @@ def unsubscribe_link(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+#: Most-recent published recordings one feed carries. A civic station's
+#: recording history is unbounded; a reader wants the recent record, and an
+#: unbounded feed would grow with every meeting ever held.
+RSS_FEED_MAX_ITEMS = 50
+#: Published rows scanned before target filtering. Bounds the resolver's work
+#: for a station whose recent publications are mostly on other channels.
+_RSS_SCAN_LIMIT = 400
+
+
+def _published_rows(asset_store: Any) -> list[StaffAssetRow]:
+    """Published, packaged recordings, newest first -- or none, never examples."""
+
+    lister = getattr(asset_store, "list_all", None)
+    if lister is None:
+        # An app instance whose asset store has no operator-side projection
+        # (the ephemeral in-memory VOD store). There is nothing published to
+        # report, so the feed is empty -- not seeded with a sample item.
+        return []
+    rows = cast(list[StaffAssetRow], lister())
+    published = [row for row in rows if row.published_at is not None and row.manifest_url]
+    return published[:_RSS_SCAN_LIMIT]
+
+
 @public_router.get(
     "/rss/{target_type}/{target_id}.xml",
     summary="Read a public no-PII subscription RSS feed",
 )
-def rss_feed(target_type: str, target_id: str) -> Response:
+def rss_feed(
+    target_type: str,
+    target_id: str,
+    request: Request,
+    asset_store: Any = Depends(get_rss_asset_store),
+    target_lookup: ChannelAssociationLookup | None = Depends(get_publication_target_lookup),
+) -> Response:
+    # WP-05 plan item 12. NOTE for future editors: this function's docstring
+    # becomes the public OpenAPI description, and
+    # `tests/policy/test_lan_only_station_external_dependencies.py` fails the
+    # build if /openapi.json names an external host -- so the history of the
+    # placeholder link this route used to emit lives here in a comment and in
+    # the CHANGELOG, never in the docstring.
+    #
+    # What was removed: one fabricated item ("Example CivicCast recording")
+    # pointing at a placeholder hostname, served for every target on every
+    # station in production. What replaced it: real published records,
+    # filtered by the same canonical resolver publish delivery uses
+    # (civiccast.publish.targets.resolve_publication_targets), so the feed and
+    # the notices agree about which recordings belong to a target.
+    """Render this target's real published recordings as RSS.
+
+    Items are the station's actual published, packaged recordings for this
+    channel or meeting body, newest first, capped at
+    :data:`RSS_FEED_MAX_ITEMS`. Links are built from the station's configured
+    public base URL (falling back to this request's own origin) and the
+    portal's ``#/watch/{asset_id}`` route. A station with nothing published
+    yet gets a valid, configured, empty feed.
+    """
+
     if target_type not in {"channel", "meeting_body"}:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="RSS feed not found. Use channel or meeting_body feed paths.",
         )
+    # Configured base first; this request's own origin is the fallback, so the
+    # feed is always self-consistent and always points at a host that exists.
+    base_url = resolve_public_base_url() or str(request.base_url).rstrip("/")
+    rows = _published_rows(asset_store)
+    channel_ids: dict[str, str] = {}
+    if rows and target_lookup is not None:
+        channel_ids = target_lookup.channel_ids_for_assets(rows)
+    default_channel_id = resolve_station_default_channel_id()
+
+    items: list[RssItem] = []
+    for row in rows:
+        targets = resolve_publication_targets(
+            row,
+            channel_id=channel_ids.get(row.asset_id),
+            default_channel_id=default_channel_id,
+        )
+        if not any(
+            target.target_type == target_type and target.target_id == target_id
+            for target in targets
+        ):
+            continue
+        link = watch_url_for_asset(row.asset_id, public_base_url=base_url)
+        if link is None:  # pragma: no cover - base_url is non-empty by construction
+            continue
+        items.append(
+            RssItem(
+                title=row.title,
+                link=link,
+                guid=f"civiccast:asset:{row.asset_id}",
+                published_at=cast(datetime, row.published_at),
+                description=(row.description or "").strip()
+                or f"Public recording published by {resolve_station_display_name()}.",
+            )
+        )
+        if len(items) >= RSS_FEED_MAX_ITEMS:
+            break
+
     xml = subscription_rss(
         target_type,
         target_id,
-        [
-            RssItem(
-                title="Example CivicCast recording",
-                link=f"https://portal.example/watch/{target_id}",
-                guid=f"civiccast:{target_type}:{target_id}:example",
-                published_at=datetime.now(UTC),
-                description="Subscribe with this RSS feed to receive public recording notices.",
-            )
-        ],
+        items,
+        public_base_url=base_url,
+        station_name=resolve_station_display_name(),
     )
     return Response(content=xml, media_type="application/rss+xml")
 

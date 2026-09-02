@@ -40,10 +40,16 @@ from civiccast.publish.service import (
     retry_publish_surface,
 )
 from civiccast.publish.store import PublishStore
+from civiccast.publish.targets import ChannelAssociationLookup
 from civiccast.schedule.models import StaffAssetRow
 from civiccast.schedule.paths import resolve_vod_package_dir
 from civiccast.schedule.router import get_postgres_store
-from civiccast.subscribe.router import get_subscribe_store
+from civiccast.subscribe.outcome_store import NotificationDeliveryStore
+from civiccast.subscribe.router import (
+    get_notification_delivery_store,
+    get_publication_target_lookup,
+    get_subscribe_store,
+)
 from civiccast.subscribe.store import SubscribeStore
 
 _LOG = logging.getLogger(__name__)
@@ -343,6 +349,8 @@ def approve_publish_asset(
     caption_job_store: OfflineCaptionJobStore | None = Depends(get_caption_job_store),
     provider_registry: ProviderRegistry = Depends(get_provider_registry),
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
+    delivery_store: NotificationDeliveryStore | None = Depends(get_notification_delivery_store),
+    target_lookup: ChannelAssociationLookup | None = Depends(get_publication_target_lookup),
 ) -> PublishAssetStatus:
     """Approve per-surface publication through the configured providers."""
     asset_store = _require_asset_store(postgres_store)
@@ -369,6 +377,8 @@ def approve_publish_asset(
             media_path=_resolve_local_recording(finalization_worker, asset_id),
             registry=provider_registry,
             subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            target_lookup=target_lookup,
         )
     except PublishConfigurationError as exc:
         # WP-03: a selected surface's real-provider config is missing/invalid
@@ -425,6 +435,8 @@ def retry_publish_asset_surface(
     caption_job_store: OfflineCaptionJobStore | None = Depends(get_caption_job_store),
     provider_registry: ProviderRegistry = Depends(get_provider_registry),
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
+    delivery_store: NotificationDeliveryStore | None = Depends(get_notification_delivery_store),
+    target_lookup: ChannelAssociationLookup | None = Depends(get_publication_target_lookup),
 ) -> PublishAssetStatus:
     """Retry a single surface without changing the rest of the publish run."""
     asset_store = _require_asset_store(postgres_store)
@@ -451,6 +463,8 @@ def retry_publish_asset_surface(
             store=publish_store,
             registry=provider_registry,
             subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            target_lookup=target_lookup,
         )
     except ValueError as exc:
         raise HTTPException(

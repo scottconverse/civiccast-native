@@ -269,6 +269,10 @@ from civiccast.programlog.router import (
 from civiccast.programlog.store import PostgresProgramLogStore
 from civiccast.publish.router import staff_router as publish_staff_router
 from civiccast.publish.store import InMemoryPublishStore, PostgresPublishStore
+from civiccast.publish.targets import (
+    SqlChannelAssociationLookup,
+    StaticChannelAssociationLookup,
+)
 from civiccast.recording.input_presets import RecordingInputPresetCatalog
 from civiccast.recording.router import (
     get_recording_input_catalog,
@@ -372,6 +376,10 @@ from civiccast.stream.cdn.factory import CdnSettings, build_cdn_adapter
 from civiccast.stream.media_router import live_router as media_live_public_router
 from civiccast.stream.media_router import router as media_public_router
 from civiccast.stream.router import staff_router as stream_staff_router
+from civiccast.subscribe.outcome_store import (
+    InMemoryNotificationDeliveryStore,
+    PostgresNotificationDeliveryStore,
+)
 from civiccast.subscribe.rate_limit import SubscribeRateLimiter
 from civiccast.subscribe.retry_worker import WebhookRetrySettings, WebhookRetryWorker
 from civiccast.subscribe.router import public_router as subscribe_public_router
@@ -1899,6 +1907,10 @@ def create_app() -> FastAPI:
     record_store = InMemoryRecordStore()
     publish_store = InMemoryPublishStore()
     subscribe_store = InMemorySubscribeStore()
+    notification_delivery_store = InMemoryNotificationDeliveryStore()
+    # No durable schedule/live tables in ephemeral mode, so every asset
+    # resolves to the station's default channel (WP-05) rather than guessing.
+    publication_target_lookup = StaticChannelAssociationLookup()
     podcast_store = InMemoryPodcastStore()
     activitypub_store = InMemoryActivityPubStore()
     analytics_store = (
@@ -1928,6 +1940,8 @@ def create_app() -> FastAPI:
         record_store=lambda: record_store,
         publish_store=lambda: publish_store,
         subscribe_store=lambda: subscribe_store,
+        notification_delivery_store=lambda: notification_delivery_store,
+        publication_target_lookup=lambda: publication_target_lookup,
         podcast_store=lambda: podcast_store,
         activitypub_store=lambda: activitypub_store,
         analytics_store=lambda: analytics_store,
@@ -2445,6 +2459,12 @@ def _wire_durable_stores(app: FastAPI) -> None:
     def _resolve_subscribe_store() -> PostgresSubscribeStore:
         return PostgresSubscribeStore(_session_factory)
 
+    def _resolve_notification_delivery_store() -> PostgresNotificationDeliveryStore:
+        return PostgresNotificationDeliveryStore(_session_factory)
+
+    def _resolve_publication_target_lookup() -> SqlChannelAssociationLookup:
+        return SqlChannelAssociationLookup(_session_factory)
+
     def _resolve_podcast_store() -> PostgresPodcastStore:
         return PostgresPodcastStore(_session_factory)
 
@@ -2527,6 +2547,8 @@ def _wire_durable_stores(app: FastAPI) -> None:
         record_store=_resolve_record_store,
         publish_store=_resolve_publish_store,
         subscribe_store=_resolve_subscribe_store,
+        notification_delivery_store=_resolve_notification_delivery_store,
+        publication_target_lookup=_resolve_publication_target_lookup,
         podcast_store=_resolve_podcast_store,
         activitypub_store=_resolve_activitypub_store,
         analytics_store=lambda: analytics_store,

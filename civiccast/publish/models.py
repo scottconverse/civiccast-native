@@ -28,6 +28,18 @@ PublishSurfaceStateValue = Literal[
     "pending",
     "running",
     "succeeded",
+    # WP-05 extends the closed vocabulary with two states a fan-out surface
+    # genuinely reaches and previously had to lie about:
+    #
+    # ``partial``    at least one intended delivery succeeded AND at least one
+    #                failed or is still in retry. Before WP-05 this was
+    #                reported as ``succeeded``.
+    # ``unverified`` the run claims success but no delivery receipt exists --
+    #                every subscriber-notification row written before WP-05,
+    #                because nothing was ever sent or recorded. Never green
+    #                evidence; it means "we cannot show this happened".
+    "partial",
+    "unverified",
     "failed",
     "overridden",
 ]
@@ -95,6 +107,59 @@ class PublishPreflightResponse(BaseModel):
     checks: list[PublishPreflightCheck]
 
 
+class PublishNotificationDeliveryRow(BaseModel):
+    """One logical subscriber delivery, safe for the dashboard and the API.
+
+    Deliberately carries no subscriber handle: ``subscription_id`` is the
+    salted digest the subscription store already exposes, and ``detail`` is
+    redacted at the point of failure
+    (:func:`civiccast.subscribe.delivery.redact_delivery_detail`). No email
+    address, webhook URL, secret or signature reaches this model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    subscription_id: Annotated[str, Field(min_length=1, max_length=160)]
+    channel: Literal["email", "webhook"]
+    target_type: Literal["channel", "meeting_body"]
+    target_id: Annotated[str, Field(min_length=1, max_length=120)]
+    outcome: Literal["pending", "sent", "failed", "queued"]
+    attempts: Annotated[int, Field(ge=0)]
+    error_code: str | None = None
+    detail: str = ""
+    #: Set when the delivery is in the durable webhook retry queue, so an
+    #: operator can follow a queued or dead-lettered notice to its retry row.
+    retry_id: str | None = None
+    last_attempted_at: datetime | None = None
+
+
+class PublishNotificationSummary(BaseModel):
+    """Per-delivery summary persisted on the publish run (WP-05 plan item 9).
+
+    The aggregate surface state is *derived* from these rows, so the dashboard
+    can always explain why a surface is ``partial`` instead of asking the
+    operator to trust a single word.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    publication_id: Annotated[str, Field(min_length=1, max_length=200)]
+    intended: Annotated[int, Field(ge=0)]
+    sent: Annotated[int, Field(ge=0)]
+    failed: Annotated[int, Field(ge=0)]
+    queued: Annotated[int, Field(ge=0)]
+    pending: Annotated[int, Field(ge=0)]
+    targets: list[str] = Field(default_factory=list)
+    #: True when ``deliveries`` lists only the first
+    #: ``NOTIFICATION_SUMMARY_MAX_DELIVERIES`` rows. The counts above are always
+    #: the full totals; this summary is embedded in the publish run's JSON
+    #: column, so a station with thousands of confirmed subscribers must not
+    #: grow that row without bound. The complete per-delivery history stays in
+    #: ``notification_delivery_outcomes``.
+    deliveries_truncated: bool = False
+    deliveries: list[PublishNotificationDeliveryRow] = Field(default_factory=list)
+
+
 class PublishSurfaceStatus(BaseModel):
     """One destination in the three-tier publish workflow."""
 
@@ -121,6 +186,12 @@ class PublishSurfaceStatus(BaseModel):
     # The dashboard MUST badge this -- a clerk approving an archive surface has
     # to be able to tell a real archival write from one that never happened.
     simulated: bool = False
+    #: WP-05: the safe per-delivery receipt behind a fan-out surface's state.
+    #: Present on ``subscriber-notifications`` once a real dispatch has run;
+    #: ``None`` on every other surface, and on subscriber-notification rows
+    #: written before WP-05 -- which is exactly what makes those rows read as
+    #: ``unverified`` instead of green.
+    notification_summary: PublishNotificationSummary | None = None
 
     @model_validator(mode="after")
     def _override_requires_justification(self) -> PublishSurfaceStatus:

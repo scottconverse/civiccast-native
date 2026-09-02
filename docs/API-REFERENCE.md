@@ -7145,6 +7145,7 @@ rule (S13 §5.1).
 - `deliveries` (required): `Array<NotificationDelivery>`
 - `failed` (required): `number`
 - `sent` (required): `number`
+- `skipped` (optional): `number`
 
 ### `NotificationPayload`
 
@@ -7800,6 +7801,31 @@ rule (S13 §5.1).
 - `portal_live` (required): `number`
 - `total_assets` (required): `number`
 
+### `PublishNotificationDeliveryRow`
+
+- `attempts` (required): `number`
+- `channel` (required): `'email' | 'webhook'`
+- `detail` (optional): `string`
+- `error_code` (optional): `string | null`
+- `last_attempted_at` (optional): `string | null`
+- `outcome` (required): `'pending' | 'sent' | 'failed' | 'queued'`
+- `retry_id` (optional): `string | null`
+- `subscription_id` (required): `string`
+- `target_id` (required): `string`
+- `target_type` (required): `'channel' | 'meeting_body'`
+
+### `PublishNotificationSummary`
+
+- `deliveries` (optional): `Array<PublishNotificationDeliveryRow>`
+- `deliveries_truncated` (optional): `boolean`
+- `failed` (required): `number`
+- `intended` (required): `number`
+- `pending` (required): `number`
+- `publication_id` (required): `string`
+- `queued` (required): `number`
+- `sent` (required): `number`
+- `targets` (optional): `Array<string>`
+
 ### `PublishPreflightCheck`
 
 - `credential_reference` (optional): `string | null`
@@ -7838,12 +7864,13 @@ rule (S13 §5.1).
 - `last_attempt_at` (optional): `string | null`
 - `message` (required): `string`
 - `next_step` (required): `string`
+- `notification_summary` (optional): `PublishNotificationSummary | null`
 - `override_justification` (optional): `string | null`
 - `path` (optional): `string | null`
 - `required` (optional): `boolean`
 - `retry_count` (optional): `number`
 - `simulated` (optional): `boolean`
-- `state` (required): `'blocked' | 'not_configured' | 'pending' | 'running' | 'succeeded' | 'failed' | 'overridden'`
+- `state` (required): `'blocked' | 'not_configured' | 'pending' | 'running' | 'succeeded' | 'partial' | 'unverified' | 'failed' | 'overridden'`
 - `url` (optional): `string | null`
 - `verification_hash` (optional): `string | null`
 
