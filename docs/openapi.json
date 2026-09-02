@@ -25647,6 +25647,83 @@
         ]
       }
     },
+    "/api/staff/recording/input-presets": {
+      "get": {
+        "tags": [
+          "staff",
+          "recording"
+        ],
+        "summary": "List detected and configured SDI/HDMI recording inputs",
+        "operationId": "list_input_presets_api_staff_recording_input_presets_get",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Re-run local FFmpeg device discovery.",
+              "default": false,
+              "title": "Refresh"
+            },
+            "description": "Re-run local FFmpeg device discovery."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RecordingInputPreset"
+                  },
+                  "title": "Response List Input Presets Api Staff Recording Input Presets Get"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable storage is not ready yet."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "setup_admin",
+          "meeting_operator",
+          "support_admin"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/recording/schedules": {
       "get": {
         "tags": [
@@ -52533,6 +52610,88 @@
         ],
         "title": "RecordExportResponse",
         "description": "Response returned by signed-record export and verification."
+      },
+      "RecordingInputPreset": {
+        "properties": {
+          "preset_id": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "title": "Preset Id"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Label"
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "sdi",
+              "hdmi"
+            ],
+            "title": "Source Kind"
+          },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "decklink",
+              "dshow"
+            ],
+            "title": "Backend"
+          },
+          "device_name": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Device Name"
+          },
+          "audio_device_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio Device Name"
+          },
+          "format_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format Code"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "configured",
+              "detected"
+            ],
+            "title": "Origin",
+            "default": "configured"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "preset_id",
+          "label",
+          "source_kind",
+          "backend",
+          "device_name"
+        ],
+        "title": "RecordingInputPreset"
       },
       "RecordingJob": {
         "properties": {

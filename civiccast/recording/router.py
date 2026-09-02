@@ -30,6 +30,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from civiccast.auth.roles import require_any_role
+from civiccast.recording.input_presets import RecordingInputPreset, RecordingInputPresetCatalog
 from civiccast.recording.models import (
     JobState,
     RecordingJob,
@@ -98,6 +99,11 @@ def get_recording_service() -> RecordingService | None:
     return None
 
 
+def get_recording_input_catalog() -> RecordingInputPresetCatalog | None:
+    """DI seam for locally detected and station-configured capture inputs."""
+    return None
+
+
 def _require_store(store: RecordingStore | None) -> RecordingStore:
     if store is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=_DB_NOT_READY)
@@ -114,6 +120,23 @@ def _require_service(svc: RecordingService | None) -> RecordingService:
 
 
 staff_router = APIRouter(prefix="/api/staff", tags=["staff", "recording"])
+
+
+@staff_router.get(
+    "/recording/input-presets",
+    response_model=list[RecordingInputPreset],
+    summary="List detected and configured SDI/HDMI recording inputs",
+    dependencies=[Depends(require_any_role(*_READ))],
+    openapi_extra=_READ_EXTRA,
+    responses={503: {"description": _DB_NOT_READY}},
+)
+def list_input_presets(
+    refresh: bool = Query(False, description="Re-run local FFmpeg device discovery."),
+    catalog: RecordingInputPresetCatalog | None = Depends(get_recording_input_catalog),
+) -> list[RecordingInputPreset]:
+    if catalog is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=_DB_NOT_READY)
+    return catalog.list_presets(refresh=refresh)
 
 
 # --- schedules ---------------------------------------------------------------

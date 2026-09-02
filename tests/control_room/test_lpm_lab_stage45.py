@@ -826,6 +826,30 @@ def test_run_executable_fixtures_usb_audio_present_counts_only_audio_devices() -
     assert all(d["class"] == "usb-audio" for d in present.details["devices"])
 
 
+def test_recording_capture_presets_reach_exact_ffmpeg_input_arguments() -> None:
+    proofs = stage45._run_executable_fixtures()
+
+    decklink = proofs["recording-decklink-preset-argv"]
+    assert decklink.status == "passed"
+    assert decklink.details["ffmpeg_input_args"] == [
+        "-f",
+        "decklink",
+        "-format_code",
+        "Hp60",
+        "-i",
+        "DeckLink Duo 2 (2)",
+    ]
+
+    dshow = proofs["recording-dshow-preset-argv"]
+    assert dshow.status == "passed"
+    assert dshow.details["ffmpeg_input_args"] == [
+        "-f",
+        "dshow",
+        "-i",
+        "video=Cam Link HDMI:audio=Digital Audio Interface",
+    ]
+
+
 def test_run_executable_fixtures_usb_audio_present_fails_loud_on_camera_only_fixture(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

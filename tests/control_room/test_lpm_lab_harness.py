@@ -65,6 +65,7 @@ def test_fixed_studio_simulation_covers_decklink_and_ptz_failure_modes(tmp_path:
     assert "decklink-channel-absent" in checks
     assert "decklink-mode-mismatch" in checks
     assert "decklink-signal-unlocked" in checks
+    assert "recording-decklink-preset-argv" in checks
     assert "visca-udp-52381-ack" in checks
     assert "visca-timeout" in checks
     assert "visca-command-not-executable" in checks
@@ -87,6 +88,7 @@ def test_portable_field_kit_simulation_covers_no_decklink_no_ptz_and_wifi() -> N
     assert "castr-unreachable" in checks
     assert "youtube-destination-confirmed" in checks
     assert "usb-capture-absent" in checks
+    assert "recording-dshow-preset-argv" in checks
     assert "usb-capture-usb-reset" in checks
     assert "vmix-laptop-resource-ceiling" in checks
     assert "atem-absent" in checks

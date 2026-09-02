@@ -242,6 +242,7 @@ def build_lpm_lab_profiles() -> dict[TopologyId, LabTopologyProfile]:
                     "decklink-channel-absent",
                     "decklink-mode-mismatch",
                     "decklink-signal-unlocked",
+                    "recording-decklink-preset-argv",
                 ],
                 evidence_basis=(
                     "LPM docs name DeckLink Duo 2, 3, and 4 as vMix inputs; Blackmagic "
@@ -425,6 +426,7 @@ def build_lpm_lab_profiles() -> dict[TopologyId, LabTopologyProfile]:
                     "usb-capture-usb-reset",
                     "usb-capture-hdmi-signal-missing",
                     "usb-capture-identity-preserved",
+                    "recording-dshow-preset-argv",
                 ],
                 evidence_basis=(
                     "LPM Outdoor Concert setup says cam link/camlink; brand is not confirmed "

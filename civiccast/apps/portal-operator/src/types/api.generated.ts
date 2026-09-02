@@ -3445,6 +3445,17 @@ export interface RecordExportResponse {
   artifact_digest?: string | null
 }
 
+export interface RecordingInputPreset {
+  preset_id: string
+  label: string
+  source_kind: 'sdi' | 'hdmi'
+  backend: 'decklink' | 'dshow'
+  device_name: string
+  audio_device_name?: string | null
+  format_code?: string | null
+  origin?: 'configured' | 'detected'
+}
+
 export interface RecordingJob {
   job_id: string
   station_id: string

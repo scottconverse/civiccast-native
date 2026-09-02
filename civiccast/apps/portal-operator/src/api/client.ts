@@ -3652,7 +3652,27 @@ export interface RecordingJobsQuery {
   limit?: number
 }
 
+export interface RecordingInputPreset {
+  preset_id: string
+  label: string
+  source_kind: 'sdi' | 'hdmi'
+  backend: 'decklink' | 'dshow'
+  device_name: string
+  audio_device_name: string | null
+  format_code: string | null
+  origin: 'configured' | 'detected'
+}
+
 const RECORDING = '/api/staff/recording'
+
+/** Capture-card inputs that the installed FFmpeg runtime can actually open.
+ * `refresh` repeats device discovery instead of returning the cached catalog. */
+export function listRecordingInputPresets(
+  refresh = false,
+): Promise<RecordingInputPreset[]> {
+  const suffix = refresh ? '?refresh=true' : ''
+  return request<RecordingInputPreset[]>(`${RECORDING}/input-presets${suffix}`)
+}
 
 /** GET /api/staff/recording/schedules — every schedule for the station. The
  * UI sorts by name client-side; the backend's order is "as inserted". */

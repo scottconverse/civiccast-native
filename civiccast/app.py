@@ -269,7 +269,9 @@ from civiccast.programlog.router import (
 from civiccast.programlog.store import PostgresProgramLogStore
 from civiccast.publish.router import staff_router as publish_staff_router
 from civiccast.publish.store import InMemoryPublishStore, PostgresPublishStore
+from civiccast.recording.input_presets import RecordingInputPresetCatalog
 from civiccast.recording.router import (
+    get_recording_input_catalog,
     get_recording_service,
     get_recording_store,
 )
@@ -2885,10 +2887,13 @@ def _wire_durable_stores(app: FastAPI) -> None:
     # normal recorded assets instead of returning an unwired 503.
     recording_store = RecordingStore(_session_factory)
     scheduled_recording_settings = ScheduledRecordingSettings.from_env()
+    recording_input_catalog = RecordingInputPresetCatalog.from_env()
     recording_svc = RecordingService(
         recording_store,
         capture_pipeline=FfmpegScheduledCapturePipeline(
-            _session_factory, settings=scheduled_recording_settings
+            _session_factory,
+            settings=scheduled_recording_settings,
+            hardware_input_args_resolver=recording_input_catalog.resolve_args,
         ),
         asset_finalizer=ScheduledRecordingAssetFinalizer(_session_factory),
         alert_sink=RecordingAlertSink(_session_factory),
@@ -2903,10 +2908,14 @@ def _wire_durable_stores(app: FastAPI) -> None:
     def _resolve_recording_store() -> RecordingStore:
         return recording_store
 
+    def _resolve_recording_input_catalog() -> RecordingInputPresetCatalog:
+        return recording_input_catalog
+
     def _resolve_recording_service() -> RecordingService:
         return recording_svc
 
     app.dependency_overrides[get_recording_store] = _resolve_recording_store
+    app.dependency_overrides[get_recording_input_catalog] = _resolve_recording_input_catalog
     app.dependency_overrides[get_recording_service] = _resolve_recording_service
 
     _wire_stage_f_workers(app, _session_factory)

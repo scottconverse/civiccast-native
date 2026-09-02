@@ -3906,6 +3906,15 @@ Retry one v0.7 publish surface.
 - Request body: `PublishRetryRequest`
 - Responses: 200 `PublishAssetStatus`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Asset or surface not found; 409 Publish preflight blocked; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `GET /api/staff/recording/input-presets`
+
+List detected and configured SDI/HDMI recording inputs.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: setup_admin or meeting_operator or support_admin
+- Parameters: `refresh` (query, optional): `boolean` -- Re-run local FFmpeg device discovery.
+- Request body: none
+- Responses: 200 `Array<RecordingInputPreset>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
+
 ### `GET /api/staff/recording/jobs`
 
 List recording jobs for the station.
@@ -7888,6 +7897,17 @@ rule (S13 §5.1).
 - `status` (required): `'verified' | 'failed'`
 - `summary_id` (required): `string`
 - `timestamp_proof` (required): `Rfc3161TimestampProof`
+
+### `RecordingInputPreset`
+
+- `audio_device_name` (optional): `string | null`
+- `backend` (required): `'decklink' | 'dshow'`
+- `device_name` (required): `string`
+- `format_code` (optional): `string | null`
+- `label` (required): `string`
+- `origin` (optional): `'configured' | 'detected'`
+- `preset_id` (required): `string`
+- `source_kind` (required): `'sdi' | 'hdmi'`
 
 ### `RecordingJob`
 

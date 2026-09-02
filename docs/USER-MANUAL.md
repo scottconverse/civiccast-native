@@ -1305,6 +1305,13 @@ honest. The production FastAPI factory now binds:
 
 - `CapturePipelineProtocol` -> `FfmpegScheduledCapturePipeline`, which
   captures SDI/HDMI/NDI and network streams through the FFmpeg runtime.
+- `RecordingInputPresetCatalog` discovers DeckLink SDI and Windows DirectShow
+  HDMI capture devices and turns the operator's stable preset selection into
+  exact FFmpeg input arguments. The Scheduled Recording screen shows detected
+  or configured inputs; if none are available, it says so and will not accept a
+  made-up device name. Use `CIVICCAST_RECORDING_INPUT_PRESETS_JSON` for a
+  connector label, DeckLink format code, or paired DirectShow audio device that
+  discovery cannot infer.
 - `AssetFinalizerProtocol` -> `ScheduledRecordingAssetFinalizer`, which
   probes the recorded file, validates ingest metadata, and registers a
   recorded `Asset`.

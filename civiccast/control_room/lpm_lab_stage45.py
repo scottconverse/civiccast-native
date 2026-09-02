@@ -31,6 +31,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.control_room.lpm_lab import DeviceContract, LabTopologyProfile, TopologyId
 from civiccast.control_room.lpm_lab_harness import CHECK_CATALOG, LabEvent
+from civiccast.recording.input_presets import RecordingInputPreset, RecordingInputPresetCatalog
+from civiccast.recording.models import RecordingSource
 
 Stage45Status = Literal["passed", "failed", "not-applicable"]
 
@@ -1163,6 +1165,33 @@ def _run_executable_fixtures() -> dict[str, Stage45Proof]:
     visca = validate_visca_udp_exchange("81 01 04 3F 02 01 FF", ["90 41 FF", "90 51 FF"])
     atem = validate_atem_state_fixture(_ATEM_STATE_FIXTURE)
     usb_capture = validate_capture_identity_fixture(_USB_CAPTURE_FIXTURE)
+    recording_catalog = RecordingInputPresetCatalog(
+        [
+            RecordingInputPreset(
+                preset_id="lpm-decklink-channel-2",
+                label="LPM DeckLink channel 2",
+                source_kind="sdi",
+                backend="decklink",
+                device_name="DeckLink Duo 2 (2)",
+                format_code="Hp60",
+            ),
+            RecordingInputPreset(
+                preset_id="lpm-cam-link-hdmi",
+                label="LPM Cam Link HDMI",
+                source_kind="hdmi",
+                backend="dshow",
+                device_name="Cam Link HDMI",
+                audio_device_name="Digital Audio Interface",
+            ),
+        ],
+        ffmpeg_runner=lambda _args: None,
+    )
+    decklink_recording_args = recording_catalog.resolve_args(
+        RecordingSource(kind="sdi", input_id="lpm-decklink-channel-2")
+    )
+    dshow_recording_args = recording_catalog.resolve_args(
+        RecordingSource(kind="hdmi", input_id="lpm-cam-link-hdmi")
+    )
     atem_absent = validate_atem_absent_fixture(None)
     obs_disabled = validate_obs_websocket_disabled("connection refused")
     obs_disabled_rejects_success_shaped_frames = _expect_value_error(
@@ -1820,6 +1849,24 @@ def _run_executable_fixtures() -> dict[str, Stage45Proof]:
             claim="Capture identity uses stable IDs rather than mutable display names.",
             observed="Fixture contains stable_id for each capture device.",
             details=usb_capture,
+        ),
+        "recording-decklink-preset-argv": Stage45Proof(
+            check_id="recording-decklink-preset-argv",
+            status="passed",
+            proof_source="api-fixture",
+            proof_level="api-contract-proven",
+            claim="The scheduled recorder resolves an LPM DeckLink SDI preset to exact FFmpeg arguments.",
+            observed="DeckLink channel identity and format code reached the FFmpeg input boundary.",
+            details={"ffmpeg_input_args": decklink_recording_args},
+        ),
+        "recording-dshow-preset-argv": Stage45Proof(
+            check_id="recording-dshow-preset-argv",
+            status="passed",
+            proof_source="api-fixture",
+            proof_level="api-contract-proven",
+            claim="The scheduled recorder resolves an LPM USB HDMI preset to exact DirectShow arguments.",
+            observed="Video and companion audio device names reached the FFmpeg input boundary.",
+            details={"ffmpeg_input_args": dshow_recording_args},
         ),
         "ndi-source-present": Stage45Proof(
             check_id="ndi-source-present",
