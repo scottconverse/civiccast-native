@@ -85,6 +85,15 @@ DEFAULT_READINESS_TTL_SECONDS: Final = 30
 MIN_READINESS_TTL_SECONDS: Final = 5
 MAX_READINESS_TTL_SECONDS: Final = 300
 
+#: How far ahead of "now" a persisted ``probe_observed_at`` may sit before
+#: :func:`readiness_state` stops trusting it. Ordinary clock imprecision
+#: between the process that stamped the row and the process reading it is a
+#: few seconds at most; this tolerates that without arguing about it. Anything
+#: past it is not skew, it is a clock that moved backwards (an NTP correction,
+#: a VM snapshot restore, a manually-set system clock) -- see
+#: ``readiness_state``'s future-observation guard below.
+_FUTURE_OBSERVATION_TOLERANCE_SECONDS: Final = 5.0
+
 
 def readiness_ttl_seconds(env: Mapping[str, str] | None = None) -> int:
     """Resolve the readiness TTL, clamped to the accepted 5-300s range.
@@ -139,12 +148,26 @@ def readiness_state(
     Fails closed on anything it does not recognize: an unknown or missing
     ``probe_state``, or a ``ready`` row with no observation timestamp (which
     would mean a partially written row), reads as ``never_probed`` rather than
-    as ready.
+    as ready. A ``probe_observed_at`` timestamped meaningfully ahead of ``now``
+    (a backwards clock correction after the row was stamped) reads as
+    ``stale`` rather than ``ready``: :func:`observation_age_seconds` clamps a
+    negative age to zero, which on its own would leave the row reading
+    "just checked" for the entire span of the clock jump.
     """
     if probe_state == PROBE_STATE_FAILED:
         return "failed"
     if probe_state != PROBE_STATE_READY:
         return "never_probed"
+    if observed_at is None:
+        return "never_probed"
+    moment = now or datetime.now(UTC)
+    aware_observed_at = (
+        observed_at if observed_at.tzinfo is not None else observed_at.replace(tzinfo=UTC)
+    )
+    aware_moment = moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+    raw_delta_seconds = (aware_moment - aware_observed_at).total_seconds()
+    if raw_delta_seconds < -_FUTURE_OBSERVATION_TOLERANCE_SECONDS:
+        return "stale"
     age = observation_age_seconds(observed_at, now=now)
     if age is None:
         return "never_probed"

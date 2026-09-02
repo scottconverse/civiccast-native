@@ -125,6 +125,42 @@ class TestReadinessState:
         # A partially written row must not read as ready.
         assert readiness_state(PROBE_STATE_READY, None, ttl_seconds=30, now=_NOW) == "never_probed"
 
+    def test_a_small_future_skew_is_still_ready(self) -> None:
+        # Ordinary clock imprecision (a few seconds) between the process that
+        # stamped the row and the one reading it must not make an otherwise
+        # fresh observation read as stale.
+        assert (
+            readiness_state(
+                PROBE_STATE_READY, _NOW + timedelta(seconds=5), ttl_seconds=30, now=_NOW
+            )
+            == "ready"
+        )
+
+    def test_a_future_observation_beyond_tolerance_reads_as_stale_not_ready(self) -> None:
+        # A backwards clock correction (NTP jump, snapshot restore, a manually
+        # set system clock) stamps ``probe_observed_at`` meaningfully ahead of
+        # "now". ``observation_age_seconds`` clamps that to zero, which on its
+        # own would leave the row reading "ready" for the entire span of the
+        # jump -- a fail-open bug, not a display quirk.
+        assert (
+            readiness_state(
+                PROBE_STATE_READY, _NOW + timedelta(minutes=10), ttl_seconds=30, now=_NOW
+            )
+            == "stale"
+        )
+
+    def test_a_future_observation_beyond_tolerance_never_reads_as_failed_or_never_probed(
+        self,
+    ) -> None:
+        # The future-timestamp guard must land on "stale" specifically (the
+        # operator is told to re-check, same as any other stale reading) --
+        # not silently reclassify the row as something else fail-open logic
+        # elsewhere might treat differently.
+        assert (
+            readiness_state(PROBE_STATE_READY, _NOW + timedelta(hours=2), ttl_seconds=300, now=_NOW)
+            == "stale"
+        )
+
     @pytest.mark.parametrize("value", [None, "", "unknown", "READY", "stale"])
     def test_unrecognized_probe_state_fails_closed(self, value: str | None) -> None:
         assert (
