@@ -4829,6 +4829,8 @@ Read CivicCast local federation metadata.
 - `expected_version` (required): `number` -- Version number the client last observed (echoed from the GET or prior PATCH response). The store rejects with 409 if the row has been updated by another writer in the meantime.
 - `meeting_body` (optional): `string | null`
 - `retention_policy` (optional): `'default' | 'permanent' | 'meeting' | 'short' | null`
+- `retention_term_unit` (optional): `'days' | 'weeks' | 'months' | 'years' | 'forever' | null`
+- `retention_term_value` (optional): `number | null`
 - `retention_until` (optional): `string | null`
 - `title` (optional): `string | null`
 - `trim_in_seconds` (optional): `number | null`
@@ -8667,7 +8669,10 @@ rule (S13 §5.1).
 - `manifest_url` (optional): `string | null`
 - `meeting_body` (optional): `string | null`
 - `published_at` (optional): `string | null`
+- `retention_anchor_at` (optional): `string | null`
 - `retention_policy` (optional): `'default' | 'permanent' | 'meeting' | 'short'`
+- `retention_term_unit` (optional): `'days' | 'weeks' | 'months' | 'years' | 'forever' | null`
+- `retention_term_value` (optional): `number | null`
 - `retention_until` (optional): `string | null`
 - `source_live_session_id` (optional): `string | null`
 - `state` (required): `'pending_ingest' | 'ingesting' | 'validated' | 'rejected' | 'recorded'`

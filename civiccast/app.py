@@ -1512,7 +1512,12 @@ class _EphemeralAssetStore:
             raise ValueError(f"Asset not found: {asset_id}")
         if not row.manifest_url:
             raise ValueError(f"Asset is not packaged: {asset_id}")
-        updated = row.model_copy(update={"published_at": published_at})
+        # WP-08: mirrors civiccast.schedule.store.PostgresAssetStore.mark_published
+        # -- capture retention_anchor_at on FIRST publish only, never move it.
+        update_fields: dict[str, Any] = {"published_at": published_at}
+        if row.retention_anchor_at is None:
+            update_fields["retention_anchor_at"] = published_at
+        updated = row.model_copy(update=update_fields)
         self._staff_rows[asset_id] = updated
         public = self._public_assets.get(asset_id)
         if public is not None:
@@ -1595,6 +1600,36 @@ class _EphemeralAssetStore:
         patch = update.model_dump(exclude_unset=True)
         patch.pop("expected_version", None)
         next_values = row.model_dump()
+        term_unit = patch.get("retention_term_unit")
+        if term_unit is not None:
+            # WP-08: ephemeral-store sibling of
+            # PostgresAssetStore._apply_retention_term. Dev/throwaway mode
+            # only (CIVICCAST_ALLOW_EPHEMERAL_STORES=1); no durable audit
+            # log exists here, so the anchor-fallback case is a no-op
+            # beyond setting the anchor -- there is nothing durable to
+            # write it to in this store.
+            from civiccast.installer.station_state import resolve_station_timezone
+            from civiccast.schedule.models import RETENTION_DEFAULT, RETENTION_PERMANENT
+            from civiccast.schedule.retention_terms import (
+                RETENTION_TERM_UNIT_FOREVER,
+                compute_retention_until,
+            )
+
+            anchor = row.retention_anchor_at or datetime.now(UTC)
+            next_values["retention_anchor_at"] = anchor
+            next_values["retention_term_unit"] = term_unit
+            next_values["retention_term_value"] = patch.get("retention_term_value")
+            next_values["retention_until"] = compute_retention_until(
+                anchor_at=anchor,
+                unit=term_unit,
+                value=patch.get("retention_term_value"),
+                station_tz_name=resolve_station_timezone(),
+            )
+            next_values["retention_policy"] = (
+                RETENTION_PERMANENT if term_unit == RETENTION_TERM_UNIT_FOREVER else RETENTION_DEFAULT
+            )
+            patch.pop("retention_term_unit", None)
+            patch.pop("retention_term_value", None)
         next_values.update(patch)
         next_values["version"] = row.version + 1
         updated = StaffAssetRow(**next_values)

@@ -34,11 +34,14 @@ from sqlalchemy.orm import Session
 
 from civiccast.schedule.commit_models import CommitToAirReport, CommitToAirReportRow
 from civiccast.schedule.ingest import FfprobeResult
+from civiccast.schedule.media_lifecycle_models import MediaLifecycleAuditEntry
 from civiccast.schedule.models import (
     _SCHEDULE_STATES,
     ASSET_STATE_VALIDATED,
     FILE_STATUS_MISSING,
     FILE_STATUS_RELINKED,
+    RETENTION_DEFAULT,
+    RETENTION_PERMANENT,
     SCHEDULE_MODE_PREMIERE,
     SCHEDULE_STATE_CANCELLED,
     SCHEDULE_STATE_PUBLISHED,
@@ -52,8 +55,26 @@ from civiccast.schedule.models import (
     StaffAssetRow,
     UploadedAssetResponse,
 )
+from civiccast.schedule.retention_terms import (
+    RETENTION_TERM_UNIT_FOREVER,
+    compute_retention_until,
+)
 from civiccast.vod.models import AssetMetadata
 from civiccast.vod.store import AssetAlreadyExistsError
+
+
+def _resolve_station_timezone_for_retention() -> str:
+    """Local-import wrapper around the S1 station-timezone loader.
+
+    Deferred import (matching ``civiccast.app._station_tz``'s own
+    pattern) rather than a module-level import: ``civiccast.installer``
+    pulls in a wide dependency graph, and this keeps that graph out of
+    ``civiccast.schedule.store``'s import-time footprint for callers that
+    never touch retention terms.
+    """
+    from civiccast.installer.station_state import resolve_station_timezone
+
+    return resolve_station_timezone()
 
 CommitReportList = list[CommitToAirReport]
 
@@ -211,7 +232,15 @@ class PostgresAssetStore:
             return row.to_staff_row()
 
     def mark_published(self, asset_id: str, *, published_at: datetime) -> StaffAssetRow:
-        """Make a packaged asset resident-visible after portal approval."""
+        """Make a packaged asset resident-visible after portal approval.
+
+        WP-08: also captures ``retention_anchor_at`` the FIRST time an
+        asset is published -- it is intentionally never overwritten on a
+        later republish (that is exactly what would defeat its purpose as
+        a fixed anchor: ``published_at`` itself is cleared by
+        ``mark_unpublished`` and overwritten by every later publish, so it
+        cannot serve as the anchor -- see ``Asset.retention_anchor_at``).
+        """
         with self._session_factory() as session:
             row = session.execute(
                 select(Asset).where(Asset.asset_id == asset_id)
@@ -221,6 +250,8 @@ class PostgresAssetStore:
             if not row.manifest_url:
                 raise ValueError(f"Asset is not packaged: {asset_id}")
             row.published_at = published_at
+            if row.retention_anchor_at is None:
+                row.retention_anchor_at = published_at
             session.commit()
             session.refresh(row)
             return row.to_staff_row()
@@ -260,6 +291,62 @@ class PostgresAssetStore:
             session.commit()
             session.refresh(row)
             return row.to_staff_row()
+
+    @staticmethod
+    def _apply_retention_term(
+        session: Session,
+        row: Asset,
+        *,
+        unit: str,
+        value: int | None,
+    ) -> None:
+        """Author/convert ``row`` onto the WP-08 value/unit/forever contract.
+
+        Reuses ``row.retention_anchor_at`` if already captured (the normal
+        case -- the asset was published at some point, so
+        :meth:`mark_published` already set it). If the asset has never
+        been published, there is no reliable anchor to reuse; the
+        finalization plan (WP-08, section 6, item 6) requires that case to
+        set-and-audit the anchor at conversion time rather than silently
+        inventing a historical one. Every recompute -- this call included
+        -- reads the anchor, never writes a new one once it exists.
+
+        Keeps the legacy ``retention_policy``/``retention_until`` columns
+        in sync so ``civiccast.schedule.retention_worker`` (unmodified by
+        WP-08) keeps enforcing correctly: ``forever`` mirrors onto
+        ``retention_policy='permanent'`` (the worker's own
+        ``!= 'permanent'`` skip) with ``retention_until=None``; every
+        finite unit mirrors onto ``retention_policy='default'`` with a
+        computed ``retention_until``.
+        """
+        anchor_fallback_used = False
+        if row.retention_anchor_at is None:
+            row.retention_anchor_at = datetime.now(UTC)
+            anchor_fallback_used = True
+
+        row.retention_term_unit = unit
+        row.retention_term_value = value
+        row.retention_until = compute_retention_until(
+            anchor_at=row.retention_anchor_at,
+            unit=unit,
+            value=value,
+            station_tz_name=_resolve_station_timezone_for_retention(),
+        )
+        row.retention_policy = RETENTION_PERMANENT if unit == RETENTION_TERM_UNIT_FOREVER else RETENTION_DEFAULT
+
+        if anchor_fallback_used:
+            session.add(
+                MediaLifecycleAuditEntry(
+                    asset_id=row.asset_id,
+                    action="retention_term_anchor_fallback",
+                    detail=(
+                        f"Asset {row.asset_id} had no publication history to anchor its "
+                        "retention term to; retention_anchor_at was set to the conversion "
+                        f"time ({row.retention_anchor_at.isoformat()}) instead of a first-"
+                        "publication instant. Future edits recompute from this fixed point."
+                    ),
+                )
+            )
 
     def update_metadata(
         self,
@@ -385,6 +472,13 @@ class PostgresAssetStore:
                 row.retention_policy = data["retention_policy"]
             if "retention_until" in data:
                 row.retention_until = data["retention_until"]
+            if "retention_term_unit" in data and data["retention_term_unit"] is not None:
+                self._apply_retention_term(
+                    session,
+                    row,
+                    unit=data["retention_term_unit"],
+                    value=data.get("retention_term_value"),
+                )
 
             # QA-008: every successful update increments version. Doing it
             # before commit so a failed commit still increments correctly

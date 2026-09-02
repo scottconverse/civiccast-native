@@ -54,6 +54,9 @@ function asset(assetId: string): AssetRow {
     chapters: [],
     retention_policy: 'default',
     retention_until: null,
+    retention_term_unit: null,
+    retention_term_value: null,
+    retention_anchor_at: null,
     version: 1,
     source_live_session_id: null,
   }

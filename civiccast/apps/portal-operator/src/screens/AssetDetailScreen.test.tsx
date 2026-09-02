@@ -33,6 +33,7 @@ import {
   getStaffIdentity,
   listStaffAssets,
   unpublishStaffAsset,
+  updateStaffAsset,
 } from '../api/client'
 import type { AssetRow } from '../types/asset'
 import type { StaffIdentityResponse } from '../types/api.generated'
@@ -63,6 +64,9 @@ function assetFixture(overrides: Partial<AssetRow> = {}): AssetRow {
     chapters: [],
     retention_policy: 'default',
     retention_until: null,
+    retention_term_unit: null,
+    retention_term_value: null,
+    retention_anchor_at: null,
     version: 1,
     source_live_session_id: null,
     ...overrides,
@@ -120,5 +124,133 @@ describe('AssetDetailScreen unpublish uses the shared ConfirmDialog, not window.
 
     expect(queryByRole('alertdialog')).toBeNull()
     expect(unpublishStaffAsset).not.toHaveBeenCalled()
+  })
+})
+
+describe('WP-08 retention term authoring', () => {
+  it('shows the legacy policy/deadline editor for a never-converted asset', async () => {
+    vi.mocked(getStaffAsset).mockResolvedValue(
+      assetFixture({ retention_policy: 'permanent', retention_term_unit: null }),
+    )
+    const { findByText, queryByLabelText } = renderScreen()
+
+    await findByText('Retention policy')
+    expect(queryByLabelText('Retention length')).toBeNull()
+  })
+
+  it('converting a legacy row prefills the permanent -> forever suggestion', async () => {
+    vi.mocked(getStaffAsset).mockResolvedValue(
+      assetFixture({ retention_policy: 'permanent', retention_term_unit: null }),
+    )
+    const { findByRole, queryByLabelText, findByText } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: /Convert to a length/ }))
+
+    await findByText('Retention term')
+    // forever needs no numeric value -- the input disappears entirely.
+    expect(queryByLabelText('Retention length')).toBeNull()
+    const unit = (await findByRole('combobox', { name: 'Retention unit' })) as HTMLSelectElement
+    expect(unit.value).toBe('forever')
+  })
+
+  it('converting a legacy short row prefills 30 days', async () => {
+    vi.mocked(getStaffAsset).mockResolvedValue(
+      assetFixture({ retention_policy: 'short', retention_term_unit: null }),
+    )
+    const { findByRole } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: /Convert to a length/ }))
+
+    const value = (await findByRole('spinbutton', {
+      name: 'Retention length',
+    })) as HTMLInputElement
+    const unit = (await findByRole('combobox', { name: 'Retention unit' })) as HTMLSelectElement
+    expect(value.value).toBe('30')
+    expect(unit.value).toBe('days')
+  })
+
+  it('an already-authored term asset shows the term editor directly, with no convert button', async () => {
+    vi.mocked(getStaffAsset).mockResolvedValue(
+      assetFixture({
+        retention_policy: 'default',
+        retention_term_unit: 'months',
+        retention_term_value: 6,
+        retention_anchor_at: '2026-01-01T00:00:00Z',
+      }),
+    )
+    const { findByText, queryByRole, findByRole } = renderScreen()
+
+    await findByText('Retention term')
+    expect(queryByRole('button', { name: /Convert to a length/ })).toBeNull()
+    expect(queryByRole('button', { name: 'Cancel conversion' })).toBeNull()
+    const unit = (await findByRole('combobox', { name: 'Retention unit' })) as HTMLSelectElement
+    expect(unit.value).toBe('months')
+  })
+
+  it('submits a finite term as a value/unit patch, never mixed with legacy fields', async () => {
+    const asset = assetFixture({ retention_policy: 'short', retention_term_unit: null })
+    vi.mocked(getStaffAsset).mockResolvedValue(asset)
+    vi.mocked(updateStaffAsset).mockResolvedValue({
+      ...asset,
+      retention_term_unit: 'days',
+      retention_term_value: 45,
+      version: 2,
+    })
+
+    const { findByRole } = renderScreen()
+    fireEvent.click(await findByRole('button', { name: /Convert to a length/ }))
+
+    const value = (await findByRole('spinbutton', {
+      name: 'Retention length',
+    })) as HTMLInputElement
+    fireEvent.change(value, { target: { value: '45' } })
+    fireEvent.click(await findByRole('button', { name: 'Save metadata' }))
+
+    await waitFor(() => expect(updateStaffAsset).toHaveBeenCalled())
+    const [, patch] = vi.mocked(updateStaffAsset).mock.calls[0]!
+    expect(patch.retention_term_unit).toBe('days')
+    expect(patch.retention_term_value).toBe(45)
+    expect(patch.retention_policy).toBeUndefined()
+    expect(patch.retention_until).toBeUndefined()
+  })
+
+  it('disables save (with an actionable message) while the term length is empty', async () => {
+    vi.mocked(getStaffAsset).mockResolvedValue(
+      assetFixture({ retention_policy: 'default', retention_term_unit: null }),
+    )
+    const { findByRole, findByText } = renderScreen()
+    fireEvent.click(await findByRole('button', { name: /Convert to a length/ }))
+
+    await findByText(/Enter how many days\/weeks\/months\/years/)
+    const saveButton = (await findByRole('button', {
+      name: 'Save metadata',
+    })) as HTMLButtonElement
+    expect(saveButton.disabled).toBe(true)
+    fireEvent.click(saveButton)
+    expect(updateStaffAsset).not.toHaveBeenCalled()
+  })
+
+  it('forever conversion is immediately saveable with no length required', async () => {
+    const asset = assetFixture({ retention_policy: 'permanent', retention_term_unit: null })
+    vi.mocked(getStaffAsset).mockResolvedValue(asset)
+    vi.mocked(updateStaffAsset).mockResolvedValue({
+      ...asset,
+      retention_term_unit: 'forever',
+      retention_term_value: null,
+      version: 2,
+    })
+
+    const { findByRole } = renderScreen()
+    fireEvent.click(await findByRole('button', { name: /Convert to a length/ }))
+    const saveButton = (await findByRole('button', {
+      name: 'Save metadata',
+    })) as HTMLButtonElement
+    expect(saveButton.disabled).toBe(false)
+
+    fireEvent.click(saveButton)
+    await waitFor(() => expect(updateStaffAsset).toHaveBeenCalled())
+    const [, patch] = vi.mocked(updateStaffAsset).mock.calls[0]!
+    expect(patch.retention_term_unit).toBe('forever')
+    expect(patch.retention_term_value).toBeUndefined()
   })
 })

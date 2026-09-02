@@ -12,6 +12,7 @@ import type {
   AssetMetadataUpdate,
   AssetRow,
   RetentionPolicy,
+  RetentionTermUnit,
 } from '../types/asset'
 import type { StaffIdentityResponse } from '../types/api.generated'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -59,6 +60,37 @@ const RETENTION_OPTIONS: ReadonlyArray<{
     description: 'Brief retention window; flagged for records review at expiry.',
   },
 ]
+
+// WP-08: value/unit/forever retention-term authoring, additive to the
+// legacy RETENTION_OPTIONS radio group above (unchanged; still the only
+// contract a never-converted "legacy" row has). Order matters for the
+// <select>: shortest-lived to longest-lived, forever last.
+const RETENTION_TERM_UNIT_OPTIONS: ReadonlyArray<{
+  id: RetentionTermUnit
+  label: string
+}> = [
+  { id: 'days', label: 'Day(s)' },
+  { id: 'weeks', label: 'Week(s)' },
+  { id: 'months', label: 'Month(s)' },
+  { id: 'years', label: 'Year(s)' },
+  { id: 'forever', label: 'Forever' },
+]
+
+// Legacy-conversion prefill suggestions (finalization plan section 6, item
+// 8: "Present existing state presets as prefilled value/unit suggestions,
+// not as an external legal decision.") -- display-only hints offered when
+// an operator starts converting a never-authored legacy row; nothing here
+// is written until the operator submits. Mirrors
+// civiccast.schedule.retention_terms's LEGACY_SHORT_SUGGESTED_* constants
+// and the "permanent -> forever" migration backfill. `default`/`meeting`
+// are deliberately absent -- the plan forbids inventing a duration for
+// those, so the operator starts from a blank term.
+const LEGACY_CONVERSION_SUGGESTIONS: Partial<
+  Record<RetentionPolicy, { unit: RetentionTermUnit; value: number | null }>
+> = {
+  permanent: { unit: 'forever', value: null },
+  short: { unit: 'days', value: 30 },
+}
 
 function fmtSize(bytes: number | null): string {
   if (bytes == null) return '—'
@@ -153,15 +185,29 @@ interface FormState {
   meeting_body: string
   retention_policy: RetentionPolicy
   retention_until_local: string
+  // WP-08: 'legacy' edits the pre-existing retention_policy/retention_until
+  // pair above; 'term' authors the new value/unit/forever contract. A row
+  // that has already been converted (asset.retention_term_unit is set) is
+  // always in 'term' mode -- there is no "convert back" operation.
+  retentionMode: 'legacy' | 'term'
+  retentionTermUnit: RetentionTermUnit
+  // Kept as a string so the number input can hold '' while the operator is
+  // mid-edit; validated/parsed at submit time.
+  retentionTermValueText: string
 }
 
 function initialFormState(asset: AssetRow): FormState {
+  const alreadyAuthored = asset.retention_term_unit != null
   return {
     title: asset.title,
     description: asset.description ?? '',
     meeting_body: asset.meeting_body ?? '',
     retention_policy: asset.retention_policy,
     retention_until_local: isoToLocalInput(asset.retention_until),
+    retentionMode: alreadyAuthored ? 'term' : 'legacy',
+    retentionTermUnit: asset.retention_term_unit ?? 'days',
+    retentionTermValueText:
+      asset.retention_term_value != null ? String(asset.retention_term_value) : '',
   }
 }
 
@@ -189,23 +235,44 @@ function diffPatch(
     patch.meeting_body = body || null
     changed = true
   }
-  if (form.retention_policy !== asset.retention_policy) {
-    patch.retention_policy = form.retention_policy
-    changed = true
-  }
-  const newUntil = localInputToIso(form.retention_until_local)
-  const cur = asset.retention_until
-  // Compare as ms-truncated strings — both browsers and JSON serializers
-  // normalize to ms precision, so a same-instant value with different
-  // textual form (Z vs +00:00) is still equal.
-  const sameInstant =
-    (newUntil == null && cur == null) ||
-    (newUntil != null &&
-      cur != null &&
-      new Date(newUntil).getTime() === new Date(cur).getTime())
-  if (!sameInstant) {
-    patch.retention_until = newUntil
-    changed = true
+  if (form.retentionMode === 'term') {
+    // WP-08: value/unit/forever authoring. Mutually exclusive with
+    // retention_policy/retention_until server-side (AssetMetadataUpdate
+    // rejects mixing them in one PATCH), so this branch never sets those.
+    const value =
+      form.retentionTermUnit === 'forever'
+        ? null
+        : form.retentionTermValueText.trim() === ''
+          ? null
+          : Number(form.retentionTermValueText)
+    const unitChanged = form.retentionTermUnit !== (asset.retention_term_unit ?? null)
+    const valueChanged = value !== (asset.retention_term_value ?? null)
+    if (unitChanged || valueChanged) {
+      patch.retention_term_unit = form.retentionTermUnit
+      if (form.retentionTermUnit !== 'forever') {
+        patch.retention_term_value = value ?? undefined
+      }
+      changed = true
+    }
+  } else {
+    if (form.retention_policy !== asset.retention_policy) {
+      patch.retention_policy = form.retention_policy
+      changed = true
+    }
+    const newUntil = localInputToIso(form.retention_until_local)
+    const cur = asset.retention_until
+    // Compare as ms-truncated strings — both browsers and JSON serializers
+    // normalize to ms precision, so a same-instant value with different
+    // textual form (Z vs +00:00) is still equal.
+    const sameInstant =
+      (newUntil == null && cur == null) ||
+      (newUntil != null &&
+        cur != null &&
+        new Date(newUntil).getTime() === new Date(cur).getTime())
+    if (!sameInstant) {
+      patch.retention_until = newUntil
+      changed = true
+    }
   }
   return changed ? patch : null
 }
@@ -218,6 +285,13 @@ function validate(form: FormState): string | null {
     return 'Description must be 2000 characters or fewer.'
   if (form.meeting_body.trim().length > 120)
     return 'Meeting body must be 120 characters or fewer.'
+  if (form.retentionMode === 'term' && form.retentionTermUnit !== 'forever') {
+    const trimmed = form.retentionTermValueText.trim()
+    if (trimmed === '') return 'Enter how many days/weeks/months/years to retain this recording.'
+    const n = Number(trimmed)
+    if (!Number.isInteger(n) || n <= 0)
+      return 'Retention length must be a whole number greater than zero.'
+  }
   return null
 }
 
@@ -465,68 +539,184 @@ function DetailEditor({ asset, onClose, onEditTrim }: DetailEditorProps) {
             </div>
           </label>
 
-          <fieldset className="m-0 border-0 p-0">
-            <legend
-              className="mb-2 block text-[10px] font-semibold uppercase tracking-wider"
-              style={{ color: 'var(--cc-ink-3)' }}
-            >
-              Retention policy
-            </legend>
-            <RadioCardGroup
-              label="Retention policy"
-              options={RETENTION_OPTIONS.map((opt) => ({
-                id: opt.id,
-                label: opt.label,
-                description: opt.description,
-              }))}
-              value={form.retention_policy}
-              onChange={(retentionPolicy) =>
-                setForm((f) => ({ ...f, retention_policy: retentionPolicy }))
-              }
-              className="grid gap-2 sm:grid-cols-2"
-            />
-            <div
-              className="mt-2 rounded-md p-2 text-[11px]"
-              style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
-            >
-              <strong>Records officer review required.</strong> State presets
-              provide a starting point, but local schedules, litigation holds,
-              and official-minutes rules can require longer retention.
-            </div>
-          </fieldset>
+          {form.retentionMode === 'legacy' ? (
+            <>
+              <fieldset className="m-0 border-0 p-0">
+                <legend
+                  className="mb-2 block text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ color: 'var(--cc-ink-3)' }}
+                >
+                  Retention policy
+                </legend>
+                <RadioCardGroup
+                  label="Retention policy"
+                  options={RETENTION_OPTIONS.map((opt) => ({
+                    id: opt.id,
+                    label: opt.label,
+                    description: opt.description,
+                  }))}
+                  value={form.retention_policy}
+                  onChange={(retentionPolicy) =>
+                    setForm((f) => ({ ...f, retention_policy: retentionPolicy }))
+                  }
+                  className="grid gap-2 sm:grid-cols-2"
+                />
+                <div
+                  className="mt-2 rounded-md p-2 text-[11px]"
+                  style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
+                >
+                  <strong>Records officer review required.</strong> State presets
+                  provide a starting point, but local schedules, litigation holds,
+                  and official-minutes rules can require longer retention.
+                </div>
+              </fieldset>
 
-          <label className="block">
-            <span
-              className="mb-1 block text-[11px] font-semibold uppercase tracking-wider"
-              style={{ color: 'var(--cc-ink-3)' }}
-            >
-              Retention deadline (optional)
-            </span>
-            <input
-              type="datetime-local"
-              value={form.retention_until_local}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  retention_until_local: e.target.value,
-                }))
-              }
-              className="cc-mono w-full rounded-md px-3 py-2 text-sm"
-              style={{
-                background: 'var(--cc-surface)',
-                border: '1px solid var(--cc-line)',
-                color: 'var(--cc-ink)',
-              }}
-            />
-            <div
-              className="cc-mono mt-1 text-[10px]"
-              style={{ color: 'var(--cc-ink-3)' }}
-            >
-              {form.retention_until_local
-                ? `Set: ${form.retention_until_local}`
-                : 'Leave blank to defer to the policy default.'}
-            </div>
-          </label>
+              <label className="block">
+                <span
+                  className="mb-1 block text-[11px] font-semibold uppercase tracking-wider"
+                  style={{ color: 'var(--cc-ink-3)' }}
+                >
+                  Retention deadline (optional)
+                </span>
+                <input
+                  type="datetime-local"
+                  value={form.retention_until_local}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      retention_until_local: e.target.value,
+                    }))
+                  }
+                  className="cc-mono w-full rounded-md px-3 py-2 text-sm"
+                  style={{
+                    background: 'var(--cc-surface)',
+                    border: '1px solid var(--cc-line)',
+                    color: 'var(--cc-ink)',
+                  }}
+                />
+                <div
+                  className="cc-mono mt-1 text-[10px]"
+                  style={{ color: 'var(--cc-ink-3)' }}
+                >
+                  {form.retention_until_local
+                    ? `Set: ${form.retention_until_local}`
+                    : 'Leave blank to defer to the policy default.'}
+                </div>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const suggestion = LEGACY_CONVERSION_SUGGESTIONS[asset.retention_policy]
+                  setForm((f) => ({
+                    ...f,
+                    retentionMode: 'term',
+                    retentionTermUnit: suggestion?.unit ?? 'days',
+                    retentionTermValueText:
+                      suggestion?.value != null ? String(suggestion.value) : '',
+                  }))
+                }}
+                className="self-start rounded-md px-3 py-1.5 text-xs font-medium"
+                style={{ border: '1px solid var(--cc-line)', color: 'var(--cc-ink-2)' }}
+              >
+                Convert to a length + unit or forever term...
+              </button>
+            </>
+          ) : (
+            <fieldset className="m-0 flex flex-col gap-2 border-0 p-0">
+              <legend
+                className="mb-1 block text-[10px] font-semibold uppercase tracking-wider"
+                style={{ color: 'var(--cc-ink-3)' }}
+              >
+                Retention term
+              </legend>
+              <div className="flex flex-wrap items-center gap-2">
+                {form.retentionTermUnit !== 'forever' && (
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    inputMode="numeric"
+                    aria-label="Retention length"
+                    value={form.retentionTermValueText}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, retentionTermValueText: e.target.value }))
+                    }
+                    className="cc-mono w-24 rounded-md px-3 py-2 text-sm"
+                    style={{
+                      background: 'var(--cc-surface)',
+                      border: '1px solid var(--cc-line)',
+                      color: 'var(--cc-ink)',
+                    }}
+                  />
+                )}
+                <select
+                  aria-label="Retention unit"
+                  value={form.retentionTermUnit}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      retentionTermUnit: e.target.value as RetentionTermUnit,
+                    }))
+                  }
+                  className="rounded-md px-3 py-2 text-sm"
+                  style={{
+                    background: 'var(--cc-surface)',
+                    border: '1px solid var(--cc-line)',
+                    color: 'var(--cc-ink)',
+                  }}
+                >
+                  {RETENTION_TERM_UNIT_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div
+                className="rounded-md p-2 text-[11px]"
+                style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
+              >
+                {form.retentionTermUnit === 'forever' ? (
+                  <>Held indefinitely; never flagged for disposition review.</>
+                ) : (
+                  <>
+                    Deletion is never automatic. When this term's deadline passes, the
+                    asset is flagged into the records-clerk disposition review queue --
+                    it stays in place until a clerk acts.
+                  </>
+                )}
+                {asset.retention_anchor_at ? (
+                  <>
+                    {' '}
+                    Counted from this recording's first publication:{' '}
+                    {fmtDate(asset.retention_anchor_at)}.
+                  </>
+                ) : (
+                  <>
+                    {' '}
+                    This recording has never been published -- saving will anchor the
+                    term to the moment you save, not to a future publish date.
+                  </>
+                )}
+              </div>
+              {asset.retention_until && asset.retention_term_unit && (
+                <div className="cc-mono text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
+                  Current computed deadline: {fmtDate(asset.retention_until)}
+                </div>
+              )}
+              {!(asset.retention_term_unit != null) && (
+                <button
+                  type="button"
+                  onClick={() => setForm((f) => ({ ...f, retentionMode: 'legacy' }))}
+                  className="self-start rounded-md px-3 py-1.5 text-xs font-medium"
+                  style={{ border: '1px solid var(--cc-line)', color: 'var(--cc-ink-2)' }}
+                >
+                  Cancel conversion
+                </button>
+              )}
+            </fieldset>
+          )}
 
           {submitError && (
             <div
