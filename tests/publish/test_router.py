@@ -155,6 +155,11 @@ def test_preflight_reports_portal_archive_nas_and_youtube_readiness(
     # read as broken (not "error") and must never gate `ready` (not required).
     assert checks["podcast"]["health"] == "unknown"
     assert checks["podcast"]["required"] is False
+    # Subscriber notifications: real sends are deferred to a future release
+    # (owner decision 2026-09-02) -- always "unknown", never gates `ready`.
+    assert checks["subscriber-notifications"]["health"] == "unknown"
+    assert checks["subscriber-notifications"]["required"] is False
+    assert "coming in a future release" in checks["subscriber-notifications"]["message"].lower()
 
 
 def test_preflight_and_approve_agree_when_a_selected_real_provider_is_misconfigured(
@@ -240,7 +245,13 @@ def test_approve_and_publish_runs_all_mock_surfaces(client: TestClient) -> None:
     assert surfaces["youtube-live"]["url"].startswith("rtmps://youtube.example/live/")
     assert surfaces["youtube-vod"]["url"].startswith("https://youtube.example/watch")
     assert surfaces["podcast"]["url"] == "https://portal.example/podcast/government.xml"
-    assert surfaces["subscriber-notifications"]["state"] == "succeeded"
+    # Owner decision 2026-09-02: real subscriber notification sends are
+    # deferred to a future release. This surface must never claim "succeeded"
+    # -- civiccast.publish.service no longer builds or dispatches any
+    # notification payload for it.
+    assert surfaces["subscriber-notifications"]["state"] == "coming_soon"
+    assert surfaces["subscriber-notifications"]["health"] == "unknown"
+    assert "coming in a future release" in surfaces["subscriber-notifications"]["message"].lower()
     assert surfaces["internet-archive"]["verification_hash"].startswith("sha256:")
 
 

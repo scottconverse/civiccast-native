@@ -49,9 +49,22 @@ const FILTERS: ReadonlyArray<{
 // already reports podcast preflight as health="unknown"; this keeps the
 // dashboard's own listing from disagreeing with that by defaulting to a
 // selectable "pending" checkbox).
-const FUTURE_SURFACE_IDS: ReadonlySet<string> = new Set(['podcast'])
+//
+// Subscriber notifications joined this set by a second owner decision, also
+// 2026-09-02: real mail/webhook sends on publish are deferred to a future
+// release (implementation parked on feat/publish-real-subscriber-delivery).
+// civiccast/publish/service.py's approve_publish never sends anything for
+// this surface and always reports state="coming_soon" -- this mirrors that
+// on the dashboard so the row can never show a green "succeeded" state for
+// a notification that was never sent.
+const FUTURE_SURFACE_IDS: ReadonlySet<string> = new Set([
+  'podcast',
+  'subscriber-notifications',
+])
 const FUTURE_SURFACE_MESSAGE: Readonly<Record<string, string>> = {
   podcast: 'Podcast is not available yet; it is coming in a future release.',
+  'subscriber-notifications':
+    'Subscriber notifications are coming in a future release. No emails or webhooks are sent yet.',
 }
 
 const STATE_TONE: Record<PublishDashboardState, { bg: string; fg: string }> = {

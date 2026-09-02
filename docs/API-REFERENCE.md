@@ -7845,7 +7845,7 @@ rule (S13 §5.1).
 - `required` (optional): `boolean`
 - `retry_count` (optional): `number`
 - `simulated` (optional): `boolean`
-- `state` (required): `'blocked' | 'not_configured' | 'pending' | 'running' | 'succeeded' | 'failed' | 'overridden'`
+- `state` (required): `'blocked' | 'not_configured' | 'coming_soon' | 'pending' | 'running' | 'succeeded' | 'failed' | 'overridden'`
 - `url` (optional): `string | null`
 - `verification_hash` (optional): `string | null`
 

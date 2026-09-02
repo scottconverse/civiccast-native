@@ -157,6 +157,72 @@ function podcastDashboard(
   }
 }
 
+// Owner decision 2026-09-02 (companion to the podcast future card above):
+// an asset with a real approvable Portal surface plus the
+// subscriber-notifications future surface, so the same neutral-card /
+// no-checkbox / never-red / excluded-from-approval behavior can be tested
+// for the surface civiccast/publish/service.py's approve_publish now marks
+// state="coming_soon" instead of the old fabricated "succeeded".
+function subscriberNotificationsDashboard(
+  overrides: { state?: PublishSurfaceState; health?: 'ok' | 'warning' | 'error' | 'unknown' } = {},
+): PublishDashboardResponse {
+  return {
+    summary: {
+      total_assets: 1,
+      draft: 1,
+      portal_live: 0,
+      archive_verified: 0,
+      degraded: 0,
+      needs_operator_action: 0,
+    },
+    assets: [
+      {
+        asset_id: 'sample-asset',
+        title: 'Sample asset',
+        dashboard_state: 'draft',
+        dashboard_label: 'Draft',
+        canonical_public: false,
+        archive_verified: false,
+        reach_degraded: false,
+        needs_operator_action: false,
+        public_record_required: true,
+        published_at: null,
+        surfaces: [
+          {
+            id: 'portal',
+            label: 'Portal',
+            kind: 'canonical',
+            state: 'pending',
+            approval: 'pending',
+            required: true,
+            url: null,
+            last_attempt_at: null,
+            completed_at: null,
+            health: 'unknown',
+            message: 'Ready.',
+            next_step: 'Approve publish.',
+          },
+          {
+            id: 'subscriber-notifications',
+            label: 'Subscriber notifications',
+            kind: 'audience',
+            state: overrides.state ?? 'pending',
+            approval: 'pending',
+            required: false,
+            url: null,
+            last_attempt_at: null,
+            completed_at: null,
+            health: overrides.health ?? 'unknown',
+            message:
+              'Subscriber notifications are coming in a future release. No emails or webhooks are sent yet.',
+            next_step: 'No action needed. This surface is not selectable for real delivery yet.',
+          },
+        ],
+      },
+    ],
+  }
+}
+
 function preflight(
   checks: PublishPreflightResponse['checks'],
   assetId = 'sample-asset',
@@ -499,6 +565,71 @@ describe('PublishDashboardScreen podcast future-release card (WP-11 item 4)', ()
 
   it('excludes podcast from the pre-checked/submittable surface set so approval can never report a fake podcast success', async () => {
     vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    vi.mocked(approvePublishAsset).mockResolvedValue({} as never)
+    const { findByRole } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
+
+    await waitFor(() =>
+      expect(approvePublishAsset).toHaveBeenCalledWith(
+        'sample-asset',
+        expect.objectContaining({ approved_surface_ids: ['portal'] }),
+      ),
+    )
+  })
+})
+
+// Owner decision 2026-09-02: real subscriber notification sends (mail/
+// webhook fan-out on publish) are deferred to a future release. Modeled
+// exactly on the podcast future-release card above -- this surface must
+// never render as a green "succeeded" checkbox an operator could select and
+// submit, since civiccast/publish/service.py's approve_publish no longer
+// sends anything for it (it used to build a NotificationPayload nobody ever
+// dispatched and still mark the row "succeeded").
+describe('PublishDashboardScreen subscriber-notifications future-release card', () => {
+  it('shows the subscriber-notifications surface as a neutral future-release card with the honest message', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(subscriberNotificationsDashboard())
+    const { findByText } = renderScreen()
+
+    expect(await findByText('Coming in a future release')).toBeTruthy()
+    expect(
+      await findByText(
+        'Subscriber notifications are coming in a future release. No emails or webhooks are sent yet.',
+      ),
+    ).toBeTruthy()
+  })
+
+  it('never renders an "Approve this surface" checkbox for subscriber notifications', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(subscriberNotificationsDashboard())
+    const { findByText, queryAllByLabelText } = renderScreen()
+
+    await findByText('Subscriber notifications')
+    // Only the Portal surface's checkbox should exist -- subscriber
+    // notifications never gets one, so approving the asset can never
+    // silently include it.
+    expect(queryAllByLabelText(/Approve this surface/i)).toHaveLength(1)
+  })
+
+  it('never renders subscriber notifications as succeeded/green, even if a future backend change reports it that way', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(
+      subscriberNotificationsDashboard({ state: 'succeeded', health: 'ok' }),
+    )
+    const { findByText, queryByText } = renderScreen()
+
+    // Still the neutral future-release framing, never the state pinned by
+    // the old bug this replaces.
+    expect(await findByText('Coming in a future release')).toBeTruthy()
+    expect(
+      await findByText(
+        'Subscriber notifications are coming in a future release. No emails or webhooks are sent yet.',
+      ),
+    ).toBeTruthy()
+    expect(queryByText('Retry this surface')).toBeNull()
+  })
+
+  it('excludes subscriber notifications from the pre-checked/submittable surface set so approval can never report a fake send', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(subscriberNotificationsDashboard())
     vi.mocked(approvePublishAsset).mockResolvedValue({} as never)
     const { findByRole } = renderScreen()
 

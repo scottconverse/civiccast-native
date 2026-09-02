@@ -52199,6 +52199,7 @@
             "enum": [
               "blocked",
               "not_configured",
+              "coming_soon",
               "pending",
               "running",
               "succeeded",

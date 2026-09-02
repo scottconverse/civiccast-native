@@ -103,6 +103,43 @@ installer asset and is not a public or production release.
 
 ### Changed
 
+- **Subscriber notifications now honestly report "coming in a future
+  release" instead of a fabricated green "succeeded" (owner decision
+  2026-09-02).** Real subscriber notification sends (mail/webhook fan-out on
+  publish) are deferred to a future release — the implementation is parked
+  on `feat/publish-real-subscriber-delivery`, not merged. Until now,
+  `civiccast/publish/service.py`'s `approve_publish` built a
+  `NotificationPayload` for the "subscriber-notifications" surface,
+  never dispatched it, and still marked the surface `state="succeeded"` —
+  an operator approving publish saw a green "sent" state for a notification
+  that was never delivered. It could also block an otherwise-ready publish
+  with a 409 if a real mail/webhook provider was misconfigured, even though
+  nothing was ever going to send. The surface now always reports a new
+  `state="coming_soon"` (`health="unknown"`) with the plain-language message
+  "Subscriber notifications are coming in a future release. No emails or
+  webhooks are sent yet.", is excluded from approval's provider-readiness
+  precheck so it can never block publish, and sends nothing. The operator
+  Publish dashboard (`apps/portal-operator/src/screens/PublishDashboardScreen.tsx`)
+  shows it as the same neutral "Coming in a future release" card already
+  used for the podcast surface (WP-11 item 4) — no checkbox, no red error,
+  never selectable or approvable. `civiccast.publish.readiness`'s real
+  per-provider subscriber-channel check is unchanged and still directly unit
+  tested (`tests/publish/test_provider_readiness.py`); service.py simply no
+  longer routes through it for this surface while the send is parked.
+  New/updated coverage: `tests/publish/test_provider_readiness.py`,
+  `tests/publish/test_router.py`, `tests/publish/test_soak.py`,
+  `civiccast/apps/portal-operator/src/screens/PublishDashboardScreen.test.tsx`.
+
+- **The public subscription RSS feed no longer invents a fake recording.**
+  `civiccast/subscribe/router.py`'s `GET /api/public/subscribe/rss/{target_type}/{target_id}.xml`
+  used to serve a single hardcoded `<item>` — title "Example CivicCast
+  recording", link `https://portal.example/watch/{target_id}` — on every
+  request, indistinguishable from a real published recording to any reader
+  or aggregator. There is no published-recording resolver wired to this
+  route yet, so it now returns an honest, valid, empty RSS 2.0 feed (zero
+  `<item>` elements) instead of a fabricated one. New coverage:
+  `tests/subscribe/test_subscribe_router.py`.
+
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
   central autouse fixture (`tests/conftest.py`, helpers in
   `tests/support/hermetic_state.py`) now points every state, lock, upload,
