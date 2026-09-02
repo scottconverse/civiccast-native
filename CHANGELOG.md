@@ -42,6 +42,19 @@ installer asset and is not a public or production release.
   scheduled swap, and does not hot-change an already-live pipeline. Pinned
   by a new focused test in `ChannelOpsScreen.test.tsx`.
 
+- **WP-11 item 3 — CivicSuite/CivicClerk bridge truth card.** `AgendasScreen`
+  now shows a disabled "CivicSuite event bridge — coming in a future
+  release" card beside the existing agenda-import configuration
+  (`ExternalImportSection`), with no executable configuration fields. The
+  card states the real distinction: CivicCast's manual/public CivicClerk
+  agenda importer (also Legistar, PrimeGov, and a generic portal crawler)
+  already works today and is unchanged; the CivicSuite event bridge is a
+  separate, not-yet-built authenticated integration that would receive a
+  jurisdiction's meeting lifecycle events automatically and send published
+  recording links back to CivicClerk. A new regression suite in
+  `AgendasScreen.test.tsx` asserts the working importer and the future
+  bridge are never conflated.
+
 ### Changed
 
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
