@@ -25,15 +25,32 @@ that a package is safe.
 
 ## Approved Installation Sources
 
-Technical testers should use only:
+**There is no approved macOS install source in this beta.** The beta line
+ships no macOS installer or package. The only supported install today is the
+native Windows station: `v1.0.0-beta.1` is the current release
+(USB-delivered), distributed from
+`https://github.com/scottconverse/civiccast-native` -- see
+[INSTALL-WINDOWS.md](../../INSTALL-WINDOWS.md) and
+[Windows Release Trust And Verification](windows-release-trust.md).
 
-- the official repository at `https://github.com/scottconverse/civiccast`; or
-- artifacts attached to the official GitHub Release, when a release explicitly
-  includes macOS evidence.
+Technical users can still evaluate CivicCast from source on macOS (see
+Support Level above), but there is no packaged artifact to fetch and no
+release to verify against.
 
 Do not install CivicCast from third-party mirrors, repackaged binaries,
 unsolicited downloads, files sent through chat or email, or packages whose name
-does not match the official release.
+does not match an official CivicCast release.
+
+<details>
+<summary>Historical: retired WSL2-line macOS reference (repository not present here)</summary>
+
+An earlier revision of this page pointed testers at
+`https://github.com/scottconverse/civiccast` as an approved source. That
+repository was the retired, separate WSL2-line product -- it is now private
+and not part of this repository's product line; its GitHub page does not
+resolve from here. It never shipped an approved macOS package either.
+
+</details>
 
 ## Evidence Required Before Supported macOS Claims
 
