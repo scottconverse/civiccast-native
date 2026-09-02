@@ -87,6 +87,30 @@ def test_rss_endpoint_returns_xml(client: TestClient) -> None:
     assert '<rss version="2.0">' in response.text
 
 
+def test_rss_endpoint_serves_an_honest_empty_feed_with_no_invented_items(
+    client: TestClient,
+) -> None:
+    """This route used to serve a single fabricated "Example CivicCast
+    recording" <item> with a https://portal.example/watch/... link on every
+    request -- indistinguishable from a real published recording to any
+    reader or aggregator. There is no published-recording resolver wired to
+    this route yet, so it must serve an honest, valid, empty feed instead of
+    inventing one."""
+    response = client.get("/api/public/subscribe/rss/channel/government.xml")
+
+    assert response.status_code == 200
+    # No fabricated <item> at all -- and specifically none carrying the old
+    # invented watch link or title.
+    assert "<item>" not in response.text
+    assert "/watch/government" not in response.text
+    assert "Example CivicCast recording" not in response.text
+    # Still a valid, well-formed RSS 2.0 document with zero items.
+    assert "<channel>" in response.text
+    assert "<title>" in response.text
+    assert "<link>" in response.text
+    assert "<description>" in response.text
+
+
 def test_staff_dispatch_sends_confirmed_subscriber(client: TestClient) -> None:
     signup = client.post(
         "/api/public/subscribe/email",

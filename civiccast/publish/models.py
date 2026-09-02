@@ -25,6 +25,12 @@ PublishSurfaceKindValue = Literal["canonical", "archive", "reach", "record", "au
 PublishSurfaceStateValue = Literal[
     "blocked",
     "not_configured",
+    # Owner decision 2026-09-02: a surface whose real delivery is deferred to
+    # a future release (see civiccast.publish.service's subscriber-notifications
+    # handling). Distinct from "not_configured" (an operator COULD set this up
+    # today) -- there is nothing to configure yet, and approval never sends
+    # anything for a surface in this state.
+    "coming_soon",
     "pending",
     "running",
     "succeeded",

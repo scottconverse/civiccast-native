@@ -13,6 +13,7 @@ export type PublishSurfaceKind = 'canonical' | 'archive' | 'reach' | 'record' | 
 export type PublishSurfaceState =
   | 'blocked'
   | 'not_configured'
+  | 'coming_soon'
   | 'pending'
   | 'running'
   | 'succeeded'

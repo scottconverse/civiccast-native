@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
 from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -15,7 +14,6 @@ from civiccast.platform.stores import resolve_app_store
 from civiccast.subscribe.models import (
     NotificationDispatchResponse,
     NotificationPayload,
-    RssItem,
     SubscriptionConfirmResponse,
     SubscriptionPublicResponse,
     SubscriptionSignupRequest,
@@ -152,19 +150,15 @@ def rss_feed(target_type: str, target_id: str) -> Response:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="RSS feed not found. Use channel or meeting_body feed paths.",
         )
-    xml = subscription_rss(
-        target_type,
-        target_id,
-        [
-            RssItem(
-                title="Example CivicCast recording",
-                link=f"https://portal.example/watch/{target_id}",
-                guid=f"civiccast:{target_type}:{target_id}:example",
-                published_at=datetime.now(UTC),
-                description="Subscribe with this RSS feed to receive public recording notices.",
-            )
-        ],
-    )
+    # There is no published-recording resolver wired to this route yet (that
+    # would mean joining subscribe targets against civiccast.publish's real
+    # per-asset records, out of scope for this fix) -- serving a single
+    # invented "Example CivicCast recording" item with a fake
+    # https://portal.example link on every request looked like a real
+    # published item to any reader/aggregator, which it never was. Until a
+    # real resolver exists, this is an honest, valid, empty feed rather than
+    # a fabricated one.
+    xml = subscription_rss(target_type, target_id, [])
     return Response(content=xml, media_type="application/rss+xml")
 
 
