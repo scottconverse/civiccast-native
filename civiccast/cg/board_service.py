@@ -455,6 +455,20 @@ class CgBoardService:
             item.model_copy(update={"approved": item.item_id in approved_ids}) for item in items
         ]
 
+    def upcoming(self, channel_id: str) -> list[tuple[datetime, str]]:
+        """Return the channel's next program-log occurrences (starts_at, title)
+        from the same real program-log data the "coming up next" preview zone
+        (DC-CG4) and the operator Schedule / Program Guide screens read
+        (``upcoming_reader``, wired to ``PostgresProgramLogStore`` in
+        production -- see ``civiccast.app._cg_upcoming_reader``). WP-06
+        non-negotiable follow-up: the public snapshot's schedule zone must
+        source real occurrences here, never invented events. Empty when no
+        reader is wired (e.g. ephemeral/no-DB mode)."""
+
+        if self._upcoming_reader is None:
+            return []
+        return self._upcoming_reader(channel_id, self._clock())
+
     def feed_catalog(
         self, channel_id: str, *, fetch: FeedFetch = default_http_fetch
     ) -> CgFeedCatalog:

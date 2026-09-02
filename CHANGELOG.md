@@ -190,6 +190,37 @@ installer asset and is not a public or production release.
   (via its own `.routes`, not a hand-maintained list) and asserts none of
   the seven historical sample strings appear on any of them, so a future
   endpoint can't reintroduce this defect unnoticed.
+- **WP-06 non-negotiable, closed for real this time: EVERY snapshot zone
+  (not just ticker) is now durable-data-or-honest-empty, on `/snapshot` and
+  `/display` alike.** PR #132 review caught that
+  `build_multi_zone_snapshot()`'s "coming up next" schedule zone still
+  returned an invented `"18:00 City Council"` / `"20:00 Planning Board"`
+  occurrence, `approved: true`, ungated, on every production response --
+  the earlier fix only ever touched the ticker zone. All six zone kinds are
+  now resolved from a real source or an honest label naming why: `ticker` /
+  `schedule` from the durable feed catalog, approved bulletin queue, and (a
+  new `CgBoardService.upcoming()` method) the SAME real program-log
+  occurrences the operator Schedule and Program Guide screens read;
+  `primary` from genuine, non-invented platform copy (the same text
+  `/idle` already returns); `logo` from the channel's real branding profile
+  (`civiccast.cable.channel.get_channel_profile()`, the same source the
+  audited board-preview render path already uses); `audio` as an honest
+  disabled-future-control state (WP-06 plan item 5) instead of a fake
+  active `"community-calendar-bed"` track; `alert` from the real EAS
+  overlay provider when wired and active, else honestly inactive. Only
+  `ticker` and `schedule` carry a demo sample, and only under
+  `CIVICCAST_CG_DEMO_FEEDS=1`; the other four zones are never demo-gated
+  because they were never sample data standing in for real configuration.
+  The production-app-factory sweep is hardened past a literal-string list
+  (which had already missed "City Council"/"Planning Board" once): it now
+  asserts every zone's `source` on every enumerated public route is one of
+  a fixed set of durable/honest values, so a brand-new invented string a
+  future change might introduce is caught by provenance, not by someone
+  remembering to add it to a list -- proven by a mutation that dropped the
+  `audio` zone's handling and confirmed the provenance test fails on the
+  reintroduced sample content while the literal-string sweep (with the
+  string removed from its list, to simulate a "never seen before" fake)
+  passes it through undetected.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

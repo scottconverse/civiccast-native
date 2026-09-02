@@ -14,6 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from civiccast.auth.roles import require_any_role
+from civiccast.cable.channel import get_channel_profile
+from civiccast.cg.board_resolver import coming_up_next
 from civiccast.cg.models import (
     CgBulletinQueue,
     CgBulletinSubmission,
@@ -80,6 +82,17 @@ def _cg_demo_feeds_enabled() -> bool:
     return os.environ.get("CIVICCAST_CG_DEMO_FEEDS") == "1"
 
 
+# DI seam (overridden by the app factory): the EAS service's active-overlay resolver.
+# When wired and a channel_id is given, the public overlay reflects a REAL ingested
+# public-safety alert being displayed on that channel (S11c) — rendered as generic
+# emergency information, never labeled "EAS". None = the deterministic placeholder.
+EmergencyOverlayProvider = Callable[[str], EmergencyOverlay | None]
+
+
+def get_eas_overlay_provider() -> EmergencyOverlayProvider | None:
+    return None
+
+
 def _empty_feed_catalog(channel_id: str) -> CgFeedCatalog:
     return CgFeedCatalog(
         generated_at=datetime.now(UTC).replace(microsecond=0),
@@ -121,6 +134,108 @@ def _durable_ticker_zone(zone: CgZone, feeds: CgFeedCatalog, bulletins: CgBullet
     if not items:
         content["empty"] = True
     return zone.model_copy(update={"source": "durable-station-config", "content": content})
+
+
+def _durable_schedule_zone(
+    zone: CgZone, upcoming: list[tuple[datetime, str]], *, now: datetime
+) -> CgZone:
+    """Build the "coming up next" schedule zone from the station's real
+    program-log occurrences (``CgBoardService.upcoming()`` -- the same
+    program-log data the operator Schedule and Program Guide screens read),
+    instead of the hard-coded "18:00 City Council" / "20:00 Planning Board"
+    sample. Empty, actionable when the station has nothing scheduled next."""
+
+    items = coming_up_next(upcoming, now=now)
+    content: dict[str, object] = {"items": items}
+    if not items:
+        content["empty"] = True
+    return zone.model_copy(update={"source": "durable-station-config", "content": content})
+
+
+def _honest_primary_zone(zone: CgZone) -> CgZone:
+    """The primary zone is generic between-streams platform copy, not a
+    per-station configuration value -- no CG board/feed/bulletin store owns
+    "primary zone content" as a concept. Reuses the SAME already-approved
+    copy the /idle endpoint returns (never a fabricated headline/body), and
+    is never demo-gated: it isn't sample data standing in for real
+    configuration, it's genuine product messaging."""
+
+    idle = build_idle_page()
+    return zone.model_copy(
+        update={
+            "source": "platform-copy",
+            "content": {"headline": idle.title, "body": idle.message},
+        }
+    )
+
+
+def _durable_logo_zone(zone: CgZone, channel_id: str) -> CgZone:
+    """Source the logo zone from the channel's real branding profile --
+    the SAME civiccast.cable.channel.get_channel_profile() lookup the
+    audited board-preview render path (board_router._preview_branding)
+    already uses as this codebase's one channel-identity source. This is
+    not new invented content: it is the identity the real on-air preview
+    already shows, not a separate fabricated "PUBLIC" label."""
+
+    profile = get_channel_profile(channel_id)
+    if profile is None:
+        return zone.model_copy(
+            update={
+                "source": "channel-profile-not-found",
+                "content": {"logo_text": "", "color": ""},
+            }
+        )
+    return zone.model_copy(
+        update={
+            "source": "channel-branding-profile",
+            "content": {
+                "logo_text": profile.branding.logo_text,
+                "color": profile.branding.color,
+            },
+        }
+    )
+
+
+def _honest_audio_zone(zone: CgZone) -> CgZone:
+    """Board background audio remains a disabled future control (WP-06 plan
+    item 5) -- this zone must never claim an active sample track is
+    playing."""
+
+    return zone.model_copy(
+        update={
+            "source": "future-release-disabled",
+            "content": {"track": None, "duck_under_alerts": False, "disabled": True},
+        }
+    )
+
+
+def _resolve_alert_zone(
+    zone: CgZone, channel_id: str, provider: EmergencyOverlayProvider | None
+) -> CgZone:
+    """Mirror the real /emergency-overlay endpoint's provider contract: a
+    real active public-safety alert when EAS is wired and one is showing on
+    this channel, otherwise honestly inactive -- never a fabricated alert."""
+
+    overlay = provider(channel_id) if provider is not None else None
+    if overlay is not None:
+        return zone.model_copy(
+            update={
+                "source": "eas-overlay",
+                "content": {
+                    "active": True,
+                    "aria_live": "assertive",
+                    "severity": overlay.severity,
+                    "title": overlay.title,
+                    "message": overlay.message,
+                },
+            }
+        )
+    return zone.model_copy(
+        update={
+            "source": "no-active-alert",
+            "content": {"active": False, "aria_live": "assertive"},
+        }
+    )
 
 
 class BulletinCreate(BaseModel):
@@ -237,17 +352,62 @@ def _resolve_durable_snapshot(
     template_id: str | None,
     feeds: CgFeedCatalog,
     bulletins: CgBulletinQueue,
+    *,
+    service: Any,
+    eas_provider: EmergencyOverlayProvider | None,
 ) -> MultiZoneCgSnapshot:
-    """Build the multi-zone snapshot with its ticker zone rebuilt from the
-    already-resolved feed catalog + approved bulletin queue, instead of the
-    static sample ticker content, so /snapshot and the display.snapshot field
-    never disagree and neither ever shows invented content by default."""
+    """Build the multi-zone snapshot with EVERY zone sourced from durable
+    station data or honestly marked otherwise (WP-06 non-negotiable: no
+    shipping production path exposes invented content) --
+    ``build_multi_zone_snapshot()`` only supplies the template's zone
+    *layout* (kinds/regions/order, which are configuration choices, not
+    invented facts); this function replaces every zone's content:
+
+    * ``ticker`` / ``schedule``: the already-resolved durable feed catalog +
+      approved bulletin queue, and the station's real program-log
+      occurrences (``CgBoardService.upcoming()``) -- empty when nothing is
+      configured, or (only under CIVICCAST_CG_DEMO_FEEDS=1, and only when no
+      durable service is wired) the historical sample.
+    * ``primary``: genuine platform copy (the same text ``/idle`` returns),
+      never demo-gated -- it isn't a stand-in for real configuration.
+    * ``logo``: the channel's real branding profile.
+    * ``audio``: an honest disabled-future-control state (WP-06 plan item 5).
+    * ``alert``: the real EAS overlay when wired and active, else honestly
+      inactive.
+
+    So /snapshot and the display.snapshot field never disagree and neither
+    ever shows invented content by default.
+    """
 
     base = build_multi_zone_snapshot(channel_id=channel_id, template_id=template_id)
-    zones = [
-        _durable_ticker_zone(zone, feeds, bulletins) if zone.kind == "ticker" else zone
-        for zone in base.zones
-    ]
+    now = datetime.now(UTC)
+
+    upcoming: list[tuple[datetime, str]] | None
+    if service is not None:
+        upcoming = cast("list[tuple[datetime, str]]", service.upcoming(channel_id))
+    elif _cg_demo_feeds_enabled():
+        upcoming = None  # sentinel: keep the template's static demo sample below
+    else:
+        upcoming = []
+
+    zones: list[CgZone] = []
+    for zone in base.zones:
+        if zone.kind == "ticker":
+            zones.append(_durable_ticker_zone(zone, feeds, bulletins))
+        elif zone.kind == "schedule":
+            zones.append(
+                zone if upcoming is None else _durable_schedule_zone(zone, upcoming, now=now)
+            )
+        elif zone.kind == "primary":
+            zones.append(_honest_primary_zone(zone))
+        elif zone.kind == "logo":
+            zones.append(_durable_logo_zone(zone, channel_id))
+        elif zone.kind == "audio":
+            zones.append(_honest_audio_zone(zone))
+        elif zone.kind == "alert":
+            zones.append(_resolve_alert_zone(zone, channel_id, eas_provider))
+        else:
+            zones.append(zone)
     return base.model_copy(update={"zones": zones})
 
 
@@ -278,17 +438,6 @@ def _zone_items(submissions: list[CgBulletinSubmission]) -> list[CgZone]:
 )
 def idle_page(channel_id: str = "public") -> IdlePage:
     return build_idle_page(channel_id=channel_id)
-
-
-# DI seam (overridden by the app factory): the EAS service's active-overlay resolver.
-# When wired and a channel_id is given, the public overlay reflects a REAL ingested
-# public-safety alert being displayed on that channel (S11c) — rendered as generic
-# emergency information, never labeled "EAS". None = the deterministic placeholder.
-EmergencyOverlayProvider = Callable[[str], EmergencyOverlay | None]
-
-
-def get_eas_overlay_provider() -> EmergencyOverlayProvider | None:
-    return None
 
 
 @public_router.get(
@@ -326,15 +475,18 @@ def multi_zone_snapshot(
     template_id: str | None = None,
     service: Any = Depends(get_cg_board_service),
     bulletin_store: Any = Depends(get_cg_bulletin_store),
+    eas_provider: EmergencyOverlayProvider | None = Depends(get_eas_overlay_provider),
 ) -> MultiZoneCgSnapshot:
     # WP-06 non-negotiable follow-up: this standalone endpoint used to call
     # build_multi_zone_snapshot() directly, which always carried the static
-    # sample ticker strings regardless of station configuration. Its ticker
-    # zone is now resolved the same way the /display endpoint's embedded
-    # snapshot is, so the two never disagree.
+    # sample ticker/schedule/logo/audio content regardless of station
+    # configuration. Every zone is now resolved the same way the /display
+    # endpoint's embedded snapshot is, so the two never disagree.
     feeds = _resolve_feed_catalog(service, channel_id)
     bulletins = _resolve_public_approved_bulletins(bulletin_store, channel_id)
-    return _resolve_durable_snapshot(channel_id, template_id, feeds, bulletins)
+    return _resolve_durable_snapshot(
+        channel_id, template_id, feeds, bulletins, service=service, eas_provider=eas_provider
+    )
 
 
 @public_router.get(
@@ -525,13 +677,13 @@ def portal_display(
     template_id: str | None = None,
     service: Any = Depends(get_cg_board_service),
     bulletin_store: Any = Depends(get_cg_bulletin_store),
+    eas_provider: EmergencyOverlayProvider | None = Depends(get_eas_overlay_provider),
 ) -> CgPortalDisplay:
-    # WP-06 + follow-up: feed_catalog, approved_bulletins, and the snapshot's
-    # ticker zone are the parts of this contract this work touches -- each is
-    # assembled the same way its standalone endpoint above is (/feeds,
-    # /bulletins), so they never disagree. The template library, render plan,
-    # and overlay contract are unchanged (out of scope; no example.invalid /
-    # sample content lives there).
+    # WP-06 + follow-ups: feed_catalog, approved_bulletins, and every zone of
+    # the snapshot are resolved the same way their standalone endpoints above
+    # are (/feeds, /bulletins, /snapshot), so they never disagree. The
+    # template library, render plan, and overlay contract are unchanged (out
+    # of scope; no example.invalid / sample content lives there).
     display = build_portal_display(channel_id=channel_id, template_id=template_id)
 
     # Every field this work touches is resolved through the SAME shared
@@ -539,7 +691,9 @@ def portal_display(
     # above, so this contract can never drift from them.
     feeds = _resolve_feed_catalog(service, channel_id)
     bulletins = _resolve_public_approved_bulletins(bulletin_store, channel_id)
-    snapshot = _resolve_durable_snapshot(channel_id, template_id, feeds, bulletins)
+    snapshot = _resolve_durable_snapshot(
+        channel_id, template_id, feeds, bulletins, service=service, eas_provider=eas_provider
+    )
 
     return display.model_copy(
         update={"feed_catalog": feeds, "approved_bulletins": bulletins, "snapshot": snapshot}

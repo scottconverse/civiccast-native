@@ -332,6 +332,35 @@ def test_preview_renders_coming_up_interstitial(svc: tuple[CgBoardService, CgBoa
     assert [i["title"] for i in sched.content["items"]] == ["City Council"]
 
 
+# ---------------------------------------------------------------------------
+# upcoming() (WP-06 non-negotiable follow-up: the public snapshot's schedule
+# zone must read the same real program-log data these tests prove, never
+# invented events)
+# ---------------------------------------------------------------------------
+
+
+def test_upcoming_returns_empty_without_a_reader(svc: tuple[CgBoardService, CgBoardStore]) -> None:
+    service, _ = svc
+    assert service.upcoming("public") == []
+
+
+def test_upcoming_reads_the_wired_reader(svc: tuple[CgBoardService, CgBoardStore]) -> None:
+    _, store = svc
+    calls: list[tuple[str, datetime]] = []
+
+    def reader(channel_id: str, now: datetime) -> list[tuple[datetime, str]]:
+        calls.append((channel_id, now))
+        return [
+            (now + timedelta(hours=1), "City Council"),
+            (now + timedelta(hours=3), "Planning Board"),
+        ]
+
+    service = CgBoardService(store, clock=lambda: _NOW, upcoming_reader=reader)
+    result = service.upcoming("public")
+    assert [title for _, title in result] == ["City Council", "Planning Board"]
+    assert calls == [("public", _NOW)]
+
+
 def test_audit_lists_newest_first(svc: tuple[CgBoardService, CgBoardStore]) -> None:
     service, _ = svc
     service.create_board("public", template_id="standard-community-board", operator_id="op_a")
