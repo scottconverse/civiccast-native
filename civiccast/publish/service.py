@@ -25,7 +25,6 @@ from civiccast.platform.providers import (
 )
 from civiccast.podcast.models import PodcastEpisodeCreate
 from civiccast.podcast.service import create_podcast_episode
-from civiccast.publish.credentials import CredentialProvider, DeterministicCredentialProvider
 from civiccast.publish.models import (
     PublishApprovalRequest,
     PublishAssetStatus,
@@ -40,11 +39,42 @@ from civiccast.publish.models import (
     PublishSurfaceKindValue,
     PublishSurfaceStatus,
 )
+from civiccast.publish.readiness import (
+    FUTURE_SURFACE_IDS,
+    SUBSCRIBER_TARGET_ID,
+    SUBSCRIBER_TARGET_TYPE,
+    SurfaceReadiness,
+    describe_surface_readiness,
+)
 from civiccast.publish.store import PublishStore
 from civiccast.schedule.models import StaffAssetRow
 from civiccast.subscribe.models import NotificationPayload
+from civiccast.subscribe.store import SubscribeStore
 
 PUBLIC_RECORD_POLICIES = {"meeting", "permanent"}
+
+_PODCAST_NOT_YET_AVAILABLE = SurfaceReadiness(
+    healthy=False,
+    reference="not-yet-available",
+    message="Podcast is not available yet; it is coming in a future release.",
+    next_step="No action needed. This surface is not selectable for real delivery yet.",
+)
+
+
+class PublishConfigurationError(RuntimeError):
+    """One or more operator-selected surfaces have invalid provider config.
+
+    Raised by :func:`approve_publish` BEFORE any surface is executed (WP-03
+    plan item 5: a controlled 409, not a mid-approval crash or partial
+    publish). ``surfaces`` maps surface id to the readiness verdict that
+    blocked it, so the router can build an actionable detail message without
+    re-deriving it.
+    """
+
+    def __init__(self, surfaces: dict[str, SurfaceReadiness]) -> None:
+        self.surfaces = surfaces
+        detail = "; ".join(f"{sid}: {r.message}" for sid, r in sorted(surfaces.items()))
+        super().__init__(f"Publish preflight blocked: {detail}")
 
 
 def _is_public_record(asset: StaffAssetRow) -> bool:
@@ -234,12 +264,47 @@ def build_initial_surfaces(asset: StaffAssetRow) -> list[PublishSurfaceStatus]:
     ]
 
 
+def _surface_readiness(
+    surface: PublishSurfaceStatus,
+    *,
+    registry: ProviderRegistry,
+    subscribe_store: SubscribeStore | None,
+) -> SurfaceReadiness | None:
+    """Real readiness for one surface, or ``None`` for a non-provider surface.
+
+    The single readiness source shared by :func:`build_publish_preflight` and
+    :func:`approve_publish` (WP-03 plan item 8: preflight and approval read
+    the same current registry configuration so they cannot disagree).
+    """
+
+    if surface.id in FUTURE_SURFACE_IDS:
+        return _PODCAST_NOT_YET_AVAILABLE
+    return describe_surface_readiness(
+        surface.id,
+        label=surface.label,
+        registry=registry,
+        subscribe_store=subscribe_store,
+        subscribe_target_type=SUBSCRIBER_TARGET_TYPE,
+        subscribe_target_id=SUBSCRIBER_TARGET_ID,
+    )
+
+
 def build_publish_preflight(
     asset: StaffAssetRow,
-    credential_provider: CredentialProvider | None = None,
+    *,
+    registry: ProviderRegistry | None = None,
+    subscribe_store: SubscribeStore | None = None,
 ) -> PublishPreflightResponse:
-    """Return approval readiness for every v0.7 publish surface."""
-    provider = credential_provider or DeterministicCredentialProvider()
+    """Return approval readiness for every v0.7 publish surface.
+
+    Side-effect-free (WP-03 plan item 4): every provider factory this calls
+    through ``describe_provider`` only reads/validates environment
+    configuration -- it never probes a remote service. Missing or invalid
+    selected-real configuration returns ``ready=false`` for that surface with
+    a safe (non-secret) credential reference and an actionable next step; it
+    never raises.
+    """
+    resolved_registry = registry if registry is not None else default_registry()
     checks: list[PublishPreflightCheck] = []
     for surface in build_initial_surfaces(asset):
         if surface.id == "portal":
@@ -264,17 +329,42 @@ def build_publish_preflight(
                 )
             )
             continue
-        credential = provider.check_surface(surface.id)
+        readiness = _surface_readiness(
+            surface, registry=resolved_registry, subscribe_store=subscribe_store
+        )
+        if readiness is None:
+            # No provider dependency for this surface (e.g. the Cable file
+            # package, which has its own local configuredness check run only
+            # at approval time) -- nothing to report as not-ready here.
+            checks.append(
+                PublishPreflightCheck(
+                    id=surface.id,
+                    label=surface.label,
+                    kind=surface.kind,
+                    required=surface.required,
+                    health="unknown",
+                    message=f"{surface.label} has no external provider dependency to check here.",
+                    next_step="No preflight action required.",
+                )
+            )
+            continue
         checks.append(
             PublishPreflightCheck(
                 id=surface.id,
                 label=surface.label,
                 kind=surface.kind,
                 required=surface.required,
-                health="ok" if credential.healthy else "error",
-                credential_reference=credential.reference,
-                message=credential.message,
-                next_step=credential.next_step,
+                # Podcast is a real, not-yet-available surface -- "unknown"
+                # (not "error") so it never reads as broken; it is also never
+                # required, so it cannot affect `ready` below either way.
+                health=(
+                    "unknown"
+                    if surface.id in FUTURE_SURFACE_IDS
+                    else ("ok" if readiness.healthy else "error")
+                ),
+                credential_reference=readiness.reference,
+                message=readiness.message,
+                next_step=readiness.next_step,
             )
         )
     ready = all(check.health == "ok" for check in checks if check.required)
@@ -321,6 +411,51 @@ def _provider_failure(
     )
 
 
+# Surfaces approve_publish never pre-checks against the provider registry:
+# Portal is gated on manifest_url (not a provider); Podcast has no provider
+# kind yet and is out of WP-03's scope (WP-04 owns the real podcast path;
+# see civiccast.publish.readiness.FUTURE_SURFACE_IDS); the Cable file
+# package has its own local configuredness check
+# (build_cable_file_package_for_asset) that already reports
+# "not_configured" without failing the approval (candidate #17).
+_PROVIDER_PRECHECK_EXCLUDED_SURFACE_IDS = {"portal", CABLE_PACKAGE_SURFACE_ID, *FUTURE_SURFACE_IDS}
+
+
+def _blocked_selected_surfaces(
+    asset: StaffAssetRow,
+    *,
+    approved_ids: set[str],
+    overrides: dict[str, str],
+    registry: ProviderRegistry,
+    subscribe_store: SubscribeStore | None,
+) -> dict[str, SurfaceReadiness]:
+    """Readiness failures among the surfaces the operator actually selected.
+
+    Only surfaces in ``approved_ids`` (and not overridden) are checked (plan
+    item 9: a broken UNselected provider must never block portal-only or
+    otherwise unrelated publishing). Reads the same registry
+    ``build_publish_preflight`` reads (plan item 8), so approval cannot
+    disagree with what preflight already told the operator.
+    """
+    blocked: dict[str, SurfaceReadiness] = {}
+    for surface in build_initial_surfaces(asset):
+        if surface.id in _PROVIDER_PRECHECK_EXCLUDED_SURFACE_IDS:
+            continue
+        if surface.id in overrides or surface.id not in approved_ids:
+            continue
+        readiness = describe_surface_readiness(
+            surface.id,
+            label=surface.label,
+            registry=registry,
+            subscribe_store=subscribe_store,
+            subscribe_target_type=SUBSCRIBER_TARGET_TYPE,
+            subscribe_target_id=SUBSCRIBER_TARGET_ID,
+        )
+        if readiness is not None and not readiness.healthy:
+            blocked[surface.id] = readiness
+    return blocked
+
+
 def approve_publish(
     *,
     asset: StaffAssetRow,
@@ -328,6 +463,7 @@ def approve_publish(
     store: PublishStore,
     registry: ProviderRegistry | None = None,
     media_path: Path | None = None,
+    subscribe_store: SubscribeStore | None = None,
 ) -> PublishRunRecord:
     """Approve and execute the publish surfaces.
 
@@ -338,9 +474,18 @@ def approve_publish(
     ``media_path`` is the asset's local recording file when the caller could
     resolve one. Adapters that support full-media publishing
     (``upload_path`` / ``upload_vod_path``) receive it; the mocks keep the
-    deterministic verification payload. A provider exception marks that
-    surface ``failed`` (retryable via the existing per-surface retry) instead
-    of failing the whole approval.
+    deterministic verification payload.
+
+    WP-03: before anything executes, every operator-selected surface's
+    provider configuration is checked with the exact same readiness source
+    preflight uses (:func:`describe_surface_readiness`). A missing/invalid
+    selected-real configuration raises :class:`PublishConfigurationError`
+    (the router turns this into a controlled 409) before any side effect
+    begins -- it never reaches an uncaught ``ProviderConfigurationError``.
+    Once past that gate, a *runtime*/network exception from an otherwise
+    correctly-configured provider marks only that surface ``failed``
+    (retryable via the existing per-surface retry) instead of failing the
+    whole approval.
     """
     at = datetime.now(UTC)
     payload = f"{asset.asset_id}:{asset.title}".encode()
@@ -351,9 +496,26 @@ def approve_publish(
         else {surface.id for surface in build_initial_surfaces(asset)}
     )
     resolved_registry = registry if registry is not None else default_registry()
-    ia = resolved_registry.resolve(PROVIDER_KIND_INTERNET_ARCHIVE)
-    nas = resolved_registry.resolve(PROVIDER_KIND_LOCAL_NAS)
-    youtube = resolved_registry.resolve(PROVIDER_KIND_YOUTUBE)
+    blocked = _blocked_selected_surfaces(
+        asset,
+        approved_ids=approved_ids,
+        overrides=overrides,
+        registry=resolved_registry,
+        subscribe_store=subscribe_store,
+    )
+    if blocked:
+        raise PublishConfigurationError(blocked)
+
+    _client_cache: dict[str, Any] = {}
+
+    def _client(kind: str) -> Any:
+        # Lazy + memoized: only surfaces actually approved this run resolve a
+        # client (plan item 9), and local-nas-rsync/local-nas-zfs (or
+        # youtube-live/youtube-vod) share one resolved client instead of
+        # constructing it twice.
+        if kind not in _client_cache:
+            _client_cache[kind] = resolved_registry.resolve(kind)
+        return _client_cache[kind]
 
     surfaces: list[PublishSurfaceStatus] = []
     events: list[PublishAuditEvent] = []
@@ -389,6 +551,7 @@ def approve_publish(
             )
         elif surface.id == "internet-archive":
             try:
+                ia = _client(PROVIDER_KIND_INTERNET_ARCHIVE)
                 if media_path is not None and hasattr(ia, "upload_path"):
                     proof = ia.upload_path(asset_id=asset.asset_id, path=media_path)
                 else:
@@ -424,6 +587,7 @@ def approve_publish(
                 if nas_proof_pair is None:
                     # One archive run per approval: both NAS surfaces share the
                     # same copy+snapshot pair instead of archiving twice.
+                    nas = _client(PROVIDER_KIND_LOCAL_NAS)
                     if media_path is not None and hasattr(nas, "archive_path"):
                         nas_proof_pair = nas.archive_path(asset_id=asset.asset_id, path=media_path)
                     else:
@@ -457,6 +621,7 @@ def approve_publish(
                 )
         elif surface.id == "youtube-live":
             try:
+                youtube = _client(PROVIDER_KIND_YOUTUBE)
                 youtube_live_proof = youtube.publish_live(asset_id=asset.asset_id)
             except Exception as exc:
                 updated = _provider_failure(surface, at=at, exc=exc)
@@ -474,6 +639,7 @@ def approve_publish(
                 )
         elif surface.id == "youtube-vod":
             try:
+                youtube = _client(PROVIDER_KIND_YOUTUBE)
                 if media_path is not None and hasattr(youtube, "upload_vod_path"):
                     youtube_vod_proof = youtube.upload_vod_path(
                         asset_id=asset.asset_id, path=media_path
@@ -620,8 +786,18 @@ def retry_publish_surface(
     surface_id: str,
     request: PublishRetryRequest,
     store: PublishStore,
+    registry: ProviderRegistry | None = None,
+    subscribe_store: SubscribeStore | None = None,
 ) -> PublishRunRecord:
-    """Retry one surface while preserving the rest of the publish run."""
+    """Retry one surface while preserving the rest of the publish run.
+
+    A retry is a one-surface approval (plan items 5/8 apply here too): if the
+    retried surface's provider configuration is missing/invalid,
+    ``approve_publish`` raises :class:`PublishConfigurationError` and this
+    function does not catch it -- the caller (the retry route) turns it into
+    the same controlled 409 the approve route uses, rather than silently
+    "retrying" a surface that was never going to succeed.
+    """
     known_surface_ids = {surface.id for surface in build_initial_surfaces(asset)}
     if surface_id not in known_surface_ids:
         raise ValueError(f"Unknown publish surface: {surface_id}")
@@ -636,6 +812,8 @@ def retry_publish_surface(
             approved_surface_ids=[surface_id],
         ),
         store=InMemoryPublishStoreProxy(previous),
+        registry=registry,
+        subscribe_store=subscribe_store,
     )
     updated_surface = next(surface for surface in retried.surfaces if surface.id == surface_id)
     old_retry_count = previous_by_id.get(surface_id, updated_surface).retry_count

@@ -26956,7 +26956,7 @@
           "publish"
         ],
         "summary": "Check v0.7 publish readiness before operator approval",
-        "description": "Return portal, Internet Archive, NAS, and YouTube readiness checks.",
+        "description": "Return portal, Internet Archive, NAS, YouTube, and subscriber readiness.\n\nReads through the real provider registry (WP-03): every check here is the\nsame non-secret, side-effect-free readiness ``approve_publish`` uses, so\nthis response and what approval would actually do cannot disagree.",
         "operationId": "get_publish_preflight_api_staff_publish_assets__asset_id__preflight_get",
         "parameters": [
           {

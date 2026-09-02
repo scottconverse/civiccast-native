@@ -125,6 +125,14 @@ def test_public_record_initial_state_keeps_archive_and_reach_separate(
 def test_preflight_reports_portal_archive_nas_and_youtube_readiness(
     client: TestClient,
 ) -> None:
+    """WP-03: preflight reads through the real provider registry.
+
+    The shipped default for every kind is the mock provider, so every
+    surface is `ready` (usable) even though it is also simulated -- the
+    `credential_reference` is now a safe, non-secret env-var descriptor
+    (never an os-keyring path; the deterministic mock credential store this
+    used to pin is gone -- see civiccast.publish.readiness).
+    """
     response = client.get("/api/staff/publish/assets/council-2026-05-08/preflight")
     assert response.status_code == 200
 
@@ -132,17 +140,63 @@ def test_preflight_reports_portal_archive_nas_and_youtube_readiness(
     assert body["ready"] is True
     checks = {check["id"]: check for check in body["checks"]}
     assert checks["portal"]["health"] == "ok"
+    assert checks["internet-archive"]["health"] == "ok"
     assert checks["internet-archive"]["credential_reference"] == (
-        "os-keyring://civiccast/internet-archive"
+        "CIVICCAST_PROVIDER_INTERNET_ARCHIVE=mock"
     )
+    assert "simulated" in checks["internet-archive"]["message"]
     assert checks["local-nas-rsync"]["credential_reference"] == (
-        "os-keyring://civiccast/local-nas-rsync"
+        "CIVICCAST_PROVIDER_LOCAL_NAS=mock"
     )
-    assert checks["local-nas-zfs"]["credential_reference"] == (
-        "os-keyring://civiccast/local-nas-zfs"
+    assert checks["local-nas-zfs"]["credential_reference"] == "CIVICCAST_PROVIDER_LOCAL_NAS=mock"
+    assert checks["youtube-live"]["credential_reference"] == "CIVICCAST_PROVIDER_YOUTUBE=mock"
+    assert checks["youtube-vod"]["credential_reference"] == "CIVICCAST_PROVIDER_YOUTUBE=mock"
+    # Podcast has no provider yet (WP-04 owns the real path); it must never
+    # read as broken (not "error") and must never gate `ready` (not required).
+    assert checks["podcast"]["health"] == "unknown"
+    assert checks["podcast"]["required"] is False
+
+
+def test_preflight_and_approve_agree_when_a_selected_real_provider_is_misconfigured(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WP-03 end-to-end (router layer): preflight says ready=false and
+    approval refuses with a controlled 409 -- never a 500 -- for the exact
+    same missing real-provider configuration."""
+    monkeypatch.setenv("CIVICCAST_PROVIDER_INTERNET_ARCHIVE", "real")
+
+    preflight = client.get("/api/staff/publish/assets/council-2026-05-08/preflight")
+    assert preflight.status_code == 200
+    body = preflight.json()
+    assert body["ready"] is False
+    check = next(c for c in body["checks"] if c["id"] == "internet-archive")
+    assert check["health"] == "error"
+    assert "CIVICCAST_IA_ACCESS_KEY" in check["message"]
+
+    approve = client.post(
+        "/api/staff/publish/assets/council-2026-05-08/approve",
+        json={
+            "operator_id": "staff-1",
+            "operator_display_name": "Avery Operator",
+            "approved_surface_ids": ["internet-archive"],
+        },
     )
-    assert checks["youtube-live"]["credential_reference"] == ("os-keyring://civiccast/youtube-live")
-    assert checks["youtube-vod"]["credential_reference"] == "os-keyring://civiccast/youtube-vod"
+    assert approve.status_code == 409
+    assert "internet-archive" in approve.json()["detail"]
+    assert "CIVICCAST_IA_ACCESS_KEY" in approve.json()["detail"]
+
+    # Unrelated, unselected surfaces are never touched by the broken config
+    # (plan item 9): a portal-only approval still succeeds.
+    portal_only = client.post(
+        "/api/staff/publish/assets/concert-archive/approve",
+        json={
+            "operator_id": "staff-1",
+            "operator_display_name": "Avery Operator",
+            "approved_surface_ids": ["portal"],
+        },
+    )
+    assert portal_only.status_code == 200
+    assert portal_only.json()["canonical_public"] is True
 
 
 def test_preflight_blocks_unpackaged_public_record_with_actionable_next_step(

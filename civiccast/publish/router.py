@@ -20,6 +20,7 @@ from civiccast.captions.vod_job import OfflineCaptionJobStore, enqueue_offline_c
 from civiccast.live.recording_paths import local_recording_path
 from civiccast.live.router import get_live_finalization_worker
 from civiccast.platform.broker import BrokerClient, get_broker_client
+from civiccast.platform.providers import ProviderRegistry, default_registry
 from civiccast.platform.stores import resolve_app_store
 from civiccast.publish.models import (
     PublishApprovalRequest,
@@ -30,6 +31,7 @@ from civiccast.publish.models import (
     PublishRunRecord,
 )
 from civiccast.publish.service import (
+    PublishConfigurationError,
     approve_publish,
     build_publish_approved_event,
     build_publish_asset_status,
@@ -41,6 +43,8 @@ from civiccast.publish.store import PublishStore
 from civiccast.schedule.models import StaffAssetRow
 from civiccast.schedule.paths import resolve_vod_package_dir
 from civiccast.schedule.router import get_postgres_store
+from civiccast.subscribe.router import get_subscribe_store
+from civiccast.subscribe.store import SubscribeStore
 
 _LOG = logging.getLogger(__name__)
 
@@ -127,6 +131,23 @@ def _apply_portal_visibility(
 
 def get_publish_store(request: Request) -> PublishStore:
     return cast(PublishStore, resolve_app_store(request, "publish_store", surface="Publish store"))
+
+
+def get_provider_registry(request: Request) -> ProviderRegistry:
+    """Resolve the app's single provider registry (WP-03 plan items 1 and 8).
+
+    Preflight and approval both depend on this so they read the exact same
+    registry within one process -- they cannot disagree about whether a
+    surface's real-provider configuration is valid. Falls back to
+    ``default_registry()`` for an app instance that never wired
+    ``app.state.provider_registry`` (this never fails: registering the
+    shipped mock/real factories is itself side-effect-free).
+    """
+
+    return cast(
+        ProviderRegistry,
+        getattr(request.app.state, "provider_registry", None) or default_registry(),
+    )
 
 
 def get_caption_job_store(request: Request) -> OfflineCaptionJobStore | None:
@@ -324,8 +345,15 @@ def get_publish_asset(
 def get_publish_preflight(
     asset_id: str,
     postgres_store: Any = Depends(get_postgres_store),
+    provider_registry: ProviderRegistry = Depends(get_provider_registry),
+    subscribe_store: SubscribeStore = Depends(get_subscribe_store),
 ) -> PublishPreflightResponse:
-    """Return portal, Internet Archive, NAS, and YouTube readiness checks."""
+    """Return portal, Internet Archive, NAS, YouTube, and subscriber readiness.
+
+    Reads through the real provider registry (WP-03): every check here is the
+    same non-secret, side-effect-free readiness ``approve_publish`` uses, so
+    this response and what approval would actually do cannot disagree.
+    """
     asset_store = _require_asset_store(postgres_store)
     asset = asset_store.get_staff_row(asset_id)
     if asset is None:
@@ -333,7 +361,11 @@ def get_publish_preflight(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Asset not found: {asset_id}",
         )
-    return build_publish_preflight(cast(StaffAssetRow, asset))
+    return build_publish_preflight(
+        cast(StaffAssetRow, asset),
+        registry=provider_registry,
+        subscribe_store=subscribe_store,
+    )
 
 
 @staff_router.post(
@@ -360,6 +392,8 @@ def approve_publish_asset(
     broker_client: BrokerClient = Depends(get_broker_client),
     finalization_worker: Any = Depends(get_live_finalization_worker),
     caption_job_store: OfflineCaptionJobStore | None = Depends(get_caption_job_store),
+    provider_registry: ProviderRegistry = Depends(get_provider_registry),
+    subscribe_store: SubscribeStore = Depends(get_subscribe_store),
 ) -> PublishAssetStatus:
     """Approve per-surface publication through the configured providers."""
     asset_store = _require_asset_store(postgres_store)
@@ -378,13 +412,16 @@ def approve_publish_asset(
                 "Run the packager or fix ingest before approving publish."
             ),
         )
-    # BEFORE approving, not after. Publication is what starts the caption
-    # obligation, and the public record must not wait days for caption review
-    # (so publish-first stays) — but a station that cannot even record the
-    # obligation must not publish at all. Queueing here means there is no
-    # window in which a recording is public with no caption job: either both
-    # happen or neither does, and the operator gets a 409 naming the cause
-    # instead of a green publish and a line in a log file.
+    # Two gates stand in front of approval, and both must pass before any
+    # surface publishes. They are ordered caption-first deliberately.
+    #
+    # WP-02: publication is what starts the caption obligation, and the public
+    # record must not wait days for caption review (so publish-first stays) --
+    # but a station that cannot even record the obligation must not publish at
+    # all. Queueing here means there is no window in which a recording is
+    # public with no caption job: either both happen or neither does, and the
+    # operator gets a 409 naming the cause instead of a green publish and a
+    # line in a log file.
     try:
         _queue_offline_captions(caption_job_store, staff_asset, require_published=False)
     except CaptionJobNotQueueableError as exc:
@@ -392,12 +429,35 @@ def approve_publish_asset(
             status_code=status.HTTP_409_CONFLICT,
             detail=CAPTION_JOB_UNQUEUEABLE_DETAIL.format(cause=str(exc)),
         ) from exc
-    record = approve_publish(
-        asset=staff_asset,
-        request=request,
-        store=publish_store,
-        media_path=_resolve_local_recording(finalization_worker, asset_id),
-    )
+    try:
+        record = approve_publish(
+            asset=staff_asset,
+            request=request,
+            store=publish_store,
+            media_path=_resolve_local_recording(finalization_worker, asset_id),
+            registry=provider_registry,
+            subscribe_store=subscribe_store,
+        )
+    except PublishConfigurationError as exc:
+        # WP-03: a selected surface's real-provider config is missing/invalid
+        # -- a controlled 409 before any side effect, never an uncaught 500.
+        #
+        # Interaction with the caption gate above, stated because WP-03 makes
+        # this path routine rather than rare: reaching here means the caption
+        # job WAS queued and then nothing published. That is deliberate and
+        # self-correcting, not a leak. enqueue_offline_caption_job is
+        # idempotent per asset, so when the operator fixes the provider
+        # configuration and approves again the same job is reused -- any
+        # transcription it already did is reused too, not repeated. The
+        # alternative ordering (validate providers, then queue captions) would
+        # need this route to re-run approve_publish's own readiness gate
+        # itself, and a gate evaluated in two places is a gate that drifts.
+        # One gate, one owner; a queued job for an unpublished asset costs a
+        # review-queue row that the retry consumes.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     staff_asset, record = _apply_portal_visibility(
         asset_store=asset_store,
         publish_store=publish_store,
@@ -443,6 +503,8 @@ def retry_publish_asset_surface(
     postgres_store: Any = Depends(get_postgres_store),
     publish_store: PublishStore = Depends(get_publish_store),
     caption_job_store: OfflineCaptionJobStore | None = Depends(get_caption_job_store),
+    provider_registry: ProviderRegistry = Depends(get_provider_registry),
+    subscribe_store: SubscribeStore = Depends(get_subscribe_store),
 ) -> PublishAssetStatus:
     """Retry a single surface without changing the rest of the publish run."""
     asset_store = _require_asset_store(postgres_store)
@@ -467,10 +529,20 @@ def retry_publish_asset_surface(
             surface_id=surface_id,
             request=request,
             store=publish_store,
+            registry=provider_registry,
+            subscribe_store=subscribe_store,
         )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except PublishConfigurationError as exc:
+        # WP-03: the retried surface's real-provider config is missing/
+        # invalid -- a controlled 409, same as the approve route, instead of
+        # silently "retrying" a surface that was never going to succeed.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
     staff_asset, record = _apply_portal_visibility(

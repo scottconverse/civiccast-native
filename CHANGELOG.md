@@ -31,6 +31,41 @@ installer asset and is not a public or production release.
   `CIVICAST_` (so their "worker off" and state-path settings never applied)
   are corrected.
 
+### Fixed
+
+- **Publish preflight and approval now read the same real provider registry
+  (WP-03; audit findings QA-001 and the readiness portion of ENG-001).**
+  Preflight used to answer from an unrelated deterministic mock credential
+  store (`civiccast.publish.credentials`, now removed) that always reported
+  "healthy" -- a station that selected e.g. `CIVICCAST_PROVIDER_YOUTUBE=real`
+  with no credentials configured saw preflight say `ready=true` and then hit
+  an uncaught `ProviderConfigurationError` (an unhandled 500) on approval.
+  Both `build_publish_preflight()` and `approve_publish()` now resolve
+  Internet Archive, local NAS, YouTube, and subscriber mail/webhook
+  readiness through `civiccast.platform.providers` via one provider registry
+  wired onto the app (`app.state.provider_registry`) and shared route
+  dependencies (`civiccast.publish.router.get_provider_registry`), so they
+  cannot disagree. Missing/invalid selected-real configuration now returns
+  `ready=false` at preflight (HTTP 200, a safe non-secret credential
+  reference such as `CIVICCAST_PROVIDER_YOUTUBE=real`, and a next step) and a
+  controlled `409 Conflict` at approval -- raised before any surface executes,
+  never a 500 -- via the new `PublishConfigurationError`. Only the surfaces
+  the operator actually selected are checked, so an unrelated, broken,
+  unselected provider can no longer block a portal-only approval (it
+  previously always resolved Internet Archive, local NAS, *and* YouTube up
+  front regardless of what was selected). A subsequent runtime/network
+  failure from an otherwise correctly-configured provider still marks only
+  that one surface `failed` and leaves the rest of the run intact. The
+  shipped mock providers remain fully usable and never block readiness; they
+  stay explicitly marked simulated so they are never mistaken for
+  real-provider proof, and a failed real adapter never silently falls back
+  to a mock. Podcast readiness reads `unknown` ("not available yet") rather
+  than claiming readiness through a registry that has no podcast provider --
+  the real podcast path is separate, upcoming work. Parameterized tests
+  cover missing / partial / valid-real / explicit-mock / runtime-call-failure
+  for every provider family, and prove no secret value ever reaches a
+  preflight/approval response or a log record.
+
 ### Added
 
 - **A download-only upgrade can reuse the AI model packs an activated station
