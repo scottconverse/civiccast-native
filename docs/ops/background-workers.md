@@ -204,6 +204,25 @@ Rejected cues are dropped. A queue that is rejected in full completes with
 the recording left uncaptioned rather than publishing text an operator
 refused.
 
+**Recorded-Spanish captions.** With the Spanish leg on (the default —
+`CIVICCAST_OFFLINE_CAPTION_SPANISH=off` disables it), `awaiting_review`
+becomes a two-phase gate. Once the **English** review pass is complete and
+something was approved, the approved English cues are translated to Spanish
+through the same operator-selected translation tier the live tap uses (local
+TranslateGemma by default), and the Spanish cues are queued for their **own**
+operator review pass — the Spanish text is AI output too, so spec §4.2's
+operator-review-before-publish applies to it. The recording is not published
+until **both** passes are complete; then both tracks attach in one manifest
+rewrite (English `captions/en/playlist.m3u8` default + `captions.vtt`, Spanish
+`captions/es/playlist.m3u8` secondary + `captions.es.vtt`). The two passes are
+separated by a `language` column on `caption_review_items` (migration
+`0083_caption_review_language`, default `en`); the operator console's review
+queue shows an EN/ES badge and a language filter. If the operator rejects the
+whole Spanish pass, the English track ships alone. Spanish review rows are
+created `low_confidence=False` (a translation of human-approved English has no
+ASR audio to retain), so the low-confidence audio-evidence approval gate
+cannot deadlock the Spanish track.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `CIVICCAST_OFFLINE_CAPTION_JOB` | `inline` | `inline` runs the worker as a lifespan thread; `off` disables it. The model is loaded lazily, so an idle queue costs nothing. |
@@ -211,6 +230,7 @@ refused.
 | `CIVICCAST_OFFLINE_CAPTION_BACKOFF_SECONDS` | `300` | Base for exponential backoff (300s, 600s, 1200s, …). |
 | `CIVICCAST_OFFLINE_CAPTION_MAX_ATTEMPTS` | `4` | Attempts per stage before the job is marked `failed` with its reason. |
 | `CIVICCAST_OFFLINE_CAPTION_CHUNK_SECONDS` | `30` | Audio handed to the model per call. Offline has no latency budget, so this is Whisper's own encoder window rather than the live tap's 5 s. |
+| `CIVICCAST_OFFLINE_CAPTION_SPANISH` | `on` | Recorded-Spanish leg. `on` (default) translates the operator-approved English captions to Spanish and queues them for a second review pass before both tracks are attached; `off` publishes English only. |
 
 Model, device, and compute type are **not** configured here — the job builds
 its runtime through the same seam the live path uses, which resolves the

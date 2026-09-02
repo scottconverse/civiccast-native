@@ -108,6 +108,30 @@ installer asset and is not a public or production release.
   the source kind does not match. The LPM hardware mock lab proves the exact
   DeckLink SDI and DirectShow HDMI argument boundary used by production.
 
+- **Recorded-Spanish captions — a published recording now carries an
+  operator-reviewed Spanish caption track alongside English** (owner
+  requirement; Longmont is ~30% Latino and Spanish captions on published
+  recordings are a hard requirement; live real-time Spanish is out of scope).
+  The offline caption job (`civiccast/captions/vod_job.py`) becomes two-phase:
+  once an operator approves the English caption cues, the approved English is
+  translated to Spanish through the same operator-selected translation tier
+  the live tap uses (local TranslateGemma by default, via
+  `build_translator`), and the Spanish cues are queued for their **own**
+  operator review pass (spec §4.2, operator review before publish — the
+  Spanish text is AI output too). Only when both review passes are complete
+  are both tracks attached in a single manifest rewrite: English default, a
+  new `es`/"Spanish" secondary. The public player already renders one caption
+  button per manifest subtitle track, so the Spanish option appears with no
+  front-end change; the operator console's review queue gains an EN/ES
+  language badge and a language filter. A new `language` column on
+  `caption_review_items` (migration `0083_caption_review_language`,
+  default/backfill `en`) keeps the two review passes cleanly separated on a
+  shared asset. On by default for the native station
+  (`CIVICCAST_OFFLINE_CAPTION_SPANISH=off` to disable). Spanish review rows
+  are created `low_confidence=False` — they are a deterministic transform of
+  human-approved English with no ASR audio to retain, so the low-confidence
+  audio-evidence approval gate cannot deadlock them.
+
 ### Fixed
 
 - **Made the D3 upgrade engine use the native installer's real flat runtime

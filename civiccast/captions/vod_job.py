@@ -50,15 +50,22 @@ from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from civiccast.captions.models import CaptionCue
 from civiccast.captions.retention import CaptionEvidenceRetentionPolicy, CaptionRetentionResult
 from civiccast.captions.review import CaptionReviewStore
 from civiccast.captions.runtime import CaptionRuntime
 from civiccast.captions.vod import (
     OFFLINE_CAPTION_CHUNK_SECONDS,
+    OFFLINE_CAPTION_LANGUAGE,
+    SPANISH_CAPTION_LANGUAGE,
+    ReviewedCaptions,
     attach_reviewed_captions,
+    queue_translated_captions,
     reviewed_caption_cues,
     transcribe_asset_captions,
 )
+from civiccast.translate.models import TranslationTarget
+from civiccast.translate.service import TranslationProvider
 
 _LOG = logging.getLogger(__name__)
 
@@ -89,7 +96,15 @@ OFFLINE_CAPTION_JOB_MODE_INLINE = "inline"
 OFFLINE_CAPTION_JOB_MODE_OFF = "off"
 _OFFLINE_CAPTION_JOB_MODES = (OFFLINE_CAPTION_JOB_MODE_INLINE, OFFLINE_CAPTION_JOB_MODE_OFF)
 
+#: env values that turn the recorded-Spanish translation leg on/off.
+_TRUE_ENV_VALUES = ("1", "true", "on", "yes", "es")
+_FALSE_ENV_VALUES = ("0", "false", "off", "no")
+
 CaptionRuntimeFactory = Callable[[], CaptionRuntime]
+#: Lazy builder for the translation adapter -- same shape as the runtime
+#: factory, so a station with the worker enabled but nothing to translate
+#: never loads the translation model.
+TranslationProviderFactory = Callable[[], TranslationProvider]
 
 __all__ = [
     "OFFLINE_CAPTION_JOB_ACTIVE_STATES",
@@ -289,6 +304,16 @@ class OfflineCaptionJobSettings:
     backoff_seconds: float = 300.0
     max_attempts: int = 4
     chunk_seconds: float = OFFLINE_CAPTION_CHUNK_SECONDS
+    #: Recorded-Spanish translation leg. On by default for the native
+    #: station (Longmont is ~30% Latino; Spanish captions on published
+    #: recordings are a hard requirement). When on, a published recording's
+    #: operator-approved English captions are translated to Spanish and
+    #: queued for their OWN review pass before both tracks are attached.
+    spanish_enabled: bool = True
+    #: Target language tag for that leg. ``es`` today; kept configurable so
+    #: another station could translate to a different language without a code
+    #: change, though only Spanish is a shipped requirement.
+    spanish_target_language: str = SPANISH_CAPTION_LANGUAGE
 
     @classmethod
     def from_env(cls) -> OfflineCaptionJobSettings:
@@ -317,6 +342,9 @@ class OfflineCaptionJobSettings:
             chunk_seconds=_env_positive_float(
                 "CIVICCAST_OFFLINE_CAPTION_CHUNK_SECONDS", defaults.chunk_seconds
             ),
+            spanish_enabled=_env_bool(
+                "CIVICCAST_OFFLINE_CAPTION_SPANISH", defaults.spanish_enabled
+            ),
         )
 
 
@@ -331,6 +359,19 @@ def _env_positive_float(name: str, default: float) -> float:
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero; got {raw!r}.")
     return value
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in _TRUE_ENV_VALUES:
+        return True
+    if raw in _FALSE_ENV_VALUES:
+        return False
+    raise ValueError(
+        f"{name} must be one of {', '.join((*_TRUE_ENV_VALUES, *_FALSE_ENV_VALUES))}; got {raw!r}."
+    )
 
 
 def _env_positive_int(name: str, default: int) -> int:
@@ -470,12 +511,21 @@ class OfflineCaptionJobWorker:
         *,
         runtime_factory: CaptionRuntimeFactory,
         settings: OfflineCaptionJobSettings,
+        translation_provider_factory: TranslationProviderFactory | None = None,
         retention_policy: CaptionEvidenceRetentionPolicy | None = None,
     ) -> None:
         self._store = store
         self._review_store = review_store
         self._runtime_factory = runtime_factory
         self._settings = settings
+        # Built lazily on first Spanish translation, same reason as
+        # ``_runtime`` -- a station with Spanish enabled but nothing to
+        # translate never loads the translation model. ``None`` (the
+        # default) means "no translation configured", so the worker
+        # publishes English-only even when ``settings.spanish_enabled`` is
+        # true; app.py always supplies the factory in production.
+        self._translation_provider_factory = translation_provider_factory
+        self._translation_provider: TranslationProvider | None = None
         self._runtime: CaptionRuntime | None = None
         # Built lazily, same reason as ``_runtime_instance`` below: this
         # worker is constructed unconditionally in app.py regardless of
@@ -679,14 +729,26 @@ class OfflineCaptionJobWorker:
         *,
         now: datetime,
     ) -> OfflineCaptionJobRecord:
-        reviewed = reviewed_caption_cues(self._review_store, row.asset_id)
-        if reviewed.pending:
-            # Still the operator's move. Not an attempt, not a failure --
-            # just poll again without burning the retry budget.
-            return self._store.save(
-                row.model_copy(update={"next_attempt_at": now, "updated_at": now})
-            )
-        if not reviewed.cues:
+        """Two-phase publish gate (spec §4.2, operator review before publish).
+
+        Phase one gates on the ENGLISH review pass. Once English is fully
+        decided and something was approved, the recorded-Spanish leg (when
+        enabled and a translator is wired) translates those approved English
+        cues, queues the Spanish cues for their OWN review pass, and gates a
+        second time on that pass. Only when BOTH passes are complete are both
+        tracks attached in a single manifest rewrite. Nothing is published
+        while either language still has pending rows -- an early attach would
+        put unreviewed AI text on the public record.
+        """
+
+        english = reviewed_caption_cues(
+            self._review_store, row.asset_id, language=OFFLINE_CAPTION_LANGUAGE
+        )
+        if english.pending:
+            # Still the operator's move on the English pass. Not an attempt,
+            # not a failure -- just poll again without burning the budget.
+            return self._poll_again(row, now=now)
+        if not english.cues:
             _LOG.warning(
                 "Offline captions for asset %s produced nothing an operator approved; "
                 "the published recording stays uncaptioned.",
@@ -703,6 +765,26 @@ class OfflineCaptionJobWorker:
                     }
                 )
             )
+
+        # English is approved. Resolve the Spanish leg before attaching, so
+        # both tracks land together and neither ships unreviewed.
+        spanish_cues: list[CaptionCue] | None = None
+        if self._spanish_active():
+            try:
+                spanish = self._resolve_spanish_review(row.asset_id, english.cues)
+            except Exception as exc:
+                return self._record_failure(
+                    row, now=now, error=str(exc), stage="caption translation"
+                )
+            if spanish is None:
+                # Spanish cues are queued but still under review -- gate the
+                # final attach without burning the retry budget, exactly like
+                # a pending English pass.
+                return self._poll_again(row, now=now)
+            # An empty list means every Spanish cue was rejected: ship the
+            # English track alone rather than blocking it forever.
+            spanish_cues = spanish.cues or None
+
         try:
             # KNOWN FOLLOW-UP (out of CivicCast One v1 scope, owner-approved
             # to defer -- see "Known follow-ups" in
@@ -720,12 +802,15 @@ class OfflineCaptionJobWorker:
             # (LiveFinalizationWorker._upload_package) for the rewritten
             # manifest and the new caption-track files after this call
             # returns.
-            attached = attach_reviewed_captions(Path(row.package_dir), reviewed.cues)
+            attached = attach_reviewed_captions(
+                Path(row.package_dir), english.cues, spanish_cues=spanish_cues
+            )
         except Exception as exc:
             return self._record_failure(row, now=now, error=str(exc), stage="caption attach")
         _LOG.info(
-            "Published %d reviewed caption cue(s) onto asset %s (%s).",
+            "Published %d English + %d Spanish reviewed caption cue(s) onto asset %s (%s).",
             attached.cue_count,
+            attached.spanish_cue_count,
             row.asset_id,
             attached.sidecar_path,
         )
@@ -741,12 +826,77 @@ class OfflineCaptionJobWorker:
             )
         )
 
+    def _poll_again(
+        self, row: OfflineCaptionJobRecord, *, now: datetime
+    ) -> OfflineCaptionJobRecord:
+        """Re-check on the next poll without consuming the retry budget."""
+
+        return self._store.save(row.model_copy(update={"next_attempt_at": now, "updated_at": now}))
+
+    def _spanish_active(self) -> bool:
+        """True when the recorded-Spanish leg should run for this worker.
+
+        Requires both the setting (on by default for the native station) and
+        a wired translation provider factory. A station with Spanish enabled
+        but no translator configured publishes English-only rather than
+        stalling the whole caption job.
+        """
+
+        return self._settings.spanish_enabled and self._translation_provider_factory is not None
+
+    def _resolve_spanish_review(
+        self,
+        asset_id: str,
+        english_cues: list[CaptionCue],
+    ) -> ReviewedCaptions | None:
+        """Ensure Spanish cues are queued, then gate on their review pass.
+
+        Returns the reviewed Spanish cues once every Spanish row has an
+        operator decision (an empty ``cues`` list means all were rejected),
+        or ``None`` while any Spanish row is still pending. Translation runs
+        exactly once per asset: the ``total == 0`` guard means a re-poll while
+        Spanish is under review never re-invokes the model, and
+        ``queue_translated_captions`` is itself idempotent as a second line of
+        defense.
+        """
+
+        target_language = self._settings.spanish_target_language
+        spanish = reviewed_caption_cues(self._review_store, asset_id, language=target_language)
+        if spanish.total == 0:
+            queued = queue_translated_captions(
+                self._review_store,
+                asset_id=asset_id,
+                cues=english_cues,
+                provider=self._translation_provider_instance(),
+                target=TranslationTarget(target_language=target_language),
+            )
+            _LOG.info(
+                "Queued %d Spanish caption cue(s) for review on asset %s (%d already queued).",
+                len(queued.created_review_item_ids),
+                asset_id,
+                len(queued.duplicate_review_item_ids),
+            )
+            spanish = reviewed_caption_cues(self._review_store, asset_id, language=target_language)
+        if spanish.pending:
+            return None
+        return spanish
+
     # -- shared ------------------------------------------------------------
 
     def _runtime_instance(self) -> CaptionRuntime:
         if self._runtime is None:
             self._runtime = self._runtime_factory()
         return self._runtime
+
+    def _translation_provider_instance(self) -> TranslationProvider:
+        if self._translation_provider is None:
+            if self._translation_provider_factory is None:  # pragma: no cover - guarded by caller
+                raise RuntimeError(
+                    "No translation provider factory configured for the offline caption "
+                    "worker; the recorded-Spanish leg cannot run."
+                )
+            self._translation_provider = self._translation_provider_factory()
+        return self._translation_provider
 
     def _record_failure(
         self,
