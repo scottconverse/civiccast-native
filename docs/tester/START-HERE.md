@@ -15,7 +15,10 @@ cap, and no publish tooling existed yet to split runtime packs from the
 model bundle when it shipped). A USB-delivered `v1.0.0-beta.1` station is a
 real, current, testable native install.
 
-`v1.0.0-beta.2` is the current owner-held unpublished candidate (unpublished;
+`v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
+upgrade-baseline kit, never a release a tester receives.
+
+`v1.0.0-beta.3` is the current owner-held unpublished candidate (unpublished;
 no installer asset). It is intended to be the first **downloadable** beta
 candidate: `setup.exe`, per-pack runtime `.ccpack` assets, and a
 `SHA256SUMS.txt` checksum file, published as a **prerelease** at
@@ -26,12 +29,15 @@ which belongs to that other repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
-A first-time install on a station with no prior CivicCast install needs the
-USB model bundle even once `v1.0.0-beta.2` publishes -- the GitHub download
-alone is the setup executable and runtime packs, not the ~21 GB model
-bundle. An upgrade of an already-installed station (USB-delivered
-`v1.0.0-beta.1`, or a later download) can be download-only and keeps the
-station's existing recordings, database, and AI models.
+A first-time install on a station with no prior CivicCast install, and the
+one-time `v1.0.0-beta.1` -> `v1.0.0-beta.3` upgrade (a fresh install from the
+`beta.3` kit, not an in-place upgrade -- see
+[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)),
+both need the USB model bundle even once `v1.0.0-beta.3` publishes -- the
+GitHub download alone is the setup executable and runtime packs, not the
+~21 GB model bundle. From `v1.0.0-beta.3` on, an upgrade of an
+already-installed station can be download-only and keeps the station's
+existing recordings, database, and AI models.
 
 ## Clean-Machine Test Rule
 

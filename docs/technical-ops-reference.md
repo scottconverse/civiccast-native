@@ -24,7 +24,7 @@ toccolor: black
 > [User Manual](USER-MANUAL.md).
 >
 > **Release line.** This repository carries the native Windows product, whose
-> version is `1.0.0-beta.2` (`civiccast/_native_version.py`). It has not been
+> version is `1.0.0-beta.3` (`civiccast/_native_version.py`). It has not been
 > published. `docs/releases/release-truth.yaml` is the authored source for
 > release state -- read it rather than any version number quoted in prose,
 > including this one.
@@ -1148,7 +1148,7 @@ questions, and monitoring setups should not confuse them.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.2","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.3","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the

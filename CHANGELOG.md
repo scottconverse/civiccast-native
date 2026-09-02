@@ -13,8 +13,10 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
-Current owner-held unpublished candidate: `v1.0.0-beta.2`. It has no tag or
-installer asset and is not a public or production release.
+Current owner-held unpublished candidate: `v1.0.0-beta.3`. It has no tag or
+installer asset and is not a public or production release. `v1.0.0-beta.2`
+was never published -- it exists only as an internal Gate A upgrade-baseline
+kit (see the "Changed" entry below).
 
 ### Added
 
@@ -307,25 +309,32 @@ installer asset and is not a public or production release.
 ### Changed
 
 - **`sandbox-lab/upgrade-baseline.json` repinned from candidate-23 (beta.1,
-  `057ffece7157e5197e6ce9159d5a1abd84c30436`) to the beta.2 candidate
-  (`564ee028cf712e26133ada9d7c25b498abe605ab`, build run 33621209994).**
-  PR #127's stable-pack-identity change (see the "download-only upgrade can
-  reuse the AI model packs" entry above) changed the signed bytes of every AI
-  model pack, and it ships with no migration bridge for a station already
-  activated on the old bytes: a beta.1 station's pack cache is keyed by the
-  old digests and can never satisfy a beta.2 signed index. Gate A run
-  33623737236's download-only lane proved this directly on the beta.2 kit —
-  installer exit 123, activation code 66 ("could not obtain model packs") —
-  after the clean-install and cross-version-upgrade lanes both passed on the
-  same kit. Owner decision 2026-09-02 (option B, recorded in
-  `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`): beta.1 to
-  beta.2 is therefore a fresh install from the beta.2 kit, never an in-place
-  upgrade, and beta.2 to beta.3 becomes the first download-only-upgradeable
-  pair. The required download-only Gate A lane (#125) stays required for
-  every release from beta.2 onward — this is the failure mode it exists to
-  catch, and it caught it. The #23 kit and its `D:\kit-23-FINAL-beta1` copy
-  are untouched; nothing about this repin deletes or supersedes them as
-  historical artifacts.
+  `057ffece7157e5197e6ce9159d5a1abd84c30436`) to the beta.2 internal
+  candidate kit (`564ee028cf712e26133ada9d7c25b498abe605ab`, build run
+  33621209994).** PR #127's stable-pack-identity change (see the
+  "download-only upgrade can reuse the AI model packs" entry above) changed
+  the signed bytes of every AI model pack, and it ships with no migration
+  bridge for a station already activated on the old bytes: a beta.1
+  station's pack cache is keyed by the old digests and can never satisfy a
+  beta.2 signed index. Gate A run 33623737236's download-only lane proved
+  this directly on the beta.2 kit — installer exit 123, activation code 66
+  ("could not obtain model packs") — after the clean-install and
+  cross-version-upgrade lanes both passed on the same kit. Owner decision
+  2026-09-02 (option B, recorded in
+  `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`): **beta.2
+  is never published** — it stays an internal Gate A upgrade-baseline kit —
+  and **beta.1 to beta.3 is a one-time fresh install from the beta.3 kit**
+  (never an in-place upgrade), making beta.3 the first downloadable release
+  and beta.3-to-beta.4 the first download-only-upgradeable pair. The
+  required download-only Gate A lane (#125) stays required for every
+  release from beta.3 onward — this is the failure mode it exists to catch,
+  and it caught it. The #23 kit and its `D:\kit-23-FINAL-beta1` copy are
+  untouched; nothing about this repin deletes or supersedes them as
+  historical artifacts. The product version itself moved from `1.0.0-beta.2`
+  to `1.0.0-beta.3` in this same change (every surface
+  `scripts/policy/check_release_identity.py` checks), so Gate A's
+  cross-version lane can prove an upgrade against the newly-pinned beta.2
+  baseline (a same-version pin cannot).
 
 ### Fixed
 
