@@ -133,7 +133,7 @@ first failure:
 | gh auth / layout / version / signature / Gate A / pre-flight | nothing remote | refuses | fix the cause, re-run |
 | `gh release create --draft` | maybe a partial draft, no tag | best-effort `gh release delete`, refuses | confirm no draft remains on GitHub, re-run |
 | draft verification (missing asset / size mismatch / not a draft) | draft, no tag | `gh release delete`, refuses | confirm no draft remains, investigate the asset, re-run |
-| `gh release edit --draft=false` | verified draft, tag state uncertain | refuses, does NOT delete | open the release on GitHub; publish it by hand if it is intact, otherwise delete it |
+| `gh release edit --draft=false` | verified draft, tag state uncertain | refuses, does NOT delete | first run `gh release view <tag> -R scottconverse/civiccast-native --json isDraft,url` to learn whether the release actually went public (a failed un-draft may have partially applied), then publish it by hand if it is intact and still a draft, or delete it |
 | `release-truth.yaml` update | public prerelease + tag, manifest not updated | refuses | edit `release-truth.yaml` by hand to match what is live |
 
 `--truth-status staging` for a first publish under review; flip a later

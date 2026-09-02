@@ -91,13 +91,20 @@ def _fake_command_factory(
         if cmd[0] == "gh":
             if cmd[1:3] == ["auth", "status"]:
                 if gh_auth_fails:
-                    return Result(returncode=1, stderr="You are not logged into any GitHub hosts. Run gh auth login")
+                    return Result(
+                        returncode=1,
+                        stderr="You are not logged into any GitHub hosts. Run gh auth login",
+                    )
                 return Result()
             if cmd[1:3] == ["run", "download"]:
                 name = cmd[cmd.index("-n") + 1]
                 dest = Path(cmd[cmd.index("-D") + 1])
                 lane = next(
-                    (lane for lane in m.GATE_A_LANES if name == m.GATE_A_ARTIFACT_NAMES[lane].format(run_id="222")),
+                    (
+                        lane
+                        for lane in m.GATE_A_LANES
+                        if name == m.GATE_A_ARTIFACT_NAMES[lane].format(run_id="222")
+                    ),
                     None,
                 )
                 if lane in missing_lanes or lane not in gate_a_docs:
@@ -340,14 +347,18 @@ def test_end_to_end_refuses_on_gate_a_failure(tmp_path, monkeypatch):
 def test_gate_a_dirty_artifact_reporting_download_only_lane_refuses():
     verdicts = {lane: _gate_a_doc(lane=lane) for lane in m.GATE_A_LANES}
     verdicts["dirty"]["lane"] = "download-only"
-    with pytest.raises(m.PublishError, match=r"lane 'dirty' verdict document reports lane 'download-only'"):
+    with pytest.raises(
+        m.PublishError, match=r"lane 'dirty' verdict document reports lane 'download-only'"
+    ):
         m.verify_gate_a_verdicts(verdicts, source_sha=SOURCE_SHA)
 
 
 def test_gate_a_download_only_artifact_reporting_dirty_lane_refuses():
     verdicts = {lane: _gate_a_doc(lane=lane) for lane in m.GATE_A_LANES}
     verdicts["download-only"]["lane"] = "dirty"
-    with pytest.raises(m.PublishError, match=r"lane 'download-only' verdict document reports lane 'dirty'"):
+    with pytest.raises(
+        m.PublishError, match=r"lane 'download-only' verdict document reports lane 'dirty'"
+    ):
         m.verify_gate_a_verdicts(verdicts, source_sha=SOURCE_SHA)
 
 
@@ -392,7 +403,10 @@ def test_preflight_refuses_asset_at_or_above_limit(tmp_path, monkeypatch):
     small = tmp_path / "setup.exe"
     small.write_bytes(b"x" * 4)
     monkeypatch.setattr(m, "GITHUB_ASSET_LIMIT_BYTES", 16)
-    with pytest.raises(m.PublishError, match=r"2 GiB.*refusing before any remote mutation.*native-server-binaries\.ccpack"):
+    with pytest.raises(
+        m.PublishError,
+        match=r"2 GiB.*refusing before any remote mutation.*native-server-binaries\.ccpack",
+    ):
         m.preflight_asset_limits([small, big])
 
 
@@ -423,7 +437,9 @@ def test_draft_asset_size_mismatch_deletes_draft_and_refuses(tmp_path, monkeypat
     fake = _fake_command_factory(gh_release_view_assets=[{"name": "setup.exe", "size": 999}])
     monkeypatch.setattr(m, "run_command", fake)
     with pytest.raises(m.PublishError, match=r"draft deleted, no tag created.*size mismatch"):
-        m.verify_draft_assets(repository="scottconverse/civiccast-native", tag=TAG, asset_paths=[asset])
+        m.verify_draft_assets(
+            repository="scottconverse/civiccast-native", tag=TAG, asset_paths=[asset]
+        )
     assert _gh_calls(fake.calls, "gh", "release", "delete") == [
         ["gh", "release", "delete", TAG, "-R", "scottconverse/civiccast-native", "--yes"]
     ]
@@ -436,7 +452,9 @@ def test_draft_missing_asset_deletes_draft_and_refuses(tmp_path, monkeypatch):
     fake = _fake_command_factory(gh_release_view_assets=[])
     monkeypatch.setattr(m, "run_command", fake)
     with pytest.raises(m.PublishError, match=r"draft deleted.*missing asset 'setup\.exe'"):
-        m.verify_draft_assets(repository="scottconverse/civiccast-native", tag=TAG, asset_paths=[asset])
+        m.verify_draft_assets(
+            repository="scottconverse/civiccast-native", tag=TAG, asset_paths=[asset]
+        )
     assert _gh_calls(fake.calls, "gh", "release", "delete")
     _assert_no_tag_or_public_release(fake.calls)
 
@@ -449,7 +467,9 @@ def test_draft_that_is_not_a_draft_refuses(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(m, "run_command", fake)
     with pytest.raises(m.PublishError, match=r"not a draft"):
-        m.verify_draft_assets(repository="scottconverse/civiccast-native", tag=TAG, asset_paths=[asset])
+        m.verify_draft_assets(
+            repository="scottconverse/civiccast-native", tag=TAG, asset_paths=[asset]
+        )
 
 
 def test_draft_delete_failure_is_reported_loudly(tmp_path, monkeypatch):
@@ -458,7 +478,9 @@ def test_draft_delete_failure_is_reported_loudly(tmp_path, monkeypatch):
     fake = _fake_command_factory(gh_release_view_assets=[], gh_release_delete_fails=True)
     monkeypatch.setattr(m, "run_command", fake)
     with pytest.raises(m.PublishError, match=r"DRAFT DELETE FAILED -- remove it by hand"):
-        m.verify_draft_assets(repository="scottconverse/civiccast-native", tag=TAG, asset_paths=[asset])
+        m.verify_draft_assets(
+            repository="scottconverse/civiccast-native", tag=TAG, asset_paths=[asset]
+        )
 
 
 def test_end_to_end_gh_release_create_failure_refuses_and_cleans_up(tmp_path, monkeypatch):
@@ -482,7 +504,10 @@ def test_gh_release_create_failure_message_is_specific(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "run_command", _fake_command_factory(gh_release_create_fails=True))
     notes = tmp_path / "notes.md"
     notes.write_text("x", encoding="utf-8")
-    with pytest.raises(m.PublishError, match=r"gh release create \(draft\) failed .*draft deleted.*no tag was created"):
+    with pytest.raises(
+        m.PublishError,
+        match=r"gh release create \(draft\) failed .*draft deleted.*no tag was created",
+    ):
         m.create_draft_release(
             repository="scottconverse/civiccast-native",
             tag=TAG,
@@ -561,11 +586,18 @@ def test_dry_run_produces_expected_artifacts(tmp_path, monkeypatch):
     assert "| clean | PASS |" in notes
     assert "| dirty | PASS |" in notes
     assert "| download-only | PASS |" in notes
-    for path in [setup, kit_dir / "packs" / "native-app-payload.ccpack", kit_dir / "packs" / "native-server-binaries.ccpack"]:
+    for path in [
+        setup,
+        kit_dir / "packs" / "native-app-payload.ccpack",
+        kit_dir / "packs" / "native-server-binaries.ccpack",
+    ]:
         assert m.sha256_file(path) in notes
     # The asset table must also list SHA256SUMS.txt and the sidecar, with
     # their real hashes.
-    assert f"| SHA256SUMS.txt | {len(sums.encode()):,} bytes | {m.sha256_file(out_dir / 'SHA256SUMS.txt')} |" in notes
+    assert (
+        f"| SHA256SUMS.txt | {len(sums.encode()):,} bytes | {m.sha256_file(out_dir / 'SHA256SUMS.txt')} |"
+        in notes
+    )
     assert f"| {setup.name}.sidecar.json |" in notes
     assert m.sha256_file(out_dir / f"{setup.name}.sidecar.json") in notes
     assert "beta candidate, not a production release" in notes.lower()
@@ -573,7 +605,9 @@ def test_dry_run_produces_expected_artifacts(tmp_path, monkeypatch):
 
     # dry run must not have touched the real release-truth.yaml on disk
     # (only via update_release_truth called on a scratch copy for the summary)
-    truth_text = (repo_root / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
+    truth_text = (repo_root / "docs" / "releases" / "release-truth.yaml").read_text(
+        encoding="utf-8"
+    )
     assert TAG not in truth_text
 
     # no git/gh mutating calls were made
@@ -592,7 +626,9 @@ def test_dry_run_with_current_status_does_not_touch_real_file(tmp_path, monkeypa
     rc = m.main(argv)
     assert rc == 0
 
-    truth_text = (repo_root / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
+    truth_text = (repo_root / "docs" / "releases" / "release-truth.yaml").read_text(
+        encoding="utf-8"
+    )
     assert "current: v1.0.0-beta.1" in truth_text  # unchanged
 
 
@@ -606,7 +642,9 @@ def test_live_publish_draft_verify_undraft_order_and_release_truth(tmp_path, mon
     fake = _fake_command_factory(mirror_uploaded_assets=True)
     monkeypatch.setattr(m, "run_command", fake)
 
-    rc = m.main(_args(tmp_path, kit_dir, dry_run=False, truth_status="current", repo_root=repo_root))
+    rc = m.main(
+        _args(tmp_path, kit_dir, dry_run=False, truth_status="current", repo_root=repo_root)
+    )
     assert rc == 0
 
     calls = fake.calls
@@ -702,9 +740,7 @@ def test_build_sha256sums_format(tmp_path):
 
 
 def test_extract_changelog_unreleased():
-    changelog = (
-        "# Changelog\n\n## [Unreleased]\n\nSome new stuff.\n\n## [1.0.0-beta.1] - 2026-08-01\n\nOld stuff.\n"
-    )
+    changelog = "# Changelog\n\n## [Unreleased]\n\nSome new stuff.\n\n## [1.0.0-beta.1] - 2026-08-01\n\nOld stuff.\n"
     section = m.extract_changelog_unreleased(changelog)
     assert "Some new stuff." in section
     assert "Old stuff." not in section

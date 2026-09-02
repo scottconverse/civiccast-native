@@ -82,7 +82,7 @@ GATE_A_ARTIFACT_NAMES: dict[str, str] = {
 }
 
 SMARTSCREEN_NOTE = (
-    "Windows may show a blue \"Windows protected your PC\" SmartScreen prompt "
+    'Windows may show a blue "Windows protected your PC" SmartScreen prompt '
     "on a freshly published installer. This is reputation, not the signature: "
     "a newly issued certificate has no SmartScreen download history yet. The "
     "prompt shows the verified publisher (Scott Converse) and fades as "
@@ -108,9 +108,7 @@ def run_command(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[st
 
 
 def run_powershell(script: str) -> subprocess.CompletedProcess[str]:
-    return run_command(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
-    )
+    return run_command(["powershell", "-NoProfile", "-NonInteractive", "-Command", script])
 
 
 def run_gh(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -149,9 +147,7 @@ def verify_layout(kit_dir: Path) -> tuple[Path, list[Path]]:
 
 
 def get_product_version(setup: Path) -> str:
-    proc = run_powershell(
-        f"(Get-Item -LiteralPath '{setup}').VersionInfo.ProductVersion"
-    )
+    proc = run_powershell(f"(Get-Item -LiteralPath '{setup}').VersionInfo.ProductVersion")
     if proc.returncode != 0:
         raise PublishError(
             f"could not read setup.exe ProductVersion via PowerShell: "
@@ -199,9 +195,7 @@ def verify_version_identity(setup: Path, tag: str) -> str:
 # (b) Authenticode verification
 # ---------------------------------------------------------------------------
 def verify_signature(setup: Path) -> None:
-    proc = run_powershell(
-        f"(Get-AuthenticodeSignature -LiteralPath '{setup}').Status"
-    )
+    proc = run_powershell(f"(Get-AuthenticodeSignature -LiteralPath '{setup}').Status")
     if proc.returncode != 0:
         raise PublishError(
             f"could not run Get-AuthenticodeSignature on {setup}: "
@@ -262,9 +256,7 @@ def download_gate_a_verdicts(
     return verdicts
 
 
-def verify_gate_a_verdicts(
-    verdicts: dict[str, dict[str, Any]], *, source_sha: str
-) -> None:
+def verify_gate_a_verdicts(verdicts: dict[str, dict[str, Any]], *, source_sha: str) -> None:
     """Require all three lanes PASS and share the same source_sha == --source-sha."""
 
     missing = [lane for lane in GATE_A_LANES if lane not in verdicts]
@@ -275,9 +267,7 @@ def verify_gate_a_verdicts(
         doc = verdicts[lane]
         verdict = doc.get("verdict")
         if verdict != "PASS":
-            raise PublishError(
-                f"Gate A lane {lane!r} did not PASS (verdict: {verdict!r})."
-            )
+            raise PublishError(f"Gate A lane {lane!r} did not PASS (verdict: {verdict!r}).")
         doc_sha = doc.get("source_sha")
         if doc_sha != source_sha:
             raise PublishError(
@@ -290,15 +280,12 @@ def verify_gate_a_verdicts(
         doc_lane = doc.get("lane", "clean")
         if doc_lane != lane:
             raise PublishError(
-                f"Gate A lane {lane!r} verdict document reports lane "
-                f"{doc_lane!r} instead."
+                f"Gate A lane {lane!r} verdict document reports lane {doc_lane!r} instead."
             )
 
     shas = {verdicts[lane].get("source_sha") for lane in GATE_A_LANES}
     if len(shas) != 1:
-        raise PublishError(
-            f"Gate A lane verdicts do not share the same source_sha: {shas}"
-        )
+        raise PublishError(f"Gate A lane verdicts do not share the same source_sha: {shas}")
 
 
 # ---------------------------------------------------------------------------
@@ -518,10 +505,13 @@ def verify_draft_assets(*, repository: str, tag: str, asset_paths: list[Path]) -
             )
     if problems:
         deleted = delete_draft_release(repository=repository, tag=tag)
-        cleanup = "draft deleted, no tag created" if deleted else "DRAFT DELETE FAILED -- remove it by hand"
+        cleanup = (
+            "draft deleted, no tag created"
+            if deleted
+            else "DRAFT DELETE FAILED -- remove it by hand"
+        )
         raise PublishError(
-            f"draft release {tag} failed asset verification ({cleanup}): "
-            + "; ".join(problems)
+            f"draft release {tag} failed asset verification ({cleanup}): " + "; ".join(problems)
         )
 
 
@@ -539,17 +529,17 @@ def undraft_release(*, repository: str, tag: str) -> None:
         raise PublishError(
             f"gh release edit --draft=false failed for {tag}; the verified DRAFT "
             "is left in place (not deleted, since un-draft may have partially "
-            "applied) -- inspect it on GitHub and either publish or delete it by "
-            f"hand: {_gh_error(proc)}"
+            "applied). Before choosing a recovery, run "
+            f"`gh release view {tag} -R {repository} --json isDraft,url` to learn "
+            "whether the release actually went public; then either publish or "
+            f"delete it by hand: {_gh_error(proc)}"
         )
 
 
 # ---------------------------------------------------------------------------
 # (g) release-truth.yaml update
 # ---------------------------------------------------------------------------
-def update_release_truth(
-    *, truth_path: Path, tag: str, status: str, notes: str
-) -> str:
+def update_release_truth(*, truth_path: Path, tag: str, status: str, notes: str) -> str:
     """Add a new entry for tag with the given status; flip the previous
     `current` entry to `superseded` (naming this tag) if status == current.
 
@@ -605,8 +595,7 @@ def update_release_truth(
                 )
             text = new_text
             summary_lines.append(
-                f"  ~ {previous_current_tag}: status current -> superseded "
-                f"(superseded_by: {tag})"
+                f"  ~ {previous_current_tag}: status current -> superseded (superseded_by: {tag})"
             )
 
     truth_path.write_text(text, encoding="utf-8", newline="\n")
@@ -624,9 +613,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gate-a-run-id", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument(
-        "--truth-status", required=True, choices=("current", "staging")
-    )
+    parser.add_argument("--truth-status", required=True, choices=("current", "staging"))
     parser.add_argument("--repository", default=DEFAULT_REPOSITORY)
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     return parser.parse_args(argv)
@@ -694,9 +681,7 @@ def _run(args: argparse.Namespace) -> None:
     preflight_asset_limits(asset_paths)
 
     changelog_path = repo_root / "CHANGELOG.md"
-    changelog_text = (
-        changelog_path.read_text(encoding="utf-8") if changelog_path.is_file() else ""
-    )
+    changelog_text = changelog_path.read_text(encoding="utf-8") if changelog_path.is_file() else ""
     asset_table = [
         {"filename": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)}
         for path in asset_paths
@@ -719,15 +704,23 @@ def _run(args: argparse.Namespace) -> None:
 
     if args.dry_run:
         print(f"publish_beta_candidate: DRY RUN -- artifacts written to {out_dir}")
-        print("publish_beta_candidate: DRY RUN -- would publish, in this order "
-              "(no tag is ever pushed by hand; un-draft creates it atomically):")
-        print(f"  1. gh release create {tag} -R {repository} --draft --target {source_sha} "
-              f"--prerelease --title '{title}' --notes-file {notes_file} {asset_names}")
-        print(f"  2. gh release view {tag} -R {repository} --json assets,isDraft  "
-              "(verify every asset name + size; on mismatch: gh release delete "
-              f"{tag} --yes, refuse)")
-        print(f"  3. gh release edit {tag} -R {repository} --draft=false  "
-              "(creates the public tag with the release)")
+        print(
+            "publish_beta_candidate: DRY RUN -- would publish, in this order "
+            "(no tag is ever pushed by hand; un-draft creates it atomically):"
+        )
+        print(
+            f"  1. gh release create {tag} -R {repository} --draft --target {source_sha} "
+            f"--prerelease --title '{title}' --notes-file {notes_file} {asset_names}"
+        )
+        print(
+            f"  2. gh release view {tag} -R {repository} --json assets,isDraft  "
+            "(verify every asset name + size; on mismatch: gh release delete "
+            f"{tag} --yes, refuse)"
+        )
+        print(
+            f"  3. gh release edit {tag} -R {repository} --draft=false  "
+            "(creates the public tag with the release)"
+        )
         print("publish_beta_candidate: DRY RUN -- would update release-truth.yaml:")
         truth_summary = _dry_run_truth_summary(
             repo_root=repo_root, tag=tag, status=args.truth_status
