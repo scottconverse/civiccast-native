@@ -39,7 +39,9 @@ this repository ships, read [START-HERE](../tester/START-HERE.md),
 [INSTALL-WINDOWS.md](../../INSTALL-WINDOWS.md), and
 [Windows Release Trust And Verification](../install/windows-release-trust.md)
 instead -- they carry the current `v1.0.0-beta.1` (USB-delivered) /
-`v1.0.0-beta.2` (next, downloadable) release-state story.
+`v1.0.0-beta.3` (next, downloadable) release-state story. `v1.0.0-beta.2`
+was never published -- it exists only as an internal Gate A
+upgrade-baseline kit.
 
 ## Historical: Installer Status (retired WSL2 line)
 

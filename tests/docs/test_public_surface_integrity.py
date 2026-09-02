@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-CURRENT_PUBLIC_CANDIDATE = "v1.0.0-beta.2"
+CURRENT_PUBLIC_CANDIDATE = "v1.0.0-beta.3"
 WITHDRAWN_RELEASE_TAG = "v1.0.0-rc13"
 
 # Live, user-facing surfaces a PEG operator or their IT actually reads.

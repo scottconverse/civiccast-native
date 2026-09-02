@@ -1858,12 +1858,14 @@ try {{
         // masked a real assertion failure) the moment the constant's
         // value last changed.
         assert!(health_response_is_ok(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"version\":\"1.0.0-beta.2\"}",
+            &format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\"}}"
+            ),
             None,
             None,
         ));
         assert!(!health_response_is_ok(
-            "HTTP/1.1 503 Service Unavailable\r\n\r\n{\"version\":\"1.0.0-beta.2\"}",
+            &format!("HTTP/1.1 503 Service Unavailable\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\"}}"),
             None,
             None,
         ));
@@ -1873,22 +1875,30 @@ try {{
             None,
         ));
         assert!(health_response_is_ok(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"version\":\"1.0.0-beta.2\",\"bootstrap_instance_id\":\"proof-123\"}",
+            &format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"proof-123\"}}"
+            ),
             Some("proof-123"),
             None,
         ));
         assert!(!health_response_is_ok(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"version\":\"1.0.0-beta.2\",\"bootstrap_instance_id\":\"other\"}",
+            &format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"other\"}}"
+            ),
             Some("proof-123"),
             None,
         ));
         assert!(health_response_is_ok(
-            "HTTP/1.1 200 OK\r\n\r\n{\"version\":\"1.0.0-beta.2\",\"runtime_build_id\":\"build-123\"}",
+            &format!(
+                "HTTP/1.1 200 OK\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"build-123\"}}"
+            ),
             None,
             Some("build-123"),
         ));
         assert!(!health_response_is_ok(
-            "HTTP/1.1 200 OK\r\n\r\n{\"version\":\"1.0.0-beta.2\",\"runtime_build_id\":\"stale\"}",
+            &format!(
+                "HTTP/1.1 200 OK\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"stale\"}}"
+            ),
             None,
             Some("build-123"),
         ));
