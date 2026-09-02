@@ -206,6 +206,33 @@ if ($script:DirtyMode) {
     Write-Marker -Name '_DIRTY-MODE.marker' -Content "dirty_mode=1 max_script_minutes=$MaxScriptMinutes detected_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
 }
 
+# DOWNLOAD-ONLY LANE <gate-a-download-only-lane>. DOWNLOAD_ONLY_MODE.txt is
+# the same host-to-guest input channel as DIRTY_MODE.txt/UPGRADE_MODE.txt
+# (Host-Launch-Sandbox-Test.ps1 -DownloadOnlyMode). It rides the existing
+# dirty-lane cross-version prologue unchanged -- phase 1 installs the pinned
+# previous candidate from its full kit (C:\CivicCastPreviousPayload, which
+# DOES carry station\) exactly as UPGRADE_MODE=1 already does -- so it
+# requires both DIRTY_MODE.txt and UPGRADE_MODE.txt to be present too. What
+# is unique to this lane is phase 2: Run-GateA.ps1 -DownloadOnlyLane points
+# C:\CivicCastPayload (the normal install flow's $PayloadDir, read below) at
+# a FILTERED payload directory containing only setup.exe and packs\ -- never
+# station\ -- so the current candidate's install must activate the station by
+# reusing an already-activated station's cached model packs instead of
+# reading a fresh station bundle. See docs/ops/gate-a.md, "Download-only
+# lane" for the field failure this exists to catch: since the K1 fix,
+# d4-activate-station required a station\ folder beside setup.exe and
+# aborted otherwise, so a download-only install/upgrade silently stopped
+# working and no existing Gate A lane could catch it (every other lane
+# installs from the full kit).
+$script:DownloadOnlyMode = Test-Path (Join-Path $OutDir 'DOWNLOAD_ONLY_MODE.txt')
+if ($script:DownloadOnlyMode -and -not ($script:DirtyMode -and $script:UpgradeMode)) {
+    Write-Marker -Name '_INVALID-DOWNLOAD-ONLY-MODE.marker' -Content 'DOWNLOAD_ONLY_MODE.txt requires DIRTY_MODE.txt and UPGRADE_MODE.txt'
+    throw 'DOWNLOAD_ONLY_MODE.txt requires DIRTY_MODE.txt and UPGRADE_MODE.txt'
+}
+if ($script:DownloadOnlyMode) {
+    Write-Marker -Name '_DOWNLOAD-ONLY-MODE.marker' -Content "download_only_mode=1 detected_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+}
+
 # Quiesce control <gate-a-run7-findings>. Raised around the installer so the
 # shipper stops competing with it for the shared VSMB transport; see the
 # QUIESCE note above the shipper for the measured cost of not doing this.
@@ -2042,6 +2069,21 @@ try {
 
         $packsDir = Join-Path $PayloadDir 'packs'
         $summary.errors += "packs dir present: $(Test-Path $packsDir); contents: $((Get-ChildItem $packsDir -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ', ')"
+
+        # DOWNLOAD-ONLY LANE <gate-a-download-only-lane>: record BEFORE this
+        # (phase-2, current-candidate) install runs that the payload really
+        # carries no station\ -- Run-GateA.ps1 -DownloadOnlyLane is what
+        # repoints $PayloadDir at the filtered directory, but the evidence
+        # this lane's judge check reads must prove it from inside the
+        # sandbox, not merely trust the host's own claim.
+        if ($script:DownloadOnlyMode) {
+            $dlOnlyResult = Join-Path $OutDir 'DOWNLOAD-ONLY-RESULT.txt'
+            $stationDirPresent = [int](Test-Path (Join-Path $PayloadDir 'station'))
+            "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $dlOnlyResult -Encoding UTF8
+            "PAYLOAD_DIR=$PayloadDir" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+            "STATION_DIR_PRESENT=$stationDirPresent" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+            Save-Summary -Step 'download-only-payload-checked'
+        }
         Save-Summary -Step 'staged-payload'
 
         # 2. Run the installer silently. Tauri/NSIS convention is uppercase /S for
@@ -2570,6 +2612,46 @@ try {
             "DIRTY_ORPHAN_WARNING=NA (remnant not seeded this run -- orphaned-tier shape not covered)" | Add-Content -Path $dirtyRes -Encoding UTF8
         }
         Save-Summary -Step 'dirty-survival-verified'
+    }
+
+    # 5b-download-only. DOWNLOAD-ONLY LANE RESULT
+    # <gate-a-download-only-lane>: finish DOWNLOAD-ONLY-RESULT.txt (started
+    # above, before phase 2's install, with STATION_DIR_PRESENT) with the
+    # phase-2 install/activation outcome and the resulting station-set.json's
+    # product version, so the judge's download_only_no_station_dir check can
+    # prove activation succeeded with no station\ present by reusing an
+    # already-activated station's cached model packs -- not by silently
+    # falling back to a stale or mismatched receipt.
+    if ($script:DownloadOnlyMode) {
+        $dlOnlyResult = Join-Path $OutDir 'DOWNLOAD-ONLY-RESULT.txt'
+        "PHASE2_INSTALL_EXIT=$($summary.installer_exit_code)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+        "D3_ROUTE=$($script:D3Route)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+        "D3_ENGINE_EXIT=$($script:D3EngineExit)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+
+        $stationSetHits = @($summary.station_set_json_found)
+        $stationSetProductVersion = '<missing>'
+        if ($stationSetHits.Count -gt 0) {
+            try {
+                $ssContent = Get-Content -LiteralPath $stationSetHits[0] -Raw -ErrorAction Stop | ConvertFrom-Json
+                if ($ssContent.product_version) { $stationSetProductVersion = [string]$ssContent.product_version }
+            } catch {
+                $stationSetProductVersion = "<read-error: $_>"
+            }
+        }
+        "STATION_SET_PRODUCT_VERSION=$stationSetProductVersion" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+
+        # CURRENT_PRODUCT_VERSION was already captured into
+        # DIRTY-PREP-RESULT.txt by the shared upgrade prologue (P1, above) --
+        # echo it here too so the judge can compare both fields from this one
+        # file without cross-referencing DIRTY-PREP-RESULT.txt itself.
+        $currentProductVersion = '<missing>'
+        try {
+            $prepRawForDlOnly = Get-Content -LiteralPath (Join-Path $OutDir 'DIRTY-PREP-RESULT.txt') -Raw -ErrorAction Stop
+            $currentVersionMatch = [regex]::Match($prepRawForDlOnly, 'CURRENT_PRODUCT_VERSION=(\S+)')
+            if ($currentVersionMatch.Success) { $currentProductVersion = $currentVersionMatch.Groups[1].Value }
+        } catch {}
+        "CURRENT_PRODUCT_VERSION=$currentProductVersion" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+        Save-Summary -Step 'download-only-result-recorded'
     }
 
     # 5c. T2 RENDER ASSERT (QA-F1 fix). The T1 checks above only prove the

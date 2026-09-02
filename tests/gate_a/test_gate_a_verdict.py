@@ -910,3 +910,152 @@ def test_dirty_busy_short_circuit_still_carries_the_lane(tmp_path: Path) -> None
     result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
     assert result["verdict"] == "BUSY"
     assert result["lane"] == "dirty"
+
+
+# --------------------------------------------------------------------------
+# Download-only lane <gate-a-download-only-lane>
+# --------------------------------------------------------------------------
+
+DOWNLOAD_ONLY_CHECKS = ("dirty_prep", "dirty_survival", "download_only_no_station_dir")
+
+
+def _write_download_only_result(
+    run_dir: Path,
+    *,
+    station_dir_present: str = "0",
+    phase2_install_exit: str = "0",
+    d3_route: str = "UPGRADE",
+    d3_engine_exit: str = "0",
+    station_set_product_version: str = "1.0.0-beta.2",
+    current_product_version: str = "1.0.0-beta.2",
+) -> None:
+    lines = [
+        "PAYLOAD_DIR=C:\\CivicCastPayload",
+        f"STATION_DIR_PRESENT={station_dir_present}",
+        f"PHASE2_INSTALL_EXIT={phase2_install_exit}",
+        f"D3_ROUTE={d3_route}",
+        f"D3_ENGINE_EXIT={d3_engine_exit}",
+        f"STATION_SET_PRODUCT_VERSION={station_set_product_version}",
+        f"CURRENT_PRODUCT_VERSION={current_product_version}",
+    ]
+    (run_dir / "DOWNLOAD-ONLY-RESULT.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_download_only_lane_all_pass(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir)
+    _write_download_only_result(run_dir)
+    result = gav.judge(run_dir, source_sha="b" * 40, run_id="123", lane="download-only")
+
+    assert result["lane"] == "download-only"
+    assert set(result["checks"].keys()) == set(REQUIRED_CHECKS) | set(DOWNLOAD_ONLY_CHECKS)
+    assert "dirty_orphaned_tier" not in result["checks"], (
+        "download-only lane must never run the dirty lane's own orphaned-tier remnant check"
+    )
+    for name in DOWNLOAD_ONLY_CHECKS:
+        assert result["checks"][name]["status"] == "PASS", result["checks"][name]["detail"]
+    assert result["verdict"] == "PASS"
+
+
+def test_download_only_lane_missing_evidence_fails_closed(tmp_path: Path) -> None:
+    """No DOWNLOAD-ONLY-RESULT.txt (and no dirty-lane evidence either) is a
+    named FAIL on every download-only check, never an assumed PASS."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    result = gav.judge(run_dir, source_sha="deadbeef", run_id="123", lane="download-only")
+    assert result["checks"]["dirty_prep"]["status"] == "FAIL"
+    assert result["checks"]["dirty_survival"]["status"] == "FAIL"
+    assert result["checks"]["download_only_no_station_dir"]["status"] == "FAIL"
+    assert "DOWNLOAD-ONLY-RESULT.txt" in result["checks"]["download_only_no_station_dir"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_download_only_lane_fails_when_station_dir_was_present(tmp_path: Path) -> None:
+    """The whole point of this lane: if the phase-2 payload still carried a
+    station\\ directory, it proved nothing about the download-only path."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir)
+    _write_download_only_result(run_dir, station_dir_present="1")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="download-only")
+
+    check = result["checks"]["download_only_no_station_dir"]
+    assert check["status"] == "FAIL"
+    assert "STATION_DIR_PRESENT=1" in check["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_download_only_lane_fails_on_nonzero_phase2_install_exit(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir)
+    _write_download_only_result(run_dir, phase2_install_exit="123")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="download-only")
+
+    check = result["checks"]["download_only_no_station_dir"]
+    assert check["status"] == "FAIL"
+    assert "PHASE2_INSTALL_EXIT=123" in check["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_download_only_lane_fails_on_nonzero_activation_engine_exit(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir)
+    _write_download_only_result(run_dir, d3_engine_exit="7")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="download-only")
+
+    check = result["checks"]["download_only_no_station_dir"]
+    assert check["status"] == "FAIL"
+    assert "D3_ENGINE_EXIT=7" in check["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_download_only_lane_fails_when_station_set_names_a_different_version(
+    tmp_path: Path,
+) -> None:
+    """station-set.json must name the CURRENT candidate -- a mismatch means
+    activation may have reused a stale or wrong receipt instead of proving
+    the parallel station-reuse change actually worked."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir)
+    _write_download_only_result(
+        run_dir,
+        station_set_product_version="1.0.0-rc18",
+        current_product_version="1.0.0-beta.2",
+    )
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="download-only")
+
+    check = result["checks"]["download_only_no_station_dir"]
+    assert check["status"] == "FAIL"
+    assert "does not match" in check["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+def test_download_only_lane_never_runs_dirty_orphaned_tier(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir)
+    _write_download_only_result(run_dir)
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="download-only")
+    assert "dirty_orphaned_tier" not in result["checks"]
+
+
+def test_download_only_lane_cli_lane_flag(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir)
+    _write_download_only_result(run_dir)
+    proc = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), str(run_dir), "--lane", "download-only"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    written = json.loads((run_dir / "gate-a-verdict.json").read_text(encoding="utf-8"))
+    assert written["lane"] == "download-only"
+    assert written["verdict"] == "PASS"
+
+
+def test_download_only_busy_short_circuit_still_carries_the_lane(tmp_path: Path) -> None:
+    run_dir = tmp_path / "busy"
+    run_dir.mkdir()
+    (run_dir / "SANDBOX-BUSY.txt").write_text("busy", encoding="utf-8")
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="download-only")
+    assert result["verdict"] == "BUSY"
+    assert result["lane"] == "download-only"

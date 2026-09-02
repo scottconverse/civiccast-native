@@ -118,9 +118,26 @@ survived the uninstall -> reinstall cycle), and ``dirty_orphaned_tier``
 the runner staged no model seed). See docs/ops/gate-a.md, "Dirty lane". The
 default ``--lane clean`` is byte-identical to the pre-dirty-lane judge.
 
+Download-only lane <gate-a-download-only-lane>: ``--lane download-only`` adds
+``dirty_prep`` and ``dirty_survival`` (the same cross-version upgrade
+evidence the dirty lane's ``UPGRADE_MODE=1`` shape produces -- phase 1
+installs a pinned previous candidate from its full kit) plus a new
+``download_only_no_station_dir`` check, and deliberately does NOT add
+``dirty_orphaned_tier`` (that remnant sub-shape is specific to the dirty
+lane's uninstall-only path and is never authored here). The new check reads
+``DOWNLOAD-ONLY-RESULT.txt`` and FAILS unless it proves the phase-2 payload
+(the CURRENT candidate's setup.exe, run from a filtered payload directory
+containing only ``setup.exe`` and ``packs`` -- no ``station`` directory) had
+no station directory beside it, the phase-2 install and its D4 activation step
+both exited 0, and the resulting ``station-set.json`` names the CURRENT
+candidate's product version (proving the parallel "reuse an already-activated
+station's cached model packs" change, not a stale receipt, is what let
+activation succeed with no station directory present). See
+docs/ops/gate-a.md, "Download-only lane".
+
 Usage:
     python scripts/gate_a_verdict.py <output_dir> \
-        [--source-sha SHA] [--run-id ID] [--lane clean|dirty] [--out PATH]
+        [--source-sha SHA] [--run-id ID] [--lane clean|dirty|download-only] [--out PATH]
 
 Exit code: 0 if the verdict is PASS, 1 if FAIL, 2 for anything that is not a
 station-acceptance finding at all -- the output directory not existing, a
@@ -659,6 +676,96 @@ DIRTY_CHECKS: dict[str, Callable[[Path], CheckResult]] = {
 }
 
 
+# --------------------------------------------------------------------------
+# Download-only lane <gate-a-download-only-lane>. Run in addition to the
+# clean-lane checks plus ``dirty_prep``/``dirty_survival`` (the same
+# cross-version upgrade shape the dirty lane's UPGRADE_MODE=1 evidence
+# proves) when the judge is invoked with --lane download-only
+# (Run-GateA.ps1 -DownloadOnlyLane, which implies -DirtyLane -UpgradeMode).
+# Never combined with dirty_orphaned_tier -- that remnant sub-shape belongs
+# only to the dirty lane's legacy uninstall-only path. See
+# docs/ops/gate-a.md, "Download-only lane" for the field bug this lane exists
+# to catch: since the K1 fix, the installer's d4-activate-station step
+# required a station\ folder beside setup.exe and aborted otherwise, so a
+# download-only install/upgrade (setup.exe + packs\, no station\, reusing an
+# already-activated station's cached model packs) silently stopped working
+# and no existing Gate A lane caught it because every other lane installs
+# from the full kit.
+# --------------------------------------------------------------------------
+
+
+def check_download_only_no_station_dir(output_dir: Path) -> CheckResult:
+    """FAILS unless the evidence proves ALL of:
+
+    - the phase-2 (current candidate) install ran from a payload directory
+      with no ``station\\`` beside ``setup.exe`` (``STATION_DIR_PRESENT=0``);
+    - that install's D4 activation step exited 0 (``PHASE2_INSTALL_EXIT=0``
+      and ``D3_ENGINE_EXIT=0``); and
+    - the resulting ``station-set.json`` names the CURRENT candidate's
+      product version, not the pinned previous candidate's -- proving the
+      parallel station-reuse change (not a leftover/mismatched receipt) is
+      what let activation succeed with no ``station\\`` present.
+
+    Fails closed on any missing or malformed field -- an absent
+    DOWNLOAD-ONLY-RESULT.txt is a FAIL, never an assumed PASS.
+    """
+    text, err = _read_text(output_dir, "DOWNLOAD-ONLY-RESULT.txt")
+    if err is not None:
+        return _fail(err)
+    assert text is not None
+
+    station_dir_present = _dirty_line(text, "STATION_DIR_PRESENT")
+    if station_dir_present != "0":
+        return _fail(
+            "DOWNLOAD-ONLY-RESULT.txt "
+            f"STATION_DIR_PRESENT={station_dir_present or '<missing>'} (expected 0 -- the "
+            "phase-2 payload must carry no station\\ directory beside setup.exe)"
+        )
+
+    phase2_exit = _dirty_line(text, "PHASE2_INSTALL_EXIT")
+    if phase2_exit != "0":
+        return _fail(
+            f"DOWNLOAD-ONLY-RESULT.txt PHASE2_INSTALL_EXIT={phase2_exit or '<missing>'} (expected 0)"
+        )
+
+    d3_engine_exit = _dirty_line(text, "D3_ENGINE_EXIT")
+    if d3_engine_exit != "0":
+        return _fail(
+            f"DOWNLOAD-ONLY-RESULT.txt D3_ENGINE_EXIT={d3_engine_exit or '<missing>'} (expected 0 "
+            "-- the D4 activation step must have exited 0 with no station\\ directory present)"
+        )
+
+    station_set_version = _dirty_line(text, "STATION_SET_PRODUCT_VERSION")
+    current_version = _dirty_line(text, "CURRENT_PRODUCT_VERSION")
+    for label, value in (
+        ("STATION_SET_PRODUCT_VERSION", station_set_version),
+        ("CURRENT_PRODUCT_VERSION", current_version),
+    ):
+        if not value or value.startswith("<"):
+            return _fail(
+                f"DOWNLOAD-ONLY-RESULT.txt {label}={value or '<missing>'} "
+                "(expected the installer product version)"
+            )
+    if station_set_version != current_version:
+        return _fail(
+            f"DOWNLOAD-ONLY-RESULT.txt STATION_SET_PRODUCT_VERSION={station_set_version} does not "
+            f"match CURRENT_PRODUCT_VERSION={current_version} -- station-set.json must name the "
+            "CURRENT candidate, not a stale or mismatched receipt"
+        )
+
+    return _pass(
+        "phase-2 payload carried no station\\ directory, install + D4 activation exited 0, and "
+        f"station-set.json names the current candidate's product version ({station_set_version})"
+    )
+
+
+DOWNLOAD_ONLY_CHECKS: dict[str, Callable[[Path], CheckResult]] = {
+    "dirty_prep": check_dirty_prep,
+    "dirty_survival": check_dirty_survival,
+    "download_only_no_station_dir": check_download_only_no_station_dir,
+}
+
+
 CHECKS: dict[str, Callable[[Path], CheckResult]] = {
     "install": check_install,
     "activation": check_activation,
@@ -726,6 +833,10 @@ def judge(
     ``lane`` field into the verdict document. ``SKIP`` (only ever produced by
     ``check_dirty_orphaned_tier``) does not fail the verdict but is preserved
     in the checks breakdown so an uncovered remnant shape stays visible.
+    ``lane="download-only"`` <gate-a-download-only-lane> adds
+    ``DOWNLOAD_ONLY_CHECKS`` instead (``dirty_prep``, ``dirty_survival``, and
+    ``download_only_no_station_dir`` -- never ``dirty_orphaned_tier``, which
+    is specific to the dirty lane's own legacy uninstall-only path).
     The default ``lane="clean"`` produces the exact pre-dirty-lane document
     -- no new fields, no new checks.
     """
@@ -738,6 +849,8 @@ def judge(
     all_checks: dict[str, Callable[[Path], CheckResult]] = dict(CHECKS)
     if lane == "dirty":
         all_checks.update(DIRTY_CHECKS)
+    elif lane == "download-only":
+        all_checks.update(DOWNLOAD_ONLY_CHECKS)
 
     checks: dict[str, dict[str, str]] = {}
     for name, fn in all_checks.items():
@@ -812,11 +925,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--lane",
-        choices=("clean", "dirty"),
+        choices=("clean", "dirty", "download-only"),
         default="clean",
         help=(
             "Which Gate A lane produced this evidence. 'dirty' adds the remnant-lane checks "
             "(dirty_prep, dirty_survival, dirty_orphaned_tier) on top of the clean set; "
+            "'download-only' adds dirty_prep, dirty_survival, and "
+            "download_only_no_station_dir (never dirty_orphaned_tier) on top of the clean set; "
             "'clean' (default) is byte-identical to the pre-dirty-lane judge"
         ),
     )
