@@ -198,6 +198,7 @@ from civiccast.live.finalization_worker import (
 from civiccast.live.models import LiveIngestPlan, RecordingTargetCreate
 from civiccast.live.network_probe import build_network_probe
 from civiccast.live.preflight import PreflightEvaluator
+from civiccast.live.readiness_service import LiveSourceReadinessService, TakeoverReadiness
 from civiccast.live.recording_paths import (
     DEFAULT_RECORDING_TARGET_DIR_NAME,
     DEFAULT_RECORDING_TARGET_ID,
@@ -210,6 +211,7 @@ from civiccast.live.router import (
     get_live_finalization_worker,
     get_live_relay_config_store,
     get_live_session_store,
+    get_live_source_readiness_service,
     get_live_source_store,
     get_preflight_evaluator,
     get_recording_target_store,
@@ -2414,6 +2416,12 @@ def _wire_durable_stores(app: FastAPI) -> None:
     def _resolve_live_source_store() -> LiveSourceStore:
         return LiveSourceStore(_session_factory)
 
+    def _resolve_live_source_readiness_service() -> LiveSourceReadinessService:
+        # WP-07: the operator's explicit "Check source" action and the
+        # production takeover gate share one service so they can never disagree
+        # about what "ready" means for the same row.
+        return LiveSourceReadinessService(LiveSourceStore(_session_factory))
+
     def _resolve_live_relay_config_store() -> LiveRelayConfigStore:
         return LiveRelayConfigStore(_session_factory)
 
@@ -2504,18 +2512,41 @@ def _wire_durable_stores(app: FastAPI) -> None:
 
     def _resolve_takeover_service() -> TakeoverService:
         # S5 live takeover: audit store + egress command queue + a live
-        # ingest-plan provider built from the channel's relay configs.
+        # ingest-plan provider.
+        #
+        # WP-07 / audit ENG-003: this provider used to pass relay configs
+        # ONLY. ``/api/staff/live/ingest-plan`` (civiccast.live.router) had
+        # already been fixed to include the channel's ``LiveSourceStore``
+        # rows, so the API showed the operator a plan containing their real
+        # encoder while the production takeover service was built from a
+        # different, source-less plan -- a configured source could appear in
+        # the plan and be invisible to takeover, and on a station with no
+        # relay row at all takeover had nothing ready to select. Both
+        # providers now read the same two stores, scoped to the same channel.
         relay_store = LiveRelayConfigStore(_session_factory)
+        source_store = LiveSourceStore(_session_factory)
 
         def _ingest_plan(channel_id: str) -> LiveIngestPlan:
             return build_ingest_plan(
-                channel_id, relay_store.list(channel_id=channel_id, enabled=True)
+                channel_id,
+                relay_store.list(channel_id=channel_id, enabled=True),
+                live_sources=source_store.list(channel_id=channel_id),
+            )
+
+        readiness = LiveSourceReadinessService(source_store)
+
+        def _verify_readiness(
+            channel_id: str, path_id: str, endpoint_url: str
+        ) -> TakeoverReadiness:
+            return readiness.verify_for_takeover(
+                channel_id=channel_id, path_id=path_id, endpoint_url=endpoint_url
             )
 
         return TakeoverService(
             PostgresTakeoverAuditStore(_session_factory),
             PostgresEgressStore(_session_factory),
             _ingest_plan,
+            readiness_verifier=_verify_readiness,
         )
 
     def _resolve_caption_review_store() -> PostgresCaptionReviewStore:
@@ -2577,6 +2608,9 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.dependency_overrides[get_live_session_store] = _resolve_live_session_store
     app.dependency_overrides[get_preflight_evaluator] = _resolve_preflight_evaluator
     app.dependency_overrides[get_live_source_store] = _resolve_live_source_store
+    app.dependency_overrides[get_live_source_readiness_service] = (
+        _resolve_live_source_readiness_service
+    )
     app.dependency_overrides[get_live_relay_config_store] = _resolve_live_relay_config_store
     app.dependency_overrides[get_recording_target_store] = _resolve_recording_target_store
     app.dependency_overrides[get_live_finalization_worker] = _resolve_live_finalization_worker

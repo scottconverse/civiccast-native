@@ -52,16 +52,36 @@ entries:
       existed yet to split runtime packs from the model bundle). Current by
       default until a downloadable beta candidate actually publishes.
   - tag: v1.0.0-beta.2
+    status: historical
+    notes: >-
+      Internal baseline kit, never published. Built (run 33621209994, source
+      SHA 564ee028cf712e26133ada9d7c25b498abe605ab) to validate the
+      download-only install/upgrade workstream (PR #124-#127); Gate A run
+      33623737236 found its download-only lane FAILS a beta.1-station upgrade
+      (installer exit 123, activation code 66 -- the new stable-pack-identity
+      change has no migration bridge for a station already activated on the
+      old pack bytes). Owner decision 2026-09-02: beta.2 stays permanently
+      unpublished and unreleasable -- it exists solely as
+      `sandbox-lab/upgrade-baseline.json`'s pinned "immutable previous
+      candidate" so Gate A's cross-version and download-only lanes have a
+      real prior build to upgrade from. See
+      `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`. No
+      GitHub release/tag exists or will exist for this entry; a live-mode
+      run of `check_release_truth.py` against this manifest is expected to
+      report it as having no matching live release for exactly that reason.
+  - tag: v1.0.0-beta.3
     status: staging
     notes: >-
       Owner-held candidate as of this entry; NOT YET PUBLISHED by this
-      change. Intended to be the first downloadable beta-candidate release:
-      setup.exe plus per-pack runtime .ccpack assets (each under GitHub's
-      2 GB/file cap) via publish_beta_candidate.py, reusing AI models already
-      on the machine (upgrade case, PR #127/#126) or the USB bundle
-      (first-install case) rather than shipping the ~21 GB station\ bundle as
-      a release asset. Flips to current, with this entry's status flipped to
-      superseded_by v1.0.0-beta.2, only once an actual publish lands and a
+      change. Now the first downloadable beta-candidate release (beta.2
+      never publishes -- see the entry above): setup.exe plus per-pack
+      runtime .ccpack assets (each under GitHub's 2 GB/file cap) via
+      publish_beta_candidate.py, reusing AI models already on the machine
+      (download-only upgrade case, from beta.3 onward) or the USB bundle
+      (first-install case, and the one-time beta.1 -> beta.3 fresh install)
+      rather than shipping the ~21 GB station\ bundle as a release asset.
+      Flips to current, with the v1.0.0-beta.1 entry's status flipped to
+      superseded_by v1.0.0-beta.3, only once an actual publish lands and a
       human/agent updates this file to match -- this manifest is the SOLE
       AUTHORED SOURCE and is never inferred from what "should" be live.
   # Below: the retired, separate WSL2-line product (scottconverse/civiccast,

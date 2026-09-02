@@ -13,8 +13,10 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
-Current owner-held unpublished candidate: `v1.0.0-beta.2`. It has no tag or
-installer asset and is not a public or production release.
+Current owner-held unpublished candidate: `v1.0.0-beta.3`. It has no tag or
+installer asset and is not a public or production release. `v1.0.0-beta.2`
+was never published -- it exists only as an internal Gate A upgrade-baseline
+kit (see the "Changed" entry below).
 
 ### Added
 
@@ -103,6 +105,64 @@ installer asset and is not a public or production release.
 
 ### Changed
 
+- **A configured live source is no longer treated as ready just because it
+  exists.** Readiness is now an observation with an age (audit finding
+  ENG-003, ADR 0025). `civiccast/live/relay.py::_source_path` used to stamp
+  `health_state='ready'` on every configured `live_sources` row, and that
+  health value is the only gate
+  `civiccast/egress/live_takeover.py::build_live_takeover_source_plan` applies
+  before a manual takeover writes a takeover audit row and queues a
+  route-change command -- so a camera that had been unplugged for a week looked
+  exactly like a live encoder. Migration `0086_live_source_probe_state` adds
+  `probe_state` / `probe_observed_at` / `probe_detail` / `probe_error_code` /
+  `probe_last_success_at` / `row_version` to `live_sources`; existing rows
+  backfill to `never_probed`, not to ready. Four operator-facing states
+  (`never_probed`, `ready`, `stale`, `failed`) are derived against a readiness
+  TTL -- 30s by default, `CIVICCAST_LIVE_SOURCE_READINESS_TTL_SECONDS`, clamped
+  to the accepted 5-300s range. `stale` is deliberately never persisted: it is
+  a function of the clock, and a stored "stale" would outlive the successful
+  probe that should have cleared it.
+- **A configured live source is visible to production takeover.**
+  `civiccast/app.py::_resolve_takeover_service` built its ingest-plan provider
+  from relay configuration only, while `/api/staff/live/ingest-plan` had
+  already been fixed to include the channel's `LiveSourceStore` rows -- so a
+  source could appear in the API plan and be invisible to the takeover service
+  that actually changes air, and a station with no relay row (the default) had
+  nothing takeover could select. `civiccast/cli.py::_build_takeover_service`
+  carried the identical omission. Both now read the same channel-scoped rows.
+- **A manual takeover re-checks the source before anything durable happens.**
+  `TakeoverService.take` calls an injected readiness verifier after the source
+  plan is built and *before* the audit row is written or the command is
+  queued: a within-TTL success is reused, anything else gets one bounded fresh
+  probe, and a source edited between the operator's ingest plan and the Take
+  fails closed. Stale, failed, and never-probed sources create no takeover
+  audit row, queue no command, and cannot change air.
+- **The `credentials_handle` column is no longer a dead surface for reading.**
+  `civiccast/live/secrets.py` resolves it through the station's OS credential
+  store at execution time -- per probe, so rotating a passphrase takes effect on
+  the next check without a restart -- and, for playout, carries the *handle*
+  (never the secret) through the durable takeover audit row and the engine's
+  on-disk graph file in a new `ElementSpec.secret_props`, resolved by the
+  worker at element-construction time. Only SRT can hold one: its passphrase is
+  a first-class option on both runtimes (`ffprobe -passphrase`, `srtsrc
+  passphrase=`), so it never enters a URL, a row, a log line, or proof output.
+  Authenticated RTSP and RTMP shapes are rejected with explicit operator copy
+  and a disabled UI control, because neither FFmpeg protocol accepts a
+  password anywhere except inside the address. Missing or unreadable secrets
+  fail the probe closed; every probe detail is secret-redacted. **Readable
+  handle contract only; no write path yet:** `save_live_source_secret` has no
+  caller anywhere in the product (no route, CLI, or UI writes an SRT
+  passphrase into the OS credential store), so a live source's stored secret
+  can only be set today by a caller reaching into `civiccast.live.secrets`
+  directly. There is also an open per-user-vault-vs-LocalSystem gap: `keyring`
+  on Windows is the signed-in user's own per-user vault, while the CivicCast
+  supervisor service is registered and runs as `LocalSystem`
+  (`civiccast/apps/installer/src-tauri/src/native_service_registration.rs`),
+  so a secret saved from an interactive operator session would not
+  necessarily be visible to the service process that actually needs it at
+  probe/playout time. See ADR 0025's "Known gaps" section for the two
+  resolution options under consideration (write from the service process, or
+  a machine-scoped credential store).
 - **Subscriber notifications now honestly report "coming in a future
   release" instead of a fabricated green "succeeded" (owner decision
   2026-09-02).** Real subscriber notification sends (mail/webhook fan-out on
@@ -155,6 +215,45 @@ installer asset and is not a public or production release.
 
 ### Fixed
 
+- **`test_guard_fails_a_test_that_writes_real_state` no longer collides with
+  mutmut in CI.** `tests/test_hermetic_state_guard.py` spawns a nested pytest
+  subprocess via `pytester` to prove the hermetic-state teardown guard fails
+  closed; that nested invocation already disabled `cacheprovider` and
+  `randomly` but not `mutmut`, so in the `mutation-report` CI job (and the
+  `deterministic-detectors` check that reads it, where the pinned
+  `mutmut==3.6.0` package is installed alongside pytest) the nested run could
+  pick up mutmut's pytest integration and abort at fixture setup with
+  `FileNotFoundError: Could not figure out where the code to mutate is`,
+  reported as an unexpected error alongside the guard's own expected error --
+  seen identically on three unrelated branches/PRs (run 33628558134, PR #130,
+  PR #131). Added `-p no:mutmut` next to the existing `-p no:cacheprovider -p
+  no:randomly` flags on the nested `runpytest_subprocess` call. Swept the
+  rest of `tests/` for other `pytester`/nested-pytest invocations that could
+  hit the same collision; this is the only one.
+
+- **`test_ac1_verifier_green_on_registered_claims_at_head` no longer
+  depends on the job's own CI re-run attempt number.**
+  `tests/policy/test_claims_evidence.py`'s AC1 fixture writes synthetic
+  producer meta hardcoding `"run_attempt": "1"`, but the verifier under
+  test (`scripts/policy/check_claims_evidence.py`) reads the real
+  `GITHUB_RUN_ATTEMPT` from the inherited CI environment whenever
+  `--run-attempt` isn't passed on the CLI (it wasn't) — so on any CI
+  re-run attempt (`GITHUB_RUN_ATTEMPT=2`) this positive test failed its
+  own CC-WS3-004 exact-artifact-routing check with `VIOLATION: producer
+  'test': meta run_attempt '1' != this workflow run's run_attempt '2'
+  (prior-attempt artifact — CC-WS3-004)` — seen on `randomized-suite` job
+  100290734871, run 33641309663 attempt 2, seed 1070036697. The test now
+  pins `GITHUB_RUN_ATTEMPT` (and, belt-and-suspenders, `GITHUB_RUN_ID`) via
+  `monkeypatch.setenv` to match the meta it writes, so the outcome no
+  longer depends on the job's real attempt number. The CC-WS3-004 check
+  itself is unweakened: a new negative twin,
+  `test_ac1_verifier_red_when_meta_run_attempt_mismatches_env`, reuses the
+  same real-registry CLI entry point with a deliberately mismatched
+  `GITHUB_RUN_ATTEMPT` and asserts the verifier still exits 1 naming
+  `run_attempt`/`CC-WS3-004`. Verified locally with `GITHUB_RUN_ATTEMPT=2`
+  set in the shell — both AC1 tests, and the full 121-test
+  `test_claims_evidence.py` suite, pass.
+
 - **Publish preflight and approval now read the same real provider registry
   (WP-03; audit findings QA-001 and the readiness portion of ENG-001).**
   Preflight used to answer from an unrelated deterministic mock credential
@@ -190,6 +289,25 @@ installer asset and is not a public or production release.
 
 ### Added
 
+- **Operators can check a meeting source and edit one.**
+  `POST /api/staff/live/sources/{id}/probe` runs the existing bounded ffprobe
+  path and records what it saw; a failed check is a 200 with the reason and the
+  exact next action, not an error that leaves the screen showing the previous
+  state. `PATCH /api/staff/live/sources/{id}` is the update path
+  `LiveSourceStore` had deferred "until a later rung defines the edit UX" --
+  role-gated to `setup_admin` like create, with optimistic concurrency
+  (`expected_row_version`, 409 naming both versions) so a second Live Room
+  window cannot silently discard the first operator's edit. Any change to what
+  would actually be probed clears readiness in the same transaction. The Live
+  Room shows each source's last observation, its age, the safe failure reason,
+  and the one thing to do next.
+- **One rule for which endpoint shape each live-source type accepts**
+  (`civiccast/live/source_endpoints.py`), applied to create and update alike
+  and keyed on the stored `source_type`. The staff API previously accepted
+  `HttpUrl | str` without asking whether the address matched the type, so an
+  `srt` row could hold an `http://` URL that no probe and no playout element
+  could open. Embedded `user:password@` and an SRT passphrase in the address
+  are both refused outright.
 - **A download-only upgrade can reuse the AI model packs an activated station
   already holds.** The station bundle publisher now stamps every reviewed
   MODEL pack (`captions-floor`, `captions-large-v3`, and the three Ollama
@@ -340,6 +458,36 @@ installer asset and is not a public or production release.
   hold pre-rc14 packages). This also means a station that broadcasts live but
   has no media storage root configured is no longer refused permission to
   publish: it has somewhere to write the caption track after all.
+
+### Changed
+
+- **`sandbox-lab/upgrade-baseline.json` repinned from candidate-23 (beta.1,
+  `057ffece7157e5197e6ce9159d5a1abd84c30436`) to the beta.2 internal
+  candidate kit (`564ee028cf712e26133ada9d7c25b498abe605ab`, build run
+  33621209994).** PR #127's stable-pack-identity change (see the
+  "download-only upgrade can reuse the AI model packs" entry above) changed
+  the signed bytes of every AI model pack, and it ships with no migration
+  bridge for a station already activated on the old bytes: a beta.1
+  station's pack cache is keyed by the old digests and can never satisfy a
+  beta.2 signed index. Gate A run 33623737236's download-only lane proved
+  this directly on the beta.2 kit — installer exit 123, activation code 66
+  ("could not obtain model packs") — after the clean-install and
+  cross-version-upgrade lanes both passed on the same kit. Owner decision
+  2026-09-02 (option B, recorded in
+  `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`): **beta.2
+  is never published** — it stays an internal Gate A upgrade-baseline kit —
+  and **beta.1 to beta.3 is a one-time fresh install from the beta.3 kit**
+  (never an in-place upgrade), making beta.3 the first downloadable release
+  and beta.3-to-beta.4 the first download-only-upgradeable pair. The
+  required download-only Gate A lane (#125) stays required for every
+  release from beta.3 onward — this is the failure mode it exists to catch,
+  and it caught it. The #23 kit and its `D:\kit-23-FINAL-beta1` copy are
+  untouched; nothing about this repin deletes or supersedes them as
+  historical artifacts. The product version itself moved from `1.0.0-beta.2`
+  to `1.0.0-beta.3` in this same change (every surface
+  `scripts/policy/check_release_identity.py` checks), so Gate A's
+  cross-version lane can prove an upgrade against the newly-pinned beta.2
+  baseline (a same-version pin cannot).
 
 ### Fixed
 
@@ -524,6 +672,40 @@ installer asset and is not a public or production release.
   `app_platform` module) and confirmed no version bump or migration is
   needed: a new optional field with a default validates cleanly against
   every pre-existing file on disk.
+- **Six hostile-review findings against WP-07's observed-readiness work
+  (ADR 0025), fixed at their root.** **(1)** Closed a fail-open race: the
+  takeover gate read a live source, ran an up-to-8s probe, then persisted the
+  verdict by id alone -- a PATCH that repointed the endpoint inside that
+  window got silently overwritten with "ready" derived from the OLD address.
+  `LiveSourceStore.record_probe_observation` now accepts the `row_version`
+  and endpoint that were actually probed and raises a new
+  `LiveSourceProbeConflictError` (refusing the write) when either moved;
+  `LiveSourceReadinessService.verify_for_takeover` and `.probe` both carry
+  their pre-probe read through and fail closed on conflict (409 from the
+  probe API), never silently overwriting a fresher edit's `never_probed`.
+  **(2)** `source_endpoints.normalize_endpoint` only inspected the query
+  string for a passphrase and re-emitted the URL fragment unchanged, so
+  `srt://host:9000#passphrase=hunter2` was accepted and persisted in
+  plaintext; any non-empty fragment is now rejected outright for every
+  URL-type source. **(3)** `readiness_state` clamped a negative observation
+  age to zero, so a backwards clock correction left a source reading "ready"
+  for the whole span of the jump; an observation timestamped more than 5s
+  ahead of "now" now reads `stale`. **(4)** In the Live Room: the Probe
+  button now checks the same `meeting_operator`/`setup_admin` role the
+  backend requires (with an explanatory line when hidden); the source list
+  polls at most every 10s so a stale pill goes stale on screen instead of
+  outliving the 30s TTL silently; switching a source's type away from SRT
+  now clears the credential field's state (not just its display), so an old
+  handle cannot be resubmitted after switching back; and a 409 on save now
+  reloads the row and tells the operator, instead of resending the same
+  stale `row_version` forever. **(5)** Fixed a stale ADR filename citation in
+  `source_endpoints.py`. **(6)** Documented, rather than built: ADR 0025
+  gained a "Known gaps" section, and the CHANGELOG's "credentials_handle is
+  no longer a dead surface" entry now says plainly that this is a readable
+  handle contract with no write path yet (`save_live_source_secret` has zero
+  callers anywhere in the product) and that a per-user `keyring` vault vs. the
+  `LocalSystem`-registered supervisor service is an open gap, not a solved
+  one.
 - **Removed the Facility Router's hard-coded `government` channel.** Every
   channel-dependent action (scheduled-take preview, overlay preview, and the
   later L-bar command) now requires the operator to pick a currently

@@ -404,9 +404,15 @@ class TestSingleAlembicHead:
         # ``0080_watch_folder_daemon``. Updated to
         # ``0083_caption_review_language`` (recorded-Spanish captions: a
         # language column on caption_review_items), chained after
-        # ``0082_egress_graphics_overlay``.
-        assert heads[0] == "0083_caption_review_language", (
-            f"Expected head '0083_caption_review_language'; got {heads[0]!r}."
+        # ``0082_egress_graphics_overlay``. Updated to
+        # ``0086_live_source_probe_state`` (WP-07 / ENG-003: observed
+        # readiness columns on live_sources), chained after
+        # ``0083_caption_review_language`` -- WP-05's ``0085`` is parked by
+        # owner decision and will not land, and ``0084`` never materialized,
+        # so 0083 was the sole other head when this branch re-parented onto
+        # it.
+        assert heads[0] == "0086_live_source_probe_state", (
+            f"Expected head '0086_live_source_probe_state'; got {heads[0]!r}."
         )
 
 

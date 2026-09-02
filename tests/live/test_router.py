@@ -58,14 +58,17 @@ from civiccast.live.preflight import (
     PREFLIGHT_STATUS_PASS,
     PreflightEvaluator,
 )
+from civiccast.live.readiness_service import LiveSourceReadinessService
 from civiccast.live.router import (
     get_live_finalization_worker,
     get_live_relay_config_store,
     get_live_session_store,
+    get_live_source_readiness_service,
     get_live_source_store,
     get_preflight_evaluator,
     get_recording_target_store,
 )
+from civiccast.live.source_probe import ProbeObservation
 from civiccast.live.store import (
     LiveRelayConfigStore,
     LiveSessionStore,
@@ -140,7 +143,18 @@ def client(session_factory) -> Iterator[TestClient]:  # type: ignore[no-untyped-
         source_probe=lambda source: (True, f"Source {source.live_source_id!r} delivered media."),
     )
     finalization_worker = LiveFinalizationWorker(session_factory)
+    # WP-07: a deterministic in-process probe. The real one shells out to
+    # ffprobe against a live encoder; router tests are about the HTTP contract
+    # and the persistence, so the probe itself is injected and the ffprobe
+    # subprocess path is proven separately in tests/live/test_source_probe.py.
+    readiness_service = LiveSourceReadinessService(
+        live_source_store,
+        probe=lambda source, **_: ProbeObservation(
+            ok=True, detail=f"{source.name} is delivering video; server-side media probe passed."
+        ),
+    )
 
+    app.dependency_overrides[get_live_source_readiness_service] = lambda: readiness_service
     app.dependency_overrides[get_live_session_store] = lambda: live_session_store
     app.dependency_overrides[get_live_source_store] = lambda: live_source_store
     app.dependency_overrides[get_live_relay_config_store] = lambda: relay_config_store
@@ -885,12 +899,18 @@ class TestGetIngestPlan:
         assert body["local_default"]["requires_inbound_firewall"] is False
         assert body["relay_paths"] == []
 
-    def test_configured_source_appears_and_becomes_recommended(self, client: TestClient) -> None:
-        """Bug B5 (field evidence, native beta candidate #17): the ingest
-        plan used to be the hardcoded RTMP placeholder plus relay rows only
-        -- an operator's real LiveSource (added via Run Meeting / source
-        setup) was invisible to live-takeover. GET /ingest-plan must now
-        surface it as a real, selectable, recommended path."""
+    def test_configured_source_appears_but_is_not_ready_until_probed(
+        self, client: TestClient
+    ) -> None:
+        """B5 made an operator's real source VISIBLE to takeover; WP-07 stops it
+        from being READY just because it exists.
+
+        This test is the mutation anchor for audit finding ENG-003. Restore
+        ``health_state=RELAY_HEALTH_READY`` in ``civiccast.live.relay._source_path``
+        and this test fails on the ``not_configured`` assertion below -- the plan
+        would once again tell live-takeover that a camera nobody has looked at is
+        safe to cut to.
+        """
         client.post(
             "/api/staff/live/sources",
             json=_source_payload(
@@ -904,13 +924,43 @@ class TestGetIngestPlan:
 
         assert r.status_code == 200
         body = r.json()
-        assert body["recommended_path_id"] == "council-encoder"
         assert len(body["relay_paths"]) == 1
-        assert body["relay_paths"][0]["endpoint_url"] == "srt://0.0.0.0:9000?mode=listener"
-        assert body["relay_paths"][0]["health_state"] == "ready"
+        path = body["relay_paths"][0]
+        assert path["path_id"] == "council-encoder"
+        assert path["endpoint_url"] == "srt://0.0.0.0:9000?mode=listener"
+        # Configured on purpose (enabled) but never observed (not ready).
+        assert path["enabled"] is True
+        assert path["health_state"] == "not_configured"
+        assert "check" in path["operator_action"].lower()
+        # Nothing is ready, so the plan still has to recommend somewhere; it
+        # falls back to the honest placeholder rather than to the unchecked
+        # source.
+        assert body["recommended_path_id"] == "gov-ch12:local"
         # The legacy placeholder stays present but honestly unusable.
         assert body["local_default"]["enabled"] is False
         assert body["local_default"]["health_state"] == "not_configured"
+
+    def test_source_becomes_the_recommended_path_once_a_probe_succeeds(
+        self, client: TestClient
+    ) -> None:
+        """The other half: an OBSERVED source is exactly as selectable as the
+        pre-WP-07 plan claimed every configured source was."""
+        client.post(
+            "/api/staff/live/sources",
+            json=_source_payload(
+                "council-encoder",
+                source_type="srt",
+                endpoint_url="srt://0.0.0.0:9000?mode=listener",
+            ),
+        )
+        probe = client.post("/api/staff/live/sources/council-encoder/probe")
+        assert probe.status_code == 200, probe.text
+        assert probe.json()["ok"] is True
+
+        body = client.get("/api/staff/live/ingest-plan", params={"channel_id": "gov-ch12"}).json()
+
+        assert body["recommended_path_id"] == "council-encoder"
+        assert body["relay_paths"][0]["health_state"] == "ready"
 
     def test_ready_relay_appears_as_outbound_only_path(self, client: TestClient) -> None:
         client.post("/api/staff/live/relay-configs", json=_relay_payload())

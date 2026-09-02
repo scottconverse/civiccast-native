@@ -2464,6 +2464,14 @@ export interface LiveSourceCreate {
   credentials_handle?: string | null
 }
 
+export interface LiveSourceProbeResponse {
+  source: LiveSourceResponse
+  probed_at: string
+  ok: boolean
+  error_code?: string | null
+  detail?: string | null
+}
+
 export interface LiveSourceResponse {
   live_source_id: string
   channel_id: string
@@ -2472,6 +2480,28 @@ export interface LiveSourceResponse {
   endpoint_url: string
   credentials_handle: string | null
   created_at: string
+  probe_state?: 'never_probed' | 'ready' | 'failed'
+  probe_observed_at?: string | null
+  probe_detail?: string | null
+  probe_error_code?: string | null
+  probe_last_success_at?: string | null
+  row_version?: number
+  readiness_ttl_seconds: number
+  observation_age_seconds: number | null
+  readiness: 'never_probed' | 'ready' | 'stale' | 'failed'
+  credentials_supported: boolean
+  credentials_unsupported_reason: string | null
+  next_action: string
+}
+
+export interface LiveSourceUpdate {
+  channel_id?: string | null
+  name?: string | null
+  source_type?: 'rtmp' | 'rtsp' | 'ndi' | 'srt' | null
+  endpoint_url?: string | null
+  credentials_handle?: string | null
+  clear_credentials_handle?: boolean
+  expected_row_version?: number | null
 }
 
 export interface LiveState {

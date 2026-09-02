@@ -1,8 +1,9 @@
 # Support
 
 > **Current native release posture:** `v1.0.0-beta.1` is the current
-> release (USB-delivered). `v1.0.0-beta.2` is the current
-> owner-held unpublished candidate. It has no installer asset and
+> release (USB-delivered). `v1.0.0-beta.2` was never published -- it exists
+> only as an internal Gate A upgrade-baseline kit. `v1.0.0-beta.3` is the
+> current owner-held unpublished candidate. It has no installer asset and
 > is not a public or production release. Community
 > support does not turn this source candidate into a supported field release.
 
@@ -68,7 +69,7 @@ development.
 ## Native Windows Beta
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
-is **not a public beta**. Its current development candidate, `v1.0.0-beta.2`,
+is **not a public beta**. Its current development candidate, `v1.0.0-beta.3`,
 is owner-held and unpublished with no installer asset, so there is no public
 installer to support yet and no dedicated support intake for it.
 

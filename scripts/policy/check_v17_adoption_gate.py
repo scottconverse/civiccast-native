@@ -84,7 +84,9 @@ HISTORICAL_DOCS = (
 # walkthrough now describes the native line's own install/verify path instead
 # of the retired WSL2 line, and the SmartScreen walkthrough keeps its
 # mechanics (Authenticode/SmartScreen clicks) current while its release-state
-# banner now names v1.0.0-beta.1/beta.2 instead of rc18. Neither file is
+# banner now names v1.0.0-beta.1/beta.3 (updated 2026-09-02: beta.2 never
+# published, see docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)
+# instead of rc18. Neither file is
 # "kept as historical reference" any more, so requiring a historical/retired
 # classification on them would be reintroducing exactly the stale-claim
 # pattern this gate exists to catch. The other five docs above still carry

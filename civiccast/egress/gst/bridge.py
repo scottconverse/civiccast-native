@@ -212,7 +212,24 @@ def source_first_element(segment: EgressSourceSegment) -> ElementSpec:
                 "(use srt/udp/rtmp/rtsp/http)"
             )
         factory, prop = mapping
-        return ElementSpec(factory, props={prop: segment.path})
+        secret_props: dict[str, str] = {}
+        if segment.secret_ref:
+            if scheme != "srt":
+                # WP-07: only SRT has a credential property this engine can set
+                # without writing the secret into the URI. Anything else that
+                # arrives carrying a handle is a wiring bug upstream, and the
+                # safe answer is to refuse the graph rather than to open the
+                # feed unauthenticated and call it live.
+                raise ValueError(
+                    f"live source scheme {scheme!r} for segment {segment.label!r} cannot "
+                    "carry a stored credential; only SRT has a passphrase property this "
+                    "engine can set without putting the secret in the address"
+                )
+            # ``srtsrc`` has a first-class ``passphrase`` property, so the
+            # secret never touches the URI, the graph file, or a log line --
+            # only the handle travels, and the worker resolves it.
+            secret_props["passphrase"] = segment.secret_ref
+        return ElementSpec(factory, props={prop: segment.path}, secret_props=secret_props)
     return ElementSpec("filesrc", props={"location": segment.path})
 
 

@@ -847,10 +847,15 @@ class TestMigration0056AndMerge:
         # evidence, candidate #17: civiccast/summary/job.py), chained after
         # 0080_watch_folder_daemon. Updated to 0083_caption_review_language
         # (recorded-Spanish captions: a language column on
-        # caption_review_items), chained after 0082_egress_graphics_overlay
-        # and is the current head.
-        assert list(heads) == ["0083_caption_review_language"], (
-            f"Expected single head 0083_caption_review_language, got {heads!r}"
+        # caption_review_items), chained after 0082_egress_graphics_overlay.
+        # Updated to 0086_live_source_probe_state (WP-07 / audit ENG-003:
+        # observed-readiness columns on live_sources), chained after
+        # 0083_caption_review_language and is the current head -- WP-05's
+        # 0085 is parked by owner decision and will not land, and 0084 never
+        # materialized, so 0083 was the sole other head when this branch
+        # re-parented onto it.
+        assert list(heads) == ["0086_live_source_probe_state"], (
+            f"Expected single head 0086_live_source_probe_state, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:
