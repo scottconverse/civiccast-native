@@ -34,7 +34,10 @@ const REQUIRED_COMPONENTS: [&str; 5] = [
     "translation-translategemma-4b",
 ];
 // Verified and staged when present in a distribution, never required.
-const OPTIONAL_COMPONENTS: [&str; 1] = ["captions-large-v3"];
+// `pub(crate)` so `native_distribution::is_station_model_component` can
+// derive the station MODEL allowlist from this constant rather than
+// retyping the component id a second time.
+pub(crate) const OPTIONAL_COMPONENTS: [&str; 1] = ["captions-large-v3"];
 // Where `captions-large-v3`'s signed pack lands once staged -- unchanged
 // from the original five-pack convention.
 const LARGE_V3_STAGED_ROOT: &str = "components/captions-large-v3";
@@ -479,12 +482,15 @@ fn promote_staging(staging: &Path, target: &Path) -> Result<(), String> {
 
 /// Whether `pack`'s own signed manifest declares the identity the index
 /// requires of it. The rule is
-/// [`native_distribution::pack_identity_expectations`]'s, not a second one:
-/// station MODEL packs are pinned by the signed index's SHA-256 + byte
-/// count (already checked by the caller) and carry a stable cross-version
-/// identity so a download-only upgrade can reuse this station's cached
-/// packs, so their version pair is not compared; `core`, and every
-/// component of a channel index, must still match the index exactly.
+/// [`native_distribution::pack_identity_expectations`]'s, not a second one
+/// -- including its allowlist of station MODEL components and the tripwire
+/// that relaxing the check gives up (read that function's doc before
+/// changing anything here). Station MODEL packs are pinned by the signed
+/// index's SHA-256 + byte count (already checked by the caller) and carry a
+/// stable cross-version identity so a download-only upgrade can reuse this
+/// station's cached packs, so their version pair is not compared; `core`,
+/// any component not on that allowlist, and every component of a channel
+/// index must still match the index exactly.
 fn pack_identity_is_consistent(distribution: &AcquiredDistribution, pack: &AcquiredPack) -> bool {
     let (expected_product_version, expected_compatible_core) =
         native_distribution::pack_identity_expectations(&distribution.index, &pack.component);

@@ -19,21 +19,29 @@ installer asset and is not a public or production release.
 ### Added
 
 - **A download-only upgrade can reuse the AI model packs an activated station
-  already holds.** The station bundle publisher now stamps every MODEL pack
-  (everything except the per-version `core` placeholder) with a stable
-  identity, `station-models-1`, instead of the product version, so the same
-  reviewed model set produces byte-identical packs — and therefore identical
-  SHA-256 digests — from one candidate to the next. The signed station index
-  and `core` still carry the real product version. Because the index pins each
-  pack by SHA-256 and byte count, a `setup.exe` that arrives with no `station\`
-  folder beside it can now serve those packs from the station's existing
-  per-SHA cache (`<install root>\packs\.station-cache\packs\`) rather than
-  requiring the ~21 GB of model media again. A cached pack is never trusted for
-  existing: its bytes must match the signed index and it must re-verify as a
-  trust-root-signed pack for that component, and a cache miss or a corrupt
-  entry fails closed naming both the media path and the cache path. The
-  identity constants are bumped only when the reviewed model set itself
-  changes.
+  already holds.** The station bundle publisher now stamps every reviewed
+  MODEL pack (`captions-floor`, `captions-large-v3`, and the three Ollama
+  components — never the per-version `core` placeholder, and never a component
+  outside that allowlist) with a stable identity, `station-models-1`, instead
+  of the product version. It also no longer signs any build-input path into a
+  pack's metadata, so the same reviewed model set produces byte-identical
+  packs — and therefore identical SHA-256 digests — from one candidate to the
+  next *and* from one build machine to the next; a test builds the same
+  fixture from two different roots and fails if the digests diverge. The
+  signed station index and `core` still carry the real product version.
+  Because the index pins each pack by SHA-256 and byte count, a `setup.exe`
+  that arrives with no `station\` folder beside it can now serve those packs
+  from the station's existing per-SHA cache
+  (`<install root>\packs\.station-cache\packs\`) rather than requiring the
+  ~21 GB of model media again. A cached pack is never trusted for existing:
+  its bytes must match the signed index and it must re-verify as a
+  trust-root-signed pack for that component; a directory, junction, or symlink
+  planted at the cache path is refused, and a cache miss or a corrupt entry
+  fails closed naming both the media path and the cache path. The trade this
+  makes is explicit: model packs no longer carry an independent version
+  tripwire, so a publisher who signs a new index pointing at a stale-era pack
+  digest gets that stale pack. The identity constants are bumped only when the
+  reviewed model set itself changes.
 
 - **Supported data-preserving install-over-existing upgrades for CivicCast
   (Native).** Setup now invokes the already-installed bootstrap's production
