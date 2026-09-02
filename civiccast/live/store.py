@@ -182,6 +182,28 @@ class LiveSourceConcurrencyError(Exception):
         )
 
 
+class LiveSourceProbeConflictError(Exception):
+    """Raised when the row that was probed no longer matches what was probed.
+
+    ``record_probe_observation`` accepts the ``row_version`` and
+    ``endpoint_url`` the caller actually probed. If either no longer matches
+    the row at write time -- an operator's PATCH landed in the window between
+    reading the row and persisting the observation -- persisting ``ready`` (or
+    any other verdict) derived from the OLD address would durably misreport
+    the NEW one. This is raised instead, and no write happens: the caller must
+    treat the probe as inconclusive, never as an answer about the row that now
+    exists.
+    """
+
+    def __init__(self, live_source_id: str, *, reason: str) -> None:
+        self.live_source_id = live_source_id
+        self.reason = reason
+        super().__init__(
+            f"LiveSource {live_source_id!r} changed during probe ({reason}); "
+            "the observation was discarded rather than recorded"
+        )
+
+
 class RecordingTargetAlreadyExistsError(Exception):
     """Raised when a ``RecordingTarget`` create collides on primary key."""
 
@@ -610,12 +632,25 @@ class LiveSourceStore:
         observed_at: datetime,
         detail: str | None,
         error_code: str | None,
+        expected_row_version: int | None = None,
+        expected_endpoint_url: str | None = None,
     ) -> LiveSourceResponse:
         """Persist the outcome of one probe against ``live_source_id``.
 
         ``probe_last_success_at`` advances only on success; a later failure
         leaves it standing so the operator can distinguish a source that never
         worked from one that stopped working.
+
+        ``expected_row_version`` / ``expected_endpoint_url`` are the version and
+        endpoint the caller actually probed, read at the top of its call before
+        the (up to several seconds long) probe ran. When either is supplied and
+        no longer matches the row, the write is refused with
+        :class:`LiveSourceProbeConflictError` rather than persisted: an
+        operator's PATCH landing in that window (re-pointing the endpoint, or
+        any other edit) must not be silently overwritten by a verdict about the
+        address that used to be there. This is the guard against the
+        probe-then-persist race the takeover gate and the explicit "Check
+        source" action both go through.
         """
         with self._session_factory() as session:
             row = session.execute(
@@ -623,6 +658,12 @@ class LiveSourceStore:
             ).scalar_one_or_none()
             if row is None:
                 raise LiveSourceNotFoundError(live_source_id)
+            if expected_row_version is not None and row.row_version != expected_row_version:
+                session.rollback()
+                raise LiveSourceProbeConflictError(live_source_id, reason="row_version_changed")
+            if expected_endpoint_url is not None and row.endpoint_url != expected_endpoint_url:
+                session.rollback()
+                raise LiveSourceProbeConflictError(live_source_id, reason="endpoint_changed")
             row.probe_state = PROBE_STATE_READY if ok else PROBE_STATE_FAILED
             row.probe_observed_at = observed_at
             row.probe_detail = (detail or None) if detail is None else detail[:_MAX_PROBE_DETAIL]

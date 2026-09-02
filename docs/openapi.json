@@ -5353,7 +5353,7 @@
           "live"
         ],
         "summary": "Check whether a live source is delivering media right now",
-        "description": "Run one bounded server-side media probe and persist what it saw.\n\nReturns 200 for a failed check, not an error status: \"this camera is not\nanswering\" is a result the operator needs rendered on the source card,\nwith its reason and its next action, not an exception that leaves the\nscreen showing the previous state. Only a missing source (404) or missing\ndurable storage (503) is an error here.",
+        "description": "Run one bounded server-side media probe and persist what it saw.\n\nReturns 200 for a failed check, not an error status: \"this camera is not\nanswering\" is a result the operator needs rendered on the source card,\nwith its reason and its next action, not an exception that leaves the\nscreen showing the previous state. Only a missing source (404), a\nconflicting concurrent edit (409), or missing durable storage (503) is an\nerror here.",
         "operationId": "probe_source_api_staff_live_sources__live_source_id__probe_post",
         "parameters": [
           {
@@ -5379,6 +5379,9 @@
           },
           "404": {
             "description": "LiveSource not found"
+          },
+          "409": {
+            "description": "The source changed while it was being checked"
           },
           "503": {
             "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"

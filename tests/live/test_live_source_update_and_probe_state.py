@@ -37,6 +37,7 @@ from civiccast.live.models import LiveSourceCreate, LiveSourceUpdate
 from civiccast.live.store import (
     LiveSourceConcurrencyError,
     LiveSourceNotFoundError,
+    LiveSourceProbeConflictError,
     LiveSourceStore,
 )
 
@@ -147,6 +148,76 @@ class TestProbeObservationPersistence:
             store.record_probe_observation(
                 "nope", ok=True, observed_at=_NOW, detail="", error_code=None
             )
+
+
+class TestProbeObservationConflict:
+    """The write-side guard against a PATCH landing inside a probe's window.
+
+    ``expected_row_version`` / ``expected_endpoint_url`` are what the caller
+    actually probed, read before the (possibly multi-second) probe ran. If an
+    edit lands before the write, persisting the probe's verdict would durably
+    misreport the row that now exists.
+    """
+
+    def test_a_row_version_that_moved_is_refused(self, store: LiveSourceStore) -> None:
+        created = _create(store)
+        store.update("council-encoder", LiveSourceUpdate(name="Renamed Mid-Probe"))
+        with pytest.raises(LiveSourceProbeConflictError) as excinfo:
+            store.record_probe_observation(
+                "council-encoder",
+                ok=True,
+                observed_at=_NOW,
+                detail="stale answer",
+                error_code=None,
+                expected_row_version=created.row_version,
+            )
+        assert excinfo.value.reason == "row_version_changed"
+        # The write must not have happened.
+        row = store.get("council-encoder")
+        assert row is not None
+        assert row.probe_state == "never_probed"
+
+    def test_an_endpoint_that_moved_is_refused_even_if_version_check_is_skipped(
+        self, store: LiveSourceStore
+    ) -> None:
+        _create(store)
+        store.update(
+            "council-encoder", LiveSourceUpdate(endpoint_url="srt://0.0.0.0:9100?mode=listener")
+        )
+        with pytest.raises(LiveSourceProbeConflictError) as excinfo:
+            store.record_probe_observation(
+                "council-encoder",
+                ok=True,
+                observed_at=_NOW,
+                detail="stale answer about the old address",
+                error_code=None,
+                expected_endpoint_url="srt://0.0.0.0:9000?mode=listener",
+            )
+        assert excinfo.value.reason == "endpoint_changed"
+
+    def test_a_matching_version_and_endpoint_write_normally(self, store: LiveSourceStore) -> None:
+        created = _create(store)
+        row = store.record_probe_observation(
+            "council-encoder",
+            ok=True,
+            observed_at=_NOW,
+            detail="fresh answer",
+            error_code=None,
+            expected_row_version=created.row_version,
+            expected_endpoint_url=created.endpoint_url,
+        )
+        assert row.probe_state == "ready"
+
+    def test_omitting_the_expectations_writes_unconditionally(self, store: LiveSourceStore) -> None:
+        # Backward-compatible default: a caller that does not supply the
+        # expectations (e.g. a future importer with no prior read to compare
+        # against) keeps today's behaviour.
+        _create(store)
+        store.update("council-encoder", LiveSourceUpdate(name="Renamed"))
+        row = store.record_probe_observation(
+            "council-encoder", ok=True, observed_at=_NOW, detail="ok", error_code=None
+        )
+        assert row.probe_state == "ready"
 
 
 class TestUpdateInvalidatesReadiness:

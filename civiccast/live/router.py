@@ -833,6 +833,7 @@ def update_source(
     dependencies=[Depends(require_any_role("meeting_operator", "setup_admin"))],
     responses={
         404: {"description": "LiveSource not found"},
+        409: {"description": "The source changed while it was being checked"},
         503: {"description": _DB_NOT_READY_DESCRIPTION},
     },
 )
@@ -845,12 +846,13 @@ def probe_source(
     Returns 200 for a failed check, not an error status: "this camera is not
     answering" is a result the operator needs rendered on the source card,
     with its reason and its next action, not an exception that leaves the
-    screen showing the previous state. Only a missing source (404) or missing
-    durable storage (503) is an error here.
+    screen showing the previous state. Only a missing source (404), a
+    conflicting concurrent edit (409), or missing durable storage (503) is an
+    error here.
     """
     service = _require_store(readiness_service, surface="live source readiness")
 
-    from civiccast.live.store import LiveSourceNotFoundError
+    from civiccast.live.store import LiveSourceNotFoundError, LiveSourceProbeConflictError
 
     try:
         source, observation, probed_at = service.probe(live_source_id)
@@ -858,6 +860,24 @@ def probe_source(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"LiveSource not found: {live_source_id}",
+        ) from exc
+    except LiveSourceProbeConflictError as exc:
+        # An edit landed while this probe was running. The edit's own write
+        # already reset readiness to ``never_probed`` when it changed
+        # anything probe-relevant; persisting this probe's verdict on top of
+        # that would silently overwrite the newer row with an answer about
+        # the address that used to be there. Refuse it the same way a
+        # concurrent PATCH-vs-PATCH conflict is refused.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    f"{live_source_id} was changed while CivicCast was checking it. "
+                    "Reload the source and choose Check source again."
+                ),
+                "live_source_id": live_source_id,
+                "reason": exc.reason,
+            },
         ) from exc
     return LiveSourceProbeResponse(
         source=_cast_response(source, LiveSourceResponse),

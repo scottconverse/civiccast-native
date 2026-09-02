@@ -98,7 +98,15 @@ def test_configured_live_source_becomes_the_recommended_path() -> None:
     plan = build_ingest_plan(
         "gov-ch12",
         [],
-        live_sources=[_source()],
+        # ``_source()``'s default ``probe_observed_at`` is real wall-clock
+        # "now" (it stands in for "a probe just ran"). This test pins
+        # ``generated_at`` to a fixed 2026-05-31 moment instead of leaving it
+        # at real "now" like every other test in this file, so the observation
+        # has to be pinned to match -- otherwise it reads as observed months
+        # *after* the plan's own "now", which readiness_state's future-
+        # observation guard (WP-07 hostile-review fix) correctly reads as
+        # stale, not ready.
+        live_sources=[_source(probe_observed_at=datetime(2026, 5, 31, 18, 59, 45, tzinfo=UTC))],
         generated_at=datetime(2026, 5, 31, 19, 0, tzinfo=UTC),
     )
 

@@ -121,12 +121,19 @@ class LiveSourceReadinessService:
             raise LiveSourceNotFoundError(live_source_id)
         observation = self._observe(source)
         observed_at = self._clock()
+        # ``row_version``/``endpoint_url`` are what was actually probed above,
+        # read before the (possibly multi-second) probe ran. If an edit landed
+        # in that window the store refuses the write rather than persisting a
+        # verdict about an address that is no longer this row's -- see
+        # ``LiveSourceProbeConflictError``.
         refreshed = self._store.record_probe_observation(
             live_source_id,
             ok=observation.ok,
             observed_at=observed_at,
             detail=observation.detail,
             error_code=observation.error_code,
+            expected_row_version=source.row_version,
+            expected_endpoint_url=source.endpoint_url,
         )
         return refreshed, observation, observed_at
 
@@ -197,13 +204,41 @@ class LiveSourceReadinessService:
         # re-observed now rather than trusted.
         observation = self._observe(source)
         observed_at = self._clock()
+        from civiccast.live.store import LiveSourceProbeConflictError
+
         try:
+            # ``row_version``/``endpoint_url`` are the values read above,
+            # BEFORE the (up to ``timeout_seconds``-long) probe ran. This is
+            # the guard against the race this method exists to close: a PATCH
+            # that repoints the row inside the probe window must not be
+            # overwritten by a verdict this probe reached about the OLD
+            # address. The store refuses the write instead of persisting it.
             refreshed = self._store.record_probe_observation(
                 path_id,
                 ok=observation.ok,
                 observed_at=observed_at,
                 detail=observation.detail,
                 error_code=observation.error_code,
+                expected_row_version=source.row_version,
+                expected_endpoint_url=source.endpoint_url,
+            )
+        except LiveSourceProbeConflictError:
+            # The row was edited while the probe was running. The edit's own
+            # write (``LiveSourceStore.update``) already reset readiness to
+            # ``never_probed`` when it changed anything probe-relevant; this
+            # verdict must not clobber that with an observation about an
+            # address that is no longer the row's. Fail closed and tell the
+            # operator to look again, exactly as the pre-probe endpoint check
+            # above does.
+            return TakeoverReadiness(
+                ok=False,
+                reason=(
+                    f"{source.name} was changed while it was being checked for takeover "
+                    "(its address is no longer the one that was checked). Reload the Live "
+                    "Room, check the source, and take air again."
+                ),
+                error_code="source_changed_during_takeover",
+                reprobed=True,
             )
         except Exception:
             # The row vanished (or the write failed) between the read and the

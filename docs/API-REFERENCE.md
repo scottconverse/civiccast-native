@@ -3319,7 +3319,7 @@ Check whether a live source is delivering media right now.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `live_source_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `LiveSourceProbeResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 LiveSource not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+- Responses: 200 `LiveSourceProbeResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 LiveSource not found; 409 The source changed while it was being checked; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
 ### `GET /api/staff/media-lifecycle/audit-log`
 

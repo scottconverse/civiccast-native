@@ -250,6 +250,55 @@ class TestTakeoverGateRace:
         assert verdict.reprobed is False
         assert "relay health surface" in verdict.reason
 
+    def test_a_patch_interleaved_between_probe_and_persist_is_refused(
+        self, store: LiveSourceStore
+    ) -> None:
+        # The race this closes: verify_for_takeover reads the row, decides it
+        # needs a fresh probe, and runs one that can take up to
+        # ``timeout_seconds``. If a PATCH repoints the endpoint inside that
+        # window, the probe that is still in flight is about the OLD address.
+        # Persisting its verdict as "ready" would durably misreport the row
+        # that now exists. The store must refuse the write instead.
+        _create(store)
+
+        class _RepointingProbe:
+            """Simulates an operator's PATCH landing while the probe is running."""
+
+            def __init__(self, store: LiveSourceStore) -> None:
+                self._store = store
+                self.calls = 0
+
+            def __call__(self, source, *, timeout_seconds, resolve_secret=None):  # type: ignore[no-untyped-def]
+                self.calls += 1
+                self._store.update(
+                    source.live_source_id,
+                    LiveSourceUpdate(endpoint_url="srt://0.0.0.0:9200?mode=listener"),
+                )
+                return ProbeObservation(
+                    ok=True,
+                    detail=f"{source.name} is delivering video (stale answer, old address).",
+                    error_code=None,
+                )
+
+        probe = _RepointingProbe(store)
+        verdict = _service(store, probe).verify_for_takeover(
+            channel_id="gov-ch12", path_id="council-encoder", endpoint_url=_ENDPOINT
+        )
+        assert probe.calls == 1
+        assert verdict.ok is False
+        assert verdict.error_code == "source_changed_during_takeover"
+
+        # The PATCH's own write already reset readiness to never_probed
+        # (invalidates_readiness() -- endpoint changed). The bug this closes
+        # is the probe's stale "ready" verdict silently overwriting that; the
+        # row must still read never_probed, not ready, and not the new
+        # endpoint's edit alone without the conflicting write ever having
+        # landed.
+        refreshed = store.get("council-encoder")
+        assert refreshed is not None
+        assert refreshed.probe_state == "never_probed"
+        assert refreshed.endpoint_url == "srt://0.0.0.0:9200?mode=listener"
+
     def test_an_unrecordable_observation_fails_closed(self, store: LiveSourceStore) -> None:
         _create(store)
         service = _service(store, _CountingProbe(True))
