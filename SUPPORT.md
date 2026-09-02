@@ -1,15 +1,9 @@
 # Support
 
-> **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
-
-> **Release state:** `v1.0.0-rc18` is the current release line and the published
-> controlled beta; `v1.0.0-rc17` remains the rollback target. The proof boundary
-> is recorded in
-> [docs/releases/v1.0.0-rc18-verification.md](docs/releases/v1.0.0-rc18-verification.md).
+> **Current native release posture:** `v1.0.0-beta.2` is the current
+> owner-held unpublished candidate. It has no installer asset and
+> is not a public or production release. Community
+> support does not turn this source candidate into a supported field release.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -40,11 +34,14 @@ there is no commercial support contract or SLA.
    message, and the steps already tried. Never
    include passwords, recovery codes, staff tokens, or private meeting
    material in a public report.
-4. **Use [Discussions](https://github.com/scottconverse/civiccast/discussions) for
+4. **Use [Discussions](https://github.com/scottconverse/civiccast-native/discussions) for
    open-ended planning.** Examples: whether CivicCast is a fit for an HOA,
    public-access station, school board, or nonprofit workflow.
 
-## What Is Supported For Early Adoption
+## Retired WSL2 Support History
+
+The following paragraph records the old WSL2 product line only. It is not
+installation or support guidance for the native product in this repository.
 
 `v1.0.0-rc13` is withdrawn after a genuine clean-host bootstrap failure.
 Existing rc13 failure reports remain useful; do not begin a new rc13 or
@@ -69,25 +66,23 @@ development.
 
 ## Native Windows Beta
 
-The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md),
-developed on `release/native-beta-1.0.0-beta.1-rc1`) is **not a public beta**.
-Its development candidate, `v1.0.0-beta.1`, is an owner-held build, not a
-published GitHub release, so there is no public installer to support yet and
-no dedicated support intake for it.
+The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
+is **not a public beta**. Its current development candidate, `v1.0.0-beta.2`,
+is owner-held and unpublished with no installer asset, so there is no public
+installer to support yet and no dedicated support intake for it.
 
 If you are working on or evaluating the native line as a contributor:
 
 - Read [ADR 0021](docs/adr/0021-native-windows-runtime.md) and
   [BRANCHES.md](BRANCHES.md) first.
-- Use [GitHub Discussions](https://github.com/scottconverse/civiccast/discussions)
+- Use [GitHub Discussions](https://github.com/scottconverse/civiccast-native/discussions)
   or a regular GitHub Issue for questions, and say explicitly in the report
-  that it concerns the native line and which commit on
-  `release/native-beta-1.0.0-beta.1-rc1` you're on — the templates don't yet
+  that it concerns the native line and which source commit you're on -- the templates don't yet
   have a native-specific path, so context has to be spelled out by hand.
 - Do not treat anything reported against the native line as a supported,
   SLA'd, or field-proven path. The same "community-driven, no SLA" posture
-  above applies, and the native line additionally has no public release or
-  proof boundary document yet. A clean-machine verification record exists at
+  above applies, and the native line additionally has no public installer
+  release or field-proof boundary yet. A clean-machine verification record exists at
   `.agent-runs/native-windows/k1-clean-box-proof/evidence/` (clean-box
   install → activation → clerk loop → captions → product-engine egress,
   2026-08-19); it is an engineering proof, not a support commitment.

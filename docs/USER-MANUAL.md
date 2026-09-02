@@ -1,6 +1,6 @@
 ---
 title: CivicCast User Manual
-subtitle: For station operators, clerks, and IT staff · v1.0.0-beta.1 (native Windows line)
+subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.2 (native Windows line)
 author: The CivicCast Authors
 date: 2026-08-30
 # Layout, fonts, and colours live in docs/assets/manual.pandoc.yaml so the
@@ -43,8 +43,8 @@ work (see
 [Comparative Capability Status](#comparative-capability-status) in
 Section C). These source capabilities and their lab evidence are not stock
 acceptance claims and do not establish station-device, provider, app-store, or
-production proof. `v1.0.0-beta.1` is the current native-Windows development
-candidate (an owner-held candidate, not yet a published release) described in
+production proof. `v1.0.0-beta.2` is the current native-Windows development
+candidate (an owner-held unpublished candidate) described in
 this manual. It is a fresh, from-scratch native Windows product line — its
 version numbers do not continue from, and are not comparable to, the older
 `v1.0.0-rcNN` line documented for a retired WSL2-based product in a separate,
@@ -664,32 +664,37 @@ After install, open the operator console at `http://localhost:8000/operator/`
 is green, save the recovery kit, and run a private first-broadcast
 rehearsal before the first public meeting.
 
-### Updating To A New Version — Uninstall First {#upgrade-path}
+### Updating To A New Version {#upgrade-path}
 
-The Windows installer is **install-only by design**: running a new
-installer `.exe` over an existing, live CivicCast (Native) install refuses
-loudly and makes no changes, rather than attempting an in-place upgrade
-while the service is running (see
-`civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh`, the
-"install-only refusal" preinstall check). The documented, and only
-supported, update path is:
+Use the complete new CivicCast kit and run its installer directly on the
+station that already has CivicCast (Native) installed. You do **not** need to
+uninstall the current version first.
 
-1. **Uninstall the current version first**, from Windows **Settings →
-   Apps**. Leave the **"Delete the application data"** checkbox
-   **unchecked** — leaving it unchecked preserves your recordings,
-   database, and settings under `C:\ProgramData\CivicCast`. (Checking that
-   box does the opposite: it deletes everything, including recordings.)
-2. **Run the new version's installer.** The fresh install detects the
-   preserved data under `C:\ProgramData\CivicCast` and adopts it —
-   including its database — automatically, then upgrades the database
-   schema in place.
-3. Confirm **System Health** is green and spot-check a known recording is
-   still present in **Assets** before resuming station use.
+1. Before the maintenance window, save a current recovery kit and confirm
+   your normal station backup is available.
+2. Stop active meetings, recordings, publishing jobs, and other operator
+   work. Close the CivicCast desktop window.
+3. Keep the new `setup.exe`, its `packs` folder, and its `station` folder
+   together, then run `setup.exe` as an administrator.
+4. Setup detects the existing install and asks the old CivicCast bootstrap to
+   stop and unregister its native service state before replacing application
+   files. It preserves `C:\ProgramData\CivicCast`, including recordings,
+   database data, and station settings. The new version then adopts that data
+   and migrates its database schema.
+5. Confirm **System Health** is green and spot-check a known recording in
+   **Assets** before resuming station use.
 
-Do not try to run a new installer directly over a live install expecting
-it to upgrade in place; it will refuse and leave the running station
-untouched, which is the intended fail-closed behavior — not a bug to work
-around.
+If setup cannot prove that the old service was safely stopped, it exits with
+an error **before replacing application files**. Do not delete
+`C:\ProgramData\CivicCast`; retain the installer log at
+`C:\ProgramData\CivicCast\install-progress.log` and resolve the reported
+service error before retrying.
+
+The Windows uninstall entry remains available for intentionally removing the
+application. Uninstall removes application/runtime files but deliberately
+leaves recordings, database data, and station settings in
+`C:\ProgramData\CivicCast`. Its optional checkbox concerns the signed-in
+account's saved installer preferences; it is not a data-purge control.
 
 ### Roles And Permissions
 

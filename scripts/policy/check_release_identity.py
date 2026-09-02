@@ -105,6 +105,12 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
     native_tauri_config = json.loads(_read(native_tauri_config_path))
     native_version = native_tauri_config.get("version")
     held_candidate_marker = "owner-held unpublished candidate"
+    held_candidate = (
+        f"v{version}" in readme
+        and held_candidate_marker in readme.lower()
+        and f"v{version}" in docs_index
+        and held_candidate_marker in docs_index.lower()
+    )
 
     # The single-source-of-truth invariant this whole check exists to
     # enforce now that the WSL line (and its separate version identity) is
@@ -137,12 +143,26 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
         ),
         violations,
     )
-    _require(
-        re.search(rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$", changelog, re.M)
-        is not None,
-        f"{_repo_path(changelog_path, root)} is missing a dated [{version}] section.",
-        violations,
-    )
+    if held_candidate:
+        _require(
+            "## [Unreleased]" in changelog and f"v{version}" in changelog,
+            (
+                f"{_repo_path(changelog_path, root)} must identify unpublished "
+                f"candidate v{version} under [Unreleased]."
+            ),
+            violations,
+        )
+    else:
+        _require(
+            re.search(
+                rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$",
+                changelog,
+                re.M,
+            )
+            is not None,
+            f"{_repo_path(changelog_path, root)} is missing a dated [{version}] section.",
+            violations,
+        )
     _require(
         (f">v{version}<" in docs_index and f"releases/tag/v{version}" in docs_index)
         or (f"v{version}" in docs_index and held_candidate_marker in docs_index.lower()),

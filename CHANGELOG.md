@@ -13,6 +13,49 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+Current owner-held unpublished candidate: `v1.0.0-beta.2`. It has no tag or
+installer asset and is not a public or production release.
+
+### Added
+
+- **Supported data-preserving install-over-existing upgrades for CivicCast
+  (Native).** Setup now invokes the already-installed bootstrap's production
+  native service quiescence before replacing application files, aborts before mutation
+  if that teardown is nonzero or its trusted bootstrap is missing, preserves
+  `C:\ProgramData\CivicCast`, and lets provisioning adopt and migrate the
+  existing station database. Gate A's dirty job now proves the operation
+  against an immutable, hash-distinct previous candidate left live in the
+  sandbox; it fails closed if the pinned prior build/kit identity is absent or
+  if the two installers are the same bytes. It also requires the current
+  installer's durable D3 evidence to report the `UPGRADE` route with engine
+  exit 0, so the installer's successful `FRESH_INSTALL` and
+  `SAME_VERSION_NO_OP` routes cannot masquerade as cross-version proof. The
+  prior uninstall-remnant shape remains available as a separate manual harness
+  mode and is never combined with cross-version evidence.
+
+### Fixed
+
+- **Made the D3 upgrade engine use the native installer's real flat runtime
+  layout.** The installer, Windows service, and station activation all use the
+  D2-verified `<install root>\runtime` payload, but D3 still tried to copy that
+  payload into an unused `app\<version>` tree and create a `current` junction.
+  Exact beta.1-to-beta.2 Gate A diagnostics proved the drain and verified
+  backup/restore drill, then rolled back before migration when Windows
+  Sandbox's mapped install volume rejected `mklink /J` with access denied.
+  The NSIS call now explicitly selects the flat-layout adapter: it verifies and
+  selects only the already-staged runtime while retaining D3's interlock,
+  quiescence, backup, migration, maintenance-health, rollback, and journal
+  gates. The generic versioned-tree/junction implementation remains available
+  and independently tested for callers that actually use that layout.
+- **Corrected a false-positive Job Object evidence claim inherited from the
+  beta.1 tag.** The hosted Windows runner is itself contained by a foreign Job
+  Object, so it cannot reproduce the clean SCM-launched supervisor topology;
+  the added descendant-inheritance test failed on its own PR and on every
+  later Windows run. That never-green test and its "empirically proven" source
+  claim are removed. Real-Win32 direct-child assignment, no-breakaway limits,
+  and kill-on-close remain CI-covered; automatic descendant inheritance in the
+  installed service topology is source-wired but awaits clean-machine proof.
+
 ## [1.0.0-beta.1] - 2026-08-31
 
 First tagged release of the native-Windows CivicCast line — owner-held, not
@@ -2198,7 +2241,7 @@ documented in `scottconverse/civiccast`, not here, and this repository does not
 produce it. Its full entry is in that repository's CHANGELOG.
 
 The native product line carries its own separate version in
-`civiccast/_native_version.py` — currently `1.0.0-beta.1`, owner-held and
+`civiccast/_native_version.py` -- currently `1.0.0-beta.2`, owner-held and
 unpublished. Whether a native-only repository should keep tracking the retired
 line's identity at all is an open decision for the owner; until it is made,
 both are recorded honestly rather than one being quietly retyped as the other.

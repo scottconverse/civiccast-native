@@ -1,5 +1,9 @@
 # Technical Tester Walkthrough
 
+> **Historical: retired WSL2 tester walkthrough, not native CivicCast
+> guidance.** `civiccast-native` ships the native Windows service and no WSL2
+> runtime. Preserve this walkthrough as historical evidence only.
+
 > **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
 > installer is built from the gate-cleared `main`, Authenticode-signed, and proven
 > on a genuinely clean Windows host. rc17 remains the rollback target but carries

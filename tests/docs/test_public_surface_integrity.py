@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-CURRENT_PUBLIC_CANDIDATE = "v1.0.0-beta.1"
+CURRENT_PUBLIC_CANDIDATE = "v1.0.0-beta.2"
 WITHDRAWN_RELEASE_TAG = "v1.0.0-rc13"
 
 # Live, user-facing surfaces a PEG operator or their IT actually reads.
@@ -154,8 +154,9 @@ def test_landing_page_has_one_coherent_current_release_posture() -> None:
     html = (REPO / "docs" / "index.html").read_text(encoding="utf-8")
     assert f"releases/tag/{WITHDRAWN_RELEASE_TAG}" not in html
     assert CURRENT_PUBLIC_CANDIDATE in html
-    assert "owner-held" in html.lower()
-    assert "not yet published" in html.lower()
+    assert "owner-held unpublished candidate" in html.lower()
+    assert "no installer download is attached" in html.lower()
+    assert "not a public or production release" in html.lower()
 
 
 def test_landing_page_does_not_deny_completed_three_channel_soaks() -> None:
@@ -173,7 +174,8 @@ def test_readme_has_one_coherent_current_release_posture() -> None:
     assert f"releases/tag/{WITHDRAWN_RELEASE_TAG}" not in text
     assert CURRENT_PUBLIC_CANDIDATE in text
     assert "owner-held" in text.lower()
-    assert "not yet published" in text.lower()
+    assert "no installer download" in text.lower()
+    assert "not a public or production release" in text.lower()
 
 
 def test_landing_page_docs_are_not_raw_markdown() -> None:

@@ -1,5 +1,10 @@
 # CivicCast Tester Packet - Start Here
 
+> **Historical: retired WSL2 tester packet, not native CivicCast guidance.**
+> `civiccast-native` ships the native Windows service and no WSL2 runtime. The
+> rc-numbered release references below belong to the retired product line and
+> are preserved only as historical evidence.
+
 > **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
 > installer is built from the gate-cleared `main`, Authenticode-signed, and proven
 > on a genuinely clean Windows host. rc17 remains the rollback target but carries

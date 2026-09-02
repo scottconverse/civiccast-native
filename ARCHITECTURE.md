@@ -1,8 +1,8 @@
 # CivicCast Architecture
 
-> **Release state: `v1.0.0-beta.1` is the owner-held development candidate.**
-> It is unpublished — not a public or production release — and no installer
-> download is attached to the tag; it describes the state a technical
+> **Release state: `v1.0.0-beta.2` is the current owner-held unpublished candidate.**
+> It is not a public or production release,
+> and no installer download exists for it; it describes the state a technical
 > reviewer finds by checking out `main` today. See
 > [BRANCHES.md](BRANCHES.md) for release identity and status.
 >

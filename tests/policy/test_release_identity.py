@@ -93,6 +93,10 @@ def test_release_identity_accepts_explicitly_held_unpublished_candidate(tmp_path
         tmp_path / "docs" / "index.html",
         "<p>v0.10.0 is the current owner-held unpublished candidate.</p>",
     )
+    _write(
+        tmp_path / "CHANGELOG.md",
+        "## [Unreleased]\n\nCurrent owner-held unpublished candidate: v0.10.0.\n",
+    )
 
     assert evaluate_release_identity(tmp_path) == []
 

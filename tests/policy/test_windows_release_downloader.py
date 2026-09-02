@@ -33,19 +33,11 @@ def test_windows_release_downloader_verifies_manifest_hashes() -> None:
 
 def test_windows_install_doc_matches_current_release_posture() -> None:
     source = INSTALL_DOC.read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    release_url = f"releases/tag/v{CURRENT_VERSION}"
-
     assert f"`v{CURRENT_VERSION}`" in source
-    if release_url in readme:
-        # The framing the line ships under. It moves with the release posture;
-        # what must not move is the pairing -- a doc that offers the download
-        # names the scope, and a doc that withholds it says so.
-        assert "controlled beta" in source
-    else:
-        assert release_url not in source
-        assert "unpublished repair candidate" in source
-        assert "no approved public Windows installer" in source
+    assert f"civiccast-native/releases/tag/v{CURRENT_VERSION}" not in source
+    assert "owner-held unpublished" in source
+    assert "no installer asset" in source
+    assert "not a public or production release" in source
 
 
 def test_downloader_falls_back_to_release_asset_digest_when_unlisted() -> None:

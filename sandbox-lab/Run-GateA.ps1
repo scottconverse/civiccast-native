@@ -125,6 +125,11 @@ param(
     # absent. See docs/ops/gate-a.md, "Dirty lane".
     [switch]$DirtyLane,
 
+    # Optional cross-version dirty-lane inputs. Both are required together;
+    # omitting both preserves the legacy uninstall-remnant sub-shape.
+    [string]$PreviousKitDir,
+    [string]$PreviousSourceSha,
+
     # Optional host-side source for the orphaned-caption-tier remnant seed: a
     # directory shaped like <ProgramData>\CivicCast\components\captions-large-v3
     # (i.e. carrying models\faster-whisper-large-v3\ with the REAL, hash-valid
@@ -150,6 +155,16 @@ function Exit-HarnessError {
 
 Write-Step "Root: $Root"
 Write-Step "SoakMinutes=$SoakMinutes TimeoutMinutes=$TimeoutMinutes Repo=$Repo"
+
+$hasPreviousKit = -not [string]::IsNullOrWhiteSpace($PreviousKitDir)
+$hasPreviousSha = -not [string]::IsNullOrWhiteSpace($PreviousSourceSha)
+if ($hasPreviousKit -xor $hasPreviousSha) {
+    Exit-HarnessError "-PreviousKitDir and -PreviousSourceSha must be supplied together"
+}
+if ($hasPreviousKit -and -not $DirtyLane) {
+    Exit-HarnessError "cross-version inputs require -DirtyLane"
+}
+$upgradeMode = $DirtyLane -and $hasPreviousKit
 
 # --------------------------------------------------------------------------
 # 1. Resolve the candidate kit.
@@ -266,6 +281,37 @@ if (-not $stationIndex) {
 }
 Write-Step "Kit validated: installer=$($installerExe.Name), station bundle=$($stationIndex.Directory.FullName)"
 
+if ($upgradeMode) {
+    if ($PreviousSourceSha -eq $sourceSha) {
+        Exit-HarnessError "-PreviousSourceSha equals current source_sha ($sourceSha) -- same-candidate reinstall is not a cross-version upgrade"
+    }
+    if (-not (Test-Path $PreviousKitDir)) {
+        Exit-HarnessError "-PreviousKitDir does not exist: $PreviousKitDir"
+    }
+    $previousKitSourceDir = (Resolve-Path $PreviousKitDir).Path
+    $previousInstaller = Get-ChildItem -Path $previousKitSourceDir -Filter '*setup.exe' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    $previousStationIndex = Get-ChildItem -Path $previousKitSourceDir -Filter 'station-index.json' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $previousInstaller -or -not $previousStationIndex) {
+        Exit-HarnessError "Previous full kit is incomplete at $previousKitSourceDir -- setup.exe and station-index.json are both required"
+    }
+    $previousPhysicalDir = $previousKitSourceDir
+    for ($previousHop = 0; $previousHop -lt 8; $previousHop++) {
+        $previousProbe = Get-Item -LiteralPath $previousPhysicalDir -Force -ErrorAction SilentlyContinue
+        if (-not $previousProbe -or -not $previousProbe.LinkType) { break }
+        $previousNext = @($previousProbe.Target) | Select-Object -First 1
+        if (-not $previousNext) { break }
+        if (-not [System.IO.Path]::IsPathRooted($previousNext)) { $previousNext = Join-Path (Split-Path -Parent $previousPhysicalDir) $previousNext }
+        $previousPhysicalDir = $previousNext
+    }
+    $previousDownload = Join-Path $Root 'previous-kit-download'
+    if (Test-Path $previousDownload) {
+        $previousItem = Get-Item $previousDownload -Force
+        if ($previousItem.LinkType) { $previousItem.Delete() } else { Remove-Item -LiteralPath $previousDownload -Recurse -Force }
+    }
+    New-Item -ItemType Junction -Path $previousDownload -Target $previousPhysicalDir | Out-Null
+    Write-Step "previous-kit-download -> $previousPhysicalDir (source_sha=$PreviousSourceSha)"
+}
+
 # Count what is actually in the station bundle directory, not just that a
 # station-index.json exists somewhere under the kit <gate-a-run7-findings>.
 # Run7's installer failed with "a signed station bundle (station-index.json
@@ -368,7 +414,7 @@ if (-not (Test-Path $launcherPath)) {
 }
 
 Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes, TeardownDrainSeconds=$TeardownDrainSeconds, TeardownDrainPollSeconds=$TeardownDrainPollSeconds, OrphanGraceMinutes=$OrphanGraceMinutes)..."
-& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds -OrphanGraceMinutes $OrphanGraceMinutes -DirtyMode:$DirtyLane
+& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds -OrphanGraceMinutes $OrphanGraceMinutes -DirtyMode:$DirtyLane -UpgradeMode:$upgradeMode -PreviousSourceSha $PreviousSourceSha
 $launcherExit = $LASTEXITCODE
 Write-Step "Host launcher exited with code $launcherExit"
 

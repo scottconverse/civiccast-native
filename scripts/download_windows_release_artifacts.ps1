@@ -13,8 +13,8 @@ against the SHA-256 values in the release manifest before extraction or use.
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast",
-  [string]$Tag = "v1.0.0-beta.1",
-  [string]$Version = "1.0.0-beta.1",
+  [string]$Tag = "v1.0.0-beta.2",
+  [string]$Version = "1.0.0-beta.2",
   [ValidateSet("ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "ProofKit",
   [string]$Destination = "C:\CivicCastProof",

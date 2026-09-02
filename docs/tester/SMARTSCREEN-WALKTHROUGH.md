@@ -1,5 +1,9 @@
 # "Windows protected your PC" — what to expect, and what to do
 
+> **Historical: retired WSL2 installer walkthrough, not native CivicCast
+> guidance.** `civiccast-native` has no public installer asset. Preserve the
+> rc-numbered instructions below as historical evidence only.
+
 > **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
 > installer is built from the gate-cleared `main`, Authenticode-signed, and proven
 > on a genuinely clean Windows host. rc17 remains the rollback target but carries

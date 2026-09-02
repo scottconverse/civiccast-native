@@ -65,7 +65,7 @@ from civiccast.native.upgrade.routing import (
     decide_route,
     default_installed_product_probe,
 )
-from civiccast.native.upgrade.seams import build_default_seams
+from civiccast.native.upgrade.seams import adapt_flat_installer_layout, build_default_seams
 from civiccast.native.upgrade.service_control import resolve_service_control_seams
 
 _EXIT_CODES: dict[UpgradePhase, int] = {
@@ -161,6 +161,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--database-url", required=True)
     parser.add_argument("--owner-run-id", required=True)
     parser.add_argument("--payload-source", required=True)
+    parser.add_argument(
+        "--flat-installer-layout",
+        action="store_true",
+        help="Use the NSIS product's already-staged <install-root>\\runtime payload "
+        "instead of the generic app/<version> junction layout.",
+    )
     parser.add_argument(
         "--migration-non-restorable",
         action="store_true",
@@ -407,15 +413,22 @@ def main(argv: list[str] | None = None) -> int:
             psql_command=[pg_clients["psql.exe"]],
         )
         seams = _guard_pg_client_binaries(seams, pg_clients)
+        if args.flat_installer_layout:
+            seams = adapt_flat_installer_layout(seams, context)
+            _log_engine_event(
+                log_path,
+                args.database_url,
+                "payload layout: flat installer runtime selected; no junction required",
+            )
         # BLOCKER #49: the D3 chain runs BEFORE D4 provisioning, so an
-        # upgrade/reinstall whose uninstall step removed the
-        # CivicCastSupervisor service (and therefore postgres) would
+        # upgrade/reinstall whose previous service is absent or deliberately
+        # quiesced by PREINSTALL (and therefore postgres is stopped) would
         # otherwise fault uncaught at the engine's first DB touch
-        # (schema_revision). attach_pg_lifecycle wraps that seam with a
-        # scoped start (only when unreachable AND the service is
-        # confirmedly absent from the SCM) and returns a stop callable this
-        # process MUST run in a finally -- so postgres this process starts
-        # is never left running for D4 provisioning to trip over.
+        # (schema_revision). attach_pg_lifecycle starts postgres only when the
+        # service is absent or confirmed STOPPED, hands ownership back before
+        # the maintenance health gate, and returns a stop callable this process
+        # MUST run in a finally -- so postgres this process starts is never
+        # left running for D4 provisioning to trip over.
         seams, stop_postgres_if_started = attach_pg_lifecycle(seams, context)
         try:
             outcome = run_upgrade(plan, context, seams)

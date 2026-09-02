@@ -95,7 +95,7 @@ archived) scottconverse/civiccast if something needs recovering. On
 machinery: `civiccast/_version.py` no longer tracks a separate WSL release
 identity (it used to hold `1.0.0-rcNN` while `civiccast/_native_version.py`
 held the native line's own `1.0.0-beta.N`). There is one product and one
-version now -- both files hold `1.0.0-beta.1`, and
+version now -- both files hold `1.0.0-beta.2`, and
 `scripts/policy/check_release_identity.py` enforces that they, and every
 other release-identity surface it checks (README, docs/index.html,
 CHANGELOG, docs/API-REFERENCE.md, the installer's Cargo/Tauri/package.json

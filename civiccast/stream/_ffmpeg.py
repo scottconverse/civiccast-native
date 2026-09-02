@@ -464,11 +464,13 @@ def start_ffmpeg(
     disables breakaway (``JOB_OBJECT_LIMIT_BREAKAWAY_OK`` /
     ``_SILENT_BREAKAWAY_OK`` are cleared —
     ``supervisor.job_object.Win32JobObjectApi.configure_kill_on_close_no_breakaway``),
-    so Windows captures every process an in-job parent spawns into the same job
-    automatically; the ffmpeg child is contained the instant it starts. Proven
-    empirically, with the production seam, in
-    ``tests/native/test_supervisor_job_object_win.py::
-    test_popen_child_of_an_in_job_process_is_contained_without_explicit_assign``.
+    so Windows is expected to capture every process an in-job parent spawns
+    into the same job automatically. The hosted Windows test runner is itself
+    wrapped in a foreign Job Object whose breakaway policy changes that
+    topology, so this inheritance claim is not treated as hosted-CI or field
+    proof. Direct-child assignment, limits, and kill-on-close remain covered by
+    the real-Win32 tests; the installed SCM topology still requires separate
+    clean-machine evidence.
     (Outside the supervisor — a bare ``uvicorn`` dev run, or a unit test — there
     is no Job Object at all, so there is nothing to assign to and nothing an
     explicit assign here could do.)

@@ -1075,19 +1075,16 @@ register against GitHub) — after registering, either log off/on once or run
 `Start-ScheduledTask -TaskName 'CivicCastGateARunner-<name>'` to start it,
 then confirm with `gh api repos/scottconverse/civiccast-native/actions/runners`.
 
-## Dirty lane: the uninstall-remnant reinstall gate
+## Dirty lane: the cross-version install-over-existing gate
 
 ### Why it exists
 
-Gate A's sandbox has no history — every run is a pristine machine. Real
-customer machines are not: an upgrade is always *uninstall the old build,
-reinstall the new one*, and the uninstaller **preserves
-`%ProgramData%\CivicCast` by design** (`nsis-hooks-bootstrap.nsh`: the
-PostgreSQL cluster, upgrade/provision journals, and operator recovery
-documents survive; purge is a separate typed operator action). For weeks this
-produced a repeating failure family: installers that passed the pristine
-sandbox and then died on machines carrying remnants. The most recent
-instance (DESKTOP-2BR3SJR, 2026-08-30, upgrade #17 → #18): the preserved
+Gate A's clean sandbox has no history. A real station does: it has a live old
+version, a PostgreSQL cluster, recordings, settings, journals, and registered
+native service state. For weeks the absence of that shape produced a repeating
+failure family: installers that passed the pristine sandbox and then died on
+machines carrying prior-version state. One field instance
+(DESKTOP-2BR3SJR, 2026-08-30, upgrade #17 → #18): the preserved
 `ProgramData` carried `data\pgdata`, `data\uploads`, and a
 `components\captions-large-v3` model **without** any ProgramData
 `activation-self-test.json` receipt — the new install resolved large-v3 as
@@ -1107,46 +1104,70 @@ the build.
 when the clean lane succeeded: a candidate that cannot pass a pristine box
 tells the dirty lane nothing new, and Windows Sandbox on this runner is a
 shared resource that a doomed 3-hour second cycle should not occupy. It invokes
-`Run-GateA.ps1 -DirtyLane`, which threads `-DirtyMode` into
-`Host-Launch-Sandbox-Test.ps1` (writes `DIRTY_MODE.txt` into `output\`, the
-same host-to-guest input channel as `SOAK_MINUTES.txt`) and `--lane dirty`
-into the judge. Inside the sandbox, `In-Sandbox-Report.ps1` runs a remnant
-**prologue** before the unchanged acceptance flow:
+`Run-GateA.ps1 -DirtyLane` with the pinned previous-kit directory and source
+SHA. The previous identity lives in `sandbox-lab/upgrade-baseline.json`; the
+workflow verifies its exact candidate-build run, source SHA, workflow name,
+successful conclusion, installer SHA-256, signed station-index SHA-256, and
+product version. Candidate #22 (`1.0.0-rc18`) is the pinned older product
+version; its complete kit is retained in
+`C:\CivicCastTester\kit-staging\<sha>`. The lane fails closed if those exact
+local bytes are absent or mixed. The signed station index in turn pins every
+station pack hash. It never substitutes newest/latest or a partial artifact.
 
-1. **Phase-1 install** — the same silent install; its provision step creates
-   a real PostgreSQL cluster at `%ProgramData%\CivicCast\data\pgdata`.
+`Run-GateA.ps1` threads `-DirtyMode` and `-UpgradeMode` into
+`Host-Launch-Sandbox-Test.ps1` (writes `DIRTY_MODE.txt` into `output\`, the
+same host-to-guest input channel as `SOAK_MINUTES.txt`, plus
+`UPGRADE_MODE.txt`) and `--lane dirty` into the judge. The `.wsb` maps the
+pinned previous kit separately at `C:\CivicCastPreviousPayload`. Inside the
+sandbox, `In-Sandbox-Report.ps1` runs an upgrade **prologue** before the
+unchanged acceptance flow:
+
+1. **Previous-candidate install** — install the pinned previous setup; its
+   provision step creates a real PostgreSQL cluster at
+   `%ProgramData%\CivicCast\data\pgdata`.
 2. **Plant operator data** — two real media files into
    `%ProgramData%\CivicCast\data\uploads`, SHA-256s recorded.
 3. **Record cluster identity** — `PG_VERSION` content + the pgdata
    directory's creation time, so phase 2 can prove the *same* cluster
    survived rather than a re-provisioned lookalike.
-4. **Real uninstall** — stop the service (bounded), run the product's own
-   `uninstall.exe /S _?=<install dir>` (bounded). `_?=` keeps NSIS
-   synchronous so the exit code is meaningful; the one artifact it leaves (a
-   self-exe the uninstaller cannot delete) is removed afterwards because the
-   customer-path copy-to-`%TEMP%` flow leaves no such file.
-5. **Verify the preservation contract** — pgdata and the planted uploads
-   survived; `runtime\`/`packs\` are gone. Recorded in
-   `DIRTY-PREP-RESULT.txt`.
-6. **Optional orphaned-tier seed** — see below.
+4. **Prove version separation** -- hash both setup executables, read the old
+   install's authoritative `InstalledVersion`, read the current setup product
+   version, and fail if either byte identities or product versions are missing,
+   malformed, or equal. Equal versions would route D3 to `SAME_VERSION_NO_OP`
+   and therefore cannot count as upgrade proof.
+5. **Leave the old version live** — no harness-authored uninstall or manual
+   service stop. This is the condition the current installer must own.
 
-Then the **full normal acceptance flow runs against that remnant-carrying
-box** (install → activation → station-up → T2/T3/T4 → a 10-minute soak).
-After the station-up verdict the harness writes `DIRTY-RESULT.txt`: pgdata
-identity re-checked, upload hashes re-checked, and (when seeded) the
-supervisor log grepped for PR #80's orphaned-tier WARNING.
+Then the **full normal acceptance flow runs the current setup directly over
+that live previous install** (upgrade quiescence/migration → activation →
+station-up → T2/T3/T4 → a 10-minute soak).
+After the station-up verdict the harness writes `DIRTY-RESULT.txt`: the last
+machine-parseable D3 breadcrumb from the append-only installer log is captured
+as `D3_ROUTE` and `D3_ENGINE_EXIT`, pgdata identity is re-checked, upload hashes
+are re-checked, and (when seeded) the supervisor log is grepped for PR #80's
+orphaned-tier WARNING. The last-match rule binds the evidence to the current
+installer, not the previous-candidate install earlier in the same sandbox run.
 
 The judge (`scripts/gate_a_verdict.py --lane dirty`) adds three checks on
 top of the unchanged clean set:
 
 | check | PASS means |
 | --- | --- |
-| `dirty_prep` | phase-1 install exit 0, uninstall exit 0, preservation contract held after uninstall |
-| `dirty_survival` | the SAME pgdata cluster and byte-identical uploads survived the full uninstall → reinstall → station-up cycle |
-| `dirty_orphaned_tier` | orphaned large-v3 seeded **and** PR #80's fallback WARNING found in the supervisor log; `SKIP` (loud, never silent) when the remnant was not seeded |
+| `dirty_prep` | previous install exit 0, the live-upgrade request is explicit, and previous/current installer SHA-256 identities are valid and distinct |
+| `dirty_survival` | current install exit 0, D3 explicitly reported route `UPGRADE` with engine exit 0, and the SAME pgdata cluster plus byte-identical uploads survived install-over-existing and station-up; successful `FRESH_INSTALL` and `SAME_VERSION_NO_OP` routes fail this check |
+| `dirty_orphaned_tier` | `SKIP` with a loud not-covered reason in automated cross-version mode; this uninstall-only remnant shape is not authored during a live upgrade |
 
 The dirty job posts its full per-check verdict table to the workflow run
 summary, so the verdict — including any `SKIP` — is on the run's front page.
+
+### Legacy uninstall-remnant sub-shape (manual opt-in)
+
+`Run-GateA.ps1 -DirtyLane` without `-PreviousKitDir` and
+`-PreviousSourceSha` retains the earlier same-candidate install → seed → real
+uninstall → reinstall harness. That manual mode verifies the uninstaller's
+ProgramData preservation contract and can exercise the orphaned-caption-tier
+fallback described below. The automated workflow does not use this shape and
+does not combine its evidence with the cross-version result.
 
 ### The orphaned-tier remnant needs the real model
 
@@ -1165,7 +1186,7 @@ model. To enable it once, permanently, on the Gate A runner:
 # (the same relative layout as %ProgramData%\CivicCast\components\captions-large-v3)
 ```
 
-`Run-GateA.ps1 -DirtyLane` picks it up from
+The legacy `Run-GateA.ps1 -DirtyLane` sub-shape picks it up from
 `C:\CivicCastTester\dirty-seed\captions-large-v3` (override with
 `-DirtySeedLargeV3Dir`) and stages it into `hoststore\dirty-seed\` for the
 sandbox. Until then, `dirty_orphaned_tier` reports `SKIP` with a
@@ -1174,10 +1195,14 @@ remnant shapes still gate.
 
 ### Remnant shapes covered vs not
 
-Covered: the post-uninstall `%ProgramData%\CivicCast` shape a real upgrade
-leaves (live pgdata reuse, uploads survival, logs/journals present), plus —
-when the seed is staged — the preserved-model/missing-receipt caption
-orphan. **Not covered**: remnants of a *crashed* (not uninstalled) install,
+Covered by the automated lane: a pinned previous candidate left live, current
+setup invoked over it, exact installer identity separation, live pgdata reuse,
+upload survival, service quiescence/migration, and the complete normal Gate A
+acceptance set. Covered only by the legacy manual sub-shape: the product's
+real uninstall preservation contract and — when seeded — the
+preserved-model/missing-receipt caption orphan. **Not covered** by the
+automated lane: uninstall-only caption remnants, remnants of a *crashed*
+(not uninstalled) install,
 partial/corrupt model directories (deliberately: the product fails closed on
 those by design), leftover registry state a failed uninstall retains
 (`InstallDirRegKey` paths), Program Files leftovers from third-party

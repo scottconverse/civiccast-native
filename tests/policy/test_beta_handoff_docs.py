@@ -53,3 +53,18 @@ class TestBetaHandoffDocsPolicy:
 
         assert result.status == "passed"
         assert result.findings == []
+
+    def test_banned_tokens_do_not_match_inside_ordinary_words(self, tmp_path: Path) -> None:
+        checker = importlib.import_module("scripts.policy.check_beta_handoff_docs")
+        docs_root = tmp_path / "docs"
+        target = docs_root / "USER-MANUAL.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "ActivityPub interoperates with Mastodon and similar services.\n",
+            encoding="utf-8",
+        )
+
+        result = checker.check_beta_handoff_docs(docs_root)
+
+        assert result.status == "passed"
+        assert result.findings == []

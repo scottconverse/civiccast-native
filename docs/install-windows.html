@@ -1,174 +1,54 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Install CivicCast On Windows</title>
-    <style>
-      :root {
-        --paper: #f7f2ea;
-        --ink: #101828;
-        --muted: #475467;
-        --line: #d8cdbf;
-        --surface: #fffaf2;
-        --blue: #2458a6;
-      }
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CivicCast for Windows</title>
+  <style>
+    :root {
+      --cc-paper: #f7f4ec;
+      --cc-ink: #18212b;
+      --cc-brand: #174f78;
+      --cc-muted: #5c6670;
+    }
+    body {
+      margin: 0;
+      background: var(--cc-paper);
+      color: var(--cc-ink);
+      font: 18px/1.6 system-ui, sans-serif;
+    }
+    main { max-width: 800px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+    h1, h2 { line-height: 1.2; color: var(--cc-brand); }
+    a { color: var(--cc-brand); }
+    .status { border-left: 5px solid var(--cc-brand); padding: .8rem 1rem; background: #fff; }
+    code { background: #fff; padding: .1rem .3rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>CivicCast for Windows</h1>
 
-      * {
-        box-sizing: border-box;
-      }
+  <p class="status"><strong>Current release posture:</strong>
+    <code>v1.0.0-beta.2</code> is the current owner-held unpublished candidate.
+    It has no public installer asset and is not a public or production release.
+  </p>
 
-      body {
-        margin: 0;
-        background: var(--paper);
-        color: var(--ink);
-        font: 16px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
-      }
+  <p>There is no public Windows installer download yet. CivicCast will not publish one until the exact installer, checksum, signature, and clean-machine proof are bound to the same release candidate.</p>
 
-      main {
-        margin: 0 auto;
-        max-width: 860px;
-        padding: 56px 22px 72px;
-      }
+  <h2>Private tester kits</h2>
+  <p>If Scott supplied you with a private tester kit, use only the installer and checksum in that kit. Verify the SHA-256 checksum and the Windows Authenticode signature before running the installer. Do not substitute an installer from another build.</p>
 
-      h1 {
-        font-size: clamp(2.4rem, 7vw, 4.8rem);
-        letter-spacing: 0;
-        line-height: 0.95;
-        margin: 0 0 20px;
-      }
+  <p>The Windows installer shows a visible progress heartbeat while setup is <strong>visibly active</strong>. Installing a newer approved build over an existing CivicCast installation preserves operator data under <code>C:\ProgramData\CivicCast</code>.</p>
 
-      h2 {
-        border-top: 1px solid var(--line);
-        font-size: 1.35rem;
-        margin: 34px 0 10px;
-        padding-top: 24px;
-      }
+  <h2>Evidence boundary</h2>
+  <p>Source tests, signed artifacts, and controlled Windows Sandbox checks do not establish field readiness by themselves. Physical DeckLink capture, real headend integration, and production operation remain pending until separately proven.</p>
 
-      p,
-      li {
-        color: var(--muted);
-      }
-
-      a {
-        color: var(--blue);
-        font-weight: 700;
-      }
-
-      .panel {
-        background: var(--surface);
-        border: 1px solid var(--line);
-        margin-top: 24px;
-        padding: 22px;
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>Install CivicCast On Windows</h1>
-      <p><a href="./">Back to CivicCast</a></p>
-      <p><strong>Release state:</strong> <code>v1.0.0-rc18</code> is the published controlled beta and the approved Windows installer. <code>v1.0.0-rc17</code> remains available as the rollback target.</p>
-      <p><strong>Proof state:</strong> rc18 carries fixes for all sixteen findings from the 2026-07-21 stage gate and for the four Critical findings the 2026-07-22 gate then raised against rc18 itself. Its exact bytes have passed a clean-host install, launch, reinstall, uninstall and rc17&rarr;rc18 upgrade on a pristine Windows 11 guest, and an interactive installer walkthrough. Its stage-gate re-run returned no blocker or critical findings. Neither proof covered cold-reboot recovery or first-run station setup. The candidate verification document linked from the release states exactly what has and has not been proven.</p>
-      <p>
-        This page explains the Windows test path for CivicCast beta builds.
-        rc13 is withdrawn after a genuine clean-host bootstrap failure.
-        <code>v1.0.0-rc18</code> carries forward rc15's clean-machine installer
-        repairs and rc16's UI/UX repairs, plus rc17's beta-blocker fixes and the
-        sixteen stage-gate fixes.
-      </p>
-
-      <div class="panel">
-        <strong>Longmont Public Media beta:</strong>
-        Use rc18 only, downloaded from its
-        <a href="https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18">published GitHub release</a>.
-        Do not install rc13; follow the
-        <a href="https://github.com/scottconverse/civiccast/blob/main/docs/tester/lpm-beta-test-handoff.md">LPM handoff</a>
-        and use the matching rc18 proof bundle (the release's manifest,
-        sidecar, and Sigstore files).
-      </div>
-
-      <div class="panel">
-        <strong>Beta status:</strong>
-        The current public installer is
-        <a href="https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18">v1.0.0-rc18</a>,
-        whose exact bytes passed a clean-host install, launch, reinstall,
-        uninstall and rc17&rarr;rc18 upgrade on a pristine Windows 11 guest.
-        <a href="https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc17">v1.0.0-rc17</a>
-        remains published as the rollback target, but it
-        carries the sixteen findings the 2026-07-21 stage gate raised —
-        including three it rated Critical — so it is not a recommended install.
-        rc13 remains historical incident evidence, not an installation candidate.
-      </div>
-
-      <h2>Before You Run It</h2>
-      <p>
-        Run only the rc18 release-matched installer after matching it to the
-        supplied manifest and checksum.
-      </p>
-      <p>
-        Windows will show a blue <strong>&ldquo;Windows protected your PC&rdquo;</strong>
-        screen the first time you run it. This is expected on a brand-new signing
-        certificate &mdash; CivicCast <strong>is</strong> signed (verified publisher
-        <strong>Scott Converse</strong>). Choose <strong>More info &rarr; Run anyway</strong>.
-        See the
-        <a href="https://github.com/scottconverse/civiccast/blob/main/docs/tester/SMARTSCREEN-WALKTHROUGH.md">SmartScreen walkthrough</a>
-        for exactly what to click and why.
-      </p>
-      <p>
-        Read the
-        <a href="https://github.com/scottconverse/civiccast/blob/main/docs/install/windows-release-trust.md">Windows release trust and verification guide</a>.
-        If a release publishes checksums or signatures for your artifact, verify the download before running it.
-      </p>
-
-      <h2>What The Setup Path Does</h2>
-      <ul>
-        <li>Guides the local Windows helper setup CivicCast needs to run meeting tools on this computer.</li>
-        <li>Prepares local durable storage.</li>
-        <li>Starts CivicCast services.</li>
-        <li>Hands off to the operator console.</li>
-        <li>Guides first-admin setup and recovery-kit creation.</li>
-      </ul>
-
-      <h2>What You Should Not Need</h2>
-      <p>
-        A normal operator test should not require Git, GitHub CLI, Git LFS, Python commands,
-        Ubuntu commands, or repository source files.
-      </p>
-
-      <h2>When To Ask For IT Help</h2>
-      <ul>
-        <li>Windows does not allow administrator approval.</li>
-        <li>The machine blocks the Windows helper or says a required Windows setting is turned off.</li>
-        <li>An endpoint or SmartScreen policy blocks the signed installer from running even after "More info &rarr; Run anyway".</li>
-        <li>CivicCast says a required setup step needs IT help.</li>
-      </ul>
-
-      <h2>Uninstalling &mdash; Removing Your Station Data</h2>
-      <p>
-        When you uninstall, the uninstaller shows a
-        <strong>&ldquo;Delete the application data&rdquo;</strong> checkbox. Check it to remove
-        everything, including the ~19 GB Windows helper (the
-        <code>CivicCast-Ubuntu-24.04</code> WSL distribution that holds the database and
-        recordings). Leave it unchecked to keep your recordings and settings for a later
-        reinstall; the uninstaller then tells you on screen exactly what was kept.
-      </p>
-      <p>
-        Note two things if you keep the data: a later reinstall makes previously published
-        recordings public again without a new approval, and a command-line
-        <strong>silent</strong> uninstall (<code>/S</code>) keeps the data by default (it never
-        shows the checkbox). To remove kept data by hand later, run
-        <code>wsl --unregister CivicCast-Ubuntu-24.04</code> and delete
-        <code>%USERPROFILE%\.civiccast</code>.
-      </p>
-
-      <h2>If Something Fails</h2>
-      <p>
-        Use the tester packet and bug report template. Do not paste passwords, recovery codes,
-        provider secrets, private keys, resident data, or private meeting content into reports.
-      </p>
-      <p>
-        <a href="https://github.com/scottconverse/civiccast/blob/main/docs/tester/START-HERE.md">Open the tester packet</a>
-      </p>
-    </main>
-  </body>
+  <h2>More information</h2>
+  <ul>
+    <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md">Windows installation notes</a></li>
+    <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md">User manual</a></li>
+    <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/BRANCHES.md">Branches and release posture</a></li>
+  </ul>
+</main>
+</body>
 </html>
