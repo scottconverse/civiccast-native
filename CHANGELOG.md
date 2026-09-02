@@ -208,12 +208,16 @@ installer asset and is not a public or production release.
   the media storage root — and the caption path only ever knew the second. A
   live recording would therefore transcribe and fill the review queue, then
   fail every attempt to attach the reviewed track to a package directory that
-  was never written. The caption path now mirrors the media-serving path's
-  precedence (the finalization job's manifest wins, the upload convention is
-  the fallback), so both agree about where a package is. This also means a
-  station that broadcasts live but has no media storage root configured is no
-  longer refused permission to publish: it has somewhere to write the caption
-  track after all.
+  was never written. The caption path now checks the finalization job's
+  manifest first and falls back to the upload convention, matching the
+  media-serving path's *live-finalized* precedence. It does not match that
+  path's upload branch: it resolves the standard
+  `.civiccast-packages/<asset_id>` location only, so a legacy pre-rc14 package
+  at `<file_path>/hls` is still not found and publishing such an asset stays
+  blocked (known gap; affects only stations upgraded across rc14 that still
+  hold pre-rc14 packages). This also means a station that broadcasts live but
+  has no media storage root configured is no longer refused permission to
+  publish: it has somewhere to write the caption track after all.
 
 ### Fixed
 

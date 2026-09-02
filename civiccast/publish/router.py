@@ -197,14 +197,32 @@ def _resolve_caption_package_dir(
     * **uploaded** -- ``.civiccast-packages/<asset_id>`` under the upload root.
 
     Live is checked first, through the same ``finalization_worker.get_status``
-    seam :func:`_resolve_local_recording` already uses, mirroring
-    ``civiccast.stream.media_router._package_dir_for_asset``'s precedence so
-    the caption path and the media-serving path agree about where a package
-    is. This closes the "a live-finalized recording would transcribe but fail
-    to attach" follow-up in docs/ops/background-workers.md -- and, now that a
-    missing package directory blocks approval rather than merely failing
-    stage two later, it is what keeps a live station with no upload root from
-    being told it cannot publish.
+    seam :func:`_resolve_local_recording` already uses. This closes the "a
+    live-finalized recording would transcribe but fail to attach" follow-up in
+    docs/ops/background-workers.md -- and, now that a missing package
+    directory blocks approval rather than merely failing stage two later, it
+    is what keeps a live station with no upload root from being told it cannot
+    publish.
+
+    **How far the agreement with the media-serving path actually goes.** The
+    *live-finalized precedence* matches
+    ``civiccast.stream.media_router._package_dir_for_asset``: the finalization
+    job's manifest path wins there too. The upload branch does NOT match. That
+    function additionally checks the asset's ``manifest_url`` suffix, verifies
+    the resolved directory is contained by the package root and the package
+    root by the upload root, and requires ``playlist.m3u8`` to exist -- and,
+    failing all that, falls back to the legacy pre-rc14 shared
+    ``<file_path>/hls`` location. This resolver does none of that: it returns
+    the standard ``.civiccast-packages/<asset_id>`` path from
+    ``resolve_vod_package_dir`` without existence or containment checks.
+
+    Known gap, stated rather than papered over: a **legacy pre-rc14 package**
+    living at ``<file_path>/hls`` is not resolved here, so the caption gate
+    would refuse to queue -- and therefore block publish -- for such an asset
+    even though the media router can still serve it. The blast radius is
+    stations upgraded across rc14 that still hold pre-rc14 packages; new
+    packaging never writes that path. Close it by resolving through a shared
+    helper if that population turns out to matter.
     """
 
     if finalization_worker is not None:

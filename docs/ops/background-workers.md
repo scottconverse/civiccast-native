@@ -380,12 +380,24 @@ were consequences of that scope line. Both have since been closed.
    deferrable the moment an unqueueable caption job began blocking approval,
    because a live station with no upload root was then refused permission to
    publish at all. `_resolve_caption_package_dir`
-   (`civiccast/publish/router.py`) now mirrors
-   `civiccast.stream.media_router._package_dir_for_asset`'s precedence --
-   the finalization job's manifest path wins, the upload convention is the
-   fallback -- resolved through the same `finalization_worker.get_status`
-   seam the route already uses for the recording file. The gate still closes
-   when neither convention resolves.
+   (`civiccast/publish/router.py`) now checks the finalization job's manifest
+   path first, resolved through the same `finalization_worker.get_status`
+   seam the route already uses for the recording file, and falls back to the
+   upload convention. The gate still closes when neither resolves.
+
+   How far this agrees with the media-serving path
+   (`civiccast.stream.media_router._package_dir_for_asset`): the
+   **live-finalized precedence matches** — the finalization job's manifest
+   path wins in both. The **upload branch does not**. The caption resolver
+   returns the standard `.civiccast-packages/<asset_id>` path only, with no
+   existence or containment checks; the media router additionally validates
+   the asset's `manifest_url`, checks containment, requires `playlist.m3u8`
+   to exist, and falls back to the legacy pre-rc14 shared `<file_path>/hls`
+   location. **Known gap:** a legacy pre-rc14 package at `<file_path>/hls` is
+   not resolved by the caption gate, so publishing such an asset is blocked
+   even though the media router can still serve it. Blast radius is stations
+   upgraded across rc14 that still hold pre-rc14 packages; new packaging
+   never writes that path.
 
 2. ~~**Caption attach never re-uploads to a CDN.**~~ **Closed.** Caption
    attach still writes only local disk, but `OfflineCaptionJobWorker` now

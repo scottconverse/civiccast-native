@@ -12,7 +12,7 @@ when it cannot.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -429,3 +429,160 @@ class TestLiveFinalizedRecordingPackageDir:
         monkeypatch.setattr(publish_router, "resolve_vod_package_dir", lambda asset_id: None)
 
         assert _resolve_caption_package_dir(_ASSET_ID, None) is None
+
+
+class TestCaptionResolverParityWithMediaRouter:
+    """The caption gate and the media router must not drift about packages.
+
+    The caption gate now BLOCKS publish when it cannot locate a package, so a
+    disagreement with the router that actually serves that package is no
+    longer cosmetic: it is "CivicCast refuses to publish a recording it would
+    happily serve". These pin the two conventions where the resolvers are
+    supposed to agree, against the real
+    ``civiccast.stream.media_router._package_dir_for_asset`` reading real
+    rows, so a change to either side fails here.
+
+    Where they are NOT supposed to agree is documented on
+    ``_resolve_caption_package_dir``: the media router additionally validates
+    manifest_url/containment/existence and falls back to the legacy pre-rc14
+    ``<file_path>/hls`` location. That last one is a known gap and is pinned
+    as a gap below rather than left to be discovered.
+    """
+
+    @staticmethod
+    def _session_factory(tmp_path: Path):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from civiccast.db import Base
+
+        engine = create_engine(f"sqlite:///{tmp_path / 'parity.sqlite3'}")
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine)
+
+    @staticmethod
+    def _publish_asset(session, *, asset_id: str, file_path: Path | None, manifest_url: str | None):
+        from civiccast.schedule.models import Asset
+
+        session.add(
+            Asset(
+                asset_id=asset_id,
+                title="Council",
+                state="validated",
+                manifest_url=manifest_url,
+                file_path=str(file_path) if file_path else None,
+                published_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    def test_live_finalized_asset_resolves_identically_in_both_resolvers(
+        self, tmp_path: Path
+    ) -> None:
+        from civiccast.live.models import FINALIZATION_STATE_COMPLETED, LiveFinalizationJob
+        from civiccast.stream.media_router import _package_dir_for_asset
+
+        package_dir = tmp_path / "recordings" / "ls_parity-hls"
+        package_dir.mkdir(parents=True)
+        manifest = package_dir / "playlist.m3u8"
+        manifest.write_text("#EXTM3U\n", encoding="utf-8")
+
+        maker = self._session_factory(tmp_path)
+        with maker() as session:
+            self._publish_asset(
+                session, asset_id=_ASSET_ID, file_path=None, manifest_url="/whatever"
+            )
+            session.add(
+                LiveFinalizationJob(
+                    live_session_id=_ASSET_ID,
+                    state=FINALIZATION_STATE_COMPLETED,
+                    asset_id=_ASSET_ID,
+                    local_package_manifest_path=str(manifest),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+
+            router_answer = _package_dir_for_asset(_ASSET_ID, session)
+
+        class _Worker:
+            def get_status(self, asset_id: str) -> object:
+                return SimpleNamespace(local_package_manifest_path=str(manifest))
+
+        assert _resolve_caption_package_dir(_ASSET_ID, _Worker()) == router_answer
+
+    def test_standard_convention_upload_resolves_identically_in_both_resolvers(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        upload_root = tmp_path / "uploads"
+        package_dir = upload_root / ".civiccast-packages" / _ASSET_ID
+        package_dir.mkdir(parents=True)
+        (package_dir / "playlist.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+        source = upload_root / "council.mp4"
+        source.write_bytes(b"\x00")
+        monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(upload_root))
+        monkeypatch.delenv("CIVICCAST_VOD_PACKAGE_DIR", raising=False)
+
+        from civiccast.stream.media_router import _package_dir_for_asset
+
+        maker = self._session_factory(tmp_path)
+        with maker() as session:
+            self._publish_asset(
+                session,
+                asset_id=_ASSET_ID,
+                file_path=source,
+                manifest_url=f"/media/vod/{_ASSET_ID}/playlist.m3u8",
+            )
+            router_answer = _package_dir_for_asset(_ASSET_ID, session)
+
+        class _Worker:
+            def get_status(self, asset_id: str) -> object:
+                return SimpleNamespace(local_package_manifest_path=None)
+
+        assert _resolve_caption_package_dir(_ASSET_ID, _Worker()) == router_answer
+
+    def test_legacy_pre_rc14_package_is_a_known_divergence(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Pinned as a GAP, not as agreement.
+
+        The media router still serves a pre-rc14 ``<file_path>/hls`` package;
+        the caption gate does not resolve it and therefore blocks publish for
+        such an asset. If someone closes that gap, this test fails and tells
+        them to update the docs that currently call it out.
+        """
+
+        from civiccast.stream.media_router import _package_dir_for_asset
+
+        upload_root = tmp_path / "uploads"
+        upload_root.mkdir()
+        source = tmp_path / "legacy" / "council.mp4"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"\x00")
+        legacy_package = source.parent / "hls"
+        legacy_package.mkdir()
+        (legacy_package / "playlist.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+        monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(upload_root))
+        monkeypatch.delenv("CIVICCAST_VOD_PACKAGE_DIR", raising=False)
+
+        maker = self._session_factory(tmp_path)
+        with maker() as session:
+            self._publish_asset(
+                session,
+                asset_id=_ASSET_ID,
+                file_path=source,
+                manifest_url=f"/media/vod/{_ASSET_ID}/playlist.m3u8",
+            )
+            router_answer = _package_dir_for_asset(_ASSET_ID, session)
+
+        class _Worker:
+            def get_status(self, asset_id: str) -> object:
+                return SimpleNamespace(local_package_manifest_path=None)
+
+        caption_answer = _resolve_caption_package_dir(_ASSET_ID, _Worker())
+
+        assert router_answer == legacy_package.resolve()
+        # The documented divergence: the caption gate points at the standard
+        # location, which has no package, so publish is blocked.
+        assert caption_answer != router_answer
+        assert not (caption_answer / "playlist.m3u8").exists()

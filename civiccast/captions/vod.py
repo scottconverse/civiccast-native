@@ -553,17 +553,23 @@ def attach_reviewed_captions(
     first -- for BOTH languages when publishing a Spanish track; this
     function does not re-derive the approval gate, it enacts the decision.
 
-    KNOWN FOLLOW-UP (out of CivicCast One v1 scope, owner-approved to
-    defer -- see "Known follow-ups" in docs/ops/background-workers.md):
-    every write here is **local disk only**, inside ``package_dir``. That
-    is correct and complete for One v1, which serves VOD from the local
-    portal origin. It is a gap only for a CDN-backed deployment
-    (``CIVICCAST_CDN_PROVIDER``) whose package already pushed to the CDN
-    before caption review finished -- the CDN-served copy never gets the
-    caption track or the rewritten manifest entry that declares it, since
-    nothing here re-runs the CDN upload
-    (:meth:`civiccast.live.finalization_worker.LiveFinalizationWorker
-    ._upload_package`). Fix when CDN-backed deployments are in scope.
+    Every write here is **local disk only**, inside ``package_dir``, and that
+    is deliberate rather than an outstanding gap: the CDN half is the
+    *caller's* job. For a CDN-backed deployment
+    (``CIVICCAST_CDN_PROVIDER``) whose package reached the CDN before caption
+    review finished, the local rewrite alone would leave CDN viewers on the
+    pre-caption manifest, so
+    :meth:`civiccast.captions.vod_job.OfflineCaptionJobWorker
+    ._publish_if_reviewed` re-publishes the rewritten manifest and the new
+    caption files through :mod:`civiccast.captions.cdn_republish` after this
+    call returns, and fails the job if that republish fails. This function
+    stays local-only so it remains usable without any CDN wiring; do not add
+    an upload here.
+
+    (This used to carry a "KNOWN FOLLOW-UP ... fix when CDN-backed
+    deployments are in scope" note pointing at "Known follow-ups" in
+    docs/ops/background-workers.md. That follow-up is closed and the doc
+    section says so; the note is replaced rather than left to contradict it.)
     """
 
     if not cues:
