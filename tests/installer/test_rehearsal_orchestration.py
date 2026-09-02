@@ -528,8 +528,8 @@ def test_system_health_does_not_count_rehearsal_target_as_production_recording(
     tmp_path: Path,
     engine: Engine,
 ) -> None:
-    monkeypatch.setenv("CIVICAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
-    monkeypatch.setenv("CIVICAST_TESTER_OPS_STATE_PATH", str(tmp_path / "ops-state.json"))
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_TESTER_OPS_STATE_PATH", str(tmp_path / "ops-state.json"))
     rehearsal_dir = tmp_path / "uploads" / "private-rehearsals"
     rehearsal_dir.mkdir(parents=True)
     with Session(bind=engine) as session:
@@ -564,7 +564,7 @@ def test_rehearsal_route_uses_durable_live_contracts(
 ) -> None:
     operator_token = _complete_station_setup(monkeypatch, tmp_path, resident_preview_url)
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.setenv("CIVICAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
     bind_engine(engine)
     Base.metadata.create_all(engine)
     app = create_app()

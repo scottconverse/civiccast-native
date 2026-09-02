@@ -186,7 +186,26 @@ def _probe_ram() -> RAMInfo:
 
 
 def _probe_disk(path: Path) -> DiskInfo:
-    usage = shutil.disk_usage(path)
+    """Report free/total space for the volume that would hold ``path``.
+
+    ``shutil.disk_usage`` requires the path to exist -- it raises
+    ``FileNotFoundError`` otherwise, rather than answering for the volume the
+    path would live on. The default caller (``probe()``) passes
+    ``Path.home()``, which is normally guaranteed to exist, but not always:
+    a freshly provisioned account before first login, or a hermetic test
+    environment that redirects ``HOME``/``USERPROFILE`` onto a directory it
+    never creates. Walk up to the nearest existing ancestor to measure, while
+    still reporting the originally requested ``path`` verbatim -- callers
+    (``civiccast doctor``, the operator-authenticated probe) want to see
+    where they asked to measure, not where the measurement actually landed.
+    """
+    usage_path = path
+    while not usage_path.exists():
+        parent = usage_path.parent
+        if parent == usage_path:
+            break
+        usage_path = parent
+    usage = shutil.disk_usage(usage_path)
     return DiskInfo(
         path=str(path),
         total_gb=round(usage.total / 1024**3),

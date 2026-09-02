@@ -432,6 +432,7 @@ markers = [
   "ai: marks tests that require GPU + AI runtime (Whisper, Ollama)",
   "wsl2: marks tests that require WSL2-specific behavior",
   "windows_only: marks tests that require native Windows APIs or binaries",
+  "installed_paths: opts a test out of the hermetic state redirect because it verifies the installed %LOCALAPPDATA%/~/.civiccast path contract itself (the real-state write guard still applies)",
 ]
 filterwarnings = [
   "error",
