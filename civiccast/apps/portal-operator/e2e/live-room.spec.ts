@@ -3,6 +3,17 @@ import AxeBuilder from '@axe-core/playwright'
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 
+// WP-07 (observed live-source readiness) added several required fields to
+// LiveSourceResponse (readiness / readiness_ttl_seconds /
+// observation_age_seconds / credentials_supported /
+// credentials_unsupported_reason / next_action, plus the persisted
+// probe_state / row_version columns). This mocked route responds directly
+// with these objects as JSON -- there is no Pydantic model in the loop to
+// backfill defaults -- so an incomplete fixture here renders a source card
+// the real API could never produce, and (StatusPill indexing an undefined
+// tone) can crash the render entirely. Both sources are never_probed: this
+// suite never presses "Check source", so that is what the server would
+// actually report for a freshly configured row.
 const sourceA = {
   live_source_id: 'rtmp-cam-01',
   channel_id: 'government',
@@ -11,6 +22,20 @@ const sourceA = {
   endpoint_url: 'rtmp://encoder.local/live/council',
   credentials_handle: null,
   created_at: '2026-05-12T18:00:00Z',
+  probe_state: 'never_probed',
+  probe_observed_at: null,
+  probe_detail: null,
+  probe_error_code: null,
+  probe_last_success_at: null,
+  row_version: 1,
+  readiness_ttl_seconds: 30,
+  observation_age_seconds: null,
+  readiness: 'never_probed',
+  credentials_supported: false,
+  credentials_unsupported_reason:
+    'CivicCast cannot check an RTMP source that needs a username and password. The only way to send them is inside the address itself, and CivicCast will not store or run a password inside an address. Use an unauthenticated RTMP address on the station network, or use SRT with a passphrase instead.',
+  next_action:
+    'Council Chamber Encoder has never been checked. Choose Check source to confirm CivicCast can see it before you take air.',
 }
 
 const sourceB = {
@@ -21,6 +46,20 @@ const sourceB = {
   endpoint_url: 'ndi://floor-camera',
   credentials_handle: null,
   created_at: '2026-05-12T18:00:00Z',
+  probe_state: 'never_probed',
+  probe_observed_at: null,
+  probe_detail: null,
+  probe_error_code: null,
+  probe_last_success_at: null,
+  row_version: 1,
+  readiness_ttl_seconds: 30,
+  observation_age_seconds: null,
+  readiness: 'never_probed',
+  credentials_supported: false,
+  credentials_unsupported_reason:
+    'NDI sources on the station network do not use a username, password, or passphrase. Leave the stored credential empty.',
+  next_action:
+    'Floor Camera NDI has never been checked. Choose Check source to confirm CivicCast can see it before you take air.',
 }
 
 const relayConfig = {

@@ -25,7 +25,7 @@ RTSP, RTMP, and NDI cannot). Its single secret value is the SRT passphrase.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import keyring
 
@@ -86,7 +86,7 @@ def delete_live_source_secret(credentials_handle: str) -> None:
         ) from exc
 
 
-def redact_secrets(text: str, secrets: object) -> str:
+def redact_secrets(text: str, secrets: str | Iterable[str] | None) -> str:
     """Replace every occurrence of a resolved secret in ``text`` with ``[redacted]``.
 
     Belt-and-suspenders. CivicCast never puts a passphrase into an address or a
@@ -95,13 +95,19 @@ def redact_secrets(text: str, secrets: object) -> str:
     must not be the way a passphrase reaches an operator-visible probe detail,
     a proof file, or the CHANGELOG of a support ticket.
 
+    ``secrets`` is one resolved value (a bare string) or several (any
+    iterable of strings, including the ``tuple[str, ...]`` the probe's own
+    credential resolver returns) -- both call shapes are real callers, not
+    hypothetical, so this takes the union rather than a loosely-typed
+    ``object`` and a runtime cast.
+
     Short values are skipped: replacing every occurrence of a two-character
     "secret" would corrupt an otherwise useful diagnostic message without
     protecting anything meaningful.
     """
-    if not text:
+    if not text or not secrets:
         return text
-    values = [secrets] if isinstance(secrets, str) else list(secrets or [])  # type: ignore[arg-type]
+    values: Iterable[str] = (secrets,) if isinstance(secrets, str) else secrets
     redacted = text
     for value in values:
         if isinstance(value, str) and len(value) >= 4:

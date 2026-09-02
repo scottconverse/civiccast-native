@@ -102,13 +102,13 @@ def upgrade() -> None:
     qualified = f"{schema}.{_TABLE}" if schema else _TABLE
     op.execute(
         sa.text(
-            f"UPDATE {qualified} SET probe_state = 'never_probed' "  # noqa: S608 - fixed identifiers
+            f"UPDATE {qualified} SET probe_state = 'never_probed' "  # noqa: S608 - fixed identifiers  # nosec B608
             "WHERE probe_state IS NULL OR probe_state = ''"
         )
     )
     op.execute(
         sa.text(
-            f"UPDATE {qualified} SET row_version = 1 "  # noqa: S608 - fixed identifiers
+            f"UPDATE {qualified} SET row_version = 1 "  # noqa: S608 - fixed identifiers  # nosec B608
             "WHERE row_version IS NULL OR row_version < 1"
         )
     )

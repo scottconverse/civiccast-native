@@ -599,7 +599,19 @@ class LiveSourceStore:
 
             read_version = row.row_version
             changed = payload.changed_fields()
-            source_type = payload.source_type if "source_type" in changed else row.source_type
+            # ``LiveSourceUpdate.source_type`` is ``Optional`` at the model
+            # (every field is optional-and-omittable), but ``changed_fields``
+            # only ever includes "source_type" when ``payload.source_type``
+            # is not ``None``. The extra ``is not None`` in this expression
+            # is what lets mypy narrow it to ``str`` for the merged-row
+            # validation below, rather than the two calls it feeds
+            # (``normalize_endpoint`` / ``check_credential_shape``) accepting
+            # a real ``str | None`` they would then have to null-check again.
+            source_type: str = (
+                payload.source_type
+                if "source_type" in changed and payload.source_type is not None
+                else row.source_type
+            )
             endpoint_url = (
                 str(payload.endpoint_url) if "endpoint_url" in changed else row.endpoint_url
             )
