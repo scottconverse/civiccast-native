@@ -89,6 +89,40 @@ def _empty_feed_catalog(channel_id: str) -> CgFeedCatalog:
     )
 
 
+def _empty_bulletin_queue(channel_id: str) -> CgBulletinQueue:
+    return CgBulletinQueue(
+        generated_at=datetime.now(UTC).replace(microsecond=0),
+        channel_id=channel_id,
+        submissions=[],
+        approved_zone_items=[],
+        proof_boundary="approved-community-bulletins-to-public-cg-zone-items",
+    )
+
+
+def _durable_ticker_zone(zone: CgZone, feeds: CgFeedCatalog, bulletins: CgBulletinQueue) -> CgZone:
+    """Build the ticker zone's content from the already-resolved durable feed
+    catalog and approved bulletin queue instead of hard-coded sample strings
+    (WP-06 follow-up). ``feeds``/``bulletins`` are resolved once per request
+    by the caller (durable store, or -- only under CIVICCAST_CG_DEMO_FEEDS=1
+    -- the sample catalog/queue), so this never invents content on its own:
+    zero durable/demo sources bound to "ticker" simply yields an empty,
+    actionable ``{"items": [], "empty": True}`` rather than static filler.
+    """
+
+    items = [
+        submission.title
+        for submission in bulletins.submissions
+        if submission.target_zone_kind == "ticker"
+    ]
+    for adapter in feeds.adapters:
+        if "ticker" in adapter.target_zone_kinds:
+            items.extend(item.title for item in adapter.items)
+    content: dict[str, object] = {"items": items}
+    if not items:
+        content["empty"] = True
+    return zone.model_copy(update={"source": "durable-station-config", "content": content})
+
+
 class BulletinCreate(BaseModel):
     """Operator-entered community bulletin submission."""
 
@@ -126,6 +160,30 @@ def _queue_from_durable(store: Any, channel_id: str) -> CgBulletinQueue:
         submissions=submissions,
         approved_zone_items=_zone_items(submissions),
         proof_boundary="community-submission-queue-to-approved-cg-zone-items",
+    )
+
+
+def _approved_submissions(
+    submissions: list[CgBulletinSubmission],
+) -> list[CgBulletinSubmission]:
+    return [
+        submission for submission in submissions if submission.state in {"accepted", "scheduled"}
+    ]
+
+
+def _durable_approved_bulletins(store: Any, channel_id: str) -> CgBulletinQueue:
+    """Same durable-store + approved-state filter the public /bulletins
+    endpoint below uses -- shared so the portal-display contract's
+    ``approved_bulletins`` field never disagrees with the standalone
+    endpoint (WP-06 follow-up)."""
+
+    queue = _queue_from_durable(store, channel_id)
+    return CgBulletinQueue(
+        generated_at=queue.generated_at,
+        channel_id=queue.channel_id,
+        submissions=_approved_submissions(queue.submissions),
+        approved_zone_items=queue.approved_zone_items,
+        proof_boundary="approved-community-bulletins-to-public-cg-zone-items",
     )
 
 
@@ -261,15 +319,10 @@ def public_bulletins(
         if store is not None
         else build_bulletin_queue(channel_id=channel_id)
     )
-    approved_submissions = [
-        submission
-        for submission in queue.submissions
-        if submission.state in {"accepted", "scheduled"}
-    ]
     return CgBulletinQueue(
         generated_at=queue.generated_at,
         channel_id=queue.channel_id,
-        submissions=approved_submissions,
+        submissions=_approved_submissions(queue.submissions),
         approved_zone_items=queue.approved_zone_items,
         proof_boundary="approved-community-bulletins-to-public-cg-zone-items",
     )
@@ -408,17 +461,46 @@ def portal_display(
     channel_id: str = "public",
     template_id: str | None = None,
     service: Any = Depends(get_cg_board_service),
+    bulletin_store: Any = Depends(get_cg_bulletin_store),
 ) -> CgPortalDisplay:
-    # WP-06: the ``feed_catalog`` field is the only part of this contract this
-    # work package touches -- it's assembled the same way the standalone
-    # /feeds endpoint above is, so the two never disagree. The snapshot,
-    # template library, bulletin queue, render plan, and overlay contract are
-    # unchanged (out of scope here; they don't carry example.invalid content).
+    # WP-06 + follow-up: feed_catalog, approved_bulletins, and the snapshot's
+    # ticker zone are the parts of this contract this work touches -- each is
+    # assembled the same way its standalone endpoint above is (/feeds,
+    # /bulletins), so they never disagree. The template library, render plan,
+    # and overlay contract are unchanged (out of scope; no example.invalid /
+    # sample content lives there).
     display = build_portal_display(channel_id=channel_id, template_id=template_id)
+
     if service is not None:
         feeds = cast(CgFeedCatalog, service.feed_catalog(channel_id))
     elif _cg_demo_feeds_enabled():
         feeds = display.feed_catalog
     else:
         feeds = _empty_feed_catalog(channel_id)
-    return display.model_copy(update={"feed_catalog": feeds})
+
+    if bulletin_store is not None:
+        bulletins = _durable_approved_bulletins(bulletin_store, channel_id)
+    elif _cg_demo_feeds_enabled():
+        bulletins = CgBulletinQueue(
+            generated_at=display.approved_bulletins.generated_at,
+            channel_id=display.approved_bulletins.channel_id,
+            submissions=_approved_submissions(display.approved_bulletins.submissions),
+            approved_zone_items=display.approved_bulletins.approved_zone_items,
+            proof_boundary="approved-community-bulletins-to-public-cg-zone-items",
+        )
+    else:
+        bulletins = _empty_bulletin_queue(channel_id)
+
+    # The ticker zone is rebuilt from the SAME resolved feeds/bulletins above
+    # (never the static sample zone), so it is empty by default, matches the
+    # demo flag when set, and can never drift from the /feeds and /bulletins
+    # contracts.
+    zones = [
+        _durable_ticker_zone(zone, feeds, bulletins) if zone.kind == "ticker" else zone
+        for zone in display.snapshot.zones
+    ]
+    snapshot = display.snapshot.model_copy(update={"zones": zones})
+
+    return display.model_copy(
+        update={"feed_catalog": feeds, "approved_bulletins": bulletins, "snapshot": snapshot}
+    )

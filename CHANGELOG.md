@@ -153,6 +153,24 @@ installer asset and is not a public or production release.
   and failed states rather than always rendering the sample rows. The sample
   catalog is available only with `CIVICCAST_CG_DEMO_FEEDS=1` explicitly set;
   it is off by default in every shipping profile.
+- **WP-06 follow-up: the portal-display contract's ticker zone and approved
+  bulletins no longer carry sample content either.** `build_multi_zone_snapshot()`'s
+  static ticker zone always read "Library board meets tonight" / "Trail work
+  begins Monday", and `build_portal_display()`'s `approved_bulletins` field
+  always read the CA-3 sample queue (including an unfiltered `needs_changes`
+  submission) -- both unconditionally, regardless of what a station actually
+  configured. `GET .../display` now builds `approved_bulletins` through the
+  same durable-store + approved-state filter (`CgBulletinStore`,
+  `PostgresCgBulletinStore`) the standalone `GET .../bulletins` endpoint
+  already used, and rebuilds the snapshot's ticker zone from the already-
+  resolved feed catalog and approved bulletin queue
+  (`source: "durable-station-config"`), rather than static filler. A station
+  with no durable board/feed/bulletin configuration gets an empty,
+  `{"items": [], "empty": true}` ticker and an empty bulletin queue. The old
+  "Trail work begins Monday" string is fully retired -- it never reappears,
+  even under `CIVICCAST_CG_DEMO_FEEDS=1`, because it was static filler with
+  no backing store; demo mode composes the ticker from the same gated sample
+  feed/bulletin data the `/feeds` and `/bulletins` endpoints show.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

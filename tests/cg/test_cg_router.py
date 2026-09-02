@@ -18,7 +18,9 @@ from sqlalchemy.pool import StaticPool
 from civiccast.app import create_app
 from civiccast.cg.board_service import CgBoardService, FeedInput, ZoneInput
 from civiccast.cg.board_store import CgBoardStore
-from civiccast.cg.router import get_cg_board_service
+from civiccast.cg.bulletin_store import PostgresCgBulletinStore
+from civiccast.cg.models import CgBulletinSubmission
+from civiccast.cg.router import get_cg_board_service, get_cg_bulletin_store
 from civiccast.cg.router import public_router as cg_public_router
 from civiccast.db import Base
 
@@ -167,10 +169,127 @@ def test_feed_catalog_durable_reflects_station_configuration(
     assert "example.invalid" not in display.text
 
 
+def test_portal_display_durable_ticker_and_bulletins(
+    _durable_factory: Callable[[], Session],
+) -> None:
+    app, service = _durable_public_app(_durable_factory)
+    bulletin_store = PostgresCgBulletinStore(_durable_factory)
+    app.dependency_overrides[get_cg_bulletin_store] = lambda: bulletin_store
+    client = TestClient(app)
+
+    # Nothing configured yet -> empty ticker + empty bulletins, never sample
+    # content (WP-06 follow-up).
+    empty = client.get("/api/public/cg/channels/public/display")
+    assert empty.status_code == 200
+    empty_payload = empty.json()
+    assert empty_payload["approved_bulletins"]["submissions"] == []
+    empty_ticker = next(z for z in empty_payload["snapshot"]["zones"] if z["kind"] == "ticker")
+    assert empty_ticker["content"] == {"items": [], "empty": True}
+
+    # Configure a real ticker-bound feed + an approved ticker bulletin.
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    feed = service.add_feed(
+        "public",
+        payload=FeedInput(
+            kind="rss",
+            label="City news",
+            source_url="https://city.example.gov/news.rss",
+            trust_tier="operator_curated",
+        ),
+        operator_id="op_a",
+    )
+    service.add_zone(
+        "public",
+        payload=ZoneInput(
+            region="lower",
+            zone_kind="ticker",
+            content_source="feed_adapter",
+            feed_source_id=feed.feed_source_id,
+        ),
+        operator_id="op_a",
+    )
+    bulletin_store.create(
+        "public",
+        CgBulletinSubmission(
+            submission_id="sub-1",
+            organization="Friends of the Library",
+            submitter_label="Jamie R.",
+            title="Book sale this Saturday",
+            message="Come by the library annex 9am-2pm.",
+            target_zone_kind="ticker",
+            state="accepted",
+            approved_by_operator="op_a",
+        ),
+    )
+    bulletin_store.create(
+        "public",
+        CgBulletinSubmission(
+            submission_id="sub-2",
+            organization="Neighborhood Group",
+            submitter_label="Volunteer",
+            title="Should not appear -- not yet approved",
+            message="Pending review.",
+            target_zone_kind="ticker",
+            state="submitted",
+        ),
+    )
+
+    configured = client.get("/api/public/cg/channels/public/display")
+    assert configured.status_code == 200
+    payload = configured.json()
+    assert [s["submission_id"] for s in payload["approved_bulletins"]["submissions"]] == ["sub-1"]
+    ticker = next(z for z in payload["snapshot"]["zones"] if z["kind"] == "ticker")
+    assert ticker["content"]["items"] == ["Book sale this Saturday"]
+    assert "empty" not in ticker["content"]
+    assert ticker["source"] == "durable-station-config"
+    assert "example.invalid" not in configured.text
+    assert "Library board meets tonight" not in configured.text
+    assert "Trail work begins Monday" not in configured.text
+
+    # The standalone /bulletins endpoint agrees with the embedded field.
+    bulletins = client.get("/api/public/cg/channels/public/bulletins")
+    assert bulletins.status_code == 200
+    assert [s["submission_id"] for s in bulletins.json()["submissions"]] == ["sub-1"]
+
+
+def test_portal_display_demo_mode_requires_explicit_env_flag(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_CG_DEMO_FEEDS", "1")
+    client = TestClient(create_app())
+
+    response = client.get("/api/public/cg/channels/public/display")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["approved_bulletins"]["submissions"], "demo mode keeps the CA-3 sample bulletin"
+    ticker = next(z for z in payload["snapshot"]["zones"] if z["kind"] == "ticker")
+    # Demo mode composes the ticker from the same sample feeds/bulletins the
+    # /feeds and /bulletins endpoints show under the flag -- never the old
+    # unconditional static "Trail work begins Monday" filler, which is fully
+    # retired regardless of the flag.
+    assert "Library board meets tonight" in ticker["content"]["items"]
+    assert "Community Arts Fair" in ticker["content"]["items"]
+    assert "example.invalid" in response.text
+    assert "Trail work begins Monday" not in response.text
+
+
+_SAMPLE_STRINGS = (
+    "example.invalid",
+    "Library board meets tonight",
+    "Trail work begins Monday",
+    "Community Arts Fair",
+    "Neighborhood cleanup",
+    "No active weather alerts",
+    "Parks department posted a trail update",
+)
+
+
 def test_production_app_factory_exposes_no_example_feed(monkeypatch: MonkeyPatch) -> None:
-    """Done-means (WP-06): the production app factory never surfaces sample
-    example.invalid content as a configured feed on either endpoint that
-    carries the feed catalog."""
+    """Done-means (WP-06 + follow-up): the production app factory never
+    surfaces sample example.invalid feed content, sample bulletin content, or
+    the old static sample ticker strings as configured station data, on
+    either endpoint that carries the feed catalog / bulletin queue / ticker
+    zone."""
 
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
     monkeypatch.delenv("CIVICCAST_CG_DEMO_FEEDS", raising=False)
@@ -181,8 +300,9 @@ def test_production_app_factory_exposes_no_example_feed(monkeypatch: MonkeyPatch
 
     assert feeds.status_code == 200
     assert display.status_code == 200
-    assert "example.invalid" not in feeds.text
-    assert "example.invalid" not in display.text
+    for sample in _SAMPLE_STRINGS:
+        assert sample not in feeds.text
+        assert sample not in display.text
 
 
 def test_template_library_and_portal_display_routes(monkeypatch: MonkeyPatch) -> None:
@@ -199,7 +319,14 @@ def test_template_library_and_portal_display_routes(monkeypatch: MonkeyPatch) ->
     display_payload = display.json()
     assert display_payload["snapshot"]["template"]["template_id"] == "standard-community-board"
     assert display_payload["template_library"]["templates"]
-    assert display_payload["approved_bulletins"]["approved_zone_items"]
+    # WP-06 follow-up: ephemeral/no-DB mode without the demo flag now returns
+    # an honest empty bulletin queue and ticker zone, never the CA-3 sample
+    # "arts-fair" bulletin as though it were a real approved submission.
+    assert display_payload["approved_bulletins"]["approved_zone_items"] == []
+    assert display_payload["approved_bulletins"]["submissions"] == []
+    ticker = next(z for z in display_payload["snapshot"]["zones"] if z["kind"] == "ticker")
+    assert ticker["content"]["items"] == []
+    assert ticker["content"]["empty"] is True
     assert display_payload["render_plan"]["manifest_url"].endswith("/stream.m3u8")
 
     alternate = client.get(
