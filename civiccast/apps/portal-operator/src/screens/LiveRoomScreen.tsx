@@ -10,6 +10,7 @@ import {
   getStaffIdentity,
   getLiveFinalizationStatus,
   getLiveSession,
+  getLiveSourceById,
   getSafeToBroadcast,
   getSourceSetup,
   goLiveOnAir,
@@ -299,6 +300,7 @@ export function SourceSwitcher({
   onEdit,
   checkingId,
   canEdit,
+  canCheck,
 }: {
   sources: LiveSourceResponse[]
   selectedId: string
@@ -307,6 +309,7 @@ export function SourceSwitcher({
   onEdit?: (source: LiveSourceResponse) => void
   checkingId?: string | null
   canEdit?: boolean
+  canCheck?: boolean
 }) {
   const selected = sources.find((source) => source.live_source_id === selectedId)
   return (
@@ -363,6 +366,7 @@ export function SourceSwitcher({
           onEdit={onEdit}
           checking={checkingId === selected.live_source_id}
           canEdit={canEdit}
+          canCheck={canCheck}
         />
       ) : null}
     </section>
@@ -383,12 +387,14 @@ export function SourceReadinessDetail({
   onEdit,
   checking,
   canEdit,
+  canCheck,
 }: {
   source: LiveSourceResponse
   onCheck?: (id: string) => void
   onEdit?: (source: LiveSourceResponse) => void
   checking?: boolean
   canEdit?: boolean
+  canCheck?: boolean
 }) {
   const tone = SOURCE_READINESS_TONE[source.readiness]
   const background =
@@ -428,7 +434,7 @@ export function SourceReadinessDetail({
         </p>
       ) : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        {onCheck ? (
+        {onCheck && canCheck ? (
           <button
             type="button"
             onClick={() => onCheck(source.live_source_id)}
@@ -463,6 +469,13 @@ export function SourceReadinessDetail({
         <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
           Editing a source needs the setup admin role. Ask your station admin to
           change the address or type.
+        </p>
+      ) : null}
+      {onCheck && !canCheck ? (
+        <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Checking a source needs the meeting operator or setup admin role. Ask
+          a meeting operator or your station admin to confirm it is delivering
+          media.
         </p>
       ) : null}
     </section>
@@ -545,7 +558,16 @@ export function SourceEditForm({
           <select
             id="source-edit-type"
             value={sourceType}
-            onChange={(event) => setSourceType(event.target.value as LiveSourceType)}
+            onChange={(event) => {
+              const nextType = event.target.value as LiveSourceType
+              setSourceType(nextType)
+              // The credential field is only visually blanked while a
+              // non-SRT type is disabled-and-shown-empty (below); the state
+              // itself used to survive the switch and get re-submitted if
+              // the operator switched back to SRT without retyping it. Clear
+              // it here so the state and the display never disagree.
+              if (nextType !== 'srt') setCredentialsHandle('')
+            }}
             className="rounded-md px-2 py-2 text-sm"
             style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
           >
@@ -997,6 +1019,14 @@ export function LiveRoomScreen() {
     queryKey: ['live-sources'],
     queryFn: listLiveSources,
     retry: false,
+    // Readiness ages out of its (default 30s, min 5s) server-side TTL even
+    // when nobody touches this screen. Session and ingest-plan state already
+    // poll at 3s; without a poll here a "Delivering / checked N seconds ago"
+    // pill could sit on screen well past the TTL that actually governs
+    // takeover, silently telling the operator something the takeover gate no
+    // longer believes. Polling at most every 10s keeps the display honest
+    // without re-listing sources on every render.
+    refetchInterval: 8_000,
   })
   const sourceSetupQuery = useQuery({
     queryKey: ['source-setup'],
@@ -1029,6 +1059,14 @@ export function LiveRoomScreen() {
     staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'meeting_operator')
   const canEditSources =
     staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'setup_admin')
+  // Matches the backend's POST /sources/{id}/probe gate exactly
+  // (require_any_role("meeting_operator", "setup_admin")): the Check source
+  // button must not render for an identity that can view the Live Room but
+  // whose click would just 403.
+  const canCheckSource =
+    staffIdentityQuery.isSuccess &&
+    (hasOperatorRole(staffIdentityQuery.data, 'meeting_operator') ||
+      hasOperatorRole(staffIdentityQuery.data, 'setup_admin'))
   const selectedSource = useMemo(() => {
     if (sources.length === 0) return undefined
     return sources.find((source) => source.live_source_id === selectedSourceId) ?? sources[0]
@@ -1104,7 +1142,29 @@ export function LiveRoomScreen() {
       setEditingSource(null)
       refreshReadiness()
     },
-    onError: (err) => setEditError(apiMessage(err, 'Could not save the source.')),
+    onError: async (err) => {
+      // A 409 means someone else's edit landed first, and the form was still
+      // holding the row_version that PATCH was built from. Resending the
+      // same payload would just 409 again forever -- reload the row (its new
+      // row_version included) so the next save has a real chance, and say so
+      // rather than showing the same generic failure text a real validation
+      // error would show.
+      if (err instanceof ApiError && err.status === 409 && editingSource) {
+        try {
+          const fresh = await getLiveSourceById(editingSource.live_source_id)
+          setEditingSource(fresh)
+          setEditError(
+            'Someone else changed this source while you were editing it. ' +
+              'CivicCast reloaded it below — review the current values and save again.',
+          )
+        } catch (reloadErr) {
+          setEditError(apiMessage(reloadErr, 'Could not save the source.'))
+        }
+        refreshReadiness()
+        return
+      }
+      setEditError(apiMessage(err, 'Could not save the source.'))
+    },
   })
 
   const stateMeta = session ? LIVE_STATE_META[session.state] : null
@@ -1183,9 +1243,16 @@ export function LiveRoomScreen() {
               }}
               checkingId={probeMutation.isPending ? probeMutation.variables : null}
               canEdit={canEditSources}
+              canCheck={canCheckSource}
             />
             {editingSource ? (
               <SourceEditForm
+                // Remount when the edited row itself changes (a 409-driven
+                // reload swaps `editingSource` for the fresh row) so the
+                // form's local field state re-initializes from the new
+                // values instead of continuing to show what was on screen
+                // before the conflict.
+                key={`${editingSource.live_source_id}:${editingSource.row_version}`}
                 source={editingSource}
                 onCancel={() => {
                   setEditError(null)

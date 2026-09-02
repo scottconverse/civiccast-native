@@ -1352,6 +1352,21 @@ export function listLiveSources(): Promise<LiveSourceResponse[]> {
 }
 
 /**
+ * Fetch one source fresh from the server. Used after a 409 on
+ * `updateLiveSource` -- the row the edit form has in memory is the one that
+ * was loaded before someone else's edit landed, so the form needs the
+ * current row (its new `row_version` included) before the operator can save
+ * again.
+ */
+export function getLiveSourceById(
+  liveSourceId: string,
+): Promise<LiveSourceResponse> {
+  return request<LiveSourceResponse>(
+    `/api/staff/live/sources/${encodeURIComponent(liveSourceId)}`,
+  )
+}
+
+/**
  * Check whether a configured source is delivering media right now, and record
  * what was seen (WP-07). A failed check is a 200 with `ok: false` -- the
  * operator needs the reason on screen, not a thrown error that leaves the card

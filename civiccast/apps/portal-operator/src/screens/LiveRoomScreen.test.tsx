@@ -1,7 +1,56 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+// Full-screen tests (role gating, the readiness poll, and the 409-conflict
+// reload) need the real API surface mocked -- LiveRoomScreen itself imports
+// every one of these. The component-level tests below (SourceSwitcher,
+// SourceReadinessDetail, SourceEditForm rendered directly) never call any of
+// these, so the mock is a safe no-op for them.
+vi.mock('../api/client', () => ({
+  ApiError: class ApiError extends Error {
+    status: number
+    detail?: string
+    constructor(message: string, status = 0, detail?: string) {
+      super(message)
+      this.status = status
+      this.detail = detail
+    }
+  },
+  createLiveSession: vi.fn(),
+  endLiveBroadcast: vi.fn(),
+  evaluateLivePreflight: vi.fn(),
+  getLiveFinalizationStatus: vi.fn(),
+  getLiveIngestPlan: vi.fn(),
+  getLiveSession: vi.fn(),
+  getLiveSourceById: vi.fn(),
+  getSafeToBroadcast: vi.fn(),
+  getSourceSetup: vi.fn(),
+  getStaffIdentity: vi.fn(),
+  goLiveOnAir: vi.fn(),
+  listChannelProfiles: vi.fn(),
+  listLiveSources: vi.fn(),
+  listRecordingTargets: vi.fn(),
+  probeLiveSource: vi.fn(),
+  retryLiveFinalization: vi.fn(),
+  startLivePreflight: vi.fn(),
+  updateLiveSource: vi.fn(),
+}))
 
 import {
+  ApiError,
+  getLiveIngestPlan,
+  getLiveSourceById,
+  getSafeToBroadcast,
+  getSourceSetup,
+  getStaffIdentity,
+  listChannelProfiles,
+  listLiveSources,
+  listRecordingTargets,
+  updateLiveSource,
+} from '../api/client'
+import {
+  LiveRoomScreen,
   PreflightList,
   PreviewPanel,
   SafeToBroadcastPanel,
@@ -10,6 +59,15 @@ import {
   SourceSwitcher,
 } from './LiveRoomScreen'
 import type { LiveSourceResponse } from '../types/live'
+import type {
+  ChannelProfile,
+  LiveIngestPlan,
+  SourceSetupReport,
+  StaffIdentityResponse,
+  SystemHealthReport,
+} from '../types/api.generated'
+
+afterEach(cleanup)
 
 /**
  * A source in whatever readiness state the test needs.
@@ -220,15 +278,26 @@ describe('LiveRoomScreen source readiness (WP-07 / ENG-003)', () => {
   it('lets the operator ask for a check and reports that it is running', () => {
     const onCheck = vi.fn()
     const { rerender } = render(
-      <SourceReadinessDetail source={source()} onCheck={onCheck} />,
+      <SourceReadinessDetail source={source()} onCheck={onCheck} canCheck />,
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Check source' }))
     expect(onCheck).toHaveBeenCalledWith('sample-source')
 
-    rerender(<SourceReadinessDetail source={source()} onCheck={onCheck} checking />)
+    rerender(
+      <SourceReadinessDetail source={source()} onCheck={onCheck} canCheck checking />,
+    )
     const busy = screen.getByRole('button', { name: 'Checking source...' })
     expect((busy as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('hides Check source and explains why when the identity lacks the role, matching the backend gate', () => {
+    render(<SourceReadinessDetail source={source()} onCheck={vi.fn()} canCheck={false} />)
+
+    expect(screen.queryByRole('button', { name: 'Check source' })).toBeNull()
+    expect(
+      screen.getByText(/needs the meeting operator or setup admin role/i),
+    ).not.toBeNull()
   })
 
   it('explains why editing is unavailable instead of silently hiding it', () => {
@@ -338,5 +407,194 @@ describe('LiveRoomScreen source edit form', () => {
     )
 
     expect(screen.getByRole('alert').textContent).toMatch(/changed by someone else/)
+  })
+
+  it('clears the stored credential when the type is switched away from SRT, so it cannot be resubmitted after switching back', () => {
+    // Before this fix, switching the type away from SRT only blanked the
+    // credential field VISUALLY (the input is disabled-and-shown-empty for a
+    // type that cannot carry one); the React state underneath kept the typed
+    // value and would reappear -- and be resubmitted -- if the operator
+    // switched back to SRT without retyping anything.
+    render(
+      <SourceEditForm
+        source={source({
+          source_type: 'srt',
+          endpoint_url: 'srt://0.0.0.0:9000?mode=listener',
+          credentials_handle: 'old-handle',
+          credentials_supported: true,
+          credentials_unsupported_reason: null,
+        })}
+        onCancel={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    )
+
+    const credentialField = screen.getByLabelText('Stored credential') as HTMLInputElement
+    expect(credentialField.value).toBe('old-handle')
+    fireEvent.change(credentialField, { target: { value: 'new-handle-typed-by-mistake' } })
+    expect(credentialField.value).toBe('new-handle-typed-by-mistake')
+
+    fireEvent.change(screen.getByLabelText('Source type'), { target: { value: 'rtmp' } })
+    const disabledField = screen.getByLabelText('Stored credential') as HTMLInputElement
+    expect(disabledField.disabled).toBe(true)
+    expect(disabledField.value).toBe('')
+
+    fireEvent.change(screen.getByLabelText('Source type'), { target: { value: 'srt' } })
+    const restoredField = screen.getByLabelText('Stored credential') as HTMLInputElement
+    expect(restoredField.disabled).toBe(false)
+    // The typed value must be gone, not merely hidden -- this is the state,
+    // not the display.
+    expect(restoredField.value).toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Full-screen integration (hostile-review fixes, WP-07)
+// ---------------------------------------------------------------------------
+
+function identity(roles: string[]): StaffIdentityResponse {
+  return { operator_id: 'dana', operator_display_name: 'Dana', roles } as unknown as StaffIdentityResponse
+}
+
+const SAFE_REPORT = {
+  safe_to_broadcast: 'green',
+  operator_message: 'All checks passed.',
+  resident_preview: { public_url: 'https://example.test/watch' },
+} as unknown as SystemHealthReport
+
+const EMPTY_INGEST_PLAN = {
+  relay_paths: [],
+  local_default: {
+    path_id: 'gov-ch12:local',
+    label: 'Local RTMP (legacy placeholder)',
+    mode: 'local_rtmp',
+    endpoint_url: 'rtmp://127.0.0.1/live/civiccast',
+    enabled: false,
+    health_state: 'not_configured',
+    outbound_only: false,
+    requires_inbound_firewall: false,
+    operator_action: 'Configure a real source.',
+  },
+  recommended_path_id: 'gov-ch12:local',
+} as unknown as LiveIngestPlan
+
+function renderLiveRoomScreen() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={qc}>
+      <LiveRoomScreen />
+    </QueryClientProvider>,
+  )
+}
+
+function stubCommonQueries() {
+  vi.mocked(listChannelProfiles).mockResolvedValue([] as unknown as ChannelProfile[])
+  vi.mocked(getSourceSetup).mockResolvedValue({} as unknown as SourceSetupReport)
+  vi.mocked(listRecordingTargets).mockResolvedValue([])
+  vi.mocked(getLiveIngestPlan).mockResolvedValue(EMPTY_INGEST_PLAN)
+  vi.mocked(getSafeToBroadcast).mockResolvedValue(SAFE_REPORT)
+}
+
+beforeEach(() => {
+  vi.restoreAllMocks()
+  vi.useRealTimers()
+  stubCommonQueries()
+})
+
+describe('LiveRoomScreen probe-button role gate (finding: Probe button rendered for everyone)', () => {
+  it('hides Check source from an identity with neither meeting_operator nor setup_admin, and says why', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listLiveSources).mockResolvedValue([source({ name: 'Council Cam' })])
+
+    renderLiveRoomScreen()
+
+    // "Council Cam" renders more than once on screen (the source-switcher
+    // radio label, the on-air preview copy) -- wait for the unambiguous
+    // radio option instead of the plain text.
+    await screen.findByRole('radio', { name: /Council Cam/i })
+    expect(screen.queryByRole('button', { name: 'Check source' })).toBeNull()
+    expect(
+      screen.getByText(/needs the meeting operator or setup admin role/i),
+    ).not.toBeNull()
+  })
+
+  it('shows Check source to a meeting operator (the backend-gate role)', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+    vi.mocked(listLiveSources).mockResolvedValue([source({ name: 'Council Cam' })])
+
+    renderLiveRoomScreen()
+
+    expect(await screen.findByRole('button', { name: 'Check source' })).not.toBeNull()
+  })
+
+  it('shows Check source to a setup admin too (the backend accepts either role)', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    vi.mocked(listLiveSources).mockResolvedValue([source({ name: 'Council Cam' })])
+
+    renderLiveRoomScreen()
+
+    expect(await screen.findByRole('button', { name: 'Check source' })).not.toBeNull()
+  })
+})
+
+describe('LiveRoomScreen readiness poll (finding: sourcesQuery never re-fetches)', () => {
+  it('re-fetches live sources on its own, at most every 10s, so a stale pill goes stale on screen', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+    vi.mocked(listLiveSources).mockResolvedValue([source({ name: 'Council Cam' })])
+
+    renderLiveRoomScreen()
+
+    // Let the initial fetch (and whatever render settling it triggers) land
+    // before capturing the baseline call count -- with `shouldAdvanceTime`,
+    // real wall-clock time elapsing during that settle already counts toward
+    // the fake clock, so asserting an exact call count here is not reliable.
+    await screen.findByRole('radio', { name: /Council Cam/i })
+    const before = vi.mocked(listLiveSources).mock.calls.length
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_100)
+    })
+
+    await waitFor(() =>
+      expect(vi.mocked(listLiveSources).mock.calls.length).toBeGreaterThan(before),
+    )
+    vi.useRealTimers()
+  })
+})
+
+describe('LiveRoomScreen edit-conflict reload (finding: 409 resends the same stale row_version forever)', () => {
+  it('on 409, reloads the row and tells the operator, instead of the generic failure text', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    const original = source({ name: 'Council Cam', row_version: 1 })
+    vi.mocked(listLiveSources).mockResolvedValue([original])
+    vi.mocked(updateLiveSource).mockRejectedValueOnce(
+      new ApiError('Request failed: 409 Conflict', 409, 'row changed'),
+    )
+    const reloaded = source({
+      name: 'Council Cam',
+      row_version: 2,
+      endpoint_url: 'rtmp://127.0.0.1/live/reloaded',
+    })
+    vi.mocked(getLiveSourceById).mockResolvedValue(reloaded)
+
+    renderLiveRoomScreen()
+
+    // "Council Cam" renders more than once on screen (the source-switcher
+    // radio label, the on-air preview copy) -- wait for the unambiguous
+    // radio option instead of the plain text.
+    await screen.findByRole('radio', { name: /Council Cam/i })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit source' }))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Chamber Cam' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save source' }))
+
+    await screen.findByText(/someone else changed this source/i)
+    expect(vi.mocked(getLiveSourceById)).toHaveBeenCalledWith('sample-source')
+    // The reloaded row's fresh endpoint is now what the (remounted) form
+    // shows -- the operator is reviewing the CURRENT row, not resubmitting
+    // blind against the version that just lost the race.
+    expect((screen.getByLabelText('Stream address') as HTMLInputElement).value).toBe(
+      'rtmp://127.0.0.1/live/reloaded',
+    )
   })
 })
