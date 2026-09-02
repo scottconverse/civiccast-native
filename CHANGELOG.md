@@ -118,6 +118,22 @@ installer asset and is not a public or production release.
 
 ### Fixed
 
+- **`test_guard_fails_a_test_that_writes_real_state` no longer collides with
+  mutmut in CI.** `tests/test_hermetic_state_guard.py` spawns a nested pytest
+  subprocess via `pytester` to prove the hermetic-state teardown guard fails
+  closed; that nested invocation already disabled `cacheprovider` and
+  `randomly` but not `mutmut`, so in the `mutation-report` CI job (and the
+  `deterministic-detectors` check that reads it, where the pinned
+  `mutmut==3.6.0` package is installed alongside pytest) the nested run could
+  pick up mutmut's pytest integration and abort at fixture setup with
+  `FileNotFoundError: Could not figure out where the code to mutate is`,
+  reported as an unexpected error alongside the guard's own expected error --
+  seen identically on three unrelated branches/PRs (run 33628558134, PR #130,
+  PR #131). Added `-p no:mutmut` next to the existing `-p no:cacheprovider -p
+  no:randomly` flags on the nested `runpytest_subprocess` call. Swept the
+  rest of `tests/` for other `pytester`/nested-pytest invocations that could
+  hit the same collision; this is the only one.
+
 - **Publish preflight and approval now read the same real provider registry
   (WP-03; audit findings QA-001 and the readiness portion of ENG-001).**
   Preflight used to answer from an unrelated deterministic mock credential
