@@ -15,7 +15,9 @@ repository ships, use
 [Windows Release Trust And Verification](../install/windows-release-trust.md)
 and [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml)
 instead -- they carry the current `v1.0.0-beta.1` (USB-delivered) /
-`v1.0.0-beta.2` (next, downloadable) release-state story.
+`v1.0.0-beta.3` (next, downloadable) release-state story. `v1.0.0-beta.2`
+was never published -- it exists only as an internal Gate A
+upgrade-baseline kit.
 
 This guide was the beta tester path for the CivicCast operator-first
 tester line on the retired WSL2 product. Windows testers used the Windows

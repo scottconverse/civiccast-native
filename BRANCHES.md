@@ -46,8 +46,12 @@ not scratch.
 
 ## Release identity
 
-`v1.0.0-beta.2` is the current owner-held unpublished development candidate.
-It has no installer asset and is **not a public or production release**. The
-previous `v1.0.0-beta.1` owner-published prerelease tag also has no installer
-asset. Tags, releases and publication are owner-only decisions; agents never
+`v1.0.0-beta.2` was **never published** -- it exists only as an internal
+Gate A upgrade-baseline kit, never a release. `v1.0.0-beta.3` is the current
+owner-held unpublished development candidate. It has no installer asset and
+is **not a public or production release**. The previous `v1.0.0-beta.1`
+owner-published prerelease tag also has no installer asset; `v1.0.0-beta.1`
+to `v1.0.0-beta.3` is a one-time fresh install, not an in-place upgrade (see
+[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
+Tags, releases and publication are owner-only decisions; agents never
 create or move a tag.

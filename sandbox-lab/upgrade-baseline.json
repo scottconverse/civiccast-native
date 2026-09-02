@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
-  "candidate_label": "candidate-23",
-  "source_sha": "057ffece7157e5197e6ce9159d5a1abd84c30436",
-  "run_id": 33411153964,
-  "gate_a_run_id": 33414111585,
-  "installer_sha256": "7eb37cdc477dc7cf862a06785b0643cfbfea2ff376d46de382fc029aee6ecafc",
-  "station_index_sha256": "45f14cfc4f608d7c3cf2e070ca0dbf3cc2487b310e5d2c66042441b532060c80",
-  "product_version": "1.0.0-beta.1"
+  "candidate_label": "candidate-beta.2",
+  "source_sha": "564ee028cf712e26133ada9d7c25b498abe605ab",
+  "run_id": 33621209994,
+  "gate_a_run_id": 33623737236,
+  "installer_sha256": "a06b7f9b49d6e586c7456dc81d2e3ed5c164bb8f9e0ebda6e67f2a7ed927c345",
+  "station_index_sha256": "22cb116b20b2db1ef4b2e0852f441a82201c7afab26e95e63c8ea96de99b94d8",
+  "product_version": "1.0.0-beta.2"
 }

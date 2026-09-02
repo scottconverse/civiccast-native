@@ -14,7 +14,7 @@ Plug the CivicCast USB stick into the station computer.
 
 ## 2. Open the USB drive and double-click the setup program
 
-It has a CivicCast icon and a name like `CivicCast (Native)_1.0.0-beta.2_x64-setup.exe`.
+It has a CivicCast icon and a name like `CivicCast (Native)_1.0.0-beta.3_x64-setup.exe`.
 
 Windows asks one question before setup starts:
 

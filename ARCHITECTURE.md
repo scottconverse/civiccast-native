@@ -1,6 +1,6 @@
 # CivicCast Architecture
 
-> **Release state: `v1.0.0-beta.2` is the current owner-held unpublished candidate.**
+> **Release state: `v1.0.0-beta.3` is the current owner-held unpublished candidate.**
 > It is not a public or production release,
 > and no installer download exists for it; it describes the state a technical
 > reviewer finds by checking out `main` today. See

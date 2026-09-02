@@ -13,7 +13,10 @@
 GitHub Release download -- there is no GitHub-hosted installer asset to
 verify for it.
 
-`v1.0.0-beta.2` is the current owner-held unpublished candidate (unpublished;
+`v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
+upgrade-baseline kit.
+
+`v1.0.0-beta.3` is the current owner-held unpublished candidate (unpublished;
 no installer asset). It is intended to be the first downloadable beta
 candidate: `setup.exe`, per-pack runtime `.ccpack` assets, and a
 `SHA256SUMS.txt` checksum file, published as a **prerelease** at

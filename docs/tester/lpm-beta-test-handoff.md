@@ -10,7 +10,10 @@ model bundle when it shipped). A USB-delivered `v1.0.0-beta.1` station is a
 real, current, testable native install -- if that is what Sergio/LPM already
 has, there is nothing further to download.
 
-`v1.0.0-beta.2` is the current owner-held unpublished candidate (unpublished;
+`v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
+upgrade-baseline kit and is never sent to Sergio/LPM.
+
+`v1.0.0-beta.3` is the current owner-held unpublished candidate (unpublished;
 no installer asset). It is intended to be the first **downloadable** beta
 candidate: `setup.exe`, per-pack runtime `.ccpack` assets, and a
 `SHA256SUMS.txt` checksum file, published as a **prerelease** at
@@ -23,11 +26,23 @@ authored release-state record -- it is the single source of truth for which
 tag is current.
 
 A first-time install on a station with no prior CivicCast install needs the
-USB model bundle even once `v1.0.0-beta.2` publishes -- the GitHub download
+USB model bundle even once `v1.0.0-beta.3` publishes -- the GitHub download
 alone is the setup executable and runtime packs, not the ~21 GB model
-bundle. An upgrade of an already-installed station (USB-delivered
-`v1.0.0-beta.1`, or a later download) can be download-only and keeps the
-station's existing recordings, database, and AI models.
+bundle. An upgrade of an already-installed `v1.0.0-beta.3`-or-later station
+can be download-only and keeps the station's existing recordings, database,
+and AI models.
+
+**Upgrading from `v1.0.0-beta.1`:** this one step is a fresh install, not an
+upgrade. `beta.1` to `beta.3` means wiping the existing `beta.1` install and
+installing `beta.3` fresh from the beta.3 kit (USB or a LAN copy); your
+recordings, settings, and AI models are **not** kept across this specific
+step -- back up anything you need first. The `beta.2` internal baseline kit
+changed the signed identity of every AI model pack so that later upgrades can
+reuse them, and a `beta.1` station's already-downloaded models don't match
+that new identity. From `beta.3` on, every later step (`beta.3` to `beta.4`
+and beyond) is a normal download-only upgrade in place: your recordings,
+settings, and AI models are kept. Details:
+[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
 
 Last updated: 2026-09-02.
 
@@ -38,7 +53,8 @@ staff, and anyone observing the first real station-side CivicCast runs.
 
 Use only the release-matched installer, sidecar, and checksum file for
 whichever release you were actually handed (USB for `v1.0.0-beta.1`, or the
-exact tagged GitHub download once `v1.0.0-beta.2` or later publishes).
+exact tagged GitHub download once `v1.0.0-beta.3` or later publishes --
+`v1.0.0-beta.2` is never handed to a tester).
 Preserve all logs and report any failure.
 
 ## What This Beta Is Meant To Exercise
@@ -60,7 +76,7 @@ The run is meant to answer:
 
 **Use the exact release named in your active handoff -- either the
 USB-delivered `v1.0.0-beta.1` station or the exact tagged GitHub download
-once a `v1.0.0-beta.2`-or-later candidate is published.**
+once a `v1.0.0-beta.3`-or-later candidate is published.**
 
 Expected SHA-256 and byte size must match that release's own sidecar and
 `SHA256SUMS.txt`.

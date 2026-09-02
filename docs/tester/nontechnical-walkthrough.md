@@ -10,13 +10,15 @@ with the release owner after the release gates and soak evidence are complete.
 ## Install
 
 > **`v1.0.0-beta.1` is the current release; it was delivered by USB, not a
-> GitHub download.** `v1.0.0-beta.2` is the next candidate and is intended to
-> be the first downloadable one. Confirm the exact filename, size, and
-> SHA-256 against [START-HERE](START-HERE.md) before you run any installer.
+> GitHub download.** `v1.0.0-beta.2` was never published -- it exists only as
+> an internal Gate A upgrade-baseline kit. `v1.0.0-beta.3` is the next
+> candidate and is intended to be the first downloadable one. Confirm the
+> exact filename, size, and SHA-256 against [START-HERE](START-HERE.md)
+> before you run any installer.
 
 1. **If you were given a USB-delivered `v1.0.0-beta.1` station:** there is
    nothing to download; follow the handoff you were given for that station.
-2. **If you were given a downloadable `v1.0.0-beta.2` (or later) candidate:**
+2. **If you were given a downloadable `v1.0.0-beta.3` (or later) candidate:**
    download `setup.exe`, its `setup.exe.sidecar.json`, and `SHA256SUMS.txt`
    from the exact tagged release at
    <https://github.com/scottconverse/civiccast-native/releases>. Do not use
