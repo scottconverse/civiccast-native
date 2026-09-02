@@ -18,27 +18,52 @@
 #      job showed green.
 #   2. The Azure-hosted mirror (azure.archive.ubuntu.com) occasionally
 #      serves a handful of packages at a few hundred KB/s instead of its
-#      usual multi-MB/s. Confirmed 2026-09-02 across three independent runs
-#      that never touched the dpkg lock at all -- every one timed out at
-#      exit 124 stalled mid-download of a single large package:
+#      usual multi-MB/s, or the connection itself stalls outright. Confirmed
+#      across four independent runs that never touched the dpkg lock at all:
 #        - PR #131 "Unit tests" job 100278667553 (libflite1, 13.6 MB,
 #          stalled from 14:08:54 past the old 300s per-call bound)
 #        - PR #135 "randomized-suite" job 100284786583 (libdav1d7, stalled
 #          from 14:20:16 to 14:24:41 -- 4m25s for a 604 kB package)
 #        - PR #132 "randomized-suite" job 100287702253 (same pattern)
+#        - PR #136 "randomized-suite" job 100314970674, AFTER the 300s->480s
+#          per-call raise above: `Get:10 ... libdav1d7 ... [604 kB]` logged
+#          at 15:46:13Z, then nothing until the 480s `timeout` killed it at
+#          15:50:00Z. `Acquire::Retries` never fired -- it only retries a
+#          call that actually fails or completes; a socket that goes silent
+#          mid-transfer without erroring or finishing is invisible to it.
+#          Fixed by giving apt its own low-level stall detector
+#          (Acquire::http::Timeout / Acquire::https::Timeout) so a silent
+#          connection aborts in 30s and the retry logic actually gets a
+#          chance to run, plus a mirror-swap fallback in case the Azure
+#          mirror itself is the problem rather than one bad connection.
 #
 # Bound both causes: stop the background upgrader before touching apt, wait
-# for the dpkg/apt locks with a visible bounded loop, retry the network, and
-# give the whole step enough headroom to survive a slow mirror -- but not
-# forever. On failure, dump what's still holding apt/dpkg so the next
-# failure is diagnosable from the log alone.
+# for the dpkg/apt locks with a visible bounded loop, bound the network at
+# both the per-call and per-connection level, fall back to a different
+# mirror if the primary one is unhealthy, and give the whole step enough
+# headroom to survive a slow mirror -- but not forever. On failure, dump
+# what's still holding apt/dpkg so the next failure is diagnosable from the
+# log alone.
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
 LOCK_WAIT_SECS="${APT_LOCK_WAIT_SECS:-180}"
 APT_TIMEOUT_SECS="${APT_CALL_TIMEOUT_SECS:-480}"
-APT=(sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3)
+# Acquire::Retries only retries a call that fails or finishes -- it does
+# nothing for a connection that goes silent mid-transfer without either. The
+# http/https ::Timeout options are the actual stall detector: no bytes for
+# 30s on a given connection aborts it, which THEN gives Acquire::Retries
+# something to retry. Dl-Limit=0 explicitly means "no artificial throughput
+# cap" (the default), stated here so a slow mirror is never self-inflicted.
+APT=(
+  sudo -n apt-get
+  -o DPkg::Lock::Timeout=120
+  -o Acquire::Retries=3
+  -o Acquire::http::Timeout=30
+  -o Acquire::https::Timeout=30
+  -o Acquire::http::Dl-Limit=0
+)
 
 echo "::group::Stopping the runner's background apt/dpkg holders"
 # unattended-upgrades and the apt-daily* timers/services are what held the
@@ -71,9 +96,50 @@ report_apt_diagnostics() {
 }
 trap report_apt_diagnostics ERR
 
+# Mirror-swap fallback (PR #136 job 100314970674 root cause): the 30s
+# stall timeout above makes a hung connection fail fast, but if the Azure
+# mirror itself is unhealthy that just means every retry against it fails
+# fast too. Swap to a different mirror and re-run `apt-get update` against
+# it before giving install another try. CURRENT_APT_HOST tracks what the
+# sources currently point at so each swap's sed targets the right string.
+CURRENT_APT_HOST="azure.archive.ubuntu.com"
+
+switch_apt_mirror() {
+  local new_host="$1"
+  echo "::group::Switching apt mirror: ${CURRENT_APT_HOST} -> ${new_host}"
+  sudo -n sed -i "s|${CURRENT_APT_HOST}|${new_host}|g" \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+  CURRENT_APT_HOST="$new_host"
+  timeout "$APT_TIMEOUT_SECS" "${APT[@]}" update
+  echo "::endgroup::"
+}
+
+# apt_install_with_mirror_fallback <apt-get install args...>
+# Attempt 1 against whatever mirror is already configured (the hosted
+# runner's default, azure.archive.ubuntu.com); on failure, fall back to
+# archive.ubuntu.com, then mirrors.edge.kernel.org/ubuntu. Prints which
+# mirror the install actually succeeded on.
+apt_install_with_mirror_fallback() {
+  local original_host="$CURRENT_APT_HOST"
+  if timeout "$APT_TIMEOUT_SECS" "${APT[@]}" install "$@"; then
+    echo "::notice::apt install succeeded via mirror: ${CURRENT_APT_HOST}"
+    return 0
+  fi
+  local fallback_host
+  for fallback_host in archive.ubuntu.com mirrors.edge.kernel.org/ubuntu; do
+    echo "::warning::apt install failed via ${CURRENT_APT_HOST}; falling back to ${fallback_host}"
+    if switch_apt_mirror "$fallback_host" && timeout "$APT_TIMEOUT_SECS" "${APT[@]}" install "$@"; then
+      echo "::notice::apt install succeeded via mirror: ${CURRENT_APT_HOST}"
+      return 0
+    fi
+  done
+  echo "::error::apt install failed on every mirror attempted (default ${original_host}, archive.ubuntu.com, mirrors.edge.kernel.org/ubuntu)."
+  return 1
+}
+
 if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
   timeout "$APT_TIMEOUT_SECS" "${APT[@]}" update
-  timeout "$APT_TIMEOUT_SECS" "${APT[@]}" install -y ffmpeg
+  apt_install_with_mirror_fallback -y ffmpeg
 fi
 
 # #151 TS-relay behavioral splice test (skips without tsp).
