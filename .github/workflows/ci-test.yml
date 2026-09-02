@@ -58,38 +58,16 @@ jobs:
           python-version: "3.12"
 
       - name: Install media test prerequisites
-        timeout-minutes: 10
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          # Hosted runners run unattended-upgrades on boot, which holds the
-          # dpkg/apt locks. Bare `apt-get` waits on that lock FOREVER: on
-          # 2026-08-19 this step sat in_progress for 3h49m on the release
-          # branch and ~2h on PRs #422/#423, silently wedging the whole merge
-          # queue while every other job showed green. Bound it three ways --
-          # apt gives up on the lock, each invocation gives up on the network,
-          # and the step itself gives up -- so a stuck runner fails in minutes
-          # instead of burning the CI clock and blocking merges.
-          APT=(sudo -n apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3)
-          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-            timeout 300 "${APT[@]}" update
-            timeout 300 "${APT[@]}" install -y ffmpeg
-          fi
-          # #151 TS-relay behavioral splice test (skips without tsp).
-          #
-          # GauntletGate T5: this tolerates a failed install with a warning and
-          # has NO junit-floor guard, unlike the four suites above. That is a
-          # DELIBERATE choice, not an oversight: TS-relay splice compliance
-          # belongs to the deferred `civiccast-cable` add-on (CLAUDE.md, closed
-          # architectural decisions), not the WSL lane's ship-critical
-          # streaming core. Cable-add-on CI coverage is intentionally
-          # best-effort until the add-on itself is in scope. If cable ships,
-          # this needs a floor guard matching the pattern used above.
-          if ! command -v tsp >/dev/null 2>&1; then
-            timeout 300 "${APT[@]}" install -y tsduck || echo '::warning::tsduck not installable; TS-relay splice test will skip (best-effort by design; see comment)'
-          fi
-          ffmpeg -version | head -n 1
-          ffprobe -version | head -n 1
+        # Shared with deterministic-detectors.yml's randomized-suite job --
+        # see scripts/ci/install_media_test_prerequisites.sh for the full
+        # rationale (dpkg-lock wait + slow-mirror handling, both confirmed
+        # hosted-runner failure modes with real job-ID evidence in the
+        # script's header comment). timeout-minutes raised from 10: the
+        # script's own internal per-apt-call timeouts (8 min each, up to 3
+        # calls) need headroom to actually run to completion on a slow
+        # mirror rather than being killed by the step wrapper first.
+        timeout-minutes: 30
+        run: bash scripts/ci/install_media_test_prerequisites.sh
 
       - name: Install project (dev)
         # --no-extra agenda-js-import: every other optional-dependency group
