@@ -32,53 +32,59 @@ public launch.
 Early adopters should have one person who can install Windows software, follow a
 checklist, save a recovery kit, and share a support bundle when something fails.
 
-## Current Installer Status
+## Current Native Line: What To Actually Use
 
-Do not install `v1.0.0-rc13`. A genuine clean-Windows run exposed concurrent
-bootstrap and missing-feedback defects, so rc13 is withdrawn from beta use.
-Use `v1.0.0-rc18`, which carries rc15's clean-Windows installer repairs and
-cold-reboot recovery, rc16's published UI/UX repairs, the audited rc17
-beta-blocker fixes, and the sixteen stage-gate remediations that define this
-release. Do not substitute an older prerelease, a
-repository source ZIP, or an untagged build.
+This whole document is historical (retired WSL2 line). For the native line
+this repository ships, read [START-HERE](../tester/START-HERE.md),
+[INSTALL-WINDOWS.md](../../INSTALL-WINDOWS.md), and
+[Windows Release Trust And Verification](../install/windows-release-trust.md)
+instead -- they carry the current `v1.0.0-beta.1` (USB-delivered) /
+`v1.0.0-beta.2` (next, downloadable) release-state story.
 
-The most recently published release is `v1.0.0-rc18`, available at its
-[public GitHub release](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18)
-with the matching proof assets. Its exact bytes passed a clean-host install,
-launch, reinstall, uninstall and rc17-to-rc18 upgrade on a pristine Windows 11
-machine, and an interactive installer walkthrough. rc17 remains published as the
-rollback target.
+## Historical: Installer Status (retired WSL2 line)
 
-## Before You Install
+The paragraphs and numbered steps below describe the retired WSL2 line and
+are not instructions for this repository's native product.
+
+`v1.0.0-rc13` was withdrawn from beta use after a genuine clean-Windows run
+exposed concurrent bootstrap and missing-feedback defects. `v1.0.0-rc18` was
+the most recently published release on that line, carrying rc15's
+clean-Windows installer repairs and cold-reboot recovery, rc16's published
+UI/UX repairs, the audited rc17 beta-blocker fixes, and the sixteen
+stage-gate remediations that defined it. Its exact bytes passed a clean-host
+install, launch, reinstall, uninstall and rc17-to-rc18 upgrade on a pristine
+Windows 11 machine, and an interactive installer walkthrough. Its GitHub
+release page and verification record are not present in this repository --
+they belonged to the separate, private `scottconverse/civiccast` repository.
+
+## Historical: Before You Install (retired WSL2 line)
 
 1. Confirm this guide explicitly names an approved replacement beta release.
 2. Match its Windows setup executable to its supplied checksum and release manifest.
-3. Verify the SHA-256 hash using
-   [Windows release trust and verification](../install/windows-release-trust.md).
+3. Verify the SHA-256 hash.
 4. Compare the installer's actual Authenticode status and publisher with the
-   rc18 verification record linked above. SmartScreen is not proof by itself.
-   If the record says the build is signed, confirm its verified publisher.
-   Stop on any mismatch.
+   active handoff. SmartScreen is not proof by itself. If the handoff says
+   the build is signed, confirm its verified publisher. Stop on any mismatch.
 5. Keep a copy of the release version and installer filename for any support
    report.
 
-## First Station Run
+## Historical: First Station Run (retired WSL2 line)
 
 1. Run the setup app.
-2. (Historical, WSL2 line) Let the installer prepare WSL2 and open the operator console.
+2. Let the installer prepare WSL2 and open the operator console.
 3. Create the first admin account.
 4. Save or print the recovery kit.
 5. Verify backup.
 6. Run the database restore drill from System Health and record its explicit
    media/configuration/credential limits.
-7. Open Run Meeting and confirm rc18 reports **Source preview unavailable** and
+7. Open Run Meeting and confirm **Source preview unavailable** shows and
    keeps live start blocked without a server-side media probe.
 8. Upload or create a short test recording.
 9. Package it and confirm it is still absent from the resident portal.
 10. Approve the Portal publication surface.
 11. Open the public portal from a second browser and confirm playback.
 
-## What The Current Beta Can Claim
+## What The Retired WSL2-Line Beta Could Claim
 
 - A guided Windows setup path proven by the exact public installer from a
   WSL-disabled baseline through cold-reboot recovery.
@@ -88,7 +94,7 @@ rollback target.
 - Public portal and feed-based resident reach.
 - Open-source code and documentation that stations can inspect and operate.
 
-## What The Current Beta Does Not Claim
+## What The Retired WSL2-Line Beta Did Not Claim
 
 - Roku Channel Store publication or certification.
 - SDI, DeckLink, Comcast, or physical headend delivery proof.

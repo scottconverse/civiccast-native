@@ -76,16 +76,24 @@ class TestWorkflowRunnerPolicy:
 
 class TestWindowsAttestationDocumentation:
     def test_trust_guide_requires_exe_and_sidecar_together_with_no_sigstore_bundle(self) -> None:
+        """The Windows installer asset is named literally `setup.exe` (see
+        scripts/release/publish_beta_candidate.py's SETUP_ASSET_NAME and
+        scripts/download_windows_release_artifacts.ps1's NativeCandidate
+        asset set) -- there is no version number in the filename. This test
+        previously pinned the retired WSL2 line's `civiccast-<version>-
+        windows-setup.exe` naming; updated 2026-09-02 to the real native-line
+        asset name so the trust guide isn't forced to document a filename the
+        publisher never produces."""
         text = Path("docs/install/windows-release-trust.md").read_text(encoding="utf-8")
 
-        assert "windows-setup.exe`" in text
-        assert "windows-setup.exe.sidecar.json`" in text
+        assert "setup.exe`" in text
+        assert "setup.exe.sidecar.json`" in text
         assert "keep them together in one folder" in text
         # ADR 0022: Sigstore/cosign was evaluated and denied for this release
         # chain. No release asset carries a `.sigstore.json` bundle, so the
         # trust guide must not tell testers to fetch one -- the only
         # permitted "sigstore" mention is the explicit denial statement.
-        assert "windows-setup.exe.sigstore.json`" not in text
+        assert "setup.exe.sigstore.json`" not in text
         assert "carries no Sigstore/cosign step" in text
 
     def test_code_signing_policy_documents_authenticode_only_chain(self) -> None:

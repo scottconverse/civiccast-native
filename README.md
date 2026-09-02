@@ -22,6 +22,15 @@ this README describes
 candidate #22 on `main` (commit `73fd258`), the state a technical reviewer
 would find by checking out this repository today.
 
+This version number and the release a tester can actually install are two
+different axes: `v1.0.0-beta.2` above is the code's own version identity as
+of this commit (what `main` reports right now), while `v1.0.0-beta.1` in
+"Install and run" below is the separate, already-published release a tester
+downloads or receives -- the same relationship as a project's `main` branch
+being ahead of its latest tagged release. `v1.0.0-beta.1` will stay the
+release to install until `v1.0.0-beta.2` (or later) is itself published with
+downloadable assets and this file's own version line above moves again.
+
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
 ## What's proven in this candidate
@@ -136,10 +145,17 @@ things outside this repository's control:
   see [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
   [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
   for the setup path, Authenticode signature verification, and the pack-trust
-  model. `v1.0.0-beta.2` is the current owner-held unpublished candidate and
-  has no installer download. The previous `v1.0.0-beta.1` prerelease tag also
-  has no installer attached -- see [BRANCHES.md](BRANCHES.md) for release
-  identity and status.
+  model. `v1.0.0-beta.1` is the current release and was delivered by **USB**,
+  not by a GitHub download -- the GitHub Release page carries no installer
+  asset for it. `v1.0.0-beta.2` is the current owner-held unpublished candidate
+  and has no installer download attached; it is intended to be the first
+  **downloadable** candidate (setup.exe, runtime packs, and checksums on the
+  [GitHub Releases page](https://github.com/scottconverse/civiccast-native/releases)).
+  A **first-time install** on a station with no prior CivicCast install still
+  needs the USB model bundle (~21 GB) even once a download exists -- the
+  GitHub download alone does not include it. A download-only **upgrade** of
+  an already-installed station keeps the station's recordings, database, and
+  AI models. See [BRANCHES.md](BRANCHES.md) for release identity and status.
   Slow setup must remain visibly active: the installer reports its current
   phase and updates a progress heartbeat instead of appearing frozen.
 - **In-product operator manual.** Once running, open the operator manual
@@ -242,7 +258,7 @@ displays CAP/IPAWS and never claims "EAS-compliant").
 - [3.0 Master Spec](docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md)
 - [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml)
 - [Legal Notices](LEGAL-NOTICES.md)
-- [GitHub Discussions](https://github.com/scottconverse/civiccast-native/discussions)
+- [GitHub Issues](https://github.com/scottconverse/civiccast-native/issues) (GitHub Discussions is not enabled on this repository)
 
 ## Contributing
 

@@ -75,11 +75,21 @@ HISTORICAL_DOCS = (
     Path("docs/adoption/early-adopter-quickstart.md"),
     Path("docs/tester/START-HERE.md"),
     Path("docs/tester/lpm-beta-test-handoff.md"),
-    Path("docs/tester/technical-walkthrough.md"),
     Path("docs/tester/known-limitations.md"),
-    Path("docs/tester/SMARTSCREEN-WALKTHROUGH.md"),
     Path("docs/install/windows-release-trust.md"),
 )
+# docs/tester/technical-walkthrough.md and docs/tester/SMARTSCREEN-WALKTHROUGH.md
+# were removed from HISTORICAL_DOCS 2026-09-02: the visitor-audit follow-up
+# (PR #134) rewrote both as live, current-beta-line guidance -- the technical
+# walkthrough now describes the native line's own install/verify path instead
+# of the retired WSL2 line, and the SmartScreen walkthrough keeps its
+# mechanics (Authenticode/SmartScreen clicks) current while its release-state
+# banner now names v1.0.0-beta.1/beta.2 instead of rc18. Neither file is
+# "kept as historical reference" any more, so requiring a historical/retired
+# classification on them would be reintroducing exactly the stale-claim
+# pattern this gate exists to catch. The other five docs above still carry
+# real retired-WSL2-line content behind a historical/retired banner and stay
+# gated here.
 
 PLACEHOLDER_PATTERN = re.compile(r"\b(?:TODO|TBD|fill in|placeholder)\b", re.IGNORECASE)
 OVERCLAIM_PATTERNS: tuple[re.Pattern[str], ...] = (
