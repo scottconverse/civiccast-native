@@ -76,6 +76,12 @@ knowing before you start:
 - **A Spanish cue is never blocked on audio evidence.** It is a translation of
   text you already approved, not a guess about what someone said, so the
   low-confidence audio check that can gate an English cue does not apply.
+- **Revising an English cue after the Spanish pass re-queues Spanish for that
+  cue.** A fresh Spanish row appears for the corrected wording and waits for
+  your approval; the old translation is left in the queue as a record but is
+  never published. Only the cue you changed comes back — the rest of the
+  Spanish pass stands. So a late English correction is always safe: the two
+  languages cannot drift apart.
 
 If Spanish rows never appear after you finish the English pass, the station's
 translation model is missing or broken. The caption job records that on the

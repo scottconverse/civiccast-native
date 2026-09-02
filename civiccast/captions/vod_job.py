@@ -1114,20 +1114,39 @@ class OfflineCaptionJobWorker:
         :data:`INCOMPLETE_TRANSLATION_REMEDIATION`, and no partial track is
         ever attached.
 
+        The expected id binds the **source wording**, not just the source cue
+        (``source_text=`` on ``translated_cue_id``). A cue id alone says which
+        cue a translation came from, not which *version* of it, so an operator
+        who corrects an English cue after the Spanish pass has already run
+        leaves a Spanish row that still says the old thing -- and an id-only
+        match accepts it as present and publishes it. Reviewer-proven: "the
+        motion carries", corrected in English to "the motion FAILS", shipped
+        as "la moción se aprueba" in Spanish with the job green. With the
+        source text in the id, an edited English cue produces an id no stored
+        row carries, so its translation is seen as missing and re-queued
+        through the ordinary path above -- idempotently, since an unedited cue
+        keeps its id and stays a duplicate.
+
         The tally is scoped to the expected ids for the same reason (see
         ``cue_ids`` on :func:`~civiccast.captions.vod.reviewed_caption_cues`):
-        a Spanish row whose English source was rejected after translation is
-        an orphan and must neither gate publication nor reach the track.
+        a Spanish row is an orphan the moment its English source is rejected
+        *or revised*, and an orphan must neither gate publication nor reach
+        the track. The superseded row stays in the review queue and simply is
+        not one of the ids the publisher asks for.
 
         Note what is deliberately NOT treated as truncation: an operator
         *rejecting* some Spanish cues. That is an editorial decision on a row
         that exists, exactly as it is in English, and it legitimately produces
         a shorter Spanish track. What must never happen is a row that was
-        never created going unnoticed.
+        never created -- or one that no longer matches its source -- going
+        unnoticed.
         """
 
         target_language = self._settings.spanish_target_language
-        expected_ids = {translated_cue_id(cue.cue_id, target_language): cue for cue in english_cues}
+        expected_ids = {
+            translated_cue_id(cue.cue_id, target_language, source_text=cue.text): cue
+            for cue in english_cues
+        }
         stored_ids = {
             item.cue.cue_id
             for item in self._review_store.list(asset_id=asset_id, language=target_language)

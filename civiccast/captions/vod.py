@@ -83,7 +83,11 @@ from civiccast.stream._ffmpeg import FfmpegError, FfmpegNotFoundError, run_ffmpe
 from civiccast.stream.config import ABR_LADDER, HLS_SEGMENT_DURATION, SLATE_RENDITION
 from civiccast.stream.packager import RenditionOutput, VodPackageResult
 from civiccast.translate.models import TranslationTarget
-from civiccast.translate.service import TranslationProvider, translate_caption_cues
+from civiccast.translate.service import (
+    TranslationProvider,
+    translate_caption_cues,
+    translated_cue_id,
+)
 
 __all__ = [
     "OFFLINE_CAPTION_CHUNK_SECONDS",
@@ -629,11 +633,22 @@ def queue_translated_captions(
     low-confidence acoustic guess). The operator still reviews the wording;
     they simply are not blocked on nonexistent audio.
 
-    Idempotent per asset: Spanish review-item ids derive from
-    ``(asset_id, "<en-cue-id>:es")`` via
+    Idempotent per asset AND per source wording: Spanish review-item ids
+    derive from ``(asset_id, "<en-cue-id>:es:<digest of the English text>")``
+    via :func:`~civiccast.translate.service.translated_cue_id` and
     :func:`~civiccast.captions.pipeline.review_item_id_for_cue`, so a re-run
-    reports already-queued rows as ``duplicate_review_item_ids`` instead of
-    clobbering an operator's Spanish decision.
+    over unchanged English reports already-queued rows as
+    ``duplicate_review_item_ids`` instead of clobbering an operator's Spanish
+    decision -- while a re-run over *edited* English mints a different id and
+    correctly produces a fresh row to review.
+
+    That digest is load-bearing, not decoration. Keyed on the cue id alone,
+    a Spanish row survives an English correction made after translation: the
+    operator fixes "the motion carries" to "the motion FAILS" in English, the
+    Spanish row still says "la moción se aprueba", and an id-only match sees
+    a row present and publishes it. Binding the id to the exact source text
+    makes the superseded row a different row -- it is not what the publisher
+    looks for, and its replacement is queued for review.
     """
 
     translation_target = target or TranslationTarget()
@@ -646,9 +661,17 @@ def queue_translated_captions(
     spanish_cues: list[CaptionCue] = []
     created: list[str] = []
     duplicates: list[str] = []
-    for translated in result.cues:
+    # translate_caption_cues preserves order 1:1, so each result pairs with
+    # the source cue whose approved text it was translated from. strict=True
+    # so a future change that breaks that pairing fails loudly here rather
+    # than silently binding a translation to the wrong source wording.
+    for source_cue, translated in zip(cues, result.cues, strict=True):
         spanish_cue = CaptionCue(
-            cue_id=translated.cue_id,
+            cue_id=translated_cue_id(
+                source_cue.cue_id,
+                translation_target.target_language,
+                source_text=source_cue.text,
+            ),
             start_seconds=translated.start_seconds,
             end_seconds=translated.end_seconds,
             text=translated.translated_text,

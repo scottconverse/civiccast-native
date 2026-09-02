@@ -59,7 +59,7 @@ from civiccast.captions.vod_job import (
 )
 from civiccast.stream._ffmpeg import FfmpegResult
 from civiccast.stream.config import ABR_LADDER, SLATE_RENDITION
-from civiccast.translate.service import DeterministicSpanishTranslator
+from civiccast.translate.service import DeterministicSpanishTranslator, translated_cue_id
 
 _ASSET_ID = "council-2026-08-16"
 
@@ -1137,7 +1137,18 @@ class TestQueueTranslatedCaptions:
         english = review_store.list(asset_id=_ASSET_ID, language="en")
         spanish = review_store.list(asset_id=_ASSET_ID, language="es")
         assert [row.review_item_id for row in english] == [f"{_ASSET_ID}:cue-000000"]
-        assert [row.review_item_id for row in spanish] == [f"{_ASSET_ID}:cue-000000:es"]
+        # Derived from the minting function rather than restated as a
+        # literal, so the id shape has ONE definition (the Spanish id now
+        # carries a digest of the English text it was translated from -- see
+        # translated_cue_id).
+        expected_spanish_id = (
+            f"{_ASSET_ID}:{translated_cue_id('cue-000000', 'es', source_text='motion carries')}"
+        )
+        assert [row.review_item_id for row in spanish] == [expected_spanish_id]
+        # It is still unmistakably the es row for that en cue, and it can
+        # never collide with the English row's id.
+        assert expected_spanish_id.startswith(f"{_ASSET_ID}:cue-000000:es")
+        assert expected_spanish_id != f"{_ASSET_ID}:cue-000000"
         # reviewed_caption_cues gates per-language: the two queues never mix.
         assert reviewed_caption_cues(review_store, _ASSET_ID, language="en").total == 1
         assert reviewed_caption_cues(review_store, _ASSET_ID, language="es").total == 1
@@ -1586,6 +1597,167 @@ class TestTruncatedSpanishTrackNeverPublishes:
         spanish_body = published_spanish_caption_sidecar(package_dir).read_text(encoding="utf-8")
         assert spanish_body.count("-->") == 1
         assert "comentario publico" not in spanish_body
+
+
+class TestEnglishEditedAfterTranslation:
+    """A corrected English cue must not publish its stale Spanish translation.
+
+    Reviewer's reproduction (PR #131, second review): the clerk approves
+    "the motion carries", Spanish is translated and approved, and then the
+    clerk goes back and corrects the English to "the motion FAILS". Keyed on
+    the cue id alone, the Spanish row is still *present*, so the completeness
+    gate accepted it and the recording published English saying the motion
+    failed beside Spanish saying it passed -- with the job green.
+
+    The fix is that a translation's identity includes the source wording it
+    was translated from, so an edited English cue has no matching Spanish row
+    and re-queues one through the ordinary path.
+    """
+
+    def _worker(
+        self,
+        job_store: InMemoryOfflineCaptionJobStore,
+        review_store: InMemoryCaptionReviewStore,
+        tmp_path: Path,
+        transcript: list[str],
+    ) -> OfflineCaptionJobWorker:
+        return OfflineCaptionJobWorker(
+            job_store,
+            review_store,
+            runtime_factory=lambda: _ScriptedRuntime(transcript),  # type: ignore[arg-type,return-value]
+            translation_provider_factory=DeterministicSpanishTranslator,
+            settings=OfflineCaptionJobSettings(
+                max_attempts=4, backoff_seconds=60.0, chunk_seconds=2.0
+            ),
+            retention_policy=CaptionEvidenceRetentionPolicy.from_system(
+                storage_root=tmp_path / "egress"
+            ),
+        )
+
+    def test_editing_english_after_spanish_approval_requeues_that_cue(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        worker = self._worker(job_store, review_store, tmp_path, ["motion carries"])
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+
+        worker.run_once()  # transcribe
+        _approve_language(review_store, "en")
+        worker.run_once()  # translate + queue Spanish
+        _approve_language(review_store, "es")
+        stale_spanish = review_store.list(asset_id=_ASSET_ID, language="es")
+        assert len(stale_spanish) == 1
+        stale_id = stale_spanish[0].review_item_id
+
+        # The clerk corrects the English AFTER the Spanish pass is approved.
+        english_row = review_store.list(asset_id=_ASSET_ID, language="en")[0]
+        review_store.edit(english_row.review_item_id, CaptionReviewEdit(text="the motion FAILS"))
+
+        # The job must go back to translation, not publish the stale pair.
+        gated = worker.run_once()[0]
+        assert gated.state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        assert not published_caption_sidecar(package_dir).exists()
+        assert not published_spanish_caption_sidecar(package_dir).exists()
+
+        # A NEW Spanish row exists for the corrected wording, pending review.
+        spanish_rows = review_store.list(asset_id=_ASSET_ID, language="es")
+        assert len(spanish_rows) == 2
+        fresh = [row for row in spanish_rows if row.review_item_id != stale_id]
+        assert len(fresh) == 1
+        assert fresh[0].status == "pending"
+
+        # Approving it publishes BOTH tracks, and the published Spanish is
+        # the translation of the corrected English -- not the superseded one.
+        review_store.approve(fresh[0].review_item_id, CaptionReviewDecision())
+        done = worker.run_once()[0]
+        assert done.state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
+
+        english_body = published_caption_sidecar(package_dir).read_text(encoding="utf-8")
+        spanish_body = published_spanish_caption_sidecar(package_dir).read_text(encoding="utf-8")
+        assert "the motion FAILS" in english_body
+        # The stale translation of the OLD English text is not on the track.
+        assert "la mocion se aprueba" not in spanish_body
+        assert spanish_body.count("-->") == 1
+        manifest = (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+        assert manifest.count("#EXT-X-MEDIA:TYPE=SUBTITLES") == 2
+
+    def test_the_superseded_spanish_row_is_never_attached(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        """The stale row survives in the queue but is not publishable.
+
+        It is deliberately not deleted -- a review decision is a record --
+        but it is no longer one of the ids the publisher asks for, so an
+        approved stale row cannot reach a resident.
+        """
+
+        source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        worker = self._worker(job_store, review_store, tmp_path, ["motion carries"])
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        worker.run_once()
+        _approve_language(review_store, "en")
+        worker.run_once()
+        _approve_language(review_store, "es")
+
+        english_row = review_store.list(asset_id=_ASSET_ID, language="en")[0]
+        review_store.edit(english_row.review_item_id, CaptionReviewEdit(text="the motion FAILS"))
+        worker.run_once()  # re-queues the corrected cue's translation
+        _approve_language(review_store, "es")  # approves BOTH rows, stale included
+        worker.run_once()
+
+        spanish_body = published_spanish_caption_sidecar(package_dir).read_text(encoding="utf-8")
+        # Both rows are approved, but only the current one is published --
+        # one cue on the track, not two.
+        assert len(review_store.list(asset_id=_ASSET_ID, language="es")) == 2
+        assert spanish_body.count("-->") == 1
+        assert "la mocion se aprueba" not in spanish_body
+
+    def test_an_unedited_cue_is_not_retranslated(self, tmp_path: Path, fake_ffmpeg: None) -> None:
+        """Only the edited cue re-queues; the rest stay duplicates.
+
+        The source-bound id must not become a re-translate-everything hammer:
+        an unedited cue keeps its id and is still recognised as present.
+        """
+
+        transcript = ["motion carries", "public comment"]
+        source = _write_wav(tmp_path / "meeting.wav", seconds=4.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        worker = self._worker(job_store, review_store, tmp_path, transcript)
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        worker.run_once()
+        _approve_language(review_store, "en")
+        worker.run_once()
+        _approve_language(review_store, "es")
+        before = {
+            row.review_item_id for row in review_store.list(asset_id=_ASSET_ID, language="es")
+        }
+        assert len(before) == 2
+
+        english_rows = review_store.list(asset_id=_ASSET_ID, language="en")
+        review_store.edit(
+            english_rows[0].review_item_id, CaptionReviewEdit(text="the motion FAILS")
+        )
+        worker.run_once()
+
+        after = {row.review_item_id for row in review_store.list(asset_id=_ASSET_ID, language="es")}
+        # Exactly one new row: the edited cue's. The untouched cue's Spanish
+        # row was reused, not duplicated.
+        assert len(after - before) == 1
+        assert before <= after
 
 
 class TestConcurrentTranslationTicks:

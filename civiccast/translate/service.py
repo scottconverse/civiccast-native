@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Mapping, Sequence
+from hashlib import sha256
 from typing import Protocol
 
 from civiccast.captions.hls import CaptionHlsTrack
@@ -106,21 +107,49 @@ def available_translation_models() -> list[TranslationModelRegistration]:
     ]
 
 
-def translated_cue_id(source_cue_id: str, target_language: str) -> str:
+def translated_cue_id(
+    source_cue_id: str,
+    target_language: str,
+    *,
+    source_text: str | None = None,
+) -> str:
     """Return the cue id a translation of ``source_cue_id`` carries.
 
-    One definition of the rule, because two callers now depend on it and a
-    silent disagreement between them is a data-loss bug rather than a
-    cosmetic one: :func:`translate_caption_cues` *mints* the id, and
+    One definition of the rule, because callers on both sides depend on it
+    and a silent disagreement between them is a data-loss bug rather than a
+    cosmetic one: the recorded-Spanish review path *mints* the id in
+    :func:`civiccast.captions.vod.queue_translated_captions` and *predicts*
+    it -- without translating -- in
     :meth:`civiccast.captions.vod_job.OfflineCaptionJobWorker
-    ._resolve_spanish_review` *predicts* it -- without translating -- to
-    work out which of an asset's approved English cues already have a
-    translated review row and which are missing. If the prediction and the
-    minting ever diverged, every cue would look missing (endless
-    re-translation) or none would (a short track published as complete).
+    ._resolve_spanish_review`, to work out which approved English cues
+    already have a translated review row. If prediction and minting ever
+    diverged, every cue would look missing (endless re-translation) or none
+    would (a short track published as complete).
+
+    ``source_text`` binds the id to the **exact source wording** it was
+    translated from, by appending a short digest of that text. Without it,
+    the id says only *which cue* a translation came from, not *which
+    version* of it -- so an operator who corrects an English cue after the
+    Spanish pass has already run leaves a Spanish row that still says the
+    old thing, and an id-only match accepts it as present and publishes it.
+    That is not a hypothetical: "the motion FAILS", corrected in English
+    after translation, shipped as "la moción se aprueba" in Spanish with the
+    job green. With the digest, an edited source produces a *different*
+    expected id, so its translation is correctly seen as missing and
+    re-queued, and the row carrying the superseded wording is no longer
+    among the ids the publisher will attach.
+
+    Omitting ``source_text`` yields the plain ``<cue>:<lang>`` form, which is
+    what the live translated-track path (:func:`translate_caption_cues`)
+    uses -- live cues are rendered straight to a track and never matched
+    back to a stored review row, so they need no version identity.
     """
 
-    return f"{source_cue_id}:{target_language}"
+    base = f"{source_cue_id}:{target_language}"
+    if source_text is None:
+        return base
+    digest = sha256(source_text.encode("utf-8")).hexdigest()[:8]
+    return f"{base}:{digest}"
 
 
 def translate_caption_cues(

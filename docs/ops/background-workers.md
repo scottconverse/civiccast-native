@@ -279,6 +279,16 @@ No way the caption pass can come up empty resolves to a green job:
   distinction: an operator *rejecting* some Spanish cues is an editorial
   decision on rows that exist and legitimately yields a shorter track; a row
   that was never created is data loss and blocks.
+* **An English cue was revised after it was translated.** The expected
+  Spanish review-item id binds the source *wording*, not just the source cue
+  (a short digest of the approved English text, via
+  `translate.service.translated_cue_id`), so editing an English cue after the
+  Spanish pass makes that cue's translation "missing" and re-queues it for
+  review — only that cue; unedited cues keep their ids and are not
+  re-translated. The superseded Spanish row stays in the queue as a record
+  and is never attached, even if it was approved. Without this, a cue
+  corrected from "the motion carries" to "the motion FAILS" published English
+  saying one thing beside Spanish saying the other, with the job green.
 
 Both hold states are idempotent — the job row and the log are written once
 per state change, not once per 60-second poll.
