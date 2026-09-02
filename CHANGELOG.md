@@ -55,6 +55,23 @@ installer asset and is not a public or production release.
   `AgendasScreen.test.tsx` asserts the working importer and the future
   bridge are never conflated.
 
+- **WP-11 item 4 — Podcast "coming soon" card (owner decision 2026-09-02).**
+  The operator Publish dashboard's podcast surface row
+  (`apps/portal-operator/src/screens/PublishDashboardScreen.tsx`) is now
+  always a neutral "Coming in a future release" card, regardless of the
+  state/health this asset's row happens to carry: no red error framing, no
+  "Approve this surface" checkbox, no retry button, and it is excluded from
+  the pre-checked/submittable surface set an "Approve and Publish selected"
+  click sends. The message text is aligned with the preflight API's
+  `health="unknown"` copy ("Podcast is not available yet; it is coming in a
+  future release."). Backend behavior is unchanged (WP-03/#129 already
+  reports podcast preflight as not-available) — this closes the gap where
+  the dashboard's own asset-listing surface still defaulted podcast to a
+  selectable `state="pending"` row that could be checked and submitted.
+  Four new tests in `PublishDashboardScreen.test.tsx` cover the neutral
+  card, the missing checkbox, the never-red-even-if-backend-reports-failed
+  case, and that approval excludes podcast from `approved_surface_ids`.
+
 ### Changed
 
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A

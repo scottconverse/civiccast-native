@@ -30,6 +30,22 @@ const FILTERS: ReadonlyArray<{
   { id: 'complete', label: stateLabel('complete') },
 ]
 
+// WP-11 item 4 (owner decision 2026-09-02): surfaces the backend has no real
+// provider path for yet. Mirrors civiccast/publish/readiness.py's
+// FUTURE_SURFACE_IDS (podcast has no provider kind registered at all --
+// WP-04 owns building the real RSS/enclosure/feed path). These render as a
+// neutral "coming in a future release" card always -- never a red error,
+// never selectable/approvable, regardless of whatever state or health this
+// asset's surface row happens to carry, so approval can never report a fake
+// success for a surface that doesn't really publish anything yet (WP-03
+// already reports podcast preflight as health="unknown"; this keeps the
+// dashboard's own listing from disagreeing with that by defaulting to a
+// selectable "pending" checkbox).
+const FUTURE_SURFACE_IDS: ReadonlySet<string> = new Set(['podcast'])
+const FUTURE_SURFACE_MESSAGE: Readonly<Record<string, string>> = {
+  podcast: 'Podcast is not available yet; it is coming in a future release.',
+}
+
 const STATE_TONE: Record<PublishDashboardState, { bg: string; fg: string }> = {
   draft: { bg: 'var(--cc-info-soft)', fg: 'var(--cc-ink)' },
   preflight_blocked: { bg: 'var(--cc-warn-soft)', fg: 'var(--cc-ink)' },
@@ -66,8 +82,12 @@ function StatePill({ asset }: { asset: PublishAssetStatus }) {
 }
 
 function SurfaceDot({ surface }: { surface: PublishSurfaceStatus }) {
-  const tone =
-    surface.state === 'succeeded' || surface.state === 'overridden'
+  const tone = FUTURE_SURFACE_IDS.has(surface.id)
+    ? // Always neutral, regardless of the row's own state/health -- never
+      // the info-blue "in progress" dot or the red "failed" dot for a
+      // surface that has no real publish path yet.
+      { bg: 'var(--cc-surface-3)', fg: 'var(--cc-ink-3)', symbol: '-' }
+    : surface.state === 'succeeded' || surface.state === 'overridden'
       ? { bg: 'var(--cc-ok-soft)', fg: 'var(--cc-ink)', symbol: 'OK' }
       : surface.state === 'failed' || surface.state === 'blocked'
         ? { bg: 'var(--cc-err-soft)', fg: 'var(--cc-ink)', symbol: '!' }
@@ -111,10 +131,12 @@ function SurfaceRow({
   onOverrideText,
   onRetrySurface,
 }: SurfaceRowProps) {
+  const isFutureSurface = FUTURE_SURFACE_IDS.has(surface.id)
   const canApprove =
-    surface.state === 'pending' ||
-    surface.state === 'failed' ||
-    surface.state === 'blocked'
+    !isFutureSurface &&
+    (surface.state === 'pending' ||
+      surface.state === 'failed' ||
+      surface.state === 'blocked')
   const canOverride = surface.required && surface.kind === 'archive' && canApprove
   return (
     <div
@@ -126,23 +148,34 @@ function SurfaceRow({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold">{surface.label}</span>
-            {surface.required && (
+            {isFutureSurface ? (
               <span
                 className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
-                style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+                style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-3)' }}
               >
-                Required
+                Coming in a future release
               </span>
+            ) : (
+              <>
+                {surface.required && (
+                  <span
+                    className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                    style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+                  >
+                    Required
+                  </span>
+                )}
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                  style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+                >
+                  {surface.approval}
+                </span>
+              </>
             )}
-            <span
-              className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
-              style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
-            >
-              {surface.approval}
-            </span>
           </div>
           <div className="cc-mono mt-0.5 text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
-            {surface.kind} / {stateLabel(surface.state)}
+            {surface.kind} / {isFutureSurface ? 'not built yet' : stateLabel(surface.state)}
           </div>
           {/* GauntletGate TW-1: a surface completed by a simulated provider used
               to render an ordinary-looking archive.org URL, so a clerk could
@@ -178,11 +211,17 @@ function SurfaceRow({
         </div>
       </div>
       <div className="grid gap-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-        <div>{surface.message}</div>
-        <div>
-          <strong style={{ color: 'var(--cc-ink)' }}>Next step.</strong>{' '}
-          {surface.next_step}
-        </div>
+        {isFutureSurface ? (
+          <div>{FUTURE_SURFACE_MESSAGE[surface.id] ?? surface.message}</div>
+        ) : (
+          <>
+            <div>{surface.message}</div>
+            <div>
+              <strong style={{ color: 'var(--cc-ink)' }}>Next step.</strong>{' '}
+              {surface.next_step}
+            </div>
+          </>
+        )}
         {canApprove && (
           <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--cc-ink)' }}>
             <input
@@ -222,7 +261,7 @@ function SurfaceRow({
             )}
           </div>
         )}
-        {surface.state === 'failed' && (
+        {!isFutureSurface && surface.state === 'failed' && (
           <button
             type="button"
             disabled={disabled || !canPublish}
@@ -262,8 +301,10 @@ function AssetPanel({
   const approvableSurfaceIds = useMemo(
     () =>
       asset.surfaces
-        .filter((surface) =>
-          ['pending', 'failed', 'blocked'].includes(surface.state),
+        .filter(
+          (surface) =>
+            ['pending', 'failed', 'blocked'].includes(surface.state) &&
+            !FUTURE_SURFACE_IDS.has(surface.id),
         )
         .map((surface) => surface.id),
     [asset.surfaces],

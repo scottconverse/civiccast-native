@@ -352,3 +352,125 @@ describe('PublishDashboardScreen state vocabulary', () => {
     expect(await findByText('Cable file package is not set up (optional).')).toBeTruthy()
   })
 })
+
+// WP-11 item 4 (owner decision 2026-09-02). The dashboard listing's own
+// build_initial_surfaces() gives the podcast row state="pending",
+// health="unknown" -- exactly what a normal, selectable, approvable surface
+// looks like. Left alone that renders a checked "Approve this surface" box
+// the operator's "Approve and Publish selected" click would submit, which
+// the backend's real approve_publish() podcast branch currently answers
+// with a fabricated https://portal.example/... "success" URL. The frontend
+// fix is to always special-case this surface into a neutral, non-selectable
+// card, regardless of what state/health this particular listing row
+// happens to carry.
+describe('PublishDashboardScreen podcast future-release card (WP-11 item 4)', () => {
+  function podcastDashboard(
+    podcastOverrides: { state?: PublishSurfaceState; health?: 'ok' | 'warning' | 'error' | 'unknown' } = {},
+  ): PublishDashboardResponse {
+    return {
+      summary: {
+        total_assets: 1,
+        draft: 1,
+        portal_live: 0,
+        archive_verified: 0,
+        degraded: 0,
+        needs_operator_action: 0,
+      },
+      assets: [
+        {
+          asset_id: 'sample-asset',
+          title: 'Sample asset',
+          dashboard_state: 'draft',
+          dashboard_label: 'Draft',
+          canonical_public: false,
+          archive_verified: false,
+          reach_degraded: false,
+          needs_operator_action: false,
+          public_record_required: true,
+          published_at: null,
+          surfaces: [
+            {
+              id: 'portal',
+              label: 'Portal',
+              kind: 'canonical',
+              state: 'pending',
+              approval: 'pending',
+              required: true,
+              url: null,
+              last_attempt_at: null,
+              completed_at: null,
+              health: 'unknown',
+              message: 'Ready.',
+              next_step: 'Approve publish.',
+            },
+            {
+              id: 'podcast',
+              label: 'Podcast episode',
+              kind: 'audience',
+              state: podcastOverrides.state ?? 'pending',
+              approval: 'pending',
+              required: false,
+              url: null,
+              last_attempt_at: null,
+              completed_at: null,
+              health: podcastOverrides.health ?? 'unknown',
+              message: 'Podcast RSS is an audience surface generated after operator approval.',
+              next_step: 'Approve podcast generation or leave it pending for later audio review.',
+            },
+          ],
+        },
+      ],
+    }
+  }
+
+  it('shows the podcast surface as a neutral future-release card with the API-aligned message', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    const { findByText } = renderScreen()
+
+    expect(await findByText('Coming in a future release')).toBeTruthy()
+    expect(
+      await findByText('Podcast is not available yet; it is coming in a future release.'),
+    ).toBeTruthy()
+  })
+
+  it('never renders an "Approve this surface" checkbox for podcast', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    const { findByText, queryAllByLabelText } = renderScreen()
+
+    await findByText('Podcast episode')
+    // Only the Portal surface's checkbox should exist -- podcast never gets
+    // one, so approving the asset can never silently include it.
+    expect(queryAllByLabelText(/Approve this surface/i)).toHaveLength(1)
+  })
+
+  it('never renders podcast in error red, even if a future backend change reports it as failed/error', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(
+      podcastDashboard({ state: 'failed', health: 'error' }),
+    )
+    const { findByText, queryByText } = renderScreen()
+
+    // Still the neutral future-release framing, not a red "Failed" state or
+    // a "Retry this surface" button.
+    expect(await findByText('Coming in a future release')).toBeTruthy()
+    expect(
+      await findByText('Podcast is not available yet; it is coming in a future release.'),
+    ).toBeTruthy()
+    expect(queryByText('Retry this surface')).toBeNull()
+  })
+
+  it('excludes podcast from the pre-checked/submittable surface set so approval can never report a fake podcast success', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
+    vi.mocked(approvePublishAsset).mockResolvedValue({} as never)
+    const { findByRole } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
+
+    await waitFor(() =>
+      expect(approvePublishAsset).toHaveBeenCalledWith(
+        'sample-asset',
+        expect.objectContaining({ approved_surface_ids: ['portal'] }),
+      ),
+    )
+  })
+})
