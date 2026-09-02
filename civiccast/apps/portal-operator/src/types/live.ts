@@ -4,7 +4,9 @@ import type {
   LiveIngestPath,
   LiveIngestPlan,
   LiveRelayConfigResponse,
+  LiveSourceProbeResponse,
   LiveSourceResponse,
+  LiveSourceUpdate,
   PreflightCheckResult,
   PreflightEvaluation,
   PreflightInputs,
@@ -17,7 +19,9 @@ export type {
   LiveIngestPath,
   LiveIngestPlan,
   LiveRelayConfigResponse,
+  LiveSourceProbeResponse,
   LiveSourceResponse,
+  LiveSourceUpdate,
   PreflightCheckResult,
   PreflightEvaluation,
   PreflightInputs,
@@ -100,4 +104,49 @@ export const PREFLIGHT_NEXT_STEP: Record<string, string> = {
 export function preflightNextStep(reasonCode: string | null | undefined): string {
   if (!reasonCode) return 'Select Run pre-flight again after resolving the item above.'
   return PREFLIGHT_NEXT_STEP[reasonCode] ?? 'Resolve the item above, then select Run pre-flight again.'
+}
+
+// --- Observed live-source readiness (WP-07) --------------------------------
+//
+// A configured source used to count as ready because it existed. It is now an
+// observation with an age, and the four states below are what the operator
+// sees. Labels are deliberately plain: an operator glancing at a source card
+// ninety seconds before a meeting gavels in should not have to decode a word.
+
+export type LiveSourceReadiness = LiveSourceResponse['readiness']
+
+export const SOURCE_READINESS_LABEL: Record<LiveSourceReadiness, string> = {
+  ready: 'Delivering',
+  stale: 'Needs re-check',
+  failed: 'Not answering',
+  never_probed: 'Not checked',
+}
+
+export const SOURCE_READINESS_TONE: Record<
+  LiveSourceReadiness,
+  'ok' | 'warn' | 'err' | 'neutral'
+> = {
+  ready: 'ok',
+  stale: 'warn',
+  failed: 'err',
+  never_probed: 'neutral',
+}
+
+/**
+ * "Checked 8 seconds ago" / "Checked 4 minutes ago" / "Never checked".
+ *
+ * Rounded to whole units on purpose: a decimal age reads as telemetry, and the
+ * operator is deciding whether to trust it, not measuring it.
+ */
+export function observationAgeLabel(seconds: number | null | undefined): string {
+  if (seconds == null) return 'Never checked'
+  const whole = Math.max(0, Math.round(seconds))
+  if (whole < 1) return 'Checked just now'
+  if (whole < 60) return `Checked ${whole} second${whole === 1 ? '' : 's'} ago`
+  const minutes = Math.round(whole / 60)
+  if (minutes < 60) return `Checked ${minutes} minute${minutes === 1 ? '' : 's'} ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `Checked ${hours} hour${hours === 1 ? '' : 's'} ago`
+  const days = Math.round(hours / 24)
+  return `Checked ${days} day${days === 1 ? '' : 's'} ago`
 }

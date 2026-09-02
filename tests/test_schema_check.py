@@ -107,15 +107,22 @@ def test_expected_head_matches_the_single_migration_head() -> None:
     # 0083_caption_review_language (recorded-Spanish captions: a language
     # column on caption_review_items so English transcription and Spanish
     # translation are reviewed as two separate passes on a shared asset)
-    # chains after 0082_egress_graphics_overlay and is the current head.
-    assert expected_migration_head() == "0083_caption_review_language"
+    # chains after 0082_egress_graphics_overlay. 0086_live_source_probe_state
+    # (WP-07 / audit ENG-003: probe_state/probe_observed_at/probe_detail/
+    # probe_error_code/probe_last_success_at/row_version on live_sources, so
+    # readiness is an observed fact instead of an assumption) chains after
+    # 0083_caption_review_language and is the current head -- WP-05's 0085 is
+    # parked by owner decision and will not land, and 0084 never
+    # materialized, so 0083 was the sole other head when this branch
+    # re-parented onto it.
+    assert expected_migration_head() == "0086_live_source_probe_state"
 
 
 def test_expected_head_does_not_depend_on_current_working_directory(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     expected_migration_head.cache_clear()
     monkeypatch.chdir(tmp_path)
     try:
-        assert expected_migration_head() == "0083_caption_review_language"
+        assert expected_migration_head() == "0086_live_source_probe_state"
     finally:
         expected_migration_head.cache_clear()
 
@@ -130,7 +137,7 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
         conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL)")
         conn.execute(
             "INSERT INTO alembic_version (version_num) VALUES (?)",
-            ("0083_caption_review_language",),
+            ("0086_live_source_probe_state",),
         )
         conn.commit()
 
@@ -143,8 +150,8 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
 
     assert status == SchemaStatus(
         state="current",
-        db_revision="0083_caption_review_language",
-        expected_head="0083_caption_review_language",
+        db_revision="0086_live_source_probe_state",
+        expected_head="0086_live_source_probe_state",
     )
 
 

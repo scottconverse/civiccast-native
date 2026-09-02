@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -457,20 +458,33 @@ class TestLiveSourceStoreCreate:
             source_store.create(_source_payload())
         assert exc_info.value.live_source_id == "rtmp-cam-01"
 
-    def test_url_coerced_to_string_at_db_layer(self, source_store: LiveSourceStore) -> None:
-        # ``endpoint_url`` is ``HttpUrl | str`` at the Pydantic surface. The
-        # store coerces to ``str`` so the DB column is a plain string; this
-        # test pins the coercion against an HTTPS URL (which Pydantic
-        # parses as an HttpUrl) to prove no Pydantic Url repr leaks into
-        # the response.
+    def test_endpoint_is_a_plain_normalized_string_at_the_db_layer(
+        self, source_store: LiveSourceStore
+    ) -> None:
+        # ``endpoint_url`` used to be ``HttpUrl | str`` at the Pydantic
+        # surface, and this test pinned that an ``https://`` URL survived as a
+        # plain string rather than a Pydantic Url repr. WP-07 replaced the
+        # permissive union with per-source-type validation, so the thing worth
+        # locking now is that a VALID address round-trips as a plain,
+        # canonicalized ``str`` -- no Url repr, no re-spelling.
         response = source_store.create(
+            _source_payload(
+                live_source_id="rtmps-cam-01",
+                endpoint_url="RTMPS://encoder.local:1935/live/stream",
+            )
+        )
+        assert isinstance(response.endpoint_url, str)
+        assert response.endpoint_url == "rtmps://encoder.local:1935/live/stream"
+
+    def test_http_endpoint_is_rejected_for_an_rtmp_source(self) -> None:
+        # The other half of the same change: the union used to accept any
+        # ``HttpUrl``, so an ``https://`` address could be stored as an
+        # ``rtmp`` source and only fail much later, inside the probe.
+        with pytest.raises(ValidationError):
             _source_payload(
                 live_source_id="https-cam-01",
                 endpoint_url="https://encoder.example/stream.m3u8",
             )
-        )
-        assert isinstance(response.endpoint_url, str)
-        assert response.endpoint_url.startswith("https://")
 
 
 class TestLiveSourceStoreGet:

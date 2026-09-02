@@ -36,9 +36,15 @@ from civiccast.live.relay import build_ingest_plan
 
 def _ready_source(channel_id: str) -> LiveSourceResponse:
     """A configured LiveSource, standing in for what an operator would add
-    via Run Meeting. Bug B5: build_ingest_plan's local_default no longer
-    claims ready for an address nothing serves, so takeover tests need a
-    real configured source in the plan the same way production does."""
+    via Run Meeting.
+
+    Bug B5: build_ingest_plan's local_default no longer claims ready for an
+    address nothing serves, so takeover tests need a real configured source in
+    the plan the same way production does. WP-07: it also needs a recent
+    successful observation, because the plan now derives health from the
+    persisted probe result rather than from the row existing.
+    """
+    observed_at = datetime.now(UTC)
     return LiveSourceResponse(
         live_source_id=f"{channel_id}-encoder",
         channel_id=channel_id,
@@ -47,6 +53,9 @@ def _ready_source(channel_id: str) -> LiveSourceResponse:
         endpoint_url="srt://0.0.0.0:9000?mode=listener",
         credentials_handle=None,
         created_at=datetime(2026, 6, 20, 18, 0, 0, tzinfo=UTC),
+        probe_state="ready",
+        probe_observed_at=observed_at,
+        probe_last_success_at=observed_at,
     )
 
 

@@ -35,6 +35,8 @@ the contracts shipped in Slice 1 Commits 3 / 4 / 5:
   - POST   /api/staff/live/sources           (create one ``LiveSource``)
   - GET    /api/staff/live/sources           (list, optional ``?channel_id=``)
   - GET    /api/staff/live/sources/{id}      (get one or 404)
+  - PATCH  /api/staff/live/sources/{id}      (edit; 409 on a stale row_version)
+  - POST   /api/staff/live/sources/{id}/probe (check it is delivering media now)
 
   - POST   /api/staff/live/recording-targets (create one ``RecordingTarget``)
   - GET    /api/staff/live/recording-targets (list every row)
@@ -77,7 +79,9 @@ from civiccast.live.models import (
     LiveSessionCreate,
     LiveSessionResponse,
     LiveSourceCreate,
+    LiveSourceProbeResponse,
     LiveSourceResponse,
+    LiveSourceUpdate,
     RecordingTargetCreate,
     RecordingTargetResponse,
 )
@@ -115,6 +119,15 @@ def get_preflight_evaluator() -> Any:
 
 def get_live_source_store() -> Any:
     """FastAPI dependency for the active ``LiveSourceStore``."""
+
+
+def get_live_source_readiness_service() -> Any:
+    """FastAPI dependency for the active ``LiveSourceReadinessService``.
+
+    Returns ``None`` until the umbrella app wires durable storage, like every
+    other seam in this module. Runtime type under ``create_app`` is
+    :class:`civiccast.live.readiness_service.LiveSourceReadinessService`.
+    """
 
 
 def get_live_relay_config_store() -> Any:
@@ -751,6 +764,128 @@ def get_source(
             detail=f"LiveSource not found: {live_source_id}",
         )
     return _cast_response(result, LiveSourceResponse)
+
+
+@staff_router.patch(
+    "/sources/{live_source_id}",
+    response_model=LiveSourceResponse,
+    summary="Edit a configured live source",
+    dependencies=[Depends(require_any_role("setup_admin"))],
+    responses={
+        404: {"description": "LiveSource not found"},
+        409: {"description": "The source changed since it was loaded for editing"},
+        422: {"description": "Invalid payload, or an endpoint that does not match the type"},
+        503: {"description": _DB_NOT_READY_DESCRIPTION},
+    },
+)
+def update_source(
+    live_source_id: str,
+    payload: LiveSourceUpdate,
+    live_source_store: Any = Depends(get_live_source_store),
+) -> LiveSourceResponse:
+    """Apply an operator edit to one configured source.
+
+    Same endpoint/type/credential validation as create, applied to the merged
+    row -- changing only ``source_type`` is checked against the endpoint the
+    row already holds. Any change to what would actually be probed (endpoint,
+    source type, channel, credential reference) clears the source's readiness
+    in the same transaction, so an edited source cannot inherit the previous
+    address's "ready" and cannot take air until it is checked again.
+    """
+    store = _require_store(live_source_store, surface="live source CRUD")
+
+    from civiccast.live.store import LiveSourceConcurrencyError, LiveSourceNotFoundError
+
+    try:
+        return _cast_response(store.update(live_source_id, payload), LiveSourceResponse)
+    except LiveSourceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"LiveSource not found: {live_source_id}",
+        ) from exc
+    except LiveSourceConcurrencyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    f"{live_source_id} was changed by someone else while you were editing "
+                    "it. Reload the source and reapply your change."
+                ),
+                "live_source_id": live_source_id,
+                "expected_row_version": exc.expected,
+                "current_row_version": exc.actual,
+            },
+        ) from exc
+    except ValueError as exc:
+        # Endpoint/type/credential validation raised from the merged row rather
+        # than from Pydantic's parse of the request body, so FastAPI has not
+        # already turned it into a 422.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
+
+@staff_router.post(
+    "/sources/{live_source_id}/probe",
+    response_model=LiveSourceProbeResponse,
+    summary="Check whether a live source is delivering media right now",
+    dependencies=[Depends(require_any_role("meeting_operator", "setup_admin"))],
+    responses={
+        404: {"description": "LiveSource not found"},
+        409: {"description": "The source changed while it was being checked"},
+        503: {"description": _DB_NOT_READY_DESCRIPTION},
+    },
+)
+def probe_source(
+    live_source_id: str,
+    readiness_service: Any = Depends(get_live_source_readiness_service),
+) -> LiveSourceProbeResponse:
+    """Run one bounded server-side media probe and persist what it saw.
+
+    Returns 200 for a failed check, not an error status: "this camera is not
+    answering" is a result the operator needs rendered on the source card,
+    with its reason and its next action, not an exception that leaves the
+    screen showing the previous state. Only a missing source (404), a
+    conflicting concurrent edit (409), or missing durable storage (503) is an
+    error here.
+    """
+    service = _require_store(readiness_service, surface="live source readiness")
+
+    from civiccast.live.store import LiveSourceNotFoundError, LiveSourceProbeConflictError
+
+    try:
+        source, observation, probed_at = service.probe(live_source_id)
+    except LiveSourceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"LiveSource not found: {live_source_id}",
+        ) from exc
+    except LiveSourceProbeConflictError as exc:
+        # An edit landed while this probe was running. The edit's own write
+        # already reset readiness to ``never_probed`` when it changed
+        # anything probe-relevant; persisting this probe's verdict on top of
+        # that would silently overwrite the newer row with an answer about
+        # the address that used to be there. Refuse it the same way a
+        # concurrent PATCH-vs-PATCH conflict is refused.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    f"{live_source_id} was changed while CivicCast was checking it. "
+                    "Reload the source and choose Check source again."
+                ),
+                "live_source_id": live_source_id,
+                "reason": exc.reason,
+            },
+        ) from exc
+    return LiveSourceProbeResponse(
+        source=_cast_response(source, LiveSourceResponse),
+        probed_at=probed_at,
+        ok=observation.ok,
+        error_code=observation.error_code,
+        detail=observation.detail,
+    )
 
 
 # ===========================================================================

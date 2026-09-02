@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import {
   ApiError,
@@ -10,12 +10,15 @@ import {
   getStaffIdentity,
   getLiveFinalizationStatus,
   getLiveSession,
+  getLiveSourceById,
   getSafeToBroadcast,
   getSourceSetup,
   goLiveOnAir,
   listChannelProfiles,
   listLiveSources,
   listRecordingTargets,
+  probeLiveSource,
+  updateLiveSource,
   retryLiveFinalization,
   startLivePreflight,
 } from '../api/client'
@@ -31,14 +34,19 @@ import {
   LIVE_STATE_META,
   PREFLIGHT_LABELS,
   preflightNextStep,
+  observationAgeLabel,
   RELAY_HEALTH_LABEL,
   RELAY_MODE_LABEL,
+  SOURCE_READINESS_LABEL,
+  SOURCE_READINESS_TONE,
   SOURCE_TYPE_LABEL,
   type LiveIngestHealth,
   type LiveIngestPath,
   type LiveIngestPlan,
   type LiveSessionResponse,
   type LiveSourceResponse,
+  type LiveSourceType,
+  type LiveSourceUpdate,
   type PreflightEvaluation,
   type PreflightInputs,
 } from '../types/live'
@@ -284,21 +292,34 @@ function FinalizationPanel({
   )
 }
 
-function SourceSwitcher({
+export function SourceSwitcher({
   sources,
   selectedId,
   onSelect,
+  onCheck,
+  onEdit,
+  checkingId,
+  canEdit,
+  canCheck,
 }: {
   sources: LiveSourceResponse[]
   selectedId: string
   onSelect: (id: string) => void
+  onCheck?: (id: string) => void
+  onEdit?: (source: LiveSourceResponse) => void
+  checkingId?: string | null
+  canEdit?: boolean
+  canCheck?: boolean
 }) {
+  const selected = sources.find((source) => source.live_source_id === selectedId)
   return (
     <section className="flex flex-col gap-3">
       <div>
         <h2 className="m-0 text-sm font-semibold">Source switcher</h2>
         <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-          Arrow keys move between configured meeting sources.
+          Arrow keys move between configured meeting sources. A source is only
+          shown as delivering if CivicCast has actually seen media from it in
+          the last {selected?.readiness_ttl_seconds ?? 30} seconds.
         </p>
       </div>
       <RadioCardGroup
@@ -307,17 +328,28 @@ function SourceSwitcher({
           id: source.live_source_id,
           label: source.name,
           trailing: (
-            <StatusPill
-              label={SOURCE_TYPE_LABEL[source.source_type]}
-              tone="neutral"
-            />
+            <span className="flex items-center gap-1">
+              <StatusPill
+                label={SOURCE_READINESS_LABEL[source.readiness]}
+                tone={SOURCE_READINESS_TONE[source.readiness]}
+              />
+              <StatusPill
+                label={SOURCE_TYPE_LABEL[source.source_type]}
+                tone="neutral"
+              />
+            </span>
           ),
           description: (
-            <span
-              className="cc-mono block truncate"
-              style={{ color: 'var(--cc-ink-3)' }}
-            >
-              {source.endpoint_url}
+            <span className="block">
+              <span
+                className="cc-mono block truncate"
+                style={{ color: 'var(--cc-ink-3)' }}
+              >
+                {source.endpoint_url}
+              </span>
+              <span className="mt-1 block" style={{ color: 'var(--cc-ink-3)' }}>
+                {observationAgeLabel(source.observation_age_seconds)}
+              </span>
             </span>
           ),
         }))}
@@ -327,7 +359,356 @@ function SourceSwitcher({
         buttonClassName="min-h-24 rounded-md p-3 text-left"
         getDescriptionColor={() => 'var(--cc-ink-3)'}
       />
+      {selected ? (
+        <SourceReadinessDetail
+          source={selected}
+          onCheck={onCheck}
+          onEdit={onEdit}
+          checking={checkingId === selected.live_source_id}
+          canEdit={canEdit}
+          canCheck={canCheck}
+        />
+      ) : null}
     </section>
+  )
+}
+
+/**
+ * What the operator needs about the selected source, in the order they need
+ * it: what was seen, when, why not (if not), and the one thing to do next.
+ *
+ * The "Check source" button exists because before WP-07 there was no way to
+ * ask -- readiness was asserted by the existence of the row, so there was
+ * nothing to re-ask.
+ */
+export function SourceReadinessDetail({
+  source,
+  onCheck,
+  onEdit,
+  checking,
+  canEdit,
+  canCheck,
+}: {
+  source: LiveSourceResponse
+  onCheck?: (id: string) => void
+  onEdit?: (source: LiveSourceResponse) => void
+  checking?: boolean
+  canEdit?: boolean
+  canCheck?: boolean
+}) {
+  const tone = SOURCE_READINESS_TONE[source.readiness]
+  const background =
+    tone === 'ok'
+      ? 'var(--cc-surface)'
+      : tone === 'err'
+        ? 'var(--cc-err-soft)'
+        : tone === 'warn'
+          ? 'var(--cc-warn-soft)'
+          : 'var(--cc-surface-2)'
+  return (
+    <section
+      className="rounded-md p-4"
+      style={{ background, border: '1px solid var(--cc-line)' }}
+      aria-label={`Readiness for ${source.name}`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="m-0 text-sm font-semibold">{source.name}</h3>
+          <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+            {observationAgeLabel(source.observation_age_seconds)}
+          </p>
+        </div>
+        <StatusPill label={SOURCE_READINESS_LABEL[source.readiness]} tone={tone} />
+      </div>
+      {source.readiness === 'failed' && source.probe_detail ? (
+        <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          {source.probe_detail}
+        </p>
+      ) : null}
+      <p className="m-0 mt-2 text-xs font-semibold" style={{ color: 'var(--cc-ink-2)' }}>
+        Next step: {source.next_action}
+      </p>
+      {!source.credentials_supported && source.credentials_unsupported_reason ? (
+        <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          {source.credentials_unsupported_reason}
+        </p>
+      ) : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {onCheck && canCheck ? (
+          <button
+            type="button"
+            onClick={() => onCheck(source.live_source_id)}
+            disabled={checking}
+            className="rounded-md px-3 py-1.5 text-xs font-semibold"
+            style={{
+              background: 'var(--cc-surface-3)',
+              border: '1px solid var(--cc-line)',
+              color: 'var(--cc-ink)',
+              opacity: checking ? 0.6 : 1,
+            }}
+          >
+            {checking ? 'Checking source...' : 'Check source'}
+          </button>
+        ) : null}
+        {onEdit && canEdit ? (
+          <button
+            type="button"
+            onClick={() => onEdit(source)}
+            className="rounded-md px-3 py-1.5 text-xs font-semibold"
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--cc-line)',
+              color: 'var(--cc-ink-2)',
+            }}
+          >
+            Edit source
+          </button>
+        ) : null}
+      </div>
+      {onEdit && !canEdit ? (
+        <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Editing a source needs the setup admin role. Ask your station admin to
+          change the address or type.
+        </p>
+      ) : null}
+      {onCheck && !canCheck ? (
+        <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Checking a source needs the meeting operator or setup admin role. Ask
+          a meeting operator or your station admin to confirm it is delivering
+          media.
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+/**
+ * Rename or re-point a configured source.
+ *
+ * Deliberately warns before saving anything that changes what would be
+ * probed: the server clears readiness on those edits, so the operator loses
+ * their "delivering" state and has to check again. Saying so up front is the
+ * difference between an informed edit and a surprise at gavel time.
+ *
+ * `conflict` is the row a 409 revealed the server actually holds now (WP-07
+ * hostile-review finding N2). It is display-only: the fields below keep
+ * whatever the operator already typed (that is the whole point -- a 409
+ * must not silently discard work in progress) and `conflict`'s values are
+ * shown alongside the ones that actually differ, so the operator can see
+ * what changed and decide what to do, rather than either losing their edit
+ * or blindly overwriting someone else's.
+ */
+export function SourceEditForm({
+  source,
+  conflict,
+  onCancel,
+  onSave,
+  saving,
+  error,
+}: {
+  source: LiveSourceResponse
+  conflict?: LiveSourceResponse | null
+  onCancel: () => void
+  onSave: (payload: LiveSourceUpdate) => void
+  saving?: boolean
+  error?: string | null
+}) {
+  const [name, setName] = useState(source.name)
+  const [endpoint, setEndpoint] = useState(source.endpoint_url)
+  const [sourceType, setSourceType] = useState<LiveSourceType>(source.source_type)
+  const [credentialsHandle, setCredentialsHandle] = useState(
+    source.credentials_handle ?? '',
+  )
+
+  const endpointChanged = endpoint.trim() !== source.endpoint_url
+  const typeChanged = sourceType !== source.source_type
+  const credentialChanged =
+    credentialsHandle.trim() !== (source.credentials_handle ?? '')
+  const invalidatesReadiness = endpointChanged || typeChanged || credentialChanged
+  const credentialsSupported = sourceType === 'srt'
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault()
+    const payload: LiveSourceUpdate = { expected_row_version: source.row_version }
+    if (name.trim() !== source.name) payload.name = name.trim()
+    if (endpointChanged) payload.endpoint_url = endpoint.trim()
+    if (typeChanged) payload.source_type = sourceType
+    if (credentialChanged) {
+      if (credentialsHandle.trim()) payload.credentials_handle = credentialsHandle.trim()
+      else payload.clear_credentials_handle = true
+    }
+    onSave(payload)
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="rounded-md p-4"
+      style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+      aria-label={`Edit ${source.name}`}
+    >
+      <h3 className="m-0 text-sm font-semibold">Edit meeting source</h3>
+      <div className="mt-3 flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="source-edit-name" className="text-xs font-semibold">
+            Name
+          </label>
+          <input
+            id="source-edit-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className="rounded-md px-2 py-2 text-sm"
+            style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+          />
+          {conflict && conflict.name !== source.name ? (
+            <p className="m-0 text-[11px]" style={{ color: 'var(--cc-warn)' }}>
+              Server now has: {conflict.name}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="source-edit-type" className="text-xs font-semibold">
+            Source type
+          </label>
+          <select
+            id="source-edit-type"
+            value={sourceType}
+            onChange={(event) => {
+              const nextType = event.target.value as LiveSourceType
+              setSourceType(nextType)
+              // The credential field is only visually blanked while a
+              // non-SRT type is disabled-and-shown-empty (below); the state
+              // itself used to survive the switch and get re-submitted if
+              // the operator switched back to SRT without retyping it. Clear
+              // it here so the state and the display never disagree.
+              if (nextType !== 'srt') setCredentialsHandle('')
+            }}
+            className="rounded-md px-2 py-2 text-sm"
+            style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+          >
+            {(['rtmp', 'rtsp', 'ndi', 'srt'] as LiveSourceType[]).map((value) => (
+              <option key={value} value={value}>
+                {SOURCE_TYPE_LABEL[value]}
+              </option>
+            ))}
+          </select>
+          {conflict && conflict.source_type !== source.source_type ? (
+            <p className="m-0 text-[11px]" style={{ color: 'var(--cc-warn)' }}>
+              Server now has: {SOURCE_TYPE_LABEL[conflict.source_type]}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="source-edit-endpoint" className="text-xs font-semibold">
+            {sourceType === 'ndi' ? 'NDI source name' : 'Stream address'}
+          </label>
+          <input
+            id="source-edit-endpoint"
+            value={endpoint}
+            onChange={(event) => setEndpoint(event.target.value)}
+            className="cc-mono rounded-md px-2 py-2 text-sm"
+            style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+            aria-describedby="source-edit-endpoint-help"
+          />
+          <p
+            id="source-edit-endpoint-help"
+            className="m-0 text-xs"
+            style={{ color: 'var(--cc-ink-3)' }}
+          >
+            {sourceType === 'ndi'
+              ? 'The NDI source name exactly as the sender advertises it on the station network.'
+              : 'Do not include a username or password. CivicCast will not store a password inside an address.'}
+          </p>
+          {conflict && conflict.endpoint_url !== source.endpoint_url ? (
+            <p className="cc-mono m-0 text-[11px]" style={{ color: 'var(--cc-warn)' }}>
+              Server now has: {conflict.endpoint_url}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="source-edit-credential" className="text-xs font-semibold">
+            Stored credential
+          </label>
+          <input
+            id="source-edit-credential"
+            value={credentialsSupported ? credentialsHandle : ''}
+            onChange={(event) => setCredentialsHandle(event.target.value)}
+            disabled={!credentialsSupported}
+            className="rounded-md px-2 py-2 text-sm"
+            style={{
+              background: 'var(--cc-surface-2)',
+              border: '1px solid var(--cc-line)',
+              opacity: credentialsSupported ? 1 : 0.5,
+            }}
+            aria-describedby="source-edit-credential-help"
+          />
+          <p
+            id="source-edit-credential-help"
+            className="m-0 text-xs"
+            style={{ color: 'var(--cc-ink-3)' }}
+          >
+            {credentialsSupported
+              ? 'The name the SRT passphrase for this source is saved under in the station credential store. The passphrase itself is never stored here.'
+              : source.credentials_unsupported_reason ??
+                'This source type cannot use a stored credential.'}
+          </p>
+          {conflict && conflict.credentials_handle !== source.credentials_handle ? (
+            <p className="m-0 text-[11px]" style={{ color: 'var(--cc-warn)' }}>
+              Server now has: {conflict.credentials_handle || '(no stored credential)'}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      {conflict ? (
+        <p
+          className="m-0 mt-3 rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink-2)' }}
+          role="status"
+        >
+          Someone else saved a change to this source first. Your typed changes
+          above were kept -- compare them with the "Server now has" lines and
+          save again when you're ready; saving will overwrite the server's
+          current values with what's shown above.
+        </p>
+      ) : null}
+      {invalidatesReadiness ? (
+        <p
+          className="m-0 mt-3 rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink-2)' }}
+          role="status"
+        >
+          Saving this change clears what CivicCast knows about this source. You
+          will need to choose Check source again before it can take air.
+        </p>
+      ) : null}
+      {error ? (
+        <p className="m-0 mt-3 text-xs" role="alert" style={{ color: 'var(--cc-err)' }}>
+          {error}
+        </p>
+      ) : null}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-md px-3 py-1.5 text-xs font-semibold"
+          style={{
+            background: 'var(--cc-accent)',
+            color: 'var(--cc-accent-ink)',
+            opacity: saving ? 0.6 : 1,
+          }}
+        >
+          {saving ? 'Saving...' : 'Save source'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md px-3 py-1.5 text-xs font-semibold"
+          style={{ background: 'transparent', border: '1px solid var(--cc-line)' }}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -667,6 +1048,15 @@ export function LiveRoomScreen() {
       // Persistence is a convenience; selection still applies this session.
     }
   }
+  const queryClient = useQueryClient()
+  const [editingSource, setEditingSource] = useState<LiveSourceResponse | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
+  // The server's current row when a 409 reveals a conflicting concurrent
+  // edit -- display-only (WP-07 hostile-review finding N2). The operator's
+  // typed field values must survive a 409, so this is never applied over
+  // `editingSource`; it's shown alongside the fields that differ so the
+  // operator can compare before deciding to save over it.
+  const [editConflict, setEditConflict] = useState<LiveSourceResponse | null>(null)
   const channelsQuery = useQuery({
     queryKey: ['channel-profiles'],
     queryFn: listChannelProfiles,
@@ -677,6 +1067,14 @@ export function LiveRoomScreen() {
     queryKey: ['live-sources'],
     queryFn: listLiveSources,
     retry: false,
+    // Readiness ages out of its (default 30s, min 5s) server-side TTL even
+    // when nobody touches this screen. Session and ingest-plan state already
+    // poll at 3s; without a poll here a "Delivering / checked N seconds ago"
+    // pill could sit on screen well past the TTL that actually governs
+    // takeover, silently telling the operator something the takeover gate no
+    // longer believes. Polling at most every 10s keeps the display honest
+    // without re-listing sources on every render.
+    refetchInterval: 10_000,
   })
   const sourceSetupQuery = useQuery({
     queryKey: ['source-setup'],
@@ -707,6 +1105,16 @@ export function LiveRoomScreen() {
   const sources = sourcesQuery.data ?? EMPTY_SOURCES
   const canOperateMeeting =
     staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'meeting_operator')
+  const canEditSources =
+    staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'setup_admin')
+  // Matches the backend's POST /sources/{id}/probe gate exactly
+  // (require_any_role("meeting_operator", "setup_admin")): the Check source
+  // button must not render for an identity that can view the Live Room but
+  // whose click would just 403.
+  const canCheckSource =
+    staffIdentityQuery.isSuccess &&
+    (hasOperatorRole(staffIdentityQuery.data, 'meeting_operator') ||
+      hasOperatorRole(staffIdentityQuery.data, 'setup_admin'))
   const selectedSource = useMemo(() => {
     if (sources.length === 0) return undefined
     return sources.find((source) => source.live_source_id === selectedSourceId) ?? sources[0]
@@ -749,6 +1157,71 @@ export function LiveRoomScreen() {
     },
     onSuccess: setPreflight,
     onError: (err) => setActionError(apiMessage(err, 'Could not run pre-flight.')),
+  })
+
+  // WP-07: checking a source and editing one both change what the ingest plan
+  // and the takeover gate will say about it, so both invalidate the two
+  // queries that render readiness rather than patching local state -- the
+  // server is the only thing that knows the applied TTL.
+  const refreshReadiness = () => {
+    void queryClient.invalidateQueries({ queryKey: ['live-sources'] })
+    void queryClient.invalidateQueries({ queryKey: ['live-ingest-plan', channelId] })
+  }
+
+  const probeMutation = useMutation({
+    mutationFn: (liveSourceId: string) => probeLiveSource(liveSourceId),
+    onSuccess: (result) => {
+      setActionError(null)
+      // A failed check is a 200. Surface its reason here rather than letting
+      // the card silently keep its previous state.
+      if (!result.ok) setActionError(result.detail ?? 'The source check failed.')
+      refreshReadiness()
+    },
+    onError: (err) => setActionError(apiMessage(err, 'Could not check the source.')),
+  })
+
+  const editMutation = useMutation({
+    mutationFn: (payload: LiveSourceUpdate) => {
+      if (!editingSource) throw new Error('No source is being edited.')
+      return updateLiveSource(editingSource.live_source_id, payload)
+    },
+    onSuccess: () => {
+      setEditError(null)
+      setEditConflict(null)
+      setEditingSource(null)
+      refreshReadiness()
+    },
+    onError: async (err) => {
+      // A 409 means someone else's edit landed first, and the form was still
+      // holding the row_version that PATCH was built from. Resending the
+      // same payload would just 409 again forever, so the next save needs
+      // the current row_version -- but the operator's typed field values
+      // must survive this, not be silently discarded and replaced with
+      // whatever the server now has (hostile-review finding N2: an earlier
+      // version of this fix remounted the form on the fresh row, which threw
+      // away work in progress the moment two edits raced). Only
+      // `row_version` advances on `editingSource`; every other field the
+      // operator typed is untouched, and the fresh row is kept separately in
+      // `editConflict` purely for the "Server now has" comparison text.
+      if (err instanceof ApiError && err.status === 409 && editingSource) {
+        try {
+          const fresh = await getLiveSourceById(editingSource.live_source_id)
+          setEditConflict(fresh)
+          setEditingSource((prev) =>
+            prev ? { ...prev, row_version: fresh.row_version } : prev,
+          )
+          setEditError(
+            'Someone else changed this source while you were editing it. ' +
+              "Your changes were kept — compare them with what the server now has, then save again.",
+          )
+        } catch (reloadErr) {
+          setEditError(apiMessage(reloadErr, 'Could not save the source.'))
+        }
+        refreshReadiness()
+        return
+      }
+      setEditError(apiMessage(err, 'Could not save the source.'))
+    },
   })
 
   const stateMeta = session ? LIVE_STATE_META[session.state] : null
@@ -820,7 +1293,38 @@ export function LiveRoomScreen() {
               sources={sources}
               selectedId={selectedSource?.live_source_id ?? ''}
               onSelect={setSelectedSourceId}
+              onCheck={(id) => probeMutation.mutate(id)}
+              onEdit={(source) => {
+                setEditError(null)
+                setEditConflict(null)
+                setEditingSource(source)
+              }}
+              checkingId={probeMutation.isPending ? probeMutation.variables : null}
+              canEdit={canEditSources}
+              canCheck={canCheckSource}
             />
+            {editingSource ? (
+              <SourceEditForm
+                // Keyed on the source id ONLY, deliberately not on
+                // row_version: remounting on a 409's row_version bump would
+                // reset the form's local field state back to the (now
+                // fresh-but-not-what-the-operator-typed) source prop,
+                // discarding whatever they'd typed (hostile-review finding
+                // N2). This key remounts only when editing switches to a
+                // genuinely different source.
+                key={editingSource.live_source_id}
+                source={editingSource}
+                conflict={editConflict}
+                onCancel={() => {
+                  setEditError(null)
+                  setEditConflict(null)
+                  setEditingSource(null)
+                }}
+                onSave={(payload) => editMutation.mutate(payload)}
+                saving={editMutation.isPending}
+                error={editError}
+              />
+            ) : null}
             <RelayStatusPanel plan={ingestPlanQuery.data} error={ingestPlanQuery.error} />
           </div>
           <aside className="flex flex-col gap-4">

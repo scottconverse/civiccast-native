@@ -1834,26 +1834,47 @@ def _build_takeover_service() -> TakeoverService:
     """Build a live-takeover service for a CLI-owned session (binds the DB).
 
     Mirrors ``app._resolve_takeover_service``: the audit store + the egress
-    command queue + a live ingest-plan provider built from the channel's enabled
-    relay configs.
+    command queue + a live ingest-plan provider built from the channel's
+    enabled relay configs AND its configured live sources, plus the same
+    observed-readiness gate the HTTP path uses.
+
+    "Mirrors" is load-bearing and was, until WP-07, untrue: this builder and
+    the app factory both omitted ``live_sources=``, so a station's real
+    encoder was invisible to takeover from either entry point. Keeping the two
+    identical is the point -- a CLI takeover must not be able to put something
+    on air that the API would have refused.
     """
     from civiccast.egress import PostgresEgressStore
     from civiccast.egress.takeover_service import TakeoverService
     from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
+    from civiccast.live.readiness_service import LiveSourceReadinessService, TakeoverReadiness
     from civiccast.live.relay import build_ingest_plan
-    from civiccast.live.store import LiveRelayConfigStore
+    from civiccast.live.store import LiveRelayConfigStore, LiveSourceStore
 
     _bind_egress_database(_resolve_egress_database_url())
     session_factory = _build_cli_session_factory()
     relay_store = LiveRelayConfigStore(session_factory)
+    source_store = LiveSourceStore(session_factory)
 
     def _ingest_plan(channel_id: str):  # type: ignore[no-untyped-def]
-        return build_ingest_plan(channel_id, relay_store.list(channel_id=channel_id, enabled=True))
+        return build_ingest_plan(
+            channel_id,
+            relay_store.list(channel_id=channel_id, enabled=True),
+            live_sources=source_store.list(channel_id=channel_id),
+        )
+
+    readiness = LiveSourceReadinessService(source_store)
+
+    def _verify_readiness(channel_id: str, path_id: str, endpoint_url: str) -> TakeoverReadiness:
+        return readiness.verify_for_takeover(
+            channel_id=channel_id, path_id=path_id, endpoint_url=endpoint_url
+        )
 
     return TakeoverService(
         PostgresTakeoverAuditStore(session_factory),
         PostgresEgressStore(session_factory),
         _ingest_plan,
+        readiness_verifier=_verify_readiness,
     )
 
 

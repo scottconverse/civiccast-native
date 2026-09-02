@@ -5271,6 +5271,151 @@
             "CivicCastStaffBearer": []
           }
         ]
+      },
+      "patch": {
+        "tags": [
+          "staff",
+          "live"
+        ],
+        "summary": "Edit a configured live source",
+        "description": "Apply an operator edit to one configured source.\n\nSame endpoint/type/credential validation as create, applied to the merged\nrow -- changing only ``source_type`` is checked against the endpoint the\nrow already holds. Any change to what would actually be probed (endpoint,\nsource type, channel, credential reference) clears the source's readiness\nin the same transaction, so an edited source cannot inherit the previous\naddress's \"ready\" and cannot take air until it is checked again.",
+        "operationId": "update_source_api_staff_live_sources__live_source_id__patch",
+        "parameters": [
+          {
+            "name": "live_source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Live Source Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LiveSourceUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveSourceResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "LiveSource not found"
+          },
+          "409": {
+            "description": "The source changed since it was loaded for editing"
+          },
+          "422": {
+            "description": "Invalid payload, or an endpoint that does not match the type"
+          },
+          "503": {
+            "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/live/sources/{live_source_id}/probe": {
+      "post": {
+        "tags": [
+          "staff",
+          "live"
+        ],
+        "summary": "Check whether a live source is delivering media right now",
+        "description": "Run one bounded server-side media probe and persist what it saw.\n\nReturns 200 for a failed check, not an error status: \"this camera is not\nanswering\" is a result the operator needs rendered on the source card,\nwith its reason and its next action, not an exception that leaves the\nscreen showing the previous state. Only a missing source (404), a\nconflicting concurrent edit (409), or missing durable storage (503) is an\nerror here.",
+        "operationId": "probe_source_api_staff_live_sources__live_source_id__probe_post",
+        "parameters": [
+          {
+            "name": "live_source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Live Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveSourceProbeResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "LiveSource not found"
+          },
+          "409": {
+            "description": "The source changed while it was being checked"
+          },
+          "503": {
+            "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
       }
     },
     "/api/staff/live/relay-configs": {
@@ -46462,23 +46607,14 @@
             "title": "Source Type"
           },
           "endpoint_url": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 2083,
-                "minLength": 1,
-                "format": "uri"
-              },
-              {
-                "type": "string"
-              }
-            ],
+            "type": "string",
             "title": "Endpoint Url"
           },
           "credentials_handle": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 200
               },
               {
                 "type": "null"
@@ -46498,6 +46634,53 @@
         ],
         "title": "LiveSourceCreate",
         "description": "Request body for creating a configured live source."
+      },
+      "LiveSourceProbeResponse": {
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/LiveSourceResponse"
+          },
+          "probed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Probed At"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source",
+          "probed_at",
+          "ok"
+        ],
+        "title": "LiveSourceProbeResponse",
+        "description": "Result of an explicit operator-triggered probe.\n\nReturns the whole refreshed source rather than a bare verdict so the Live\nRoom can replace the row it just probed without a second round trip and\nwithout the two surfaces briefly disagreeing about readiness."
       },
       "LiveSourceResponse": {
         "properties": {
@@ -46542,6 +46725,123 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "probe_state": {
+            "type": "string",
+            "enum": [
+              "never_probed",
+              "ready",
+              "failed"
+            ],
+            "title": "Probe State",
+            "default": "never_probed"
+          },
+          "probe_observed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Probe Observed At"
+          },
+          "probe_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Probe Detail"
+          },
+          "probe_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Probe Error Code"
+          },
+          "probe_last_success_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Probe Last Success At"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version",
+            "default": 1
+          },
+          "readiness_ttl_seconds": {
+            "type": "integer",
+            "title": "Readiness Ttl Seconds",
+            "description": "The station's configured readiness window, as actually applied.",
+            "readOnly": true
+          },
+          "observation_age_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Age Seconds",
+            "description": "Seconds since the last observation; ``None`` when never probed.",
+            "readOnly": true
+          },
+          "readiness": {
+            "type": "string",
+            "enum": [
+              "never_probed",
+              "ready",
+              "stale",
+              "failed"
+            ],
+            "title": "Readiness",
+            "description": "``ready`` / ``stale`` / ``failed`` / ``never_probed``.",
+            "readOnly": true
+          },
+          "credentials_supported": {
+            "type": "boolean",
+            "title": "Credentials Supported",
+            "description": "Whether this source type can carry a stored credential at all.",
+            "readOnly": true
+          },
+          "credentials_unsupported_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials Unsupported Reason",
+            "description": "Copy for the disabled credential control; ``None`` when supported.",
+            "readOnly": true
+          },
+          "next_action": {
+            "type": "string",
+            "title": "Next Action",
+            "description": "The one thing the operator should do next about this source.",
+            "readOnly": true
           }
         },
         "additionalProperties": false,
@@ -46553,10 +46853,107 @@
           "source_type",
           "endpoint_url",
           "credentials_handle",
-          "created_at"
+          "created_at",
+          "readiness_ttl_seconds",
+          "observation_age_seconds",
+          "readiness",
+          "credentials_supported",
+          "credentials_unsupported_reason",
+          "next_action"
         ],
         "title": "LiveSourceResponse",
-        "description": "Response shape for live source reads."
+        "description": "Response shape for live source reads.\n\nCarries the persisted observation (``probe_*``) AND the derived answer the\noperator actually needs (``readiness``, ``observation_age_seconds``,\n``next_action``). Deriving it server-side is deliberate: the readiness TTL\nis a station setting, and a client computing staleness from its own clock\nwould disagree with the takeover gate that refuses it."
+      },
+      "LiveSourceUpdate": {
+        "properties": {
+          "channel_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "rtmp",
+                  "rtsp",
+                  "ndi",
+                  "srt"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
+          },
+          "endpoint_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Url"
+          },
+          "credentials_handle": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials Handle"
+          },
+          "clear_credentials_handle": {
+            "type": "boolean",
+            "title": "Clear Credentials Handle",
+            "default": false
+          },
+          "expected_row_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Row Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "LiveSourceUpdate",
+        "description": "Request body for ``PATCH /api/staff/live/sources/{live_source_id}``.\n\nEvery field is optional; omitted fields are left alone. ``channel_id`` is\neditable because moving a mis-filed source to the right channel was\notherwise a delete-and-recreate the store has no delete for.\n\n``expected_row_version`` is the optimistic-concurrency token. When present\nit must equal the row's current ``row_version`` or the update is rejected\n409; when absent the update is last-writer-wins, which is what a scripted\nsingle-operator station wants and what the operator UI never sends."
       },
       "LiveState": {
         "properties": {
