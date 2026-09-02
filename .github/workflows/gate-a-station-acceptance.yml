@@ -28,6 +28,17 @@
 # previous/current installer hashes and data survival are judged fail-closed.
 # See that job's own header and docs/ops/gate-a.md, "Dirty lane".
 #
+# DOWNLOAD-ONLY LANE <gate-a-download-only-lane>: a third, REQUIRED job
+# (station-acceptance-download-only, below) proves the download-only
+# install/upgrade path the K1 fix silently broke -- since then,
+# d4-activate-station requires a station\ folder beside setup.exe and aborts
+# otherwise, so a download-only install (setup.exe + side-loaded packs\, no
+# station\, reusing an already-activated station's cached model packs)
+# stopped working and no other lane caught it because every other lane
+# installs from the full kit (setup.exe + packs\ + station\). Owner decision
+# 2026-09-02: this lane is required for every release from now on. See that
+# job's own header and docs/ops/gate-a.md, "Download-only lane".
+#
 # STATUS: informational only. It reports its verdict on every candidate but
 # does NOT block merges or releases until the owner promotes it to a required
 # check after 3 consecutive green runs (docs/ops/gate-a.md, "Promotion
@@ -68,12 +79,13 @@ on:
         required: true
         type: string
       lane:
-        description: "Run the full gate or the cross-version lane only (diagnostic rerun)"
+        description: "Run the full gate, the cross-version lane only, or the download-only lane only (diagnostic reruns)"
         required: true
         type: choice
         options:
           - full
           - cross-version-only
+          - download-only-only
         default: full
 
 concurrency:
@@ -98,7 +110,7 @@ jobs:
     # did not succeed -- there is no installable kit to judge in that case,
     # and a Gate A FAIL on top of an already-red candidate build would be
     # noise, not signal.
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.lane != 'cross-version-only') || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.lane != 'cross-version-only' && inputs.lane != 'download-only-only') || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, windows, sandbox-lab]
     timeout-minutes: 180
     steps:
@@ -760,4 +772,379 @@ jobs:
           $verdictLabel = '<unknown>'
           if ($verdict) { $verdictLabel = $verdict }
           Write-Error "Gate A dirty lane did not PASS (Run-GateA.ps1 exit code: $code, verdict: $verdictLabel). A candidate that only passes the pristine sandbox is exactly the failure family this lane exists to catch -- see the uploaded gate-a-dirty-verdict / evidence artifacts."
+          exit 1
+
+  # ==========================================================================
+  # DOWNLOAD-ONLY LANE <gate-a-download-only-lane>. REQUIRED for every
+  # release (owner decision 2026-09-02). Same candidate kit, same pinned
+  # previous full kit as the dirty lane above, but phase 2 -- the CURRENT
+  # candidate's install -- runs from a payload directory this job's
+  # Run-GateA.ps1 invocation builds containing ONLY setup.exe and packs\,
+  # never station\. Since the K1 fix, the installer's d4-activate-station
+  # step has required a station\ folder beside setup.exe and aborted
+  # otherwise, so a download-only install/upgrade silently stopped working
+  # and no other Gate A lane caught it -- every other lane (including the
+  # dirty lane above) installs from the full kit (setup.exe + packs\ +
+  # station\). This lane proves the parallel change that makes the installer
+  # reuse an already-activated station's cached model packs when station\ is
+  # absent, once that change and the accompanying embedded station-index
+  # change land.
+  #
+  # Runs AFTER the dirty lane (needs:), on the same runner -- this box's
+  # Windows Sandbox is single-instance and the self-hosted runner's workspace
+  # persists across jobs, so strict `needs:` ordering (clean -> dirty ->
+  # download-only) is what keeps three jobs from contending for the same
+  # sandbox slot and mapped-folder tree the way the clean/dirty pair already
+  # does. REQUIRED, not informational -- the `Fail the job on a non-PASS
+  # verdict or harness error` step below fails the job like any other CI
+  # check; nothing about the promotion-rule/branch-protection gate elsewhere
+  # in this repo is touched by that (see docs/ops/gate-a.md, "Promotion
+  # rule" -- this job's own required-ness on the workflow itself is an
+  # explicit owner decision, not something this file elevates on its own).
+  # Timing contract: same two-install-cycle budget as the dirty lane (210
+  # in-sandbox watchdog, 230 host poll, 340 job timeout) -- asserted by
+  # tests/gate_a/test_gate_a_harness_contract.py.
+  # ==========================================================================
+  station-acceptance-download-only:
+    name: Download-only upgrade lane
+    needs: station-acceptance-dirty
+    if: ${{ always() && ((github.event_name == 'workflow_dispatch' && (inputs.lane == 'download-only-only' || needs.station-acceptance-dirty.result == 'success')) || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && needs.station-acceptance-dirty.result == 'success')) }}
+    runs-on: [self-hosted, windows, sandbox-lab]
+    timeout-minutes: 340
+    steps:
+      - name: Wait for prior run's workspace to be clean
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          # Same rename-probe drain as the clean/dirty jobs above -- the
+          # dirty lane that just finished on this same runner may still be
+          # releasing its VSMB handles when this job's Checkout starts.
+          if (-not (Test-Path 'sandbox-lab')) {
+            Write-Host "No sandbox-lab/ present yet -- nothing to drain, proceeding to Checkout."
+            exit 0
+          }
+          function Test-DirectoryHandlesFree {
+              param([string]$Path)
+              if (-not (Test-Path -LiteralPath $Path)) { return $true }
+              $parent = Split-Path -Parent $Path
+              $leaf = Split-Path -Leaf $Path
+              $probeLeaf = "$leaf.checkout-drain-probe-$([guid]::NewGuid().ToString('N'))"
+              $probePath = Join-Path $parent $probeLeaf
+              try {
+                  Rename-Item -LiteralPath $Path -NewName $probeLeaf -ErrorAction Stop
+              } catch {
+                  return $false
+              }
+              try {
+                  Rename-Item -LiteralPath $probePath -NewName $leaf -ErrorAction Stop
+                  return $true
+              } catch {
+                  Start-Sleep -Milliseconds 500
+                  try {
+                      Rename-Item -LiteralPath $probePath -NewName $leaf -ErrorAction Stop
+                  } catch {
+                      Write-Warning "Could not rename $probePath back to $leaf -- left renamed for manual recovery: $_"
+                  }
+                  return $false
+              }
+          }
+          $probeTargets = @('scripts', 'hoststore', 'output', 'soak-4h') |
+              ForEach-Object { Join-Path 'sandbox-lab' $_ } |
+              Where-Object { Test-Path $_ }
+          if (-not $probeTargets) {
+            Write-Host "sandbox-lab/ present but none of its mapped subfolders exist -- proceeding to Checkout."
+            exit 0
+          }
+          $deadline = (Get-Date).AddSeconds(300)
+          while ($true) {
+              $busy = @($probeTargets | Where-Object { -not (Test-DirectoryHandlesFree -Path $_) })
+              if ($busy.Count -eq 0) { Write-Host "Workspace is clean."; break }
+              Write-Host "$((Get-Date).ToString('o')) waiting on prior run's teardown -- still locked: $($busy -join ', ')"
+              if ((Get-Date) -ge $deadline) { Write-Warning "Still locked after 300s -- proceeding to Checkout anyway."; break }
+              Start-Sleep -Seconds 5
+          }
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve target run id and candidate sha
+        id: run_id
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $runId = "${{ github.event.inputs.run_id }}"
+          if ([string]::IsNullOrWhiteSpace($runId)) {
+            $runId = "${{ github.event.workflow_run.id }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($runId)) {
+            throw "Could not resolve a run id from either workflow_dispatch input or workflow_run event."
+          }
+          "run_id=$runId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $sha = "${{ github.event.workflow_run.head_sha }}"
+          if ([string]::IsNullOrWhiteSpace($sha)) {
+            Write-Host "No workflow_run head_sha available (workflow_dispatch trigger) -- resolving via gh run view $runId."
+            $runJson = & gh run view $runId -R "scottconverse/civiccast-native" --json headSha 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh run view $runId failed: $runJson"
+            }
+            $sha = ($runJson | ConvertFrom-Json).headSha
+          }
+          if ([string]::IsNullOrWhiteSpace($sha)) {
+            throw "Could not resolve a candidate sha for run $runId."
+          }
+          "source_sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "run_id=$runId source_sha=$sha"
+
+      - name: Clean previous kit-staging (21 GB/run -- keep only the current candidate)
+        shell: pwsh
+        run: |
+          $stagingRoot = "sandbox-lab/kit-staging"
+          $currentSha = "${{ steps.run_id.outputs.source_sha }}"
+          if (Test-Path $stagingRoot) {
+            Get-ChildItem -Path $stagingRoot -Directory -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -ne $currentSha } |
+              ForEach-Object {
+                Write-Host "Removing stale kit-staging dir: $($_.FullName)"
+                if ($_.LinkType) {
+                  $_.Delete()
+                } else {
+                  Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                }
+              }
+          } else {
+            New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+          }
+
+      - name: Reuse a locally pre-staged kit when this box already has it
+        id: local_kit
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $sha = "${{ steps.run_id.outputs.source_sha }}"
+          $local = Join-Path "C:\CivicCastTester\kit-staging" $sha
+          $target = Join-Path "sandbox-lab/kit-staging" $sha
+          if ((Test-Path (Join-Path $local "station")) -and (Get-ChildItem $local -Filter "*setup.exe" -ErrorAction SilentlyContinue)) {
+            New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+            if (Test-Path $target) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue }
+            New-Item -ItemType Junction -Path $target -Target $local | Out-Null
+            Write-Host "Reusing locally staged kit: $local"
+            "found=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "No locally staged kit at $local -- falling back to artifact download."
+            "found=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Download the candidate kit artifact (parallel, chunked)
+        if: steps.local_kit.outputs.found != 'true'
+        uses: actions/download-artifact@v4
+        timeout-minutes: 60
+        with:
+          name: native-beta-kit-${{ steps.run_id.outputs.source_sha }}
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}
+
+      - name: Resolve and verify immutable previous candidate
+        id: upgrade_baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Reuses the SAME pinned previous candidate identity as the dirty
+          # lane's own "Resolve and verify immutable previous candidate"
+          # step -- one immutable upgrade baseline, two cross-version lanes.
+          $baselinePath = "sandbox-lab/upgrade-baseline.json"
+          $baseline = Get-Content -LiteralPath $baselinePath -Raw | ConvertFrom-Json
+          if ($baseline.schema_version -ne 2) { throw "Unsupported upgrade baseline schema: $($baseline.schema_version)" }
+          $previousSha = [string]$baseline.source_sha
+          $previousRunId = [string]$baseline.run_id
+          $previousInstallerSha256 = [string]$baseline.installer_sha256
+          $previousStationIndexSha256 = [string]$baseline.station_index_sha256
+          $previousProductVersion = [string]$baseline.product_version
+          if ($previousSha -notmatch '^[0-9a-f]{40}$' -or $previousRunId -notmatch '^\d+$') {
+            throw "Invalid immutable previous candidate identity in $baselinePath"
+          }
+          if ($previousInstallerSha256 -notmatch '^[0-9a-f]{64}$' -or $previousStationIndexSha256 -notmatch '^[0-9a-f]{64}$' -or $previousProductVersion -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
+            throw "Invalid immutable previous candidate byte/version identity in $baselinePath"
+          }
+          if ($previousSha -eq "${{ steps.run_id.outputs.source_sha }}") {
+            throw "Pinned previous source SHA equals the current candidate; this would be a same-candidate reinstall."
+          }
+          $runJson = & gh run view $previousRunId -R "scottconverse/civiccast-native" --json headSha,workflowName,conclusion,status 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "Could not verify pinned previous candidate run ${previousRunId}: $runJson" }
+          $run = $runJson | ConvertFrom-Json
+          if ($run.headSha -ne $previousSha -or $run.workflowName -ne 'native-beta-candidate-artifacts' -or $run.conclusion -ne 'success') {
+            throw "Pinned previous candidate identity mismatch: expected sha=$previousSha workflow=native-beta-candidate-artifacts conclusion=success; got sha=$($run.headSha) workflow=$($run.workflowName) conclusion=$($run.conclusion)"
+          }
+          "previous_source_sha=$previousSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_run_id=$previousRunId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_installer_sha256=$previousInstallerSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_station_index_sha256=$previousStationIndexSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "previous_product_version=$previousProductVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Verified previous candidate: label=$($baseline.candidate_label) run_id=$previousRunId source_sha=$previousSha product_version=$previousProductVersion gate_a_run_id=$($baseline.gate_a_run_id)"
+
+      - name: Require the pinned previous full kit from local staging
+        shell: pwsh
+        run: |
+          # Same fail-closed identity check as the dirty lane's own step:
+          # the previous candidate's full kit (needed for phase 1, which is
+          # unchanged by this lane) must be present locally with exactly the
+          # pinned installer/station-index bytes and product version.
+          $previousSha = "${{ steps.upgrade_baseline.outputs.previous_source_sha }}"
+          $local = Join-Path "C:\CivicCastTester\kit-staging" $previousSha
+          $targetRoot = "sandbox-lab/previous-kit-staging"
+          $target = Join-Path $targetRoot $previousSha
+          $installers = @(Get-ChildItem -LiteralPath $local -Filter "*setup.exe" -File -ErrorAction SilentlyContinue)
+          $stationIndexPath = Join-Path $local "station\station-index.json"
+          if (-not (Test-Path $stationIndexPath) -or $installers.Count -ne 1) {
+            throw "Previous full kit is absent or incomplete at $local; refusing to substitute a different candidate or partial artifact."
+          }
+          $installer = $installers[0]
+          $installerHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $stationIndexHash = (Get-FileHash -LiteralPath $stationIndexPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installerVersion = ([System.Diagnostics.FileVersionInfo]::GetVersionInfo($installer.FullName).ProductVersion).Trim()
+          $stationIndex = Get-Content -LiteralPath $stationIndexPath -Raw | ConvertFrom-Json
+          $stationVersion = [string]$stationIndex.manifest.product_version
+          $expectedInstallerHash = "${{ steps.upgrade_baseline.outputs.previous_installer_sha256 }}"
+          $expectedStationIndexHash = "${{ steps.upgrade_baseline.outputs.previous_station_index_sha256 }}"
+          $expectedVersion = "${{ steps.upgrade_baseline.outputs.previous_product_version }}"
+          if ($installerHash -ne $expectedInstallerHash -or $stationIndexHash -ne $expectedStationIndexHash -or $installerVersion -ne $expectedVersion -or $stationVersion -ne $expectedVersion) {
+            throw "Previous local kit identity mismatch: installer_sha256=$installerHash (expected $expectedInstallerHash), station_index_sha256=$stationIndexHash (expected $expectedStationIndexHash), installer_version=$installerVersion station_version=$stationVersion (expected $expectedVersion)."
+          }
+          New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
+          if (Test-Path $target) {
+            $item = Get-Item -LiteralPath $target -Force
+            if ($item.LinkType) { $item.Delete() } else { Remove-Item -LiteralPath $target -Recurse -Force }
+          }
+          New-Item -ItemType Junction -Path $target -Target $local | Out-Null
+          Write-Host "Pinned byte-verified previous full kit: $target -> $local (installer_sha256=$installerHash station_index_sha256=$stationIndexHash product_version=$expectedVersion)"
+
+      - name: Run Gate A (download-only lane)
+        id: gate_a_download_only
+        shell: pwsh
+        run: |
+          # Same timing contract as the dirty lane: -DownloadOnlyLane
+          # implies the in-sandbox watchdog raising itself to 210 minutes
+          # (DIRTY_MODE.txt is written either way), so -TimeoutMinutes here
+          # MUST stay above 210 -- asserted by tests/gate_a/
+          # test_gate_a_harness_contract.py. Run-GateA.ps1 builds the
+          # filtered current-candidate payload (setup.exe + packs\, no
+          # station\) itself before launching Sandbox.
+          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DownloadOnlyLane -PreviousKitDir "sandbox-lab/previous-kit-staging/${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -PreviousSourceSha "${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -SoakMinutes 10 -TimeoutMinutes 230
+          $exitCode = $LASTEXITCODE
+          "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $latest = Get-ChildItem -Path "sandbox-lab/evidence" -Directory -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName "gate-a-verdict.json") } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($latest) {
+            "evidence_dir=$($latest.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+          exit $exitCode
+
+      - name: Publish the download-only-lane verdict to the run summary
+        if: always()
+        shell: pwsh
+        run: |
+          # This lane is REQUIRED (owner decision 2026-09-02), so its verdict
+          # belongs on the run's front page just as loudly as the dirty
+          # lane's informational one does.
+          $evidenceDir = "${{ steps.gate_a_download_only.outputs.evidence_dir }}"
+          $lines = @("## Gate A download-only lane (setup.exe + packs\, no station\)", "")
+          $verdictPath = if ($evidenceDir) { Join-Path $evidenceDir 'gate-a-verdict.json' } else { $null }
+          if ($verdictPath -and (Test-Path $verdictPath)) {
+            try {
+              $v = Get-Content -Path $verdictPath -Raw | ConvertFrom-Json
+              $lines += "**Verdict: $($v.verdict)** (lane: $($v.lane))"
+              $lines += ""
+              $lines += "| check | status | detail |"
+              $lines += "| --- | --- | --- |"
+              foreach ($prop in $v.checks.PSObject.Properties) {
+                $detail = ($prop.Value.detail -replace '\|', '\|')
+                $lines += "| $($prop.Name) | $($prop.Value.status) | $detail |"
+              }
+            } catch {
+              $lines += "Could not parse gate-a-verdict.json: $_"
+            }
+          } else {
+            $lines += "No gate-a-verdict.json was produced (exit code: ${{ steps.gate_a_download_only.outputs.exit_code }})."
+          }
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Upload download-only-lane verdict
+        if: always() && steps.gate_a_download_only.outputs.evidence_dir != ''
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 30
+        with:
+          name: gate-a-download-only-verdict-${{ steps.run_id.outputs.run_id }}
+          path: ${{ steps.gate_a_download_only.outputs.evidence_dir }}/gate-a-verdict.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload download-only-lane evidence
+        if: always() && steps.gate_a_download_only.outputs.evidence_dir != ''
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 30
+        with:
+          name: gate-a-download-only-${{ steps.run_id.outputs.run_id }}
+          path: ${{ steps.gate_a_download_only.outputs.evidence_dir }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Unlink the pinned previous-kit junction (never leave it for the next checkout)
+        if: always()
+        shell: pwsh
+        run: |
+          # Same reason as the dirty lane's own step: left behind, the next
+          # run's actions/checkout `git clean -ffdx` walks through this
+          # junction and deletes the real pinned kit. Remove ONLY the link.
+          $root = "sandbox-lab/previous-kit-staging"
+          if (Test-Path $root) {
+            Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue | ForEach-Object {
+              if ($_.LinkType) {
+                Write-Host "Unlinking previous-kit junction: $($_.FullName) -> $($_.Target)"
+                $_.Delete()
+              } else {
+                Write-Warning "Not a junction, leaving in place for inspection: $($_.FullName)"
+              }
+            }
+          }
+
+      - name: Fail the job on a non-PASS verdict or harness error
+        if: always()
+        shell: pwsh
+        run: |
+          # Same BUSY / HARNESS_ERROR discrimination as the clean/dirty jobs
+          # above -- neither is a station-acceptance finding, and neither may
+          # read as a download-only-lane product failure. Unlike the dirty
+          # lane, this job's failure IS meant to gate the release (owner
+          # decision 2026-09-02) -- but a harness-busy or harness-error
+          # outcome still isn't a product finding, so it still fails the job
+          # with a distinctly worded, re-runnable message rather than the
+          # generic one.
+          $code = "${{ steps.gate_a_download_only.outputs.exit_code }}"
+          if ($code -eq '0') {
+            Write-Host "Gate A download-only lane PASS."
+            exit 0
+          }
+          $verdict = $null
+          $evidenceDir = "${{ steps.gate_a_download_only.outputs.evidence_dir }}"
+          if ($evidenceDir -and (Test-Path (Join-Path $evidenceDir 'gate-a-verdict.json'))) {
+            try {
+              $verdict = (Get-Content -Path (Join-Path $evidenceDir 'gate-a-verdict.json') -Raw | ConvertFrom-Json).verdict
+            } catch {
+              Write-Warning "Could not parse gate-a-verdict.json to determine verdict: $_"
+            }
+          }
+          if ($verdict -eq 'BUSY') {
+            Write-Error "Gate A download-only lane did not run: Windows Sandbox was busy for the entire wait window. NOT a product failure -- re-run this workflow once the sandbox is free."
+            exit 1
+          }
+          if ($verdict -eq 'HARNESS_ERROR') {
+            Write-Error "Gate A download-only lane produced no station-acceptance verdict: the run's evidence channel broke (see gate-a-verdict.json's harness_error field). NOT a candidate failure -- re-run this workflow."
+            exit 1
+          }
+          $verdictLabel = '<unknown>'
+          if ($verdict) { $verdictLabel = $verdict }
+          Write-Error "Gate A download-only lane did not PASS (Run-GateA.ps1 exit code: $code, verdict: $verdictLabel). A candidate that only installs from the full kit is exactly the failure family this REQUIRED lane exists to catch -- see the uploaded gate-a-download-only-verdict / evidence artifacts."
           exit 1

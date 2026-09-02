@@ -1220,6 +1220,123 @@ up-to-90-minute shared-sandbox wait. The clean lane's 150 < 170 ordering is
 untouched. All of it is asserted by
 `tests/gate_a/test_gate_a_harness_contract.py`.
 
+## Download-only lane
+
+### Why it exists
+
+Owner decision, 2026-09-02. Since the K1 fix the installer's
+`d4-activate-station` step requires a `station\` folder (the ~21 GB signed
+model bundle) beside `setup.exe` and aborts otherwise -- so a download-only
+install or upgrade (the shape a real deployment uses when it fetches
+`setup.exe` and the small runtime `packs\` over the network but reuses an
+already-activated station's cached model packs instead of re-downloading the
+whole station bundle) silently stopped working. No existing Gate A lane
+caught it: the clean lane and the dirty lane above both install from the
+**full** kit (`setup.exe` + `packs\` + `station\`), so neither ever exercises
+a payload with `station\` absent. The owner ruled that a download-only lane
+is required for every release from now on.
+
+### What it does
+
+`gate-a-station-acceptance.yml` runs a third job,
+`station-acceptance-download-only`, after the dirty lane (`needs:
+station-acceptance-dirty`, same runner, same shared-Sandbox discipline).
+Unlike the clean and dirty lanes, this job is **REQUIRED**, not
+informational -- its own `Fail the job on a non-PASS verdict or harness
+error` step fails the job like any other CI check.
+
+It invokes `Run-GateA.ps1 -DownloadOnlyLane` with the same pinned
+previous-kit directory and source SHA the dirty lane uses (one immutable
+upgrade baseline, `sandbox-lab/upgrade-baseline.json`, shared by both
+cross-version lanes). `-DownloadOnlyLane` implies the dirty lane's
+`-DirtyLane`/cross-version `-UpgradeMode` shape -- phase 1 is byte-identical
+to the dirty lane's own upgrade prologue:
+
+1. **Phase 1 -- install the pinned previous candidate from its FULL kit**
+   (`-PreviousKitDir`/`-PreviousSourceSha`, hash-verified exactly as the
+   dirty lane verifies it), plant operator data, leave it live. This reuses
+   `Invoke-DirtyRemnantPrologue`'s existing `UpgradeMode` branch in
+   `In-Sandbox-Report.ps1` unchanged.
+2. **Phase 2 -- run the CURRENT candidate's `setup.exe` from a FILTERED
+   payload directory containing ONLY `setup.exe` and `packs\`** (the runtime
+   packs, side-loaded because the sandbox has no network) **and NO
+   `station\` directory.** `Run-GateA.ps1` builds this filtered directory
+   itself, on the host, before rendering the `.wsb`: it copies the small
+   `setup.exe` and NTFS-junctions `packs\` from the resolved current kit into
+   a fresh `sandbox-lab\kit-download-filtered\` directory, refuses to
+   proceed if that directory somehow ends up with a `station\` subdirectory,
+   and then repoints the existing `sandbox-lab\kit-download` junction (which
+   the `.wsb` template already maps to `C:\CivicCastPayload` read-only) at
+   the filtered directory instead of the full kit -- the kit on disk is
+   never modified. The full acceptance flow inside the sandbox is otherwise
+   unchanged; it reads `$PayloadDir` (`C:\CivicCastPayload`) exactly as the
+   clean and dirty lanes do, so it now sees the filtered shape without any
+   code path needing to know it is in a special mode, except for the small
+   evidence-recording addition below.
+3. In-sandbox, `In-Sandbox-Report.ps1` records the download-only evidence to
+   `DOWNLOAD-ONLY-RESULT.txt` in two passes: **before** phase 2's install
+   runs, `STATION_DIR_PRESENT` (0/1, checked against
+   `C:\CivicCastPayload\station`) and `PAYLOAD_DIR`; **after** the station-up
+   verdict, `PHASE2_INSTALL_EXIT`, `D3_ROUTE`/`D3_ENGINE_EXIT` (the same D3
+   breadcrumb the dirty lane's `DIRTY-RESULT.txt` already captures),
+   `STATION_SET_PRODUCT_VERSION` (read directly from the install's own
+   `station-set.json`), and `CURRENT_PRODUCT_VERSION` (echoed from the
+   shared upgrade prologue's own `DIRTY-PREP-RESULT.txt`).
+
+The judge (`scripts/gate_a_verdict.py --lane download-only`) runs the
+unchanged clean-lane checks plus `dirty_prep` and `dirty_survival` (the same
+cross-version upgrade evidence the dirty lane's checks already grade) plus a
+new `download_only_no_station_dir` check, which FAILS unless
+`DOWNLOAD-ONLY-RESULT.txt` proves all of: the phase-2 payload had no
+`station\` (`STATION_DIR_PRESENT=0`), the phase-2 install and its D4
+activation step both exited 0 (`PHASE2_INSTALL_EXIT=0`,
+`D3_ENGINE_EXIT=0`), and `station-set.json` names the CURRENT candidate's
+product version (`STATION_SET_PRODUCT_VERSION == CURRENT_PRODUCT_VERSION`) --
+proving activation succeeded by reusing an already-activated station's
+cached model packs, not by silently falling back to a stale or mismatched
+receipt. This lane deliberately does **not** run `dirty_orphaned_tier` -- that
+remnant sub-shape belongs only to the dirty lane's own legacy uninstall-only
+path. Fail-closed on any missing evidence file, exactly like every other
+Gate A check.
+
+### What it does NOT prove
+
+- **Runtime-pack download from `civiccast-releases` is not exercised.** The
+  filtered payload directory's `packs\` is side-loaded from the already
+  fetched/staged current kit (junctioned, never copied) because the sandbox
+  has no network (see `docs/ops/gate-a.md`'s clean-lane boundary statement
+  above -- `Networking: Disable` in the `.wsb`). This lane proves the
+  installer's OWN behavior when `station\` is absent and packs are already
+  present beside `setup.exe`; it does not prove the separate download step a
+  real download-only deployment performs to fetch those packs over the
+  network in the first place.
+- Everything the clean lane's own boundary statement already excludes (the
+  24h/72h real-hardware soaks, physical SDI proof, unattended-reboot
+  survival, the commissioning-wizard UI walkthrough, OTT-app checks).
+- The dirty lane's legacy uninstall-only remnant shapes (real uninstall
+  preservation, the orphaned-caption-tier fallback) -- this lane never runs
+  that sub-shape.
+
+### Diagnostic reruns
+
+`workflow_dispatch`'s `lane` input gained a third option,
+`download-only-only`, alongside the existing `full` and `cross-version-only`
+-- it skips both the clean and dirty lanes (their own `if:` guards exclude
+it) and runs only `station-acceptance-download-only`, using its own
+`needs: station-acceptance-dirty` bypass exactly the way `cross-version-only`
+already bypasses the dirty lane's own `needs: station-acceptance`.
+
+### Timing contract
+
+Identical two-install-cycle budget to the dirty lane, reused rather than
+duplicated: `-DownloadOnlyLane` sets `-DirtyMode` on
+`Host-Launch-Sandbox-Test.ps1` exactly as plain `-DirtyLane` does, so the
+in-sandbox watchdog raises itself to 210 minutes, the host poll floor is 230,
+and the job's own `timeout-minutes: 340` outlasts 230 plus the up-to-90-minute
+shared-sandbox wait -- the same numbers `tests/gate_a/
+test_gate_a_harness_contract.py` already asserts for the dirty lane, since
+they are the identical settings.
+
 ## Promotion rule
 
 Gate A's workflow (`.github/workflows/gate-a-station-acceptance.yml`) is

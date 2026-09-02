@@ -126,6 +126,22 @@ param(
     [switch]$UpgradeMode,
     [string]$PreviousSourceSha,
 
+    # DOWNLOAD-ONLY LANE <gate-a-download-only-lane>: writes
+    # DOWNLOAD_ONLY_MODE.txt into output\ -- the same host-to-guest input
+    # channel as DIRTY_MODE.txt/UPGRADE_MODE.txt/SOAK_MINUTES.txt -- opting
+    # the in-sandbox harness into recording that phase 2 (the current
+    # candidate's install) ran from a payload directory with no station\
+    # beside setup.exe. Rides the existing cross-version upgrade prologue
+    # unchanged (phase 1 still installs the pinned previous candidate from
+    # its own full kit), so it requires -DirtyMode and -UpgradeMode together
+    # -- Run-GateA.ps1's own -DownloadOnlyLane switch is what sets both.
+    # Building the filtered current-candidate payload (setup.exe + packs\,
+    # no station\) is entirely a Run-GateA.ps1 concern -- it repoints
+    # kit-download at the filtered directory before this script ever renders
+    # the .wsb, so this script and the .wsb template need no separate
+    # mapping for it. See docs/ops/gate-a.md, "Download-only lane".
+    [switch]$DownloadOnlyMode,
+
     # HARDENED <gate-a-orphan-guard> 2026-08-26: minutes a WindowsSandbox
     # server/client process may sit with NO vmmemWindowsSandbox (the actual
     # VM) before the pre-launch busy guard stops treating it as someone
@@ -173,6 +189,10 @@ if ($UpgradeMode -and -not $DirtyMode) {
 }
 if ($UpgradeMode -and [string]::IsNullOrWhiteSpace($PreviousSourceSha)) {
     Write-Error "-UpgradeMode requires -PreviousSourceSha."
+    exit 1
+}
+if ($DownloadOnlyMode -and -not ($DirtyMode -and $UpgradeMode)) {
+    Write-Error "-DownloadOnlyMode requires -DirtyMode and -UpgradeMode."
     exit 1
 }
 
@@ -288,7 +308,10 @@ if ($DirtyMode) {
 if ($UpgradeMode) {
     Set-Content -Path (Join-Path $OutDir 'UPGRADE_MODE.txt') -Value "upgrade_mode=1 previous_source_sha=$PreviousSourceSha requested_utc=$((Get-Date).ToUniversalTime().ToString('o'))" -Encoding UTF8
 }
-Write-Host "Output dir stamped clean: $OutDir (SOAK_MINUTES=$SoakMinutes, DirtyMode=$([bool]$DirtyMode), UpgradeMode=$([bool]$UpgradeMode))"
+if ($DownloadOnlyMode) {
+    Set-Content -Path (Join-Path $OutDir 'DOWNLOAD_ONLY_MODE.txt') -Value "download_only_mode=1 requested_utc=$((Get-Date).ToUniversalTime().ToString('o'))" -Encoding UTF8
+}
+Write-Host "Output dir stamped clean: $OutDir (SOAK_MINUTES=$SoakMinutes, DirtyMode=$([bool]$DirtyMode), UpgradeMode=$([bool]$UpgradeMode), DownloadOnlyMode=$([bool]$DownloadOnlyMode))"
 
 # 1b. Guard: wait for a free sandbox. Windows Sandbox only ever runs ONE
 #     instance system-wide -- if any of $SandboxProcessNames is already

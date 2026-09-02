@@ -1143,7 +1143,13 @@ def test_dirty_orphan_warning_pattern_matches_the_product_log_line() -> None:
 def test_run_gate_a_threads_the_dirty_lane_through_launcher_and_judge() -> None:
     text = _read(_RUN_GATE_A)
     assert "[switch]$DirtyLane" in text
-    assert "-DirtyMode:$DirtyLane" in text, "the launcher must receive the dirty opt-in"
+    # -DownloadOnlyLane implies the dirty lane's -DirtyMode opt-in too (both
+    # perform the same two-install-cycle upgrade prologue), so the launcher
+    # is threaded a combined flag rather than the raw -DirtyLane switch --
+    # see test_download_only_lane_implies_dirty_mode_on_the_launcher below
+    # for the -DownloadOnlyLane-specific assertions on that combined flag.
+    assert "-DirtyMode:$dirtyLaneActive" in text, "the launcher must receive the dirty opt-in"
+    assert "$dirtyLaneActive = [bool]$DirtyLane -or [bool]$DownloadOnlyLane" in text
     assert "--lane $judgeLane" in text or "--lane $forensicLane" in text, (
         "the judge must be told which lane produced the evidence"
     )
@@ -1287,7 +1293,164 @@ def test_manual_gate_dispatch_can_run_only_the_cross_version_diagnostic_lane() -
     clean_job = workflow.split("  station-acceptance:", 1)[1].split(
         "  station-acceptance-dirty:", 1
     )[0]
-    dirty_job = workflow.split("  station-acceptance-dirty:", 1)[1]
+    dirty_job = workflow.split("  station-acceptance-dirty:", 1)[1].split(
+        "  station-acceptance-download-only:", 1
+    )[0]
     assert "inputs.lane != 'cross-version-only'" in clean_job
     assert "always()" in dirty_job
     assert "inputs.lane == 'cross-version-only'" in dirty_job
+
+
+# --------------------------------------------------------------------------
+# 10. Download-only lane <gate-a-download-only-lane>
+# --------------------------------------------------------------------------
+
+
+def _split_download_only_job(workflow: str) -> str:
+    assert "  station-acceptance-download-only:" in workflow, (
+        "the workflow must carry a station-acceptance-download-only job"
+    )
+    return workflow.split("  station-acceptance-download-only:", 1)[1]
+
+
+def test_workflow_carries_a_required_download_only_job() -> None:
+    workflow = _read(_WORKFLOW)
+    download_only_job = _split_download_only_job(workflow)
+    assert "name: Download-only upgrade lane" in download_only_job
+    assert "needs: station-acceptance-dirty" in download_only_job
+    assert "runs-on: [self-hosted, windows, sandbox-lab]" in download_only_job
+
+
+def test_download_only_job_lane_input_option_and_bypass() -> None:
+    workflow = _read(_WORKFLOW)
+    assert "download-only-only" in workflow, (
+        "workflow_dispatch must carry the download-only-only diagnostic lane option"
+    )
+    clean_job = workflow.split("  station-acceptance:", 1)[1].split(
+        "  station-acceptance-dirty:", 1
+    )[0]
+    dirty_job = workflow.split("  station-acceptance-dirty:", 1)[1].split(
+        "  station-acceptance-download-only:", 1
+    )[0]
+    download_only_job = _split_download_only_job(workflow)
+
+    # 'download-only-only' must bypass BOTH the clean and dirty lanes (their
+    # own guards must exclude it, or all three jobs run every time) and must
+    # be an explicit bypass on the download-only job's own needs check.
+    assert "inputs.lane != 'download-only-only'" in clean_job
+    assert "'download-only-only'" not in dirty_job.split("if:", 1)[1].split("\n", 1)[0], (
+        "the dirty job's own if-guard must not special-case download-only-only -- it should "
+        "fall through to the unchanged needs.station-acceptance check and be skipped"
+    )
+    assert "inputs.lane == 'download-only-only'" in download_only_job
+    assert "needs.station-acceptance-dirty.result == 'success'" in download_only_job
+    assert "always()" in download_only_job
+
+
+def test_download_only_job_filtered_payload_step_and_lane_flag() -> None:
+    workflow = _read(_WORKFLOW)
+    download_only_job = _split_download_only_job(workflow)
+    assert "id: upgrade_baseline" in download_only_job
+    assert "Require the pinned previous full kit" in download_only_job
+    run_gate_a_line = next(
+        line
+        for line in download_only_job.splitlines()
+        if "Run-GateA.ps1" in line and "-DownloadOnlyLane" in line
+    )
+    assert "-PreviousKitDir" in run_gate_a_line
+    assert "-PreviousSourceSha" in run_gate_a_line
+    assert "-DirtyLane" not in run_gate_a_line, (
+        "the workflow invokes -DownloadOnlyLane only -- Run-GateA.ps1 itself derives the "
+        "combined dirty-mode flag, the workflow must not pass both"
+    )
+
+
+def test_download_only_job_timing_matches_the_dirty_lane_contract() -> None:
+    workflow = _read(_WORKFLOW)
+    download_only_job = _split_download_only_job(workflow)
+    timeout_match = re.search(r"timeout-minutes:\s*(\d+)", download_only_job)
+    assert timeout_match is not None
+    assert int(timeout_match.group(1)) == 340, (
+        "the download-only job must carry the same 340-minute timeout as the dirty lane -- "
+        "same two-install-cycle budget"
+    )
+    run_gate_a_line = next(
+        line
+        for line in download_only_job.splitlines()
+        if "Run-GateA.ps1" in line and "-DownloadOnlyLane" in line
+    )
+    match = re.search(r"-TimeoutMinutes (\d+)", run_gate_a_line)
+    assert match is not None
+    assert int(match.group(1)) == 230, (
+        "the download-only lane's -TimeoutMinutes must match the dirty lane's 230-minute floor"
+    )
+
+
+def test_run_gate_a_exposes_download_only_lane_switch_and_requires_previous_kit() -> None:
+    text = _read(_RUN_GATE_A)
+    assert "[switch]$DownloadOnlyLane" in text
+    assert "-DownloadOnlyLane requires -PreviousKitDir and -PreviousSourceSha" in text, (
+        "download-only lane's phase 1 needs a full previous kit, same as the dirty lane"
+    )
+    assert "-DownloadOnlyMode:$DownloadOnlyLane" in text, (
+        "the launcher must receive the download-only opt-in as its own distinct switch"
+    )
+
+
+def test_run_gate_a_builds_a_filtered_payload_with_no_station_dir() -> None:
+    text = _read(_RUN_GATE_A)
+    assert "kit-download-filtered" in text
+    assert "New-Item -ItemType Junction -Path (Join-Path $filteredPayload 'packs')" in text
+    assert "Copy-Item -LiteralPath $installerExe.FullName" in text
+    assert "filtered payload unexpectedly contains station" in text, (
+        "the harness must refuse to run the lane if the filtered payload somehow carries station\\"
+    )
+    # kit-download is repointed at the filtered directory -- no separate .wsb
+    # mapping is needed since the template already maps kit-download ->
+    # C:\CivicCastPayload.
+    assert "New-Item -ItemType Junction -Path $kitDownload -Target $filteredPayload" in text
+
+
+def test_host_launcher_download_only_mode_requires_dirty_and_upgrade_mode() -> None:
+    host = _read(_HOST_LAUNCHER)
+    assert "[switch]$DownloadOnlyMode" in host
+    assert "Join-Path $OutDir 'DOWNLOAD_ONLY_MODE.txt'" in host
+    assert "if ($DownloadOnlyMode -and -not ($DirtyMode -and $UpgradeMode)) {" in host, (
+        "download-only mode must require both -DirtyMode and -UpgradeMode -- it rides their prologue"
+    )
+
+
+def test_driver_download_only_mode_requires_dirty_and_upgrade_mode_and_records_evidence() -> None:
+    driver = _read(_DRIVER)
+    code = _code_only(driver).replace("\r\n", "\n")
+    assert (
+        "$script:DownloadOnlyMode = Test-Path (Join-Path $OutDir 'DOWNLOAD_ONLY_MODE.txt')" in code
+    )
+    assert (
+        "if ($script:DownloadOnlyMode -and -not ($script:DirtyMode -and $script:UpgradeMode)) {"
+        in code
+    )
+    assert "STATION_DIR_PRESENT" in driver
+    assert "DOWNLOAD-ONLY-RESULT.txt" in driver
+    assert "PHASE2_INSTALL_EXIT" in driver
+    assert "STATION_SET_PRODUCT_VERSION" in driver
+    # The station-dir presence check must run BEFORE the phase-2 install (the
+    # "staged-payload" step), and the install/activation result recording
+    # must run AFTER it -- both anchored on the same shared marker text.
+    before_install = code.index("Save-Summary -Step 'staged-payload'")
+    station_check_at = code.index("STATION_DIR_PRESENT=$stationDirPresent")
+    assert station_check_at < before_install, (
+        "STATION_DIR_PRESENT must be recorded before the phase-2 install runs"
+    )
+    result_recorded_at = code.index("Save-Summary -Step 'download-only-result-recorded'")
+    assert result_recorded_at > before_install
+
+
+def test_judge_download_only_lane_is_registered() -> None:
+    judge = _read(_JUDGE)
+    assert '"download-only"' in judge or "'download-only'" in judge
+    assert "download_only_no_station_dir" in judge
+    assert "DOWNLOAD_ONLY_CHECKS" in judge
+    assert (
+        "dirty_orphaned_tier" not in judge.split("DOWNLOAD_ONLY_CHECKS", 1)[1].split("}", 1)[0]
+    ), "DOWNLOAD_ONLY_CHECKS must never include dirty_orphaned_tier"

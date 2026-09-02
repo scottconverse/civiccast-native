@@ -130,6 +130,23 @@ param(
     [string]$PreviousKitDir,
     [string]$PreviousSourceSha,
 
+    # DOWNLOAD-ONLY LANE <gate-a-download-only-lane>: proves the download-only
+    # install/upgrade path the K1 fix silently broke -- d4-activate-station
+    # started requiring a station\ folder beside setup.exe and aborting
+    # otherwise, so every OTHER Gate A lane (which installs from the full
+    # kit) never caught the regression. Implies -DirtyLane and cross-version
+    # -UpgradeMode: phase 1 installs the pinned previous candidate from its
+    # full kit (-PreviousKitDir/-PreviousSourceSha, both REQUIRED with this
+    # switch), then phase 2 runs the CURRENT candidate's setup.exe from a
+    # payload directory this script builds containing ONLY setup.exe and
+    # packs\ (the runtime packs, side-loaded because the sandbox has no
+    # network) -- never station\ -- so activation must reuse an
+    # already-activated station's cached model packs (a parallel change) or
+    # fail. Never combined with the dirty lane's own orphaned-tier remnant
+    # seed; the judge's --lane download-only never runs dirty_orphaned_tier.
+    # See docs/ops/gate-a.md, "Download-only lane".
+    [switch]$DownloadOnlyLane,
+
     # Optional host-side source for the orphaned-caption-tier remnant seed: a
     # directory shaped like <ProgramData>\CivicCast\components\captions-large-v3
     # (i.e. carrying models\faster-whisper-large-v3\ with the REAL, hash-valid
@@ -161,10 +178,24 @@ $hasPreviousSha = -not [string]::IsNullOrWhiteSpace($PreviousSourceSha)
 if ($hasPreviousKit -xor $hasPreviousSha) {
     Exit-HarnessError "-PreviousKitDir and -PreviousSourceSha must be supplied together"
 }
-if ($hasPreviousKit -and -not $DirtyLane) {
-    Exit-HarnessError "cross-version inputs require -DirtyLane"
+if ($DownloadOnlyLane -and -not ($hasPreviousKit -and $hasPreviousSha)) {
+    Exit-HarnessError "-DownloadOnlyLane requires -PreviousKitDir and -PreviousSourceSha together (phase 1 installs the pinned previous candidate from its full kit)"
 }
-$upgradeMode = $DirtyLane -and $hasPreviousKit
+# -DownloadOnlyLane implies the dirty lane's cross-version upgrade shape --
+# phase 1 (the pinned previous candidate, from its full kit) is identical to
+# -DirtyLane -PreviousKitDir/-PreviousSourceSha. $dirtyLaneActive, not
+# $DirtyLane itself, gates every downstream behavior shared between the two
+# switches from here on, so a caller only has to pass -DownloadOnlyLane.
+$dirtyLaneActive = [bool]$DirtyLane -or [bool]$DownloadOnlyLane
+if ($hasPreviousKit -and -not $dirtyLaneActive) {
+    Exit-HarnessError "cross-version inputs require -DirtyLane or -DownloadOnlyLane"
+}
+$upgradeMode = $dirtyLaneActive -and $hasPreviousKit
+
+# The judge's --lane value: 'download-only' takes priority over plain
+# 'dirty' (the two are mutually exclusive in practice -- -DownloadOnlyLane
+# forces $dirtyLaneActive true on its own), then 'dirty', then 'clean'.
+$judgeLaneName = if ($DownloadOnlyLane) { 'download-only' } elseif ($DirtyLane) { 'dirty' } else { 'clean' }
 
 # --------------------------------------------------------------------------
 # 1. Resolve the candidate kit.
@@ -371,6 +402,54 @@ New-Item -ItemType Junction -Path $kitDownload -Target $kitPhysicalDir | Out-Nul
 Write-Step "kit-download -> $kitPhysicalDir (junction, physical target)"
 
 # --------------------------------------------------------------------------
+# 3b. DOWNLOAD-ONLY LANE <gate-a-download-only-lane>: repoint kit-download at
+#     a FILTERED payload directory containing ONLY setup.exe and packs\ --
+#     never station\ -- so phase 2's install (the current candidate, run by
+#     the unchanged normal acceptance flow against $PayloadDir =
+#     C:\CivicCastPayload, which the .wsb template already maps from
+#     kit-download\) must activate the station without a station\ directory
+#     beside setup.exe. Junction packs\ (the runtime packs, never copied --
+#     it can be tens of GB) and copy only the small setup.exe; NEVER modify
+#     the source kit itself. Phase 1 (the pinned previous candidate) is
+#     untouched by this: it installs from the separately mapped
+#     C:\CivicCastPreviousPayload (previous-kit-download\, below), which DOES
+#     carry a full station\ -- exactly like the plain -DirtyLane -UpgradeMode
+#     cross-version shape.
+# --------------------------------------------------------------------------
+
+if ($DownloadOnlyLane) {
+    $filteredPayload = Join-Path $Root 'kit-download-filtered'
+    if (Test-Path $filteredPayload) {
+        Remove-Item -LiteralPath $filteredPayload -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    New-Item -ItemType Directory -Force -Path $filteredPayload | Out-Null
+
+    Copy-Item -LiteralPath $installerExe.FullName -Destination (Join-Path $filteredPayload $installerExe.Name) -Force
+
+    $packsSourceDir = Join-Path $kitPhysicalDir 'packs'
+    if (-not (Test-Path $packsSourceDir)) {
+        Exit-HarnessError "-DownloadOnlyLane: no packs\ directory found at $packsSourceDir -- the current kit must carry runtime packs for a download-only install to side-load (the sandbox has no network)"
+    }
+    New-Item -ItemType Junction -Path (Join-Path $filteredPayload 'packs') -Target $packsSourceDir | Out-Null
+
+    $filteredStationDir = Join-Path $filteredPayload 'station'
+    if (Test-Path $filteredStationDir) {
+        Exit-HarnessError "-DownloadOnlyLane: filtered payload unexpectedly contains station\ at $filteredStationDir -- refusing to run the download-only lane against a payload that still carries a station directory"
+    }
+
+    if (Test-Path $kitDownload) {
+        $kdItem = Get-Item $kitDownload -Force
+        if ($kdItem.LinkType) {
+            $kdItem.Delete()
+        } else {
+            Remove-Item -Path $kitDownload -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    New-Item -ItemType Junction -Path $kitDownload -Target $filteredPayload | Out-Null
+    Write-Step "DownloadOnlyLane: kit-download -> $filteredPayload (filtered payload: setup.exe + packs\ only, no station\)"
+}
+
+# --------------------------------------------------------------------------
 # 4. Reset hoststore\ -- every gate run is a fresh install.
 # --------------------------------------------------------------------------
 
@@ -413,8 +492,8 @@ if (-not (Test-Path $launcherPath)) {
     Exit-HarnessError "Host-Launch-Sandbox-Test.ps1 not found at $launcherPath"
 }
 
-Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes, TeardownDrainSeconds=$TeardownDrainSeconds, TeardownDrainPollSeconds=$TeardownDrainPollSeconds, OrphanGraceMinutes=$OrphanGraceMinutes)..."
-& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds -OrphanGraceMinutes $OrphanGraceMinutes -DirtyMode:$DirtyLane -UpgradeMode:$upgradeMode -PreviousSourceSha $PreviousSourceSha
+Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes, TeardownDrainSeconds=$TeardownDrainSeconds, TeardownDrainPollSeconds=$TeardownDrainPollSeconds, OrphanGraceMinutes=$OrphanGraceMinutes, DownloadOnlyLane=$([bool]$DownloadOnlyLane))..."
+& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds -OrphanGraceMinutes $OrphanGraceMinutes -DirtyMode:$dirtyLaneActive -UpgradeMode:$upgradeMode -PreviousSourceSha $PreviousSourceSha -DownloadOnlyMode:$DownloadOnlyLane
 $launcherExit = $LASTEXITCODE
 Write-Step "Host launcher exited with code $launcherExit"
 
@@ -511,7 +590,7 @@ if ($launcherExit -ne 0) {
             $forensicRepoRoot = Split-Path $Root -Parent
             $forensicJudgePath = Join-Path $forensicRepoRoot 'scripts\gate_a_verdict.py'
             Write-Step "Running the verdict judge on partial evidence for forensics (harness did not complete cleanly)..."
-            $forensicLane = if ($DirtyLane) { 'dirty' } else { 'clean' }
+            $forensicLane = $judgeLaneName
             & uv run --project $forensicRepoRoot python $forensicJudgePath $evidenceDir --source-sha $sourceSha --run-id "$resolvedRunId" --lane $forensicLane --out (Join-Path $evidenceDir 'gate-a-verdict.json') 2>&1 | Write-Host
         }
     }
@@ -534,7 +613,7 @@ if (-not (Test-Path $judgePath)) {
 }
 
 $verdictPath = Join-Path $evidenceDir 'gate-a-verdict.json'
-$judgeLane = if ($DirtyLane) { 'dirty' } else { 'clean' }
+$judgeLane = $judgeLaneName
 Write-Step "Judging $evidenceDir (lane=$judgeLane)..."
 & uv run --project $repoRoot python $judgePath $evidenceDir --source-sha $sourceSha --run-id "$resolvedRunId" --lane $judgeLane --out $verdictPath
 $judgeExit = $LASTEXITCODE
