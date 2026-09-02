@@ -29,7 +29,9 @@ def test_publish_soak_runs_every_three_tier_surface() -> None:
     # reaches state="succeeded" (and emits no "succeeded" audit event) even
     # though the soak run approves every surface, including it.
     expected_succeeded_surface_ids = [
-        surface_id for surface_id in EXPECTED_SURFACE_IDS if surface_id != "subscriber-notifications"
+        surface_id
+        for surface_id in EXPECTED_SURFACE_IDS
+        if surface_id != "subscriber-notifications"
     ]
     for iteration in result.iterations:
         assert iteration.ready is True

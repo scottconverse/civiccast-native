@@ -204,9 +204,7 @@ def rss_feed(target_type: str, target_id: str, request: Request) -> Response:
     # published item to any reader/aggregator, which it never was. Until a
     # real resolver exists, this is an honest, valid, empty feed rather than
     # a fabricated one.
-    xml = subscription_rss(
-        target_type, target_id, [], base_url=_resolve_public_base_url(request)
-    )
+    xml = subscription_rss(target_type, target_id, [], base_url=_resolve_public_base_url(request))
     return Response(content=xml, media_type="application/rss+xml")
 
 
