@@ -187,6 +187,70 @@ def _durable_approved_bulletins(store: Any, channel_id: str) -> CgBulletinQueue:
     )
 
 
+# ---------------------------------------------------------------------------
+# Shared resolvers (WP-06 non-negotiable: no shipping production path exposes
+# invented content). Every public GET route that carries feed, bulletin, or
+# ticker data goes through exactly one of these three functions, so a station
+# with nothing configured gets an honest empty result everywhere, a
+# durable-store-backed station sees the same data on every route that shows
+# it, and the sample content is reachable ONLY behind
+# CIVICCAST_CG_DEMO_FEEDS=1 -- never as an unconditional no-store fallback.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_feed_catalog(service: Any, channel_id: str) -> CgFeedCatalog:
+    if service is not None:
+        return cast(CgFeedCatalog, service.feed_catalog(channel_id))
+    if _cg_demo_feeds_enabled():
+        return build_feed_catalog(channel_id=channel_id)
+    return _empty_feed_catalog(channel_id)
+
+
+def _resolve_public_approved_bulletins(store: Any, channel_id: str) -> CgBulletinQueue:
+    if store is not None:
+        return _durable_approved_bulletins(store, channel_id)
+    if _cg_demo_feeds_enabled():
+        sample = build_bulletin_queue(channel_id=channel_id)
+        return CgBulletinQueue(
+            generated_at=sample.generated_at,
+            channel_id=sample.channel_id,
+            submissions=_approved_submissions(sample.submissions),
+            approved_zone_items=sample.approved_zone_items,
+            proof_boundary="approved-community-bulletins-to-public-cg-zone-items",
+        )
+    return _empty_bulletin_queue(channel_id)
+
+
+def _resolve_staff_bulletin_queue(store: Any, channel_id: str) -> CgBulletinQueue:
+    # Unfiltered (unlike the public/approved resolver above): this backs the
+    # operator moderation queue, which must show submitted/needs_changes rows
+    # too, not just accepted/scheduled ones.
+    if store is not None:
+        return _queue_from_durable(store, channel_id)
+    if _cg_demo_feeds_enabled():
+        return build_bulletin_queue(channel_id=channel_id)
+    return _empty_bulletin_queue(channel_id)
+
+
+def _resolve_durable_snapshot(
+    channel_id: str,
+    template_id: str | None,
+    feeds: CgFeedCatalog,
+    bulletins: CgBulletinQueue,
+) -> MultiZoneCgSnapshot:
+    """Build the multi-zone snapshot with its ticker zone rebuilt from the
+    already-resolved feed catalog + approved bulletin queue, instead of the
+    static sample ticker content, so /snapshot and the display.snapshot field
+    never disagree and neither ever shows invented content by default."""
+
+    base = build_multi_zone_snapshot(channel_id=channel_id, template_id=template_id)
+    zones = [
+        _durable_ticker_zone(zone, feeds, bulletins) if zone.kind == "ticker" else zone
+        for zone in base.zones
+    ]
+    return base.model_copy(update={"zones": zones})
+
+
 def _zone_items(submissions: list[CgBulletinSubmission]) -> list[CgZone]:
     return [
         CgZone(
@@ -260,8 +324,17 @@ def emergency_overlay(
 def multi_zone_snapshot(
     channel_id: str = "public",
     template_id: str | None = None,
+    service: Any = Depends(get_cg_board_service),
+    bulletin_store: Any = Depends(get_cg_bulletin_store),
 ) -> MultiZoneCgSnapshot:
-    return build_multi_zone_snapshot(channel_id=channel_id, template_id=template_id)
+    # WP-06 non-negotiable follow-up: this standalone endpoint used to call
+    # build_multi_zone_snapshot() directly, which always carried the static
+    # sample ticker strings regardless of station configuration. Its ticker
+    # zone is now resolved the same way the /display endpoint's embedded
+    # snapshot is, so the two never disagree.
+    feeds = _resolve_feed_catalog(service, channel_id)
+    bulletins = _resolve_public_approved_bulletins(bulletin_store, channel_id)
+    return _resolve_durable_snapshot(channel_id, template_id, feeds, bulletins)
 
 
 @public_router.get(
@@ -289,11 +362,7 @@ def feed_catalog(
     # wired durable storage (ephemeral/no-DB mode) AND an operator has
     # explicitly opted into CIVICCAST_CG_DEMO_FEEDS=1; otherwise a station
     # with nothing configured gets an honest empty catalog, not sample rows.
-    if service is not None:
-        return cast(CgFeedCatalog, service.feed_catalog(channel_id))
-    if _cg_demo_feeds_enabled():
-        return build_feed_catalog(channel_id=channel_id)
-    return _empty_feed_catalog(channel_id)
+    return _resolve_feed_catalog(service, channel_id)
 
 
 @public_router.get(
@@ -314,18 +383,10 @@ def public_bulletins(
     channel_id: str = "public",
     store: Any = Depends(get_cg_bulletin_store),
 ) -> CgBulletinQueue:
-    queue = (
-        _queue_from_durable(store, channel_id)
-        if store is not None
-        else build_bulletin_queue(channel_id=channel_id)
-    )
-    return CgBulletinQueue(
-        generated_at=queue.generated_at,
-        channel_id=queue.channel_id,
-        submissions=_approved_submissions(queue.submissions),
-        approved_zone_items=queue.approved_zone_items,
-        proof_boundary="approved-community-bulletins-to-public-cg-zone-items",
-    )
+    # WP-06 non-negotiable follow-up: the no-store fallback used to return
+    # the CA-3 sample queue unconditionally. It now falls to an honest empty
+    # queue unless CIVICCAST_CG_DEMO_FEEDS=1 is explicitly set.
+    return _resolve_public_approved_bulletins(store, channel_id)
 
 
 @staff_router.get(
@@ -338,9 +399,11 @@ def staff_bulletin_queue(
     channel_id: str = "public",
     store: Any = Depends(get_cg_bulletin_store),
 ) -> CgBulletinQueue:
-    if store is not None:
-        return _queue_from_durable(store, channel_id)
-    return build_bulletin_queue(channel_id=channel_id)
+    # WP-06 non-negotiable follow-up: the no-store fallback used to return
+    # the CA-3 sample queue unconditionally, even to an authenticated staff
+    # session on a station that hasn't wired durable storage. It now falls to
+    # an honest empty queue unless CIVICCAST_CG_DEMO_FEEDS=1 is set.
+    return _resolve_staff_bulletin_queue(store, channel_id)
 
 
 @staff_router.post(
@@ -471,35 +534,12 @@ def portal_display(
     # sample content lives there).
     display = build_portal_display(channel_id=channel_id, template_id=template_id)
 
-    if service is not None:
-        feeds = cast(CgFeedCatalog, service.feed_catalog(channel_id))
-    elif _cg_demo_feeds_enabled():
-        feeds = display.feed_catalog
-    else:
-        feeds = _empty_feed_catalog(channel_id)
-
-    if bulletin_store is not None:
-        bulletins = _durable_approved_bulletins(bulletin_store, channel_id)
-    elif _cg_demo_feeds_enabled():
-        bulletins = CgBulletinQueue(
-            generated_at=display.approved_bulletins.generated_at,
-            channel_id=display.approved_bulletins.channel_id,
-            submissions=_approved_submissions(display.approved_bulletins.submissions),
-            approved_zone_items=display.approved_bulletins.approved_zone_items,
-            proof_boundary="approved-community-bulletins-to-public-cg-zone-items",
-        )
-    else:
-        bulletins = _empty_bulletin_queue(channel_id)
-
-    # The ticker zone is rebuilt from the SAME resolved feeds/bulletins above
-    # (never the static sample zone), so it is empty by default, matches the
-    # demo flag when set, and can never drift from the /feeds and /bulletins
-    # contracts.
-    zones = [
-        _durable_ticker_zone(zone, feeds, bulletins) if zone.kind == "ticker" else zone
-        for zone in display.snapshot.zones
-    ]
-    snapshot = display.snapshot.model_copy(update={"zones": zones})
+    # Every field this work touches is resolved through the SAME shared
+    # helpers the standalone /feeds, /bulletins, and /snapshot endpoints use
+    # above, so this contract can never drift from them.
+    feeds = _resolve_feed_catalog(service, channel_id)
+    bulletins = _resolve_public_approved_bulletins(bulletin_store, channel_id)
+    snapshot = _resolve_durable_snapshot(channel_id, template_id, feeds, bulletins)
 
     return display.model_copy(
         update={"feed_catalog": feeds, "approved_bulletins": bulletins, "snapshot": snapshot}

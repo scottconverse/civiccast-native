@@ -106,6 +106,43 @@ describe('LayoutPreview', () => {
     expect(getByText('tpl-board-v1')).toBeTruthy()
     expect(getByText('S6 V1')).toBeTruthy()
   })
+
+  // WP-06 non-negotiable follow-up: /snapshot and display.snapshot's ticker
+  // zone are now durable-data-or-empty (backend), never the static
+  // "Library board meets tonight" / "Trail work begins Monday" sample
+  // strings. This locks that the operator preview renders the honest-empty
+  // ticker ("0 items", from the generic content.items array-length label)
+  // without crashing or assuming a non-empty items array.
+  it('renders an honest 0-items ticker instead of assuming ticker content exists', () => {
+    const tickerTemplate: CgTemplate = {
+      template_id: 'tpl-ticker-v1',
+      label: 'Ticker template',
+      regions: [{ region: 'lower', zone_kind: 'ticker', order: 0 }],
+    }
+    const tickerDisplay = {
+      ...DISPLAY,
+      snapshot: {
+        ...DISPLAY.snapshot,
+        zones: [
+          {
+            zone_id: 'news-ticker',
+            kind: 'ticker',
+            title: null,
+            source: 'durable-station-config',
+            content: { items: [], empty: true },
+            approved: true,
+          },
+        ],
+      },
+    } as unknown as CgPortalDisplay
+
+    const { getByText, queryByText } = render(
+      <LayoutPreview template={tickerTemplate} display={tickerDisplay} />,
+    )
+    expect(getByText('0 items')).toBeTruthy()
+    expect(queryByText(/Library board meets tonight/)).toBeNull()
+    expect(queryByText(/Trail work begins Monday/)).toBeNull()
+  })
 })
 
 describe('OutputPanel', () => {

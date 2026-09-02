@@ -9,6 +9,7 @@ from contextlib import contextmanager
 
 import pytest
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 from sqlalchemy import create_engine
@@ -29,6 +30,7 @@ _STAFF_HEADERS = {"Authorization": "Bearer operator-token-a"}
 
 def test_multi_zone_snapshot_public_route(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.delenv("CIVICCAST_CG_DEMO_FEEDS", raising=False)
     client = TestClient(create_app())
 
     response = client.get("/api/public/cg/channels/public/snapshot")
@@ -46,6 +48,67 @@ def test_multi_zone_snapshot_public_route(monkeypatch: MonkeyPatch) -> None:
         "audio",
         "alert",
     }
+    # WP-06 non-negotiable follow-up: the standalone /snapshot endpoint's
+    # ticker zone is resolved the same way display.snapshot's is -- empty by
+    # default, never the static sample strings.
+    ticker = next(z for z in payload["zones"] if z["kind"] == "ticker")
+    assert ticker["content"] == {"items": [], "empty": True}
+    assert ticker["source"] == "durable-station-config"
+
+
+def test_multi_zone_snapshot_demo_mode_requires_explicit_env_flag(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_CG_DEMO_FEEDS", "1")
+    client = TestClient(create_app())
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+
+    assert response.status_code == 200
+    ticker = next(z for z in response.json()["zones"] if z["kind"] == "ticker")
+    assert "Library board meets tonight" in ticker["content"]["items"]
+    assert "Community Arts Fair" in ticker["content"]["items"]
+    assert "Trail work begins Monday" not in response.text
+
+
+def test_multi_zone_snapshot_durable_reflects_station_configuration(
+    _durable_factory: Callable[[], Session],
+) -> None:
+    app, service = _durable_public_app(_durable_factory)
+    bulletin_store = PostgresCgBulletinStore(_durable_factory)
+    app.dependency_overrides[get_cg_bulletin_store] = lambda: bulletin_store
+    client = TestClient(app)
+
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    feed = service.add_feed(
+        "public",
+        payload=FeedInput(
+            kind="rss",
+            label="City news",
+            source_url="https://city.example.gov/news.rss",
+            trust_tier="operator_curated",
+        ),
+        operator_id="op_a",
+    )
+    service.add_zone(
+        "public",
+        payload=ZoneInput(
+            region="lower",
+            zone_kind="ticker",
+            content_source="feed_adapter",
+            feed_source_id=feed.feed_source_id,
+        ),
+        operator_id="op_a",
+    )
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    ticker = next(z for z in response.json()["zones"] if z["kind"] == "ticker")
+    assert ticker["content"]["items"] == []  # feed has no cached items yet, but is bound
+
+    # The embedded display.snapshot agrees with the standalone endpoint.
+    display = client.get("/api/public/cg/channels/public/display")
+    display_ticker = next(z for z in display.json()["snapshot"]["zones"] if z["kind"] == "ticker")
+    assert display_ticker["content"] == ticker["content"]
 
 
 def test_feed_catalog_public_route_is_empty_by_default(monkeypatch: MonkeyPatch) -> None:
@@ -284,25 +347,62 @@ _SAMPLE_STRINGS = (
 )
 
 
+def _public_get_routes() -> list[tuple[str, str]]:
+    """Enumerate every GET route the public CG router exposes, substituting a
+    concrete channel_id for the {channel_id} path param.
+
+    Programmatic, not a hand-maintained list: a future endpoint added to
+    civiccast.cg.router.public_router is automatically picked up by the
+    production-factory sweep below without anyone remembering to add it."""
+
+    routes: list[tuple[str, str]] = []
+    for route in cg_public_router.routes:
+        if not isinstance(route, APIRoute) or "GET" not in route.methods:
+            continue
+        path = route.path.format(channel_id="public")
+        routes.append((route.name, path))
+    return routes
+
+
+def test_public_cg_router_route_enumeration_finds_the_full_surface() -> None:
+    # Guards the enumeration helper itself: if this ever drops to a
+    # suspiciously small number, the sweep below is silently covering less
+    # than it claims to.
+    names = {name for name, _ in _public_get_routes()}
+    assert names == {
+        "idle_page",
+        "emergency_overlay",
+        "multi_zone_snapshot",
+        "feed_catalog",
+        "template_library",
+        "public_bulletins",
+        "hls_render_plan",
+        "hls_manifest",
+        "overlay_contract",
+        "portal_display",
+    }
+
+
 def test_production_app_factory_exposes_no_example_feed(monkeypatch: MonkeyPatch) -> None:
-    """Done-means (WP-06 + follow-up): the production app factory never
+    """Done-means (WP-06 + follow-ups): the production app factory never
     surfaces sample example.invalid feed content, sample bulletin content, or
-    the old static sample ticker strings as configured station data, on
-    either endpoint that carries the feed catalog / bulletin queue / ticker
-    zone."""
+    the old static sample ticker strings as configured/approved station data,
+    on ANY GET route the public CG router exposes -- enumerated
+    programmatically so a future endpoint cannot be missed."""
 
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
     monkeypatch.delenv("CIVICCAST_CG_DEMO_FEEDS", raising=False)
     client = TestClient(create_app())
 
-    feeds = client.get("/api/public/cg/channels/public/feeds")
-    display = client.get("/api/public/cg/channels/public/display")
-
-    assert feeds.status_code == 200
-    assert display.status_code == 200
-    for sample in _SAMPLE_STRINGS:
-        assert sample not in feeds.text
-        assert sample not in display.text
+    routes = _public_get_routes()
+    assert routes, "route enumeration must find at least the known public CG surface"
+    for name, path in routes:
+        # route.path already carries the router's own "/api/public/cg" prefix
+        # (confirmed against civiccast.cg.router.public_router's routes).
+        response = client.get(path)
+        assert response.status_code == 200, f"{name} ({path}) returned {response.status_code}"
+        for sample in _SAMPLE_STRINGS:
+            assert sample not in response.text, f"{name} ({path}) leaked {sample!r}"
 
 
 def test_template_library_and_portal_display_routes(monkeypatch: MonkeyPatch) -> None:
@@ -336,10 +436,36 @@ def test_template_library_and_portal_display_routes(monkeypatch: MonkeyPatch) ->
     assert alternate.json()["snapshot"]["template"]["template_id"] == "schedule-forward-board"
 
 
-def test_bulletins_routes_separate_public_approved_view_from_staff_queue(
+def test_bulletins_routes_are_empty_by_default_without_the_demo_flag(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # WP-06 non-negotiable follow-up: the no-store fallback on BOTH the
+    # public and staff bulletin routes used to return the CA-3 sample queue
+    # unconditionally, even to a staff session with no durable storage wired.
+    # Neither may invent content by default.
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.delenv("CIVICCAST_CG_DEMO_FEEDS", raising=False)
+    client = TestClient(create_app())
+
+    public = client.get("/api/public/cg/channels/public/bulletins")
+    staff = client.get("/api/staff/cg/channels/public/bulletins", headers=_STAFF_HEADERS)
+
+    assert public.status_code == 200
+    public_payload = public.json()
+    assert public_payload["submissions"] == []
+    assert public_payload["approved_zone_items"] == []
+    assert (
+        public_payload["proof_boundary"] == "approved-community-bulletins-to-public-cg-zone-items"
+    )
+    assert staff.status_code == 200
+    assert staff.json()["submissions"] == []
+
+
+def test_bulletins_routes_separate_public_approved_view_from_staff_queue_in_demo_mode(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_CG_DEMO_FEEDS", "1")
     client = TestClient(create_app())
 
     public = client.get("/api/public/cg/channels/public/bulletins")

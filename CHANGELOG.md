@@ -171,6 +171,25 @@ installer asset and is not a public or production release.
   even under `CIVICCAST_CG_DEMO_FEEDS=1`, because it was static filler with
   no backing store; demo mode composes the ticker from the same gated sample
   feed/bulletin data the `/feeds` and `/bulletins` endpoints show.
+- **WP-06 non-negotiable follow-up: closed the last two unconditional-sample
+  paths on the public CG router.** The standalone `GET
+  /api/public/cg/channels/{channel_id}/snapshot` endpoint still called
+  `build_multi_zone_snapshot()` directly (the same static ticker sample
+  content the `/display` fix above already removed from the embedded
+  contract), and the no-store fallback on both `GET .../bulletins` (public)
+  and `GET /api/staff/cg/channels/{channel_id}/bulletins` (staff) returned
+  the CA-3 sample bulletin queue unconditionally -- with no
+  `CIVICCAST_CG_DEMO_FEEDS` gate at all -- whenever durable storage wasn't
+  wired. All three now resolve through the same shared
+  `_resolve_feed_catalog` / `_resolve_public_approved_bulletins` /
+  `_resolve_staff_bulletin_queue` / `_resolve_durable_snapshot` helpers the
+  `/feeds` and `/display` endpoints already use: durable data when a store
+  is wired, an honest empty result otherwise, and the sample catalog/queue
+  only under the explicit demo flag. The production-app-factory test now
+  enumerates every GET route `civiccast.cg.router.public_router` exposes
+  (via its own `.routes`, not a hand-maintained list) and asserts none of
+  the seven historical sample strings appear on any of them, so a future
+  endpoint can't reintroduce this defect unnoticed.
 
 ## [1.0.0-beta.1] - 2026-08-31
 
