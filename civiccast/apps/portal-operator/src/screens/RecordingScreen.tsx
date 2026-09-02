@@ -1095,8 +1095,19 @@ function ScheduleForm({
             aria-invalid={showErrors && Boolean(errors.schedule_id) ? true : undefined}
             aria-describedby={showErrors && errors.schedule_id ? idSlugError : undefined}
           />
+          {/* CI ci-a11y caught this (axe color-contrast, serious): plain
+              `var(--cc-warn)` text on this section's `var(--cc-surface)`
+              background is only ~3.8:1 in light theme, under the 4.5:1 AA
+              floor for normal-size text -- pre-existing on `main`, never
+              axe-scanned before item 1 added the first Recording-screen a11y
+              coverage. `var(--cc-err)` on the same background measures
+              ~6.2:1. Applied to every plain-surface validation/notice span
+              in this form (schedule_id/name/source/recurrence/duration/
+              encoder_profile errors, plus the two input-preset notices
+              below) for the same reason -- not just the ones this scan
+              happened to catch. */}
           {showErrors && errors.schedule_id && (
-            <span id={idSlugError} role="alert" style={{ color: 'var(--cc-warn)' }}>
+            <span id={idSlugError} role="alert" style={{ color: 'var(--cc-err)' }}>
               {errors.schedule_id}
             </span>
           )}
@@ -1117,7 +1128,7 @@ function ScheduleForm({
             aria-describedby={showErrors && errors.name ? idNameError : undefined}
           />
           {showErrors && errors.name && (
-            <span id={idNameError} role="alert" style={{ color: 'var(--cc-warn)' }}>
+            <span id={idNameError} role="alert" style={{ color: 'var(--cc-err)' }}>
               {errors.name}
             </span>
           )}
@@ -1193,12 +1204,12 @@ function ScheduleForm({
               ))}
             </select>
             {inputPresetsError && (
-              <span role="alert" style={{ color: 'var(--cc-warn)' }}>
+              <span role="alert" style={{ color: 'var(--cc-err)' }}>
                 {inputPresetsError}
               </span>
             )}
             {!inputPresetsLoading && !inputPresetsError && matchingInputPresets.length === 0 && (
-              <span style={{ color: 'var(--cc-warn)' }}>
+              <span style={{ color: 'var(--cc-err)' }}>
                 No {state.source_kind.toUpperCase()} capture input was detected or configured.
               </span>
             )}
@@ -1254,7 +1265,7 @@ function ScheduleForm({
             id={idSourceError}
             role="alert"
             className="text-xs sm:col-span-2"
-            style={{ color: 'var(--cc-warn)' }}
+            style={{ color: 'var(--cc-err)' }}
           >
             {errors.source}
           </span>
@@ -1477,7 +1488,7 @@ function ScheduleForm({
             id={idRecurrenceError}
             role="alert"
             className="text-xs sm:col-span-2"
-            style={{ color: 'var(--cc-warn)' }}
+            style={{ color: 'var(--cc-err)' }}
           >
             {errors.recurrence}
           </span>
@@ -1498,7 +1509,7 @@ function ScheduleForm({
             aria-describedby={showErrors && errors.duration ? idDurationError : undefined}
           />
           {showErrors && errors.duration && (
-            <span id={idDurationError} role="alert" style={{ color: 'var(--cc-warn)' }}>
+            <span id={idDurationError} role="alert" style={{ color: 'var(--cc-err)' }}>
               {errors.duration}
             </span>
           )}
@@ -1536,7 +1547,7 @@ function ScheduleForm({
             admin for the full list of available presets.
           </span>
           {showErrors && errors.encoder_profile && (
-            <span id={idEncoderError} role="alert" style={{ color: 'var(--cc-warn)' }}>
+            <span id={idEncoderError} role="alert" style={{ color: 'var(--cc-err)' }}>
               {errors.encoder_profile}
             </span>
           )}

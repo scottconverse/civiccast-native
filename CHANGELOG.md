@@ -30,7 +30,14 @@ installer asset and is not a public or production release.
   `RecordingScreen.test.tsx` that read the real `aria-invalid` /
   `aria-describedby` DOM attributes and `document.activeElement` (not just
   the visible copy), and by two new `e2e/a11y.spec.ts` cases that exercise
-  the same flow with axe-core against a real browser render.
+  the same flow with axe-core against a real browser render. That axe scan
+  also caught a pre-existing `color-contrast` defect (serious) on `main`:
+  every plain-surface validation/notice span in this form used
+  `var(--cc-warn)` text on the section's `var(--cc-surface)` background
+  (~3.8:1 in light theme, under the 4.5:1 AA floor for normal text) — never
+  axe-scanned before this PR added the first Recording-screen a11y
+  coverage. Switched to `var(--cc-err)` (~6.2:1) for every such span in the
+  file, not just the four the CI run happened to render simultaneously.
 
 - **WP-11 item 2 — Lower-third help copy.** Channel Ops' lower-third-banner
   control (`GraphicsOverlayPanel` in

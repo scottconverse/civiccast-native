@@ -443,10 +443,16 @@ test.describe('publish dashboard', () => {
     const councilPanel = page
       .locator('article')
       .filter({ hasText: 'Council - May 8, 2026' })
-    await expect(councilPanel.getByText('Readiness check')).toBeVisible()
-    await expect(councilPanel.getByText('Not ready')).toBeVisible()
+    // Scope to the readiness panel itself (aria-label="Publish readiness"):
+    // the not-ready warning span near the approve button separately repeats
+    // both "readiness check" and the check's message text, so an unscoped
+    // getByText against the whole article resolves to two elements each and
+    // Playwright's strict mode refuses to pick one.
+    const readinessPanel = councilPanel.getByRole('region', { name: 'Publish readiness' })
+    await expect(readinessPanel.getByText('Readiness check', { exact: true })).toBeVisible()
+    await expect(readinessPanel.getByText('Not ready')).toBeVisible()
     await expect(
-      councilPanel.getByText('Portal cannot publish: DATABASE_URL is not configured.'),
+      readinessPanel.getByText('Portal cannot publish: DATABASE_URL is not configured.'),
     ).toBeVisible()
     await expect(
       councilPanel.getByRole('button', { name: 'Approve and Publish selected' }),
