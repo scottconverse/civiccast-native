@@ -201,6 +201,20 @@ installer asset and is not a public or production release.
   video segments were never uploaded. Proven against a mock CDN adapter, not a
   live CDN account.
 
+- **A live-finalized recording can now be captioned.** CivicCast resolves an
+  asset's packaged video through two different conventions — a live-finalized
+  recording packages to `<recording>/<live_session_id>-hls/` (recorded on its
+  finalization job), an uploaded one to `.civiccast-packages/<asset_id>` under
+  the media storage root — and the caption path only ever knew the second. A
+  live recording would therefore transcribe and fill the review queue, then
+  fail every attempt to attach the reviewed track to a package directory that
+  was never written. The caption path now mirrors the media-serving path's
+  precedence (the finalization job's manifest wins, the upload convention is
+  the fallback), so both agree about where a package is. This also means a
+  station that broadcasts live but has no media storage root configured is no
+  longer refused permission to publish: it has somewhere to write the caption
+  track after all.
+
 ### Fixed
 
 - **Made the D3 upgrade engine use the native installer's real flat runtime
