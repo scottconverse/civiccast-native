@@ -101,6 +101,7 @@ from civiccast.auth.store import PostgresStaffTokenStore
 from civiccast.auth.tokens import validate_staff_token_config
 from civiccast.cable.router import public_router as cable_public_router
 from civiccast.cable.router import staff_router as cable_staff_router
+from civiccast.captions.cdn_republish import VodPackageCdnRepublisher
 from civiccast.captions.persistence import (
     PostgresCaptionReviewStore,
     PostgresOfflineCaptionJobStore,
@@ -171,6 +172,7 @@ from civiccast.installer.storage import (
     load_managed_database_url,
     load_managed_upload_dir,
 )
+from civiccast.live.cdn_targets import build_asset_cdn_package_target_lookup
 from civiccast.live.contribution.bridge import NullVdoNinjaBridge, UrlVdoNinjaBridge
 from civiccast.live.contribution.coprocess import (
     ContributionCoprocessSettings,
@@ -195,6 +197,7 @@ from civiccast.live.finalization_worker import (
 from civiccast.live.models import LiveIngestPlan, RecordingTargetCreate
 from civiccast.live.network_probe import build_network_probe
 from civiccast.live.preflight import PreflightEvaluator
+from civiccast.live.readiness_service import LiveSourceReadinessService, TakeoverReadiness
 from civiccast.live.recording_paths import (
     DEFAULT_RECORDING_TARGET_DIR_NAME,
     DEFAULT_RECORDING_TARGET_ID,
@@ -207,6 +210,7 @@ from civiccast.live.router import (
     get_live_finalization_worker,
     get_live_relay_config_store,
     get_live_session_store,
+    get_live_source_readiness_service,
     get_live_source_store,
     get_preflight_evaluator,
     get_recording_target_store,
@@ -1313,6 +1317,28 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # caption tier and inherits the hardware-adaptive device the native
         # station runtime published into the environment (PR #398).
         runtime_factory=lambda: build_caption_runtime(_build_ai_model_service(session_factory)),
+        # Recorded-Spanish leg: a published recording carries an
+        # operator-reviewed Spanish track alongside English (owner
+        # requirement). Mirrors the LIVE tap's translation wiring above
+        # (build_translator at the CaptionTapWorker construction) -- the
+        # operator-selected translation tier (local TranslateGemma by
+        # default). Built lazily per attempt, same reason as the runtime
+        # factory: a station with nothing queued never loads the model.
+        translation_provider_factory=lambda: build_translator(
+            _build_ai_model_service(session_factory)
+        ),
+        # Caption attach rewrites the LOCAL manifest. When this asset's
+        # package is served to residents through a CDN, that copy still has
+        # the pre-caption manifest, so the reviewed EN/ES tracks and the
+        # rewritten manifest are pushed back to the same prefix the package
+        # was published under. No-op (returns None) on a station with no CDN
+        # configured, or for a package this station never CDN-published.
+        cdn_republisher=VodPackageCdnRepublisher(
+            # Resolved per call so setup-wizard credentials entered after
+            # startup take effect, same seam the surge switch uses.
+            lambda: app.state.resolve_cdn_adapter(),
+            build_asset_cdn_package_target_lookup(session_factory),
+        ),
         settings=offline_caption_settings,
     )
     app.state.offline_caption_worker = offline_caption_worker
@@ -1626,7 +1652,9 @@ class _EphemeralAssetStore:
                 station_tz_name=resolve_station_timezone(),
             )
             next_values["retention_policy"] = (
-                RETENTION_PERMANENT if term_unit == RETENTION_TERM_UNIT_FOREVER else RETENTION_DEFAULT
+                RETENTION_PERMANENT
+                if term_unit == RETENTION_TERM_UNIT_FOREVER
+                else RETENTION_DEFAULT
             )
             patch.pop("retention_term_unit", None)
             patch.pop("retention_term_value", None)
@@ -2424,6 +2452,12 @@ def _wire_durable_stores(app: FastAPI) -> None:
     def _resolve_live_source_store() -> LiveSourceStore:
         return LiveSourceStore(_session_factory)
 
+    def _resolve_live_source_readiness_service() -> LiveSourceReadinessService:
+        # WP-07: the operator's explicit "Check source" action and the
+        # production takeover gate share one service so they can never disagree
+        # about what "ready" means for the same row.
+        return LiveSourceReadinessService(LiveSourceStore(_session_factory))
+
     def _resolve_live_relay_config_store() -> LiveRelayConfigStore:
         return LiveRelayConfigStore(_session_factory)
 
@@ -2514,18 +2548,41 @@ def _wire_durable_stores(app: FastAPI) -> None:
 
     def _resolve_takeover_service() -> TakeoverService:
         # S5 live takeover: audit store + egress command queue + a live
-        # ingest-plan provider built from the channel's relay configs.
+        # ingest-plan provider.
+        #
+        # WP-07 / audit ENG-003: this provider used to pass relay configs
+        # ONLY. ``/api/staff/live/ingest-plan`` (civiccast.live.router) had
+        # already been fixed to include the channel's ``LiveSourceStore``
+        # rows, so the API showed the operator a plan containing their real
+        # encoder while the production takeover service was built from a
+        # different, source-less plan -- a configured source could appear in
+        # the plan and be invisible to takeover, and on a station with no
+        # relay row at all takeover had nothing ready to select. Both
+        # providers now read the same two stores, scoped to the same channel.
         relay_store = LiveRelayConfigStore(_session_factory)
+        source_store = LiveSourceStore(_session_factory)
 
         def _ingest_plan(channel_id: str) -> LiveIngestPlan:
             return build_ingest_plan(
-                channel_id, relay_store.list(channel_id=channel_id, enabled=True)
+                channel_id,
+                relay_store.list(channel_id=channel_id, enabled=True),
+                live_sources=source_store.list(channel_id=channel_id),
+            )
+
+        readiness = LiveSourceReadinessService(source_store)
+
+        def _verify_readiness(
+            channel_id: str, path_id: str, endpoint_url: str
+        ) -> TakeoverReadiness:
+            return readiness.verify_for_takeover(
+                channel_id=channel_id, path_id=path_id, endpoint_url=endpoint_url
             )
 
         return TakeoverService(
             PostgresTakeoverAuditStore(_session_factory),
             PostgresEgressStore(_session_factory),
             _ingest_plan,
+            readiness_verifier=_verify_readiness,
         )
 
     def _resolve_caption_review_store() -> PostgresCaptionReviewStore:
@@ -2587,6 +2644,9 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.dependency_overrides[get_live_session_store] = _resolve_live_session_store
     app.dependency_overrides[get_preflight_evaluator] = _resolve_preflight_evaluator
     app.dependency_overrides[get_live_source_store] = _resolve_live_source_store
+    app.dependency_overrides[get_live_source_readiness_service] = (
+        _resolve_live_source_readiness_service
+    )
     app.dependency_overrides[get_live_relay_config_store] = _resolve_live_relay_config_store
     app.dependency_overrides[get_recording_target_store] = _resolve_recording_target_store
     app.dependency_overrides[get_live_finalization_worker] = _resolve_live_finalization_worker

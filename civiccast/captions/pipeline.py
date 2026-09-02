@@ -251,7 +251,18 @@ class CaptionPipeline:
         return self._stabilizer.expired_unconfirmed()
 
 
-def _review_item_id(asset_id: str, cue: CaptionCue) -> str:
+def review_item_id_for_cue(asset_id: str, cue: CaptionCue) -> str:
+    """Derive the stable, collision-safe review-item id for ``(asset, cue)``.
+
+    Public seam over the private helper so other producers of review rows --
+    notably the recorded-Spanish translation queue in
+    :mod:`civiccast.captions.vod` -- derive ids the exact same way the
+    transcription pipeline does, keeping re-runs idempotent. Spanish cue ids
+    carry a ``:es`` suffix (see
+    :func:`civiccast.translate.service.translate_caption_cues`), so a Spanish
+    row's id never collides with its English source row's id.
+    """
+
     natural_id = f"{asset_id}:{cue.cue_id}"
     if len(natural_id) <= 160:
         return natural_id
@@ -259,3 +270,8 @@ def _review_item_id(asset_id: str, cue: CaptionCue) -> str:
     digest = sha256(natural_id.encode("utf-8")).hexdigest()[:12]
     asset_prefix = asset_id[: max(1, 160 - len(cue.cue_id) - len(digest) - 3)]
     return f"{asset_prefix}:{cue.cue_id}:{digest}"
+
+
+#: Backwards-compatible private alias -- this module's internal call sites
+#: predate the public name above.
+_review_item_id = review_item_id_for_cue

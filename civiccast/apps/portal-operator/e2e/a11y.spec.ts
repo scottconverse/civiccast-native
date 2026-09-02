@@ -195,6 +195,52 @@ test.describe('operator portal accessibility (desktop)', () => {
   })
 })
 
+test.describe('operator portal accessibility — Recording screen (WP-11 item 1)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/staff/recording/schedules', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback()
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    })
+    await page.route('**/api/staff/recording/jobs**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    })
+    await page.route('**/api/staff/recording/input-presets**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    })
+  })
+
+  test('scheduled recording has zero WCAG axe violations', async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Recording', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Scheduled recording' })).toBeVisible()
+
+    await expectNoWcagAxeViolations(page, 'operator Recording screen')
+  })
+
+  test('a failed submit focuses the first invalid control and wires aria-invalid/aria-describedby (WP-11 item 1)', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Recording', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'New schedule' })).toBeVisible()
+
+    // Submit the empty create form: schedule_id is the first field the
+    // validator rejects, so focus must land there, not on the form heading.
+    await page.getByRole('button', { name: 'Create schedule' }).click()
+
+    const slug = page.getByLabel('Schedule ID (slug)')
+    await expect(slug).toBeFocused()
+    await expect(slug).toHaveAttribute('aria-invalid', 'true')
+    const describedBy = await slug.getAttribute('aria-describedby')
+    expect(describedBy).toBeTruthy()
+    const message = page.locator(`#${describedBy}`)
+    await expect(message).toBeVisible()
+    await expect(message).toHaveAttribute('role', 'alert')
+
+    await expectNoWcagAxeViolations(page, 'operator Recording screen (invalid form)')
+  })
+})
+
 test.describe('operator portal accessibility (mobile)', () => {
   test.use({ viewport: { width: 375, height: 812 } })
 

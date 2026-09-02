@@ -25,7 +25,7 @@ from sqlalchemy import create_engine, inspect, text
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 
-_PARENT_REVISION = "0082_egress_graphics_overlay"
+_PARENT_REVISION = "0086_live_source_probe_state"
 _REVISION = "0087_retention_terms"
 
 _NEW_COLUMNS = ("retention_term_unit", "retention_term_value", "retention_anchor_at")
@@ -76,9 +76,8 @@ def _seed_minimal_assets_table(url: str) -> None:
 def test_single_head() -> None:
     """WP-08's own head must be the ONLY head reachable from this
     worktree's migration set (finalization plan section 7's "single-head
-    assertion" gate). Documents plainly (see the migration's own
-    docstring) that this worktree was cut before 0083-0086 exist, so the
-    chain is 0082 -> 0087, pending the coordinator's re-parent."""
+    assertion" gate). The chain is 0086_live_source_probe_state -> 0087,
+    per the migration's own docstring."""
     script = ScriptDirectory.from_config(_cfg("sqlite:///:memory:"))
     heads = script.get_heads()
     assert heads == [_REVISION], f"expected a single head {_REVISION!r}, got {heads}"

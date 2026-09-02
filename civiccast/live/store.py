@@ -64,12 +64,25 @@ from civiccast.live.models import (
     LiveSource,
     LiveSourceCreate,
     LiveSourceResponse,
+    LiveSourceUpdate,
     RecordingTarget,
     RecordingTargetCreate,
     RecordingTargetResponse,
+    check_credential_shape,
 )
+from civiccast.live.readiness import (
+    PROBE_STATE_FAILED,
+    PROBE_STATE_NEVER_PROBED,
+    PROBE_STATE_READY,
+)
+from civiccast.live.source_endpoints import normalize_endpoint
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
+
+#: ``live_sources.probe_detail`` is Text, but the operator-facing string is a
+#: sentence, not a protocol trace. Truncating at the write keeps a pathological
+#: ffprobe stderr out of the row (and out of every list response built from it).
+_MAX_PROBE_DETAIL = 400
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +148,60 @@ class LiveSourceAlreadyExistsError(Exception):
     def __init__(self, live_source_id: str) -> None:
         self.live_source_id = live_source_id
         super().__init__(f"LiveSource {live_source_id!r} already exists")
+
+
+class LiveSourceNotFoundError(Exception):
+    """Raised when an update or probe-observation write targets a missing row.
+
+    Carries the requested id so the router can produce a 404 that names the
+    source, and so the takeover readiness check can fail closed with a reason
+    ("the source you selected no longer exists") instead of a bare False.
+    """
+
+    def __init__(self, live_source_id: str) -> None:
+        self.live_source_id = live_source_id
+        super().__init__(f"LiveSource {live_source_id!r} not found")
+
+
+class LiveSourceConcurrencyError(Exception):
+    """Raised when a PATCH's ``expected_row_version`` does not match the row.
+
+    Two operators editing the same camera from two Live Room windows is not
+    hypothetical in a control room; the second save is refused with both
+    versions so the UI can say "this source changed while you were editing"
+    rather than silently discarding the first operator's work.
+    """
+
+    def __init__(self, live_source_id: str, *, expected: int, actual: int) -> None:
+        self.live_source_id = live_source_id
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"LiveSource {live_source_id!r} was modified: expected row_version "
+            f"{expected}, found {actual}"
+        )
+
+
+class LiveSourceProbeConflictError(Exception):
+    """Raised when the row that was probed no longer matches what was probed.
+
+    ``record_probe_observation`` accepts the ``row_version`` and
+    ``endpoint_url`` the caller actually probed. If either no longer matches
+    the row at write time -- an operator's PATCH landed in the window between
+    reading the row and persisting the observation -- persisting ``ready`` (or
+    any other verdict) derived from the OLD address would durably misreport
+    the NEW one. This is raised instead, and no write happens: the caller must
+    treat the probe as inconclusive, never as an answer about the row that now
+    exists.
+    """
+
+    def __init__(self, live_source_id: str, *, reason: str) -> None:
+        self.live_source_id = live_source_id
+        self.reason = reason
+        super().__init__(
+            f"LiveSource {live_source_id!r} changed during probe ({reason}); "
+            "the observation was discarded rather than recorded"
+        )
 
 
 class RecordingTargetAlreadyExistsError(Exception):
@@ -415,10 +482,20 @@ class LiveSessionStore:
 class LiveSourceStore:
     """SA-backed store for configured live-input sources.
 
-    The Slice 1 surface intentionally exposes ``create``, ``get``, and
-    ``list`` only. ``delete`` and ``update`` are out of scope until a
-    later rung defines the operator-cancel + edit UX; carrying them
-    here without a UX would commit to semantics ahead of the contract.
+    ``create`` / ``get`` / ``list`` are the Slice 1 surface. WP-07 adds the
+    two operations observed readiness needs: ``update`` (the operator edit
+    flow the Slice 1 docstring deferred until "a later rung defines the
+    operator-cancel + edit UX" -- the Live Room edit form is that UX) and
+    ``record_probe_observation`` (the durable result of a probe). ``delete``
+    remains out of scope; nothing in WP-07 needs it and the cancel UX it was
+    waiting on still does not exist.
+
+    Readiness invalidation lives here rather than in the router because it is
+    a property of the write, not of the transport: any change to what would be
+    probed -- endpoint, source type, channel, credential reference -- resets
+    the row to ``never_probed`` in the same transaction that applies the edit,
+    so there is no window in which the new endpoint carries the old
+    endpoint's readiness.
     """
 
     def __init__(self, session_factory: SessionFactory) -> None:
@@ -472,6 +549,218 @@ class LiveSourceStore:
             stmt = stmt.order_by(LiveSource.created_at.asc(), LiveSource.live_source_id.asc())
             rows = session.execute(stmt).scalars().all()
             return [LiveSourceResponse.model_validate(row) for row in rows]
+
+    def update(self, live_source_id: str, payload: LiveSourceUpdate) -> LiveSourceResponse:
+        """Apply an operator edit, invalidating readiness when it needs to be.
+
+        Raises :class:`LiveSourceNotFoundError` when the row is gone and
+        :class:`LiveSourceConcurrencyError` when ``expected_row_version`` does
+        not match, OR when a *different* commit lands between this method's
+        own read of the row and its own write -- see the compare-and-swap
+        note below. ``row_version`` is bumped on every applied edit so a
+        second operator's stale PATCH is refused rather than silently
+        winning.
+
+        Endpoint/type validation is NOT re-implemented here: the merged
+        (existing + requested) source type and endpoint are re-run through
+        :class:`~civiccast.live.models.LiveSourceCreate`'s own validator via
+        ``normalize_endpoint``, so changing only the source type of an
+        existing row is checked against that row's stored endpoint rather than
+        being accepted because the request body did not mention the endpoint.
+
+        **Compare-and-swap, not read-then-write.** An earlier version of this
+        method read the row, mutated the ORM object's attributes, and
+        committed -- which checks ``expected_row_version`` against the value
+        it read, but leaves a window between that read and the eventual
+        ``UPDATE`` for a *different* concurrent commit to land unnoticed
+        (hostile-review finding N1). The write below is a single
+        ``UPDATE ... WHERE live_source_id = ? AND row_version = ?`` statement,
+        where the version is the one this call just read: the database
+        performs the check-and-write atomically, so there is no window at
+        all, whether or not the caller supplied its own
+        ``expected_row_version``. ``rowcount == 0`` means the row changed (or
+        was deleted) between the read above and this statement.
+        """
+        with self._session_factory() as session:
+            row = session.execute(
+                select(LiveSource).where(LiveSource.live_source_id == live_source_id)
+            ).scalar_one_or_none()
+            if row is None:
+                raise LiveSourceNotFoundError(live_source_id)
+            if (
+                payload.expected_row_version is not None
+                and payload.expected_row_version != row.row_version
+            ):
+                raise LiveSourceConcurrencyError(
+                    live_source_id,
+                    expected=payload.expected_row_version,
+                    actual=row.row_version,
+                )
+
+            read_version = row.row_version
+            changed = payload.changed_fields()
+            # ``LiveSourceUpdate.source_type`` is ``Optional`` at the model
+            # (every field is optional-and-omittable), but ``changed_fields``
+            # only ever includes "source_type" when ``payload.source_type``
+            # is not ``None``. The extra ``is not None`` in this expression
+            # is what lets mypy narrow it to ``str`` for the merged-row
+            # validation below, rather than the two calls it feeds
+            # (``normalize_endpoint`` / ``check_credential_shape``) accepting
+            # a real ``str | None`` they would then have to null-check again.
+            source_type: str = (
+                payload.source_type
+                if "source_type" in changed and payload.source_type is not None
+                else row.source_type
+            )
+            endpoint_url = (
+                str(payload.endpoint_url) if "endpoint_url" in changed else row.endpoint_url
+            )
+            if payload.clear_credentials_handle:
+                credentials_handle: str | None = None
+            elif "credentials_handle" in changed:
+                credentials_handle = payload.credentials_handle
+            else:
+                credentials_handle = row.credentials_handle
+
+            # Same rule as create, applied to the MERGED row. A request that
+            # flips source_type from srt to rtsp must be judged against the
+            # endpoint the row will actually hold afterwards.
+            normalized_endpoint = normalize_endpoint(source_type, endpoint_url)
+            check_credential_shape(source_type, credentials_handle)
+
+            setters: dict[str, object] = {
+                "source_type": source_type,
+                "endpoint_url": normalized_endpoint,
+                "credentials_handle": credentials_handle,
+                "row_version": int(read_version or 1) + 1,
+            }
+            if "channel_id" in changed and payload.channel_id is not None:
+                setters["channel_id"] = payload.channel_id
+            if "name" in changed and payload.name is not None:
+                setters["name"] = payload.name
+
+            if payload.invalidates_readiness():
+                # Immediately, in this same statement. A row whose address
+                # just changed has never been probed at its new address, and
+                # anything that reads it between now and the next probe --
+                # including a takeover -- must see that.
+                setters["probe_state"] = PROBE_STATE_NEVER_PROBED
+                setters["probe_observed_at"] = None
+                setters["probe_detail"] = None
+                setters["probe_error_code"] = None
+                # probe_last_success_at is deliberately NOT cleared: "this
+                # camera last worked at 09:41" stays true and useful history
+                # even though it no longer counts as readiness.
+
+            result = session.execute(
+                update(LiveSource)
+                .where(LiveSource.live_source_id == live_source_id)
+                .where(LiveSource.row_version == read_version)
+                .values(**setters)
+            )
+            matched: int = result.rowcount  # type: ignore[attr-defined]
+            if matched == 0:
+                session.rollback()
+                current = session.execute(
+                    select(LiveSource).where(LiveSource.live_source_id == live_source_id)
+                ).scalar_one_or_none()
+                if current is None:
+                    raise LiveSourceNotFoundError(live_source_id)
+                raise LiveSourceConcurrencyError(
+                    live_source_id,
+                    expected=read_version,
+                    actual=current.row_version,
+                )
+            session.commit()
+            updated = session.execute(
+                select(LiveSource).where(LiveSource.live_source_id == live_source_id)
+            ).scalar_one()
+            return LiveSourceResponse.model_validate(updated)
+
+    def record_probe_observation(
+        self,
+        live_source_id: str,
+        *,
+        ok: bool,
+        observed_at: datetime,
+        detail: str | None,
+        error_code: str | None,
+        expected_row_version: int | None = None,
+        expected_endpoint_url: str | None = None,
+    ) -> LiveSourceResponse:
+        """Persist the outcome of one probe against ``live_source_id``.
+
+        ``probe_last_success_at`` advances only on success; a later failure
+        leaves it standing so the operator can distinguish a source that never
+        worked from one that stopped working.
+
+        ``expected_row_version`` / ``expected_endpoint_url`` are the version and
+        endpoint the caller actually probed, read at the top of its call before
+        the (up to several seconds long) probe ran. When either is supplied and
+        no longer matches the row at write time, the write is refused with
+        :class:`LiveSourceProbeConflictError` rather than persisted: an
+        operator's PATCH landing in that window (re-pointing the endpoint, or
+        any other edit) must not be silently overwritten by a verdict about the
+        address that used to be there. This is the guard against the
+        probe-then-persist race the takeover gate and the explicit "Check
+        source" action both go through.
+
+        **Compare-and-swap, not read-then-write** (hostile-review finding
+        N1, same defect class as :meth:`update`). The version/endpoint
+        expectations are carried directly in the ``UPDATE``'s own ``WHERE``
+        clause rather than checked against a prior ``SELECT`` and then
+        written separately -- the database performs the check-and-write as
+        one atomic statement, so there is no read-then-write window at all,
+        not even the narrow one between this method's own read and its own
+        write.
+        """
+        setters: dict[str, object] = {
+            "probe_state": PROBE_STATE_READY if ok else PROBE_STATE_FAILED,
+            "probe_observed_at": observed_at,
+            "probe_detail": (detail or None) if detail is None else detail[:_MAX_PROBE_DETAIL],
+            "probe_error_code": error_code,
+        }
+        if ok:
+            setters["probe_last_success_at"] = observed_at
+
+        with self._session_factory() as session:
+            stmt = update(LiveSource).where(LiveSource.live_source_id == live_source_id)
+            if expected_row_version is not None:
+                stmt = stmt.where(LiveSource.row_version == expected_row_version)
+            if expected_endpoint_url is not None:
+                stmt = stmt.where(LiveSource.endpoint_url == expected_endpoint_url)
+            result = session.execute(stmt.values(**setters))
+            matched: int = result.rowcount  # type: ignore[attr-defined]
+            if matched == 0:
+                session.rollback()
+                current = session.execute(
+                    select(LiveSource).where(LiveSource.live_source_id == live_source_id)
+                ).scalar_one_or_none()
+                if current is None:
+                    raise LiveSourceNotFoundError(live_source_id)
+                # Distinguish which expectation actually broke, for the
+                # conflict reason -- version wins when both were supplied and
+                # both moved, since a version change already implies "this is
+                # not the row I read."
+                if expected_row_version is not None and current.row_version != expected_row_version:
+                    reason = "row_version_changed"
+                elif (
+                    expected_endpoint_url is not None
+                    and current.endpoint_url != expected_endpoint_url
+                ):
+                    reason = "endpoint_changed"
+                else:
+                    # Neither expectation was supplied (or both still match,
+                    # e.g. some other column changed underneath a caller that
+                    # gave no expectations at all) -- name it generically
+                    # rather than guessing.
+                    reason = "row_changed"
+                raise LiveSourceProbeConflictError(live_source_id, reason=reason)
+            session.commit()
+            row = session.execute(
+                select(LiveSource).where(LiveSource.live_source_id == live_source_id)
+            ).scalar_one()
+            return LiveSourceResponse.model_validate(row)
 
 
 # ---------------------------------------------------------------------------

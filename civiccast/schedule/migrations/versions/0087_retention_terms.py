@@ -3,27 +3,20 @@
 """WP-08: value/unit/forever retention-term authoring.
 
 Revision ID: 0087_retention_terms
-Revises: 0082_egress_graphics_overlay
+Revises: 0086_live_source_probe_state
 Create Date: 2026-09-02
 
 Finalization plan (``implementation-plan.md`` section 6/7) reserves this
 migration id as ``0087_retention_terms``, chained after ``0086`` in the
 plan's schema-sequencing table (``0083`` Spanish, ``0084`` podcast,
 ``0085`` subscriber outcomes, ``0086`` live-source probe -- WP-02/04/05/07
-respectively). None of those four intermediate migrations exist on this
-worktree's base yet -- this branch was cut from ``main`` at
-``0082_egress_graphics_overlay`` (the actual current head, confirmed via
-``alembic heads`` at branch-cut time), because WP-08's schema dependency
-on ``0086`` is a migration-BASE ordering requirement, not a functional
-dependency on WP-07's live-source work (finalization plan section 6,
-WP-08's own "Dependency" line). This file therefore chains
-``down_revision`` to the real base it was built against
-(``0082_egress_graphics_overlay``) and says so plainly rather than citing
-a revision this worktree cannot see. This migration WILL be re-parented
-onto the real ``0086`` head by a separate, coordinator-directed commit at
-integration time -- that follow-up renumbers ``down_revision`` only; no
-other change to this file (columns, backfill, constraints, upgrade/
-downgrade bodies) is expected as part of that re-parent.
+respectively). ``0084`` (podcast) and ``0085`` (subscriber outcomes) never
+landed; ``0083_caption_review_language`` (#131) and
+``0086_live_source_probe_state`` (#140) did, and this migration now
+chains ``down_revision`` to the real ``0086_live_source_probe_state``
+head. WP-08's dependency on ``0086`` was always a migration-BASE
+ordering requirement, not a functional dependency on WP-07's live-source
+work (finalization plan section 6, WP-08's own "Dependency" line).
 
 Adds three columns to ``assets``, additive to the existing
 ``retention_policy``/``retention_until`` pair (unchanged; the enforcement
@@ -73,7 +66,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0087_retention_terms"
-down_revision: str | None = "0082_egress_graphics_overlay"
+down_revision: str | None = "0086_live_source_probe_state"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 
@@ -151,8 +144,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     schema = _schema()
     if _use_schema():
-        op.drop_constraint("assets_retention_term_value_check", "assets", schema=schema, type_="check")
-        op.drop_constraint("assets_retention_term_unit_check", "assets", schema=schema, type_="check")
+        op.drop_constraint(
+            "assets_retention_term_value_check", "assets", schema=schema, type_="check"
+        )
+        op.drop_constraint(
+            "assets_retention_term_unit_check", "assets", schema=schema, type_="check"
+        )
     op.drop_column("assets", "retention_anchor_at", schema=schema)
     op.drop_column("assets", "retention_term_value", schema=schema)
     op.drop_column("assets", "retention_term_unit", schema=schema)

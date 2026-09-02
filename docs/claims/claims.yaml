@@ -135,7 +135,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 41712ac5450bcad3f941551b475132659cee914d
+        blob: 21b3dbf4f5b427534765d18039f56269d2b83fb0
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -213,7 +213,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 41712ac5450bcad3f941551b475132659cee914d
+        blob: 21b3dbf4f5b427534765d18039f56269d2b83fb0
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -268,7 +268,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 41712ac5450bcad3f941551b475132659cee914d
+        blob: 21b3dbf4f5b427534765d18039f56269d2b83fb0
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -331,7 +331,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 41712ac5450bcad3f941551b475132659cee914d
+        blob: 21b3dbf4f5b427534765d18039f56269d2b83fb0
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -420,13 +420,20 @@ entries:
       # across the shared engine graph and made audio_tap.py a direct engine
       # dependency. All current runtime inputs are bound; any further change
       # goes red and requires another current-source external proof.
+      # Re-provisioned (WP-07, observed live-source readiness): engine.py and
+      # graph.py drifted again -- ElementSpec gained secret_props so an SRT
+      # source's resolved credential handle (never the secret) reaches
+      # PlayoutPipeline._make without being serialized into the on-disk graph
+      # file. Blob IDs re-hashed with `git hash-object --path <file> <file>`
+      # per D2; worker.py/control.py/audio_tap.py are byte-identical and keep
+      # their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 50544a91533383e714dface4cdd5bdff0336966b
         - path: civiccast/egress/gst/engine.py
-          blob: 6e2ea28c811c08c9daa9bf39b14f4f86502100b7
+          blob: 30b847776130be31700ab1d5a9144370fd1f0811
         - path: civiccast/egress/gst/graph.py
-          blob: 398eb6b568e14c2c8d0d16292337ba5a5b506338
+          blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
@@ -442,7 +449,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 41712ac5450bcad3f941551b475132659cee914d
+        blob: 21b3dbf4f5b427534765d18039f56269d2b83fb0
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -464,7 +471,7 @@ entries:
       # exact-config artifact that was never committed for this spike.
       fixtures:
         - path: civiccast/egress/gst/graph.py
-          blob: 398eb6b568e14c2c8d0d16292337ba5a5b506338
+          blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
     controls:
       - id: native-decision-gate-authority-record
         command: >-
@@ -549,13 +556,20 @@ entries:
       # across the shared engine graph and made audio_tap.py a direct engine
       # dependency. All current runtime inputs are bound; any further change
       # goes red and requires another current-source session-0 proof.
+      # Re-provisioned (WP-07, observed live-source readiness): engine.py and
+      # graph.py drifted again -- ElementSpec gained secret_props so an SRT
+      # source's resolved credential handle (never the secret) reaches
+      # PlayoutPipeline._make without being serialized into the on-disk graph
+      # file. Blob IDs re-hashed with `git hash-object --path <file> <file>`
+      # per D2; worker.py/control.py/audio_tap.py are byte-identical and keep
+      # their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 50544a91533383e714dface4cdd5bdff0336966b
         - path: civiccast/egress/gst/engine.py
-          blob: 6e2ea28c811c08c9daa9bf39b14f4f86502100b7
+          blob: 30b847776130be31700ab1d5a9144370fd1f0811
         - path: civiccast/egress/gst/graph.py
-          blob: 398eb6b568e14c2c8d0d16292337ba5a5b506338
+          blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
@@ -571,7 +585,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 41712ac5450bcad3f941551b475132659cee914d
+        blob: 21b3dbf4f5b427534765d18039f56269d2b83fb0
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1

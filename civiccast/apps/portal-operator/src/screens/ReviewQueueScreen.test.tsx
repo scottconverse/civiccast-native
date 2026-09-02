@@ -110,6 +110,51 @@ describe('ReviewCard low-confidence policy', () => {
     )
   })
 
+  it('shows a Spanish language badge for an es review row', () => {
+    const { getByLabelText } = render(
+      <ReviewCard
+        item={item({
+          review_item_id: 'review-1:es',
+          language: 'es',
+          low_confidence: false,
+          audio_evidence_available: false,
+          original_text: 'la mocion se aprueba',
+          cue: {
+            cue_id: 'cue-1:es',
+            start_seconds: 12,
+            end_seconds: 14,
+            text: 'la mocion se aprueba',
+            confidence: 0.9,
+            low_confidence: false,
+          },
+        })}
+        busy={false}
+        onApprove={vi.fn()}
+        onEdit={vi.fn()}
+        onReject={vi.fn()}
+        canReview
+      />,
+    )
+
+    const badge = getByLabelText('Spanish caption review')
+    expect(badge.textContent).toBe('ES')
+  })
+
+  it('defaults the badge to English when a row has no language', () => {
+    const { getByLabelText } = render(
+      <ReviewCard
+        item={item({ low_confidence: false, audio_evidence_available: false })}
+        busy={false}
+        onApprove={vi.fn()}
+        onEdit={vi.fn()}
+        onReject={vi.fn()}
+        canReview
+      />,
+    )
+
+    expect(getByLabelText('English caption review').textContent).toBe('EN')
+  })
+
   it('does not require the acknowledgement for a high-confidence cue', () => {
     const onApprove = vi.fn()
     const highConfidence = item({

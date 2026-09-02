@@ -139,6 +139,33 @@ describe('FeatureModelCard', () => {
     expect(text).toContain('On-device — private')
   })
 
+  it('the translation card says where the selection actually shows up', () => {
+    // This copy went stale once already: it carried a "not connected yet —
+    // no published caption track uses a translated language" warning for
+    // months after recorded-Spanish captions connected it, telling the
+    // operator the opposite of the truth. Pin the claim so a future change
+    // to the pipeline has to come past this test.
+    const { container } = render(
+      <FeatureModelCard
+        registry={registry({ feature: 'translation' })}
+        canWrite={false}
+        onSelect={() => {}}
+      />,
+    )
+    const text = container.textContent ?? ''
+    expect(text).not.toContain('Not connected yet')
+    expect(text).toContain('approved English')
+    expect(text).toContain('Spanish')
+    expect(text).toContain('caption review')
+  })
+
+  it('a non-translation card carries no translation explainer', () => {
+    const { container } = render(
+      <FeatureModelCard registry={registry()} canWrite={false} onSelect={() => {}} />,
+    )
+    expect(container.textContent ?? '').not.toContain('approved English')
+  })
+
   it('renders a select with one option per available tier', () => {
     const { getByLabelText } = render(
       <FeatureModelCard registry={registry()} canWrite onSelect={() => {}} />,

@@ -640,6 +640,13 @@ class EgressSourceSegment(BaseModel):
     duration_seconds: Annotated[float, Field(gt=0)]
     kind: EgressSourceKind = "program"
     source_ref: Annotated[str | None, Field(default=None, max_length=200)] = None
+    #: Opaque credential HANDLE for a live segment whose protocol supports one
+    #: (WP-07: SRT only). Never the secret itself -- this model is serialized
+    #: into ``TakeoverSession.source_plan_json`` (a durable audit row) and into
+    #: the engine's on-disk graph file, so a secret here would be persisted
+    #: plaintext in two places. The worker resolves the handle through the
+    #: station credential store at element-construction time.
+    secret_ref: Annotated[str | None, Field(default=None, max_length=200)] = None
     inpoint_seconds: Annotated[float | None, Field(default=None, ge=0)] = None
     outpoint_seconds: Annotated[float | None, Field(default=None, gt=0)] = None
 

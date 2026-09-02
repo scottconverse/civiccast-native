@@ -16,7 +16,187 @@ came across and what deliberately did not.
 Current owner-held unpublished candidate: `v1.0.0-beta.2`. It has no tag or
 installer asset and is not a public or production release.
 
+### Added
+
+- **WP-11 item 1 — Recording form accessibility.** Every field-validation
+  message on the operator Scheduled Recording form
+  (`apps/portal-operator/src/screens/RecordingScreen.tsx`) now has a stable
+  id, and the offending control (or, for the weekday checkboxes, the
+  `role="group"` wrapper) carries `aria-invalid` and `aria-describedby`
+  pointing at it. A failed submit moves keyboard/screen-reader focus to the
+  first invalid control in field order (slug -> name -> source -> recurrence
+  -> duration -> encoder profile) instead of leaving focus on the "Create
+  schedule" button or the form heading. Covered by new unit assertions in
+  `RecordingScreen.test.tsx` that read the real `aria-invalid` /
+  `aria-describedby` DOM attributes and `document.activeElement` (not just
+  the visible copy), and by two new `e2e/a11y.spec.ts` cases that exercise
+  the same flow with axe-core against a real browser render. That axe scan
+  also caught a pre-existing `color-contrast` defect (serious) on `main`:
+  every plain-surface validation/notice span in this form used
+  `var(--cc-warn)` text on the section's `var(--cc-surface)` background
+  (~3.8:1 in light theme, under the 4.5:1 AA floor for normal text) — never
+  axe-scanned before this PR added the first Recording-screen a11y
+  coverage. Switched to `var(--cc-err)` (~6.2:1) for every such span in the
+  file, not just the four the CI run happened to render simultaneously.
+
+- **WP-11 item 2 — Lower-third help copy.** Channel Ops' lower-third-banner
+  control (`GraphicsOverlayPanel` in
+  `apps/portal-operator/src/screens/ChannelOpsScreen.tsx`) no longer calls
+  itself a "station bug graphics overlay" — that's a different broadcast
+  graphic (the corner logo) from the lower-third text banner this control
+  actually edits. The copy now says plainly that the change lands on the
+  selected channel's lower-third banner on the next pipeline build or a
+  scheduled swap, and does not hot-change an already-live pipeline. Pinned
+  by a new focused test in `ChannelOpsScreen.test.tsx`.
+
+- **WP-11 item 3 — CivicSuite/CivicClerk bridge truth card.** `AgendasScreen`
+  now shows a disabled "CivicSuite event bridge — coming in a future
+  release" card beside the existing agenda-import configuration
+  (`ExternalImportSection`), with no executable configuration fields. The
+  card states the real distinction: CivicCast's manual/public CivicClerk
+  agenda importer (also Legistar, PrimeGov, and a generic portal crawler)
+  already works today and is unchanged; the CivicSuite event bridge is a
+  separate, not-yet-built authenticated integration that would receive a
+  jurisdiction's meeting lifecycle events automatically and send published
+  recording links back to CivicClerk. A new regression suite in
+  `AgendasScreen.test.tsx` asserts the working importer and the future
+  bridge are never conflated.
+
+- **WP-11 item 4 — Podcast "coming soon" card (owner decision 2026-09-02).**
+  The operator Publish dashboard's podcast surface row
+  (`apps/portal-operator/src/screens/PublishDashboardScreen.tsx`) is now
+  always a neutral "Coming in a future release" card, regardless of the
+  state/health this asset's row happens to carry: no red error framing, no
+  "Approve this surface" checkbox, no retry button, and it is excluded from
+  the pre-checked/submittable surface set an "Approve and Publish selected"
+  click sends. The message text is aligned with the preflight API's
+  `health="unknown"` copy ("Podcast is not available yet; it is coming in a
+  future release."). Backend behavior is unchanged (WP-03/#129 already
+  reports podcast preflight as not-available) — this closes the gap where
+  the dashboard's own asset-listing surface still defaulted podcast to a
+  selectable `state="pending"` row that could be checked and submitted.
+  Four new tests in `PublishDashboardScreen.test.tsx` cover the neutral
+  card, the missing checkbox, the never-red-even-if-backend-reports-failed
+  case, and that approval excludes podcast from `approved_surface_ids`.
+
+- **WP-11 item 5 — Publish preflight in the UI (gap found in review of
+  #129).** The operator Publish screen never called `GET
+  .../assets/{id}/preflight`, so an operator could select a surface with
+  missing/invalid real-provider configuration and only find out from the
+  approval 409 after clicking. `PublishDashboardScreen.tsx` now shows a
+  per-surface readiness panel (`getPublishPreflight`, new hand-curated
+  `PublishPreflightResponse`/`PublishPreflightCheck` types in
+  `types/publish.ts` mirroring PR #129's backend models) for every asset,
+  before the approve action: loading state, ready/not-ready per surface
+  with the API's own safe next-step text, the podcast future-release
+  surface (never rendered "not ready"), and a load error with a retry
+  action. "Approve and Publish selected" now also stays disabled while any
+  SELECTED real (non-future) surface's readiness check reports
+  `health="error"`; a still-loading or failed readiness fetch adds no new
+  block of its own (approval's existing 409 refusal remains the real
+  backstop). Six new tests in `PublishDashboardScreen.test.tsx` cover
+  ready/not-ready/future/load-error-with-retry and the approve-disabled
+  gate; `e2e/publish-dashboard.spec.ts` gained a default preflight route
+  mock plus a dedicated not-ready-blocks-approve case (Playwright was not
+  run in this session — say so rather than claiming a run that didn't
+  happen).
+
 ### Changed
+
+- **A configured live source is no longer treated as ready just because it
+  exists.** Readiness is now an observation with an age (audit finding
+  ENG-003, ADR 0025). `civiccast/live/relay.py::_source_path` used to stamp
+  `health_state='ready'` on every configured `live_sources` row, and that
+  health value is the only gate
+  `civiccast/egress/live_takeover.py::build_live_takeover_source_plan` applies
+  before a manual takeover writes a takeover audit row and queues a
+  route-change command -- so a camera that had been unplugged for a week looked
+  exactly like a live encoder. Migration `0086_live_source_probe_state` adds
+  `probe_state` / `probe_observed_at` / `probe_detail` / `probe_error_code` /
+  `probe_last_success_at` / `row_version` to `live_sources`; existing rows
+  backfill to `never_probed`, not to ready. Four operator-facing states
+  (`never_probed`, `ready`, `stale`, `failed`) are derived against a readiness
+  TTL -- 30s by default, `CIVICCAST_LIVE_SOURCE_READINESS_TTL_SECONDS`, clamped
+  to the accepted 5-300s range. `stale` is deliberately never persisted: it is
+  a function of the clock, and a stored "stale" would outlive the successful
+  probe that should have cleared it.
+- **A configured live source is visible to production takeover.**
+  `civiccast/app.py::_resolve_takeover_service` built its ingest-plan provider
+  from relay configuration only, while `/api/staff/live/ingest-plan` had
+  already been fixed to include the channel's `LiveSourceStore` rows -- so a
+  source could appear in the API plan and be invisible to the takeover service
+  that actually changes air, and a station with no relay row (the default) had
+  nothing takeover could select. `civiccast/cli.py::_build_takeover_service`
+  carried the identical omission. Both now read the same channel-scoped rows.
+- **A manual takeover re-checks the source before anything durable happens.**
+  `TakeoverService.take` calls an injected readiness verifier after the source
+  plan is built and *before* the audit row is written or the command is
+  queued: a within-TTL success is reused, anything else gets one bounded fresh
+  probe, and a source edited between the operator's ingest plan and the Take
+  fails closed. Stale, failed, and never-probed sources create no takeover
+  audit row, queue no command, and cannot change air.
+- **The `credentials_handle` column is no longer a dead surface for reading.**
+  `civiccast/live/secrets.py` resolves it through the station's OS credential
+  store at execution time -- per probe, so rotating a passphrase takes effect on
+  the next check without a restart -- and, for playout, carries the *handle*
+  (never the secret) through the durable takeover audit row and the engine's
+  on-disk graph file in a new `ElementSpec.secret_props`, resolved by the
+  worker at element-construction time. Only SRT can hold one: its passphrase is
+  a first-class option on both runtimes (`ffprobe -passphrase`, `srtsrc
+  passphrase=`), so it never enters a URL, a row, a log line, or proof output.
+  Authenticated RTSP and RTMP shapes are rejected with explicit operator copy
+  and a disabled UI control, because neither FFmpeg protocol accepts a
+  password anywhere except inside the address. Missing or unreadable secrets
+  fail the probe closed; every probe detail is secret-redacted. **Readable
+  handle contract only; no write path yet:** `save_live_source_secret` has no
+  caller anywhere in the product (no route, CLI, or UI writes an SRT
+  passphrase into the OS credential store), so a live source's stored secret
+  can only be set today by a caller reaching into `civiccast.live.secrets`
+  directly. There is also an open per-user-vault-vs-LocalSystem gap: `keyring`
+  on Windows is the signed-in user's own per-user vault, while the CivicCast
+  supervisor service is registered and runs as `LocalSystem`
+  (`civiccast/apps/installer/src-tauri/src/native_service_registration.rs`),
+  so a secret saved from an interactive operator session would not
+  necessarily be visible to the service process that actually needs it at
+  probe/playout time. See ADR 0025's "Known gaps" section for the two
+  resolution options under consideration (write from the service process, or
+  a machine-scoped credential store).
+- **Subscriber notifications now honestly report "coming in a future
+  release" instead of a fabricated green "succeeded" (owner decision
+  2026-09-02).** Real subscriber notification sends (mail/webhook fan-out on
+  publish) are deferred to a future release — the implementation is parked
+  on `feat/publish-real-subscriber-delivery`, not merged. Until now,
+  `civiccast/publish/service.py`'s `approve_publish` built a
+  `NotificationPayload` for the "subscriber-notifications" surface,
+  never dispatched it, and still marked the surface `state="succeeded"` —
+  an operator approving publish saw a green "sent" state for a notification
+  that was never delivered. It could also block an otherwise-ready publish
+  with a 409 if a real mail/webhook provider was misconfigured, even though
+  nothing was ever going to send. The surface now always reports a new
+  `state="coming_soon"` (`health="unknown"`) with the plain-language message
+  "Subscriber notifications are coming in a future release. No emails or
+  webhooks are sent yet.", is excluded from approval's provider-readiness
+  precheck so it can never block publish, and sends nothing. The operator
+  Publish dashboard (`apps/portal-operator/src/screens/PublishDashboardScreen.tsx`)
+  shows it as the same neutral "Coming in a future release" card already
+  used for the podcast surface (WP-11 item 4) — no checkbox, no red error,
+  never selectable or approvable. `civiccast.publish.readiness`'s real
+  per-provider subscriber-channel check is unchanged and still directly unit
+  tested (`tests/publish/test_provider_readiness.py`); service.py simply no
+  longer routes through it for this surface while the send is parked.
+  New/updated coverage: `tests/publish/test_provider_readiness.py`,
+  `tests/publish/test_router.py`, `tests/publish/test_soak.py`,
+  `civiccast/apps/portal-operator/src/screens/PublishDashboardScreen.test.tsx`.
+
+- **The public subscription RSS feed no longer invents a fake recording.**
+  `civiccast/subscribe/router.py`'s `GET /api/public/subscribe/rss/{target_type}/{target_id}.xml`
+  used to serve a single hardcoded `<item>` — title "Example CivicCast
+  recording", link `https://portal.example/watch/{target_id}` — on every
+  request, indistinguishable from a real published recording to any reader
+  or aggregator. There is no published-recording resolver wired to this
+  route yet, so it now returns an honest, valid, empty RSS 2.0 feed (zero
+  `<item>` elements) instead of a fabricated one. New coverage:
+  `tests/subscribe/test_subscribe_router.py`.
 
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
   central autouse fixture (`tests/conftest.py`, helpers in
@@ -32,6 +212,45 @@ installer asset and is not a public or production release.
   are corrected.
 
 ### Fixed
+
+- **`test_guard_fails_a_test_that_writes_real_state` no longer collides with
+  mutmut in CI.** `tests/test_hermetic_state_guard.py` spawns a nested pytest
+  subprocess via `pytester` to prove the hermetic-state teardown guard fails
+  closed; that nested invocation already disabled `cacheprovider` and
+  `randomly` but not `mutmut`, so in the `mutation-report` CI job (and the
+  `deterministic-detectors` check that reads it, where the pinned
+  `mutmut==3.6.0` package is installed alongside pytest) the nested run could
+  pick up mutmut's pytest integration and abort at fixture setup with
+  `FileNotFoundError: Could not figure out where the code to mutate is`,
+  reported as an unexpected error alongside the guard's own expected error --
+  seen identically on three unrelated branches/PRs (run 33628558134, PR #130,
+  PR #131). Added `-p no:mutmut` next to the existing `-p no:cacheprovider -p
+  no:randomly` flags on the nested `runpytest_subprocess` call. Swept the
+  rest of `tests/` for other `pytester`/nested-pytest invocations that could
+  hit the same collision; this is the only one.
+
+- **`test_ac1_verifier_green_on_registered_claims_at_head` no longer
+  depends on the job's own CI re-run attempt number.**
+  `tests/policy/test_claims_evidence.py`'s AC1 fixture writes synthetic
+  producer meta hardcoding `"run_attempt": "1"`, but the verifier under
+  test (`scripts/policy/check_claims_evidence.py`) reads the real
+  `GITHUB_RUN_ATTEMPT` from the inherited CI environment whenever
+  `--run-attempt` isn't passed on the CLI (it wasn't) — so on any CI
+  re-run attempt (`GITHUB_RUN_ATTEMPT=2`) this positive test failed its
+  own CC-WS3-004 exact-artifact-routing check with `VIOLATION: producer
+  'test': meta run_attempt '1' != this workflow run's run_attempt '2'
+  (prior-attempt artifact — CC-WS3-004)` — seen on `randomized-suite` job
+  100290734871, run 33641309663 attempt 2, seed 1070036697. The test now
+  pins `GITHUB_RUN_ATTEMPT` (and, belt-and-suspenders, `GITHUB_RUN_ID`) via
+  `monkeypatch.setenv` to match the meta it writes, so the outcome no
+  longer depends on the job's real attempt number. The CC-WS3-004 check
+  itself is unweakened: a new negative twin,
+  `test_ac1_verifier_red_when_meta_run_attempt_mismatches_env`, reuses the
+  same real-registry CLI entry point with a deliberately mismatched
+  `GITHUB_RUN_ATTEMPT` and asserts the verifier still exits 1 naming
+  `run_attempt`/`CC-WS3-004`. Verified locally with `GITHUB_RUN_ATTEMPT=2`
+  set in the shell — both AC1 tests, and the full 121-test
+  `test_claims_evidence.py` suite, pass.
 
 - **Publish preflight and approval now read the same real provider registry
   (WP-03; audit findings QA-001 and the readiness portion of ENG-001).**
@@ -123,10 +342,32 @@ installer asset and is not a public or production release.
   actual current head at branch-cut time) rather than the finalization
   plan's nominal `0086` predecessor, because `0083`-`0086` (Spanish/
   podcast/subscriber/live-source, WP-02/04/05/07) had not yet landed on
-  `main` -- the migration file says so plainly and is expected to be
-  re-parented onto the real `0086` at integration time, per the
-  coordinator's instruction.
-
+  `main`. `0084` (podcast) and `0085` (subscriber outcomes) never
+  landed at all; `0083_caption_review_language` (#131) and
+  `0086_live_source_probe_state` (#140) did. This integration commit
+  re-parents `0087_retention_terms`'s `down_revision` onto the real
+  `0086_live_source_probe_state` so `alembic heads` again reports a
+  single head; no other change (columns, backfill, constraints,
+  upgrade/downgrade bodies) was made as part of the re-parent.
+- **Operators can check a meeting source and edit one.**
+  `POST /api/staff/live/sources/{id}/probe` runs the existing bounded ffprobe
+  path and records what it saw; a failed check is a 200 with the reason and the
+  exact next action, not an error that leaves the screen showing the previous
+  state. `PATCH /api/staff/live/sources/{id}` is the update path
+  `LiveSourceStore` had deferred "until a later rung defines the edit UX" --
+  role-gated to `setup_admin` like create, with optimistic concurrency
+  (`expected_row_version`, 409 naming both versions) so a second Live Room
+  window cannot silently discard the first operator's edit. Any change to what
+  would actually be probed clears readiness in the same transaction. The Live
+  Room shows each source's last observation, its age, the safe failure reason,
+  and the one thing to do next.
+- **One rule for which endpoint shape each live-source type accepts**
+  (`civiccast/live/source_endpoints.py`), applied to create and update alike
+  and keyed on the stored `source_type`. The staff API previously accepted
+  `HttpUrl | str` without asking whether the address matched the type, so an
+  `srt` row could hold an `http://` URL that no probe and no playout element
+  could open. Embedded `user:password@` and an SRT passphrase in the address
+  are both refused outright.
 - **A download-only upgrade can reuse the AI model packs an activated station
   already holds.** The station bundle publisher now stamps every reviewed
   MODEL pack (`captions-floor`, `captions-large-v3`, and the three Ollama
@@ -201,6 +442,82 @@ installer asset and is not a public or production release.
   to backend-specific FFmpeg arguments and fails closed when it is missing or
   the source kind does not match. The LPM hardware mock lab proves the exact
   DeckLink SDI and DirectShow HDMI argument boundary used by production.
+- **Recorded-Spanish captions — a published recording now carries an
+  operator-reviewed Spanish caption track alongside English, and cannot
+  publish without one** (owner requirement; Longmont is ~30% Latino and
+  Spanish captions on published recordings are a hard requirement; live
+  real-time Spanish is out of scope). The offline caption job
+  (`civiccast/captions/vod_job.py`) becomes two-phase: once an operator
+  approves the English caption cues, the approved English is translated to
+  Spanish through the same operator-selected translation tier the live tap
+  uses (local TranslateGemma by default, via `build_translator`), and the
+  Spanish cues are queued for their **own** operator review pass (spec §4.2,
+  operator review before publish — the Spanish text is AI output too). Only
+  when both review passes are complete are both tracks attached in a single
+  manifest rewrite: English default, a new `es`/"Spanish" secondary. The
+  public player already renders one caption button per manifest subtitle
+  track, so the Spanish option appears with no front-end change; the operator
+  console's review queue gains an EN/ES language badge and a language filter.
+  A new `language` column on `caption_review_items` (migration
+  `0083_caption_review_language`, default/backfill `en`) keeps the two review
+  passes cleanly separated on a shared asset. Spanish review rows are created
+  `low_confidence=False` — they are a deterministic transform of
+  human-approved English with no ASR audio to retain, so the low-confidence
+  audio-evidence approval gate cannot deadlock them.
+
+  Spanish is **required, not a setting**: there is no supported configuration
+  in which a caption-eligible recording completes with only English. The
+  `CIVICCAST_OFFLINE_CAPTION_SPANISH` switch is retired — a false value now
+  stops startup with an error naming the variable rather than quietly
+  publishing English-only recordings. The two ways the Spanish leg can come up
+  empty are both blocked and operator-actionable instead of green: a station
+  with no translation runtime records an attempt with a remediation on the job
+  row (and ultimately `failed`, reason intact) rather than shipping English;
+  an operator who rejects every Spanish cue leaves the job in
+  `awaiting_review` with a remediation, retry budget untouched, until they
+  edit or approve a Spanish cue — review decisions are not terminal, so that
+  move is really available. A recording whose *English* pass approved nothing
+  still completes uncaptioned, because there is no English track to hold it
+  for either.
+
+- **A captioned recording served through a CDN now actually gets its caption
+  tracks.** Caption attach rewrites the multivariant manifest and writes the
+  WebVTT tracks on local disk; for a package that was already pushed to a CDN
+  before caption review finished, the copy residents watch kept the
+  pre-caption manifest, and the job called itself complete anyway. The offline
+  caption worker now re-publishes the rewritten manifest, both segmented
+  caption tracks, and both flat sidecars to the same key prefix the package
+  was published under, through the same `upload_package_files` helper the
+  finalization worker publishes with (extracted from
+  `LiveFinalizationWorker._upload_package` and shared, so the manifest still
+  uploads **last** and a resident can never fetch a manifest naming a track
+  the CDN does not have). Only the caption artifacts are re-uploaded — the
+  video renditions are byte-identical and can be gigabytes. A republish
+  failure fails the job with the provider's message on the row rather than
+  completing it. Nothing is uploaded when no CDN is configured, or when the
+  recorded manifest URL for that package is not the configured CDN's URL for
+  it — which is how a locally served package, or one from a CDN the station
+  has since replaced, avoids having caption files pushed to a prefix whose
+  video segments were never uploaded. Proven against a mock CDN adapter, not a
+  live CDN account.
+
+- **A live-finalized recording can now be captioned.** CivicCast resolves an
+  asset's packaged video through two different conventions — a live-finalized
+  recording packages to `<recording>/<live_session_id>-hls/` (recorded on its
+  finalization job), an uploaded one to `.civiccast-packages/<asset_id>` under
+  the media storage root — and the caption path only ever knew the second. A
+  live recording would therefore transcribe and fill the review queue, then
+  fail every attempt to attach the reviewed track to a package directory that
+  was never written. The caption path now checks the finalization job's
+  manifest first and falls back to the upload convention, matching the
+  media-serving path's *live-finalized* precedence. It does not match that
+  path's upload branch: it resolves the standard
+  `.civiccast-packages/<asset_id>` location only, so a legacy pre-rc14 package
+  at `<file_path>/hls` is still not found and publishing such an asset stays
+  blocked (known gap; affects only stations upgraded across rc14 that still
+  hold pre-rc14 packages). This also means a station that broadcasts live but
+  has no media storage root configured is no longer refused permission to
+  publish: it has somewhere to write the caption track after all.
 
 ### Fixed
 
@@ -230,6 +547,109 @@ installer asset and is not a public or production release.
   and overlay CG paths are unchanged. Live video in a zone and board background
   audio are now labeled "coming in a future release"; the existing audio choice
   is disabled because the current renderer does not play it.
+- **Six hostile-review findings against WP-07's observed-readiness work
+  (ADR 0025), fixed at their root.** **(1)** Closed a fail-open race: the
+  takeover gate read a live source, ran an up-to-8s probe, then persisted the
+  verdict by id alone -- a PATCH that repointed the endpoint inside that
+  window got silently overwritten with "ready" derived from the OLD address.
+  `LiveSourceStore.record_probe_observation` now accepts the `row_version`
+  and endpoint that were actually probed and raises a new
+  `LiveSourceProbeConflictError` (refusing the write) when either moved;
+  `LiveSourceReadinessService.verify_for_takeover` and `.probe` both carry
+  their pre-probe read through and fail closed on conflict (409 from the
+  probe API), never silently overwriting a fresher edit's `never_probed`.
+  **(2)** `source_endpoints.normalize_endpoint` only inspected the query
+  string for a passphrase and re-emitted the URL fragment unchanged, so
+  `srt://host:9000#passphrase=hunter2` was accepted and persisted in
+  plaintext; any non-empty fragment is now rejected outright for every
+  URL-type source. **(3)** `readiness_state` clamped a negative observation
+  age to zero, so a backwards clock correction left a source reading "ready"
+  for the whole span of the jump; an observation timestamped more than 5s
+  ahead of "now" now reads `stale`. **(4)** In the Live Room: the Probe
+  button now checks the same `meeting_operator`/`setup_admin` role the
+  backend requires (with an explanatory line when hidden); the source list
+  polls at most every 10s so a stale pill goes stale on screen instead of
+  outliving the 30s TTL silently; switching a source's type away from SRT
+  now clears the credential field's state (not just its display), so an old
+  handle cannot be resubmitted after switching back; and a 409 on save now
+  reloads the row and tells the operator, instead of resending the same
+  stale `row_version` forever. **(5)** Fixed a stale ADR filename citation in
+  `source_endpoints.py`. **(6)** Documented, rather than built: ADR 0025
+  gained a "Known gaps" section, and the CHANGELOG's "credentials_handle is
+  no longer a dead surface" entry now says plainly that this is a readable
+  handle contract with no write path yet (`save_live_source_secret` has zero
+  callers anywhere in the product) and that a per-user `keyring` vault vs. the
+  `LocalSystem`-registered supervisor service is an open gap, not a solved
+  one.
+- **Removed the Facility Router's hard-coded `government` channel.** Every
+  channel-dependent action (scheduled-take preview, overlay preview, and the
+  later L-bar command) now requires the operator to pick a currently
+  configured channel from a new "Target channel" picker
+  (`FacilityRouterScreen.tsx`), loaded through the same channel-profile API
+  and cache key Channel Ops and Live Room already use
+  (`listChannelProfiles`/`['channel-profiles']`) rather than a new endpoint.
+  A single configured channel auto-selects but still shows in the picker; two
+  or more require an explicit pick; the picker clears the selection and any
+  stale overlay/schedule preview if the chosen channel disappears from the
+  configured list; and both actions are disabled with a plain reason
+  ("Choose a channel before scheduling a take.", "Choose a channel before
+  previewing an overlay.", the no-channels-configured message, the load-error
+  message, or "Scheduling a take and previewing overlays require the meeting
+  operator role.") until a valid channel and role are in place. Manual
+  crosspoint preview (endpoint/source/destination) is unchanged and does not
+  take a channel_id. `FacilityRouterScreen.test.tsx` covers no-channel,
+  one-channel (auto-selected), multiple-channel (explicit pick required),
+  stale-selection, load-error, read-only-role, and mobile-viewport states;
+  `e2e/facility-router.spec.ts` is updated for the new channel picker and
+  role.
+- **CI: hardened the "Install media test prerequisites" step against two
+  distinct hosted-ubuntu apt failure modes instead of only the dpkg-lock
+  one it already handled.** `ci-test.yml`'s `Unit tests` job and
+  `deterministic-detectors.yml`'s `randomized-suite` job both timed out at
+  exit 124 several times on 2026-09-02 across unrelated PRs — PR #131 "Unit
+  tests" job 100278667553, PR #135 "randomized-suite" job 100284786583, and
+  PR #132 "randomized-suite" job 100287702253. The step's own comment
+  already documented `unattended-upgrades` holding the dpkg lock for 3h49m
+  on 2026-08-19, but these three failures never touched the lock at all:
+  each stalled mid-download of a single large package
+  (`libcodec2-1.2`/`libflite1`/`libdav1d7`) on the Azure-hosted mirror,
+  hitting the old 300s per-call timeout. A longer timeout alone would have
+  papered over the symptom without addressing the lock risk that is still
+  real. Both jobs' inline apt shell — previously duplicated between the two
+  workflow files — is replaced with a single call to the new
+  `scripts/ci/install_media_test_prerequisites.sh`, which: stops and kills
+  `unattended-upgrades`/`apt-daily*.timer`/`apt-daily*.service` before
+  touching apt; waits up to 3 minutes for the dpkg/apt locks in a bounded
+  loop, printing the holder via `fuser -v` each iteration; runs every
+  `apt-get` call with `DPkg::Lock::Timeout=120`, `Acquire::Retries=3`, and
+  `DEBIAN_FRONTEND=noninteractive`; raises the per-call timeout from 300s to
+  480s (and the step's own `timeout-minutes` from 10 to 30) so a slow mirror
+  has room to finish instead of being killed mid-transfer; and, on any
+  failure, dumps `ps -ef | grep -E 'apt|dpkg|unattended'` so the next
+  occurrence is diagnosable from the log alone. Validated with
+  `python -c "import yaml,sys; ..."` over `.github/workflows/*.yml` and
+  `actionlint` (both clean) plus `bash -n` and `shellcheck` on the new
+  script.
+
+### Security
+
+- **Triaged and allowlisted a new nltk pathsec-bypass advisory
+  (`PYSEC-2026-3740` / CVE-2026-81726 / GHSA-8mgp-746c-j5xp).** `pip-audit`
+  started flagging `nltk 3.10.3` (a transitive dependency of `crawl4ai`,
+  pulled in only by the optional `agenda-js-import` extra behind
+  `civiccast/agenda_import/js_portal.py`) for a sandbox bypass in
+  `TransitionParser.train()`/`.parse()`, `AveragedPerceptron.save()`/`.load()`,
+  `PerceptronTagger.save_to_json()`, and `save_maxent_params()`, which use raw
+  `open()` on caller-controlled paths instead of nltk's guarded `pathsec`
+  helpers. No fix version exists upstream as of this review (`pip-audit`
+  reports empty `fix_versions`). `civiccast/` never imports `nltk` directly,
+  and `js_portal.py`'s `crawler.arun()` call passes no `chunking_strategy`/
+  `extraction_strategy`, so crawl4ai's only nltk touchpoint
+  (`chunking_strategy.py`'s `sent_tokenize` punkt tokenizer) is never
+  exercised — none of the five vulnerable model-persistence APIs are
+  reachable from any code path in this repo. Documented in
+  `security/pip-audit-allowlist.json` with a review-by date of 2026-10-01;
+  re-check when nltk ships a fix.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

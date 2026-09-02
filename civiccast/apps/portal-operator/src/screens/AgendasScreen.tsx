@@ -774,6 +774,40 @@ function ItemsTable({
 
 // --- External agenda import (civiccast/agenda_import/, Agenda Bridge) ------
 //
+// WP-11 owner-directed card (carried forward from the reconciled long list):
+// a disabled "coming in a future release" explainer for the CivicSuite event
+// bridge, placed beside the working ExternalImportSection below so the two
+// are never conflated. CivicCast already ships a manual/public CivicClerk
+// agenda importer today (ExternalImportSection's `civicclerk` source, using
+// the tenant's public CivicClerk site — no CivicClerk account or API key
+// required) and that stays exactly as-is. The CivicSuite event bridge is a
+// separate, not-yet-built integration: an authenticated connection to a
+// jurisdiction's CivicSuite account that would receive meeting lifecycle
+// events automatically (no operator import click) and send published
+// recording links back to CivicClerk. This card exposes no executable
+// configuration -- there is nothing to configure yet.
+function CivicSuiteBridgeCard() {
+  return (
+    <div
+      className="space-y-1 rounded-md border-t pt-3 text-xs"
+      style={{ borderColor: 'var(--cc-line)' }}
+      aria-label="CivicSuite event bridge (future release)"
+    >
+      <div className="font-semibold">CivicSuite event bridge — coming in a future release</div>
+      <p className="m-0" style={{ color: 'var(--cc-ink-3)' }}>
+        The agenda importer above is separate from this and already works: it pulls a
+        meeting&apos;s agenda from a tenant&apos;s public CivicClerk site (or Legistar,
+        PrimeGov, or a generic agenda portal) on request, with no CivicClerk account
+        required. The CivicSuite event bridge is a different, not-yet-built integration:
+        an authenticated connection to a jurisdiction&apos;s CivicSuite account that would
+        receive meeting lifecycle events automatically as they happen, and send published
+        recording links back to CivicClerk once a meeting airs. There is nothing to
+        configure here yet.
+      </p>
+    </div>
+  )
+}
+
 // Distinct from the plain-text/PDF "Import from doc" block above: this talks
 // to civiccast/agenda_import/router.py's discovery + import-external routes
 // (Legistar/PrimeGov/CivicClerk/js_portal adapters), a separate module that
@@ -1613,6 +1647,8 @@ function SelectedAgendaSection({
             invalidateAgendas()
           }}
         />
+
+        <CivicSuiteBridgeCard />
       </section>
     </>
   )

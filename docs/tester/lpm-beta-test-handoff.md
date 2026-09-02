@@ -1,65 +1,49 @@
 # CivicCast Beta Test Handoff For Longmont Public Media
 
-> **Historical: retired WSL2 tester handoff, not native CivicCast guidance.**
-> `civiccast-native` ships the native Windows service and no WSL2 runtime. The
-> rc-numbered release references below are preserved only as historical field
-> evidence and must not be used as a current installer handoff.
+## Current Release
 
-> **CURRENT (native line): no downloadable release is published yet.** The
-> owner-held candidate is `v1.0.0-beta.2` (unpublished; no installer asset).
-> The previously issued `v1.0.0-beta.1` tag was **USB-delivered only** and
-> carries no GitHub Release assets either. When a beta candidate is first
-> published with downloadable assets for Sergio (LPM) to check, it appears as
-> a **prerelease** at
-> <https://github.com/scottconverse/civiccast-native/releases> under the
-> `v1.0.0-beta.N` tag family -- watch that page, not `scottconverse/civiccast`
-> (the retired, separate WSL2-line repository) and not any `v1.0.0-rcNN` tag,
-> which belongs to that other repository. See
-> [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
-> authored release-state record. Everything below this notice that mentions
-> `v1.0.0-rc18` or `scottconverse/civiccast` describes the retired WSL2 line
-> and is historical evidence only, not the current native handoff.
+`v1.0.0-beta.1` is the current release. It was delivered by USB, not by a
+GitHub Release download -- the GitHub Release page carries no installer
+asset for it (the ~21 GB AI-model bundle exceeds GitHub's 2 GB/file asset
+cap, and no publish tooling existed yet to split runtime packs from the
+model bundle when it shipped). A USB-delivered `v1.0.0-beta.1` station is a
+real, current, testable native install -- if that is what Sergio/LPM already
+has, there is nothing further to download.
 
-> **HISTORICAL (retired WSL2 line): `v1.0.0-rc18` was the published controlled
-> beta on that other line.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
+`v1.0.0-beta.2` is the current owner-held unpublished candidate (unpublished;
+no installer asset). It is intended to be the first **downloadable** beta
+candidate: `setup.exe`, per-pack runtime `.ccpack` assets, and a
+`SHA256SUMS.txt` checksum file, published as a **prerelease** at
+<https://github.com/scottconverse/civiccast-native/releases> -- watch that
+page for Sergio's next check, not `scottconverse/civiccast` (the retired,
+separate WSL2-line repository) and not any `v1.0.0-rcNN` tag, which belongs
+to that other repository. See
+[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
+authored release-state record -- it is the single source of truth for which
+tag is current.
 
-> **Use `v1.0.0-rc18`; do not install `v1.0.0-rc13`.** The earlier LPM clean install
-> failed, and a later genuine clean-Windows run reproduced bootstrap and user-
-> feedback defects. The current line carries rc15's clean-Windows repairs
-> (which passed exact-public validation), rc16's published UI/UX repairs,
-> the six audited rc17 beta-blocker fixes, and rc18's sixteen stage-gate
-> remediations.
+A first-time install on a station with no prior CivicCast install needs the
+USB model bundle even once `v1.0.0-beta.2` publishes -- the GitHub download
+alone is the setup executable and runtime packs, not the ~21 GB model
+bundle. An upgrade of an already-installed station (USB-delivered
+`v1.0.0-beta.1`, or a later download) can be download-only and keeps the
+station's existing recordings, database, and AI models.
 
-> The exact rc18 installer passed a clean-host install, launch, reinstall,
-> uninstall and rc17-to-rc18 upgrade on a pristine Windows 11 guest, plus an
-> interactive installer walkthrough. The full product path on a clean host was
-> last proven against rc17's exact bytes on 2026-07-20; the write-up is in the
-> [rc17 verification record](../releases/v1.0.0-rc17-verification.md).
-
-Last updated: 2026-07-23; published rc18 controlled beta handoff
+Last updated: 2026-09-02.
 
 Audience: Longmont Public Media beta testers, station operators, technical
 staff, and anyone observing the first real station-side CivicCast runs.
 
 ## Plain-English Summary
 
-CivicCast `v1.0.0-rc18` is the current controlled beta for LPM evaluation and the most recently published release; `v1.0.0-rc17` is the rollback target.
-Use only its release-matched installer, sidecar, manifest, and verification
-record. Its rc15 foundation passed post-publication clean-machine validation
-from a WSL-disabled baseline through cold-reboot recovery, and rc18's own exact
-installer passed a clean-host install, launch, reinstall, uninstall and upgrade
-on a pristine guest. The full product path on a clean host was last proven
-against rc17's bytes on 2026-07-20 and has NOT yet been repeated on rc18 --
-that is part of what this run is for. Preserve all logs and report any failure.
+Use only the release-matched installer, sidecar, and checksum file for
+whichever release you were actually handed (USB for `v1.0.0-beta.1`, or the
+exact tagged GitHub download once `v1.0.0-beta.2` or later publishes).
+Preserve all logs and report any failure.
 
 ## What This Beta Is Meant To Exercise
 
-The first approved rc18 run is deliberately narrower than a full station beta.
-It is meant to answer:
+The run is meant to answer:
 
 - Can LPM install CivicCast on a real Windows station machine?
 - Can staff complete first setup without developer help?
@@ -74,27 +58,29 @@ It is meant to answer:
 
 ## Release Build To Use
 
-**Use `v1.0.0-rc18`. Do not download or run rc13.**
+**Use the exact release named in your active handoff -- either the
+USB-delivered `v1.0.0-beta.1` station or the exact tagged GitHub download
+once a `v1.0.0-beta.2`-or-later candidate is published.**
 
-Expected SHA-256 and byte size must match rc18's own sidecar and artifact
-manifest.
+Expected SHA-256 and byte size must match that release's own sidecar and
+`SHA256SUMS.txt`.
 
-LPM release candidate artifact details:
+LPM release candidate artifact details (once a downloadable candidate is
+published; a USB-delivered station has no GitHub artifacts to check):
 
 | Field | Value |
 | --- | --- |
-| Release tag | `v1.0.0-rc18` |
-| Source candidate identity | `v1.0.0-rc18` controlled beta |
-| Candidate asset source | [Public GitHub release](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18) |
-| Windows installer | `civiccast-1.0.0-rc18-windows-setup.exe` |
-| Release manifest | `civiccast-1.0.0-rc18-release-artifacts-manifest.json` |
-| Installer size | Verify against the release's own sidecar and complete manifest |
-| Installer SHA-256 | Verify the exact value in this release's sidecar and complete manifest; never reuse a copied hash from another candidate |
+| Release tag | the exact `v1.0.0-beta.N` tag named in your active handoff |
+| Candidate asset source | [GitHub Releases page](https://github.com/scottconverse/civiccast-native/releases) |
+| Windows installer | `setup.exe` |
+| Checksum file | `SHA256SUMS.txt` |
+| Installer sidecar | `setup.exe.sidecar.json` |
+| Runtime packs (if applicable) | `*.ccpack` |
+| Installer size / SHA-256 | Verify against `SHA256SUMS.txt` and the sidecar; never reuse a copied hash from another candidate |
 | Signature | Valid Authenticode signature from Scott Converse (Azure Trusted Signing; this release chain carries no Sigstore step) |
-| Status | Controlled beta; proof boundary recorded in the [rc18 verification record](../releases/v1.0.0-rc18-verification.md). |
 
 Optional reference files (proof kit, manifest, PDF, DOCX) must come from that
-same rc18 release. Do not reuse old hashes.
+same release. Do not reuse old hashes.
 
 ## Before The Test
 
@@ -108,15 +94,13 @@ Before starting:
 - Keep the Windows session logged in while setup or a test is running.
 - Plug the machine into reliable power.
 - Disable sleep during the acceptance run.
-- Make sure virtualization is enabled in BIOS/UEFI.
-- Make sure outbound HTTPS is allowed to GitHub, Microsoft/WSL services, and
-  Ubuntu package sources.
+- Make sure outbound HTTPS is allowed to GitHub.
 - Leave at least **5 GB free for installation**, plus separate capacity for the
-  short sample media and recordings used in the test. **rc17 and later:** the local AI
-  models (Ollama summary and translation models) add roughly 15-20 GB more —
-  CivicCast ensures the same three-tag target set and downloads only the tags
-  still missing, automatically in the background after the base install
-  finishes.
+  short sample media and recordings used in the test. The local AI models
+  (Ollama summary and translation models) add roughly 15-20 GB more for a
+  first install using the USB bundle -- CivicCast ensures the same
+  three-tag target set and downloads only the tags still missing,
+  automatically in the background after the base install finishes.
 - Have a place to save the recovery kit that is not a public folder.
 - Decide who is allowed to know the beta admin password.
 - Decide how LPM will send reports privately to Scott.
@@ -126,21 +110,22 @@ content, or resident data into bug reports.
 
 ## Verify The Installer
 
-The approved rc18 release includes a `.sidecar.json` file next to the
-installer. It lists that exact installer's SHA-256 hash.
-Always verify against the sidecar from the exact package you received; do not
-trust a hash copied from anywhere else.
+A downloadable release includes a `setup.exe.sidecar.json` file next to
+`setup.exe`, and a `SHA256SUMS.txt` listing every asset's hash. Always
+verify against the sidecar and checksum file from the exact package you
+received; do not trust a hash copied from anywhere else.
 
-1. Open the handed-off `civiccast-<version>-windows-setup.exe.sidecar.json`
-   that matches the installer and note its `sha256` value.
+1. Open `setup.exe.sidecar.json` and note its `sha256` value.
 2. In PowerShell, in your download folder, run:
 
    ```powershell
-   Get-FileHash .\<installer-filename>.exe -Algorithm SHA256
+   Get-FileHash .\setup.exe -Algorithm SHA256
    ```
 
-3. The two hashes must match exactly. If they do not, do not run the installer.
-   Quarantine the package and ask Scott for a replacement proof bundle.
+3. Compare against both the sidecar's `sha256` value and `setup.exe`'s own
+   line in `SHA256SUMS.txt`. All must match exactly. If they do not, do not
+   run the installer. Quarantine the package and ask Scott for a replacement
+   proof bundle.
 
 Do not assume the candidate is signed. The active handoff must state the actual
 Authenticode status for the exact bytes. If it says `Valid`, confirm the named
@@ -151,14 +136,15 @@ signature checks.
 
 ## Install And First Setup
 
-1. Run the exact `.exe` named in the active LPM handoff.
+1. Run `setup.exe` (or the USB-delivered installer, for a `v1.0.0-beta.1`
+   station) named in the active LPM handoff.
 2. Approve expected Windows prompts.
-3. Let the installer prepare CivicCast and its WSL2 Ubuntu runtime. This step can
-   take several minutes, but the screen must keep showing the current phase,
-   step, elapsed time, and a regularly updating heartbeat. It must explicitly
-   say if a restart is required. Missing or stale feedback is itself a defect;
-   capture it immediately. (Report a permanent freeze or crash if
-   the window never recovers.)
+3. Let the installer prepare CivicCast. This step can take several minutes,
+   but the screen must keep showing the current phase, step, elapsed time,
+   and a regularly updating heartbeat. It must explicitly say if a restart is
+   required. Missing or stale feedback is itself a defect; capture it
+   immediately. (Report a permanent freeze or crash if the window never
+   recovers.)
 4. If Windows requires a reboot, record the exact prompt and reboot reason.
    After reboot, log back into the same Windows account and continue.
 5. When the installer provides the operator console URL, open that URL exactly.
@@ -185,18 +171,9 @@ Record:
 - whether the setup window closed normally;
 - any warning or error text.
 
-Expected version:
-
-```text
-1.0.0-rc18
-```
-
-Known beta diagnostic note: the older R19 release (an earlier internal release
-tag, predating the current rc numbering) could show `schema=unknown`
-in packaged `/health` output. The LPM controlled-test candidate includes the
-packaged schema lookup fix. If LPM still sees `schema=unknown`, report it with a
-support bundle, but do not treat that label alone as a failed station workflow
-when setup, login, saved state, and recording workflows are working.
+Expected version: the exact tag named in your active handoff (`v1.0.0-beta.1`
+for a USB-delivered station, or the exact `v1.0.0-beta.N` tag for a
+downloaded candidate).
 
 ## First-Day Smoke Test
 
@@ -276,8 +253,7 @@ Cover:
 
 Long soaks, SDI/device proof, live source work, and downstream station-output
 testing are deliberately deferred. They require a later candidate with a real
-server-side source probe and separate station/integrator acceptance; rc18 does
-not claim those paths.
+server-side source probe and separate station/integrator acceptance.
 
 ## What To Capture In Every Report
 
@@ -371,28 +347,66 @@ for that.
 - Support bundle instructions: `docs/tester/support-bundle-instructions.md`
 - Bug report template: `docs/tester/bug-report-template.md`
 - User manual: `docs/USER-MANUAL.md`
-- Release verification: `docs/releases/v1.0.0-rc18-verification.md`
+- Release-state record: `docs/releases/release-truth.yaml`
 - Windows release trust: `docs/install/windows-release-trust.md`
 
 ## Current Beta Boundary
 
-rc13 is withdrawn and completed no valid clean-Windows proof. rc18 is the most
-recently published release; rc17 remains available as the rollback target but
-carries the sixteen findings rc18 fixes. Use an rc18
-executable only after verifying its exact
-filename, SHA-256, byte size, and actual signature status against the public
-release. The stock build must show **Source
-preview unavailable** and keep live start disabled without an integrator-
-provided media probe. The bounded acceptance path is recorded media → exact-
-sample private rehearsal → private package → Portal approval → resident
-playback. The recovery drill covers the database only, not media,
+Use only the exact release named in your active handoff, verified against its
+own checksum and sidecar files before running it. The stock build must show
+**Source preview unavailable** and keep live start disabled without an
+integrator-provided media probe. The bounded acceptance path is recorded
+media -> exact-sample private rehearsal -> private package -> Portal approval
+-> resident playback. The recovery drill covers the database only, not media,
 configuration, or credentials.
 
-Treat the beta as controlled evaluation software until the LPM station-device evidence
-is complete.
+Treat the beta as controlled evaluation software until the LPM station-device
+evidence is complete.
 
-Known rc15-era installer issue, fixed in this line: a still-open rc15 installer could briefly show a stale
-restart screen after setup is already healthy. Close and reopen it; saved
-progress is retained. That display-state defect was fixed from the rc17 line
-onward and did not change the published rc15 assets, which remain immutable
-history.
+---
+
+## Historical: retired WSL2-line (rc13-rc18) handoff
+
+Everything below describes the retired public WSL2 line
+(`v1.0.0-rc18` and earlier, repository `scottconverse/civiccast`) that this
+repository does not carry. It is preserved as historical evidence only, not
+as current tester guidance. The verification document it used to cite
+(`docs/releases/v1.0.0-rc17-verification.md`,
+`docs/releases/v1.0.0-rc18-verification.md`) is not present in this
+repository -- it is omitted below rather than linked, because it does not
+exist on `main`.
+
+<details>
+<summary>Expand: retired WSL2-line (rc13-rc18) handoff notes</summary>
+
+`v1.0.0-rc18` was the published controlled beta on that other line; do not
+install the withdrawn `v1.0.0-rc13`. The earlier LPM clean install failed,
+and a later genuine clean-Windows run reproduced bootstrap and user-feedback
+defects. That line carried rc15's clean-Windows repairs (which passed
+exact-public validation), rc16's published UI/UX repairs, the six audited
+rc17 beta-blocker fixes, and rc18's sixteen stage-gate remediations.
+
+The exact rc18 installer passed a clean-host install, launch, reinstall,
+uninstall and rc17-to-rc18 upgrade on a pristine Windows 11 guest, plus an
+interactive installer walkthrough. The full product path on a clean host was
+last proven against rc17's exact bytes on 2026-07-20.
+
+LPM release candidate artifact details on that line:
+
+| Field | Value |
+| --- | --- |
+| Release tag | `v1.0.0-rc18` |
+| Windows installer | `civiccast-1.0.0-rc18-windows-setup.exe` |
+| Release manifest | `civiccast-1.0.0-rc18-release-artifacts-manifest.json` |
+| Signature | Valid Authenticode signature from Scott Converse |
+
+Known beta diagnostic note: the older R19 release (an earlier internal release
+tag, predating the rc numbering) could show `schema=unknown` in packaged
+`/health` output. The rc18 candidate included the packaged schema lookup fix.
+
+Known rc15-era installer issue, fixed from rc17 onward: a still-open rc15
+installer could briefly show a stale restart screen after setup was already
+healthy; closing and reopening it retained saved progress. The published
+rc15 assets remain immutable history.
+
+</details>

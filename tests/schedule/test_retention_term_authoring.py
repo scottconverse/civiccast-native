@@ -115,7 +115,9 @@ class TestAssetMetadataUpdateTermValidation:
 
     def test_negative_or_zero_value_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            AssetMetadataUpdate(expected_version=1, retention_term_unit="days", retention_term_value=0)
+            AssetMetadataUpdate(
+                expected_version=1, retention_term_unit="days", retention_term_value=0
+            )
         with pytest.raises(ValidationError):
             AssetMetadataUpdate(
                 expected_version=1, retention_term_unit="days", retention_term_value=-3
@@ -123,7 +125,9 @@ class TestAssetMetadataUpdateTermValidation:
 
     def test_unknown_unit_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            AssetMetadataUpdate(expected_version=1, retention_term_unit="fortnights", retention_term_value=1)
+            AssetMetadataUpdate(
+                expected_version=1, retention_term_unit="fortnights", retention_term_value=1
+            )
 
     def test_value_past_the_absolute_max_rejected_at_pydantic_layer(self) -> None:
         # Coordinator-directed fix (follow-up commit, MAJOR finding 1):
@@ -274,7 +278,10 @@ class TestStoreAuthorTerm:
             )
         assert len(entries) == 1
         assert entries[0].action == "retention_term_anchor_fallback"
-        assert "no publication" in entries[0].detail.lower() or "conversion time" in entries[0].detail.lower()
+        assert (
+            "no publication" in entries[0].detail.lower()
+            or "conversion time" in entries[0].detail.lower()
+        )
 
     def test_legacy_row_never_converted_has_no_term_fields(self, session_factory) -> None:
         # A legacy `meeting` row that is never touched under the new
@@ -486,9 +493,7 @@ class TestRetentionWorkerIntegration:
             assert row.file_path is None
             assert row.state == "validated"
 
-    def test_forever_term_never_flagged_even_far_past_any_deadline(
-        self, session_factory
-    ) -> None:
+    def test_forever_term_never_flagged_even_far_past_any_deadline(self, session_factory) -> None:
         anchor = _NOW - timedelta(days=10_000)
         _seed_asset(session_factory, "r2", retention_anchor_at=anchor)
         store = PostgresAssetStore(session_factory)

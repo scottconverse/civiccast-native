@@ -4,11 +4,15 @@ import {
   ApiError,
   getFacilityRouterInventory,
   getFacilityRouterPanel,
+  getStaffIdentity,
+  listChannelProfiles,
   previewOverlayCompositorPlan,
   previewFacilityRouterSchedulePlan,
   previewFacilityRouterTake,
 } from '../api/client'
+import { hasOperatorRole } from '../auth/roles'
 import type {
+  ChannelProfile,
   OverlayCompositorPlan,
   RouterEndpoint,
   RouterInput,
@@ -21,7 +25,20 @@ import type {
 } from '../types/api.generated'
 
 const REQUESTED_BY = 'facility-operator'
-const CHANNEL_ID = 'government'
+
+// Every channel-dependent action (scheduled take, overlay, later L-bar) must
+// name a currently configured channel the operator picked -- never an
+// implicit first/default channel. Manual crosspoint preview below is
+// facility-path scoped (endpoint/source/destination only) and does not take
+// a channel_id, so it never reads this selection.
+const CHOOSE_CHANNEL_FOR_TAKE = 'Choose a channel before scheduling a take.'
+const CHOOSE_CHANNEL_FOR_OVERLAY = 'Choose a channel before previewing an overlay.'
+const NO_CHANNELS_CONFIGURED =
+  'No channels are configured yet. Configure a channel in Channel Ops before scheduling a take or previewing overlays.'
+const CHANNELS_LOAD_ERROR = 'Configured channels could not load. Scheduled take and overlay actions are unavailable until they do.'
+const CHANNEL_PERMISSION_MESSAGE =
+  'Scheduling a take and previewing overlays require the meeting operator or setup admin role.'
+const CHECKING_PERMISSIONS_MESSAGE = 'Checking your permissions...'
 
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? fallback
@@ -128,6 +145,87 @@ function EndpointPicker({
           )
         })}
       </div>
+    </section>
+  )
+}
+
+export function ChannelPicker({
+  channels,
+  selectedChannelId,
+  isLoading,
+  loadError,
+  staleNotice,
+  onSelect,
+}: {
+  channels: ChannelProfile[]
+  selectedChannelId: string
+  isLoading: boolean
+  loadError: unknown
+  staleNotice: string | null
+  onSelect: (channelId: string) => void
+}) {
+  return (
+    <section
+      className="grid gap-2 rounded-md p-4"
+      style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="m-0 text-sm font-semibold">Target channel</h2>
+        <StatusPill
+          label={selectedChannelId ? 'channel selected' : 'no channel selected'}
+          tone={selectedChannelId ? 'ok' : 'warn'}
+        />
+      </div>
+      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+        Scheduled takes, overlays, and later L-bar commands apply to this channel. Manual
+        crosspoint preview below previews an endpoint path and does not require a channel.
+      </p>
+      {staleNotice != null && (
+        <div
+          role="alert"
+          className="rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-warn)' }}
+        >
+          {staleNotice}
+        </div>
+      )}
+      {loadError != null && (
+        <div
+          role="alert"
+          className="rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+        >
+          {apiMessage(loadError, CHANNELS_LOAD_ERROR)}
+        </div>
+      )}
+      {loadError == null && !isLoading && channels.length === 0 && (
+        <div className="rounded-md p-2 text-xs" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
+          {NO_CHANNELS_CONFIGURED}
+        </div>
+      )}
+      {channels.length > 0 && (
+        <label className="grid gap-1 text-sm" htmlFor="facility-router-channel">
+          <span className="sr-only">Target channel</span>
+          <select
+            id="facility-router-channel"
+            value={selectedChannelId}
+            onChange={(event) => onSelect(event.target.value)}
+            className="w-full rounded-md px-3 py-2 text-sm outline-none"
+            style={{
+              background: 'var(--cc-surface-2)',
+              border: '1px solid var(--cc-line)',
+              color: 'var(--cc-ink)',
+            }}
+          >
+            <option value="">Choose a channel...</option>
+            {channels.map((channel) => (
+              <option key={channel.channel_id} value={channel.channel_id}>
+                {channel.branding.display_name} ({channel.channel_id})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
     </section>
   )
 }
@@ -299,15 +397,17 @@ function PlanPreview({ plan }: { plan: RouterTakePlan | null }) {
   )
 }
 
-function OverlayPlanPanel({
+export function OverlayPlanPanel({
   plan,
   busy,
   error,
+  disabledReason,
   onPreview,
 }: {
   plan: OverlayCompositorPlan | null
   busy: boolean
   error: unknown
+  disabledReason: string | null
   onPreview: () => void
 }) {
   return (
@@ -336,16 +436,22 @@ function OverlayPlanPanel({
       <button
         type="button"
         onClick={onPreview}
-        disabled={busy}
+        disabled={busy || disabledReason != null}
+        aria-describedby={disabledReason != null && !busy ? 'overlay-disabled-reason' : undefined}
         className="rounded-md px-3 py-2 text-sm font-semibold"
         style={{
-          background: 'var(--cc-brand)',
-          color: 'white',
+          background: busy || disabledReason != null ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
+          color: busy || disabledReason != null ? 'var(--cc-ink-3)' : 'white',
           opacity: busy ? 0.65 : 1,
         }}
       >
         {busy ? 'Previewing overlay...' : 'Preview L-bar and squeezeback'}
       </button>
+      {disabledReason != null && !busy && (
+        <div id="overlay-disabled-reason" aria-live="polite" className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          {disabledReason}
+        </div>
+      )}
       {plan && (
         <div className="grid gap-2 text-xs">
           <div>
@@ -430,15 +536,17 @@ function ManualTakePanel({
   )
 }
 
-function ScheduledTakePanel({
+export function ScheduledTakePanel({
   plan,
   busy,
   error,
+  disabledReason,
   onPreview,
 }: {
   plan: RouterScheduledTakePlan | null
   busy: boolean
   error: unknown
+  disabledReason: string | null
   onPreview: () => void
 }) {
   return (
@@ -467,16 +575,22 @@ function ScheduledTakePanel({
       <button
         type="button"
         onClick={onPreview}
-        disabled={busy}
+        disabled={busy || disabledReason != null}
+        aria-describedby={disabledReason != null && !busy ? 'scheduled-take-disabled-reason' : undefined}
         className="rounded-md px-3 py-2 text-sm font-semibold"
         style={{
-          background: 'var(--cc-brand)',
-          color: 'white',
+          background: busy || disabledReason != null ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
+          color: busy || disabledReason != null ? 'var(--cc-ink-3)' : 'white',
           opacity: busy ? 0.65 : 1,
         }}
       >
         {busy ? 'Previewing schedule...' : 'Preview scheduled take'}
       </button>
+      {disabledReason != null && !busy && (
+        <div id="scheduled-take-disabled-reason" aria-live="polite" className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          {disabledReason}
+        </div>
+      )}
       {plan && (
         <div className="grid gap-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
           <div>
@@ -509,6 +623,87 @@ export function FacilityRouterScreen() {
   const [latestPlan, setLatestPlan] = useState<RouterTakePlan | null>(null)
   const [latestOverlayPlan, setLatestOverlayPlan] = useState<OverlayCompositorPlan | null>(null)
   const [latestSchedulePlan, setLatestSchedulePlan] = useState<RouterScheduledTakePlan | null>(null)
+
+  // Target channel for every channel-dependent action. Reuses the same
+  // channel-profile API and query key Channel Ops and Live Room use, so the
+  // list stays in one cache. Never defaults silently -- the operator must
+  // pick, except when exactly one channel exists (auto-selected but still
+  // shown, per WP-09).
+  const channelsQuery = useQuery({
+    queryKey: ['channel-profiles'],
+    queryFn: listChannelProfiles,
+    retry: false,
+  })
+  const channels = useMemo(() => channelsQuery.data ?? [], [channelsQuery.data])
+  const [selectedChannelId, setSelectedChannelId] = useState('')
+  const [staleChannelNotice, setStaleChannelNotice] = useState<string | null>(null)
+  // Tracks the last `channels` reference this component reacted to, so the
+  // render-time sync block below (React's "adjust state when a prop
+  // changes" pattern -- https://react.dev/learn/you-might-not-need-an-effect)
+  // runs exactly once per genuine channel-list change, not on every render.
+  const [syncedChannels, setSyncedChannels] = useState(channels)
+
+  const staffIdentityQuery = useQuery({
+    queryKey: ['staff-identity'],
+    queryFn: getStaffIdentity,
+    retry: false,
+  })
+  // Aligned with ChannelOpsScreen's takeover/config gate (meeting_operator OR
+  // setup_admin may operate) rather than Live Room's meeting_operator-only
+  // pattern, which is the outlier, per PR #130 review.
+  const canOperateChannel =
+    staffIdentityQuery.isSuccess &&
+    (hasOperatorRole(staffIdentityQuery.data, 'meeting_operator') ||
+      hasOperatorRole(staffIdentityQuery.data, 'setup_admin'))
+
+  function selectChannel(channelId: string) {
+    setSelectedChannelId(channelId)
+    setStaleChannelNotice(null)
+    // Any preview built against the previous channel selection no longer
+    // describes the newly selected (or cleared) channel -- clear it rather
+    // than leave a stale plan on screen next to a different target.
+    setLatestOverlayPlan(null)
+    setLatestSchedulePlan(null)
+  }
+
+  if (channels !== syncedChannels) {
+    setSyncedChannels(channels)
+    if (channelsQuery.isSuccess) {
+      if (selectedChannelId) {
+        // If the previously selected channel disappears from the configured
+        // list (deleted, disabled, renamed), clear the selection and any
+        // preview data built against it instead of silently continuing to
+        // target a channel that no longer exists.
+        const stillConfigured = channels.some((channel) => channel.channel_id === selectedChannelId)
+        if (!stillConfigured) {
+          setStaleChannelNotice(
+            `The previously selected channel (${selectedChannelId}) is no longer configured. Choose another channel.`,
+          )
+          setSelectedChannelId('')
+          setLatestOverlayPlan(null)
+          setLatestSchedulePlan(null)
+        }
+      } else if (channels.length === 1) {
+        // Auto-select the single configured channel so the operator isn't
+        // forced to click a one-item picker, but it still renders selected
+        // (not silent) via the picker's own value.
+        setSelectedChannelId(channels[0].channel_id)
+      }
+    }
+  }
+
+  function channelActionDisabledReason(kind: 'take' | 'overlay'): string | null {
+    if (channelsQuery.isError) return CHANNELS_LOAD_ERROR
+    if (channelsQuery.isSuccess && channels.length === 0) return NO_CHANNELS_CONFIGURED
+    if (!selectedChannelId) return kind === 'take' ? CHOOSE_CHANNEL_FOR_TAKE : CHOOSE_CHANNEL_FOR_OVERLAY
+    // Fail closed while identity is still loading (or errored) instead of
+    // briefly enabling a privileged action before the role is known -- the
+    // backend role gate still enforces, but the button must never appear
+    // actionable in that gap. PR #130 review.
+    if (!staffIdentityQuery.isSuccess) return CHECKING_PERMISSIONS_MESSAGE
+    if (!canOperateChannel) return CHANNEL_PERMISSION_MESSAGE
+    return null
+  }
 
   const defaultEndpointId = useMemo(
     () => inventory?.endpoints.find((item) => item.enabled !== false)?.endpoint_id ?? inventory?.endpoints[0]?.endpoint_id ?? '',
@@ -569,10 +764,11 @@ export function FacilityRouterScreen() {
   }
 
   function previewOverlay() {
+    if (!selectedChannelId) return
     overlayMutation.mutate({
-      channel_id: CHANNEL_ID,
-      input_url: 'rtmp://127.0.0.1/live/government',
-      output_manifest_path: 'live/government/overlay.m3u8',
+      channel_id: selectedChannelId,
+      input_url: `rtmp://127.0.0.1/live/${selectedChannelId}`,
+      output_manifest_path: `live/${selectedChannelId}/overlay.m3u8`,
       acceleration_preference: 'auto',
       layers: [
         {
@@ -604,12 +800,12 @@ export function FacilityRouterScreen() {
   }
 
   function previewScheduledTake() {
-    if (!activeEndpointId || !activeSourceId || !activeDestinationId) return
+    if (!activeEndpointId || !activeSourceId || !activeDestinationId || !selectedChannelId) return
     const startsAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
     scheduleMutation.mutate({
       request_id: `portal-schedule-${Date.now()}`,
       schedule_item_id: 'operator-preview-schedule',
-      channel_id: CHANNEL_ID,
+      channel_id: selectedChannelId,
       starts_at: startsAt,
       endpoint_id: activeEndpointId,
       source_id: activeSourceId,
@@ -654,6 +850,22 @@ export function FacilityRouterScreen() {
         <StatusPill label="hardware send disabled" tone="warn" />
       </div>
 
+      <ChannelPicker
+        channels={channels}
+        selectedChannelId={selectedChannelId}
+        isLoading={channelsQuery.isLoading}
+        loadError={channelsQuery.error}
+        staleNotice={staleChannelNotice}
+        onSelect={selectChannel}
+      />
+
+      {staffIdentityQuery.isSuccess && !canOperateChannel && (
+        <div className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}>
+          {CHANNEL_PERMISSION_MESSAGE} Endpoint inventory and manual crosspoint preview remain
+          available.
+        </div>
+      )}
+
       <EndpointPicker
         endpoints={inventory.endpoints}
         selectedId={activeEndpointId}
@@ -697,12 +909,14 @@ export function FacilityRouterScreen() {
             plan={latestSchedulePlan}
             busy={scheduleMutation.isPending}
             error={scheduleMutation.error}
+            disabledReason={channelActionDisabledReason('take')}
             onPreview={previewScheduledTake}
           />
           <OverlayPlanPanel
             plan={latestOverlayPlan}
             busy={overlayMutation.isPending}
             error={overlayMutation.error}
+            disabledReason={channelActionDisabledReason('overlay')}
             onPreview={previewOverlay}
           />
         </div>

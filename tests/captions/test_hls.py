@@ -129,3 +129,55 @@ class TestAttachCaptionTracksToPackage:
     def test_rejects_empty_track_list(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="At least one"):
             attach_caption_tracks_to_package(_stub_vod_package(tmp_path), [])
+
+    def test_two_subtitle_tracks_are_declared_distinctly(self, tmp_path: Path) -> None:
+        """Recorded-Spanish: English + Spanish must each be a distinct,
+
+        player-selectable subtitle rendition in the ONE manifest rewrite.
+        The front end (HlsPlayer.tsx) renders one caption button per
+        TYPE=SUBTITLES media line by NAME/LANGUAGE, so two lines with
+        distinct LANGUAGE/NAME/URI are exactly what makes the Spanish button
+        appear with no front-end change. English stays DEFAULT=YES so an
+        unchanged player still lands on English.
+        """
+
+        package = _stub_vod_package(tmp_path)
+        outputs = attach_caption_tracks_to_package(
+            package,
+            [
+                CaptionHlsTrack(
+                    cues=[_cue("cue-1", 0, 1, "Motion carries.")],
+                    language="en",
+                    name="English",
+                    default=True,
+                ),
+                CaptionHlsTrack(
+                    cues=[_cue("cue-1:es", 0, 1, "La mocion se aprueba.")],
+                    language="es",
+                    name="Spanish",
+                    default=False,
+                ),
+            ],
+        )
+
+        manifest = package.manifest_path.read_text(encoding="utf-8")
+        subtitle_lines = [
+            line for line in manifest.splitlines() if line.startswith("#EXT-X-MEDIA:TYPE=SUBTITLES")
+        ]
+        assert len(subtitle_lines) == 2, manifest
+
+        english = next(line for line in subtitle_lines if 'LANGUAGE="en"' in line)
+        spanish = next(line for line in subtitle_lines if 'LANGUAGE="es"' in line)
+        # Distinct language, name, and playlist URI -- the three things a
+        # player uses to tell the two caption options apart.
+        assert 'NAME="English"' in english and 'NAME="Spanish"' in spanish
+        assert 'URI="captions/en/playlist.m3u8"' in english
+        assert 'URI="captions/es/playlist.m3u8"' in spanish
+        # Exactly one default track, and it is English.
+        assert "DEFAULT=YES" in english
+        assert "DEFAULT=NO" in spanish
+        assert sum("DEFAULT=YES" in line for line in subtitle_lines) == 1
+        # Both playlists were actually written to disk.
+        assert {out.manifest_track.language for out in outputs} == {"en", "es"}
+        assert (package.output_dir / "captions" / "en" / "playlist.m3u8").is_file()
+        assert (package.output_dir / "captions" / "es" / "playlist.m3u8").is_file()

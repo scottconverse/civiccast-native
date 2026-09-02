@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import {
   ApiError,
   approvePublishAsset,
+  getPublishPreflight,
   getStaffIdentity,
   listPublishAssets,
   retryPublishSurface,
@@ -13,9 +14,16 @@ import type {
   PublishApprovalRequest,
   PublishAssetStatus,
   PublishDashboardState,
+  PublishPreflightResponse,
   PublishSurfaceStatus,
 } from '../types/publish'
 import { stateLabel } from './status-language'
+
+function apiMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) return err.detail || err.message || fallback
+  if (err instanceof Error) return err.message || fallback
+  return fallback
+}
 
 const FILTERS: ReadonlyArray<{
   id: 'all' | PublishDashboardState
@@ -29,6 +37,35 @@ const FILTERS: ReadonlyArray<{
   { id: 'reach_degraded', label: stateLabel('reach_degraded') },
   { id: 'complete', label: stateLabel('complete') },
 ]
+
+// WP-11 item 4 (owner decision 2026-09-02): surfaces the backend has no real
+// provider path for yet. Mirrors civiccast/publish/readiness.py's
+// FUTURE_SURFACE_IDS (podcast has no provider kind registered at all --
+// WP-04 owns building the real RSS/enclosure/feed path). These render as a
+// neutral "coming in a future release" card always -- never a red error,
+// never selectable/approvable, regardless of whatever state or health this
+// asset's surface row happens to carry, so approval can never report a fake
+// success for a surface that doesn't really publish anything yet (WP-03
+// already reports podcast preflight as health="unknown"; this keeps the
+// dashboard's own listing from disagreeing with that by defaulting to a
+// selectable "pending" checkbox).
+//
+// Subscriber notifications joined this set by a second owner decision, also
+// 2026-09-02: real mail/webhook sends on publish are deferred to a future
+// release (implementation parked on feat/publish-real-subscriber-delivery).
+// civiccast/publish/service.py's approve_publish never sends anything for
+// this surface and always reports state="coming_soon" -- this mirrors that
+// on the dashboard so the row can never show a green "succeeded" state for
+// a notification that was never sent.
+const FUTURE_SURFACE_IDS: ReadonlySet<string> = new Set([
+  'podcast',
+  'subscriber-notifications',
+])
+const FUTURE_SURFACE_MESSAGE: Readonly<Record<string, string>> = {
+  podcast: 'Podcast is not available yet; it is coming in a future release.',
+  'subscriber-notifications':
+    'Subscriber notifications are coming in a future release. No emails or webhooks are sent yet.',
+}
 
 const STATE_TONE: Record<PublishDashboardState, { bg: string; fg: string }> = {
   draft: { bg: 'var(--cc-info-soft)', fg: 'var(--cc-ink)' },
@@ -66,8 +103,12 @@ function StatePill({ asset }: { asset: PublishAssetStatus }) {
 }
 
 function SurfaceDot({ surface }: { surface: PublishSurfaceStatus }) {
-  const tone =
-    surface.state === 'succeeded' || surface.state === 'overridden'
+  const tone = FUTURE_SURFACE_IDS.has(surface.id)
+    ? // Always neutral, regardless of the row's own state/health -- never
+      // the info-blue "in progress" dot or the red "failed" dot for a
+      // surface that has no real publish path yet.
+      { bg: 'var(--cc-surface-3)', fg: 'var(--cc-ink-3)', symbol: '-' }
+    : surface.state === 'succeeded' || surface.state === 'overridden'
       ? { bg: 'var(--cc-ok-soft)', fg: 'var(--cc-ink)', symbol: 'OK' }
       : surface.state === 'failed' || surface.state === 'blocked'
         ? { bg: 'var(--cc-err-soft)', fg: 'var(--cc-ink)', symbol: '!' }
@@ -111,10 +152,12 @@ function SurfaceRow({
   onOverrideText,
   onRetrySurface,
 }: SurfaceRowProps) {
+  const isFutureSurface = FUTURE_SURFACE_IDS.has(surface.id)
   const canApprove =
-    surface.state === 'pending' ||
-    surface.state === 'failed' ||
-    surface.state === 'blocked'
+    !isFutureSurface &&
+    (surface.state === 'pending' ||
+      surface.state === 'failed' ||
+      surface.state === 'blocked')
   const canOverride = surface.required && surface.kind === 'archive' && canApprove
   return (
     <div
@@ -126,23 +169,34 @@ function SurfaceRow({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold">{surface.label}</span>
-            {surface.required && (
+            {isFutureSurface ? (
               <span
                 className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
-                style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+                style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-3)' }}
               >
-                Required
+                Coming in a future release
               </span>
+            ) : (
+              <>
+                {surface.required && (
+                  <span
+                    className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                    style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+                  >
+                    Required
+                  </span>
+                )}
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                  style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+                >
+                  {surface.approval}
+                </span>
+              </>
             )}
-            <span
-              className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
-              style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
-            >
-              {surface.approval}
-            </span>
           </div>
           <div className="cc-mono mt-0.5 text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
-            {surface.kind} / {stateLabel(surface.state)}
+            {surface.kind} / {isFutureSurface ? 'not built yet' : stateLabel(surface.state)}
           </div>
           {/* GauntletGate TW-1: a surface completed by a simulated provider used
               to render an ordinary-looking archive.org URL, so a clerk could
@@ -178,11 +232,17 @@ function SurfaceRow({
         </div>
       </div>
       <div className="grid gap-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-        <div>{surface.message}</div>
-        <div>
-          <strong style={{ color: 'var(--cc-ink)' }}>Next step.</strong>{' '}
-          {surface.next_step}
-        </div>
+        {isFutureSurface ? (
+          <div>{FUTURE_SURFACE_MESSAGE[surface.id] ?? surface.message}</div>
+        ) : (
+          <>
+            <div>{surface.message}</div>
+            <div>
+              <strong style={{ color: 'var(--cc-ink)' }}>Next step.</strong>{' '}
+              {surface.next_step}
+            </div>
+          </>
+        )}
         {canApprove && (
           <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--cc-ink)' }}>
             <input
@@ -222,7 +282,7 @@ function SurfaceRow({
             )}
           </div>
         )}
-        {surface.state === 'failed' && (
+        {!isFutureSurface && surface.state === 'failed' && (
           <button
             type="button"
             disabled={disabled || !canPublish}
@@ -239,6 +299,117 @@ function SurfaceRow({
         )}
       </div>
     </div>
+  )
+}
+
+function ReadinessDot({ health }: { health: 'ok' | 'warning' | 'error' | 'unknown' }) {
+  const tone =
+    health === 'ok'
+      ? { bg: 'var(--cc-ok-soft)', fg: 'var(--cc-ink)', symbol: 'OK' }
+      : health === 'error'
+        ? { bg: 'var(--cc-err-soft)', fg: 'var(--cc-ink)', symbol: '!' }
+        : health === 'warning'
+          ? { bg: 'var(--cc-warn-soft)', fg: 'var(--cc-ink)', symbol: '~' }
+          : { bg: 'var(--cc-surface-3)', fg: 'var(--cc-ink-3)', symbol: '-' }
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+      style={{ background: tone.bg, color: tone.fg }}
+    >
+      {tone.symbol}
+    </span>
+  )
+}
+
+function readinessStatusLabel(health: 'ok' | 'warning' | 'error' | 'unknown'): string {
+  switch (health) {
+    case 'ok':
+      return 'Ready'
+    case 'error':
+      return 'Not ready'
+    case 'warning':
+      return 'Ready (warning)'
+    default:
+      return 'Unknown'
+  }
+}
+
+// WP-11 item 5 (gap found in review of #129): the operator Publish screen
+// never called GET .../preflight, so an operator could select a surface
+// whose real-provider configuration was missing/invalid and only find out
+// from the approval 409 after clicking. This panel reads the exact same
+// non-secret, side-effect-free readiness civiccast.publish.readiness
+// answers preflight and approval with (WP-03 plan item 8: they read one
+// registry, so this panel and what approval actually does cannot disagree),
+// and renders every state a real GET can produce: loading, per-surface
+// ready/not-ready with the API's own safe next-step text, the podcast
+// future-release surface (never "not ready" red for a surface with no real
+// publish path), and a load error with retry.
+function PreflightPanel({
+  preflightQuery,
+}: {
+  preflightQuery: UseQueryResult<PublishPreflightResponse, Error>
+}) {
+  return (
+    <section
+      aria-label="Publish readiness"
+      className="mt-4 grid gap-2 rounded-md p-3"
+      style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+    >
+      <div className="text-xs font-semibold" style={{ color: 'var(--cc-ink)' }}>
+        Readiness check
+      </div>
+      {preflightQuery.isLoading && (
+        <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Checking readiness…
+        </p>
+      )}
+      {preflightQuery.isError && (
+        <div role="alert" className="grid gap-2 text-xs" style={{ color: 'var(--cc-err)' }}>
+          <div>{apiMessage(preflightQuery.error, 'Could not load publish readiness.')}</div>
+          <button
+            type="button"
+            onClick={() => preflightQuery.refetch()}
+            className="w-fit rounded-md px-2 py-1 text-[11px] font-medium"
+            style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+          >
+            Retry readiness check
+          </button>
+        </div>
+      )}
+      {preflightQuery.isSuccess && (
+        <ul className="grid gap-2">
+          {preflightQuery.data.checks.map((check) => {
+            const isFuture = FUTURE_SURFACE_IDS.has(check.id)
+            return (
+              <li key={check.id} className="flex items-start gap-2 text-xs">
+                <ReadinessDot health={isFuture ? 'unknown' : check.health} />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-semibold">{check.label}</span>
+                    <span
+                      className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                      style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+                    >
+                      {isFuture ? 'Future release' : readinessStatusLabel(check.health)}
+                    </span>
+                  </div>
+                  <div style={{ color: 'var(--cc-ink-2)' }}>
+                    {isFuture ? (FUTURE_SURFACE_MESSAGE[check.id] ?? check.message) : check.message}
+                  </div>
+                  {!isFuture && (
+                    <div style={{ color: 'var(--cc-ink-3)' }}>
+                      <strong>Next step.</strong> {check.next_step}
+                    </div>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
   )
 }
 
@@ -259,11 +430,24 @@ function AssetPanel({
   onApprove,
   onRetrySurface,
 }: AssetPanelProps) {
+  const preflightQuery = useQuery({
+    queryKey: ['publish-preflight', asset.asset_id],
+    queryFn: () => getPublishPreflight(asset.asset_id),
+    retry: false,
+  })
+  const preflightChecksById = useMemo(() => {
+    const map = new Map<string, PublishPreflightResponse['checks'][number]>()
+    for (const check of preflightQuery.data?.checks ?? []) map.set(check.id, check)
+    return map
+  }, [preflightQuery.data])
+
   const approvableSurfaceIds = useMemo(
     () =>
       asset.surfaces
-        .filter((surface) =>
-          ['pending', 'failed', 'blocked'].includes(surface.state),
+        .filter(
+          (surface) =>
+            ['pending', 'failed', 'blocked'].includes(surface.state) &&
+            !FUTURE_SURFACE_IDS.has(surface.id),
         )
         .map((surface) => surface.id),
     [asset.surfaces],
@@ -314,13 +498,28 @@ function AssetPanel({
       activeSelected.has(surface.id) &&
       !activeOverrideIds.has(surface.id),
   )
+  // WP-11 item 5: approve stays disabled while any SELECTED real (non-future)
+  // surface's readiness check reports health="error". Scoped to preflight
+  // success only -- while the readiness check is still loading or failed to
+  // load, this gate adds nothing (approval's own 409 refusal is still the
+  // real backstop), so a slow/broken readiness fetch can't itself block a
+  // publish the backend would otherwise allow.
+  const notReadySelectedSurfaces = preflightQuery.isSuccess
+    ? approvedSurfaceIds
+        .filter((surfaceId) => !FUTURE_SURFACE_IDS.has(surfaceId))
+        .map((surfaceId) => preflightChecksById.get(surfaceId))
+        .filter((check): check is PublishPreflightResponse['checks'][number] =>
+          check != null && check.health === 'error',
+        )
+    : []
   const canSubmit =
     approvableSurfaceIds.length > 0 &&
     canPublish &&
     !isApproving &&
     (approvedSurfaceIds.length > 0 || overrides.length > 0) &&
     !overrideMissingJustification &&
-    blockedSelectedSurface == null
+    blockedSelectedSurface == null &&
+    notReadySelectedSurfaces.length === 0
   const errorDetail =
     error instanceof ApiError && error.detail ? error.detail : error?.message
 
@@ -417,6 +616,7 @@ function AssetPanel({
           />
         ))}
       </div>
+      <PreflightPanel preflightQuery={preflightQuery} />
       {approvableSurfaceIds.length > 0 && asset.surfaces.some((s) => s.kind === 'canonical') && (
         // Candidate #17 tester finding 5: "nothing tells the volunteer that
         // publishing is what starts transcription." This is the one action
@@ -456,6 +656,14 @@ function AssetPanel({
             <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
               The selected surface is blocked. Complete its next step or uncheck it before
               publishing other ready surfaces.
+            </span>
+          )}
+          {notReadySelectedSurfaces.length > 0 && (
+            <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
+              {notReadySelectedSurfaces.map((check) => check.label).join(', ')} failed its
+              readiness check: {notReadySelectedSurfaces[0].message} Fix the listed
+              configuration, rerun the readiness check, or uncheck it before publishing other
+              ready surfaces.
             </span>
           )}
           {!canPublish && (

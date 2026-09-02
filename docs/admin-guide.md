@@ -1,6 +1,6 @@
 # CivicCast Admin Guide
 
-_Covers `v1.0.0-rc17` and later._
+_Covers the native Windows line (`v1.0.0-beta.1` and later)._
 
 This guide is for the person who installs CivicCast, owns station settings,
 keeps recovery material safe, and helps meeting staff when the console says a

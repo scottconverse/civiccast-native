@@ -92,17 +92,19 @@ def test_no_numbered_channel_ids_in_live_source_or_active_docs() -> None:
 
 def test_capabilities_row_matches_which_screens_actually_load_channels() -> None:
     """CAPABILITIES.md's "Operator channel selection" row is a claim about code.
-    It has now drifted twice: once naming a retired numbered id, once asserting
-    Live Room had no channel picker when it has had one since b10de82b. Pin the
-    claim to the source so wiring a screen (or unwiring one) fails here and
-    forces the row to be rewritten."""
+    It has now drifted three times: once naming a retired numbered id, once
+    asserting Live Room had no channel picker when it has had one since
+    b10de82b, and once (WP-09) asserting Facility Router still hard-coded a
+    single default channel after it was wired to the real channel list. Pin
+    the claim to the source so wiring a screen (or unwiring one) fails here
+    and forces the row to be rewritten."""
     screens = REPO_ROOT / "civiccast/apps/portal-operator/src"
     loads_channels = {
         "components/schedule/ScheduleDrawer.tsx",
         "screens/LiveRoomScreen.tsx",
         "screens/ChannelOpsScreen.tsx",
+        "screens/FacilityRouterScreen.tsx",
     }
-    hardcodes_one_channel = {"screens/FacilityRouterScreen.tsx"}
 
     for rel in sorted(loads_channels):
         text = (screens / rel).read_text(encoding="utf-8")
@@ -110,16 +112,9 @@ def test_capabilities_row_matches_which_screens_actually_load_channels() -> None
             f"{rel} no longer loads the real channel list — update the "
             "'Operator channel selection' row in CAPABILITIES.md"
         )
-
-    for rel in sorted(hardcodes_one_channel):
-        text = (screens / rel).read_text(encoding="utf-8")
-        assert "listChannelProfiles" not in text, (
-            f"{rel} now loads the real channel list — the 'Operator channel "
-            "selection' row in CAPABILITIES.md still calls it the remaining gap"
-        )
-        assert re.search(r"const CHANNEL_ID\s*=", text), (
-            f"{rel} no longer pins a single default channel — re-check the "
-            "'Operator channel selection' row in CAPABILITIES.md"
+        assert not re.search(r"const CHANNEL_ID\s*=", text), (
+            f"{rel} reintroduced a hard-coded default channel constant — "
+            "re-check the 'Operator channel selection' row in CAPABILITIES.md"
         )
 
 

@@ -194,21 +194,24 @@ export function FeatureModelCard({
       {/* U4/Q2/M3: spec §6.3 degraded-state surface — TEXT, not color-only. */}
       {availMessage && <AvailabilityHint message={availMessage} />}
 
-      {/* Audit finding 2026-08-29: translation has a model picker, a cost, and a
-          latency figure, but no caller ever supplies a translation target — no
-          translated caption track is ever published. Say so plainly here rather
-          than implying a working capability the build cannot deliver. Remove
-          this banner only once an operator-facing target-language control
-          actually invokes the pipeline end to end. */}
+      {/* The 2026-08-29 audit found this picker had a model, a cost and a
+          latency figure but no caller, so it carried a "not connected yet"
+          warning. Recorded-Spanish captions connected it: publishing a
+          recording translates its approved English captions with the model
+          selected here. The banner is now a plain status note, not a warning
+          — it says where the selection shows up, because a setting whose
+          effect is invisible is the thing operators distrust. */}
       {registry.feature === 'translation' && (
         <div
           role="status"
           className="rounded-md p-2 text-xs"
-          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}
+          style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
         >
-          <strong>Not connected yet.</strong> Selecting a model here has no visible
-          effect: no published caption track uses a translated language today.
-          This picker reserves the setting for when that output ships.
+          This model translates a published recording&rsquo;s approved English
+          captions into Spanish, and the Spanish cues then go to the caption
+          review queue for their own approval. The recording is public
+          immediately; captions attach after review — both languages together,
+          never English alone. Live broadcasts are captioned in English only.
         </div>
       )}
 

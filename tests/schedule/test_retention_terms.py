@@ -186,9 +186,7 @@ class TestComputeRetentionUntilElapsed:
     def test_invalid_term_raises(self) -> None:
         anchor = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
         with pytest.raises(ValueError):
-            compute_retention_until(
-                anchor_at=anchor, unit="days", value=0, station_tz_name="UTC"
-            )
+            compute_retention_until(anchor_at=anchor, unit="days", value=0, station_tz_name="UTC")
 
 
 class TestComputeRetentionUntilCalendar:

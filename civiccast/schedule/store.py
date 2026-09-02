@@ -76,6 +76,7 @@ def _resolve_station_timezone_for_retention() -> str:
 
     return resolve_station_timezone()
 
+
 CommitReportList = list[CommitToAirReport]
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
@@ -332,7 +333,9 @@ class PostgresAssetStore:
             value=value,
             station_tz_name=_resolve_station_timezone_for_retention(),
         )
-        row.retention_policy = RETENTION_PERMANENT if unit == RETENTION_TERM_UNIT_FOREVER else RETENTION_DEFAULT
+        row.retention_policy = (
+            RETENTION_PERMANENT if unit == RETENTION_TERM_UNIT_FOREVER else RETENTION_DEFAULT
+        )
 
         if anchor_fallback_used:
             session.add(

@@ -250,6 +250,22 @@ class GstPlayoutEngine:
                     caps_from_string=Gst.Caps.from_string,
                 ),
             )
+        for key, handle in spec.secret_props.items():
+            # WP-07: the graph file on disk carries only an opaque handle; the
+            # real secret is fetched from the station's OS credential store
+            # here, at element-construction time, and set straight onto the
+            # element. It is never logged and never written back anywhere.
+            # Fail closed -- a live SRT source whose passphrase cannot be read
+            # must not silently start unauthenticated.
+            from civiccast.live.secrets import load_live_source_secret
+
+            secret = load_live_source_secret(handle)
+            if not secret:
+                raise RuntimeError(
+                    f"credential handle {handle!r} for {spec.factory} property {key!r} is "
+                    "not present in this station's credential store"
+                )
+            element.set_property(key, secret)
         self.pipeline.add(element)
         if self._collecting is not None:
             # Building a source leg — record the element so the leg can be torn down

@@ -471,7 +471,9 @@ class AssetMetadataUpdate(BaseModel):
                 "submit a replacement term to convert this asset's retention rule."
             )
         if term_value_set and not term_unit_set:
-            raise ValueError("retention_term_value requires retention_term_unit in the same update.")
+            raise ValueError(
+                "retention_term_value requires retention_term_unit in the same update."
+            )
         if term_unit_set:
             assert self.retention_term_unit is not None
             _validate_retention_term(self.retention_term_unit, self.retention_term_value)
@@ -832,9 +834,7 @@ class Asset(Base):
             chapters=chapters,
             retention_policy=cast(RetentionPolicyValue, self.retention_policy),
             retention_until=retention_until,
-            retention_term_unit=cast(
-                "RetentionTermUnitValue | None", self.retention_term_unit
-            ),
+            retention_term_unit=cast("RetentionTermUnitValue | None", self.retention_term_unit),
             retention_term_value=self.retention_term_value,
             retention_anchor_at=retention_anchor_at,
             version=self.version,

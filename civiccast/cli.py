@@ -1834,26 +1834,47 @@ def _build_takeover_service() -> TakeoverService:
     """Build a live-takeover service for a CLI-owned session (binds the DB).
 
     Mirrors ``app._resolve_takeover_service``: the audit store + the egress
-    command queue + a live ingest-plan provider built from the channel's enabled
-    relay configs.
+    command queue + a live ingest-plan provider built from the channel's
+    enabled relay configs AND its configured live sources, plus the same
+    observed-readiness gate the HTTP path uses.
+
+    "Mirrors" is load-bearing and was, until WP-07, untrue: this builder and
+    the app factory both omitted ``live_sources=``, so a station's real
+    encoder was invisible to takeover from either entry point. Keeping the two
+    identical is the point -- a CLI takeover must not be able to put something
+    on air that the API would have refused.
     """
     from civiccast.egress import PostgresEgressStore
     from civiccast.egress.takeover_service import TakeoverService
     from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
+    from civiccast.live.readiness_service import LiveSourceReadinessService, TakeoverReadiness
     from civiccast.live.relay import build_ingest_plan
-    from civiccast.live.store import LiveRelayConfigStore
+    from civiccast.live.store import LiveRelayConfigStore, LiveSourceStore
 
     _bind_egress_database(_resolve_egress_database_url())
     session_factory = _build_cli_session_factory()
     relay_store = LiveRelayConfigStore(session_factory)
+    source_store = LiveSourceStore(session_factory)
 
     def _ingest_plan(channel_id: str):  # type: ignore[no-untyped-def]
-        return build_ingest_plan(channel_id, relay_store.list(channel_id=channel_id, enabled=True))
+        return build_ingest_plan(
+            channel_id,
+            relay_store.list(channel_id=channel_id, enabled=True),
+            live_sources=source_store.list(channel_id=channel_id),
+        )
+
+    readiness = LiveSourceReadinessService(source_store)
+
+    def _verify_readiness(channel_id: str, path_id: str, endpoint_url: str) -> TakeoverReadiness:
+        return readiness.verify_for_takeover(
+            channel_id=channel_id, path_id=path_id, endpoint_url=endpoint_url
+        )
 
     return TakeoverService(
         PostgresTakeoverAuditStore(session_factory),
         PostgresEgressStore(session_factory),
         _ingest_plan,
+        readiness_verifier=_verify_readiness,
     )
 
 
@@ -2474,6 +2495,88 @@ def _doctor_check_captions() -> None:
             "(gst-inspect-1.0 not found in the installed CivicCast runtime or on "
             "PATH here; verified on the gst-engine host)"
         )
+
+    typer.echo("")
+    typer.echo("Recorded-Spanish captions (translation runtime)")
+    for line in _doctor_translation_lines():
+        typer.echo(line)
+
+
+def _doctor_translation_lines() -> list[str]:
+    """Report whether the required Spanish caption track can actually be produced.
+
+    A published recording must carry a reviewed Spanish track alongside
+    English, and the offline caption job blocks — telling the operator to
+    "run 'civiccast doctor'" — when no translation model is available. Doctor
+    used to say nothing whatsoever about translation, so following that
+    instruction produced a screen with no mention of the thing that was
+    broken. This closes that loop.
+
+    Resolves through the SAME seam the worker does: the S13
+    :class:`~civiccast.ai_models.service.AiModelService`, whose
+    ``effective_selection`` is what ``build_translator`` binds to, and whose
+    ``get_availability`` probes the local runtime for the model's presence.
+    Reading a different source would let doctor print OK for a model the
+    worker cannot load.
+
+    Returns lines rather than echoing them so the report can be asserted in a
+    test without capturing stdout.
+    """
+
+    from civiccast.captions.vod_job import CAPTIONS_SPANISH_ENV_VAR
+
+    lines: list[str] = []
+    # The retired switch first: a station still carrying it will fail to
+    # start, and an operator running doctor to find out why deserves the
+    # answer here rather than only in the startup traceback.
+    retired = os.environ.get(CAPTIONS_SPANISH_ENV_VAR, "").strip()
+    if retired:
+        lines.append(
+            f"  {CAPTIONS_SPANISH_ENV_VAR}={retired!r} is set. That switch is retired; "
+            "Spanish captions are required and it can no longer disable them. Remove it "
+            "from the station environment (a false value stops CivicCast from starting)."
+        )
+    try:
+        from civiccast.ai_models.service import AiModelService
+        from civiccast.ai_models.store import AiModelStore
+        from civiccast.platform.hardware import probe
+
+        hardware = probe()
+        service = AiModelService(
+            AiModelStore(_build_cli_session_factory()),
+            system_ram_total_gb=int(hardware.ram.total_gb),
+            has_gpu=hardware.gpu is not None,
+        )
+        availability = service.get_availability()
+    except Exception as exc:
+        lines.append(f"  translation model: UNKNOWN — could not read the model settings ({exc}).")
+        lines.append(
+            "    Recorded recordings cannot publish until this is readable; check that "
+            "the station database is reachable."
+        )
+        return lines
+
+    feature = availability.features.get("translation")
+    if feature is None:  # pragma: no cover — catalog always carries translation
+        lines.append("  translation model: UNKNOWN — no translation entry in the model catalog.")
+        return lines
+
+    lines.append(f"  translation model: {feature.effective_model_key}  ({feature.band})")
+    if feature.model_present is False or feature.runtime_reachable is False:
+        lines.append("  status:            NOT AVAILABLE")
+        lines.append(f"    {feature.detail}")
+        lines.append(
+            "    Published recordings will be HELD, not published in English only: the "
+            "caption job records the gap on each affected recording. Fix the model under "
+            "Settings > AI Models > Translation."
+        )
+    elif feature.model_present is None and feature.runtime_reachable is None:
+        lines.append("  status:            NOT PROBED")
+        lines.append(f"    {feature.detail}")
+    else:
+        lines.append("  status:            OK")
+        lines.append(f"    {feature.detail}")
+    return lines
 
 
 def _tier_explanation(tier: str) -> str:

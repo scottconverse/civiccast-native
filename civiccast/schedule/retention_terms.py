@@ -149,9 +149,7 @@ def validate_term(unit: str, value: int | None) -> None:
     ``True``/``False`` are never a meaningful retention length.
     """
     if unit not in RETENTION_TERM_UNITS:
-        raise ValueError(
-            f"retention term unit must be one of {RETENTION_TERM_UNITS}, got {unit!r}"
-        )
+        raise ValueError(f"retention term unit must be one of {RETENTION_TERM_UNITS}, got {unit!r}")
     if unit == RETENTION_TERM_UNIT_FOREVER:
         if value is not None:
             raise ValueError("retention term value must be omitted when unit is 'forever'")

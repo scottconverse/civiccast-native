@@ -256,7 +256,9 @@ import type {
   LiveSessionResponse,
   LiveIngestPlan,
   LiveRelayConfigResponse,
+  LiveSourceProbeResponse,
   LiveSourceResponse,
+  LiveSourceUpdate,
   PreflightEvaluation,
   PreflightInputs,
   RecordingTargetResponse,
@@ -265,6 +267,7 @@ import type {
   PublishApprovalRequest,
   PublishAssetStatus,
   PublishDashboardResponse,
+  PublishPreflightResponse,
   PublishRetryRequest,
 } from '../types/publish'
 import type {
@@ -1030,6 +1033,16 @@ export function listPublishAssets(): Promise<PublishDashboardResponse> {
   return request<PublishDashboardResponse>('/api/staff/publish/assets')
 }
 
+/** GET /api/staff/publish/assets/{id}/preflight (PR #129) -- the same
+ * non-secret, side-effect-free per-surface readiness approval reads
+ * (civiccast.publish.readiness), so the panel this backs can never promise
+ * something approval then refuses. */
+export function getPublishPreflight(assetId: string): Promise<PublishPreflightResponse> {
+  return request<PublishPreflightResponse>(
+    `/api/staff/publish/assets/${encodeURIComponent(assetId)}/preflight`,
+  )
+}
+
 export function approvePublishAsset(
   assetId: string,
   payload: PublishApprovalRequest,
@@ -1347,6 +1360,53 @@ export function endLiveBroadcast(
 
 export function listLiveSources(): Promise<LiveSourceResponse[]> {
   return request<LiveSourceResponse[]>('/api/staff/live/sources')
+}
+
+/**
+ * Fetch one source fresh from the server. Used after a 409 on
+ * `updateLiveSource` -- the row the edit form has in memory is the one that
+ * was loaded before someone else's edit landed, so the form needs the
+ * current row (its new `row_version` included) before the operator can save
+ * again.
+ */
+export function getLiveSourceById(
+  liveSourceId: string,
+): Promise<LiveSourceResponse> {
+  return request<LiveSourceResponse>(
+    `/api/staff/live/sources/${encodeURIComponent(liveSourceId)}`,
+  )
+}
+
+/**
+ * Check whether a configured source is delivering media right now, and record
+ * what was seen (WP-07). A failed check is a 200 with `ok: false` -- the
+ * operator needs the reason on screen, not a thrown error that leaves the card
+ * showing the previous state.
+ */
+export function probeLiveSource(
+  liveSourceId: string,
+): Promise<LiveSourceProbeResponse> {
+  return request<LiveSourceProbeResponse>(
+    `/api/staff/live/sources/${encodeURIComponent(liveSourceId)}/probe`,
+    { method: 'POST' },
+  )
+}
+
+/**
+ * Edit a configured source. Any change to what would actually be probed
+ * (address, type, channel, credential reference) clears the source's readiness
+ * server-side, so the response is authoritative about whether it still needs
+ * checking. Send `expected_row_version` to be told (409) rather than silently
+ * overwrite when someone else edited the same source first.
+ */
+export function updateLiveSource(
+  liveSourceId: string,
+  payload: LiveSourceUpdate,
+): Promise<LiveSourceResponse> {
+  return request<LiveSourceResponse>(
+    `/api/staff/live/sources/${encodeURIComponent(liveSourceId)}`,
+    { method: 'PATCH', body: payload },
+  )
 }
 
 export function listLiveRelayConfigs(): Promise<LiveRelayConfigResponse[]> {
@@ -1992,6 +2052,7 @@ export function listRecordingTargets(): Promise<RecordingTargetResponse[]> {
 export interface ListCaptionReviewParams {
   asset_id?: string
   status_filter?: CaptionReviewStatus
+  language?: string
 }
 
 export function listCaptionReviewItems(
@@ -2000,6 +2061,7 @@ export function listCaptionReviewItems(
   const qs = new URLSearchParams()
   if (params.asset_id) qs.set('asset_id', params.asset_id)
   if (params.status_filter) qs.set('status_filter', params.status_filter)
+  if (params.language) qs.set('language', params.language)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   return request<CaptionReviewItemResponse[]>(
     `/api/staff/captions/review-items${suffix}`,
