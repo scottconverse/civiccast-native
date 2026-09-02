@@ -9,8 +9,20 @@
 ; `tests/policy/test_native_installer_identity.py` pins that reference on the
 ; EFFECTIVE (deep-merged) native config. `scripts/build_native_bootstrap.py`'s
 ; `validate_native_bootstrap_config` is a hard gate requiring exactly this
-; file name plus `bundle.resources == {"resources/vc_redist.x64.exe":
-; "vc_redist.x64.exe"}` -- no embedded multi-gigabyte payload, ever.
+; file name plus a `bundle.resources` map of exactly three tiny entries:
+;   resources/vc_redist.x64.exe       -> vc_redist.x64.exe
+;   resources/station/station-index.json -> station/station-index.json
+;   resources/station/core.ccpack        -> station/core.ccpack
+; -- no embedded multi-gigabyte payload, ever. The two station entries were
+; added 2026-09-02 (owner decision) so a DOWNLOAD-ONLY install/upgrade of
+; setup.exe alone still has the signed station index it must activate
+; against; the signed index is a few KB and `core.ccpack` is ~1.5 KB (its
+; payload is a placeholder NOTICE, never runtime bytes -- see
+; scripts/build_native_station_bundle.py::_core_placeholder_sources). The
+; model packs the index names stay out of this binary and are obtained from
+; the kit's own station directory or the per-SHA pack cache. See the
+; d4-activate-station step's own comment for the two-source resolution
+; order.
 ;
 ; WP2 hook-migration (2026-07-30): POSTINSTALL below now carries the D2/D4
 ; install-time chain that previously sat unreachable in the retired
@@ -1024,34 +1036,77 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; registered against $INSTDIR\runtime\python.exe (see that macro's own
   ; header comment two steps below).
   ;
-  ; Sources a signed station bundle side-loaded next to the installer, at
-  ; "$EXEDIR\station\station-index.json" -- the SAME "packs next to the
-  ; installer" side-load convention --civiccast-stage-packs already uses
-  ; above for component packs, extended to a full station bundle (a signed
-  ; index plus its own packs, verified through
+  ; Sources a signed station bundle, verified through
   ; native_distribution::acquire_station_distribution -- reused verbatim via
-  ; --civiccast-import-station, never a second, forked acquisition path).
+  ; --civiccast-import-station, never a second, forked acquisition path.
   ;
-  ; KNOWN GAP (this slice, 2026-08-16): no build step publishes a station
-  ; bundle to $EXEDIR\station yet, so this step currently fails loud on
-  ; every install until one is. That is the correct, honest behavior for
-  ; this slice -- an unconditional silent skip here is the exact shape that
-  ; produced K1 in the first place (an install that reports success while
-  ; the station can never activate). See this slice's evidence/report for
-  ; the full reconciliation this still needs (native_pack_staging.rs's
-  ; DEFAULT_REQUIRED_COMPONENTS stages a disjoint component set from the one
-  ; station activation's self-test needs) before this can pass on a real
-  ; build.
+  ; TWO SOURCES, resolved in this order (2026-09-02 owner decision, "make
+  ; sure the installer always HAS that index, even when downloaded alone"):
+  ;
+  ;   (a) "$EXEDIR\station\station-index.json" -- the USB-kit side-load next
+  ;       to setup.exe. The SAME "packs next to the installer" convention
+  ;       --civiccast-stage-packs already uses above for component packs,
+  ;       extended to a full station bundle (a signed index plus its own
+  ;       packs). assemble-native-beta-kit publishes exactly this layout, so
+  ;       an air-gapped station installing from the stick keeps behaving
+  ;       EXACTLY as before this branch: the kit copy wins, its packs sit
+  ;       beside it in the same directory, and no cache round-trip happens.
+  ;
+  ;   (b) "$INSTDIR\station\station-index.json" -- the EMBEDDED copy. The
+  ;       tiny signed index plus the tiny `core` pack (~1.5 KB; `core`'s
+  ;       payload is a placeholder NOTICE, never runtime bytes -- see
+  ;       scripts/build_native_station_bundle.py::_core_placeholder_sources)
+  ;       ship inside setup.exe as Tauri bundle.resources and are laid down
+  ;       at $INSTDIR\station\ before this hook runs. This is what makes a
+  ;       DOWNLOAD-ONLY install/upgrade of setup.exe alone work: the ~21 GB
+  ;       of model packs the index names are then satisfied from the per-SHA
+  ;       cache under --cache-root rather than from the media directory
+  ;       (native_distribution.rs::copy_station_pack_to_cache).
+  ;       bundle.resources still carries ONLY these two tiny files plus the
+  ;       VC++ prerequisite -- no embedded multi-gigabyte payload, ever; the
+  ;       resource map is a hard gate in
+  ;       scripts/build_native_bootstrap.py::validate_native_bootstrap_config.
+  ;
+  ; Fails loud only when NEITHER exists. An unconditional silent skip here
+  ; is the exact shape that produced K1 in the first place (an install that
+  ; reports success while the station can never activate), so the fail-closed
+  ; branch stays -- it just can no longer fire merely because the operator
+  ; downloaded setup.exe on its own.
+  ;
+  ; Written as two literal nsExec invocations rather than one invocation
+  ; over a computed path register: every $R0-$R4 register live across this
+  ; point still holds D3/D4 chain state (see the D3 rehoming note above and
+  ; CIVICCAST_STEP's own register notes), and $0-$9 are unusable inside a
+  ; CIVICCAST_STEP breadcrumb argument. Two literals cost a duplicated line
+  ; and cannot clobber anything.
   !insertmacro CIVICCAST_STEP "step d4-activate-station: begin"
   DetailPrint "Activating the CivicCast (Native) station (K1)..."
+  IfFileExists "$EXEDIR\station\station-index.json" civiccast_activate_station_from_exedir civiccast_activate_station_try_instdir
+  civiccast_activate_station_from_exedir:
+  !insertmacro CIVICCAST_STEP "step d4-activate-station: source EXEDIR (kit side-load $EXEDIR\station\station-index.json)"
+  DetailPrint "CivicCast (Native): using the station bundle beside setup.exe ($EXEDIR\station)."
   nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$EXEDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
   Pop $0
+  Goto civiccast_activate_station_ran
+  civiccast_activate_station_try_instdir:
+  IfFileExists "$INSTDIR\station\station-index.json" civiccast_activate_station_from_instdir civiccast_activate_station_no_index
+  civiccast_activate_station_from_instdir:
+  !insertmacro CIVICCAST_STEP "step d4-activate-station: source INSTDIR (embedded $INSTDIR\station\station-index.json)"
+  DetailPrint "CivicCast (Native): using the station index embedded in setup.exe ($INSTDIR\station)."
+  nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$INSTDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
+  Pop $0
+  Goto civiccast_activate_station_ran
+  civiccast_activate_station_no_index:
+  !insertmacro CIVICCAST_STEP "step d4-activate-station: no station index at $EXEDIR\station or $INSTDIR\station"
+  DetailPrint "CivicCast (Native): station activation FAILED — no signed station index was found."
+  !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station: no signed station index (station-index.json) was found beside setup.exe at $EXEDIR\station, and this setup.exe does not carry the embedded copy it normally ships with. Download the CivicCast (Native) setup again from the official release page, or copy the full CivicCast kit folder (setup.exe together with its station folder) onto this machine and run setup from there. See the installer log above for details."
+  civiccast_activate_station_ran:
   !insertmacro CIVICCAST_STEP "step d4-activate-station: returned $0"
   ${If} $0 == 0
     DetailPrint "CivicCast (Native): station activation complete (or already activated; no-op)."
   ${Else}
     DetailPrint "CivicCast (Native): station activation FAILED (exit $0) — see the installer log above."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station. A signed station bundle (station-index.json and its packs) was not found at $EXEDIR\station -- publish one alongside the installer, place it there, and run setup again. See the installer log above for the exact underlying error."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station from the signed station index it found. If you installed from a CivicCast kit folder, make sure its station folder was copied across whole; otherwise the station's component packs could not be obtained from this machine's pack cache. See the installer log above for the exact underlying error."
   ${EndIf}
   ;
   ; ===================================================================

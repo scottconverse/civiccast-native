@@ -764,3 +764,110 @@ def test_delta_m02_a_genuine_taskkill_failure_still_reaches_the_details_pane() -
     assert 'taskkill.exe /IM "CivicCast Native.exe" /T /F' in prior_install_arm, (
         "the real stop command itself must be unchanged"
     )
+
+
+# --------------------------------------------------------------------------
+# 2026-09-02 (owner decision): the installer now EMBEDS the signed station
+# index and the tiny `core` pack as Tauri bundle.resources, so a
+# download-only install/upgrade of setup.exe ALONE can activate. Before this,
+# d4-activate-station imported only "$EXEDIR\station\station-index.json" and
+# failed the install outright when it was absent -- and its dialog offered a
+# remedy ("publish one alongside the installer") that is release-engineering
+# work, not something the operator standing at the machine can perform.
+#
+# Same class of defect as chain F above: a fail-loud dialog naming a remedy
+# outside the operator's reach. Pinned here, next to chain F, for that reason.
+# --------------------------------------------------------------------------
+
+ACTIVATE_STATION_BEGIN = '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"'
+SERVICE_REGISTRATION_BEGIN = '!insertmacro CIVICCAST_STEP "step d4-service-registration: begin"'
+
+
+def _activate_station_step(source: str) -> str:
+    return _slice(source, ACTIVATE_STATION_BEGIN, SERVICE_REGISTRATION_BEGIN)
+
+
+def _activate_station_fail_messages(step: str) -> tuple[str, ...]:
+    messages = re.findall(
+        r"!insertmacro CIVICCAST_FAIL \$\{CIVICCAST_EXIT_D4_ACTIVATION\} \"(.*?)\"\n",
+        step,
+        re.DOTALL,
+    )
+    assert messages, "the activation step no longer fails loud through CIVICCAST_FAIL"
+    return tuple(messages)
+
+
+def test_station_activation_tries_the_kit_bundle_before_the_embedded_index() -> None:
+    """Order is the whole contract. An air-gapped station that carried a full
+    signed bundle to the machine on a stick must keep using THAT bundle --
+    its component packs live in the same media directory the index sits in
+    (native_distribution.rs::acquire_station_distribution derives media_root
+    from the index's parent). Preferring the embedded copy would silently
+    send that station down the pack-cache path instead, on a machine whose
+    cache is empty."""
+    step = _activate_station_step(_hooks_source())
+
+    exedir = r'IfFileExists "$EXEDIR\station\station-index.json"'
+    instdir = r'IfFileExists "$INSTDIR\station\station-index.json"'
+    assert exedir in step, "the USB-kit index must still be probed"
+    assert instdir in step, "the embedded index must be probed as a fallback"
+    assert step.index(exedir) < step.index(instdir), (
+        "the kit's own bundle must be preferred over the embedded index"
+    )
+
+
+def test_station_activation_only_fails_closed_when_neither_index_exists() -> None:
+    """The K1 invariant survives: a missing index still aborts the install
+    (never a silent success that leaves a station which can never activate).
+    What changed is only WHEN -- both sources must be exhausted first."""
+    step = _activate_station_step(_hooks_source())
+
+    no_index_arm = step.split("civiccast_activate_station_no_index:", 1)
+    assert len(no_index_arm) == 2, (
+        "there must be a distinct branch for 'no index at either location' -- "
+        "otherwise the two sources are not really both tried"
+    )
+    arm = no_index_arm[1].split("civiccast_activate_station_ran:", 1)[0]
+    assert "!insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION}" in arm, (
+        "no index anywhere must still abort the install through CIVICCAST_FAIL"
+    )
+    assert "!insertmacro CIVICCAST_ALERT" not in arm
+
+
+def test_station_activation_failure_names_a_remedy_the_operator_can_perform() -> None:
+    """chain-F rule, applied to this dialog: 'publish one alongside the
+    installer' is release-engineering work, not an action available to the
+    volunteer standing at the station. The replacement must name things the
+    operator can actually do."""
+    messages = _activate_station_fail_messages(_activate_station_step(_hooks_source()))
+    combined = "\n".join(messages)
+
+    assert "publish one alongside the installer" not in combined, (
+        "the old dialog told the operator to publish a station bundle -- that is a "
+        "build-pipeline action, not an operator action"
+    )
+    assert re.search(r"release page", combined, re.IGNORECASE), (
+        "the operator must be told where a good setup.exe comes from"
+    )
+    assert re.search(r"\bkit\b", combined, re.IGNORECASE), (
+        "the operator must be told the other real remedy: copy the full CivicCast kit "
+        "folder (setup.exe together with its station folder) onto this machine"
+    )
+    for message in messages:
+        assert "installer log" in message, (
+            "every activation failure dialog must keep pointing at the installer log"
+        )
+
+
+def test_station_activation_logs_which_index_source_it_used() -> None:
+    r"""An install nobody watched is diagnosed from
+    $COMMONPROGRAMDATA\CivicCast\install-progress.log alone. With two possible
+    sources, 'activation failed' is not diagnosable unless the log says which
+    index was imported."""
+    step = _activate_station_step(_hooks_source())
+
+    assert "step d4-activate-station: source EXEDIR" in step
+    assert "step d4-activate-station: source INSTDIR" in step
+    assert "step d4-activate-station: no station index at" in step, (
+        "the neither-present case must also name itself in the breadcrumb log"
+    )

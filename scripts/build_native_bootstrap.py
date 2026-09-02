@@ -24,8 +24,27 @@ NATIVE_CONFIG = SRC_TAURI / "tauri.native.conf.json"
 VC_REDIST_RESOURCE = SRC_TAURI / "resources" / "vc_redist.x64.exe"
 VC_REDIST_EXPECTED_BYTES = 25_635_768
 VC_REDIST_EXPECTED_SHA256 = "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b"
+# The station resources the installer embeds so a DOWNLOAD-ONLY install or
+# upgrade of setup.exe alone still carries the signed station index the
+# mandatory K1 activation step (nsis-hooks-bootstrap.nsh, d4-activate-station)
+# must import. They are produced by the `build-native-station-bundle` CI job
+# (scripts/build_native_station_bundle.py) and staged here by
+# `.github/workflows/native-beta-candidate-artifacts.yml` before this script
+# runs -- this script never fabricates them, it only proves what is there.
+STATION_RESOURCE_DIR = SRC_TAURI / "resources" / "station"
+STATION_INDEX_RESOURCE = STATION_RESOURCE_DIR / "station-index.json"
+STATION_CORE_PACK_RESOURCE = STATION_RESOURCE_DIR / "core.ccpack"
+# Deliberately small, and enforced. The whole point of the bootstrap is that
+# it carries no station payload; `core`'s payload is a placeholder NOTICE
+# (build_native_station_bundle.py::_core_placeholder_sources) and the index is
+# a signed JSON envelope. Anything approaching a megabyte here means somebody
+# started smuggling real bytes into setup.exe, which is the rule this gate
+# exists to keep.
+STATION_EMBEDDED_RESOURCE_LIMIT_EXCLUSIVE = 1_000_000
 BOOTSTRAP_RESOURCES = {
     "resources/vc_redist.x64.exe": "vc_redist.x64.exe",
+    "resources/station/station-index.json": "station/station-index.json",
+    "resources/station/core.ccpack": "station/core.ccpack",
 }
 # Tauri names the generated NSIS installer "<productName>_<version>_x64-setup.exe"
 # from the EFFECTIVE merged native config. productName ("CivicCast (Native)") is
@@ -106,6 +125,102 @@ def validate_native_bootstrap_config(path: Path = NATIVE_CONFIG) -> None:
             "native bootstrap must embed the silent offline WebView2 installer; "
             "air-gapped setup must not depend on a download"
         )
+
+
+def validate_embedded_station_resources(
+    *,
+    index_path: Path = STATION_INDEX_RESOURCE,
+    core_pack_path: Path = STATION_CORE_PACK_RESOURCE,
+    product_version: str = __version__,
+    size_limit_exclusive: int = STATION_EMBEDDED_RESOURCE_LIMIT_EXCLUSIVE,
+) -> dict[str, object]:
+    """Fail closed unless the two embedded station resources are really there.
+
+    The activation CLI verifies the signed index's ``product_version`` and
+    ``compatible_core`` against ``main.rs``'s ``CIVICCAST_VERSION`` (see
+    ``run_native_flat_activation_cli``, which passes that constant for both),
+    and ``scripts/policy/check_release_identity.py`` already binds that
+    constant to ``civiccast._native_version.__version__``. So an index built
+    for a different product version would install fine and then fail
+    activation on every machine -- exactly the fail-late shape this gate
+    turns into a build-time failure.
+
+    Returns the verified manifest identity for the build report.
+    """
+
+    for required in (index_path, core_pack_path):
+        if not required.is_file():
+            raise ValueError(
+                "embedded station resource is missing: "
+                f"{required}. The station index and core pack are produced by "
+                "the build-native-station-bundle job and must be staged under "
+                f"{STATION_RESOURCE_DIR} before the Tauri build runs."
+            )
+        observed = required.stat().st_size
+        if observed <= 0:
+            raise ValueError(f"embedded station resource is empty: {required}")
+        if observed >= size_limit_exclusive:
+            raise ValueError(
+                "embedded station resource is too large: "
+                f"{required} is {observed} bytes, which is not smaller than "
+                f"{size_limit_exclusive}; station payload belongs in signed packs"
+            )
+
+    envelope = json.loads(index_path.read_text(encoding="utf-8"))
+    manifest = envelope.get("manifest") if isinstance(envelope, dict) else None
+    if not isinstance(manifest, dict):
+        raise ValueError(f"embedded station index is not a signed envelope: {index_path}")
+    if not isinstance(envelope.get("signature"), str) or not envelope["signature"]:
+        raise ValueError(f"embedded station index carries no signature: {index_path}")
+    if manifest.get("kind") != "station-index":
+        raise ValueError(f"embedded station index is not a station-index: {manifest.get('kind')!r}")
+    for field in ("product_version", "compatible_core"):
+        observed_version = manifest.get(field)
+        if observed_version != product_version:
+            raise ValueError(
+                f"embedded station index {field} {observed_version!r} does not match the "
+                f"native product version {product_version!r} the activation CLI verifies "
+                "against; rebuild the station bundle at this product version"
+            )
+
+    packs = manifest.get("packs")
+    if not isinstance(packs, list) or not packs:
+        raise ValueError(f"embedded station index names no component packs: {index_path}")
+    core = next(
+        (entry for entry in packs if isinstance(entry, dict) and entry.get("component") == "core"),
+        None,
+    )
+    if core is None:
+        raise ValueError(f"embedded station index names no `core` component: {index_path}")
+    if core.get("filename") != core_pack_path.name:
+        raise ValueError(
+            f"embedded station index names core pack {core.get('filename')!r}, but the "
+            f"embedded core pack is {core_pack_path.name!r}"
+        )
+    observed_core_bytes = core_pack_path.stat().st_size
+    if core.get("bytes") != observed_core_bytes:
+        raise ValueError(
+            f"embedded core pack is {observed_core_bytes} bytes, but the signed index "
+            f"declares {core.get('bytes')!r}"
+        )
+    observed_core_sha256 = _sha256(core_pack_path)
+    if core.get("sha256") != observed_core_sha256:
+        raise ValueError(
+            f"embedded core pack SHA-256 {observed_core_sha256} does not match the signed "
+            f"index entry {core.get('sha256')!r}"
+        )
+
+    return {
+        "product_version": manifest["product_version"],
+        "compatible_core": manifest["compatible_core"],
+        "channel": manifest.get("channel"),
+        "signing_key_id": manifest.get("signing_key_id"),
+        "index_sha256": _sha256(index_path),
+        "index_bytes": index_path.stat().st_size,
+        "core_pack_sha256": observed_core_sha256,
+        "core_pack_bytes": observed_core_bytes,
+        "component_count": len(packs),
+    }
 
 
 def require_allowed_signing_key(key_id: str, *, allow_development_key: bool) -> None:
@@ -263,6 +378,11 @@ def _build(public_key: str, key_id: str, vc_redist: Path) -> None:
     try:
         shutil.copyfile(reviewed_redist, VC_REDIST_RESOURCE)
         os.utime(VC_REDIST_RESOURCE, (SOURCE_DATE_EPOCH, SOURCE_DATE_EPOCH))
+        # Same reproducibility normalization the redistributable already gets:
+        # these two files are staged by CI (not by this script), so their
+        # mtimes carry the runner's clock into the NSIS archive unless pinned.
+        for station_resource in (STATION_INDEX_RESOURCE, STATION_CORE_PACK_RESOURCE):
+            os.utime(station_resource, (SOURCE_DATE_EPOCH, SOURCE_DATE_EPOCH))
         _run([npm, "ci"])
         if not tauri.is_file():
             raise RuntimeError("Tauri CLI was not installed by npm ci")
@@ -293,7 +413,12 @@ def _build(public_key: str, key_id: str, vc_redist: Path) -> None:
         VC_REDIST_RESOURCE.unlink(missing_ok=True)
 
 
-def build_report(setup: Path, *, key_id: str) -> dict[str, object]:
+def build_report(
+    setup: Path,
+    *,
+    key_id: str,
+    embedded_station: dict[str, object] | None = None,
+) -> dict[str, object]:
     """Measure an already-built unsigned bootstrap and enforce the size gate."""
 
     if not setup.is_file():
@@ -309,6 +434,7 @@ def build_report(setup: Path, *, key_id: str) -> dict[str, object]:
         "sha256": _sha256(setup),
         "signed": False,
         "status": "PASS",
+        "embedded_station": embedded_station,
     }
 
 
@@ -331,12 +457,17 @@ def main() -> int:
             allow_development_key=args.allow_development_key,
         )
         validate_native_bootstrap_config()
+        embedded_station = validate_embedded_station_resources()
         _build(
             args.pack_public_key_base64,
             args.pack_signing_key_id,
             args.vc_redist_x64,
         )
-        report = build_report(SETUP_ARTIFACT, key_id=args.pack_signing_key_id)
+        report = build_report(
+            SETUP_ARTIFACT,
+            key_id=args.pack_signing_key_id,
+            embedded_station=embedded_station,
+        )
         report_path = args.report.resolve()
         if report_path.exists():
             raise FileExistsError(f"bootstrap report already exists: {report_path}")

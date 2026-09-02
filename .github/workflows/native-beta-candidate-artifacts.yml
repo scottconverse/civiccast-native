@@ -82,6 +82,15 @@ permissions:
 jobs:
   build-native-beta:
     name: Build and sign native-beta candidate assets
+    # The installer now EMBEDS the signed station index and the tiny `core`
+    # pack as Tauri bundle.resources (tauri.native.conf.json), so a
+    # download-only install/upgrade of setup.exe alone still has an index to
+    # activate against (nsis-hooks-bootstrap.nsh, d4-activate-station,
+    # source (b)). Those two files are produced by build-native-station-bundle
+    # below, so this job now depends on it. Nothing about the USB kit changes:
+    # assemble-native-beta-kit still co-locates the FULL bundle at
+    # .\station\ next to setup.exe, and the hook still prefers that copy.
+    needs: build-native-station-bundle
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
     timeout-minutes: 180
     env:
@@ -109,53 +118,21 @@ jobs:
         if: env.BUILD_TARGET == 'self-hosted'
         shell: pwsh
         run: |
-          # Two local roots on this box, both keyed by <sha>, both pruned here
-          # at the start of the one job every self-hosted dispatch always
-          # runs first:
-          #   - C:\CivicCastTester\candidates\<sha>\ -- intermediate mirrors
-          #     written by this job, build-native-station-bundle, and
-          #     assemble-native-beta-kit (candidate\, station-bundle\).
-          #   - C:\CivicCastTester\kit-staging\<sha>\ -- the FINAL flat kit
-          #     assemble-native-beta-kit writes there, which is the exact
-          #     path/layout gate-a-station-acceptance.yml's "Reuse a locally
-          #     pre-staged kit" step reads via Test-Path + a junction (never a
-          #     copy), never pruned from that side.
-          # Safe to prune stale shas from either root here: this job's own
-          # "sandbox-lab" concurrency group (shared with gate-a-station-
-          # acceptance.yml) guarantees no Gate A run is reading either root
-          # while a self-hosted build is executing. Without this, every
-          # self-hosted dispatch would add another ~20-40 GB across the two
-          # roots that never gets reclaimed -- keep only the sha this run is
-          # building.
-          $currentSha = "${{ github.sha }}"
-          # The cross-version upgrade lane (gate-a-station-acceptance.yml,
-          # "Require the pinned previous full kit from local staging") installs
-          # the IMMUTABLE previous candidate from
-          # C:\CivicCastTester\kit-staging\<previous sha> and fails closed if
-          # it is absent. Pruning it here is exactly what emptied that lane
-          # three times on 2026-09-02 (runs 33592973903 and the two after).
-          # Keep the baseline's sha alongside this build's own.
-          $keep = @($currentSha)
-          $baselinePath = "sandbox-lab/upgrade-baseline.json"
-          if (Test-Path -LiteralPath $baselinePath) {
-            $baseline = Get-Content -LiteralPath $baselinePath -Raw | ConvertFrom-Json
-            if ([string]$baseline.source_sha -match '^[0-9a-f]{40}$') {
-              $keep += [string]$baseline.source_sha
-              Write-Host "Keeping pinned previous candidate kit: $($baseline.source_sha) ($($baseline.candidate_label))"
-            }
-          }
-          foreach ($root in @("C:\CivicCastTester\candidates", "C:\CivicCastTester\kit-staging")) {
-            if (Test-Path -LiteralPath $root) {
-              Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $keep -notcontains $_.Name } |
-                ForEach-Object {
-                  Write-Host "Removing stale local candidate: $($_.FullName)"
-                  Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            } else {
-              New-Item -ItemType Directory -Force -Path $root | Out-Null
-            }
-          }
+          # ONE implementation of the prune + its keep-list, shared with
+          # build-native-station-bundle's identical step (which now runs FIRST
+          # -- this job gained `needs: build-native-station-bundle` -- and
+          # writes ~18.6 GB into C:\CivicCastTester\candidates\<sha>\station-
+          # bundle before this job starts, so the reclaim has to happen ahead
+          # of that write too). The keep-list is NOT duplicated inline in the
+          # two steps: PR #124's fix (keep the pinned previous-candidate kit
+          # sandbox-lab/upgrade-baseline.json names, or the cross-version
+          # upgrade lane fails closed with an empty kit-staging) has to hold in
+          # BOTH jobs, and a hand-copied second copy is exactly how that
+          # regression comes back -- a reviewer caught precisely that on this
+          # branch before it merged. See the script's own header for the two
+          # roots, the concurrency-safety argument, and the #124 history.
+          pwsh -NoProfile -File scripts/ci/prune_local_candidate_roots.ps1 -CurrentSha "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw "Local candidate prune failed (exit $LASTEXITCODE)." }
 
       - name: Bind reviewed MSVC install location
         shell: pwsh
@@ -646,6 +623,62 @@ jobs:
             }
           }
 
+      # Hosted only. build-native-station-bundle publishes the two tiny files
+      # this installer embeds as their OWN small artifact
+      # (native-station-embed-<sha>, a few KB) precisely so this job never has
+      # to download the ~18.6 GB full-bundle artifact to obtain them.
+      # actions/download-artifact has no file-level filter within one
+      # artifact, so a second small artifact is the only way to fetch a
+      # kilobyte instead of eighteen gigabytes here.
+      - name: Download the embedded station index and core pack (hosted)
+        if: env.BUILD_TARGET != 'self-hosted'
+        timeout-minutes: 10
+        uses: actions/download-artifact@v4
+        with:
+          name: native-station-embed-${{ github.sha }}
+          path: station-embed
+
+      - name: Stage the embedded station index and core pack for the Tauri build
+        shell: pwsh
+        run: |
+          # Places the signed station index and the tiny `core` pack at the
+          # bundle.resources source paths tauri.native.conf.json declares, so
+          # the built setup.exe lays them down at
+          # $INSTDIR\station\station-index.json and $INSTDIR\station\core.ccpack.
+          # That is the fallback source nsis-hooks-bootstrap.nsh's
+          # d4-activate-station step uses when setup.exe was downloaded on its
+          # own (no kit .\station\ beside it).
+          #
+          # Self-hosted reads build-native-station-bundle's local mirror under
+          # C:\CivicCastTester\candidates\<sha>\station-bundle\station\ -- the
+          # same mirror assemble-native-beta-kit reads, located the same
+          # defensive way (find the file by name under the source root rather
+          # than assuming a nested layout). Hosted reads the small artifact
+          # downloaded above.
+          #
+          # civiccast/apps/installer/src-tauri/resources/* is gitignored, so
+          # staging here cannot dirty the tree the pack build's clean-source
+          # guard inspected earlier in this job.
+          $ErrorActionPreference = "Stop"
+          $selfHosted = $env:BUILD_TARGET -eq "self-hosted"
+          $source = if ($selfHosted) { Join-Path $env:CANDIDATE_ROOT "station-bundle" } else { "station-embed" }
+          if (-not (Test-Path -LiteralPath $source)) { throw "Embedded station staging: source directory not found: $source" }
+          $destination = "civiccast/apps/installer/src-tauri/resources/station"
+          if (Test-Path -LiteralPath $destination) { Remove-Item -Recurse -Force $destination }
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          foreach ($name in @("station-index.json", "core.ccpack")) {
+            $found = Get-ChildItem -Path $source -Recurse -Filter $name | Select-Object -First 1
+            if (-not $found) { throw "Embedded station staging: $name not found under $source." }
+            Copy-Item -LiteralPath $found.FullName -Destination (Join-Path $destination $name)
+            $placed = Join-Path $destination $name
+            if (-not (Test-Path -LiteralPath $placed)) { throw "Embedded station staging: $name was not placed at $placed." }
+            Write-Host "Staged $name ($((Get-Item -LiteralPath $placed).Length) bytes) for embedding."
+          }
+          # Fail closed here as well as inside build_native_bootstrap.py's
+          # validate_embedded_station_resources(): this step is the producer,
+          # so a failure here names the missing INPUT rather than the missing
+          # resource, which is the faster diagnosis.
+
       - name: Build the native bootstrap with the release trust root
         shell: pwsh
         run: |
@@ -925,6 +958,29 @@ jobs:
           }
           Write-Host "build_target=$buildTarget upload_large_artifacts=$uploadLarge candidate_root=$candidateRoot"
 
+      # The SAME script build-native-beta's own prune step runs, not a second
+      # copy of the logic. This job prunes because it now runs FIRST on the
+      # self-hosted lane (build-native-beta gained
+      # `needs: build-native-station-bundle`) and writes the largest single
+      # mirror on the box (~18.6 GB); without a prune ahead of that write, a
+      # dispatch stacks the new sha's bundle on top of every stale sha and
+      # only reclaims them later, in build-native-beta.
+      #
+      # It MUST use the shared keep-list, not a keep-only-this-sha prune: the
+      # cross-version upgrade lane installs the immutable previous candidate
+      # from C:\CivicCastTester\kit-staging\<sandbox-lab/upgrade-baseline.json
+      # source_sha> and fails closed when it is absent (PR #124). This step
+      # running FIRST makes that especially load-bearing -- a keep-only-this-
+      # sha prune here would delete the pinned kit before build-native-beta's
+      # correct prune ever got the chance to keep it. Running the prune twice
+      # per dispatch is idempotent: both calls compute the same keep-list.
+      - name: Prune stale local candidate builds (self-hosted only, keep this sha)
+        if: env.BUILD_TARGET == 'self-hosted'
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/ci/prune_local_candidate_roots.ps1 -CurrentSha "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { throw "Local candidate prune failed (exit $LASTEXITCODE)." }
+
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
         with:
@@ -1115,6 +1171,38 @@ jobs:
             "{0}  {1}" -f (Get-FileHash -Algorithm SHA256 $asset.FullName).Hash.ToLowerInvariant(), $relative
           }
           $lines | Set-Content -LiteralPath (Join-Path $stationDir "SHA256SUMS.txt") -Encoding utf8
+
+      # The two tiny files build-native-beta embeds into setup.exe as Tauri
+      # bundle.resources, published as their OWN small artifact so that job
+      # never downloads the ~18.6 GB full bundle to obtain a few kilobytes
+      # (actions/download-artifact has no file-level filter within one
+      # artifact). Uploaded on EVERY lane, unconditionally -- unlike the full
+      # bundle below, which the self-hosted lane skips by default -- because
+      # the hosted lane's build-native-beta has no local mirror to read.
+      - name: Stage the installer-embedded station resources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $stationDir = "artifacts/native-station-bundle/station"
+          $embedDir = "artifacts/native-station-embed"
+          New-Item -ItemType Directory -Force -Path $embedDir | Out-Null
+          foreach ($name in @("station-index.json", "core.ccpack")) {
+            $source = Join-Path $stationDir $name
+            if (-not (Test-Path -LiteralPath $source)) {
+              throw "Signed station bundle is missing $name; the installer cannot embed it."
+            }
+            Copy-Item -LiteralPath $source -Destination (Join-Path $embedDir $name)
+          }
+          Write-Host "Staged the installer-embedded station resources at $embedDir."
+
+      - name: Upload the installer-embedded station resources
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 10
+        with:
+          name: native-station-embed-${{ github.sha }}
+          path: artifacts/native-station-embed/**
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Mirror the station bundle to the local artifact root (self-hosted only)
         if: env.BUILD_TARGET == 'self-hosted'

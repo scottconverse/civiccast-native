@@ -20,7 +20,9 @@
     "publisher": "CivicCast",
     "copyright": "© 2026 The CivicCast Authors",
     "resources": {
-      "resources/vc_redist.x64.exe": "vc_redist.x64.exe"
+      "resources/vc_redist.x64.exe": "vc_redist.x64.exe",
+      "resources/station/station-index.json": "station/station-index.json",
+      "resources/station/core.ccpack": "station/core.ccpack"
     },
     "windows": {
       "webviewInstallMode": {

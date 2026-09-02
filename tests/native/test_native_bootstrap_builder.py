@@ -117,7 +117,12 @@ def test_native_bootstrap_config_rejects_network_dependent_webview_install(
         json.dumps(
             {
                 "bundle": {
-                    "resources": {"resources/vc_redist.x64.exe": "vc_redist.x64.exe"},
+                    # Sourced from the builder's own pinned map rather than a
+                    # second hand-typed literal: this fixture exists to reach
+                    # the WebView2 branch, and the resources gate runs first,
+                    # so a literal here silently turns this into a
+                    # resources-gate test every time that map changes.
+                    "resources": dict(builder.BOOTSTRAP_RESOURCES),
                     "windows": {
                         "webviewInstallMode": {
                             "type": "downloadBootstrapper",
@@ -247,6 +252,11 @@ def test_file_hash_and_report_measure_the_actual_bootstrap(tmp_path: Path) -> No
         "sha256": hashlib.sha256(b"actual bootstrap bytes").hexdigest(),
         "signed": False,
         "status": "PASS",
+        # Recorded so a candidate receipt says WHICH station index the
+        # setup.exe carries -- otherwise "the installer embeds an index" is a
+        # claim with no artifact behind it. None only when no identity was
+        # supplied (this direct unit call); main() always supplies one.
+        "embedded_station": None,
     }
 
 
@@ -330,6 +340,18 @@ def test_build_controls_tauri_features_and_trust_environment(
         installer / "src-tauri" / "resources" / "vc_redist.x64.exe",
     )
     monkeypatch.setattr(builder, "validate_vc_redist", lambda path: path.resolve())
+    # The two embedded station resources are staged into the source tree by
+    # CI before this script runs; _build only pins their mtimes for
+    # reproducibility. Point them at real fixture files so that pin is
+    # exercised rather than skipped.
+    station_resources = installer / "src-tauri" / "resources" / "station"
+    station_resources.mkdir(parents=True)
+    station_index = station_resources / "station-index.json"
+    station_core = station_resources / "core.ccpack"
+    station_index.write_text("{}", encoding="utf-8")
+    station_core.write_bytes(b"core")
+    monkeypatch.setattr(builder, "STATION_INDEX_RESOURCE", station_index)
+    monkeypatch.setattr(builder, "STATION_CORE_PACK_RESOURCE", station_core)
     monkeypatch.setattr(
         builder,
         "_run",
@@ -364,6 +386,13 @@ def test_build_controls_tauri_features_and_trust_environment(
     assert environment["SOURCE_DATE_EPOCH"] == str(builder.SOURCE_DATE_EPOCH)
     assert normalized == [True]
     assert not builder.VC_REDIST_RESOURCE.exists()
+    # Reproducibility: the CI-staged station resources carry the runner's
+    # clock into the NSIS archive unless pinned to SOURCE_DATE_EPOCH.
+    for staged in (station_index, station_core):
+        assert staged.stat().st_mtime == builder.SOURCE_DATE_EPOCH
+    # ...and unlike the VC++ redistributable, they are NOT deleted afterwards:
+    # this script does not own them, the workflow step that staged them does.
+    assert staged.exists()
 
 
 def test_build_removes_partial_vc_resource_when_staging_copy_fails(
@@ -507,6 +536,14 @@ def _stub_successful_main(
         ],
     )
     monkeypatch.setattr(builder, "validate_native_bootstrap_config", lambda: None)
+    # The embedded station resources are staged by CI, not present in a
+    # checkout, so main()'s fail-closed gate on them is stubbed here the same
+    # way the config gate above is -- it has its own dedicated tests below.
+    monkeypatch.setattr(
+        builder,
+        "validate_embedded_station_resources",
+        lambda: {"product_version": "stub"},
+    )
     monkeypatch.setattr(
         builder,
         "_build",
@@ -515,9 +552,10 @@ def _stub_successful_main(
     monkeypatch.setattr(
         builder,
         "build_report",
-        lambda setup, *, key_id: {
+        lambda setup, *, key_id, embedded_station: {
             "artifact": str(setup),
             "pack_signing_key_id": key_id,
+            "embedded_station": embedded_station,
             "status": "PASS",
         },
     )
@@ -539,6 +577,7 @@ def test_main_writes_a_deterministic_report_and_returns_success(
     expected = {
         "artifact": str(builder.SETUP_ARTIFACT),
         "pack_signing_key_id": "production-test",
+        "embedded_station": {"product_version": "stub"},
         "status": "PASS",
     }
     assert json.loads(report.read_text(encoding="utf-8")) == expected
@@ -623,3 +662,163 @@ def test_script_entrypoint_rejects_missing_required_arguments() -> None:
 
     assert completed.returncode == 2
     assert "--pack-public-key-base64" in completed.stderr
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-02 (owner decision): setup.exe embeds the signed station index and
+# the tiny `core` pack so a download-only install/upgrade can activate. The
+# payload-separation rule this module exists to enforce is unchanged -- these
+# two files are kilobytes, and the gate below proves nothing bigger sneaks in
+# behind them.
+# ---------------------------------------------------------------------------
+
+
+def _station_fixture(
+    tmp_path: Path,
+    *,
+    product_version: str = "9.9.9-test",
+    core_payload: bytes = b"core-placeholder",
+    core_filename: str = "core.ccpack",
+    mutate: Any = None,
+) -> tuple[Path, Path]:
+    station = tmp_path / "station"
+    station.mkdir(parents=True)
+    core = station / core_filename
+    core.write_bytes(core_payload)
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "product": "civiccast-native",
+        "kind": "station-index",
+        "channel": "beta",
+        "product_version": product_version,
+        "compatible_core": product_version,
+        "signing_key_id": "development-test",
+        "created_epoch": 1_704_067_200,
+        "packs": [
+            {
+                "component": "core",
+                "filename": core_filename,
+                "bytes": len(core_payload),
+                "sha256": hashlib.sha256(core_payload).hexdigest(),
+                "required": True,
+                "urls": [],
+            },
+            {
+                "component": "captions-floor",
+                "filename": "captions-floor.ccpack",
+                "bytes": 1_500_000_000,
+                "sha256": "0" * 64,
+                "required": True,
+                "urls": [],
+            },
+        ],
+    }
+    if mutate is not None:
+        mutate(manifest)
+    index = station / "station-index.json"
+    index.write_text(
+        json.dumps({"manifest": manifest, "signature": "ZmFrZS1zaWduYXR1cmU="}),
+        encoding="utf-8",
+    )
+    return index, core
+
+
+def test_bootstrap_resources_carry_only_the_two_tiny_station_files() -> None:
+    assert builder.BOOTSTRAP_RESOURCES == {
+        "resources/vc_redist.x64.exe": "vc_redist.x64.exe",
+        "resources/station/station-index.json": "station/station-index.json",
+        "resources/station/core.ccpack": "station/core.ccpack",
+    }
+    # The map is the gate: validate_native_bootstrap_config compares the live
+    # config against it exactly, so widening one without the other is
+    # impossible by construction.
+    config = json.loads(
+        (
+            Path(builder.__file__).resolve().parents[1]
+            / "civiccast"
+            / "apps"
+            / "installer"
+            / "src-tauri"
+            / "tauri.native.conf.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert config["bundle"]["resources"] == builder.BOOTSTRAP_RESOURCES
+    assert builder.STATION_EMBEDDED_RESOURCE_LIMIT_EXCLUSIVE == 1_000_000
+
+
+def test_embedded_station_resources_validate_and_report_their_identity(tmp_path: Path) -> None:
+    index, core = _station_fixture(tmp_path)
+
+    identity = builder.validate_embedded_station_resources(
+        index_path=index,
+        core_pack_path=core,
+        product_version="9.9.9-test",
+    )
+
+    assert identity["product_version"] == "9.9.9-test"
+    assert identity["compatible_core"] == "9.9.9-test"
+    assert identity["core_pack_bytes"] == core.stat().st_size
+    assert identity["core_pack_sha256"] == hashlib.sha256(core.read_bytes()).hexdigest()
+    assert identity["component_count"] == 2
+
+
+def test_embedded_station_resources_fail_closed_when_absent(tmp_path: Path) -> None:
+    index, core = _station_fixture(tmp_path)
+    core.unlink()
+
+    with pytest.raises(ValueError, match="embedded station resource is missing"):
+        builder.validate_embedded_station_resources(
+            index_path=index, core_pack_path=core, product_version="9.9.9-test"
+        )
+
+
+def test_embedded_station_resources_reject_a_product_version_the_cli_will_refuse(
+    tmp_path: Path,
+) -> None:
+    """main.rs::run_native_flat_activation_cli passes CIVICCAST_VERSION as BOTH
+    expected_product_version and expected_compatible_core, so a mismatched
+    index installs fine and then fails activation on every machine. Catch it
+    at build time instead."""
+    index, core = _station_fixture(tmp_path, product_version="1.2.3")
+
+    with pytest.raises(ValueError, match="does not match the native product version"):
+        builder.validate_embedded_station_resources(
+            index_path=index, core_pack_path=core, product_version="9.9.9-test"
+        )
+
+    def _skew_compatible_core(manifest: dict[str, Any]) -> None:
+        manifest["compatible_core"] = "0.0.1"
+
+    index, core = _station_fixture(
+        tmp_path / "skew", product_version="9.9.9-test", mutate=_skew_compatible_core
+    )
+    with pytest.raises(ValueError, match="compatible_core"):
+        builder.validate_embedded_station_resources(
+            index_path=index, core_pack_path=core, product_version="9.9.9-test"
+        )
+
+
+def test_embedded_station_resources_reject_a_core_pack_the_index_does_not_describe(
+    tmp_path: Path,
+) -> None:
+    index, core = _station_fixture(tmp_path)
+    core.write_bytes(b"tampered")
+
+    with pytest.raises(ValueError, match="bytes, but the signed index"):
+        builder.validate_embedded_station_resources(
+            index_path=index, core_pack_path=core, product_version="9.9.9-test"
+        )
+
+
+def test_embedded_station_resources_reject_a_smuggled_multi_megabyte_payload(
+    tmp_path: Path,
+) -> None:
+    """The rule the whole module exists for: no embedded payload, ever. A
+    `core.ccpack` carrying real bytes rather than the placeholder NOTICE is
+    exactly how that rule would erode."""
+    index, core = _station_fixture(tmp_path, core_payload=b"x" * 2_000_000)
+
+    with pytest.raises(ValueError, match="too large"):
+        builder.validate_embedded_station_resources(
+            index_path=index, core_pack_path=core, product_version="9.9.9-test"
+        )
