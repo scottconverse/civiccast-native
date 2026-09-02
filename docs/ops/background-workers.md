@@ -366,33 +366,26 @@ a clean 409 rather than two active jobs or a raw 500.
 
 CivicCast One v1 serves uploaded files through the local portal VOD path;
 LIVE broadcast and CDN delivery are deferred to keystone K4. The items below
-are consequences of that scope line. Item 1 is still open (owner-approved to
-defer); item 2 has since been closed.
+were consequences of that scope line. Both have since been closed.
 
-1. **A live-finalized recording would transcribe but fail to attach.**
-   `_queue_offline_captions` (`civiccast/publish/router.py:163`) resolves an
-   asset's package directory with `resolve_vod_package_dir`
-   (`civiccast/schedule/paths.py`), which only knows the **upload**
-   convention: `.civiccast-packages/<asset_id>` under the configured upload
-   root. `LiveFinalizationWorker._package_once`
-   (`civiccast/live/finalization_worker.py`) packages a live-finalized
-   recording somewhere else entirely -- `<recording_path.parent>/<live_session_id>-hls/`,
-   persisted on the finalization row's `local_package_manifest_path` -- and
-   nothing in the offline caption path consults that record. Stage one
-   (transcription) does not depend on the package directory at all, so it
-   would still succeed and queue review rows; stage two
-   (`OfflineCaptionJobWorker._publish_if_reviewed` in
-   `civiccast/captions/vod_job.py`, calling `attach_reviewed_captions`)
-   would fail every attempt against a package directory that was never
-   written, exhaust its retry budget, and land the job in `failed` with the
-   recording permanently uncaptioned. In One v1, offline captioning is only
-   reachable from an uploaded-and-published asset (LIVE is out of scope), so
-   this path is unreachable today -- it becomes reachable the moment K4
-   brings live broadcast back and a live-finalized recording is approved for
-   portal publish. The fix, when K4 lands: resolve the package directory the
-   same way `civiccast/stream/media_router.py`'s `_package_dir_for_asset`
-   already does -- prefer `LiveFinalizationJob.local_package_manifest_path`
-   when present, and fall back to the upload convention otherwise.
+1. ~~**A live-finalized recording would transcribe but fail to attach.**~~
+   **Closed.** `_queue_offline_captions` used to resolve the package
+   directory with `resolve_vod_package_dir` alone, which only knows the
+   **upload** convention (`.civiccast-packages/<asset_id>` under the upload
+   root). A live-finalized recording packages somewhere else entirely --
+   `<recording_path.parent>/<live_session_id>-hls/`, recorded on the
+   finalization job's `local_package_manifest_path` -- so stage two would
+   have failed every retry against a directory that was never written.
+   Deferred while it was only a stage-two failure; it stopped being
+   deferrable the moment an unqueueable caption job began blocking approval,
+   because a live station with no upload root was then refused permission to
+   publish at all. `_resolve_caption_package_dir`
+   (`civiccast/publish/router.py`) now mirrors
+   `civiccast.stream.media_router._package_dir_for_asset`'s precedence --
+   the finalization job's manifest path wins, the upload convention is the
+   fallback -- resolved through the same `finalization_worker.get_status`
+   seam the route already uses for the recording file. The gate still closes
+   when neither convention resolves.
 
 2. ~~**Caption attach never re-uploads to a CDN.**~~ **Closed.** Caption
    attach still writes only local disk, but `OfflineCaptionJobWorker` now

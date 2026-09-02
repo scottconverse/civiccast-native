@@ -179,10 +179,50 @@ CAPTION_JOB_UNQUEUEABLE_DETAIL = (
 )
 
 
+def _resolve_caption_package_dir(
+    asset_id: str,
+    finalization_worker: Any,
+) -> Path | None:
+    """Resolve where this asset's HLS package actually lives.
+
+    Two packaging conventions exist and only one of them is under the upload
+    root, so asking ``resolve_vod_package_dir`` alone gets a LIVE-finalized
+    recording wrong:
+
+    * **live-finalized** -- ``LiveFinalizationWorker._package_once`` writes to
+      ``<recording_path.parent>/<live_session_id>-hls/`` and records the
+      manifest on the finalization job. Nothing about it is under
+      ``CIVICCAST_UPLOAD_DIR``, and a station broadcasting live may not have
+      an upload root configured at all.
+    * **uploaded** -- ``.civiccast-packages/<asset_id>`` under the upload root.
+
+    Live is checked first, through the same ``finalization_worker.get_status``
+    seam :func:`_resolve_local_recording` already uses, mirroring
+    ``civiccast.stream.media_router._package_dir_for_asset``'s precedence so
+    the caption path and the media-serving path agree about where a package
+    is. This closes the "a live-finalized recording would transcribe but fail
+    to attach" follow-up in docs/ops/background-workers.md -- and, now that a
+    missing package directory blocks approval rather than merely failing
+    stage two later, it is what keeps a live station with no upload root from
+    being told it cannot publish.
+    """
+
+    if finalization_worker is not None:
+        try:
+            job_status = finalization_worker.get_status(asset_id)
+        except Exception:  # pragma: no cover - unwired/ephemeral worker
+            job_status = None
+        manifest_path = getattr(job_status, "local_package_manifest_path", None)
+        if manifest_path:
+            return Path(manifest_path).resolve().parent
+    return resolve_vod_package_dir(asset_id)
+
+
 def _queue_offline_captions(
     caption_job_store: OfflineCaptionJobStore | None,
     staff_asset: StaffAssetRow,
     *,
+    finalization_worker: Any = None,
     require_published: bool = True,
 ) -> None:
     """Queue captioning for a recording that is becoming public (K3).
@@ -234,28 +274,15 @@ def _queue_offline_captions(
             "this station has no caption job store configured, which usually means "
             "durable storage is unavailable — check Settings > System health."
         )
-    # KNOWN FOLLOW-UP (out of CivicCast One v1 scope, owner-approved to
-    # defer -- see "Known follow-ups" in docs/ops/background-workers.md):
-    # resolve_vod_package_dir only knows the UPLOAD packaging convention
-    # (.civiccast-packages/<asset_id> under the upload root). A
-    # LIVE-finalized recording packages to a different, unrelated path
-    # instead (<recording_path.parent>/<live_session_id>-hls/, recorded on
-    # LiveFinalizationJob.local_package_manifest_path -- see
-    # civiccast.live.finalization_worker.LiveFinalizationWorker
-    # ._package_once and civiccast.stream.media_router
-    # ._package_dir_for_asset, which already knows to prefer it). One v1
-    # only reaches this function from an uploaded-and-published asset (LIVE
-    # broadcast is deferred keystone K4), so that mismatch is unreachable
-    # today: transcription (stage one) doesn't need the package directory
-    # and would still succeed, but attach (stage two) would fail every
-    # retry against a package directory that was never written, and the
-    # job would land in `failed` with the recording permanently
-    # uncaptioned. Fix when K4 lands: mirror media_router's fallback here.
-    package_dir = resolve_vod_package_dir(staff_asset.asset_id)
+    # Live-finalized packages are NOT under the upload root; see
+    # _resolve_caption_package_dir, which mirrors media_router's precedence.
+    package_dir = _resolve_caption_package_dir(staff_asset.asset_id, finalization_worker)
     if package_dir is None:
         raise CaptionJobNotQueueableError(
-            "this station has no upload storage configured, so there is nowhere to write "
-            "the caption track — set the media storage location in Setup."
+            "CivicCast cannot work out where this recording's packaged video lives, so "
+            "there is nowhere to write its caption track. A live recording resolves this "
+            "from its finalization job; an uploaded one needs the media storage location "
+            "set in Setup."
         )
     try:
         enqueue_offline_caption_job(
@@ -423,7 +450,12 @@ def approve_publish_asset(
     # operator gets a 409 naming the cause instead of a green publish and a
     # line in a log file.
     try:
-        _queue_offline_captions(caption_job_store, staff_asset, require_published=False)
+        _queue_offline_captions(
+            caption_job_store,
+            staff_asset,
+            finalization_worker=finalization_worker,
+            require_published=False,
+        )
     except CaptionJobNotQueueableError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -505,6 +537,10 @@ def retry_publish_asset_surface(
     caption_job_store: OfflineCaptionJobStore | None = Depends(get_caption_job_store),
     provider_registry: ProviderRegistry = Depends(get_provider_registry),
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
+    # Same seam the approve route uses: a portal retry that makes a
+    # LIVE-finalized recording public has to resolve its package directory
+    # from the finalization job, not from the upload convention.
+    finalization_worker: Any = Depends(get_live_finalization_worker),
 ) -> PublishAssetStatus:
     """Retry a single surface without changing the rest of the publish run."""
     asset_store = _require_asset_store(postgres_store)
@@ -584,7 +620,9 @@ def retry_publish_asset_surface(
         # retrying the portal surface again after the fix is safe because the
         # enqueue is idempotent per asset.
         try:
-            _queue_offline_captions(caption_job_store, staff_asset)
+            _queue_offline_captions(
+                caption_job_store, staff_asset, finalization_worker=finalization_worker
+            )
         except CaptionJobNotQueueableError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

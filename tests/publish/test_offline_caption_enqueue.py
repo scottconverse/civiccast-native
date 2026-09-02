@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,7 +25,11 @@ from civiccast.captions.vod_job import (
     OFFLINE_CAPTION_JOB_STATE_PENDING,
     InMemoryOfflineCaptionJobStore,
 )
-from civiccast.publish.router import get_caption_job_store, get_publish_store
+from civiccast.publish.router import (
+    _resolve_caption_package_dir,
+    get_caption_job_store,
+    get_publish_store,
+)
 from civiccast.publish.store import InMemoryPublishStore
 from civiccast.schedule.models import StaffAssetRow
 from civiccast.schedule.router import get_postgres_store
@@ -350,3 +355,77 @@ class TestPublishWithoutCaptionableSource:
         assert "Nothing was published." in detail
         # Names what the operator should go and look at.
         assert "System health" in detail
+
+
+class TestLiveFinalizedRecordingPackageDir:
+    """A live-finalized recording's package is NOT under the upload root.
+
+    Regression: making an unqueueable caption job block approval turned a
+    deferred stage-two gap into a publish-blocking 409. A station that
+    broadcasts live may have no CIVICCAST_UPLOAD_DIR at all, and
+    resolve_vod_package_dir only knows the upload convention, so approving a
+    live recording was refused with "this station has no upload storage
+    configured" -- about an asset whose package was sitting on disk exactly
+    where the finalization job said it was. Caught by the randomized-order
+    CI suite, which surfaced it through
+    tests/live/test_finalization_worker_app_wiring.py.
+
+    The resolver now mirrors media_router._package_dir_for_asset: the
+    finalization job's local_package_manifest_path wins, and the upload
+    convention is the fallback.
+    """
+
+    def test_the_live_finalization_manifest_wins_over_the_upload_convention(
+        self, tmp_path: Path
+    ) -> None:
+        package_dir = tmp_path / "recordings" / "ls_abc-hls"
+        package_dir.mkdir(parents=True)
+        manifest = package_dir / "playlist.m3u8"
+        manifest.write_text("#EXTM3U\n", encoding="utf-8")
+
+        class _Worker:
+            def get_status(self, asset_id: str) -> object:
+                return SimpleNamespace(local_package_manifest_path=str(manifest))
+
+        resolved = _resolve_caption_package_dir(_ASSET_ID, _Worker())
+
+        assert resolved == package_dir.resolve()
+
+    def test_no_finalization_job_falls_back_to_the_upload_convention(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        class _Worker:
+            def get_status(self, asset_id: str) -> object:
+                return SimpleNamespace(local_package_manifest_path=None)
+
+        import civiccast.publish.router as publish_router
+
+        monkeypatch.setattr(
+            publish_router, "resolve_vod_package_dir", lambda asset_id: tmp_path / asset_id
+        )
+
+        assert _resolve_caption_package_dir(_ASSET_ID, _Worker()) == tmp_path / _ASSET_ID
+
+    def test_an_unwired_worker_falls_back_rather_than_raising(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Ephemeral mode has no finalization worker at all."""
+
+        import civiccast.publish.router as publish_router
+
+        monkeypatch.setattr(
+            publish_router, "resolve_vod_package_dir", lambda asset_id: tmp_path / asset_id
+        )
+
+        assert _resolve_caption_package_dir(_ASSET_ID, None) == tmp_path / _ASSET_ID
+
+    def test_neither_convention_resolves_is_still_a_block(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The gate stays closed when the package really cannot be located."""
+
+        import civiccast.publish.router as publish_router
+
+        monkeypatch.setattr(publish_router, "resolve_vod_package_dir", lambda asset_id: None)
+
+        assert _resolve_caption_package_dir(_ASSET_ID, None) is None
