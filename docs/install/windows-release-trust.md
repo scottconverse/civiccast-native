@@ -1,38 +1,31 @@
 # Windows Release Trust And Verification
 
-> **Historical: retired WSL2 release-trust guide, not native CivicCast
-> guidance.** `civiccast-native` has no public installer asset. Preserve the
-> rc-numbered instructions below as historical evidence only; a native release
-> must bind its own exact installer, SHA-256, signature, and proof.
+> **Historical: retired WSL2 release-trust guide, applies only to the
+> appendix below.** `civiccast-native` has no public installer asset yet.
+> The rc-numbered instructions in the "Historical" appendix at the bottom of
+> this page are preserved as historical evidence only; a native release must
+> bind its own exact installer, SHA-256, signature, and proof, using the
+> steps in this page's current sections.
 
-> **CURRENT (native line): no downloadable release is published yet.** The
-> owner-held candidate is `v1.0.0-beta.2` (unpublished; no installer asset).
-> The previously issued `v1.0.0-beta.1` tag was **USB-delivered only** and
-> carries no GitHub Release assets either. When a beta candidate is first
-> published with downloadable assets, it appears as a **prerelease** at
-> <https://github.com/scottconverse/civiccast-native/releases> under the
-> `v1.0.0-beta.N` tag family -- watch that page, not `scottconverse/civiccast`
-> (the retired, separate WSL2-line repository) and not any `v1.0.0-rcNN` tag,
-> which belongs to that other repository. See
-> [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
-> authored release-state record. Everything below this notice that mentions
-> `v1.0.0-rc18` or `scottconverse/civiccast` describes the retired WSL2 line
-> and is historical evidence only, not the current native trust path.
+## Current Release State
 
-> **HISTORICAL (retired WSL2 line): `v1.0.0-rc18` was the published controlled
-> beta on that other line.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
+`v1.0.0-beta.1` is the current release. It was delivered by USB, not by a
+GitHub Release download -- there is no GitHub-hosted installer asset to
+verify for it.
 
-> **Release state:** `v1.0.0-rc18` is the most recently published release and
-> supersedes `v1.0.0-rc17`. Its signed GitHub release assets and complete manifest
-> are public; its proof boundary is recorded in the
-> [rc18 verification record](../releases/v1.0.0-rc18-verification.md).
+`v1.0.0-beta.2` is the current owner-held unpublished candidate (unpublished;
+no installer asset). It is intended to be the first downloadable beta
+candidate: `setup.exe`, per-pack runtime `.ccpack` assets, and a
+`SHA256SUMS.txt` checksum file, published as a **prerelease** at
+<https://github.com/scottconverse/civiccast-native/releases> -- watch that
+page, not `scottconverse/civiccast` (the retired, separate WSL2-line
+repository) and not any `v1.0.0-rcNN` tag, which belongs to that other
+repository. See
+[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
+authored release-state record.
 
 This page explains how an operator should verify a CivicCast Windows setup
-download before running it.
+download before running it, once one is published.
 
 ## Read The Release Docs First
 
@@ -42,12 +35,10 @@ anything:
 1. [Beta Tester Start Here](../tester/START-HERE.md)
 2. [Install CivicCast On Windows](../../INSTALL-WINDOWS.md)
 3. This trust and verification page
-4. [CivicCast v1.0.0-rc18 Candidate Verification](../releases/v1.0.0-rc18-verification.md)
 
-`v1.0.0-rc18` is the most recently published release. Download only the asset attached to
-that release and verify its sidecar before installation; see the rc18
-verification record for what the exact rc18 installer has and has not yet
-proven on a clean host.
+Download only the asset attached to the exact tagged GitHub Release you were
+told to use, and verify it against `SHA256SUMS.txt` and its sidecar before
+installation.
 
 Record that these documents were opened and read in the proof report. If the
 approved package source, manifest, sidecar, installer UI, or docs disagree about the
@@ -62,7 +53,7 @@ A CivicCast release can provide three different kinds of trust evidence:
 | --- | --- | --- |
 | SHA-256 checksum | The file on your machine matches the owner-approved package or published release. | It does not identify the publisher by itself. |
 | Release sidecar or manifest | The package, service metadata, and expected hash belong to the same release artifact set. | It does not replace checking the downloaded file hash. |
-| Signature | The artifact was Authenticode-signed by the stated release process (Azure Trusted Signing). See [CODE_SIGNING_POLICY.md](../../CODE_SIGNING_POLICY.md) — this release chain carries no Sigstore/cosign step; Authenticode is the only code signature a Windows release asset carries. | It is not the same as Microsoft SmartScreen reputation unless Authenticode signing is explicitly present. |
+| Signature | The artifact was Authenticode-signed by the stated release process (Azure Trusted Signing). See [CODE_SIGNING_POLICY.md](../../CODE_SIGNING_POLICY.md) -- this release chain carries no Sigstore/cosign step; Authenticode is the only code signature a Windows release asset carries. | It is not the same as Microsoft SmartScreen reputation unless Authenticode signing is explicitly present. |
 
 Do not assume a candidate is Authenticode-signed. The active handoff and exact
 artifact sidecar must state its actual signature status. A public beta should
@@ -72,34 +63,31 @@ be distributed as a public beta.
 
 ## Verify The Download With PowerShell
 
-> **Current status:** rc13 is withdrawn. The approved bounded Windows beta is
-> `v1.0.0-rc18`; apply the steps below to its exact public release assets.
-
-1. From the exact approved replacement release, obtain these matching files
-   and keep them together in one folder:
-   - `civiccast-<approved-version>-windows-setup.exe`
-   - `civiccast-<approved-version>-windows-setup.exe.sidecar.json`
-   The bundle should also include the release manifest for an
-   artifact-set-wide check. Use the exact approved release page, not a draft,
-   an older prerelease, or a generic "latest" link.
+1. From the exact tagged GitHub Release, obtain these matching files and
+   keep them together in one folder:
+   - `civiccast-<version>-windows-setup.exe`
+   - `civiccast-<version>-windows-setup.exe.sidecar.json`
+   - `SHA256SUMS.txt`
+   Use the exact release page, not a draft, an older prerelease, or a
+   generic "latest" link.
 2. Open PowerShell in the download folder.
 3. Compute the local hash:
 
 ```powershell
-$Version = "REPLACE-WITH-APPROVED-VERSION"
+$Version = "REPLACE-WITH-RELEASE-VERSION"
 Get-FileHash ".\civiccast-$Version-windows-setup.exe" -Algorithm SHA256
 ```
 
-4. Compare the `Hash` value with the SHA-256 value recorded in the matching
-   `civiccast-<approved-version>-release-artifacts-manifest.json` or
-   `civiccast-<approved-version>-windows-setup.exe.sidecar.json` file. The values must
-   match exactly.
+4. Compare the `Hash` value with the SHA-256 value recorded for that filename
+   in `SHA256SUMS.txt`, and cross-check it against the matching
+   `civiccast-<version>-windows-setup.exe.sidecar.json` file. All three
+   values must match exactly.
 
 If they do not match, quarantine the package and request a replacement proof
 bundle from the owner. Do not run an installer with a mismatched hash.
 
 Do not trust stale local artifact paths or hashes copied from earlier proof
-runs. The manifest and setup sidecar published with the exact approved
+runs. The `SHA256SUMS.txt` and setup sidecar published with the exact
 GitHub Release are the public source of truth.
 
 ## Verify The Release Manifest
@@ -115,8 +103,8 @@ uv run civiccast installer verify-package `
 ```
 
 The verifier should report `ok` only when the artifact bytes, sidecar hash,
-install manifest, and service/bootstrap metadata line up, and — when the
-sidecar claims `signed: true` — the `.exe` genuinely carries an embedded
+install manifest, and service/bootstrap metadata line up, and -- when the
+sidecar claims `signed: true` -- the `.exe` genuinely carries an embedded
 Authenticode certificate table. It should report blocked or failed when any
 one is missing or inconsistent.
 
@@ -126,7 +114,7 @@ Each release must say whether the Windows setup executable is Authenticode
 signed. If it is signed, verify the signature in PowerShell:
 
 ```powershell
-$Version = "REPLACE-WITH-APPROVED-VERSION"
+$Version = "REPLACE-WITH-RELEASE-VERSION"
 Get-AuthenticodeSignature ".\civiccast-$Version-windows-setup.exe" | Format-List
 ```
 
@@ -146,8 +134,8 @@ the file is untrustworthy if Authenticode already reports `Valid`.
 
 ## Operator Rule
 
-Do not install rc13. Install rc18 only from its matching artifacts. Approved
-sources include:
+Install only the exact tagged release you were told to use, verified against
+its own `SHA256SUMS.txt` and sidecar. Approved sources include:
 
 - the official CivicCast GitHub Release,
 - a release artifact set built by your organization from source, or
@@ -156,3 +144,25 @@ sources include:
 Do not install a CivicCast setup executable received through email, chat, a
 shared drive, or an issue comment unless your organization independently checks
 the hash and release provenance.
+
+---
+
+## Historical: retired rc line
+
+Everything below describes the retired public WSL2 line
+(`v1.0.0-rc18` and earlier, repository `scottconverse/civiccast`) that this
+repository does not carry. It is preserved as historical evidence only. The
+verification document it used to cite
+(`docs/releases/v1.0.0-rc18-verification.md`) is not present in this
+repository -- it is omitted below rather than linked, because it does not
+exist on `main`.
+
+<details>
+<summary>Expand: retired WSL2-line (rc17-rc18) release state</summary>
+
+`v1.0.0-rc18` was the most recently published release on that other line and
+superseded `v1.0.0-rc17`. Its signed GitHub release assets and complete
+manifest were public. `v1.0.0-rc13` was withdrawn on that line; only rc18
+and its matching proof assets were the recommended install.
+
+</details>
