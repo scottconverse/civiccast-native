@@ -32,6 +32,16 @@ installer asset and is not a public or production release.
   the visible copy), and by two new `e2e/a11y.spec.ts` cases that exercise
   the same flow with axe-core against a real browser render.
 
+- **WP-11 item 2 — Lower-third help copy.** Channel Ops' lower-third-banner
+  control (`GraphicsOverlayPanel` in
+  `apps/portal-operator/src/screens/ChannelOpsScreen.tsx`) no longer calls
+  itself a "station bug graphics overlay" — that's a different broadcast
+  graphic (the corner logo) from the lower-third text banner this control
+  actually edits. The copy now says plainly that the change lands on the
+  selected channel's lower-third banner on the next pipeline build or a
+  scheduled swap, and does not hot-change an already-live pipeline. Pinned
+  by a new focused test in `ChannelOpsScreen.test.tsx`.
+
 ### Changed
 
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
