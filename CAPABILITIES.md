@@ -1,10 +1,10 @@
 # CivicCast - Capability Matrix
 
-> **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
+> **Release state:** `v1.0.0-beta.1` is the current release (USB-delivered);
+> `v1.0.0-beta.2` is the current owner-held unpublished candidate and is
+> intended to be the first downloadable one. See
+> [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
+> the authored release-state record.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -25,7 +25,7 @@ banner above) unless a row explicitly says otherwise. The native Windows
 product this repository ships is tracked under
 [ADR 0021](docs/adr/0021-native-windows-runtime.md); its own development
 evidence does not yet establish a public native beta.
-_Baseline observed at `v2.0.10` (commit `02c9e6c`), 2026-06-09 (source of record: the reconciled audit dated 2026-06-09); rows updated in-commit thereafter - see git history per row. `v2.0.10` is a pre-reset internal build-ladder version (used through June 2026, before the public version reset); it is a separate numbering track from the controlled-beta release line below (see `docs/releases/archive/pre-reset/README.md`). The current published release is **v1.0.0-rc18** (controlled beta), available from the [exact GitHub Release](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18); rc17 remains available only as the rollback target. The full recorded-media product path was last proven against **rc17's** exact published installer via a full clean-host walkthrough on 2026-07-20 (see [the rc17 verification record](docs/releases/v1.0.0-rc17-verification.md)); that full-path proof has not yet been repeated against rc18's exact bytes. Local 3.2 LPM contract-lab work is development proof only until its own gates pass and station-device evidence is attached._
+_Baseline observed at `v2.0.10` (commit `02c9e6c`), 2026-06-09 (source of record: the reconciled audit dated 2026-06-09); rows updated in-commit thereafter - see git history per row. `v2.0.10` is a pre-reset internal build-ladder version (used through June 2026, before the public version reset); it is a separate numbering track from the retired WSL2-line's controlled-beta releases described below (see `docs/releases/archive/pre-reset/README.md`). On that retired line (repository `scottconverse/civiccast`, not this repository), the last published release was `v1.0.0-rc18` (controlled beta); rc17 was the rollback target; the full recorded-media product path was last proven against rc17's exact published installer via a full clean-host walkthrough on 2026-07-20, and that full-path proof was never repeated against rc18's exact bytes before the line was retired. (Neither that release page nor its verification record is present in this repository.) Local 3.2 LPM contract-lab work is development proof only until its own gates pass and station-device evidence is attached._
 
 ---
 

@@ -1,31 +1,23 @@
 # Known Limitations For Early-Adopter Builds
 
-> **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
+## Release State
 
-> **Verify before installing:** use only `v1.0.0-rc18`'s own signed GitHub release assets and complete manifest; its proof boundary is recorded in the [rc18 verification record](../releases/v1.0.0-rc18-verification.md).
+`v1.0.0-beta.1` is the current release. It was delivered by USB, not a
+GitHub download. `v1.0.0-beta.2` is the current owner-held unpublished
+candidate and is intended to be the first downloadable one:
+`setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`, published as a
+prerelease at <https://github.com/scottconverse/civiccast-native/releases>.
+See [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for
+the authored release-state record.
 
 These limits are intentional for the current early-adopter line.
 
 ## Installer Trust
 
-rc13 is withdrawn after a genuine clean-host bootstrap failure. Do not install
-it. Use the current `v1.0.0-rc18` release and verify that exact release's
-SHA-256 and actual Authenticode status against its matching handoff and
-sidecar. Never assume a candidate is signed from its filename or from a
-SmartScreen page.
-
-The current line is `v1.0.0-rc18`; its rc15 foundation's exact public
-packaged installer passed a genuine clean-Windows run through cold-reboot
-recovery, and rc18's own exact installer passed a clean-host install,
-launch, reinstall, uninstall and rc17-to-rc18 upgrade on a pristine guest.
-
-A known rc15-era limitation — a still-open installer briefly showing a stale
-restart screen after setup was already healthy — is fixed in this line; the
-published rc15 assets remain immutable history.
+Verify the exact release's SHA-256 and actual Authenticode status (`setup.exe`
+against `SHA256SUMS.txt` and `setup.exe.sidecar.json`) against its matching
+handoff before installing. Never assume a candidate is signed from its
+filename or from a SmartScreen page.
 
 Do not install from repository source ZIPs, tester handoff files, Git LFS-backed
 files, email attachments, chat uploads, or issue-comment downloads unless your
@@ -33,7 +25,7 @@ organization independently verifies the hash and provenance.
 
 For the Longmont Public Media beta, use only the exact installer and filename
 named in the active LPM handoff, and verify its SHA-256 against the matching
-release `.sidecar.json`. Older GitHub prerelease tags remain
+release sidecar. Older GitHub prerelease tags remain
 historical evidence; they are not automatically the current beta candidate after
 a later GauntletGate rebuild.
 
@@ -98,10 +90,15 @@ first acceptance run; validate the bounded recorded-media path first.
 
 ## Restore, Update, And Rollback
 
-The System Health restore action is a real isolated **database** drill. In the last full clean-host walkthrough -- rc17's exact published bytes, completed 2026-07-20 -- it verified 95 tables plus crash recovery; that result has not yet been re-proven on rc18's own bytes (see Clean-Machine Proof below). It does not restore or verify media, configuration, or credentials. Update preflight, rollback
-rehearsal, controlled failed-update proof, and post-update safe-to-broadcast
-proof are also part of the software-owned resilience path. None substitutes
-for a station's full disaster-recovery exercise with real archived meetings.
+The System Health restore action is a real isolated **database** drill. It
+does not restore or verify media, configuration, or credentials. Update
+preflight, rollback rehearsal, controlled failed-update proof, and
+post-update safe-to-broadcast proof are also part of the software-owned
+resilience path. None substitutes for a station's full disaster-recovery
+exercise with real archived meetings. (A prior full clean-host database-drill
+walkthrough exists for the retired WSL2 line's rc17 bytes -- see
+Clean-Machine Proof below -- and does not describe this repository's native
+line.)
 
 ## Roles And Permissions
 
@@ -145,15 +142,26 @@ livestreaming, portable field kit, and digitization/OBS profiles. The native
 caption-SEI lane depends on the CivicCast-bundled private GStreamer runtime,
 which the installer must extract and verify before claiming readiness.
 
-The current controlled Windows beta is `v1.0.0-rc18`. Its clean-host proof
-covers packaging, lifecycle and the installer wizard; the full product
-walkthrough on a clean host was last completed against rc17's exact bytes on
-2026-07-20 (captions were not exercised in that pass) and is recorded in the
-[rc17 verification record](../releases/v1.0.0-rc17-verification.md). rc18's
-own boundary is in the
-[rc18 verification record](../releases/v1.0.0-rc18-verification.md). See the corrected
-[v1.0.0-rc13 incident record](../releases/v1.0.0-rc13-verification.md) for why
-rc13's earlier lab-host evidence did not prove a genuine clean-Windows install.
+**Historical: the paragraph below describes the retired public WSL2 line**
+(`v1.0.0-rc18` and earlier, repository `scottconverse/civiccast`), not this
+repository's native Windows line. Its cited verification documents
+(`docs/releases/v1.0.0-rc{13,17,18}-verification.md`) are not present in this
+repository and are not linked here for that reason. `v1.0.0-beta.1` (the
+current native release) was USB-delivered; no clean-host proof record for the
+native line is published in this repository yet.
+
+<details>
+<summary>Expand: retired WSL2-line (rc13-rc18) clean-machine proof record</summary>
+
+The controlled Windows beta on that other line was `v1.0.0-rc18`. Its
+clean-host proof covered packaging, lifecycle and the installer wizard; the
+full product walkthrough on a clean host was last completed against rc17's
+exact bytes on 2026-07-20 (captions were not exercised in that pass). rc13's
+earlier lab-host evidence did not prove a genuine clean-Windows install and
+was withdrawn.
+
+</details>
+
 External-provider paths, hardware paths, app-store paths, downstream headend
 claims, and broad hardware compatibility need their own exact proof before
 CivicCast should claim them.

@@ -266,6 +266,82 @@ installer asset and is not a public or production release.
   to backend-specific FFmpeg arguments and fails closed when it is missing or
   the source kind does not match. The LPM hardware mock lab proves the exact
   DeckLink SDI and DirectShow HDMI argument boundary used by production.
+- **Recorded-Spanish captions — a published recording now carries an
+  operator-reviewed Spanish caption track alongside English, and cannot
+  publish without one** (owner requirement; Longmont is ~30% Latino and
+  Spanish captions on published recordings are a hard requirement; live
+  real-time Spanish is out of scope). The offline caption job
+  (`civiccast/captions/vod_job.py`) becomes two-phase: once an operator
+  approves the English caption cues, the approved English is translated to
+  Spanish through the same operator-selected translation tier the live tap
+  uses (local TranslateGemma by default, via `build_translator`), and the
+  Spanish cues are queued for their **own** operator review pass (spec §4.2,
+  operator review before publish — the Spanish text is AI output too). Only
+  when both review passes are complete are both tracks attached in a single
+  manifest rewrite: English default, a new `es`/"Spanish" secondary. The
+  public player already renders one caption button per manifest subtitle
+  track, so the Spanish option appears with no front-end change; the operator
+  console's review queue gains an EN/ES language badge and a language filter.
+  A new `language` column on `caption_review_items` (migration
+  `0083_caption_review_language`, default/backfill `en`) keeps the two review
+  passes cleanly separated on a shared asset. Spanish review rows are created
+  `low_confidence=False` — they are a deterministic transform of
+  human-approved English with no ASR audio to retain, so the low-confidence
+  audio-evidence approval gate cannot deadlock them.
+
+  Spanish is **required, not a setting**: there is no supported configuration
+  in which a caption-eligible recording completes with only English. The
+  `CIVICCAST_OFFLINE_CAPTION_SPANISH` switch is retired — a false value now
+  stops startup with an error naming the variable rather than quietly
+  publishing English-only recordings. The two ways the Spanish leg can come up
+  empty are both blocked and operator-actionable instead of green: a station
+  with no translation runtime records an attempt with a remediation on the job
+  row (and ultimately `failed`, reason intact) rather than shipping English;
+  an operator who rejects every Spanish cue leaves the job in
+  `awaiting_review` with a remediation, retry budget untouched, until they
+  edit or approve a Spanish cue — review decisions are not terminal, so that
+  move is really available. A recording whose *English* pass approved nothing
+  still completes uncaptioned, because there is no English track to hold it
+  for either.
+
+- **A captioned recording served through a CDN now actually gets its caption
+  tracks.** Caption attach rewrites the multivariant manifest and writes the
+  WebVTT tracks on local disk; for a package that was already pushed to a CDN
+  before caption review finished, the copy residents watch kept the
+  pre-caption manifest, and the job called itself complete anyway. The offline
+  caption worker now re-publishes the rewritten manifest, both segmented
+  caption tracks, and both flat sidecars to the same key prefix the package
+  was published under, through the same `upload_package_files` helper the
+  finalization worker publishes with (extracted from
+  `LiveFinalizationWorker._upload_package` and shared, so the manifest still
+  uploads **last** and a resident can never fetch a manifest naming a track
+  the CDN does not have). Only the caption artifacts are re-uploaded — the
+  video renditions are byte-identical and can be gigabytes. A republish
+  failure fails the job with the provider's message on the row rather than
+  completing it. Nothing is uploaded when no CDN is configured, or when the
+  recorded manifest URL for that package is not the configured CDN's URL for
+  it — which is how a locally served package, or one from a CDN the station
+  has since replaced, avoids having caption files pushed to a prefix whose
+  video segments were never uploaded. Proven against a mock CDN adapter, not a
+  live CDN account.
+
+- **A live-finalized recording can now be captioned.** CivicCast resolves an
+  asset's packaged video through two different conventions — a live-finalized
+  recording packages to `<recording>/<live_session_id>-hls/` (recorded on its
+  finalization job), an uploaded one to `.civiccast-packages/<asset_id>` under
+  the media storage root — and the caption path only ever knew the second. A
+  live recording would therefore transcribe and fill the review queue, then
+  fail every attempt to attach the reviewed track to a package directory that
+  was never written. The caption path now checks the finalization job's
+  manifest first and falls back to the upload convention, matching the
+  media-serving path's *live-finalized* precedence. It does not match that
+  path's upload branch: it resolves the standard
+  `.civiccast-packages/<asset_id>` location only, so a legacy pre-rc14 package
+  at `<file_path>/hls` is still not found and publishing such an asset stays
+  blocked (known gap; affects only stations upgraded across rc14 that still
+  hold pre-rc14 packages). This also means a station that broadcasts live but
+  has no media storage root configured is no longer refused permission to
+  publish: it has somewhere to write the caption track after all.
 
 ### Fixed
 
@@ -316,6 +392,26 @@ installer asset and is not a public or production release.
   stale-selection, load-error, read-only-role, and mobile-viewport states;
   `e2e/facility-router.spec.ts` is updated for the new channel picker and
   role.
+
+### Security
+
+- **Triaged and allowlisted a new nltk pathsec-bypass advisory
+  (`PYSEC-2026-3740` / CVE-2026-81726 / GHSA-8mgp-746c-j5xp).** `pip-audit`
+  started flagging `nltk 3.10.3` (a transitive dependency of `crawl4ai`,
+  pulled in only by the optional `agenda-js-import` extra behind
+  `civiccast/agenda_import/js_portal.py`) for a sandbox bypass in
+  `TransitionParser.train()`/`.parse()`, `AveragedPerceptron.save()`/`.load()`,
+  `PerceptronTagger.save_to_json()`, and `save_maxent_params()`, which use raw
+  `open()` on caller-controlled paths instead of nltk's guarded `pathsec`
+  helpers. No fix version exists upstream as of this review (`pip-audit`
+  reports empty `fix_versions`). `civiccast/` never imports `nltk` directly,
+  and `js_portal.py`'s `crawler.arun()` call passes no `chunking_strategy`/
+  `extraction_strategy`, so crawl4ai's only nltk touchpoint
+  (`chunking_strategy.py`'s `sent_tokenize` punkt tokenizer) is never
+  exercised — none of the five vulnerable model-persistence APIs are
+  reachable from any code path in this repo. Documented in
+  `security/pip-audit-allowlist.json` with a review-by date of 2026-10-01;
+  re-check when nltk ships a fix.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

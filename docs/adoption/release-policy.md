@@ -1,10 +1,10 @@
 # CivicCast Release Policy
 
-> **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
+> **Release state:** `v1.0.0-beta.1` is the current release (USB-delivered);
+> `v1.0.0-beta.2` is the current owner-held unpublished candidate and is
+> intended to be the first downloadable one. See
+> [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
+> authored release-state record.
 
 Status: current beta adoption guidance
 

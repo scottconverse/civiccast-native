@@ -55,6 +55,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import tempfile
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -66,8 +67,13 @@ from civiccast.captions.hls import (
 )
 from civiccast.captions.live_sidecar import LiveWebVttPublisher
 from civiccast.captions.models import AudioChunk, CaptionCue, CustomVocabulary
-from civiccast.captions.pipeline import CaptionPipeline
-from civiccast.captions.review import CaptionReviewAudioEvidence, CaptionReviewStore
+from civiccast.captions.pipeline import CaptionPipeline, review_item_id_for_cue
+from civiccast.captions.review import (
+    CaptionReviewAudioEvidence,
+    CaptionReviewItemAlreadyExistsError,
+    CaptionReviewItemCreate,
+    CaptionReviewStore,
+)
 from civiccast.captions.review_media import write_caption_review_audio_evidence
 from civiccast.captions.runtime import CaptionRuntime
 from civiccast.captions.stabilize import CaptionStabilizer
@@ -76,6 +82,12 @@ from civiccast.captions.worker import AudioEvidenceFactory, LiveCaptionWorker
 from civiccast.stream._ffmpeg import FfmpegError, FfmpegNotFoundError, run_ffmpeg
 from civiccast.stream.config import ABR_LADDER, HLS_SEGMENT_DURATION, SLATE_RENDITION
 from civiccast.stream.packager import RenditionOutput, VodPackageResult
+from civiccast.translate.models import TranslationTarget
+from civiccast.translate.service import (
+    TranslationProvider,
+    translate_caption_cues,
+    translated_cue_id,
+)
 
 __all__ = [
     "OFFLINE_CAPTION_CHUNK_SECONDS",
@@ -83,14 +95,20 @@ __all__ = [
     "OFFLINE_CAPTION_LANGUAGE_NAME",
     "OFFLINE_REVIEWER_NOTE",
     "OFFLINE_STABLE_WINDOWS",
+    "SPANISH_CAPTION_LANGUAGE",
+    "SPANISH_CAPTION_LANGUAGE_NAME",
+    "SPANISH_REVIEWER_NOTE",
     "AttachedCaptions",
     "OfflineCaptionAudioError",
     "OfflineCaptionPackageError",
     "OfflineTranscription",
     "ReviewedCaptions",
+    "TranslatedCaptionQueue",
     "attach_reviewed_captions",
     "extract_caption_audio",
     "published_caption_sidecar",
+    "published_spanish_caption_sidecar",
+    "queue_translated_captions",
     "resolve_vod_package",
     "reviewed_caption_cues",
     "transcribe_asset_captions",
@@ -107,6 +125,17 @@ OFFLINE_STABLE_WINDOWS = 1
 OFFLINE_CAPTION_LANGUAGE = "en"
 OFFLINE_CAPTION_LANGUAGE_NAME = "English"
 OFFLINE_REVIEWER_NOTE = "Auto-generated for the published recording by the local caption model."
+
+#: Recorded-Spanish caption track (owner requirement: a published recording
+#: carries an operator-reviewed Spanish track alongside English). ``es`` is
+#: the secondary, never the default track -- English stays the default so an
+#: English-only player behaves exactly as before.
+SPANISH_CAPTION_LANGUAGE = "es"
+SPANISH_CAPTION_LANGUAGE_NAME = "Spanish"
+SPANISH_REVIEWER_NOTE = (
+    "Machine translation of the operator-approved English captions. Review the "
+    "Spanish text before it reaches the published recording."
+)
 
 #: ffmpeg wall-clock ceiling for audio extraction. Extraction is a stream
 #: copy-to-PCM with no video decode of consequence, so even a multi-hour
@@ -165,15 +194,39 @@ class ReviewedCaptions:
 
 
 @dataclass(frozen=True)
+class TranslatedCaptionQueue:
+    """What one recorded-Spanish translation-and-queue pass produced.
+
+    Peer of :class:`OfflineTranscription` for the translation leg: the
+    Spanish rows are queued for their OWN operator review pass, so this
+    reports what was created versus what already existed (a re-run is safe).
+    """
+
+    asset_id: str
+    language: str
+    #: Spanish cues produced by the translator, in playback order.
+    cues: list[CaptionCue]
+    created_review_item_ids: list[str]
+    duplicate_review_item_ids: list[str]
+
+
+@dataclass(frozen=True)
 class AttachedCaptions:
     """Files written when a reviewed caption track was published."""
 
     #: Segmented WebVTT playlists written beside the video renditions, and
-    #: the rewritten multivariant manifest they were declared in.
+    #: the rewritten multivariant manifest they were declared in. Covers
+    #: every track attached in one call -- English, and Spanish when present.
     hls_outputs: list[CaptionHlsTrackOutput]
-    #: The whole-recording WebVTT file (the records/legal artifact).
+    #: The whole-recording English WebVTT file (the records/legal artifact).
     sidecar_path: Path
+    #: English reviewed cues published to the track.
     cue_count: int
+    #: The whole-recording Spanish WebVTT file, when a Spanish track was
+    #: attached alongside English; ``None`` for an English-only publish.
+    spanish_sidecar_path: Path | None = None
+    #: Spanish reviewed cues published to the secondary track.
+    spanish_cue_count: int = 0
 
 
 def published_caption_sidecar(package_dir: Path) -> Path:
@@ -188,6 +241,20 @@ def published_caption_sidecar(package_dir: Path) -> Path:
     """
 
     return package_dir / "captions" / "captions.vtt"
+
+
+def published_spanish_caption_sidecar(package_dir: Path) -> Path:
+    """Return the whole-recording Spanish WebVTT path inside a package.
+
+    Peer of :func:`published_caption_sidecar` for the recorded-Spanish track:
+    a second flat, complete WebVTT file a clerk (or a records request) can
+    take away in Spanish, next to the English one. Distinct filename
+    (``captions.es.vtt``) so it never clobbers the English sidecar, and lives
+    in the same package tree served by the existing published-gated
+    ``/media/vod/{asset_id}/...`` route -- no new public surface.
+    """
+
+    return package_dir / "captions" / "captions.es.vtt"
 
 
 def extract_caption_audio(source_path: Path, destination: Path) -> Path:
@@ -360,7 +427,13 @@ def transcribe_asset_captions(
         )
 
 
-def reviewed_caption_cues(review_store: CaptionReviewStore, asset_id: str) -> ReviewedCaptions:
+def reviewed_caption_cues(
+    review_store: CaptionReviewStore,
+    asset_id: str,
+    *,
+    language: str = OFFLINE_CAPTION_LANGUAGE,
+    cue_ids: Collection[str] | None = None,
+) -> ReviewedCaptions:
     """Collect an asset's operator-decided cues and count what is left.
 
     Approved and edited rows become publishable cues carrying the
@@ -368,11 +441,28 @@ def reviewed_caption_cues(review_store: CaptionReviewStore, asset_id: str) -> Re
     air). Rejected rows are dropped -- a rejection means "this text is
     wrong", and publishing it anyway would defeat the review. Pending rows
     are counted, not published.
+
+    ``language`` scopes the tally to one review pass. English transcription
+    (``en``) and recorded-Spanish translation (``es``) rows share an
+    ``asset_id`` but are reviewed independently, so mixing them would let an
+    approved English queue publish a Spanish track that no one reviewed (or
+    vice versa) -- the count and the gate must be per-language.
+
+    ``cue_ids``, when given, narrows the tally further to exactly those cue
+    ids. The translated pass needs it: a Spanish row whose English source
+    cue was rejected *after* the Spanish row was queued is an orphan, and
+    counting it would both gate publication on a decision about a cue that
+    is no longer going out and put Spanish text on screen at a timestamp
+    with no English counterpart. Passing the ids the caller actually intends
+    to publish scopes both the gate and the output to that set.
     """
 
     cues: list[CaptionCue] = []
     pending = approved = edited = rejected = 0
-    for item in review_store.list(asset_id=asset_id):
+    wanted = None if cue_ids is None else set(cue_ids)
+    for item in review_store.list(asset_id=asset_id, language=language):
+        if wanted is not None and item.cue.cue_id not in wanted:
+            continue
         if item.status == "pending":
             pending += 1
             continue
@@ -442,6 +532,7 @@ def attach_reviewed_captions(
     *,
     language: str = OFFLINE_CAPTION_LANGUAGE,
     name: str = OFFLINE_CAPTION_LANGUAGE_NAME,
+    spanish_cues: list[CaptionCue] | None = None,
     segment_duration: int = HLS_SEGMENT_DURATION,
 ) -> AttachedCaptions:
     """Publish reviewed cues onto an asset's packaged VOD output.
@@ -451,37 +542,167 @@ def attach_reviewed_captions(
     :func:`~civiccast.captions.hls.attach_caption_tracks_to_package`), and
     the flat whole-recording ``captions.vtt`` the records office keeps.
 
-    Callers must have checked :attr:`ReviewedCaptions.review_complete`
-    first; this function does not re-derive the approval gate, it enacts
-    the decision.
+    When ``spanish_cues`` is supplied and non-empty, a SECOND track is
+    attached in the same call -- ``es``/"Spanish", ``default=False`` so
+    English stays the default selection -- and a second flat sidecar
+    (``captions.es.vtt``) is written beside the English one. Both tracks are
+    declared in the one manifest rewrite, so a single call publishes the
+    bilingual package atomically rather than rewriting the manifest twice.
 
-    KNOWN FOLLOW-UP (out of CivicCast One v1 scope, owner-approved to
-    defer -- see "Known follow-ups" in docs/ops/background-workers.md):
-    every write here is **local disk only**, inside ``package_dir``. That
-    is correct and complete for One v1, which serves VOD from the local
-    portal origin. It is a gap only for a CDN-backed deployment
-    (``CIVICCAST_CDN_PROVIDER``) whose package already pushed to the CDN
-    before caption review finished -- the CDN-served copy never gets the
-    caption track or the rewritten manifest entry that declares it, since
-    nothing here re-runs the CDN upload
-    (:meth:`civiccast.live.finalization_worker.LiveFinalizationWorker
-    ._upload_package`). Fix when CDN-backed deployments are in scope.
+    Callers must have checked :attr:`ReviewedCaptions.review_complete`
+    first -- for BOTH languages when publishing a Spanish track; this
+    function does not re-derive the approval gate, it enacts the decision.
+
+    Every write here is **local disk only**, inside ``package_dir``, and that
+    is deliberate rather than an outstanding gap: the CDN half is the
+    *caller's* job. For a CDN-backed deployment
+    (``CIVICCAST_CDN_PROVIDER``) whose package reached the CDN before caption
+    review finished, the local rewrite alone would leave CDN viewers on the
+    pre-caption manifest, so
+    :meth:`civiccast.captions.vod_job.OfflineCaptionJobWorker
+    ._publish_if_reviewed` re-publishes the rewritten manifest and the new
+    caption files through :mod:`civiccast.captions.cdn_republish` after this
+    call returns, and fails the job if that republish fails. This function
+    stays local-only so it remains usable without any CDN wiring; do not add
+    an upload here.
+
+    (This used to carry a "KNOWN FOLLOW-UP ... fix when CDN-backed
+    deployments are in scope" note pointing at "Known follow-ups" in
+    docs/ops/background-workers.md. That follow-up is closed and the doc
+    section says so; the note is replaced rather than left to contradict it.)
     """
 
     if not cues:
         raise ValueError("At least one reviewed cue is required to publish a caption track.")
     package = resolve_vod_package(package_dir)
+    tracks = [CaptionHlsTrack(cues=cues, language=language, name=name)]
+    if spanish_cues:
+        tracks.append(
+            CaptionHlsTrack(
+                cues=spanish_cues,
+                language=SPANISH_CAPTION_LANGUAGE,
+                name=SPANISH_CAPTION_LANGUAGE_NAME,
+                # English remains the default selection; Spanish is a peer
+                # the resident chooses. autoselect stays on so a player set
+                # to a Spanish OS locale can pick it up automatically.
+                default=False,
+                autoselect=True,
+            )
+        )
     hls_outputs = attach_caption_tracks_to_package(
         package,
-        [CaptionHlsTrack(cues=cues, language=language, name=name)],
+        tracks,
         segment_duration=segment_duration,
     )
     sidecar_path = published_caption_sidecar(package.output_dir)
     # Same atomic write the live sidecar uses: a resident or a clerk never
     # reads a half-written WebVTT file.
     LiveWebVttPublisher(sidecar_path).publish(cues)
+    spanish_sidecar_path: Path | None = None
+    if spanish_cues:
+        spanish_sidecar_path = published_spanish_caption_sidecar(package.output_dir)
+        LiveWebVttPublisher(spanish_sidecar_path).publish(spanish_cues)
     return AttachedCaptions(
         hls_outputs=hls_outputs,
         sidecar_path=sidecar_path,
         cue_count=len(cues),
+        spanish_sidecar_path=spanish_sidecar_path,
+        spanish_cue_count=len(spanish_cues) if spanish_cues else 0,
+    )
+
+
+def queue_translated_captions(
+    review_store: CaptionReviewStore,
+    *,
+    asset_id: str,
+    cues: list[CaptionCue],
+    provider: TranslationProvider,
+    target: TranslationTarget | None = None,
+    glossary: dict[str, str] | None = None,
+    reviewer_note: str = SPANISH_REVIEWER_NOTE,
+) -> TranslatedCaptionQueue:
+    """Translate operator-approved English cues and queue them for review.
+
+    Second review pass of the recorded-Spanish path (spec §4.2, operator
+    review before publish): the Spanish cues are AI output too, so they get
+    their own operator review pass rather than airing straight from the
+    machine. Call this only with cues an operator already approved in the
+    English pass -- the Spanish text derives from human-approved English.
+
+    LANDMINE (see ``require_low_confidence_approval_evidence`` in
+    ``review.py``): a Spanish cue is a *translation*, with no ASR audio to
+    retain as evidence. If it were queued ``low_confidence=True`` it could
+    never be approved -- the evidence gate would deadlock the whole Spanish
+    track. It is therefore queued ``low_confidence=False`` (which
+    :class:`CaptionCue` defaults to, and which is honest: the cue is a
+    deterministic transform of text a human already accepted, not a
+    low-confidence acoustic guess). The operator still reviews the wording;
+    they simply are not blocked on nonexistent audio.
+
+    Idempotent per asset AND per source wording: Spanish review-item ids
+    derive from ``(asset_id, "<en-cue-id>:es:<digest of the English text>")``
+    via :func:`~civiccast.translate.service.translated_cue_id` and
+    :func:`~civiccast.captions.pipeline.review_item_id_for_cue`, so a re-run
+    over unchanged English reports already-queued rows as
+    ``duplicate_review_item_ids`` instead of clobbering an operator's Spanish
+    decision -- while a re-run over *edited* English mints a different id and
+    correctly produces a fresh row to review.
+
+    That digest is load-bearing, not decoration. Keyed on the cue id alone,
+    a Spanish row survives an English correction made after translation: the
+    operator fixes "the motion carries" to "the motion FAILS" in English, the
+    Spanish row still says "la moción se aprueba", and an id-only match sees
+    a row present and publishes it. Binding the id to the exact source text
+    makes the superseded row a different row -- it is not what the publisher
+    looks for, and its replacement is queued for review.
+    """
+
+    translation_target = target or TranslationTarget()
+    result = translate_caption_cues(
+        cues,
+        provider=provider,
+        target=translation_target,
+        glossary=glossary,
+    )
+    spanish_cues: list[CaptionCue] = []
+    created: list[str] = []
+    duplicates: list[str] = []
+    # translate_caption_cues preserves order 1:1, so each result pairs with
+    # the source cue whose approved text it was translated from. strict=True
+    # so a future change that breaks that pairing fails loudly here rather
+    # than silently binding a translation to the wrong source wording.
+    for source_cue, translated in zip(cues, result.cues, strict=True):
+        spanish_cue = CaptionCue(
+            cue_id=translated_cue_id(
+                source_cue.cue_id,
+                translation_target.target_language,
+                source_text=source_cue.text,
+            ),
+            start_seconds=translated.start_seconds,
+            end_seconds=translated.end_seconds,
+            text=translated.translated_text,
+            confidence=translated.confidence,
+            # The landmine defense -- see the docstring. Never True here.
+            low_confidence=False,
+        )
+        spanish_cues.append(spanish_cue)
+        review_item_id = review_item_id_for_cue(asset_id, spanish_cue)
+        payload = CaptionReviewItemCreate(
+            review_item_id=review_item_id,
+            asset_id=asset_id,
+            cue=spanish_cue,
+            language=translation_target.target_language,
+            reviewer_note=reviewer_note,
+        )
+        try:
+            review_store.create(payload)
+            created.append(review_item_id)
+        except CaptionReviewItemAlreadyExistsError:
+            duplicates.append(review_item_id)
+    return TranslatedCaptionQueue(
+        asset_id=asset_id,
+        language=translation_target.target_language,
+        cues=spanish_cues,
+        created_review_item_ids=created,
+        duplicate_review_item_ids=duplicates,
     )

@@ -6,6 +6,13 @@
       "id": "PYSEC-2026-597",
       "reviewed": "2026-07-05",
       "reason": "Path-traversal read (CVE-2026-12243) in nltk.data.load()/find() when called with an attacker-controlled resource name; no fix version exists upstream yet. nltk is a transitive dependency of rouge-score (dev-only summarization-quality test metric) — civiccast/ never imports nltk, and no runtime or CI path calls nltk.data.load()/find() with any input, let alone untrusted input. No fix version available as of this review; re-check when nltk publishes one."
+    },
+    {
+      "package": "nltk",
+      "id": "PYSEC-2026-3740",
+      "reviewed": "2026-09-01",
+      "review_by": "2026-10-01",
+      "reason": "pathsec sandbox bypass (CVE-2026-81726 / GHSA-8mgp-746c-j5xp) in nltk's model-artifact APIs — TransitionParser.train()/.parse(), AveragedPerceptron.save()/.load(), PerceptronTagger.save_to_json(), and save_maxent_params() use raw open() on caller-controlled paths instead of nltk.pathsec's guarded helpers, so a path outside an enforced pathsec root can still be read or written through these APIs. No fix version exists upstream as of this review (pip-audit reports empty fix_versions for nltk 3.10.3, the current pin). nltk is a transitive dependency of crawl4ai>=0.9.2 (civiccast/agenda_import/js_portal.py's optional JS-portal agenda-import adapter, pyproject.toml agenda-js-import extra) — civiccast/ never imports nltk directly (grep for `import nltk`/`from nltk` under civiccast/ and tests/ is empty). crawl4ai only reaches nltk through crawl4ai.chunking_strategy's sentence-tokenizer helpers (nltk.tokenize.sent_tokenize via the punkt model), which requires an explicit chunking_strategy/extraction_strategy on CrawlerRunConfig; js_portal.py's crawler.arun() call passes no such strategy, so that code path is never exercised. None of the five vulnerable model-persistence APIs (TransitionParser/AveragedPerceptron/PerceptronTagger/maxent) are reachable from crawl4ai's sentence-tokenization usage or from any other code path in this repo. Re-check when nltk publishes a fix; re-review by 2026-10-01 regardless."
     }
   ]
 }
