@@ -32,6 +32,22 @@ When reviewing captions:
 If captions publish before review, the public surface should label them as
 auto-generated.
 
+### When captions actually appear
+
+Approving publish makes the recording public straight away — residents and
+the press can watch it before anyone has reviewed a single caption cue. That
+is deliberate: a public record must not wait days on caption review.
+
+**The recording is public immediately; captions attach after review — both
+languages together, never English alone.** So the caption queue is not a gate
+on publication, it is a gate on *captions*: until you finish both passes, the
+recording is public and uncaptioned, and when you finish, both tracks appear
+at once.
+
+CivicCast will not approve a publish it cannot queue a caption job for. If
+approval fails with a message about the caption job, nothing was published —
+fix what the message names and approve again.
+
 ### English and Spanish are two passes
 
 A published recording carries **both** an English and a Spanish caption
@@ -48,10 +64,15 @@ a language filter above the list, because the two are reviewed separately:
 The recording publishes with both tracks or neither. Two consequences worth
 knowing before you start:
 
-- **Rejecting every Spanish cue does not publish English on its own.** The
-  recording is held and the caption job says why. Edit the Spanish rows with
-  the correct wording instead — a rejected row can still be edited — and
-  publication continues by itself.
+- **Rejecting every Spanish cue does not attach English on its own.** The
+  caption job is held and says why. Edit the Spanish rows with the correct
+  wording instead — a rejected row can still be edited — and the tracks
+  attach by themselves.
+- **Rejecting every English cue does not finish the job either.** With no
+  English there is nothing to translate and no track in either language, so
+  the job is held the same way. Fix the English cues; if the audio is
+  genuinely unusable, ask a technical admin to cancel the caption job rather
+  than leaving it held.
 - **A Spanish cue is never blocked on audio evidence.** It is a translation of
   text you already approved, not a guess about what someone said, so the
   low-confidence audio check that can gate an English cue does not apply.

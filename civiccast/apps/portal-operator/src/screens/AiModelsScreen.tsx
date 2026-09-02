@@ -208,10 +208,10 @@ export function FeatureModelCard({
           style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
         >
           This model translates a published recording&rsquo;s approved English
-          captions into Spanish. The Spanish cues then go to the caption review
-          queue for their own approval — a recording publishes with both
-          language tracks or neither. Live broadcasts are captioned in English
-          only.
+          captions into Spanish, and the Spanish cues then go to the caption
+          review queue for their own approval. The recording is public
+          immediately; captions attach after review — both languages together,
+          never English alone. Live broadcasts are captioned in English only.
         </div>
       )}
 

@@ -106,6 +106,23 @@ def available_translation_models() -> list[TranslationModelRegistration]:
     ]
 
 
+def translated_cue_id(source_cue_id: str, target_language: str) -> str:
+    """Return the cue id a translation of ``source_cue_id`` carries.
+
+    One definition of the rule, because two callers now depend on it and a
+    silent disagreement between them is a data-loss bug rather than a
+    cosmetic one: :func:`translate_caption_cues` *mints* the id, and
+    :meth:`civiccast.captions.vod_job.OfflineCaptionJobWorker
+    ._resolve_spanish_review` *predicts* it -- without translating -- to
+    work out which of an asset's approved English cues already have a
+    translated review row and which are missing. If the prediction and the
+    minting ever diverged, every cue would look missing (endless
+    re-translation) or none would (a short track published as complete).
+    """
+
+    return f"{source_cue_id}:{target_language}"
+
+
 def translate_caption_cues(
     cues: Sequence[CaptionCue],
     *,
@@ -133,7 +150,7 @@ def translate_caption_cues(
         latencies.append(latency_ms)
         translated.append(
             TranslationCue(
-                cue_id=f"{cue.cue_id}:{translation_target.target_language}",
+                cue_id=translated_cue_id(cue.cue_id, translation_target.target_language),
                 start_seconds=cue.start_seconds,
                 end_seconds=cue.end_seconds,
                 source_language=translation_target.source_language,

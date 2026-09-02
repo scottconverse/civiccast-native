@@ -204,6 +204,25 @@ Rejected cues are dropped. A queue that is rejected in full completes with
 the recording left uncaptioned rather than publishing text an operator
 refused.
 
+**When captions exist relative to publication.** Approving publish makes the
+recording public immediately; the caption job runs afterwards, because a
+public record must not wait days on caption review. The operator-facing
+statement of this, used verbatim on every surface, is: *the recording is
+public immediately; captions attach after review — both languages together,
+never English alone.*
+
+Publish-first does **not** mean best-effort. `POST /api/staff/publish/assets/
+{asset_id}/approve` queues the caption job **before** it approves anything,
+and returns **409** naming the cause if it cannot — no caption job store, no
+upload storage, or a failing enqueue. Nothing is published in that case, so
+there is no window in which a recording is public with no caption job and
+only a log line to say so. The one case that is still a skip rather than a
+block is an asset with no local recording file: there is nothing to
+transcribe, so no caption job is owed. A portal *retry* that publishes cannot
+be pre-checked the same way (the recording is public by the time the retry's
+outcome is known), so it raises a 409 that says plainly that the portal
+publish succeeded and the caption job did not queue.
+
 **Recorded-Spanish captions (required, not optional).** A published
 recording carries an operator-reviewed **Spanish** caption track alongside
 English. This is a product requirement, not a station setting: there is no
@@ -229,7 +248,7 @@ created `low_confidence=False` (a translation of human-approved English has no
 ASR audio to retain), so the low-confidence audio-evidence approval gate
 cannot deadlock the Spanish track.
 
-Neither way the Spanish leg can come up empty publishes English alone:
+No way the caption pass can come up empty resolves to a green job:
 
 * **No translation runtime available.** The job records an attempt with an
   operator-facing remediation on `last_error` ("CivicCast has no translation
@@ -244,10 +263,25 @@ Neither way the Spanish leg can come up empty publishes English alone:
   wording (or approve the ones that are right) — review decisions are not
   terminal, so a rejected row can be edited. Publication continues on the next
   poll once at least one Spanish cue is approved or edited.
+* **The operator rejected every English cue.** Symmetric with the Spanish
+  case: no English means nothing to translate and no track in either
+  language, so the job stays in `awaiting_review` with its own remediation
+  rather than completing with zero cues attached. If the audio is genuinely
+  unusable, a technical admin cancels the job; the worker will not decide
+  that on its own.
+* **The translation pass came back short.** `queue_translated_captions`
+  writes one review row per cue, so a store failure partway through a long
+  meeting leaves fewer Spanish rows than approved English cues. The job
+  compares the stored Spanish cue ids against the ids the approved English
+  cues *should* produce, queues only the missing ones on the next attempt,
+  and fails with a remediation naming the shortfall ("3 of 6") if they still
+  cannot be written. A short Spanish track is never attached. Note the
+  distinction: an operator *rejecting* some Spanish cues is an editorial
+  decision on rows that exist and legitimately yields a shorter track; a row
+  that was never created is data loss and blocks.
 
-An asset whose *English* pass approved nothing still completes uncaptioned —
-there is no English track either, so there is nothing to hold the recording
-for.
+Both hold states are idempotent — the job row and the log are written once
+per state change, not once per 60-second poll.
 
 **CDN republish after review.** Attaching captions rewrites the multivariant
 manifest and writes the caption files on **local disk**. When the asset's
@@ -267,7 +301,8 @@ record of publishing that package to the configured CDN.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CIVICCAST_OFFLINE_CAPTION_JOB` | `inline` | `inline` runs the worker as a lifespan thread; `off` disables it. The model is loaded lazily, so an idle queue costs nothing. |
+| `CIVICCAST_OFFLINE_CAPTION_JOB` | `inline` | `inline` runs the worker as a lifespan thread. **`off` refuses to start.** Captions on the published file are the legal obligation this job exists to meet, so switching them off is not a supported station configuration; the startup error names the variable and points at `civiccast doctor`. A station with no caption model staged still starts, still queues the work, and reports the gap on each job — it never publishes uncaptioned in silence. The model is loaded lazily, so an idle queue costs nothing. |
+| `CIVICCAST_ALLOW_CAPTIONS_OFF_FOR_TESTS` | unset | **Automated tests only; never set this on a station.** The only way to make `CIVICCAST_OFFLINE_CAPTION_JOB=off` take effect. Deliberately a second, coordinated variable with `FOR_TESTS` in its name, so captioning cannot be disabled by a stale runbook or a copied support-thread snippet. |
 | `CIVICCAST_OFFLINE_CAPTION_POLL_SECONDS` | `60` | Scan interval. |
 | `CIVICCAST_OFFLINE_CAPTION_BACKOFF_SECONDS` | `300` | Base for exponential backoff (300s, 600s, 1200s, …). |
 | `CIVICCAST_OFFLINE_CAPTION_MAX_ATTEMPTS` | `4` | Attempts per stage before the job is marked `failed` with its reason. |

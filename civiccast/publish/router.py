@@ -138,11 +138,33 @@ def get_caption_job_store(request: Request) -> OfflineCaptionJobStore | None:
     )
 
 
+class CaptionJobNotQueueableError(Exception):
+    """A recording's caption job could not be queued.
+
+    Carries the operator-facing *cause* clause only; the route wraps it in
+    :data:`CAPTION_JOB_UNQUEUEABLE_DETAIL`, which supplies the rest of the
+    sentence and the reassurance that nothing was published.
+    """
+
+
+#: Raised as the 409 body when a recording cannot have its caption job
+#: queued. Publication is what starts the caption obligation, so approving
+#: publication while knowing the obligation cannot even be *recorded* is the
+#: one outcome this route must not produce.
+CAPTION_JOB_UNQUEUEABLE_DETAIL = (
+    "Publish blocked: CivicCast cannot queue this recording's caption job, so approving "
+    "would put it on the public record with no path to the captions the law requires. "
+    "Nothing was published. Cause: {cause} Fix that and approve again."
+)
+
+
 def _queue_offline_captions(
     caption_job_store: OfflineCaptionJobStore | None,
     staff_asset: StaffAssetRow,
+    *,
+    require_published: bool = True,
 ) -> None:
-    """Queue captioning for a recording that just became public (K3).
+    """Queue captioning for a recording that is becoming public (K3).
 
     Publishing is the trigger because "captioned published files" is the
     legal obligation the offline caption path exists to meet — the moment
@@ -151,15 +173,46 @@ def _queue_offline_captions(
     files every cue in the operator review queue; nothing reaches the
     resident-facing package until an operator has decided on it.
 
-    Deliberately best-effort: captioning is asynchronous work that trails
-    publication, so a queueing failure is logged and the publish response
-    still reflects what actually published. The operator sees the gap on
-    the caption review queue, and re-approving the asset re-queues it.
+    **Raises** :class:`CaptionJobNotQueueableError` when the job cannot be
+    queued. It used to swallow every failure and log, on the reasoning that
+    captioning trails publication and must not fail the publish. The half of
+    that reasoning which is still true — captioning trails publication, and a
+    public record must not wait days for caption review — is preserved by
+    when this runs, not by ignoring its result: the approval route calls it
+    *before* approving, so the operator gets a controlled 409 naming the
+    cause and nothing is published, rather than a public recording with no
+    caption job and only a line in a log file to say so.
+
+    ``require_published=False`` is that pre-approval call: the asset has not
+    been marked public yet, so the ``published_at`` check must not veto it.
+    The trade is explicit — if the approval that follows then fails, the
+    asset has a queued caption job it did not need yet. That is bounded and
+    harmless: the job is idempotent per asset (so the operator's retry reuses
+    it rather than transcribing twice), and the worker publishes nothing on
+    its own — it fills the review queue and waits for an operator either way.
+    A public recording with no caption job is not similarly recoverable,
+    because nothing afterwards goes looking for one.
     """
 
-    if caption_job_store is None or staff_asset.published_at is None:
+    if require_published and staff_asset.published_at is None:
         return
     source_path = Path(staff_asset.file_path) if staff_asset.file_path else None
+    if source_path is None:
+        # Not caption-eligible: there is no local recording to transcribe, so
+        # no caption job is owed and none can be queued. This is the one skip
+        # that stays a skip -- blocking here would stop an operator publishing
+        # an asset CivicCast never had the media for, which is a different
+        # thing entirely from a recording whose captions cannot be arranged.
+        _LOG.info(
+            "No offline caption job for %s: the asset has no local recording file.",
+            staff_asset.asset_id,
+        )
+        return
+    if caption_job_store is None:
+        raise CaptionJobNotQueueableError(
+            "this station has no caption job store configured, which usually means "
+            "durable storage is unavailable — check Settings > System health."
+        )
     # KNOWN FOLLOW-UP (out of CivicCast One v1 scope, owner-approved to
     # defer -- see "Known follow-ups" in docs/ops/background-workers.md):
     # resolve_vod_package_dir only knows the UPLOAD packaging convention
@@ -178,12 +231,11 @@ def _queue_offline_captions(
     # job would land in `failed` with the recording permanently
     # uncaptioned. Fix when K4 lands: mirror media_router's fallback here.
     package_dir = resolve_vod_package_dir(staff_asset.asset_id)
-    if source_path is None or package_dir is None:
-        _LOG.info(
-            "Skipped offline captioning for %s: no local source file or upload storage.",
-            staff_asset.asset_id,
+    if package_dir is None:
+        raise CaptionJobNotQueueableError(
+            "this station has no upload storage configured, so there is nowhere to write "
+            "the caption track — set the media storage location in Setup."
         )
-        return
     try:
         enqueue_offline_caption_job(
             caption_job_store,
@@ -191,10 +243,9 @@ def _queue_offline_captions(
             source_path=source_path,
             package_dir=package_dir,
         )
-    except Exception:
-        _LOG.exception(
-            "Published %s but could not queue its offline captions.", staff_asset.asset_id
-        )
+    except Exception as exc:
+        _LOG.exception("Could not queue offline captions for %s.", staff_asset.asset_id)
+        raise CaptionJobNotQueueableError(f"queueing the caption job failed ({exc}).") from exc
 
 
 def get_activitypub_store(request: Request) -> ActivityPubStore:
@@ -327,6 +378,20 @@ def approve_publish_asset(
                 "Run the packager or fix ingest before approving publish."
             ),
         )
+    # BEFORE approving, not after. Publication is what starts the caption
+    # obligation, and the public record must not wait days for caption review
+    # (so publish-first stays) — but a station that cannot even record the
+    # obligation must not publish at all. Queueing here means there is no
+    # window in which a recording is public with no caption job: either both
+    # happen or neither does, and the operator gets a 409 naming the cause
+    # instead of a green publish and a line in a log file.
+    try:
+        _queue_offline_captions(caption_job_store, staff_asset, require_published=False)
+    except CaptionJobNotQueueableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=CAPTION_JOB_UNQUEUEABLE_DETAIL.format(cause=str(exc)),
+        ) from exc
     record = approve_publish(
         asset=staff_asset,
         request=request,
@@ -340,7 +405,6 @@ def approve_publish_asset(
         staff_asset=staff_asset,
         record=record,
     )
-    _queue_offline_captions(caption_job_store, staff_asset)
     status_response = build_publish_asset_status(staff_asset, record)
     broker_client.publish(build_publish_approved_event(status_response))
     activitypub_config = http_request.app.state.activitypub_config
@@ -437,5 +501,26 @@ def retry_publish_asset_surface(
         surface.id == "portal" and surface.state == "succeeded" for surface in record.surfaces
     )
     if surface_id == "portal" and portal_became_public:
-        _queue_offline_captions(caption_job_store, staff_asset)
+        # This retry is what made the recording public, so it carries the
+        # same obligation as a first approval. It cannot be pre-checked the
+        # way approval is -- the recording is already public by the time we
+        # know the retry succeeded -- so the failure is surfaced rather than
+        # swallowed: a public recording with no caption job and nothing but a
+        # log line is the exact silence this route is not allowed to produce.
+        # The message says plainly that the portal publish DID succeed, so
+        # the operator does not read the 409 as "nothing happened", and
+        # retrying the portal surface again after the fix is safe because the
+        # enqueue is idempotent per asset.
+        try:
+            _queue_offline_captions(caption_job_store, staff_asset)
+        except CaptionJobNotQueueableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "The portal retry succeeded and this recording is now public, but "
+                    "CivicCast could not queue its caption job, so no captions are on "
+                    f"the way. Cause: {exc} Fix that and retry the portal surface again "
+                    "to start captioning."
+                ),
+            ) from exc
     return build_publish_asset_status(staff_asset, record)

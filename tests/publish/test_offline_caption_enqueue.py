@@ -85,13 +85,21 @@ def _asset(source_file: Path | None) -> StaffAssetRow:
 
 
 @pytest.fixture
+def publish_store() -> InMemoryPublishStore:
+    """Shared so a test can assert nothing was published, not just the code."""
+
+    return InMemoryPublishStore()
+
+
+@pytest.fixture
 def client(
     source_file: Path,
     job_store: InMemoryOfflineCaptionJobStore,
+    publish_store: InMemoryPublishStore,
 ) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_postgres_store] = lambda: FakeAssetStore([_asset(source_file)])
-    app.dependency_overrides[get_publish_store] = lambda: InMemoryPublishStore()
+    app.dependency_overrides[get_publish_store] = lambda: publish_store
     app.dependency_overrides[get_caption_job_store] = lambda: job_store
     with TestClient(app, headers=_STAFF_HEADERS) as test_client:
         yield test_client
@@ -262,11 +270,23 @@ class TestPublishEnqueuesOfflineCaptions:
         assert retry.status_code == 200
         assert job_store.active_for_asset(_ASSET_ID) is None
 
-    def test_a_queueing_failure_never_breaks_the_publish_response(
+    def test_a_queueing_failure_blocks_approval_with_a_409(
         self,
         client: TestClient,
+        publish_store: InMemoryPublishStore,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """A caption job that cannot be queued must stop the publish.
+
+        This used to assert the opposite -- queueing was best-effort, so a
+        failure was logged and the publish returned 200. That produced the
+        state the whole caption policy exists to prevent: a recording on the
+        public record with no caption job, no captions coming, and nothing
+        but a log line to say so. Publish-first still stands (the recording
+        does not wait for review), but a station that cannot even record the
+        obligation does not publish.
+        """
+
         import civiccast.publish.router as publish_router
 
         def _boom(*_args: object, **_kwargs: object) -> None:
@@ -276,7 +296,12 @@ class TestPublishEnqueuesOfflineCaptions:
 
         response = client.post(f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL)
 
-        assert response.status_code == 200
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert "Nothing was published." in detail
+        assert "caption queue unavailable" in detail
+        # And it really did not publish: no surface record was written.
+        assert publish_store.get_run(_ASSET_ID) is None
 
 
 class TestPublishWithoutCaptionableSource:
@@ -298,10 +323,18 @@ class TestPublishWithoutCaptionableSource:
         assert response.status_code == 200
         assert job_store.active_for_asset(_ASSET_ID) is None
 
-    def test_no_caption_job_store_configured_is_survivable(
+    def test_no_caption_job_store_configured_blocks_a_captionable_asset(
         self,
         source_file: Path,
     ) -> None:
+        """No caption job store + a real recording = no publish.
+
+        Previously "survivable" (200). A station with no caption job store has
+        lost durable storage; publishing a recording it can never caption is
+        not survival, it is a public record with a permanent accessibility
+        gap and no record that one is owed.
+        """
+
         app = create_app()
         app.dependency_overrides[get_postgres_store] = lambda: FakeAssetStore([_asset(source_file)])
         app.dependency_overrides[get_publish_store] = lambda: InMemoryPublishStore()
@@ -312,4 +345,8 @@ class TestPublishWithoutCaptionableSource:
                 f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert "Nothing was published." in detail
+        # Names what the operator should go and look at.
+        assert "System health" in detail

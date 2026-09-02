@@ -55,6 +55,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import tempfile
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -427,6 +428,7 @@ def reviewed_caption_cues(
     asset_id: str,
     *,
     language: str = OFFLINE_CAPTION_LANGUAGE,
+    cue_ids: Collection[str] | None = None,
 ) -> ReviewedCaptions:
     """Collect an asset's operator-decided cues and count what is left.
 
@@ -441,11 +443,22 @@ def reviewed_caption_cues(
     ``asset_id`` but are reviewed independently, so mixing them would let an
     approved English queue publish a Spanish track that no one reviewed (or
     vice versa) -- the count and the gate must be per-language.
+
+    ``cue_ids``, when given, narrows the tally further to exactly those cue
+    ids. The translated pass needs it: a Spanish row whose English source
+    cue was rejected *after* the Spanish row was queued is an orphan, and
+    counting it would both gate publication on a decision about a cue that
+    is no longer going out and put Spanish text on screen at a timestamp
+    with no English counterpart. Passing the ids the caller actually intends
+    to publish scopes both the gate and the output to that set.
     """
 
     cues: list[CaptionCue] = []
     pending = approved = edited = rejected = 0
+    wanted = None if cue_ids is None else set(cue_ids)
     for item in review_store.list(asset_id=asset_id, language=language):
+        if wanted is not None and item.cue.cue_id not in wanted:
+            continue
         if item.status == "pending":
             pending += 1
             continue

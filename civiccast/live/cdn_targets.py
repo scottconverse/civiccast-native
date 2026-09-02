@@ -67,11 +67,29 @@ def build_asset_cdn_package_target_lookup(
 
     def lookup(asset_id: str) -> CdnPackageTarget | None:
         with session_factory() as session:
+            # ``asset_id`` is a plain nullable column on live_finalization_jobs
+            # with no unique constraint -- the primary key is
+            # ``live_session_id`` -- so two completed sessions can name the
+            # same asset (a re-finalize after a repackage, for one). An
+            # earlier ``scalar_one_or_none()`` here raised MultipleResultsFound
+            # on that shape, turning a survivable ambiguity into a caption-job
+            # failure. Order by completion and take the most recent instead:
+            # the newest completed package is the one whose files are on the
+            # CDN now, and therefore the one whose manifest a caption
+            # republish must rewrite. ``completed_at`` can be NULL on an older
+            # row, so ``live_session_id`` breaks the tie deterministically
+            # rather than leaving the choice to row order.
             row = session.execute(
-                select(LiveFinalizationJob).where(
+                select(LiveFinalizationJob)
+                .where(
                     LiveFinalizationJob.asset_id == asset_id,
                     LiveFinalizationJob.state == FINALIZATION_STATE_COMPLETED,
                 )
+                .order_by(
+                    LiveFinalizationJob.completed_at.desc().nullslast(),
+                    LiveFinalizationJob.live_session_id.desc(),
+                )
+                .limit(1)
             ).scalar_one_or_none()
             if row is None:
                 return None

@@ -419,9 +419,17 @@ export function ReviewQueueScreen() {
   >({})
   const queryClient = useQueryClient()
 
+  // The language filter is applied by the API (`?language=`), not by
+  // discarding rows in the browser. A meeting's caption queue is one row per
+  // cue in TWO languages, so a long council session is thousands of rows;
+  // fetching all of them to show one language's worth was work the server
+  // already knows how to avoid. The language is part of the query key, so
+  // switching tabs is a cached, cancellable fetch rather than a re-filter of
+  // a payload we should not have asked for.
   const query = useQuery<CaptionReviewItemResponse[], Error>({
-    queryKey: ['caption-review-items'],
-    queryFn: () => listCaptionReviewItems(),
+    queryKey: ['caption-review-items', languageFilter],
+    queryFn: () =>
+      listCaptionReviewItems(languageFilter === 'all' ? {} : { language: languageFilter }),
     retry: false,
   })
   const staffIdentityQuery = useQuery({
@@ -469,7 +477,6 @@ export function ReviewQueueScreen() {
     const needle = search.trim().toLowerCase()
     return items.filter((item) => {
       if (filter !== 'all' && item.status !== filter) return false
-      if (languageFilter !== 'all' && captionLanguageOf(item) !== languageFilter) return false
       if (
         needle &&
         !item.asset_id.toLowerCase().includes(needle) &&
@@ -480,17 +487,13 @@ export function ReviewQueueScreen() {
       }
       return true
     })
-  }, [filter, languageFilter, items, search])
+  }, [filter, items, search])
 
-  const languageCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const item of items) {
-      const language = captionLanguageOf(item)
-      counts[language] = (counts[language] ?? 0) + 1
-    }
-    return counts
-  }, [items])
-  const hasSpanish = (languageCounts.es ?? 0) > 0
+  // Only the selected language is fetched now, so a per-language count for
+  // the tabs the operator is NOT looking at would be a number we do not
+  // have. The active tab carries the count it can honestly show; the others
+  // carry none rather than a stale or invented one.
+  const spanishTabIsEmpty = languageFilter === 'es' && query.isSuccess && items.length === 0
 
   const busy =
     approveMutation.isPending || editMutation.isPending || rejectMutation.isPending
@@ -561,8 +564,6 @@ export function ReviewQueueScreen() {
         <div role="tablist" aria-label="Caption review language filter" className="flex flex-wrap gap-2">
           {LANGUAGE_FILTERS.map((item) => {
             const active = item.id === languageFilter
-            const count =
-              item.id === 'all' ? items.length : languageCounts[item.id] ?? 0
             return (
               <button
                 key={item.id}
@@ -578,16 +579,20 @@ export function ReviewQueueScreen() {
                 }}
               >
                 {item.label}
-                <span className="ml-1.5" style={{ color: active ? 'var(--cc-brand-ink)' : 'var(--cc-ink-3)' }}>
-                  {count}
-                </span>
+                {active && (
+                  <span className="ml-1.5" style={{ color: 'var(--cc-brand-ink)' }}>
+                    {items.length}
+                  </span>
+                )}
               </button>
             )
           })}
         </div>
-        {!hasSpanish && (
+        {spanishTabIsEmpty && (
           <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            Spanish cues appear here after English captions are approved and translated.
+            Spanish cues appear here after English captions are approved and translated. The
+            recording is public immediately; captions attach after review — both languages
+            together, never English alone.
           </span>
         )}
       </div>

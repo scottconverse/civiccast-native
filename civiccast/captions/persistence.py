@@ -184,7 +184,25 @@ class PostgresCaptionReviewStore:
                 updated_at=now,
             )
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as exc:
+                # The ``session.get`` above is check-then-insert with no row
+                # lock, so two concurrent creators of the same review item --
+                # two offline-caption worker ticks both finding the Spanish
+                # translation short and both re-queueing the missing cues --
+                # can both pass it before either commits. ``review_item_id``
+                # is the primary key, so the DB is the real guard and one of
+                # them loses here. Translate that loss into the store's own
+                # "already exists" error, exactly as the offline caption job
+                # queue translates its partial-unique-index loss into
+                # OfflineCaptionJobConflictError: the caller
+                # (civiccast.captions.vod.queue_translated_captions) already
+                # treats that as "someone else queued this row" and records a
+                # duplicate, instead of surfacing a raw DB error that would
+                # fail an otherwise-healthy caption job.
+                session.rollback()
+                raise CaptionReviewItemAlreadyExistsError(payload.review_item_id) from exc
             session.refresh(row)
             return _to_response(row)
 

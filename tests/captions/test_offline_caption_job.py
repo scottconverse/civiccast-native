@@ -25,6 +25,9 @@ from civiccast.captions.retention import CaptionEvidenceRetentionPolicy, Caption
 from civiccast.captions.review import (
     CaptionReviewDecision,
     CaptionReviewEdit,
+    CaptionReviewItemAlreadyExistsError,
+    CaptionReviewItemCreate,
+    CaptionReviewItemResponse,
     InMemoryCaptionReviewStore,
 )
 from civiccast.captions.vod import (
@@ -40,7 +43,9 @@ from civiccast.captions.vod import (
     transcribe_asset_captions,
 )
 from civiccast.captions.vod_job import (
+    ALL_ENGLISH_REJECTED_REMEDIATION,
     ALL_SPANISH_REJECTED_REMEDIATION,
+    CAPTIONS_OFF_TEST_OVERRIDE_ENV,
     MISSING_TRANSLATOR_REMEDIATION,
     OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW,
     OFFLINE_CAPTION_JOB_STATE_COMPLETE,
@@ -595,9 +600,16 @@ class TestOfflineCaptionJobWorker:
         assert "Motion carries." in body
         assert "motoin carrys" not in body
 
-    def test_a_fully_rejected_queue_leaves_the_recording_uncaptioned(
+    def test_a_fully_rejected_queue_holds_the_job_instead_of_completing(
         self, tmp_path: Path, fake_ffmpeg: None
     ) -> None:
+        """Rejecting every English cue must not mark the recording captioned.
+
+        This used to complete with ``published_cue_count == 0``: a published
+        recording reported as done by the caption job while carrying no track
+        in any language. Same failure shape as an English-only publish, so it
+        gets the same treatment -- held, with the operator's move on the row.
+        """
         source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
         package_dir = _package(tmp_path / "packages")
         job_store = InMemoryOfflineCaptionJobStore()
@@ -610,15 +622,24 @@ class TestOfflineCaptionJobWorker:
 
         for item in review_store.list(asset_id=_ASSET_ID):
             review_store.reject(item.review_item_id, CaptionReviewDecision())
-        done = worker.run_once()[0]
+        held = worker.run_once()[0]
 
-        assert done.state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
-        assert done.published_cue_count == 0
+        assert held.state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        assert held.last_error == ALL_ENGLISH_REJECTED_REMEDIATION
+        # Held on a human decision, so the retry budget is untouched.
+        assert held.attempts == 0
+        assert held.published_cue_count == 0
         # Retained review audio evidence lands under package_dir/captions/
         # even though nothing was published -- see the comment in
         # test_full_run_transcribes_waits_for_review_then_publishes.
         assert not published_caption_sidecar(package_dir).exists()
         assert "SUBTITLES" not in (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+
+        # Idempotent hold (the poll runs every 60s while the operator
+        # decides): a second tick with nothing changed rewrites nothing.
+        again = worker.run_once()[0]
+        assert again.updated_at == held.updated_at
+        assert again.last_error == ALL_ENGLISH_REJECTED_REMEDIATION
 
     def test_a_silent_recording_completes_without_review_work(
         self, tmp_path: Path, fake_ffmpeg: None
@@ -994,8 +1015,17 @@ class TestOfflineCaptionJobSettings:
         with pytest.raises(ValueError, match="greater than zero"):
             OfflineCaptionJobSettings.from_env()
 
-    def test_off_mode_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_off_mode_is_accepted_only_with_the_test_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``off`` is reachable for tests, and ONLY for tests.
+
+        See TestCaptionsCannotBeSwitchedOff for the station-facing half: the
+        same value without this override refuses to start.
+        """
+
         monkeypatch.setenv("CIVICCAST_OFFLINE_CAPTION_JOB", "off")
+        monkeypatch.setenv(CAPTIONS_OFF_TEST_OVERRIDE_ENV, "1")
 
         assert OfflineCaptionJobSettings.from_env().mode == "off"
 
@@ -1367,6 +1397,315 @@ class TestCdnRepublishGatesCompletion:
         assert row.state != OFFLINE_CAPTION_JOB_STATE_COMPLETE
         assert row.attempts == 1
         assert "CDN refused the upload: 403" in row.last_error
+
+
+class TestTruncatedSpanishTrackNeverPublishes:
+    """A Spanish queue that came back SHORT must never publish as complete.
+
+    Reviewer's reproduction (PR #131): ``queue_translated_captions`` writes
+    one review row per cue, so a store error partway through a long meeting
+    leaves N of M rows behind. The old gate asked "does this asset have any
+    Spanish rows?" -- it did -- so it never queued the rest, and once an
+    operator decided those N it reported ``pending == 0`` and published an
+    N-of-M Spanish track as ``complete``. Silent truncation of a legally
+    required accessibility artifact.
+    """
+
+    class _FlakyStore(InMemoryCaptionReviewStore):
+        """Fails every ``create`` after ``fail_after`` succeed, once."""
+
+        def __init__(self, fail_after: int) -> None:
+            super().__init__()
+            self.fail_after = fail_after
+            self.created = 0
+            self.armed = True
+
+        def create(self, payload: CaptionReviewItemCreate) -> CaptionReviewItemResponse:
+            if self.armed and payload.language == "es":
+                if self.created >= self.fail_after:
+                    raise RuntimeError("review store write failed mid-batch")
+                self.created += 1
+            return super().create(payload)
+
+    def _worker_for(
+        self,
+        job_store: InMemoryOfflineCaptionJobStore,
+        review_store: InMemoryCaptionReviewStore,
+        tmp_path: Path,
+        transcript: list[str],
+    ) -> OfflineCaptionJobWorker:
+        return OfflineCaptionJobWorker(
+            job_store,
+            review_store,
+            runtime_factory=lambda: _ScriptedRuntime(transcript),  # type: ignore[arg-type,return-value]
+            translation_provider_factory=DeterministicSpanishTranslator,
+            settings=OfflineCaptionJobSettings(
+                max_attempts=4, backoff_seconds=60.0, chunk_seconds=2.0
+            ),
+            retention_policy=CaptionEvidenceRetentionPolicy.from_system(
+                storage_root=tmp_path / "egress"
+            ),
+        )
+
+    def test_three_of_six_spanish_rows_never_publishes_as_complete(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        transcript = [
+            "motion carries",
+            "public comment",
+            "the meeting is called to order",
+            "roll call",
+            "second the motion",
+            "meeting adjourned",
+        ]
+        source = _write_wav(tmp_path / "meeting.wav", seconds=len(transcript) * 2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = self._FlakyStore(fail_after=3)
+        worker = self._worker_for(job_store, review_store, tmp_path, transcript)
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+
+        worker.run_once()  # transcribe English
+        english_rows = review_store.list(asset_id=_ASSET_ID, language="en")
+        assert len(english_rows) == len(transcript)
+        _approve_language(review_store, "en")
+
+        # Translation dies after 3 of 6 Spanish rows.
+        blocked = worker.run_once()[0]
+        assert len(review_store.list(asset_id=_ASSET_ID, language="es")) == 3
+        assert blocked.state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        assert blocked.attempts == 1
+
+        # The operator decides the 3 rows that DO exist. Under the old gate
+        # this published a 3-of-6 Spanish track and marked the job complete.
+        _approve_language(review_store, "es")
+        still_blocked = worker.run_once(now=datetime.now(UTC) + timedelta(days=1))[0]
+        assert still_blocked.state != OFFLINE_CAPTION_JOB_STATE_COMPLETE
+        assert not published_spanish_caption_sidecar(package_dir).exists()
+        assert "SUBTITLES" not in (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+
+    def test_the_retry_queues_the_missing_cues_and_then_publishes_all_six(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        transcript = [
+            "motion carries",
+            "public comment",
+            "the meeting is called to order",
+            "roll call",
+            "second the motion",
+            "meeting adjourned",
+        ]
+        source = _write_wav(tmp_path / "meeting.wav", seconds=len(transcript) * 2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = self._FlakyStore(fail_after=3)
+        worker = self._worker_for(job_store, review_store, tmp_path, transcript)
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        worker.run_once()
+        _approve_language(review_store, "en")
+        worker.run_once()  # partial translation
+        assert len(review_store.list(asset_id=_ASSET_ID, language="es")) == 3
+
+        # Store recovers; the next attempt must queue the MISSING three, not
+        # re-queue the whole batch and not give up.
+        review_store.armed = False
+        worker.run_once(now=datetime.now(UTC) + timedelta(days=1))
+        spanish_rows = review_store.list(asset_id=_ASSET_ID, language="es")
+        assert len(spanish_rows) == len(transcript)
+        # Every Spanish row derives from a distinct English cue.
+        assert len({row.cue.cue_id for row in spanish_rows}) == len(transcript)
+
+        _approve_language(review_store, "es")
+        done = worker.run_once(now=datetime.now(UTC) + timedelta(days=2))[0]
+        assert done.state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
+        manifest = (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+        assert manifest.count("#EXT-X-MEDIA:TYPE=SUBTITLES") == 2
+        spanish_body = published_spanish_caption_sidecar(package_dir).read_text(encoding="utf-8")
+        # The whole meeting is in the Spanish sidecar, first cue to last.
+        assert "la mocion se aprueba" in spanish_body
+        assert spanish_body.count("-->") == len(transcript)
+
+    def test_the_short_queue_reason_on_the_row_names_the_shortfall(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        transcript = ["motion carries", "public comment", "roll call"]
+        source = _write_wav(tmp_path / "meeting.wav", seconds=6.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = self._FlakyStore(fail_after=1)
+        worker = self._worker_for(job_store, review_store, tmp_path, transcript)
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        worker.run_once()
+        _approve_language(review_store, "en")
+        blocked = worker.run_once()[0]
+
+        assert "1 of this recording's 3 approved" in blocked.last_error
+        assert "civiccast doctor" in blocked.last_error
+
+    def test_an_orphaned_spanish_row_neither_gates_nor_reaches_the_track(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        """A Spanish row whose English source was rejected after translation.
+
+        It must not hold publication hostage (its decision is irrelevant) and
+        must not appear on the published track (there is no English cue at
+        that timestamp any more).
+        """
+
+        transcript = ["motion carries", "public comment"]
+        source = _write_wav(tmp_path / "meeting.wav", seconds=4.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        worker = self._worker_for(job_store, review_store, tmp_path, transcript)
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        worker.run_once()
+        _approve_language(review_store, "en")
+        worker.run_once()  # queues both Spanish rows
+        assert len(review_store.list(asset_id=_ASSET_ID, language="es")) == 2
+
+        # The clerk goes back and rejects the SECOND English cue.
+        english_rows = review_store.list(asset_id=_ASSET_ID, language="en")
+        review_store.reject(english_rows[1].review_item_id, CaptionReviewDecision())
+        # Only the FIRST Spanish cue is decided; the orphan stays pending.
+        spanish_rows = review_store.list(asset_id=_ASSET_ID, language="es")
+        review_store.approve(spanish_rows[0].review_item_id, CaptionReviewDecision())
+
+        done = worker.run_once()[0]
+
+        # The still-pending orphan did not gate the publish.
+        assert done.state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
+        spanish_body = published_spanish_caption_sidecar(package_dir).read_text(encoding="utf-8")
+        assert spanish_body.count("-->") == 1
+        assert "comentario publico" not in spanish_body
+
+
+class TestConcurrentTranslationTicks:
+    """Two ticks racing to queue the same Spanish rows must not fail a job.
+
+    Finding the Spanish queue short and queueing the missing cues is
+    check-then-act with no row lock, so two workers (or a supervised tick
+    overlapping a manual run) can both decide the same cue is missing. The
+    guard is the same one the job-enqueue path uses: the DATABASE, via the
+    ``review_item_id`` primary key. ``PostgresCaptionReviewStore.create``
+    translates the losing insert's IntegrityError into
+    ``CaptionReviewItemAlreadyExistsError``, which
+    ``queue_translated_captions`` already records as a duplicate -- so the
+    loser records duplicates instead of failing an otherwise-healthy job.
+
+    RESIDUAL, documented rather than fixed: the losing tick still pays for
+    the translation it computed before the insert lost, so a race costs
+    duplicate model work (not duplicate rows, and not a failed job). Removing
+    that would need a job-level lease, which is more machinery than a race
+    this rare is worth; the durable outcome is already correct.
+    """
+
+    def test_the_losing_racer_records_duplicates_rather_than_failing(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        source = _write_wav(tmp_path / "meeting.wav", seconds=4.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+
+        def _worker_instance() -> OfflineCaptionJobWorker:
+            return OfflineCaptionJobWorker(
+                job_store,
+                review_store,
+                runtime_factory=lambda: _ScriptedRuntime(["motion carries", "public comment"]),  # type: ignore[arg-type,return-value]
+                translation_provider_factory=DeterministicSpanishTranslator,
+                settings=OfflineCaptionJobSettings(
+                    max_attempts=3, backoff_seconds=60.0, chunk_seconds=2.0
+                ),
+                retention_policy=CaptionEvidenceRetentionPolicy.from_system(
+                    storage_root=tmp_path / "egress"
+                ),
+            )
+
+        first, second = _worker_instance(), _worker_instance()
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        first.run_once()
+        _approve_language(review_store, "en")
+
+        # Two ticks over the same job, back to back: the second sees the rows
+        # the first just wrote and must treat them as already queued.
+        first.run_once()
+        row = second.run_once()[0]
+
+        assert row.state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        assert row.last_error == ""
+        spanish_rows = review_store.list(asset_id=_ASSET_ID, language="es")
+        assert len(spanish_rows) == 2
+        assert len({item.review_item_id for item in spanish_rows}) == 2
+
+    def test_a_store_that_loses_the_insert_race_is_treated_as_a_duplicate(self) -> None:
+        """The durable store's own guard, exercised directly.
+
+        Mirrors what Postgres does under a real race: the row is already
+        there when the losing session commits. The store must surface that as
+        ``CaptionReviewItemAlreadyExistsError``, because that is the error
+        ``queue_translated_captions`` knows how to absorb -- a raw DB error
+        would escape and fail the caption job.
+        """
+
+        store = InMemoryCaptionReviewStore()
+        cue = _cue("cue-000000:es", 0.0, 1.8, "la mocion se aprueba")
+        payload = CaptionReviewItemCreate(
+            review_item_id=f"{_ASSET_ID}:{cue.cue_id}",
+            asset_id=_ASSET_ID,
+            cue=cue,
+            language="es",
+        )
+        store.create(payload)
+
+        with pytest.raises(CaptionReviewItemAlreadyExistsError):
+            store.create(payload)
+
+
+class TestCaptionsCannotBeSwitchedOff:
+    """Offline captioning is a legal obligation, not a performance option."""
+
+    def test_off_refuses_to_start_without_the_test_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_OFFLINE_CAPTION_JOB", "off")
+        monkeypatch.delenv(CAPTIONS_OFF_TEST_OVERRIDE_ENV, raising=False)
+
+        with pytest.raises(ValueError) as excinfo:
+            OfflineCaptionJobSettings.from_env()
+
+        message = str(excinfo.value)
+        # Names the variable to remove and what the operator should do about
+        # a broken caption model instead of switching captioning off.
+        assert "CIVICCAST_OFFLINE_CAPTION_JOB" in message
+        assert "civiccast doctor" in message
+        assert "no caption track in any language" in message
+
+    def test_inline_is_unaffected_by_the_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("CIVICCAST_OFFLINE_CAPTION_JOB", raising=False)
+        monkeypatch.delenv(CAPTIONS_OFF_TEST_OVERRIDE_ENV, raising=False)
+
+        assert OfflineCaptionJobSettings.from_env().mode == "inline"
+
+    def test_the_override_alone_does_not_switch_captions_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two coordinated variables, so neither can do it by accident."""
+
+        monkeypatch.delenv("CIVICCAST_OFFLINE_CAPTION_JOB", raising=False)
+        monkeypatch.setenv(CAPTIONS_OFF_TEST_OVERRIDE_ENV, "1")
+
+        assert OfflineCaptionJobSettings.from_env().mode == "inline"
 
 
 class TestSpanishIsNotOptional:
