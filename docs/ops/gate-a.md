@@ -1232,17 +1232,42 @@ untouched. All of it is asserted by
 
 ### Why it exists
 
-Owner decision, 2026-09-02. Since the K1 fix the installer's
-`d4-activate-station` step requires a `station\` folder (the ~21 GB signed
-model bundle) beside `setup.exe` and aborts otherwise -- so a download-only
-install or upgrade (the shape a real deployment uses when it fetches
-`setup.exe` and the small runtime `packs\` over the network but reuses an
-already-activated station's cached model packs instead of re-downloading the
-whole station bundle) silently stopped working. No existing Gate A lane
-caught it: the clean lane and the dirty lane above both install from the
-**full** kit (`setup.exe` + `packs\` + `station\`), so neither ever exercises
-a payload with `station\` absent. The owner ruled that a download-only lane
-is required for every release from now on.
+Owner decision, 2026-09-02. From the K1 fix until the two changes named
+below, the installer's `d4-activate-station` step *required* a `station\`
+folder (the ~21 GB signed model bundle) beside `setup.exe` and aborted
+otherwise -- so a download-only install or upgrade (the shape a real
+deployment uses when it fetches `setup.exe` and the small runtime `packs\`
+over the network but reuses an already-activated station's cached model packs
+instead of re-downloading the whole station bundle) silently stopped working.
+No existing Gate A lane caught it: the clean lane and the dirty lane above
+both install from the **full** kit (`setup.exe` + `packs\` + `station\`), so
+neither ever exercises a payload with `station\` absent. The owner ruled that
+a download-only lane is required for every release from now on.
+
+**What closed the gap, and why this lane still exists.** Two changes landed
+after this lane was written, and together they are what it now grades:
+
+1. `acquire_station_distribution` serves a pack that is absent from the
+   index's media directory from the station's own per-SHA cache instead of
+   failing on the missing file (`native_distribution.rs::
+   copy_station_pack_to_cache`), and the model packs carry an identity that
+   is stable across candidates so a previous install's cache still matches.
+2. `setup.exe` embeds the signed `station-index.json` and the tiny `core`
+   pack as Tauri `bundle.resources`, so `d4-activate-station` has an index to
+   import even with no `station\` folder beside it: it resolves
+   `$EXEDIR\station\station-index.json` first (the full-kit path both lanes
+   above still take, unchanged) and falls back to
+   `$INSTDIR\station\station-index.json`. It still aborts when NEITHER
+   exists.
+
+So this lane is no longer proving a known-failing shape -- it is the required
+proof that the replacement actually works end to end on a real machine. Note
+what it therefore does **not** cover, and what "download-only" means here: a
+download-only *upgrade* completes because the previous install populated
+`<install root>\packs\.station-cache`; a download-only *first* install on a
+machine that has never held the model packs still fails closed, correctly.
+Phase 1 of this lane installs the pinned previous candidate from its full kit
+precisely so the cache exists before phase 2 runs.
 
 ### What it does
 

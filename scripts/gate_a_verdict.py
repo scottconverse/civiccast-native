@@ -703,8 +703,12 @@ def check_download_only_no_station_dir(output_dir: Path) -> CheckResult:
       and ``D3_ENGINE_EXIT=0``); and
     - the resulting ``station-set.json`` names the CURRENT candidate's
       product version, not the pinned previous candidate's -- proving the
-      parallel station-reuse change (not a leftover/mismatched receipt) is
-      what let activation succeed with no ``station\\`` present.
+      two parallel changes (not a leftover/mismatched receipt) are what let
+      activation succeed with no ``station\\`` present: the installer's
+      EMBEDDED signed index, which gives ``d4-activate-station`` something to
+      import when no ``station\\`` sits beside ``setup.exe``, and the
+      station-reuse change, which serves the model packs that index names
+      from the per-SHA cache.
 
     Fails closed on any missing or malformed field -- an absent
     DOWNLOAD-ONLY-RESULT.txt is a FAIL, never an assumed PASS.
