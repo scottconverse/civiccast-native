@@ -385,6 +385,8 @@ export interface AssetMetadataUpdate {
   chapters?: Array<Chapter> | null
   retention_policy?: 'default' | 'permanent' | 'meeting' | 'short' | null
   retention_until?: string | null
+  retention_term_unit?: 'days' | 'weeks' | 'months' | 'years' | 'forever' | null
+  retention_term_value?: number | null
 }
 
 export interface AssetQuery {
@@ -4249,6 +4251,9 @@ export interface StaffAssetRow {
   chapters?: Array<Chapter>
   retention_policy?: 'default' | 'permanent' | 'meeting' | 'short'
   retention_until?: string | null
+  retention_term_unit?: 'days' | 'weeks' | 'months' | 'years' | 'forever' | null
+  retention_term_value?: number | null
+  retention_anchor_at?: string | null
   version?: number
   source_live_session_id?: string | null
   content_hash?: string | null

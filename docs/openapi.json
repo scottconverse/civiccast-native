@@ -33355,6 +33355,37 @@
               }
             ],
             "title": "Retention Until"
+          },
+          "retention_term_unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "days",
+                  "weeks",
+                  "months",
+                  "years",
+                  "forever"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Term Unit"
+          },
+          "retention_term_value": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 73200.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Term Value"
           }
         },
         "type": "object",
@@ -58186,6 +58217,47 @@
               }
             ],
             "title": "Retention Until"
+          },
+          "retention_term_unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "days",
+                  "weeks",
+                  "months",
+                  "years",
+                  "forever"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Term Unit"
+          },
+          "retention_term_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Term Value"
+          },
+          "retention_anchor_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Anchor At"
           },
           "version": {
             "type": "integer",

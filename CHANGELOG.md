@@ -289,6 +289,68 @@ kit (see the "Changed" entry below).
 
 ### Added
 
+- **Retention value/unit/forever authoring (WP-08; punch item 7; audit
+  findings ENG-006, TEST-004, DOC-008).** Retention rules could previously
+  only be set from the four legacy `retention_policy` presets
+  (`default`/`permanent`/`meeting`/`short`) plus an operator-typed
+  deadline (`retention_until`) with no fixed reference point, so a term
+  couldn't say "keep this 3 years" in a way that survives an edit. Assets
+  now carry an additive authoring contract
+  (`civiccast/schedule/retention_terms.py`,
+  `Asset.retention_term_unit`/`retention_term_value`/`retention_anchor_at`,
+  migration `0087_retention_terms`): a positive integer `value` plus
+  `days`/`weeks`/`months`/`years`, or `forever` with no value.
+  `retention_anchor_at` is captured once, at an asset's FIRST publish
+  (`PostgresAssetStore.mark_published`), and never moves -- not on
+  unpublish (which clears `published_at` but leaves the anchor alone),
+  not on republish (which overwrites `published_at` but not the anchor),
+  and not on a later term edit (which recomputes the deadline from the
+  same fixed anchor). Days/weeks are elapsed-duration arithmetic; months/
+  years are calendar additions performed in the station's local timezone
+  (`civiccast.installer.station_state.resolve_station_timezone`),
+  end-of-month clamped, leap-day safe, converted to UTC only for the
+  persisted instant. Converting a legacy row with no publication history
+  falls back to the conversion instant and writes a
+  `MediaLifecycleAuditEntry` recording the fallback
+  (`PostgresAssetStore._apply_retention_term`). The migration backfills
+  only the unambiguous case (`permanent` -> `forever`, no anchor needed)
+  and reuses any already-published asset's real `published_at` as its
+  anchor; ambiguous legacy `default`/`meeting` rows, and never-published
+  `short` rows, are deliberately left unconverted -- `short`'s known
+  30-day meaning is offered only as an operator-facing prefill suggestion
+  on the Asset Detail retention editor (`AssetDetailScreen.tsx`'s new
+  "Convert to a length + unit or forever term..." flow), never
+  auto-applied. Enforcement is UNCHANGED by design: every write to the
+  new columns mirrors the legacy `retention_policy`/`retention_until`
+  pair (`forever` -> `permanent` + no deadline; every finite term ->
+  `default` + a computed deadline), so
+  `civiccast.schedule.retention_worker` -- untouched by this change --
+  keeps flagging expired, non-held assets into the records-clerk
+  disposition review queue and never deletes a byte. New coverage:
+  `tests/schedule/test_retention_terms.py` (pure arithmetic -- end-of-month
+  clamp, leap day, DST spring-forward, station-timezone, forever,
+  invalid values; a naive 30-days-per-month mutation kills five of these),
+  `tests/schedule/test_retention_term_authoring.py` (Pydantic validation,
+  anchor capture/reuse/immutability across publish/unpublish/republish/
+  edit, legacy-conversion audit fallback, and an explicit worker-
+  integration proof that crossing an authored deadline creates a
+  disposition review and deletes no media),
+  `tests/schedule/test_migration_0087.py` (upgrade/downgrade/round-trip/
+  single-head/empty-db/backfill against production-shaped rows), and new
+  `AssetDetailScreen.test.tsx` cases for the legacy-vs-term UI branch,
+  prefill suggestions, the mutually-exclusive legacy/new PATCH contract,
+  and the disabled-until-valid Save button. Migration note: this
+  worktree branched from `main` at `0082_egress_graphics_overlay` (the
+  actual current head at branch-cut time) rather than the finalization
+  plan's nominal `0086` predecessor, because `0083`-`0086` (Spanish/
+  podcast/subscriber/live-source, WP-02/04/05/07) had not yet landed on
+  `main`. `0084` (podcast) and `0085` (subscriber outcomes) never
+  landed at all; `0083_caption_review_language` (#131) and
+  `0086_live_source_probe_state` (#140) did. This integration commit
+  re-parents `0087_retention_terms`'s `down_revision` onto the real
+  `0086_live_source_probe_state` so `alembic heads` again reports a
+  single head; no other change (columns, backfill, constraints,
+  upgrade/downgrade bodies) was made as part of the re-parent.
 - **Operators can check a meeting source and edit one.**
   `POST /api/staff/live/sources/{id}/probe` runs the existing bounded ffprobe
   path and records what it saw; a failed check is a 200 with the reason and the

@@ -42,6 +42,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from civiccast.db import Base
+from civiccast.schedule.retention_terms import (
+    RETENTION_TERM_VALUE_ABSOLUTE_MAX as _RETENTION_TERM_VALUE_ABSOLUTE_MAX,
+)
+from civiccast.schedule.retention_terms import validate_term as _validate_retention_term
 from civiccast.vod.models import AssetMetadata as VodAssetMetadata
 from civiccast.vod.models import _enforce_https_manifest, _normalize_meeting_body
 
@@ -101,6 +105,16 @@ AssetStateValue = Literal[
     "recorded",
 ]
 RetentionPolicyValue = Literal["default", "permanent", "meeting", "short"]
+
+# WP-08 value/unit/forever retention-term authoring (finalization plan
+# section 6). ``retention_term_unit``/``retention_term_value`` are the new
+# authoring contract; ``retention_policy``/``retention_until`` above remain
+# the columns the enforcement worker actually reads (unchanged -- WP-08
+# extends authoring, not enforcement). See
+# ``civiccast.schedule.retention_terms`` for the arithmetic and
+# ``Asset.retention_anchor_at`` below for the immutable anchor contract.
+RetentionTermUnitValue = Literal["days", "weeks", "months", "years", "forever"]
+_RETENTION_TERM_UNITS = ("days", "weeks", "months", "years", "forever")
 ScheduleModeValue = Literal["premiere", "embargo"]
 ScheduleStateValue = Literal["scheduled", "cancelled", "published"]
 
@@ -295,6 +309,17 @@ class StaffAssetRow(BaseModel):
     chapters: list[Chapter] = Field(default_factory=list)
     retention_policy: RetentionPolicyValue = "default"
     retention_until: datetime | None = None
+    # WP-08: new value/unit/forever authoring contract, read-only alongside
+    # the legacy fields above. ``None``/``None`` means this asset's
+    # retention term has never been authored under the new contract (a
+    # "legacy" row per the WP-08 plan) -- the operator UI falls back to
+    # displaying ``retention_policy``/``retention_until`` for those rows.
+    retention_term_unit: RetentionTermUnitValue | None = None
+    retention_term_value: int | None = None
+    # Immutable once captured -- first publication only, never cleared by
+    # unpublish or moved by republish or by a term edit. See
+    # ``Asset.retention_anchor_at`` for the full contract.
+    retention_anchor_at: datetime | None = None
     # QA-008 (audit-team v0.3.0) — version for optimistic concurrency.
     # Returned in the GET response; the operator UI echoes the same value
     # back as ``AssetMetadataUpdate.expected_version`` on PATCH so a stale
@@ -364,6 +389,25 @@ class AssetMetadataUpdate(BaseModel):
     chapters: list[Chapter] | None = None
     retention_policy: RetentionPolicyValue | None = None
     retention_until: datetime | None = None
+    # WP-08 value/unit/forever authoring. Submit these two together
+    # (``retention_term_value`` omitted/``None`` for ``forever``) to author
+    # or convert a term; they cannot be combined with ``retention_policy``/
+    # ``retention_until`` in the same PATCH -- pick one contract per
+    # request so precedence is never ambiguous. ``retention_term_unit``
+    # cannot be sent as an explicit ``null``: there is no "clear back to
+    # legacy" operation in this contract.
+    retention_term_unit: RetentionTermUnitValue | None = None
+    # Coordinator-directed fix (follow-up commit, MAJOR finding 1): the
+    # outer ``le=`` bound is the largest of the per-unit ceilings in
+    # ``civiccast.schedule.retention_terms`` (200 years' worth of days) --
+    # it rejects an absurd/overflow-risk value at the request-body layer,
+    # before the tighter per-unit bound in ``_retention_term_shape`` below
+    # (via ``validate_term``) even runs. Both together mean no value can
+    # ever reach ``compute_retention_until``'s ``timedelta`` arithmetic in
+    # a range that could raise ``OverflowError``.
+    retention_term_value: int | None = Field(
+        default=None, ge=1, le=_RETENTION_TERM_VALUE_ABSOLUTE_MAX
+    )
 
     @field_validator("description")
     @classmethod
@@ -399,6 +443,40 @@ class AssetMetadataUpdate(BaseModel):
             and self.trim_in_seconds >= self.trim_out_seconds
         ):
             raise ValueError("trim_in_seconds must be strictly less than trim_out_seconds.")
+        return self
+
+    @model_validator(mode="after")
+    def _retention_term_shape(self) -> AssetMetadataUpdate:
+        # WP-08: the new value/unit/forever contract and the legacy
+        # retention_policy/retention_until contract are mutually exclusive
+        # within a single PATCH, so the store never has to decide which one
+        # wins. ``model_fields_set`` (not the resolved value) is what tells
+        # us a key was actually present in the request payload, per the
+        # class docstring's "missing key vs explicit null" PATCH contract.
+        term_unit_set = "retention_term_unit" in self.model_fields_set
+        term_value_set = "retention_term_value" in self.model_fields_set
+        legacy_set = (
+            "retention_policy" in self.model_fields_set
+            or "retention_until" in self.model_fields_set
+        )
+        if term_unit_set and legacy_set:
+            raise ValueError(
+                "retention_term_unit cannot be combined with retention_policy or "
+                "retention_until in the same update; submit the value/unit/forever "
+                "term on its own."
+            )
+        if term_unit_set and self.retention_term_unit is None:
+            raise ValueError(
+                "retention_term_unit cannot be cleared with an explicit null; "
+                "submit a replacement term to convert this asset's retention rule."
+            )
+        if term_value_set and not term_unit_set:
+            raise ValueError(
+                "retention_term_value requires retention_term_unit in the same update."
+            )
+        if term_unit_set:
+            assert self.retention_term_unit is not None
+            _validate_retention_term(self.retention_term_unit, self.retention_term_value)
         return self
 
 
@@ -452,6 +530,22 @@ class Asset(Base):
         CheckConstraint(
             "file_status IN ('ok', 'missing', 'relinked')",
             name="assets_file_status_check",
+        ),
+        CheckConstraint(
+            "retention_term_unit IS NULL OR retention_term_unit IN "
+            "('days', 'weeks', 'months', 'years', 'forever')",
+            name="assets_retention_term_unit_check",
+        ),
+        CheckConstraint(
+            # forever carries no value; every finite unit requires a
+            # positive one. A NULL unit (legacy, never authored under the
+            # new contract) leaves value unconstrained by this check (it is
+            # always NULL in practice, but nothing here depends on that).
+            "retention_term_unit IS NULL "
+            "OR (retention_term_unit = 'forever' AND retention_term_value IS NULL) "
+            "OR (retention_term_unit != 'forever' AND retention_term_value IS NOT NULL "
+            "AND retention_term_value > 0)",
+            name="assets_retention_term_value_check",
         ),
     )
 
@@ -524,6 +618,35 @@ class Asset(Base):
         server_default=RETENTION_DEFAULT,
     )
     retention_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # WP-08 value/unit/forever authoring (finalization plan section 6).
+    # ``retention_term_unit``/``retention_term_value`` are the new
+    # authoring contract, additive to the legacy pair above -- the
+    # enforcement worker (``civiccast.schedule.retention_worker``) is
+    # UNCHANGED and still reads only ``retention_policy``/
+    # ``retention_until``; every write to the new columns keeps those two
+    # legacy columns in sync (``compute_retention_until`` -> retention_until,
+    # unit == 'forever' -> retention_policy = 'permanent', else 'default')
+    # so enforcement never has to know the new contract exists. NULL/NULL
+    # means "never authored under the new contract" (a legacy row).
+    retention_term_unit: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    retention_term_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Immutable once captured: the instant this asset was FIRST published
+    # (``civiccast.schedule.store.PostgresAssetStore.mark_published`` sets
+    # it only when it is still NULL). ``published_at`` cannot serve this
+    # role itself -- unpublish clears ``published_at`` to NULL and republish
+    # overwrites it with a new instant, so a policy anchored to
+    # ``published_at`` would silently re-anchor on every unpublish/republish
+    # cycle. ``retention_anchor_at`` never moves once set, including across
+    # unpublish/republish and across every later term edit -- every
+    # ``compute_retention_until`` call recomputes the deadline from this
+    # SAME fixed point. For an asset that converts to the new contract
+    # before ever being published, the store falls back to "now" at
+    # conversion time and writes an audit-log entry recording the fallback
+    # (finalization plan section 6, item 6).
+    retention_anchor_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # S7 media lifecycle (CLAUDE.md §4.6 archival non-negotiable): a legal
     # hold blocks retention expiry outright. civiccast.schedule.retention_worker
@@ -670,6 +793,9 @@ class Asset(Base):
         retention_until = self.retention_until
         if retention_until is not None and retention_until.tzinfo is None:
             retention_until = retention_until.replace(tzinfo=UTC)
+        retention_anchor_at = self.retention_anchor_at
+        if retention_anchor_at is not None and retention_anchor_at.tzinfo is None:
+            retention_anchor_at = retention_anchor_at.replace(tzinfo=UTC)
         file_status_checked_at = self.file_status_checked_at
         if file_status_checked_at is not None and file_status_checked_at.tzinfo is None:
             file_status_checked_at = file_status_checked_at.replace(tzinfo=UTC)
@@ -708,6 +834,9 @@ class Asset(Base):
             chapters=chapters,
             retention_policy=cast(RetentionPolicyValue, self.retention_policy),
             retention_until=retention_until,
+            retention_term_unit=cast("RetentionTermUnitValue | None", self.retention_term_unit),
+            retention_term_value=self.retention_term_value,
+            retention_anchor_at=retention_anchor_at,
             version=self.version,
             source_live_session_id=self.source_live_session_id,
             content_hash=self.content_hash,

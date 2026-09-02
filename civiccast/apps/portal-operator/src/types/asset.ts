@@ -8,6 +8,9 @@ import type {
 
 export type AssetState = StaffAssetRow['state']
 export type RetentionPolicy = NonNullable<StaffAssetRow['retention_policy']>
+// WP-08 value/unit/forever retention-term authoring, additive to the
+// legacy RetentionPolicy contract above (civiccast.schedule.retention_terms).
+export type RetentionTermUnit = 'days' | 'weeks' | 'months' | 'years' | 'forever'
 export type Chapter = GeneratedChapter
 
 export type AssetRow = StaffAssetRow & {
@@ -28,6 +31,14 @@ export type AssetRow = StaffAssetRow & {
   chapters: Chapter[]
   retention_policy: RetentionPolicy
   retention_until: string | null
+  // WP-08: null/null means this asset's retention term has never been
+  // authored under the new contract (a "legacy" row) -- the operator UI
+  // falls back to the retention_policy/retention_until pair above.
+  retention_term_unit: RetentionTermUnit | null
+  retention_term_value: number | null
+  // Immutable once captured -- see civiccast.schedule.models.Asset
+  // .retention_anchor_at for the full first-publication-only contract.
+  retention_anchor_at: string | null
   version: number
   source_live_session_id: string | null
 }

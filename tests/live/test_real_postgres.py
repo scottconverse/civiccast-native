@@ -410,9 +410,11 @@ class TestSingleAlembicHead:
         # ``0083_caption_review_language`` -- WP-05's ``0085`` is parked by
         # owner decision and will not land, and ``0084`` never materialized,
         # so 0083 was the sole other head when this branch re-parented onto
-        # it.
-        assert heads[0] == "0086_live_source_probe_state", (
-            f"Expected head '0086_live_source_probe_state'; got {heads[0]!r}."
+        # it. Updated to ``0087_retention_terms`` (WP-08: value/unit/forever
+        # retention-term authoring on assets), chained after
+        # ``0086_live_source_probe_state`` and is the current head.
+        assert heads[0] == "0087_retention_terms", (
+            f"Expected head '0087_retention_terms'; got {heads[0]!r}."
         )
 
 
