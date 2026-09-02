@@ -66,6 +66,12 @@ installer asset and is not a public or production release.
   and kill-on-close remain CI-covered; automatic descendant inheritance in the
   installed service topology is source-wired but awaits clean-machine proof.
 
+- **Stopped presenting unfinished CG media controls as working features.** The
+  existing text, schedule, feed, image/logo, ticker, alert, preview, filler,
+  and overlay CG paths are unchanged. Live video in a zone and board background
+  audio are now labeled "coming in a future release"; the existing audio choice
+  is disabled because the current renderer does not play it.
+
 ## [1.0.0-beta.1] - 2026-08-31
 
 First tagged release of the native-Windows CivicCast line — owner-held, not

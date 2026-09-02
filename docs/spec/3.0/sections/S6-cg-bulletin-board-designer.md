@@ -375,6 +375,13 @@ per-bulletin/per-channel **background audio** (under the loudness path), **zone 
 **program-aware interstitials** ("coming up next"). See
 the S18 comparative appendix.
 
+**Current shipping boundary:** the existing slide/multi-zone/feed/image/logo/
+ticker/alert CG renderer remains active. Live video in a zone and board
+background audio are not rendered in this release. The operator designer labels
+both as "coming in a future release" and disables background-audio selection;
+their persistence contracts are not evidence of playback.
+
+
 ## CG depth — build detail (migration `0053_cg_depth`)
 
 Extends the CG model (boards/zones/bulletins from `0040`) with the depth incumbent PEG graphics ships:

@@ -83,6 +83,18 @@ describe('ZoneForm', () => {
     expect(getByDisplayValue('Welcome')).toBeTruthy()
     expect(getByText('Save changes')).toBeTruthy()
   })
+
+  it('disables board audio and labels both unfinished CG options as future work', () => {
+    const { getByLabelText, getByText } = render(
+      <ZoneForm feeds={[]} submitting={false} onSubmit={vi.fn()} />,
+    )
+    const zoneKind = getByLabelText('Zone kind') as HTMLSelectElement
+    const audio = zoneKind.querySelector('option[value="audio"]') as HTMLOptionElement
+    expect(audio.disabled).toBe(true)
+    expect(audio.textContent).toMatch(/coming in a future release/i)
+    expect(getByText(/Live video in a zone/i)).toBeTruthy()
+    expect(getByText(/current renderer does not play it/i)).toBeTruthy()
+  })
 })
 
 describe('FeedForm', () => {
