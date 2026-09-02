@@ -125,7 +125,14 @@ class AppPlatformConfigStore:
         channel_id: str,
         patch: ChannelBrandingUpdate,
     ) -> ChannelPublicConfig:
-        payload = patch.model_dump(exclude_unset=True)
+        # PR #132 review (second re-review): an operator explicitly saving
+        # branding through Channel Ops is what "configured" means -- even
+        # when the values they chose happen to equal the compile-time
+        # default profile (a plausible choice, e.g. keeping the default
+        # color). configured_at is therefore stamped unconditionally on
+        # every write through this method, never derived by comparing the
+        # saved values against civiccast.cable.channel.default_channel_profiles().
+        payload = {**patch.model_dump(exclude_unset=True), "configured_at": datetime.now(UTC)}
         with self._lock:
             channels: list[ChannelPublicConfig] = []
             updated: ChannelPublicConfig | None = None

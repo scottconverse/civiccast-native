@@ -215,13 +215,51 @@ def test_staff_channel_branding_updates_public_channel_contract(
 
     assert response.status_code == 200
     assert public.status_code == 200
-    assert public.json()["branding"] == {
+    branding = public.json()["branding"]
+    # configured_at is an explicit stored fact (PR #132 second re-review):
+    # every save through this endpoint stamps it, regardless of the values
+    # chosen -- checked separately below since its value is a request-time
+    # timestamp, not a literal to hardcode.
+    configured_at = branding.pop("configured_at")
+    assert branding == {
         "display_name": "City Government Live",
         "short_name": "City Gov",
         "color": "#114488",
         "logo_text": "CG",
         "logo_url": None,
     }
+    assert configured_at is not None
+
+
+def test_staff_channel_branding_save_equal_to_default_is_still_configured(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # PR #132 second re-review, reproduced live by the reviewer: an operator
+    # who opens Channel Ops and explicitly saves branding equal to the
+    # compile-time default (a plausible choice -- e.g. keeping the default
+    # color) must be recorded as configured, not silently indistinguishable
+    # from a station that never visited the screen.
+    client = _client(monkeypatch)
+
+    response = client.patch(
+        "/api/staff/app/channels/public/branding",
+        headers=_STAFF_HEADERS,
+        json={
+            "display_name": "Public Channel",
+            "short_name": "Public",
+            "color": "#2458A6",
+            "logo_text": "PUBLIC",
+        },
+    )
+    public = client.get("/api/public/app/channels/public")
+
+    assert response.status_code == 200
+    assert public.status_code == 200
+    branding = public.json()["branding"]
+    assert branding["configured_at"] is not None
+    assert branding["display_name"] == "Public Channel"
+    assert branding["color"] == "#2458A6"
+    assert branding["logo_text"] == "PUBLIC"
 
 
 def test_app_platform_catalog_filters_and_sorts_deterministically(monkeypatch: MonkeyPatch) -> None:

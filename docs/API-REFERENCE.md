@@ -9431,6 +9431,7 @@ rule (S13 §5.1).
 ### `civiccast__app_platform__models__ChannelBranding`
 
 - `color` (required): `string`
+- `configured_at` (optional): `string | null`
 - `display_name` (required): `string`
 - `logo_text` (required): `string`
 - `logo_url` (optional): `string | null`

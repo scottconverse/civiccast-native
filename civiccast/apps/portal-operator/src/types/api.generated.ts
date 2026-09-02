@@ -4979,6 +4979,7 @@ export interface civiccast__app_platform__models__ChannelBranding {
   color: string
   logo_text: string
   logo_url?: string | null
+  configured_at?: string | null
 }
 
 export interface civiccast__app_platform__models__ChannelOutput {

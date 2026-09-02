@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import contextlib
+import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +20,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from civiccast.app import create_app
+from civiccast.app_platform.router import get_app_platform_config_store
+from civiccast.app_platform.store import AppPlatformConfigStore
 from civiccast.cg.board_service import CgBoardService, FeedInput, ZoneInput
 from civiccast.cg.board_store import CgBoardStore
 from civiccast.cg.bulletin_store import PostgresCgBulletinStore
@@ -226,7 +230,6 @@ def test_multi_zone_snapshot_logo_zone_reflects_real_channel_ops_branding(
     # the logo zone -- and that the default table's "PUBLIC"/"#2458A6"
     # appear nowhere in the response.
     from civiccast.app_platform.models import ChannelBranding, ChannelPublicConfig
-    from civiccast.app_platform.router import get_app_platform_config_store
     from civiccast.cable.channel import get_channel_profile
     from civiccast.installer.station_state import resolve_station_display_name
 
@@ -290,6 +293,107 @@ def test_multi_zone_snapshot_logo_zone_reflects_real_channel_ops_branding(
     assert "#2458A6" not in response.text
     assert "PUBLIC" not in display.text
     assert "#2458A6" not in display.text
+
+
+def _real_app_platform_store(tmp_path: Path) -> AppPlatformConfigStore:
+    return AppPlatformConfigStore(tmp_path / "app-platform-config.json")
+
+
+def test_multi_zone_snapshot_logo_zone_end_to_end_channel_ops_save_equal_to_default(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # PR #132 second re-review, case (a): a REAL AppPlatformConfigStore (not
+    # a spy), exercised through the real Channel Ops write path
+    # (update_channel_branding), saving branding equal to the compile-time
+    # default -- must report configured=true with the real values, never
+    # the "channel-default-branding" fallback.
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    store = _real_app_platform_store(tmp_path)
+    app = create_app()
+    app.dependency_overrides[get_app_platform_config_store] = lambda: store
+    client = TestClient(app, headers=_STAFF_HEADERS)
+
+    save = client.patch(
+        "/api/staff/app/channels/public/branding",
+        json={
+            "display_name": "Public Channel",
+            "short_name": "Public",
+            "color": "#2458A6",
+            "logo_text": "PUBLIC",
+        },
+    )
+    assert save.status_code == 200
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
+    assert logo["source"] == "station-channel-branding"
+    assert logo["content"]["configured"] is True
+    assert logo["content"]["logo_text"] == "PUBLIC"
+    assert logo["content"]["color"] == "#2458A6"
+
+
+def test_multi_zone_snapshot_logo_zone_end_to_end_seeded_row_never_saved(
+    tmp_path: Path,
+) -> None:
+    # PR #132 second re-review, case (b): a REAL AppPlatformConfigStore that
+    # nobody has ever PATCHed -- its "public" channel row is seeded straight
+    # from the compile-time default table and configured_at is unset. Must
+    # report configured=false and never leak the default table's literals.
+    store = _real_app_platform_store(tmp_path)
+    app = FastAPI()
+    app.include_router(cg_public_router)
+    app.dependency_overrides[get_app_platform_config_store] = lambda: store
+    client = TestClient(app)
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
+    assert logo["source"] == "channel-default-branding"
+    assert logo["content"]["configured"] is False
+    assert logo["content"]["logo_text"] == ""
+    assert logo["content"]["color"] == ""
+    assert "PUBLIC" not in response.text
+    assert "#2458A6" not in response.text
+
+
+def test_multi_zone_snapshot_logo_zone_end_to_end_upgrade_row_predates_configured_at(
+    tmp_path: Path,
+) -> None:
+    # PR #132 second re-review, case (c): a durable row persisted BEFORE
+    # configured_at existed, whose branding already differs from the
+    # compile-time default (a real prior operator customization) but whose
+    # configured_at is unset because the field didn't exist yet when it was
+    # saved. Must still report configured=true -- an upgrade must never
+    # silently demote a real customization to "not configured".
+    config_path = tmp_path / "app-platform-config.json"
+    seed_store = AppPlatformConfigStore(config_path)
+    config = seed_store.read_config()
+    raw = json.loads(config.model_dump_json())
+    for channel in raw["channels"]:
+        if channel["channel_id"] == "public":
+            # A real prior customization (differs from the default table)
+            # with no configured_at key at all -- exactly what a row
+            # written before this field existed looks like on disk.
+            channel["branding"]["logo_text"] = "Legacy Custom Logo"
+            channel["branding"]["color"] = "#010203"
+            channel["branding"].pop("configured_at", None)
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    upgraded_store = AppPlatformConfigStore(config_path)
+    app = FastAPI()
+    app.include_router(cg_public_router)
+    app.dependency_overrides[get_app_platform_config_store] = lambda: upgraded_store
+    client = TestClient(app)
+
+    response = client.get("/api/public/cg/channels/public/snapshot")
+    assert response.status_code == 200
+    logo = next(z for z in response.json()["zones"] if z["kind"] == "logo")
+    assert logo["source"] == "station-channel-branding"
+    assert logo["content"]["configured"] is True
+    assert logo["content"]["logo_text"] == "Legacy Custom Logo"
+    assert logo["content"]["color"] == "#010203"
 
 
 def test_multi_zone_snapshot_alert_zone_reflects_a_real_active_eas_overlay(

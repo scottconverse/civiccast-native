@@ -257,6 +257,40 @@ installer asset and is not a public or production release.
   is already unique." A station that ships without ever visiting Channel Ops
   will correctly show the honest not-configured state, never a silently
   identical fake "PUBLIC" logo passed off as real.
+- **WP-06 non-negotiable, third re-review: "configured" is now an explicit
+  stored fact, not a value comparison.** The entry above derived
+  "configured" by comparing the durable branding row against the
+  compile-time default table; a PR #132 review reproduced live that an
+  operator who opens Channel Ops and explicitly saves branding equal to the
+  default -- a plausible choice, e.g. keeping the default color -- got
+  `configured: false`, a blank logo/color, and the "set this in Channel
+  Ops" hint: indistinguishable from never having visited the screen at all.
+  The same bug would recur in delayed form whenever a future release
+  changes the default table, silently reclassifying every station that had
+  saved the old default values as unconfigured. `ChannelBranding` gained a
+  `configured_at: datetime | None` field that
+  `AppPlatformConfigStore.update_channel_branding()` now stamps
+  unconditionally on every operator save, regardless of the values chosen
+  -- never derived by comparing against
+  `civiccast.cable.channel.default_channel_profiles()`. The CG logo zone
+  reports `configured: true` iff `configured_at` is set. A durable row
+  persisted before this field existed (whose branding already differs from
+  the default, a real prior customization, but whose `configured_at` is
+  unset because the field didn't exist yet) is still treated as configured
+  on read, so nobody loses their branding on upgrade -- only a row that is
+  BOTH unstamped AND value-equal to the default (the genuine
+  never-touched-Channel-Ops state) gets the honest fallback. Covered by
+  three new tests exercising the real write path end to end: (a) an
+  operator saves branding equal to the default -> `configured: true` and
+  the real (default-equal) values render; (b) a seeded row nobody has ever
+  saved -> `configured: false`, no default literals leak; (c) a pre-existing
+  row that differs from the default with `configured_at` unset (the
+  upgrade case) -> `configured: true`. Checked the store's persistence
+  (`app-platform-config.json`, a plain pydantic-validated JSON file with no
+  `schema_version` field or migration mechanism anywhere in the
+  `app_platform` module) and confirmed no version bump or migration is
+  needed: a new optional field with a default validates cleanly against
+  every pre-existing file on disk.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

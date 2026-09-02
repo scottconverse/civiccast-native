@@ -175,51 +175,70 @@ def _honest_primary_zone(zone: CgZone) -> CgZone:
 def _durable_logo_zone(
     zone: CgZone, channel_id: str, app_platform_store: AppPlatformConfigStore
 ) -> CgZone:
-    """Source the logo zone from real per-station data (PR #132 review,
-    second pass): the station's own commissioned identity
-    (``resolve_station_display_name()`` -- the SAME ``station_name`` the
-    installer/first-admin setup persists and the Station Profile screen
-    edits) plus the channel's durable branding row in
+    """Source the logo zone from real per-station data: the station's own
+    commissioned identity (``resolve_station_display_name()`` -- the SAME
+    ``station_name`` the installer/first-admin setup persists and the
+    Station Profile screen edits) plus the channel's durable branding row in
     ``AppPlatformConfigStore`` -- the SAME store instance the operator
     Channel Ops screen reads and writes
     (``civiccast.app_platform.router.get_app_platform_config_store``).
 
-    ``AppPlatformConfigStore`` seeds a brand-new channel's branding row from
-    ``civiccast.cable.channel.default_channel_profiles()`` -- the exact
-    compile-time table (``logo_text="PUBLIC"``, ``color="#2458A6"`` for
-    every deployment's "public" channel) the first pass of this fix wrongly
-    called "the real branding profile." A station that has never edited
-    Channel Ops branding therefore still has a durable row, but its values
-    still equal the compile-time default -- so this compares the durable
-    row against that same default and only calls the zone "configured" when
-    an operator has genuinely changed it. Otherwise the honest
-    "channel-default-branding" fallback carries the real station_name and
-    channel_id (never the default table's "PUBLIC"/"#2458A6") plus an
-    operator hint, and ``configured: false``.
+    "Configured" is read from ``ChannelBranding.configured_at`` -- an
+    EXPLICIT STORED FACT ``update_channel_branding()`` stamps on every
+    operator save, never a comparison against
+    ``civiccast.cable.channel.default_channel_profiles()`` (the compile-time
+    table -- ``logo_text="PUBLIC"``, ``color="#2458A6"`` for every
+    deployment's "public" channel -- this fix's first pass wrongly called
+    "the real branding profile", and whose *second* pass wrongly re-derived
+    "configured" as a value comparison against: a PR #132 review reproduced
+    live that an operator who deliberately saves branding equal to the
+    default -- a plausible choice -- got misclassified as never having
+    configured anything at all, and that a future default-table change would
+    silently re-open the same bug for every station that saved with the old
+    values). A row seeded straight from the default table (never saved
+    through Channel Ops) leaves ``configured_at`` unset.
+
+    Compatibility for rows persisted before this field existed: if
+    ``configured_at`` is unset but the durable branding already differs from
+    the compile-time default, the row is still treated as configured -- an
+    operator's pre-existing customization is never silently demoted to "not
+    configured" on upgrade. Only a row that is BOTH unstamped AND
+    value-equal to the default -- the genuine "nobody has touched this"
+    state -- gets the honest "channel-default-branding" fallback: the real
+    station_name and channel_id (never the default table's
+    "PUBLIC"/"#2458A6"), an operator hint, and ``configured: false``.
     """
 
     station_name = resolve_station_display_name()
     durable_channel = app_platform_store.read_channel(channel_id)
-    default_profile = get_channel_profile(channel_id)
 
-    customized = False
+    configured = False
     if durable_channel is not None:
-        if default_profile is None:
-            # No compile-time default exists for this channel_id at all --
-            # the durable row can only be here because an operator created
-            # it, so it is configured by construction.
-            customized = True
+        branding = durable_channel.branding
+        if branding.configured_at is not None:
+            # The explicit stored fact: an operator saved this through
+            # Channel Ops, regardless of what values they chose.
+            configured = True
         else:
-            durable_branding = durable_channel.branding
-            default_branding = default_profile.branding
-            customized = (
-                durable_branding.display_name != default_branding.display_name
-                or durable_branding.short_name != default_branding.short_name
-                or durable_branding.color != default_branding.color
-                or durable_branding.logo_text != default_branding.logo_text
-            )
+            # Pre-existing row from before configured_at existed. Fall back
+            # to comparing against the compile-time default ONLY to avoid
+            # demoting a real prior customization on upgrade -- never used
+            # for a row that could still be stamped going forward.
+            default_profile = get_channel_profile(channel_id)
+            if default_profile is None:
+                # No compile-time default for this channel_id at all -- the
+                # row can only exist because an operator created it.
+                configured = True
+            else:
+                default_branding = default_profile.branding
+                configured = (
+                    branding.display_name != default_branding.display_name
+                    or branding.short_name != default_branding.short_name
+                    or branding.color != default_branding.color
+                    or branding.logo_text != default_branding.logo_text
+                )
 
-    if customized and durable_channel is not None:
+    if configured and durable_channel is not None:
         return zone.model_copy(
             update={
                 "source": "station-channel-branding",

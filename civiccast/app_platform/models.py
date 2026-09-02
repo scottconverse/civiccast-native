@@ -114,7 +114,22 @@ class AppBuildProfile(BaseModel):
 
 
 class ChannelBranding(BaseModel):
-    """Public channel identity used by every app shell."""
+    """Public channel identity used by every app shell.
+
+    ``configured_at`` is an explicit stored fact, not a value comparison:
+    ``AppPlatformConfigStore.update_channel_branding()`` sets it to the
+    write timestamp whenever an operator saves branding through Channel
+    Ops, regardless of what values they chose -- including values that
+    happen to equal the compile-time default profile (a plausible operator
+    choice, e.g. keeping the default color). A row seeded from the default
+    table (``_default_station_config()``) leaves this unset. Consumers that
+    need to tell "an operator configured this" from "nobody has touched
+    this yet" must read this field, not compare branding values against
+    ``civiccast.cable.channel.default_channel_profiles()`` -- a PR #132
+    review caught a value-comparison implementation of exactly that
+    distinction silently misclassifying a deliberate default-equal save as
+    unconfigured.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -123,6 +138,7 @@ class ChannelBranding(BaseModel):
     color: HexColor
     logo_text: Annotated[str, Field(min_length=1, max_length=40)]
     logo_url: UrlString | None = None
+    configured_at: datetime | None = None
 
 
 class ChannelOutput(BaseModel):
