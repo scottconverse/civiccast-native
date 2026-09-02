@@ -222,6 +222,34 @@ async function mockDashboard(page: import('@playwright/test').Page, status = 200
             }),
     })
   })
+  // WP-11 item 5: every AssetPanel now calls GET .../preflight. Default to a
+  // ready portal check so the pre-existing assertions below (which don't
+  // care about the readiness panel) see a clean state; the dedicated
+  // readiness-panel tests further down override this per-test.
+  await page.route('**/api/staff/publish/assets/*/preflight', async (route) => {
+    const assetId = decodeURIComponent(
+      new URL(route.request().url()).pathname.split('/').at(-2) ?? '',
+    )
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        asset_id: assetId,
+        ready: true,
+        checks: [
+          {
+            id: 'portal',
+            label: 'Resident Portal',
+            kind: 'canonical',
+            required: true,
+            health: 'ok',
+            message: 'Portal manifest is packaged and ready.',
+            next_step: 'Approve portal publication when review is complete.',
+          },
+        ],
+      }),
+    })
+  })
 }
 
 async function openPublish(page: import('@playwright/test').Page) {
@@ -375,6 +403,54 @@ test.describe('publish dashboard', () => {
     await expect(page.getByRole('alert')).toContainText('Publish dashboard needs a database.')
     await expect(page.getByRole('alert')).toContainText('connect the CivicCast database')
     await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible()
+  })
+
+  // WP-11 item 5: a per-surface readiness panel reads GET .../preflight
+  // before approval, and Approve stays disabled while a selected real
+  // surface reads not-ready.
+  test('readiness panel blocks Approve on a not-ready selected surface, with the API safe next-action text', async ({
+    page,
+  }) => {
+    await mockDashboard(page)
+    await page.route(
+      '**/api/staff/publish/assets/council-2026-05-08/preflight',
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            asset_id: 'council-2026-05-08',
+            ready: false,
+            checks: [
+              {
+                id: 'portal',
+                label: 'Resident Portal',
+                kind: 'canonical',
+                required: true,
+                health: 'error',
+                credential_reference: 'CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real',
+                message: 'Portal cannot publish: DATABASE_URL is not configured.',
+                next_step:
+                  'Fix the CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real configuration, then rerun preflight.',
+              },
+            ],
+          }),
+        })
+      },
+    )
+    await openPublish(page)
+
+    const councilPanel = page
+      .locator('article')
+      .filter({ hasText: 'Council - May 8, 2026' })
+    await expect(councilPanel.getByText('Readiness check')).toBeVisible()
+    await expect(councilPanel.getByText('Not ready')).toBeVisible()
+    await expect(
+      councilPanel.getByText('Portal cannot publish: DATABASE_URL is not configured.'),
+    ).toBeVisible()
+    await expect(
+      councilPanel.getByRole('button', { name: 'Approve and Publish selected' }),
+    ).toBeDisabled()
   })
 
   test('axe scan: publish dashboard has no serious/critical violations', async ({ page }) => {

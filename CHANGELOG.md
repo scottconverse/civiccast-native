@@ -72,6 +72,28 @@ installer asset and is not a public or production release.
   card, the missing checkbox, the never-red-even-if-backend-reports-failed
   case, and that approval excludes podcast from `approved_surface_ids`.
 
+- **WP-11 item 5 — Publish preflight in the UI (gap found in review of
+  #129).** The operator Publish screen never called `GET
+  .../assets/{id}/preflight`, so an operator could select a surface with
+  missing/invalid real-provider configuration and only find out from the
+  approval 409 after clicking. `PublishDashboardScreen.tsx` now shows a
+  per-surface readiness panel (`getPublishPreflight`, new hand-curated
+  `PublishPreflightResponse`/`PublishPreflightCheck` types in
+  `types/publish.ts` mirroring PR #129's backend models) for every asset,
+  before the approve action: loading state, ready/not-ready per surface
+  with the API's own safe next-step text, the podcast future-release
+  surface (never rendered "not ready"), and a load error with a retry
+  action. "Approve and Publish selected" now also stays disabled while any
+  SELECTED real (non-future) surface's readiness check reports
+  `health="error"`; a still-loading or failed readiness fetch adds no new
+  block of its own (approval's existing 409 refusal remains the real
+  backstop). Six new tests in `PublishDashboardScreen.test.tsx` cover
+  ready/not-ready/future/load-error-with-retry and the approve-disabled
+  gate; `e2e/publish-dashboard.spec.ts` gained a default preflight route
+  mock plus a dedicated not-ready-blocks-approve case (Playwright was not
+  run in this session — say so rather than claiming a run that didn't
+  happen).
+
 ### Changed
 
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
