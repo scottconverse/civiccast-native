@@ -171,6 +171,27 @@ installer asset and is not a public or production release.
   and overlay CG paths are unchanged. Live video in a zone and board background
   audio are now labeled "coming in a future release"; the existing audio choice
   is disabled because the current renderer does not play it.
+- **Removed the Facility Router's hard-coded `government` channel.** Every
+  channel-dependent action (scheduled-take preview, overlay preview, and the
+  later L-bar command) now requires the operator to pick a currently
+  configured channel from a new "Target channel" picker
+  (`FacilityRouterScreen.tsx`), loaded through the same channel-profile API
+  and cache key Channel Ops and Live Room already use
+  (`listChannelProfiles`/`['channel-profiles']`) rather than a new endpoint.
+  A single configured channel auto-selects but still shows in the picker; two
+  or more require an explicit pick; the picker clears the selection and any
+  stale overlay/schedule preview if the chosen channel disappears from the
+  configured list; and both actions are disabled with a plain reason
+  ("Choose a channel before scheduling a take.", "Choose a channel before
+  previewing an overlay.", the no-channels-configured message, the load-error
+  message, or "Scheduling a take and previewing overlays require the meeting
+  operator role.") until a valid channel and role are in place. Manual
+  crosspoint preview (endpoint/source/destination) is unchanged and does not
+  take a channel_id. `FacilityRouterScreen.test.tsx` covers no-channel,
+  one-channel (auto-selected), multiple-channel (explicit pick required),
+  stale-selection, load-error, read-only-role, and mobile-viewport states;
+  `e2e/facility-router.spec.ts` is updated for the new channel picker and
+  role.
 
 ## [1.0.0-beta.1] - 2026-08-31
 
