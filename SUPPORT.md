@@ -1,6 +1,7 @@
 # Support
 
-> **Current native release posture:** `v1.0.0-beta.2` is the current
+> **Current native release posture:** `v1.0.0-beta.1` is the current
+> release (USB-delivered). `v1.0.0-beta.2` is the current
 > owner-held unpublished candidate. It has no installer asset and
 > is not a public or production release. Community
 > support does not turn this source candidate into a supported field release.
@@ -34,8 +35,9 @@ there is no commercial support contract or SLA.
    message, and the steps already tried. Never
    include passwords, recovery codes, staff tokens, or private meeting
    material in a public report.
-4. **Use [Discussions](https://github.com/scottconverse/civiccast-native/discussions) for
-   open-ended planning.** Examples: whether CivicCast is a fit for an HOA,
+4. **Use [GitHub Issues](https://github.com/scottconverse/civiccast-native/issues) for
+   open-ended planning too** (GitHub Discussions is not enabled on this
+   repository). Examples: whether CivicCast is a fit for an HOA,
    public-access station, school board, or nonprofit workflow.
 
 ## Retired WSL2 Support History
@@ -43,16 +45,15 @@ there is no commercial support contract or SLA.
 The following paragraph records the old WSL2 product line only. It is not
 installation or support guidance for the native product in this repository.
 
-`v1.0.0-rc13` is withdrawn after a genuine clean-host bootstrap failure.
-Existing rc13 failure reports remain useful; do not begin a new rc13 or
-older-candidate installation. The most recently published release is
-`v1.0.0-rc18`. The full clean-host product walkthrough was last completed against
-**rc17's** exact bytes on
-2026-07-20 and passed — install with no restarts, first admin and recovery kit,
-backup and scoped database restore, private rehearsal and packaging, the publish
-privacy gate, resident playback, and unaided cold-reboot recovery. Captions were
-not exercised in that pass; see the
-[rc17 verification record](docs/releases/v1.0.0-rc17-verification.md).
+`v1.0.0-rc13` was withdrawn after a genuine clean-host bootstrap failure;
+`v1.0.0-rc18` was the most recently published release on that retired line.
+The full clean-host product walkthrough was last completed against rc17's
+exact bytes on 2026-07-20 and passed -- install with no restarts, first admin
+and recovery kit, backup and scoped database restore, private rehearsal and
+packaging, the publish privacy gate, resident playback, and unaided
+cold-reboot recovery. Captions were not exercised in that pass. (The
+verification record for that run is not present in this repository -- it
+belongs to the separate, private `scottconverse/civiccast` repository.)
 Preserve the installer log and support bundle for every failure.
 
 Supported early-adopter paths are documented self-hosted deployment profiles,
@@ -75,8 +76,8 @@ If you are working on or evaluating the native line as a contributor:
 
 - Read [ADR 0021](docs/adr/0021-native-windows-runtime.md) and
   [BRANCHES.md](BRANCHES.md) first.
-- Use [GitHub Discussions](https://github.com/scottconverse/civiccast-native/discussions)
-  or a regular GitHub Issue for questions, and say explicitly in the report
+- Use a regular [GitHub Issue](https://github.com/scottconverse/civiccast-native/issues)
+  for questions (GitHub Discussions is not enabled on this repository), and say explicitly in the report
   that it concerns the native line and which source commit you're on -- the templates don't yet
   have a native-specific path, so context has to be spelled out by hand.
 - Do not treat anything reported against the native line as a supported,

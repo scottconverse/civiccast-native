@@ -845,9 +845,12 @@ class TestMigration0056AndMerge:
         # lands after the already-merged 0078. Updated to
         # 0082_egress_graphics_overlay (async summary generation job -- field
         # evidence, candidate #17: civiccast/summary/job.py), chained after
-        # 0080_watch_folder_daemon and is the current head.
-        assert list(heads) == ["0082_egress_graphics_overlay"], (
-            f"Expected single head 0082_egress_graphics_overlay, got {heads!r}"
+        # 0080_watch_folder_daemon. Updated to 0083_caption_review_language
+        # (recorded-Spanish captions: a language column on
+        # caption_review_items), chained after 0082_egress_graphics_overlay
+        # and is the current head.
+        assert list(heads) == ["0083_caption_review_language"], (
+            f"Expected single head 0083_caption_review_language, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:

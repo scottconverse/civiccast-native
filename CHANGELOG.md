@@ -103,6 +103,43 @@ installer asset and is not a public or production release.
 
 ### Changed
 
+- **Subscriber notifications now honestly report "coming in a future
+  release" instead of a fabricated green "succeeded" (owner decision
+  2026-09-02).** Real subscriber notification sends (mail/webhook fan-out on
+  publish) are deferred to a future release — the implementation is parked
+  on `feat/publish-real-subscriber-delivery`, not merged. Until now,
+  `civiccast/publish/service.py`'s `approve_publish` built a
+  `NotificationPayload` for the "subscriber-notifications" surface,
+  never dispatched it, and still marked the surface `state="succeeded"` —
+  an operator approving publish saw a green "sent" state for a notification
+  that was never delivered. It could also block an otherwise-ready publish
+  with a 409 if a real mail/webhook provider was misconfigured, even though
+  nothing was ever going to send. The surface now always reports a new
+  `state="coming_soon"` (`health="unknown"`) with the plain-language message
+  "Subscriber notifications are coming in a future release. No emails or
+  webhooks are sent yet.", is excluded from approval's provider-readiness
+  precheck so it can never block publish, and sends nothing. The operator
+  Publish dashboard (`apps/portal-operator/src/screens/PublishDashboardScreen.tsx`)
+  shows it as the same neutral "Coming in a future release" card already
+  used for the podcast surface (WP-11 item 4) — no checkbox, no red error,
+  never selectable or approvable. `civiccast.publish.readiness`'s real
+  per-provider subscriber-channel check is unchanged and still directly unit
+  tested (`tests/publish/test_provider_readiness.py`); service.py simply no
+  longer routes through it for this surface while the send is parked.
+  New/updated coverage: `tests/publish/test_provider_readiness.py`,
+  `tests/publish/test_router.py`, `tests/publish/test_soak.py`,
+  `civiccast/apps/portal-operator/src/screens/PublishDashboardScreen.test.tsx`.
+
+- **The public subscription RSS feed no longer invents a fake recording.**
+  `civiccast/subscribe/router.py`'s `GET /api/public/subscribe/rss/{target_type}/{target_id}.xml`
+  used to serve a single hardcoded `<item>` — title "Example CivicCast
+  recording", link `https://portal.example/watch/{target_id}` — on every
+  request, indistinguishable from a real published recording to any reader
+  or aggregator. There is no published-recording resolver wired to this
+  route yet, so it now returns an honest, valid, empty RSS 2.0 feed (zero
+  `<item>` elements) instead of a fabricated one. New coverage:
+  `tests/subscribe/test_subscribe_router.py`.
+
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
   central autouse fixture (`tests/conftest.py`, helpers in
   `tests/support/hermetic_state.py`) now points every state, lock, upload,
@@ -227,6 +264,82 @@ installer asset and is not a public or production release.
   to backend-specific FFmpeg arguments and fails closed when it is missing or
   the source kind does not match. The LPM hardware mock lab proves the exact
   DeckLink SDI and DirectShow HDMI argument boundary used by production.
+- **Recorded-Spanish captions — a published recording now carries an
+  operator-reviewed Spanish caption track alongside English, and cannot
+  publish without one** (owner requirement; Longmont is ~30% Latino and
+  Spanish captions on published recordings are a hard requirement; live
+  real-time Spanish is out of scope). The offline caption job
+  (`civiccast/captions/vod_job.py`) becomes two-phase: once an operator
+  approves the English caption cues, the approved English is translated to
+  Spanish through the same operator-selected translation tier the live tap
+  uses (local TranslateGemma by default, via `build_translator`), and the
+  Spanish cues are queued for their **own** operator review pass (spec §4.2,
+  operator review before publish — the Spanish text is AI output too). Only
+  when both review passes are complete are both tracks attached in a single
+  manifest rewrite: English default, a new `es`/"Spanish" secondary. The
+  public player already renders one caption button per manifest subtitle
+  track, so the Spanish option appears with no front-end change; the operator
+  console's review queue gains an EN/ES language badge and a language filter.
+  A new `language` column on `caption_review_items` (migration
+  `0083_caption_review_language`, default/backfill `en`) keeps the two review
+  passes cleanly separated on a shared asset. Spanish review rows are created
+  `low_confidence=False` — they are a deterministic transform of
+  human-approved English with no ASR audio to retain, so the low-confidence
+  audio-evidence approval gate cannot deadlock them.
+
+  Spanish is **required, not a setting**: there is no supported configuration
+  in which a caption-eligible recording completes with only English. The
+  `CIVICCAST_OFFLINE_CAPTION_SPANISH` switch is retired — a false value now
+  stops startup with an error naming the variable rather than quietly
+  publishing English-only recordings. The two ways the Spanish leg can come up
+  empty are both blocked and operator-actionable instead of green: a station
+  with no translation runtime records an attempt with a remediation on the job
+  row (and ultimately `failed`, reason intact) rather than shipping English;
+  an operator who rejects every Spanish cue leaves the job in
+  `awaiting_review` with a remediation, retry budget untouched, until they
+  edit or approve a Spanish cue — review decisions are not terminal, so that
+  move is really available. A recording whose *English* pass approved nothing
+  still completes uncaptioned, because there is no English track to hold it
+  for either.
+
+- **A captioned recording served through a CDN now actually gets its caption
+  tracks.** Caption attach rewrites the multivariant manifest and writes the
+  WebVTT tracks on local disk; for a package that was already pushed to a CDN
+  before caption review finished, the copy residents watch kept the
+  pre-caption manifest, and the job called itself complete anyway. The offline
+  caption worker now re-publishes the rewritten manifest, both segmented
+  caption tracks, and both flat sidecars to the same key prefix the package
+  was published under, through the same `upload_package_files` helper the
+  finalization worker publishes with (extracted from
+  `LiveFinalizationWorker._upload_package` and shared, so the manifest still
+  uploads **last** and a resident can never fetch a manifest naming a track
+  the CDN does not have). Only the caption artifacts are re-uploaded — the
+  video renditions are byte-identical and can be gigabytes. A republish
+  failure fails the job with the provider's message on the row rather than
+  completing it. Nothing is uploaded when no CDN is configured, or when the
+  recorded manifest URL for that package is not the configured CDN's URL for
+  it — which is how a locally served package, or one from a CDN the station
+  has since replaced, avoids having caption files pushed to a prefix whose
+  video segments were never uploaded. Proven against a mock CDN adapter, not a
+  live CDN account.
+
+- **A live-finalized recording can now be captioned.** CivicCast resolves an
+  asset's packaged video through two different conventions — a live-finalized
+  recording packages to `<recording>/<live_session_id>-hls/` (recorded on its
+  finalization job), an uploaded one to `.civiccast-packages/<asset_id>` under
+  the media storage root — and the caption path only ever knew the second. A
+  live recording would therefore transcribe and fill the review queue, then
+  fail every attempt to attach the reviewed track to a package directory that
+  was never written. The caption path now checks the finalization job's
+  manifest first and falls back to the upload convention, matching the
+  media-serving path's *live-finalized* precedence. It does not match that
+  path's upload branch: it resolves the standard
+  `.civiccast-packages/<asset_id>` location only, so a legacy pre-rc14 package
+  at `<file_path>/hls` is still not found and publishing such an asset stays
+  blocked (known gap; affects only stations upgraded across rc14 that still
+  hold pre-rc14 packages). This also means a station that broadcasts live but
+  has no media storage root configured is no longer refused permission to
+  publish: it has somewhere to write the caption track after all.
 
 ### Fixed
 
@@ -432,6 +545,54 @@ installer asset and is not a public or production release.
   stale-selection, load-error, read-only-role, and mobile-viewport states;
   `e2e/facility-router.spec.ts` is updated for the new channel picker and
   role.
+- **CI: hardened the "Install media test prerequisites" step against two
+  distinct hosted-ubuntu apt failure modes instead of only the dpkg-lock
+  one it already handled.** `ci-test.yml`'s `Unit tests` job and
+  `deterministic-detectors.yml`'s `randomized-suite` job both timed out at
+  exit 124 several times on 2026-09-02 across unrelated PRs — PR #131 "Unit
+  tests" job 100278667553, PR #135 "randomized-suite" job 100284786583, and
+  PR #132 "randomized-suite" job 100287702253. The step's own comment
+  already documented `unattended-upgrades` holding the dpkg lock for 3h49m
+  on 2026-08-19, but these three failures never touched the lock at all:
+  each stalled mid-download of a single large package
+  (`libcodec2-1.2`/`libflite1`/`libdav1d7`) on the Azure-hosted mirror,
+  hitting the old 300s per-call timeout. A longer timeout alone would have
+  papered over the symptom without addressing the lock risk that is still
+  real. Both jobs' inline apt shell — previously duplicated between the two
+  workflow files — is replaced with a single call to the new
+  `scripts/ci/install_media_test_prerequisites.sh`, which: stops and kills
+  `unattended-upgrades`/`apt-daily*.timer`/`apt-daily*.service` before
+  touching apt; waits up to 3 minutes for the dpkg/apt locks in a bounded
+  loop, printing the holder via `fuser -v` each iteration; runs every
+  `apt-get` call with `DPkg::Lock::Timeout=120`, `Acquire::Retries=3`, and
+  `DEBIAN_FRONTEND=noninteractive`; raises the per-call timeout from 300s to
+  480s (and the step's own `timeout-minutes` from 10 to 30) so a slow mirror
+  has room to finish instead of being killed mid-transfer; and, on any
+  failure, dumps `ps -ef | grep -E 'apt|dpkg|unattended'` so the next
+  occurrence is diagnosable from the log alone. Validated with
+  `python -c "import yaml,sys; ..."` over `.github/workflows/*.yml` and
+  `actionlint` (both clean) plus `bash -n` and `shellcheck` on the new
+  script.
+
+### Security
+
+- **Triaged and allowlisted a new nltk pathsec-bypass advisory
+  (`PYSEC-2026-3740` / CVE-2026-81726 / GHSA-8mgp-746c-j5xp).** `pip-audit`
+  started flagging `nltk 3.10.3` (a transitive dependency of `crawl4ai`,
+  pulled in only by the optional `agenda-js-import` extra behind
+  `civiccast/agenda_import/js_portal.py`) for a sandbox bypass in
+  `TransitionParser.train()`/`.parse()`, `AveragedPerceptron.save()`/`.load()`,
+  `PerceptronTagger.save_to_json()`, and `save_maxent_params()`, which use raw
+  `open()` on caller-controlled paths instead of nltk's guarded `pathsec`
+  helpers. No fix version exists upstream as of this review (`pip-audit`
+  reports empty `fix_versions`). `civiccast/` never imports `nltk` directly,
+  and `js_portal.py`'s `crawler.arun()` call passes no `chunking_strategy`/
+  `extraction_strategy`, so crawl4ai's only nltk touchpoint
+  (`chunking_strategy.py`'s `sent_tokenize` punkt tokenizer) is never
+  exercised — none of the five vulnerable model-persistence APIs are
+  reachable from any code path in this repo. Documented in
+  `security/pip-audit-allowlist.json` with a review-by date of 2026-10-01;
+  re-check when nltk ships a fix.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

@@ -766,6 +766,7 @@ export interface CaptionReviewItemRequest {
   review_item_id: string
   asset_id: string
   cue: CaptionCue
+  language?: string
   reviewer_note?: string | null
 }
 
@@ -773,6 +774,7 @@ export interface CaptionReviewItemResponse {
   review_item_id: string
   asset_id: string
   cue: CaptionCue
+  language?: string
   status: 'pending' | 'approved' | 'edited' | 'rejected'
   original_text: string
   reviewed_text?: string | null
@@ -3378,7 +3380,7 @@ export interface PublishSurfaceStatus {
   id: string
   label: string
   kind: 'canonical' | 'archive' | 'reach' | 'record' | 'audience'
-  state: 'blocked' | 'not_configured' | 'pending' | 'running' | 'succeeded' | 'failed' | 'overridden'
+  state: 'blocked' | 'not_configured' | 'coming_soon' | 'pending' | 'running' | 'succeeded' | 'failed' | 'overridden'
   required?: boolean
   approval?: 'pending' | 'approved' | 'overridden'
   url?: string | null

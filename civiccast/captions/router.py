@@ -154,9 +154,18 @@ def create_external_caption_review_items(
 def list_review_items(
     asset_id: str | None = None,
     status_filter: CaptionReviewStatus | None = None,
+    language: str | None = None,
     store: CaptionReviewStore = Depends(get_caption_review_store),
 ) -> list[CaptionReviewItemResponse]:
-    return store.list(asset_id=asset_id, status=status_filter)
+    """List review-queue rows.
+
+    ``language`` scopes to one review pass -- ``en`` (English transcription)
+    or ``es`` (recorded-Spanish translation). Omitted, both are returned so
+    the operator console can render the language badge and filter
+    client-side; the parameter lets a caller fetch just one queue directly.
+    """
+
+    return store.list(asset_id=asset_id, status=status_filter, language=language)
 
 
 @staff_router.get(

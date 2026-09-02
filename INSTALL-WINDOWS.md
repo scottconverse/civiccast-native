@@ -6,99 +6,46 @@
 > Windows service through the SCM and supervises the control plane,
 > Postgres, and the media workers from a bundled runtime, at
 > `C:\Program Files\CivicCast (Native)\`.
->
-> **Current native release posture:** `v1.0.0-beta.2` is the current
-> owner-held unpublished candidate. It has no installer asset and
-> is not a public or production release. This
-> page currently documents the one thing that is real and testable before an
-> installer is published: recovering the operator-console setup handoff on an
-> already-installed native station.
-> A full native install/download walkthrough will be written once an exact
-> installer, checksum, signature, and clean-machine proof are attached to the
-> same approved release.
->
-> **Everything below this notice, up to "If The Operator Console Says
-> 'Could Not Read Setup State'," describes the retired public WSL2 line**
-> (`v1.0.0-rc18` and earlier) that this repository does not carry. That
-> product's full history, release artifacts, and verification docs live in
-> the separate, private `scottconverse/civiccast` repository (see
-> BRANCHES.md's "Where the old line went") -- the doc links and GitHub
-> release URLs below point there, not here, and several no longer resolve
-> from this repository. It is kept as historical reference, not as
-> current install instructions for this repository.
 
-> **CURRENT (native line): no downloadable release is published yet.** The
-> owner-held candidate is `v1.0.0-beta.2` (unpublished; no installer asset).
-> The previously issued `v1.0.0-beta.1` tag was **USB-delivered only** and
-> carries no GitHub Release assets either. When a beta candidate is first
-> published with downloadable assets, it appears as a **prerelease** at
-> <https://github.com/scottconverse/civiccast-native/releases> under the
-> `v1.0.0-beta.N` tag family -- watch that page, not `scottconverse/civiccast`
-> (the retired, separate WSL2-line repository) and not any `v1.0.0-rcNN` tag,
-> which belongs to that other repository. See
-> [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
-> the authored release-state record. Everything below this notice that
-> mentions `v1.0.0-rc18` or `scottconverse/civiccast` describes the retired
-> WSL2 line and is historical evidence only, not the current native install
-> path.
+## Current Release
 
-> **HISTORICAL (retired WSL2 line): `v1.0.0-rc18` was the published controlled
-> beta on that other line.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
+`v1.0.0-beta.1` is the current release. It was delivered by USB, not by a
+GitHub Release download -- the GitHub Release page carries no installer
+asset for it (the ~21 GB AI-model bundle it needs exceeds GitHub's 2 GB
+per-file asset cap, and the publish tooling that splits runtime packs from
+the model bundle did not exist yet when it shipped). If you already have a
+USB-delivered `v1.0.0-beta.1` station, it is the real, current, testable
+native install -- there is nothing further to download for it.
 
-> **Last published installer:**
-> [`v1.0.0-rc18`](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18),
-> with its matching sidecar and complete manifest, plus an Authenticode signature
-> (see [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md); this release chain carries no Sigstore bundle).
-> [`v1.0.0-rc17`](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc17)
-> remains published as the rollback target, but it carries the sixteen findings
-> rc18 fixes and is not a recommended install.
+**Next release:** `v1.0.0-beta.2` is the current owner-held unpublished
+candidate. It has no installer asset and is not a public or production release.
+It is intended to be the first **downloadable** beta candidate:
+a `setup.exe`, per-pack runtime `.ccpack` assets, and a `SHA256SUMS.txt`
+checksum file (each asset under GitHub's 2 GB/file cap), published as a
+prerelease at <https://github.com/scottconverse/civiccast-native/releases>.
+Watch that page, not `scottconverse/civiccast` (the retired, separate
+WSL2-line repository) and not any `v1.0.0-rcNN` tag, which belongs to that
+other repository. See
+[`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
+the authored release-state record -- it is the single source of truth for
+which tag is current.
 
-> **Proof state:** the exact rc18 installer passed a clean-host install, launch,
-> reinstall, uninstall and rc17-to-rc18 upgrade on a pristine Windows 11 guest,
-> plus an interactive installer walkthrough. The full product path below was
-> last proven on a clean host against **rc17's** exact bytes, and has not yet
-> been repeated on rc18. That rc17 run **completed** a full
-> clean-host lifecycle walkthrough on 2026-07-20 — install with no restarts,
-> first admin and recovery kit, backup and scoped database restore drill,
-> private rehearsal and packaging, the pre-publication privacy check, Portal-only
-> approval and resident playback, real local summary/translation inference,
-> service relaunch, cold-reboot recovery, and reinstall. Verdict: **passed**
-> (1 Minor, 1 Nit; no blocker/critical/Major — an initial Major uninstall
-> data-retention finding was reviewed and downgraded to non-blocking; see the
-> verification doc for detail).
->
-> **Uninstalling — removing your station data.** When you uninstall, the
-> uninstaller shows a **"Delete the application data"** checkbox. Check it to
-> remove everything, including the ~19 GB Windows helper (the
-> `CivicCast-Ubuntu-24.04` WSL distribution that holds the database and
-> recordings). Leave it unchecked to keep your recordings and settings for a
-> later reinstall; the uninstaller then tells you on screen exactly what was
-> kept. Note two things if you keep the data: a later reinstall makes
-> previously published recordings public again without a new approval, and a
-> command-line **silent** uninstall (`/S`) keeps the data by default (it never
-> shows the checkbox). To remove kept data by hand later, run
-> `wsl --unregister CivicCast-Ubuntu-24.04` and delete `%USERPROFILE%\.civiccast`.
-> Captions were not exercised in rc17's full-lifecycle walkthrough, and rc18 does not inherit that result either. Details in
-> [CivicCast v1.0.0-rc17 Candidate Verification](docs/releases/v1.0.0-rc17-verification.md).
+**First install vs. upgrade, once `v1.0.0-beta.2` publishes:**
 
-> **Do not use `v1.0.0-rc13` for a clean Windows installation.** A real
-> bare-metal test with WSL and its Windows features absent exposed a release-
-> blocking helper-bootstrap failure. rc13 is withdrawn from beta use.
-> Use only `v1.0.0-rc18` and its matching proof assets.
+- **First-time install on a station with no prior CivicCast install** still
+  needs the USB model bundle (~21 GB of AI models). The GitHub download
+  alone is not enough for a first install -- it ships the setup executable
+  and runtime packs, not the model bundle, because that bundle is too large
+  for a GitHub Release asset.
+- **Upgrade of an already-installed station** (USB-delivered `beta.1` or a
+  later download) can be download-only: it reuses the AI models already on
+  the machine. An upgrade keeps the station's existing recordings, database,
+  and AI models -- nothing already on the station is discarded by an
+  upgrade install.
 
-`v1.0.0-rc18` is the published controlled beta. It carries rc15's
-clean-machine installer repairs (validated on a WSL-disabled baseline through
-cold-reboot recovery), rc16's published UI/UX repairs, the six audited
-rc17 beta-blocker fixes, and the sixteen stage-gate remediations that define
-this release. See the proof boundary above for what the exact rc18
-installer has and has not yet proven itself.
-
-This page explains the Windows test path for the current CivicCast line.
-Preserve all logs and report any failure found during beta testing.
+Setup remains visibly active during long steps: it reports its current
+phase, step count, elapsed time, and a heartbeat that updates every few
+seconds instead of appearing frozen.
 
 ## Read This First
 
@@ -108,8 +55,6 @@ Before running the installer, read these in order:
 1. [Beta Tester Start Here](docs/tester/START-HERE.md)
 2. This Windows install page
 3. [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
-4. [CivicCast v1.0.0-rc18 Candidate Verification](docs/releases/v1.0.0-rc18-verification.md)
-5. [CivicCast v1.0.0-rc13 Incident Record](docs/releases/v1.0.0-rc13-verification.md) (rc13 is withdrawn; superseded by rc14)
 
 Record in the clean-machine proof report that each document was opened and read.
 If the docs and the installer/proof package disagree about version, filename,
@@ -117,105 +62,57 @@ checksum, or expected next step, stop and report the mismatch before installing.
 
 ## What To Download
 
-Download `civiccast-1.0.0-rc18-windows-setup.exe` only from the public
-`v1.0.0-rc18` GitHub release. Do not use a draft, an older prerelease, a generic
-"latest" link, or a copied asset whose release provenance you cannot verify.
+- **If you are receiving `v1.0.0-beta.1`:** it is USB-delivered. There is no
+  GitHub Release download for it -- do not go looking for one.
+- **If you are receiving `v1.0.0-beta.2` or later** (once it is published as
+  a downloadable prerelease): download `setup.exe`, the matching
+  `.ccpack` runtime pack(s), and `SHA256SUMS.txt` from the exact tagged
+  GitHub Release at
+  <https://github.com/scottconverse/civiccast-native/releases> -- never a
+  draft, an older prerelease, or a generic "latest" link. A first-time
+  install on that station also needs the USB model bundle; an upgrade of an
+  already-installed station does not.
 
-Use the release asset meant for your test path. Do not install from the
-repository source ZIP unless you are intentionally working as a developer. Do
-not download files from `tester-handoff/`; those files coordinate automated
-tester-machine work and are not the operator install path.
+Do not install from the repository source ZIP unless you are intentionally
+working as a developer.
 
 ## Before Running It
 
-Read [Windows Release Trust And Verification](docs/install/windows-release-trust.md).
-Verify the release manifest, proof kit, and installer sidecar before running the
-installer.
+Read [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
+before running any downloaded installer. Verify `setup.exe` against
+`SHA256SUMS.txt` and its sidecar `.sidecar.json` file first -- the trust
+page has the exact PowerShell steps.
 
 Leave at least **5 GB of free disk space** for the base installation. This
-does not include station recordings, media, backups, or downloaded caption
-models; plan those separately.
-
-> **rc17 and later:** the local AI models (Ollama summary and translation
-> models) are large on top of that: roughly 15-20 GB combined. CivicCast
-> ensures the same three-tag target set (the fixed set of three Ollama model
-> tags every install needs for summary and translation) and downloads only
-> the tags still missing, automatically in the background after the base
-> install finishes, not before, so budget the extra space even though
-> nothing prompts for it during setup.
+does not include station recordings, media, backups, or the AI model
+bundle; plan those separately. The local AI models (Ollama summary and
+translation models) are large on top of that -- roughly 15-20 GB combined
+for a first install using the USB bundle.
 
 Windows may show a blue **Windows protected your PC** screen. Do not infer a
 signature from that screen. The approved handoff must state the exact file's
 actual Authenticode status. If signed, verify the named publisher; if the result
 is `NotSigned` or differs from the handoff, stop. Read
 [docs/tester/SMARTSCREEN-WALKTHROUGH.md](docs/tester/SMARTSCREEN-WALKTHROUGH.md) before
-you run the installer so you know exactly what to click (two clicks) and why, plus how
+you run the installer so you know exactly what to click and why, plus how
 to independently verify the file yourself first if you want extra confidence.
-
-## What The Setup Path Does
-
-Run the setup path and follow the screens. CivicCast guides:
-
-- The local Windows helper setup CivicCast needs to run meeting tools on this
-  computer.
-- Local durable storage preparation.
-- CivicCast service startup.
-- Operator-console handoff.
-- First-admin setup and recovery-kit creation.
-- The local Ollama AI runtime (reused if a healthy install already exists,
-  installed if absent) and the standard summary/translation models (the same
-  three-tag target set on every install; only the tags still missing are
-  downloaded), continuing in the background after the console is already
-  open (rc17 and later).
-
-You should not need Git, GitHub CLI, Git LFS, Python commands, Ubuntu commands,
-or repository source files for a normal operator test.
-
-You may still need to approve Windows administrator prompts. If Windows asks
-for a restart while setting up the helper, restart and reopen the CivicCast
-installer or setup instructions. The installer re-probes the helper
-after reboot; it should continue when the helper is ready or show **Set up
-Windows helper** again when repair is needed.
-
-> **rc17 and later:** the installer does not expect exactly one prompt. If
-> Windows asks for a restart while setting up the helper, expect to approve a
-> Windows security prompt again when it resumes — a restart clears the
-> earlier approval, so CivicCast re-elevates as a fresh step rather than
-> carrying the first approval across the reboot.
-
-Slow Windows setup must remain visibly active. The replacement installer shows
-the current phase, step count, elapsed time, and a heartbeat that updates every
-few seconds. The phase may take many minutes, but a static screen with no
-heartbeat is not considered normal. Only the Windows administrator-consent
-prompt should appear; helper command and PowerShell windows stay hidden. Restart
-only when the installer explicitly says Windows requires it.
-
-After a successful install, CivicCast registers a per-user runtime host at
-Windows sign-in through an HKCU `Run` entry. The host keeps the WSL helper
-available, polls CivicCast health, and restarts the helper or Linux service if
-health is lost. No manual relaunch is expected after a normal reboot once the
-one-time setup is complete. The runtime host does not perform the privileged
-one-time Windows helper setup; if that step never completed, open CivicCast
-Installer and choose **Set up Windows helper** for the required administrator
-approval.
 
 ## If The Operator Console Says "Could Not Read Setup State"
 
 **This is the current, applicable content in this repository.** It covers
-the native Windows line's own install — the paths and executables below
+the native Windows line's own install -- the paths and executables below
 (`CivicCast Native.exe`, `CivicCast (Native)`, `civiccast.native.runtime_cli`)
-only exist on a native-line install; the retired public WSL2 line described
-above (a different, archived repository) never had this recovery flow.
+only exist on a native-line install.
 
 The operator console's first setup page needs the one-time handoff URL the
-Windows installer creates — a plain console URL with no `?nonce=` on the end
+Windows installer creates -- a plain console URL with no `?nonce=` on the end
 cannot read setup state, cannot create the first administrator, and cannot
 sign in. If the console shows:
 
 > Could not read setup state. Open the operator console from the CivicCast
 > installer handoff, then continue setup.
 
-…and reopening CivicCast Setup and pressing **Open operator console** produces
+...and reopening CivicCast Setup and pressing **Open operator console** produces
 the same result, the setup app could not read the handoff the installer stored.
 That handoff lives in a registry key restricted to SYSTEM and Administrators, so
 a setup app running without administrator rights cannot read it and opens the
@@ -223,9 +120,9 @@ console without it.
 
 **Recover it on a native Windows station (no reinstall needed).** Either
 option below reads the same registry-stored handoff and requires
-administrator rights on the station — use whichever is more convenient.
+administrator rights on the station -- use whichever is more convenient.
 
-**Option A — restore it in CivicCast Setup (recommended):**
+**Option A -- restore it in CivicCast Setup (recommended):**
 
 1. Run, adjusting the path if you installed somewhere other than the default:
 
@@ -234,10 +131,10 @@ administrator rights on the station — use whichever is more convenient.
    ```
 
 2. Approve the Windows administrator prompt. CivicCast re-reads the stored
-   handoff and updates Setup's own cache — no URL to copy.
+   handoff and updates Setup's own cache -- no URL to copy.
 3. In CivicCast Setup, use **Open operator console** as normal.
 
-**Option B — print the handoff URL directly (from an elevated terminal, or
+**Option B -- print the handoff URL directly (from an elevated terminal, or
 when the Setup app itself is not available):**
 
 1. Open **Command Prompt** or **PowerShell** with **Run as administrator**.
@@ -250,7 +147,7 @@ when the Setup app itself is not available):**
    (From a checkout or a pip install, `civiccast runtime setup-handoff` is the
    same command.)
 
-3. Copy the printed `http://127.0.0.1:8000/operator/?nonce=…` URL and open it
+3. Copy the printed `http://127.0.0.1:8000/operator/?nonce=...` URL and open it
    in a browser **on this same computer**. Setup and sign-in work from there.
 
 Treat that URL as a password. It authorizes creating the station's first
@@ -275,15 +172,6 @@ Ask for IT help if:
 - You are testing an external provider, physical video output, or cable-headend
   path.
 
-For IT, historical (retired public WSL2 line, not this repository): that
-line's Windows helper was WSL2 Ubuntu 24.04, and its install path used to
-depend on WSL2 because the local meeting tools ran inside that helper with
-Linux-compatible service behavior. WSL1 was never a supported release path
-for it. The native Windows line documented in this repository — see the
-section below — does not use WSL at all; it runs as a native Windows
-service through the SCM. None of the WSL2 requirement above applies to a
-native-line install.
-
 ## If Something Fails
 
 Open **System Health**, create a support bundle, and use
@@ -291,3 +179,81 @@ Open **System Health**, create a support bundle, and use
 
 Do not paste passwords, recovery codes, provider secrets, private keys,
 resident data, or private meeting content into reports.
+
+---
+
+## Historical: retired rc line
+
+Everything in this section describes the retired public WSL2 line
+(`v1.0.0-rc18` and earlier, repository `scottconverse/civiccast`) that this
+repository does not carry. That product's full history, release artifacts,
+and verification docs live in the separate, private `scottconverse/civiccast`
+repository (see BRANCHES.md's "Where the old line went"). It is kept as
+historical reference only, not as current install instructions for this
+repository. None of the GitHub release links below resolve from this
+repository, and the verification documents they used to cite -- including
+the withdrawn `v1.0.0-rc13`'s incident record
+(`docs/releases/v1.0.0-rc18-verification.md`, `v1.0.0-rc17-verification.md`,
+`v1.0.0-rc13-verification.md`) -- are not present here -- they are omitted
+below rather than linked, because they do not exist on `main`.
+
+<details>
+<summary>Expand: retired WSL2-line (rc13-rc18) install notes</summary>
+
+`v1.0.0-rc18` was the published controlled beta on the retired WSL2 line.
+Its installer was built from the gate-cleared `main`, Authenticode-signed,
+and proven on a genuinely clean Windows host. `v1.0.0-rc17` remained the
+rollback target but carried the sixteen findings rc18 fixed.
+
+The exact rc18 installer passed a clean-host install, launch, reinstall,
+uninstall, and rc17-to-rc18 upgrade on a pristine Windows 11 guest, plus an
+interactive installer walkthrough. The full product path was last proven on
+a clean host against rc17's exact bytes and was not repeated on rc18. That
+rc17 run completed a full clean-host lifecycle walkthrough on 2026-07-20 --
+install with no restarts, first admin and recovery kit, backup and scoped
+database restore drill, private rehearsal and packaging, the
+pre-publication privacy check, Portal-only approval and resident playback,
+real local summary/translation inference, service relaunch, cold-reboot
+recovery, and reinstall. Verdict: passed (1 Minor, 1 Nit; no
+blocker/critical/Major -- an initial Major uninstall data-retention finding
+was reviewed and downgraded to non-blocking). Captions were not exercised in
+rc17's full-lifecycle walkthrough, and rc18 did not inherit that result
+either.
+
+`v1.0.0-rc13` was withdrawn from beta use: a real bare-metal test with WSL
+and its Windows features absent exposed a release-blocking helper-bootstrap
+failure. Only rc18 and its matching proof assets were the recommended
+install on that line.
+
+Uninstalling on that line removed station data through an uninstaller
+checkbox labeled "Delete the application data." Checking it removed
+everything, including the ~19 GB Windows helper (the `CivicCast-Ubuntu-24.04`
+WSL distribution that held the database and recordings). Leaving it
+unchecked kept recordings and settings for a later reinstall; a command-line
+silent uninstall (`/S`) kept the data by default. To remove kept data by
+hand, `wsl --unregister CivicCast-Ubuntu-24.04` and delete
+`%USERPROFILE%\.civiccast`.
+
+The setup path on that line guided: Windows helper setup (WSL2 Ubuntu
+24.04), local durable storage preparation, CivicCast service startup,
+operator-console handoff, first-admin setup and recovery-kit creation, and
+the local Ollama AI runtime with the standard summary/translation models
+(rc17 and later), continuing in the background after the console was
+already open. A normal operator test did not need Git, GitHub CLI, Git LFS,
+Python commands, or Ubuntu commands. Windows administrator prompts could
+appear more than once across a restart (rc17 and later) because a restart
+cleared the earlier approval.
+
+After a successful install, CivicCast registered a per-user runtime host at
+Windows sign-in through an HKCU `Run` entry that kept the WSL helper
+available, polled CivicCast health, and restarted the helper or Linux
+service if health was lost.
+
+For IT: that line's Windows helper was WSL2 Ubuntu 24.04, and its install
+path depended on WSL2 because the local meeting tools ran inside that helper
+with Linux-compatible service behavior. WSL1 was never a supported release
+path for it. The native Windows line documented above this appendix does
+not use WSL at all; it runs as a native Windows service through the SCM.
+None of the WSL2 requirement above applies to a native-line install.
+
+</details>
