@@ -767,7 +767,9 @@ def _prepare_ac1_synthetic_artifacts(tmp_path: Path, meta_run_attempt: str) -> t
     return artifacts, real_repo_head
 
 
-def _run_ac1_cli(artifacts: Path, real_repo_head: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run_ac1_cli(
+    artifacts: Path, real_repo_head: str, tmp_path: Path
+) -> subprocess.CompletedProcess[str]:
     return _run_cli(
         [
             "--mode",
