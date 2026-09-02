@@ -277,6 +277,34 @@ installer asset and is not a public or production release.
   stale-selection, load-error, read-only-role, and mobile-viewport states;
   `e2e/facility-router.spec.ts` is updated for the new channel picker and
   role.
+- **CI: hardened the "Install media test prerequisites" step against two
+  distinct hosted-ubuntu apt failure modes instead of only the dpkg-lock
+  one it already handled.** `ci-test.yml`'s `Unit tests` job and
+  `deterministic-detectors.yml`'s `randomized-suite` job both timed out at
+  exit 124 several times on 2026-09-02 across unrelated PRs — PR #131 "Unit
+  tests" job 100278667553, PR #135 "randomized-suite" job 100284786583, and
+  PR #132 "randomized-suite" job 100287702253. The step's own comment
+  already documented `unattended-upgrades` holding the dpkg lock for 3h49m
+  on 2026-08-19, but these three failures never touched the lock at all:
+  each stalled mid-download of a single large package
+  (`libcodec2-1.2`/`libflite1`/`libdav1d7`) on the Azure-hosted mirror,
+  hitting the old 300s per-call timeout. A longer timeout alone would have
+  papered over the symptom without addressing the lock risk that is still
+  real. Both jobs' inline apt shell — previously duplicated between the two
+  workflow files — is replaced with a single call to the new
+  `scripts/ci/install_media_test_prerequisites.sh`, which: stops and kills
+  `unattended-upgrades`/`apt-daily*.timer`/`apt-daily*.service` before
+  touching apt; waits up to 3 minutes for the dpkg/apt locks in a bounded
+  loop, printing the holder via `fuser -v` each iteration; runs every
+  `apt-get` call with `DPkg::Lock::Timeout=120`, `Acquire::Retries=3`, and
+  `DEBIAN_FRONTEND=noninteractive`; raises the per-call timeout from 300s to
+  480s (and the step's own `timeout-minutes` from 10 to 30) so a slow mirror
+  has room to finish instead of being killed mid-transfer; and, on any
+  failure, dumps `ps -ef | grep -E 'apt|dpkg|unattended'` so the next
+  occurrence is diagnosable from the log alone. Validated with
+  `python -c "import yaml,sys; ..."` over `.github/workflows/*.yml` and
+  `actionlint` (both clean) plus `bash -n` and `shellcheck` on the new
+  script.
 
 ## [1.0.0-beta.1] - 2026-08-31
 
