@@ -22,7 +22,7 @@ persist so two spellings of the same address cannot produce two different rows.
 Credential capability is decided here too, because "which endpoint shapes are
 legal" and "which of them may carry a credential handle" are the same question
 asked twice -- see :data:`CREDENTIAL_SUPPORTED_SOURCE_TYPES` and
-``docs/adr/0025-live-source-credential-capability.md``.
+``docs/adr/0025-live-source-observed-readiness.md``.
 """
 
 from __future__ import annotations
@@ -220,13 +220,28 @@ def _normalize_url(source_type: str, trimmed: str) -> str:
             "will not store or run a password inside an address. Remove the "
             "'user:password@' part; for SRT, store a passphrase instead."
         )
-    if source_type == "srt" and _has_query_key(parsed.query, "passphrase"):
+    if source_type == "srt" and (
+        _has_query_key(parsed.query, "passphrase") or _has_query_key(parsed.fragment, "passphrase")
+    ):
         raise EndpointValidationError(
             "Do not put the SRT passphrase in the address. Leave it out and store the "
             "passphrase in the station credential store instead -- CivicCast passes it "
             "to the encoder without ever writing it into an address."
         )
+    if parsed.fragment:
+        # A non-empty fragment is never a legal part of any address this
+        # module accepts. Rejecting only a fragment that happens to spell
+        # "passphrase=..." would still store (and later re-emit, in plaintext)
+        # any other secret an operator pastes after a '#' -- e.g.
+        # ``srt://host:9000#hunter2`` -- so any fragment at all is refused
+        # rather than silently persisted.
+        raise EndpointValidationError(
+            "The stream address cannot contain anything after '#'. CivicCast will not "
+            "store or run a password, passphrase, or token pasted into an address -- "
+            "remove it, and for SRT, store a passphrase in the station credential store "
+            "instead."
+        )
     # Re-emit through urlunsplit so the stored value is canonical (lowercased
-    # scheme, no duplicate empty fragment) and two spellings of one address
-    # cannot become two rows the operator has to tell apart.
-    return urlunsplit((scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+    # scheme, no fragment) and two spellings of one address cannot become two
+    # rows the operator has to tell apart.
+    return urlunsplit((scheme, parsed.netloc, parsed.path, parsed.query, ""))

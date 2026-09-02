@@ -110,6 +110,35 @@ class TestRejectedShapes:
         with pytest.raises(EndpointValidationError, match="passphrase"):
             normalize_endpoint("srt", "srt://host:9000?mode=caller&PassPhrase=hunter2")
 
+    def test_srt_passphrase_in_the_fragment_is_rejected(self) -> None:
+        # ``normalize_endpoint`` only inspected ``parsed.query`` and then
+        # re-emitted the fragment unchanged, so a passphrase after '#' was
+        # accepted and persisted in plaintext, byte-for-byte, in the row.
+        with pytest.raises(EndpointValidationError, match="passphrase"):
+            normalize_endpoint("srt", "srt://10.0.0.5:9000#passphrase=hunter2")
+
+    def test_any_url_fragment_is_rejected_even_without_the_word_passphrase(self) -> None:
+        # A fragment that does not literally spell "passphrase=" is still an
+        # operator pasting a secret after '#' -- an SRT passphrase copied
+        # without its key name, a bearer token, anything. Reject the fragment
+        # outright rather than pattern-matching only the one spelling.
+        with pytest.raises(EndpointValidationError, match="#"):
+            normalize_endpoint("srt", "srt://10.0.0.5:9000#hunter2")
+
+    def test_an_empty_fragment_marker_is_stripped_not_rejected(self) -> None:
+        # A bare trailing '#' with nothing after it carries no secret and no
+        # information; ``urlsplit`` reports it as an empty fragment, which
+        # must normalize away cleanly rather than round-trip.
+        assert normalize_endpoint("rtmp", "rtmp://encoder.local/live/a#") == (
+            "rtmp://encoder.local/live/a"
+        )
+
+    def test_a_non_srt_fragment_is_rejected_too(self) -> None:
+        # The fragment rule is not SRT-specific: any URL-type source could
+        # carry a secret after '#'.
+        with pytest.raises(EndpointValidationError, match="#"):
+            normalize_endpoint("rtsp", "rtsp://camera.local:554/stream1#token=abc123")
+
     def test_at_sign_in_an_ndi_name_is_rejected(self) -> None:
         with pytest.raises(EndpointValidationError, match="username or password"):
             normalize_endpoint("ndi", "admin@COUNCIL-CAM")
