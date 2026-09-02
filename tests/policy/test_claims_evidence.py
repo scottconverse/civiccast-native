@@ -716,12 +716,15 @@ def _real_registered_claims() -> list:
     return [entry for entry in registry.entries if entry.resolution == "same_run"]
 
 
-def test_ac1_verifier_green_on_registered_claims_at_head(tmp_path: Path) -> None:
-    """AC1: exercised against the REAL committed registry/workflow-contract/
-    trust-root/ci-test.yml in this worktree (real blobs must match — this is
-    the load-bearing proof that docs/claims/claims.yaml is not aspirational),
-    with synthetic-but-otherwise-real-shaped CI artifacts standing in for a
-    real GitHub Actions run (no Docker/GitHub available locally)."""
+def _prepare_ac1_synthetic_artifacts(tmp_path: Path, meta_run_attempt: str) -> tuple[Path, str]:
+    """Shared AC1 fixture builder: synthetic-but-otherwise-real-shaped CI
+    artifacts for every real producer in workflow-contract.yaml, standing in
+    for a real GitHub Actions run (no Docker/GitHub available locally).
+    `meta_run_attempt` is the run_attempt value written into every
+    producer's meta JSON — parameterized so the positive case
+    (test_ac1_verifier_green_on_registered_claims_at_head) and its negative
+    twin (test_ac1_verifier_red_when_meta_run_attempt_mismatches_env) below
+    can share this setup while asserting opposite outcomes."""
     contract = yaml.safe_load(
         (REPO_ROOT / "docs" / "claims" / "workflow-contract.yaml").read_text()
     )
@@ -748,7 +751,12 @@ def test_ac1_verifier_green_on_registered_claims_at_head(tmp_path: Path) -> None
         (junit_dir / spec["junit_file"]).write_text(junit_xml(cases), encoding="utf-8")
         (meta_dir / spec["meta_file"]).write_text(
             json.dumps(
-                {"job_id": producer, "sha": real_repo_head, "run_id": "999", "run_attempt": "1"}
+                {
+                    "job_id": producer,
+                    "sha": real_repo_head,
+                    "run_id": "999",
+                    "run_attempt": meta_run_attempt,
+                }
             ),
             encoding="utf-8",
         )
@@ -756,7 +764,11 @@ def test_ac1_verifier_green_on_registered_claims_at_head(tmp_path: Path) -> None
     producer_results = dict.fromkeys(producers, "success")
     (tmp_path / "producer-results.json").write_text(json.dumps(producer_results), encoding="utf-8")
 
-    result = _run_cli(
+    return artifacts, real_repo_head
+
+
+def _run_ac1_cli(artifacts: Path, real_repo_head: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    return _run_cli(
         [
             "--mode",
             "same-run",
@@ -780,8 +792,60 @@ def test_ac1_verifier_green_on_registered_claims_at_head(tmp_path: Path) -> None
             str(REPO_ROOT),
         ]
     )
+
+
+def test_ac1_verifier_green_on_registered_claims_at_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1: exercised against the REAL committed registry/workflow-contract/
+    trust-root/ci-test.yml in this worktree (real blobs must match — this is
+    the load-bearing proof that docs/claims/claims.yaml is not aspirational),
+    with synthetic-but-otherwise-real-shaped CI artifacts standing in for a
+    real GitHub Actions run (no Docker/GitHub available locally).
+
+    Hermetic against the job's OWN run_attempt: `--run-attempt` is never
+    passed on the CLI below, so the verifier falls back to its own process's
+    `GITHUB_RUN_ATTEMPT` env var (`main`'s `if args.run_attempt is None:
+    args.run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT")`), and `_run_cli`
+    passes this test's own inherited `os.environ` through to the subprocess.
+    Left ambient, a CI re-run attempt (GitHub Actions sets a real
+    `GITHUB_RUN_ATTEMPT=2` on attempt 2) would mismatch the "1" hardcoded
+    into the synthetic meta below and fail CC-WS3-004 for a reason that has
+    nothing to do with what this test actually proves — seen on
+    randomized-suite job 100290734871, run 33641309663 attempt 2 (seed
+    1070036697). `monkeypatch.setenv` pins `GITHUB_RUN_ATTEMPT` to match the
+    meta so the outcome never depends on the job's real attempt number.
+    `GITHUB_RUN_ID` is pinned too for the same reason, belt-and-suspenders —
+    `--run-id 999` is already passed explicitly below, so `args.run_id` is
+    never `None` and the env fallback is never actually consulted, but a
+    future edit that drops `--run-id` should not silently regain this
+    dependency."""
+    artifacts, real_repo_head = _prepare_ac1_synthetic_artifacts(tmp_path, meta_run_attempt="1")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("GITHUB_RUN_ID", "999")
+
+    result = _run_ac1_cli(artifacts, real_repo_head, tmp_path)
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     assert "PASS" in result.stdout
+
+
+def test_ac1_verifier_red_when_meta_run_attempt_mismatches_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative twin of test_ac1_verifier_green_on_registered_claims_at_head,
+    at the same real-registry CLI entry point: proves the hermeticity fix
+    above (pinning GITHUB_RUN_ATTEMPT to match the meta) did not weaken the
+    CC-WS3-004 run_attempt guard it works around — only removed that guard's
+    dependence on the job's own ambient attempt number. Meta says
+    run_attempt "1" (same synthetic fixture); the environment says this is
+    attempt "2" — a genuine mismatch the verifier must still reject."""
+    artifacts, real_repo_head = _prepare_ac1_synthetic_artifacts(tmp_path, meta_run_attempt="1")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    monkeypatch.setenv("GITHUB_RUN_ID", "999")
+
+    result = _run_ac1_cli(artifacts, real_repo_head, tmp_path)
+    assert result.returncode == 1, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert "run_attempt" in result.stdout and "CC-WS3-004" in result.stdout, result.stdout
 
 
 def test_ac2_every_d8_group_is_represented_by_its_own_red_test() -> None:
