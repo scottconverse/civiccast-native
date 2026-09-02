@@ -37,11 +37,25 @@ which tag is current.
   alone is not enough for a first install -- it ships the setup executable
   and runtime packs, not the model bundle, because that bundle is too large
   for a GitHub Release asset.
-- **Upgrade of an already-installed station** (USB-delivered `beta.1` or a
-  later download) can be download-only: it reuses the AI models already on
-  the machine. An upgrade keeps the station's existing recordings, database,
-  and AI models -- nothing already on the station is discarded by an
-  upgrade install.
+- **Upgrade of an already-installed station** can be download-only starting
+  with `v1.0.0-beta.2`: it reuses the AI models already on the machine. An
+  upgrade keeps the station's existing recordings, database, and AI models --
+  nothing already on the station is discarded by an upgrade install.
+
+**Upgrading from `v1.0.0-beta.1`:** `beta.1` to `beta.2` is a **fresh
+install from the beta.2 kit, not an in-place upgrade** -- wipe the existing
+`beta.1` install and install `beta.2` fresh (USB kit or a LAN copy of it).
+A `v1.0.0-beta.2` release changed the signed identity of every AI model pack
+so that later download-only upgrades can reuse them; a `beta.1` station's
+already-downloaded models were signed under the old identity and cannot
+satisfy a `beta.2` station's signed index. Recordings, settings, and
+downloaded AI models are not carried over by this one step -- export or back
+up anything you need before wiping. **From `beta.2` onward, upgrades are
+download-only**: `beta.2` to `beta.3` and every later step downloads
+`setup.exe` and the runtime packs and upgrades in place, keeping recordings,
+settings, and AI models. See
+[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)
+for why.
 
 Setup remains visibly active during long steps: it reports its current
 phase, step count, elapsed time, and a heartbeat that updates every few
@@ -70,8 +84,11 @@ checksum, or expected next step, stop and report the mismatch before installing.
   GitHub Release at
   <https://github.com/scottconverse/civiccast-native/releases> -- never a
   draft, an older prerelease, or a generic "latest" link. A first-time
-  install on that station also needs the USB model bundle; an upgrade of an
-  already-installed station does not.
+  install on that station also needs the USB model bundle. An upgrade of an
+  already-installed `beta.2`-or-later station does not need the USB bundle --
+  but a `beta.1` station upgrading to `beta.2` is the one exception: see
+  "Upgrading from `v1.0.0-beta.1`" above, it needs a fresh install from the
+  beta.2 kit, not a download-only upgrade.
 
 Do not install from the repository source ZIP unless you are intentionally
 working as a developer.

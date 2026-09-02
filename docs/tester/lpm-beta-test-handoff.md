@@ -25,9 +25,21 @@ tag is current.
 A first-time install on a station with no prior CivicCast install needs the
 USB model bundle even once `v1.0.0-beta.2` publishes -- the GitHub download
 alone is the setup executable and runtime packs, not the ~21 GB model
-bundle. An upgrade of an already-installed station (USB-delivered
-`v1.0.0-beta.1`, or a later download) can be download-only and keeps the
-station's existing recordings, database, and AI models.
+bundle. An upgrade of an already-installed `v1.0.0-beta.2`-or-later station
+can be download-only and keeps the station's existing recordings, database,
+and AI models.
+
+**Upgrading from `v1.0.0-beta.1`:** this one step is a fresh install, not an
+upgrade. `beta.1` to `beta.2` means wiping the existing `beta.1` install and
+installing `beta.2` fresh from the beta.2 kit (USB or a LAN copy); your
+recordings, settings, and AI models are **not** kept across this specific
+step -- back up anything you need first. `beta.2` changed the signed
+identity of every AI model pack so that later upgrades can reuse them, and a
+`beta.1` station's already-downloaded models don't match that new identity.
+From `beta.2` on, every later step (`beta.2` to `beta.3` and beyond) is a
+normal download-only upgrade in place: your recordings, settings, and AI
+models are kept. Details:
+[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
 
 Last updated: 2026-09-02.
 
