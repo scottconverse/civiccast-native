@@ -15,7 +15,21 @@ def _source(
     *,
     source_type: str = "srt",
     endpoint_url: str = "srt://0.0.0.0:9000?mode=listener",
+    probe_state: str = "ready",
+    probe_observed_at: datetime | None = None,
+    probe_detail: str | None = None,
 ) -> LiveSourceResponse:
+    """A configured source, observed-ready *now* unless the caller says otherwise.
+
+    WP-07: the default used to be irrelevant because ``_source_path`` stamped
+    ``health_state='ready'`` on every row regardless. It now derives health
+    from the observation, so these fixtures have to say what was observed.
+    ``probe_observed_at`` defaults to "just now" so a plan built during the
+    test is inside the readiness TTL.
+    """
+    observed_at = probe_observed_at
+    if observed_at is None and probe_state == "ready":
+        observed_at = datetime.now(UTC)
     return LiveSourceResponse(
         live_source_id=live_source_id,
         channel_id="gov-ch12",
@@ -24,6 +38,10 @@ def _source(
         endpoint_url=endpoint_url,
         credentials_handle=None,
         created_at=datetime(2026, 5, 31, 17, 0, tzinfo=UTC),
+        probe_state=probe_state,  # type: ignore[arg-type]
+        probe_observed_at=observed_at,
+        probe_detail=probe_detail,
+        probe_last_success_at=observed_at if probe_state == "ready" else None,
     )
 
 

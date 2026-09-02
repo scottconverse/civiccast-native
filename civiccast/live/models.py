@@ -30,7 +30,14 @@ from datetime import datetime
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, computed_field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -45,6 +52,21 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from civiccast.db import Base
+from civiccast.live.readiness import (
+    PROBE_STATE_NEVER_PROBED,
+    PROBE_STATES,
+    ProbeStateValue,
+    ReadinessValue,
+    next_action_for,
+    observation_age_seconds,
+    readiness_state,
+    readiness_ttl_seconds,
+)
+from civiccast.live.source_endpoints import (
+    credential_support_reason,
+    normalize_endpoint,
+    supports_credentials,
+)
 
 # ---------------------------------------------------------------------------
 # State + type constants
@@ -224,6 +246,10 @@ class LiveSource(Base):
             "source_type IN ('rtmp', 'rtsp', 'ndi', 'srt')",
             name="live_sources_source_type_check",
         ),
+        CheckConstraint(
+            "probe_state IN ('never_probed', 'ready', 'failed')",
+            name="live_sources_probe_state_check",
+        ),
     )
 
     live_source_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -236,6 +262,44 @@ class LiveSource(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
+    )
+    # --- Observed readiness (WP-07, migration 0086_live_source_probe_state) ---
+    # The row used to BE the readiness claim: civiccast.live.relay._source_path
+    # stamped health_state='ready' on every configured source, and that value is
+    # the only gate live takeover applies before changing air. These five columns
+    # replace "it exists" with "somebody looked, and here is when and what they
+    # saw". ``probe_state`` is deliberately one of three durable values --
+    # staleness is derived from ``probe_observed_at`` against the readiness TTL
+    # (civiccast.live.readiness), never written down, because a persisted
+    # "stale" would outlive the successful probe that should have cleared it.
+    probe_state: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'never_probed'"),
+    )
+    probe_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    #: Operator-safe, truncated, secret-redacted reason for the last observation.
+    probe_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Stable machine code for the last observation (see
+    #: ``civiccast.live.source_probe.PROBE_ERROR_CODES``). Kept separate from
+    #: ``probe_detail`` so the UI can branch on the cause without parsing prose.
+    probe_error_code: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    #: When this source last actually delivered media. Survives a later failure
+    #: so the operator can tell "never worked" from "worked until 09:41".
+    probe_last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    #: Optimistic-concurrency token. Incremented on every operator edit; a PATCH
+    #: carrying a stale value is rejected rather than silently overwriting the
+    #: edit another operator made from the second Live Room window.
+    row_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("1"),
     )
 
 
@@ -500,6 +564,21 @@ class LiveSessionResponse(BaseModel):
         return value
 
 
+def check_credential_shape(source_type: str, credentials_handle: str | None) -> None:
+    """Reject a stored credential on a source type CivicCast cannot run one for.
+
+    Requirement, not politeness: an rtsp/rtmp row carrying a handle would look
+    authenticated in the operator UI while every probe and every playout leg
+    silently ran unauthenticated. Rejecting the shape is the only honest
+    outcome -- see ``civiccast.live.source_endpoints`` for why only SRT
+    qualifies.
+    """
+    if not credentials_handle or not credentials_handle.strip():
+        return
+    if not supports_credentials(source_type):
+        raise ValueError(credential_support_reason(source_type))
+
+
 class LiveSourceCreate(BaseModel):
     """Request body for creating a configured live source."""
 
@@ -509,8 +588,8 @@ class LiveSourceCreate(BaseModel):
     channel_id: Annotated[str, Field(min_length=1, max_length=64)]
     name: Annotated[str, Field(min_length=1, max_length=200)]
     source_type: LiveSourceTypeValue
-    endpoint_url: HttpUrl | str
-    credentials_handle: str | None = None
+    endpoint_url: str
+    credentials_handle: Annotated[str | None, Field(default=None, max_length=200)] = None
 
     @field_validator("live_source_id", "channel_id")
     @classmethod
@@ -524,9 +603,106 @@ class LiveSourceCreate(BaseModel):
             raise ValueError(f"source_type must be one of {_SOURCE_TYPES!r}; got {value!r}")
         return value
 
+    @model_validator(mode="after")
+    def _endpoint_matches_type(self) -> LiveSourceCreate:
+        # WP-07: one rule, one place. Before this the create surface accepted
+        # ``HttpUrl | str`` and never asked whether the address matched the
+        # source type at all, so an ``srt`` row could hold an ``http://`` URL
+        # that no probe and no playout element could ever open.
+        object.__setattr__(
+            self, "endpoint_url", normalize_endpoint(self.source_type, str(self.endpoint_url))
+        )
+        check_credential_shape(self.source_type, self.credentials_handle)
+        return self
+
+
+class LiveSourceUpdate(BaseModel):
+    """Request body for ``PATCH /api/staff/live/sources/{live_source_id}``.
+
+    Every field is optional; omitted fields are left alone. ``channel_id`` is
+    editable because moving a mis-filed source to the right channel was
+    otherwise a delete-and-recreate the store has no delete for.
+
+    ``expected_row_version`` is the optimistic-concurrency token. When present
+    it must equal the row's current ``row_version`` or the update is rejected
+    409; when absent the update is last-writer-wins, which is what a scripted
+    single-operator station wants and what the operator UI never sends.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    channel_id: Annotated[str | None, Field(default=None, min_length=1, max_length=64)] = None
+    name: Annotated[str | None, Field(default=None, min_length=1, max_length=200)] = None
+    source_type: LiveSourceTypeValue | None = None
+    endpoint_url: str | None = None
+    credentials_handle: Annotated[str | None, Field(default=None, max_length=200)] = None
+    #: Sentinel for "clear the stored credential handle" -- distinct from
+    #: ``credentials_handle=None`` meaning "leave it alone", which is what
+    #: every other omitted field means in this model.
+    clear_credentials_handle: bool = False
+    expected_row_version: Annotated[int | None, Field(default=None, ge=1)] = None
+
+    @field_validator("channel_id")
+    @classmethod
+    def _slug_check(cls, value: str | None) -> str | None:
+        return None if value is None else _validate_slug(value)
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def _source_type_check(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in _SOURCE_TYPES:
+            raise ValueError(f"source_type must be one of {_SOURCE_TYPES!r}; got {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def _at_least_one_change(self) -> LiveSourceUpdate:
+        if not self.changed_fields():
+            raise ValueError(
+                "Send at least one field to change (channel_id, name, source_type, "
+                "endpoint_url, credentials_handle, or clear_credentials_handle)."
+            )
+        if self.credentials_handle is not None and self.clear_credentials_handle:
+            raise ValueError(
+                "Send either credentials_handle or clear_credentials_handle, not both."
+            )
+        return self
+
+    def changed_fields(self) -> set[str]:
+        """Names of the fields this request actually asks to change."""
+        fields = {
+            name
+            for name in ("channel_id", "name", "source_type", "endpoint_url", "credentials_handle")
+            if getattr(self, name) is not None
+        }
+        if self.clear_credentials_handle:
+            fields.add("credentials_handle")
+        return fields
+
+    def invalidates_readiness(self) -> bool:
+        """Whether this edit makes the previous probe observation meaningless.
+
+        Endpoint, source type, channel, and credential reference all change
+        *what would be probed*; a name change does not. The store clears
+        readiness on the former and leaves it on the latter, so renaming a
+        camera thirty seconds before gavel does not force a re-probe.
+        """
+        return bool(
+            self.changed_fields()
+            & {"channel_id", "source_type", "endpoint_url", "credentials_handle"}
+        )
+
 
 class LiveSourceResponse(BaseModel):
-    """Response shape for live source reads."""
+    """Response shape for live source reads.
+
+    Carries the persisted observation (``probe_*``) AND the derived answer the
+    operator actually needs (``readiness``, ``observation_age_seconds``,
+    ``next_action``). Deriving it server-side is deliberate: the readiness TTL
+    is a station setting, and a client computing staleness from its own clock
+    would disagree with the takeover gate that refuses it.
+    """
 
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
@@ -537,6 +713,12 @@ class LiveSourceResponse(BaseModel):
     endpoint_url: str
     credentials_handle: str | None
     created_at: datetime
+    probe_state: ProbeStateValue = PROBE_STATE_NEVER_PROBED
+    probe_observed_at: datetime | None = None
+    probe_detail: str | None = None
+    probe_error_code: str | None = None
+    probe_last_success_at: datetime | None = None
+    row_version: int = 1
 
     @field_validator("source_type", mode="before")
     @classmethod
@@ -544,6 +726,70 @@ class LiveSourceResponse(BaseModel):
         if value not in _SOURCE_TYPES:
             raise ValueError(f"source_type must be one of {_SOURCE_TYPES!r}; got {value!r}")
         return value
+
+    @field_validator("probe_state", mode="before")
+    @classmethod
+    def _probe_state_check(cls, value: str | None) -> str:
+        # Fail closed: a row written by an older build, or one whose column is
+        # somehow unrecognized, reads as "nobody has looked" rather than ready.
+        return value if value in PROBE_STATES else PROBE_STATE_NEVER_PROBED
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def readiness_ttl_seconds(self) -> int:
+        """The station's configured readiness window, as actually applied."""
+        return readiness_ttl_seconds()
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def observation_age_seconds(self) -> float | None:
+        """Seconds since the last observation; ``None`` when never probed."""
+        return observation_age_seconds(self.probe_observed_at)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def readiness(self) -> ReadinessValue:
+        """``ready`` / ``stale`` / ``failed`` / ``never_probed``."""
+        return readiness_state(
+            self.probe_state,
+            self.probe_observed_at,
+            ttl_seconds=readiness_ttl_seconds(),
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def credentials_supported(self) -> bool:
+        """Whether this source type can carry a stored credential at all."""
+        return supports_credentials(self.source_type)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def credentials_unsupported_reason(self) -> str | None:
+        """Copy for the disabled credential control; ``None`` when supported."""
+        return credential_support_reason(self.source_type)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def next_action(self) -> str:
+        """The one thing the operator should do next about this source."""
+        return next_action_for(self.readiness, source_name=self.name, detail=self.probe_detail)
+
+
+class LiveSourceProbeResponse(BaseModel):
+    """Result of an explicit operator-triggered probe.
+
+    Returns the whole refreshed source rather than a bare verdict so the Live
+    Room can replace the row it just probed without a second round trip and
+    without the two surfaces briefly disagreeing about readiness.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: LiveSourceResponse
+    probed_at: datetime
+    ok: bool
+    error_code: str | None = None
+    detail: str | None = None
 
 
 class RecordingTargetCreate(BaseModel):

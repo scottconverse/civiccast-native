@@ -225,14 +225,26 @@ class TestLiveSourceCreatePydantic:
         )
         assert m.source_type == "rtmp"
 
-    @pytest.mark.parametrize("source_type", ["rtmp", "rtsp", "ndi", "srt"])
-    def test_all_four_source_types_accepted(self, source_type: str) -> None:
+    @pytest.mark.parametrize(
+        ("source_type", "endpoint_url"),
+        [
+            ("rtmp", "rtmp://camera.example/live"),
+            ("rtsp", "rtsp://camera.example/live"),
+            # WP-07: NDI carries a source NAME, not a URL path. ``ndi://x/y``
+            # used to be accepted here and then failed closed much later, in
+            # civiccast.live.source_probe._build_probe_command, after the row
+            # had already been advertised to the operator as configured.
+            ("ndi", "COUNCIL-CAM (Channel 1)"),
+            ("srt", "srt://camera.example:9000"),
+        ],
+    )
+    def test_all_four_source_types_accepted(self, source_type: str, endpoint_url: str) -> None:
         m = LiveSourceCreate(
             live_source_id=f"room-a-{source_type}",
             channel_id="gov-ch12",
             name=f"Room A {source_type.upper()}",
             source_type=source_type,
-            endpoint_url=f"{source_type}://camera.example/live",
+            endpoint_url=endpoint_url,
         )
         assert m.source_type == source_type
 

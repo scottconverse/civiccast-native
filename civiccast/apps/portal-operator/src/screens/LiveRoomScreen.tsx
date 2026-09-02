@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import {
   ApiError,
@@ -16,6 +16,8 @@ import {
   listChannelProfiles,
   listLiveSources,
   listRecordingTargets,
+  probeLiveSource,
+  updateLiveSource,
   retryLiveFinalization,
   startLivePreflight,
 } from '../api/client'
@@ -31,14 +33,19 @@ import {
   LIVE_STATE_META,
   PREFLIGHT_LABELS,
   preflightNextStep,
+  observationAgeLabel,
   RELAY_HEALTH_LABEL,
   RELAY_MODE_LABEL,
+  SOURCE_READINESS_LABEL,
+  SOURCE_READINESS_TONE,
   SOURCE_TYPE_LABEL,
   type LiveIngestHealth,
   type LiveIngestPath,
   type LiveIngestPlan,
   type LiveSessionResponse,
   type LiveSourceResponse,
+  type LiveSourceType,
+  type LiveSourceUpdate,
   type PreflightEvaluation,
   type PreflightInputs,
 } from '../types/live'
@@ -284,21 +291,32 @@ function FinalizationPanel({
   )
 }
 
-function SourceSwitcher({
+export function SourceSwitcher({
   sources,
   selectedId,
   onSelect,
+  onCheck,
+  onEdit,
+  checkingId,
+  canEdit,
 }: {
   sources: LiveSourceResponse[]
   selectedId: string
   onSelect: (id: string) => void
+  onCheck?: (id: string) => void
+  onEdit?: (source: LiveSourceResponse) => void
+  checkingId?: string | null
+  canEdit?: boolean
 }) {
+  const selected = sources.find((source) => source.live_source_id === selectedId)
   return (
     <section className="flex flex-col gap-3">
       <div>
         <h2 className="m-0 text-sm font-semibold">Source switcher</h2>
         <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-          Arrow keys move between configured meeting sources.
+          Arrow keys move between configured meeting sources. A source is only
+          shown as delivering if CivicCast has actually seen media from it in
+          the last {selected?.readiness_ttl_seconds ?? 30} seconds.
         </p>
       </div>
       <RadioCardGroup
@@ -307,17 +325,28 @@ function SourceSwitcher({
           id: source.live_source_id,
           label: source.name,
           trailing: (
-            <StatusPill
-              label={SOURCE_TYPE_LABEL[source.source_type]}
-              tone="neutral"
-            />
+            <span className="flex items-center gap-1">
+              <StatusPill
+                label={SOURCE_READINESS_LABEL[source.readiness]}
+                tone={SOURCE_READINESS_TONE[source.readiness]}
+              />
+              <StatusPill
+                label={SOURCE_TYPE_LABEL[source.source_type]}
+                tone="neutral"
+              />
+            </span>
           ),
           description: (
-            <span
-              className="cc-mono block truncate"
-              style={{ color: 'var(--cc-ink-3)' }}
-            >
-              {source.endpoint_url}
+            <span className="block">
+              <span
+                className="cc-mono block truncate"
+                style={{ color: 'var(--cc-ink-3)' }}
+              >
+                {source.endpoint_url}
+              </span>
+              <span className="mt-1 block" style={{ color: 'var(--cc-ink-3)' }}>
+                {observationAgeLabel(source.observation_age_seconds)}
+              </span>
             </span>
           ),
         }))}
@@ -327,7 +356,295 @@ function SourceSwitcher({
         buttonClassName="min-h-24 rounded-md p-3 text-left"
         getDescriptionColor={() => 'var(--cc-ink-3)'}
       />
+      {selected ? (
+        <SourceReadinessDetail
+          source={selected}
+          onCheck={onCheck}
+          onEdit={onEdit}
+          checking={checkingId === selected.live_source_id}
+          canEdit={canEdit}
+        />
+      ) : null}
     </section>
+  )
+}
+
+/**
+ * What the operator needs about the selected source, in the order they need
+ * it: what was seen, when, why not (if not), and the one thing to do next.
+ *
+ * The "Check source" button exists because before WP-07 there was no way to
+ * ask -- readiness was asserted by the existence of the row, so there was
+ * nothing to re-ask.
+ */
+export function SourceReadinessDetail({
+  source,
+  onCheck,
+  onEdit,
+  checking,
+  canEdit,
+}: {
+  source: LiveSourceResponse
+  onCheck?: (id: string) => void
+  onEdit?: (source: LiveSourceResponse) => void
+  checking?: boolean
+  canEdit?: boolean
+}) {
+  const tone = SOURCE_READINESS_TONE[source.readiness]
+  const background =
+    tone === 'ok'
+      ? 'var(--cc-surface)'
+      : tone === 'err'
+        ? 'var(--cc-err-soft)'
+        : tone === 'warn'
+          ? 'var(--cc-warn-soft)'
+          : 'var(--cc-surface-2)'
+  return (
+    <section
+      className="rounded-md p-4"
+      style={{ background, border: '1px solid var(--cc-line)' }}
+      aria-label={`Readiness for ${source.name}`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="m-0 text-sm font-semibold">{source.name}</h3>
+          <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+            {observationAgeLabel(source.observation_age_seconds)}
+          </p>
+        </div>
+        <StatusPill label={SOURCE_READINESS_LABEL[source.readiness]} tone={tone} />
+      </div>
+      {source.readiness === 'failed' && source.probe_detail ? (
+        <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          {source.probe_detail}
+        </p>
+      ) : null}
+      <p className="m-0 mt-2 text-xs font-semibold" style={{ color: 'var(--cc-ink-2)' }}>
+        Next step: {source.next_action}
+      </p>
+      {!source.credentials_supported && source.credentials_unsupported_reason ? (
+        <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          {source.credentials_unsupported_reason}
+        </p>
+      ) : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {onCheck ? (
+          <button
+            type="button"
+            onClick={() => onCheck(source.live_source_id)}
+            disabled={checking}
+            className="rounded-md px-3 py-1.5 text-xs font-semibold"
+            style={{
+              background: 'var(--cc-surface-3)',
+              border: '1px solid var(--cc-line)',
+              color: 'var(--cc-ink-1)',
+              opacity: checking ? 0.6 : 1,
+            }}
+          >
+            {checking ? 'Checking source...' : 'Check source'}
+          </button>
+        ) : null}
+        {onEdit && canEdit ? (
+          <button
+            type="button"
+            onClick={() => onEdit(source)}
+            className="rounded-md px-3 py-1.5 text-xs font-semibold"
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--cc-line)',
+              color: 'var(--cc-ink-2)',
+            }}
+          >
+            Edit source
+          </button>
+        ) : null}
+      </div>
+      {onEdit && !canEdit ? (
+        <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Editing a source needs the setup admin role. Ask your station admin to
+          change the address or type.
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+/**
+ * Rename or re-point a configured source.
+ *
+ * Deliberately warns before saving anything that changes what would be
+ * probed: the server clears readiness on those edits, so the operator loses
+ * their "delivering" state and has to check again. Saying so up front is the
+ * difference between an informed edit and a surprise at gavel time.
+ */
+export function SourceEditForm({
+  source,
+  onCancel,
+  onSave,
+  saving,
+  error,
+}: {
+  source: LiveSourceResponse
+  onCancel: () => void
+  onSave: (payload: LiveSourceUpdate) => void
+  saving?: boolean
+  error?: string | null
+}) {
+  const [name, setName] = useState(source.name)
+  const [endpoint, setEndpoint] = useState(source.endpoint_url)
+  const [sourceType, setSourceType] = useState<LiveSourceType>(source.source_type)
+  const [credentialsHandle, setCredentialsHandle] = useState(
+    source.credentials_handle ?? '',
+  )
+
+  const endpointChanged = endpoint.trim() !== source.endpoint_url
+  const typeChanged = sourceType !== source.source_type
+  const credentialChanged =
+    credentialsHandle.trim() !== (source.credentials_handle ?? '')
+  const invalidatesReadiness = endpointChanged || typeChanged || credentialChanged
+  const credentialsSupported = sourceType === 'srt'
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault()
+    const payload: LiveSourceUpdate = { expected_row_version: source.row_version }
+    if (name.trim() !== source.name) payload.name = name.trim()
+    if (endpointChanged) payload.endpoint_url = endpoint.trim()
+    if (typeChanged) payload.source_type = sourceType
+    if (credentialChanged) {
+      if (credentialsHandle.trim()) payload.credentials_handle = credentialsHandle.trim()
+      else payload.clear_credentials_handle = true
+    }
+    onSave(payload)
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="rounded-md p-4"
+      style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+      aria-label={`Edit ${source.name}`}
+    >
+      <h3 className="m-0 text-sm font-semibold">Edit meeting source</h3>
+      <div className="mt-3 flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="source-edit-name" className="text-xs font-semibold">
+            Name
+          </label>
+          <input
+            id="source-edit-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className="rounded-md px-2 py-2 text-sm"
+            style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="source-edit-type" className="text-xs font-semibold">
+            Source type
+          </label>
+          <select
+            id="source-edit-type"
+            value={sourceType}
+            onChange={(event) => setSourceType(event.target.value as LiveSourceType)}
+            className="rounded-md px-2 py-2 text-sm"
+            style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+          >
+            {(['rtmp', 'rtsp', 'ndi', 'srt'] as LiveSourceType[]).map((value) => (
+              <option key={value} value={value}>
+                {SOURCE_TYPE_LABEL[value]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="source-edit-endpoint" className="text-xs font-semibold">
+            {sourceType === 'ndi' ? 'NDI source name' : 'Stream address'}
+          </label>
+          <input
+            id="source-edit-endpoint"
+            value={endpoint}
+            onChange={(event) => setEndpoint(event.target.value)}
+            className="cc-mono rounded-md px-2 py-2 text-sm"
+            style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+            aria-describedby="source-edit-endpoint-help"
+          />
+          <p
+            id="source-edit-endpoint-help"
+            className="m-0 text-xs"
+            style={{ color: 'var(--cc-ink-3)' }}
+          >
+            {sourceType === 'ndi'
+              ? 'The NDI source name exactly as the sender advertises it on the station network.'
+              : 'Do not include a username or password. CivicCast will not store a password inside an address.'}
+          </p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="source-edit-credential" className="text-xs font-semibold">
+            Stored credential
+          </label>
+          <input
+            id="source-edit-credential"
+            value={credentialsSupported ? credentialsHandle : ''}
+            onChange={(event) => setCredentialsHandle(event.target.value)}
+            disabled={!credentialsSupported}
+            className="rounded-md px-2 py-2 text-sm"
+            style={{
+              background: 'var(--cc-surface-2)',
+              border: '1px solid var(--cc-line)',
+              opacity: credentialsSupported ? 1 : 0.5,
+            }}
+            aria-describedby="source-edit-credential-help"
+          />
+          <p
+            id="source-edit-credential-help"
+            className="m-0 text-xs"
+            style={{ color: 'var(--cc-ink-3)' }}
+          >
+            {credentialsSupported
+              ? 'The name the SRT passphrase for this source is saved under in the station credential store. The passphrase itself is never stored here.'
+              : source.credentials_unsupported_reason ??
+                'This source type cannot use a stored credential.'}
+          </p>
+        </div>
+      </div>
+      {invalidatesReadiness ? (
+        <p
+          className="m-0 mt-3 rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink-2)' }}
+          role="status"
+        >
+          Saving this change clears what CivicCast knows about this source. You
+          will need to choose Check source again before it can take air.
+        </p>
+      ) : null}
+      {error ? (
+        <p className="m-0 mt-3 text-xs" role="alert" style={{ color: 'var(--cc-err)' }}>
+          {error}
+        </p>
+      ) : null}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-md px-3 py-1.5 text-xs font-semibold"
+          style={{
+            background: 'var(--cc-accent)',
+            color: 'var(--cc-on-accent)',
+            opacity: saving ? 0.6 : 1,
+          }}
+        >
+          {saving ? 'Saving...' : 'Save source'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md px-3 py-1.5 text-xs font-semibold"
+          style={{ background: 'transparent', border: '1px solid var(--cc-line)' }}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -667,6 +984,9 @@ export function LiveRoomScreen() {
       // Persistence is a convenience; selection still applies this session.
     }
   }
+  const queryClient = useQueryClient()
+  const [editingSource, setEditingSource] = useState<LiveSourceResponse | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
   const channelsQuery = useQuery({
     queryKey: ['channel-profiles'],
     queryFn: listChannelProfiles,
@@ -707,6 +1027,8 @@ export function LiveRoomScreen() {
   const sources = sourcesQuery.data ?? EMPTY_SOURCES
   const canOperateMeeting =
     staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'meeting_operator')
+  const canEditSources =
+    staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'setup_admin')
   const selectedSource = useMemo(() => {
     if (sources.length === 0) return undefined
     return sources.find((source) => source.live_source_id === selectedSourceId) ?? sources[0]
@@ -749,6 +1071,40 @@ export function LiveRoomScreen() {
     },
     onSuccess: setPreflight,
     onError: (err) => setActionError(apiMessage(err, 'Could not run pre-flight.')),
+  })
+
+  // WP-07: checking a source and editing one both change what the ingest plan
+  // and the takeover gate will say about it, so both invalidate the two
+  // queries that render readiness rather than patching local state -- the
+  // server is the only thing that knows the applied TTL.
+  const refreshReadiness = () => {
+    void queryClient.invalidateQueries({ queryKey: ['live-sources'] })
+    void queryClient.invalidateQueries({ queryKey: ['live-ingest-plan', channelId] })
+  }
+
+  const probeMutation = useMutation({
+    mutationFn: (liveSourceId: string) => probeLiveSource(liveSourceId),
+    onSuccess: (result) => {
+      setActionError(null)
+      // A failed check is a 200. Surface its reason here rather than letting
+      // the card silently keep its previous state.
+      if (!result.ok) setActionError(result.detail ?? 'The source check failed.')
+      refreshReadiness()
+    },
+    onError: (err) => setActionError(apiMessage(err, 'Could not check the source.')),
+  })
+
+  const editMutation = useMutation({
+    mutationFn: (payload: LiveSourceUpdate) => {
+      if (!editingSource) throw new Error('No source is being edited.')
+      return updateLiveSource(editingSource.live_source_id, payload)
+    },
+    onSuccess: () => {
+      setEditError(null)
+      setEditingSource(null)
+      refreshReadiness()
+    },
+    onError: (err) => setEditError(apiMessage(err, 'Could not save the source.')),
   })
 
   const stateMeta = session ? LIVE_STATE_META[session.state] : null
@@ -820,7 +1176,26 @@ export function LiveRoomScreen() {
               sources={sources}
               selectedId={selectedSource?.live_source_id ?? ''}
               onSelect={setSelectedSourceId}
+              onCheck={(id) => probeMutation.mutate(id)}
+              onEdit={(source) => {
+                setEditError(null)
+                setEditingSource(source)
+              }}
+              checkingId={probeMutation.isPending ? probeMutation.variables : null}
+              canEdit={canEditSources}
             />
+            {editingSource ? (
+              <SourceEditForm
+                source={editingSource}
+                onCancel={() => {
+                  setEditError(null)
+                  setEditingSource(null)
+                }}
+                onSave={(payload) => editMutation.mutate(payload)}
+                saving={editMutation.isPending}
+                error={editError}
+              />
+            ) : null}
             <RelayStatusPanel plan={ingestPlanQuery.data} error={ingestPlanQuery.error} />
           </div>
           <aside className="flex flex-col gap-4">

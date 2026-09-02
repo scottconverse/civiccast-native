@@ -45,6 +45,19 @@ class ElementSpec:
     factory: str
     name: str | None = None
     props: dict[str, Any] = field(default_factory=dict)
+    #: Property name -> opaque credential HANDLE, resolved to the real secret
+    #: by the worker at element-construction time
+    #: (``civiccast.egress.gst.engine.PlayoutPipeline._make``).
+    #:
+    #: Kept separate from ``props`` on purpose. This graph is serialized to a
+    #: JSON file on disk by the strategy and read back by the worker process,
+    #: so a secret placed in ``props`` would be persisted in plaintext. A
+    #: handle is not a secret: it is meaningless without the station's OS
+    #: credential store, exactly like ``live_sources.credentials_handle``
+    #: itself. (WP-07; the pre-existing SRT *sink* passphrase path in
+    #: ``bridge.sink_element_spec`` resolves eagerly into a URI query
+    #: parameter and is out of this package's scope to change.)
+    secret_props: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -417,12 +430,24 @@ def demo_test_graph(
 
 
 def _elem_to_dict(spec: ElementSpec) -> dict[str, Any]:
-    return {"factory": spec.factory, "name": spec.name, "props": dict(spec.props)}
+    out: dict[str, Any] = {
+        "factory": spec.factory,
+        "name": spec.name,
+        "props": dict(spec.props),
+    }
+    # Omitted when empty so every existing graph file and every existing
+    # golden-JSON assertion keeps its exact shape.
+    if spec.secret_props:
+        out["secret_props"] = dict(spec.secret_props)
+    return out
 
 
 def _elem_from_dict(obj: dict[str, Any]) -> ElementSpec:
     return ElementSpec(
-        factory=obj["factory"], name=obj.get("name"), props=dict(obj.get("props") or {})
+        factory=obj["factory"],
+        name=obj.get("name"),
+        props=dict(obj.get("props") or {}),
+        secret_props=dict(obj.get("secret_props") or {}),
     )
 
 

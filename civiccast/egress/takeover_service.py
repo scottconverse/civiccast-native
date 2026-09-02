@@ -17,6 +17,14 @@ The service touches no engine process directly; it persists + enqueues, and the
 daemon consumes the commands (S5 daemon slice). ``clock`` / ``id_factory`` are
 injectable for deterministic tests; ``ingest_plan_provider`` is injected so the
 service stays decoupled from the live relay-config store.
+
+WP-07 adds one more injected seam, ``readiness_verifier``, called in **take**
+after the source plan is built and *before* the audit row is written or the
+command is queued. Ordering is the whole point: an audit row is the station's
+durable record that a takeover happened, and the queued command moves air as
+soon as the daemon reads it, so neither may exist for a source that has gone
+stale, started failing, or been edited since the operator's ingest plan was
+built. See ``civiccast.live.readiness_service``.
 """
 
 from __future__ import annotations
@@ -24,15 +32,45 @@ from __future__ import annotations
 import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Protocol
 
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.live_takeover import build_live_takeover_source_plan
 from civiccast.egress.models import EgressCommand, ManualRouteState, TakeoverSession
 from civiccast.egress.store import EgressStore
 from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
-from civiccast.live.models import RELAY_HEALTH_READY, LiveIngestPlan
+from civiccast.live.models import RELAY_HEALTH_READY, LiveIngestPath, LiveIngestPlan
 
 IngestPlanProvider = Callable[[str], LiveIngestPlan]
+
+
+class ReadinessVerdict(Protocol):
+    """What a :data:`ReadinessVerifier` hands back.
+
+    Structural, not a base class, so this module stays decoupled from the live
+    package exactly as ``ingest_plan_provider`` already is. The concrete
+    implementation is
+    ``civiccast.live.readiness_service.TakeoverReadiness``.
+    """
+
+    @property
+    def ok(self) -> bool: ...
+
+    @property
+    def reason(self) -> str: ...
+
+    @property
+    def secret_ref(self) -> str | None: ...
+
+
+#: Last gate before air changes. Called with the channel, the selected ingest
+#: path id, and the endpoint the plan actually offered. The real
+#: implementation is
+#: ``LiveSourceReadinessService.verify_for_takeover``, which re-reads the row,
+#: refuses a source that changed under the plan, performs or reuses a bounded
+#: fresh probe, and returns the source's credential HANDLE (never its secret)
+#: so the engine can open an authenticated SRT feed.
+ReadinessVerifier = Callable[[str, str, str], ReadinessVerdict]
 
 
 class AlreadyLiveError(RuntimeError):
@@ -55,6 +93,13 @@ def _default_clock() -> datetime:
     return datetime.now(UTC)
 
 
+def _selected_path(plan: LiveIngestPlan, path_id: str) -> LiveIngestPath | None:
+    for candidate in (plan.local_default, *plan.relay_paths):
+        if candidate.path_id == path_id:
+            return candidate
+    return None
+
+
 def _live_source_ready(plan: LiveIngestPlan) -> bool:
     return any(
         path.enabled and path.health_state == RELAY_HEALTH_READY
@@ -73,12 +118,22 @@ class TakeoverService:
         *,
         clock: Callable[[], datetime] = _default_clock,
         id_factory: Callable[[], str] = _default_token,
+        readiness_verifier: ReadinessVerifier | None = None,
     ) -> None:
         self._audit = audit_store
         self._egress = egress_store
         self._ingest_plan_provider = ingest_plan_provider
         self._clock = clock
         self._id_factory = id_factory
+        # ``None`` is not fail-open. The plan's own ``health_state`` is already
+        # a fail-closed floor -- WP-07 made it derive from the source's
+        # persisted probe observation rather than from the row's existence, and
+        # build_live_takeover_source_plan still refuses anything that is not
+        # ``ready``. The verifier ADDS the freshness re-check and the
+        # plan-built-then-source-edited race check on top of that floor; a
+        # caller that omits it (an in-memory test, the deprecated no-DB path)
+        # gets the floor, never a bypass.
+        self._readiness_verifier = readiness_verifier
 
     def take(
         self,
@@ -106,9 +161,30 @@ class TakeoverService:
         except (SourcePrepareError, ValueError) as exc:
             raise TakeoverNotReadyError(str(exc)) from exc
 
+        segment = plan.segments[0]
+        # WP-07: revalidate BEFORE any durable side effect. Nothing below this
+        # point is undoable from the operator's seat -- the audit row is a
+        # public record of a takeover that happened, and the queued command
+        # will move air the moment the daemon picks it up. A source that went
+        # stale, failed, or was edited between the ingest plan the operator
+        # saw and this request must produce neither.
+        if self._readiness_verifier is not None and segment.source_ref:
+            selected = _selected_path(ingest_plan, segment.source_ref)
+            verdict = self._readiness_verifier(
+                channel_id,
+                segment.source_ref,
+                selected.endpoint_url if selected is not None else "",
+            )
+            if not verdict.ok:
+                raise TakeoverNotReadyError(verdict.reason)
+            if verdict.secret_ref:
+                # A handle, never a secret: this plan is serialized into the
+                # durable takeover audit row and into the engine's graph file.
+                segment = segment.model_copy(update={"secret_ref": verdict.secret_ref})
+                plan = plan.model_copy(update={"segments": [segment, *plan.segments[1:]]})
+
         now = self._clock()
         token = self._id_factory()
-        segment = plan.segments[0]
         session = TakeoverSession(
             session_id=f"takeover-{token}",
             channel_id=channel_id,

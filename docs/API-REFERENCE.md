@@ -3303,6 +3303,24 @@ Get one live source.
 - Request body: none
 - Responses: 200 `LiveSourceResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 LiveSource not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `PATCH /api/staff/live/sources/{live_source_id}`
+
+Edit a configured live source.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `live_source_id` (path, required): `string`
+- Request body: `LiveSourceUpdate`
+- Responses: 200 `LiveSourceResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 LiveSource not found; 409 The source changed since it was loaded for editing; 422 Invalid payload, or an endpoint that does not match the type; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+
+### `POST /api/staff/live/sources/{live_source_id}/probe`
+
+Check whether a live source is delivering media right now.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `live_source_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `LiveSourceProbeResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 LiveSource not found; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+
 ### `GET /api/staff/media-lifecycle/audit-log`
 
 Media lifecycle worker audit trail (dry-run entries included).
@@ -6913,15 +6931,45 @@ rule (S13 §5.1).
 - `name` (required): `string`
 - `source_type` (required): `'rtmp' | 'rtsp' | 'ndi' | 'srt'`
 
+### `LiveSourceProbeResponse`
+
+- `detail` (optional): `string | null`
+- `error_code` (optional): `string | null`
+- `ok` (required): `boolean`
+- `probed_at` (required): `string`
+- `source` (required): `LiveSourceResponse`
+
 ### `LiveSourceResponse`
 
 - `channel_id` (required): `string`
 - `created_at` (required): `string`
 - `credentials_handle` (required): `string | null`
+- `credentials_supported` (required): `boolean` -- Whether this source type can carry a stored credential at all.
+- `credentials_unsupported_reason` (required): `string | null` -- Copy for the disabled credential control; ``None`` when supported.
 - `endpoint_url` (required): `string`
 - `live_source_id` (required): `string`
 - `name` (required): `string`
+- `next_action` (required): `string` -- The one thing the operator should do next about this source.
+- `observation_age_seconds` (required): `number | null` -- Seconds since the last observation; ``None`` when never probed.
+- `probe_detail` (optional): `string | null`
+- `probe_error_code` (optional): `string | null`
+- `probe_last_success_at` (optional): `string | null`
+- `probe_observed_at` (optional): `string | null`
+- `probe_state` (optional): `'never_probed' | 'ready' | 'failed'`
+- `readiness` (required): `'never_probed' | 'ready' | 'stale' | 'failed'` -- ``ready`` / ``stale`` / ``failed`` / ``never_probed``.
+- `readiness_ttl_seconds` (required): `number` -- The station's configured readiness window, as actually applied.
+- `row_version` (optional): `number`
 - `source_type` (required): `'rtmp' | 'rtsp' | 'ndi' | 'srt'`
+
+### `LiveSourceUpdate`
+
+- `channel_id` (optional): `string | null`
+- `clear_credentials_handle` (optional): `boolean`
+- `credentials_handle` (optional): `string | null`
+- `endpoint_url` (optional): `string | null`
+- `expected_row_version` (optional): `number | null`
+- `name` (optional): `string | null`
+- `source_type` (optional): `'rtmp' | 'rtsp' | 'ndi' | 'srt' | null`
 
 ### `LiveState`
 

@@ -28,6 +28,15 @@ address nothing serves -- it is kept only so a station with zero
 configured sources still gets a ``recommended_path_id`` to point
 somewhere, and it now tells the operator to add a real source instead of
 implying the placeholder itself works.
+
+WP-07 / audit ENG-003 completes that fix. B5 made the operator's real
+sources *visible* to takeover; it also made every one of them claim
+``health_state='ready'`` purely because a row existed, and that health value
+is the only gate ``build_live_takeover_source_plan`` applies before changing
+air. :func:`_source_path` now derives health from the source's persisted
+probe observation (:mod:`civiccast.live.readiness`, migration
+``0086_live_source_probe_state``), so an unchecked, stale, or failed source
+cannot present itself to the takeover path as a live encoder.
 """
 
 from __future__ import annotations
@@ -36,7 +45,9 @@ from datetime import UTC, datetime
 from typing import cast
 
 from civiccast.live.models import (
+    RELAY_HEALTH_DEGRADED,
     RELAY_HEALTH_NOT_CONFIGURED,
+    RELAY_HEALTH_OFFLINE,
     RELAY_HEALTH_READY,
     RELAY_MODE_CLOUD_RTMP,
     RELAY_MODE_DIRECT_SYNDICATION,
@@ -48,6 +59,7 @@ from civiccast.live.models import (
     LiveRelayModeValue,
     LiveSourceResponse,
 )
+from civiccast.live.readiness import next_action_for, readiness_state, readiness_ttl_seconds
 
 
 def build_ingest_plan(
@@ -71,6 +83,7 @@ def build_ingest_plan(
     """
 
     now = generated_at or datetime.now(UTC)
+    ttl = readiness_ttl_seconds()
     local_default = LiveIngestPath(
         path_id=f"{channel_id}:local",
         label="Legacy local placeholder (unusable)",
@@ -89,7 +102,9 @@ def build_ingest_plan(
         ),
         risk_note=None,
     )
-    source_paths = [_source_path(source) for source in (live_sources or [])]
+    source_paths = [
+        _source_path(source, now=now, ttl_seconds=ttl) for source in (live_sources or [])
+    ]
     relay_paths = [*source_paths, *(_relay_path(row) for row in relay_configs if row.enabled)]
     ready_relays = [path for path in relay_paths if path.health_state == RELAY_HEALTH_READY]
     recommended_path_id = ready_relays[0].path_id if ready_relays else local_default.path_id
@@ -107,20 +122,71 @@ def build_ingest_plan(
     )
 
 
-def _source_path(source: LiveSourceResponse) -> LiveIngestPath:
+#: Persisted readiness -> the ingest plan's health vocabulary.
+#:
+#: ``build_live_takeover_source_plan`` refuses any path whose health is not
+#: ``ready``, so this mapping IS the air gate. ``stale`` maps to ``degraded``
+#: rather than ``offline`` because a stale source is probably fine and merely
+#: unverified; ``failed`` maps to ``offline`` because a probe actually said no;
+#: ``never_probed`` maps to ``not_configured`` because, from the plan's point
+#: of view, nothing about this path has been established yet.
+_HEALTH_BY_READINESS: dict[str, str] = {
+    "ready": RELAY_HEALTH_READY,
+    "stale": RELAY_HEALTH_DEGRADED,
+    "failed": RELAY_HEALTH_OFFLINE,
+    "never_probed": RELAY_HEALTH_NOT_CONFIGURED,
+}
+
+
+def _source_path(
+    source: LiveSourceResponse,
+    *,
+    now: datetime,
+    ttl_seconds: int,
+) -> LiveIngestPath:
     """A configured, operator-owned :class:`LiveSource` as a takeover path.
 
-    Reported ``ready`` the same way the legacy ``local_default`` always
-    was -- this plan describes WHICH paths exist and are configured, not
-    whether media is flowing right now; that verification is pre-flight's
-    ``live_source`` check (``civiccast.live.source_probe``) and the egress
-    health sample after takeover, both of which already run against this
-    exact source. ``mode`` reuses ``local_rtmp`` (this codebase's only
-    "operator's own local encoder" mode) even for a non-RTMP scheme --
-    SRT/RTSP/NDI sources are equally local-encoder paths; there is no
-    separate mode value for them and adding one is a larger, unrelated
-    schema change.
+    WP-07 / audit ENG-003: this used to report ``ready`` unconditionally, on
+    the argument that the plan "describes WHICH paths exist and are
+    configured, not whether media is flowing right now". That argument was
+    wrong in the one place it mattered:
+    ``civiccast.egress.live_takeover.build_live_takeover_source_plan`` treats
+    this health value as the gate on changing air, so "configured" was
+    silently promoted to "safe to cut to". Health is now derived from the
+    persisted probe observation aged against the readiness TTL -- a source
+    nobody has checked, or whose last check failed, or whose last check is
+    older than the window, no longer looks the same as a live encoder.
+
+    ``mode`` reuses ``local_rtmp`` (this codebase's only "operator's own local
+    encoder" mode) even for a non-RTMP scheme -- SRT/RTSP/NDI sources are
+    equally local-encoder paths; there is no separate mode value for them and
+    adding one is a larger, unrelated schema change.
     """
+
+    readiness = readiness_state(
+        source.probe_state,
+        source.probe_observed_at,
+        ttl_seconds=ttl_seconds,
+        now=now,
+    )
+    health = _HEALTH_BY_READINESS.get(readiness, RELAY_HEALTH_NOT_CONFIGURED)
+    if readiness == "ready":
+        operator_action = (
+            f"{source.name} is delivering media. You can take air with it, or run "
+            "pre-flight to check the rest of the room."
+        )
+    else:
+        operator_action = next_action_for(
+            readiness, source_name=source.name, detail=source.probe_detail
+        )
+    risk_note = (
+        None
+        if readiness == "ready"
+        else (
+            "CivicCast will re-check this source before it changes air, and will refuse "
+            "the takeover if the check fails."
+        )
+    )
 
     return LiveIngestPath(
         path_id=source.live_source_id,
@@ -128,8 +194,13 @@ def _source_path(source: LiveSourceResponse) -> LiveIngestPath:
         mode=cast(LiveRelayModeValue, RELAY_MODE_LOCAL_RTMP),
         endpoint_url=source.endpoint_url,
         provider="operator-configured",
+        # ``enabled`` still means "the operator configured this on purpose".
+        # Readiness is carried by ``health_state`` so the UI can tell a
+        # deliberately-configured-but-unverified source apart from one the
+        # operator never set up -- collapsing both into enabled=False would
+        # make a brand-new source look like a mistake.
         enabled=True,
-        health_state=cast(LiveRelayHealthValue, RELAY_HEALTH_READY),
+        health_state=cast(LiveRelayHealthValue, health),
         outbound_only=False,
         # Whether this specific endpoint is reachable only from this machine
         # or exposed to the room network depends on the address the operator
@@ -137,11 +208,8 @@ def _source_path(source: LiveSourceResponse) -> LiveIngestPath:
         # has no way to tell those apart from the URL string alone, so it
         # makes no firewall claim rather than guessing one.
         requires_inbound_firewall=False,
-        operator_action=(
-            f"Point this {source.source_type.upper()} encoder at {source.endpoint_url!r}, "
-            "then run pre-flight to confirm CivicCast can see it before going on air."
-        ),
-        risk_note=None,
+        operator_action=operator_action,
+        risk_note=risk_note,
     )
 
 

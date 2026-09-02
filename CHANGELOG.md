@@ -18,6 +18,51 @@ installer asset and is not a public or production release.
 
 ### Changed
 
+- **A configured live source is no longer treated as ready just because it
+  exists.** Readiness is now an observation with an age (audit finding
+  ENG-003, ADR 0025). `civiccast/live/relay.py::_source_path` used to stamp
+  `health_state='ready'` on every configured `live_sources` row, and that
+  health value is the only gate
+  `civiccast/egress/live_takeover.py::build_live_takeover_source_plan` applies
+  before a manual takeover writes a takeover audit row and queues a
+  route-change command -- so a camera that had been unplugged for a week looked
+  exactly like a live encoder. Migration `0086_live_source_probe_state` adds
+  `probe_state` / `probe_observed_at` / `probe_detail` / `probe_error_code` /
+  `probe_last_success_at` / `row_version` to `live_sources`; existing rows
+  backfill to `never_probed`, not to ready. Four operator-facing states
+  (`never_probed`, `ready`, `stale`, `failed`) are derived against a readiness
+  TTL -- 30s by default, `CIVICCAST_LIVE_SOURCE_READINESS_TTL_SECONDS`, clamped
+  to the accepted 5-300s range. `stale` is deliberately never persisted: it is
+  a function of the clock, and a stored "stale" would outlive the successful
+  probe that should have cleared it.
+- **A configured live source is visible to production takeover.**
+  `civiccast/app.py::_resolve_takeover_service` built its ingest-plan provider
+  from relay configuration only, while `/api/staff/live/ingest-plan` had
+  already been fixed to include the channel's `LiveSourceStore` rows -- so a
+  source could appear in the API plan and be invisible to the takeover service
+  that actually changes air, and a station with no relay row (the default) had
+  nothing takeover could select. `civiccast/cli.py::_build_takeover_service`
+  carried the identical omission. Both now read the same channel-scoped rows.
+- **A manual takeover re-checks the source before anything durable happens.**
+  `TakeoverService.take` calls an injected readiness verifier after the source
+  plan is built and *before* the audit row is written or the command is
+  queued: a within-TTL success is reused, anything else gets one bounded fresh
+  probe, and a source edited between the operator's ingest plan and the Take
+  fails closed. Stale, failed, and never-probed sources create no takeover
+  audit row, queue no command, and cannot change air.
+- **The `credentials_handle` column is no longer a dead surface.**
+  `civiccast/live/secrets.py` resolves it through the station's OS credential
+  store at execution time -- per probe, so rotating a passphrase takes effect on
+  the next check without a restart -- and, for playout, carries the *handle*
+  (never the secret) through the durable takeover audit row and the engine's
+  on-disk graph file in a new `ElementSpec.secret_props`, resolved by the
+  worker at element-construction time. Only SRT can hold one: its passphrase is
+  a first-class option on both runtimes (`ffprobe -passphrase`, `srtsrc
+  passphrase=`), so it never enters a URL, a row, a log line, or proof output.
+  Authenticated RTSP and RTMP shapes are rejected with explicit operator copy
+  and a disabled UI control, because neither FFmpeg protocol accepts a
+  password anywhere except inside the address. Missing or unreadable secrets
+  fail the probe closed; every probe detail is secret-redacted.
 - **Ordinary tests can no longer touch the operator's real CivicCast state.** A
   central autouse fixture (`tests/conftest.py`, helpers in
   `tests/support/hermetic_state.py`) now points every state, lock, upload,
@@ -33,6 +78,25 @@ installer asset and is not a public or production release.
 
 ### Added
 
+- **Operators can check a meeting source and edit one.**
+  `POST /api/staff/live/sources/{id}/probe` runs the existing bounded ffprobe
+  path and records what it saw; a failed check is a 200 with the reason and the
+  exact next action, not an error that leaves the screen showing the previous
+  state. `PATCH /api/staff/live/sources/{id}` is the update path
+  `LiveSourceStore` had deferred "until a later rung defines the edit UX" --
+  role-gated to `setup_admin` like create, with optimistic concurrency
+  (`expected_row_version`, 409 naming both versions) so a second Live Room
+  window cannot silently discard the first operator's edit. Any change to what
+  would actually be probed clears readiness in the same transaction. The Live
+  Room shows each source's last observation, its age, the safe failure reason,
+  and the one thing to do next.
+- **One rule for which endpoint shape each live-source type accepts**
+  (`civiccast/live/source_endpoints.py`), applied to create and update alike
+  and keyed on the stored `source_type`. The staff API previously accepted
+  `HttpUrl | str` without asking whether the address matched the type, so an
+  `srt` row could hold an `http://` URL that no probe and no playout element
+  could open. Embedded `user:password@` and an SRT passphrase in the address
+  are both refused outright.
 - **A download-only upgrade can reuse the AI model packs an activated station
   already holds.** The station bundle publisher now stamps every reviewed
   MODEL pack (`captions-floor`, `captions-large-v3`, and the three Ollama
