@@ -25,6 +25,21 @@ fixture kit under ``tmp_path`` and asserts, from the real filesystem:
   pointed at the (now-deleted) filtered payload -- the exact junction-
   hygiene property BLOCKER 1 exists to guarantee.
 
+<gate-a-download-only-lane-review-2> MAJOR: two more tests exercise the
+hard-link -> Copy-Item fallback path deterministically, via the
+``-ForceCopyFallback`` test-only hook on ``New-DownloadOnlyPayload`` (it
+forces every file through the copy path without even attempting a hard
+link, so this does not depend on a real cross-volume environment):
+
+- with a generous ``-CopyFailThresholdBytes``, the fallback is counted
+  correctly (``HardLinkCount`` 0, ``CopyFallbackCount`` matching the fixture
+  file count, ``CopyFallbackBytes`` > 0) and the host-side
+  ``DOWNLOAD-ONLY-PAYLOAD.txt`` summary is written with matching numbers --
+  never throws.
+- with a tiny ``-CopyFailThresholdBytes`` (1 byte), the same fallback now
+  exceeds the threshold and the function throws -- proving the fail-closed
+  path actually fires, not just that its code exists in source.
+
 Requires ``pwsh`` (PowerShell 7+, the same shell every Gate A workflow step
 uses) on PATH. Skips cleanly -- never fails the suite -- when it is absent,
 per the review's own instruction.
@@ -176,3 +191,147 @@ def test_download_only_payload_builder_produces_no_reparse_points_and_cleanup_re
         "cleanup must restore kit-download to the real kit, not leave it dangling or "
         "pointed at the (now-removed) filtered payload"
     )
+
+
+# Second driver: forces the Copy-Item fallback via -ForceCopyFallback (a
+# test-only hook on New-DownloadOnlyPayload) against a fixture kit with two
+# pack files, and reports both the function's own return value (when it
+# doesn't throw) and the host-side DOWNLOAD-ONLY-PAYLOAD.txt summary file's
+# raw content -- the summary is written BEFORE the fail-closed throw
+# decision, so it must exist and carry accurate numbers on both the
+# within-threshold and over-threshold runs.
+_FORCE_COPY_DRIVER_TEMPLATE = r"""
+param(
+    [Parameter(Mandatory=$true)][string]$Builder,
+    [Parameter(Mandatory=$true)][string]$Root,
+    [Parameter(Mandatory=$true)][string]$ResultPath,
+    [Parameter(Mandatory=$true)][long]$CopyFailThresholdBytes
+)
+$ErrorActionPreference = 'Stop'
+. $Builder
+
+$kit = Join-Path $Root 'kit'
+$payload = Join-Path $Root 'payload'
+
+New-Item -ItemType Directory -Force -Path $kit | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $kit 'packs') | Out-Null
+Set-Content -Path (Join-Path $kit 'setup.exe') -Value 'fake installer bytes' -Encoding UTF8
+Set-Content -Path (Join-Path $kit 'packs\a.ccpack') -Value 'fake pack bytes AAAAAAAAAA' -Encoding UTF8
+Set-Content -Path (Join-Path $kit 'packs\b.ccpack') -Value 'fake pack bytes BBBBBBBBBB' -Encoding UTF8
+
+$threw = $false
+$errorMessage = $null
+$buildResult = $null
+try {
+    $buildResult = New-DownloadOnlyPayload -KitPhysicalDir $kit -InstallerExePath (Join-Path $kit 'setup.exe') -PayloadDir $payload -ForceCopyFallback -CopyFailThresholdBytes $CopyFailThresholdBytes
+} catch {
+    $threw = $true
+    $errorMessage = "$_"
+}
+
+$summaryPath = Join-Path $Root 'DOWNLOAD-ONLY-PAYLOAD.txt'
+$summaryExists = Test-Path -LiteralPath $summaryPath
+$summaryContent = if ($summaryExists) { Get-Content -LiteralPath $summaryPath -Raw } else { $null }
+$payloadExistsAfter = Test-Path -LiteralPath $payload
+
+$result = [ordered]@{
+    threw                = [bool]$threw
+    error_message        = $errorMessage
+    return_hard_link_count     = if ($buildResult) { $buildResult.HardLinkCount } else { $null }
+    return_copy_fallback_count = if ($buildResult) { $buildResult.CopyFallbackCount } else { $null }
+    return_copy_fallback_bytes = if ($buildResult) { $buildResult.CopyFallbackBytes } else { $null }
+    summary_exists       = [bool]$summaryExists
+    summary_content      = $summaryContent
+    payload_exists_after = [bool]$payloadExistsAfter
+}
+$result | ConvertTo-Json -Depth 5 | Set-Content -Path $ResultPath -Encoding UTF8
+"""
+
+
+def _run_force_copy_driver(tmp_path: Path, copy_fail_threshold_bytes: int) -> dict:
+    driver_path = tmp_path / "force_copy_driver.ps1"
+    driver_path.write_text(_FORCE_COPY_DRIVER_TEMPLATE, encoding="utf-8")
+    result_path = tmp_path / "force_copy_result.json"
+
+    proc = subprocess.run(
+        [
+            _PWSH,
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            str(driver_path),
+            "-Builder",
+            str(_BUILDER),
+            "-Root",
+            str(tmp_path),
+            "-ResultPath",
+            str(result_path),
+            "-CopyFailThresholdBytes",
+            str(copy_fail_threshold_bytes),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    # The driver itself never re-throws (it catches New-DownloadOnlyPayload's
+    # exception and records it in the JSON result) -- a nonzero exit here
+    # means the DRIVER script itself broke, not the fail-closed path under
+    # test, so it is always a hard test failure.
+    assert proc.returncode == 0, (
+        f"driver script failed (exit {proc.returncode})\n"
+        f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    )
+    return json.loads(result_path.read_text(encoding="utf-8"))
+
+
+def test_download_only_payload_builder_counts_forced_copy_fallback_within_threshold(
+    tmp_path: Path,
+) -> None:
+    # A generous threshold -- the two tiny fixture pack files' combined
+    # fallback bytes are nowhere near it, so this must NOT throw.
+    result = _run_force_copy_driver(tmp_path, copy_fail_threshold_bytes=1_000_000_000)
+
+    assert result["threw"] is False, result["error_message"]
+    assert result["return_hard_link_count"] == 0, (
+        "-ForceCopyFallback must force every file through the copy path, never a hard link"
+    )
+    assert result["return_copy_fallback_count"] == 2
+    assert result["return_copy_fallback_bytes"] > 0
+
+    # (a) the summary line is always printed -- (b) it is written to the
+    # host-side evidence file with matching numbers, even on the
+    # within-threshold (non-throwing) path.
+    assert result["summary_exists"] is True
+    summary = result["summary_content"]
+    assert "HARD_LINK_COUNT=0" in summary
+    assert "COPY_FALLBACK_COUNT=2" in summary
+    assert f"COPY_FALLBACK_BYTES={result['return_copy_fallback_bytes']}" in summary
+    assert "download-only payload: 2 files, 0 hard-linked, 2 copied" in summary
+
+
+def test_download_only_payload_builder_fails_closed_when_forced_copy_fallback_exceeds_tiny_threshold(
+    tmp_path: Path,
+) -> None:
+    # (c) fail closed: a 1-byte threshold is smaller than any real file's
+    # fallback bytes, so this MUST throw -- proving the fail-closed branch
+    # actually fires rather than only existing in source.
+    result = _run_force_copy_driver(tmp_path, copy_fail_threshold_bytes=1)
+
+    assert result["threw"] is True
+    assert "over the 1-byte threshold" in result["error_message"]
+    assert "same-volume hard-link assumption" in result["error_message"]
+
+    # The summary file is written BEFORE the throw decision -- fail-closed
+    # must still leave an accurate evidence trail behind, not just an
+    # exception with no record of what was copied.
+    assert result["summary_exists"] is True
+    assert "COPY_FALLBACK_COUNT=2" in result["summary_content"]
+
+    # New-DownloadOnlyPayload throwing mid-build leaves a partial payload
+    # directory on disk -- this is expected and is exactly what
+    # Run-GateA.ps1's own try/finally (wrapping the payload build itself,
+    # not just the steps after it) exists to clean up; this driver does not
+    # call the cleanup functions, so it is asserted present here rather than
+    # silently ignored.
+    assert result["payload_exists_after"] is True

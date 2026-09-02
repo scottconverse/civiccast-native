@@ -54,14 +54,40 @@ function New-DownloadOnlyPayload {
       removed first, so this must never be pointed at a directory the caller
       cares about.
 
+      .PARAMETER CopyFailThresholdBytes
+      <gate-a-download-only-lane-review-2> MAJOR: the hard-link -> Copy-Item
+      fallback is silent by default in the sense that a handful of odd files
+      copying instead of linking is not, by itself, a problem worth failing
+      the run over. What IS a problem is the same-volume assumption between
+      the kit (typically under C:\CivicCastTester\kit-staging on this
+      runner) and the payload directory breaking wholesale -- that would
+      make every single pack file fall back to a real byte-for-byte copy,
+      silently spending the lane's I/O and time budget on tens of GB of
+      copying instead of near-instant hard-linking. If the TOTAL bytes
+      copied via fallback exceeds this threshold (default 1 GB), this
+      function throws rather than warns -- a small fallback stays a warning
+      only. See the summary file and Write-Warning/throw messages below for
+      the exact numbers.
+
+      .PARAMETER ForceCopyFallback
+      TEST-ONLY HOOK. Forces every file through the Copy-Item fallback path
+      without even attempting a hard link, so
+      tests/gate_a/test_gate_a_download_only_payload.py can deterministically
+      exercise the fallback counters and the CopyFailThresholdBytes throw
+      without needing a real cross-volume environment. Run-GateA.ps1's own
+      real invocation never sets this.
+
       .OUTPUTS
-      A PSCustomObject with PayloadDir, FileCount, and InstallerName, for
-      logging/assertions by the caller.
+      A PSCustomObject with PayloadDir, InstallerName, FileCount,
+      HardLinkCount, CopyFallbackCount, CopyFallbackBytes, and SummaryPath,
+      for logging/assertions by the caller.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$KitPhysicalDir,
         [Parameter(Mandatory = $true)][string]$InstallerExePath,
-        [Parameter(Mandatory = $true)][string]$PayloadDir
+        [Parameter(Mandatory = $true)][string]$PayloadDir,
+        [long]$CopyFailThresholdBytes = 1GB,
+        [switch]$ForceCopyFallback
     )
 
     if (-not (Test-Path -LiteralPath $InstallerExePath)) {
@@ -86,10 +112,12 @@ function New-DownloadOnlyPayload {
     # Recurse the source packs\ tree and reproduce it file-by-file: real
     # directories (New-Item -ItemType Directory), hard-linked files (falling
     # back to a copy only if the hard link itself fails -- e.g. cross-volume
-    # staging). Never a junction/symlink at any level.
+    # staging, or -ForceCopyFallback for tests). Never a junction/symlink at
+    # any level.
     $sourceFiles = @(Get-ChildItem -LiteralPath $packsSourceDir -Recurse -File -Force)
     $hardLinkCount = 0
     $copyFallbackCount = 0
+    [long]$copyFallbackBytes = 0
     foreach ($file in $sourceFiles) {
         $relative = $file.FullName.Substring($packsSourceDir.Length).TrimStart('\', '/')
         $destPath = Join-Path $packsDestDir $relative
@@ -97,12 +125,20 @@ function New-DownloadOnlyPayload {
         if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
         }
-        try {
-            New-Item -ItemType HardLink -Path $destPath -Target $file.FullName -ErrorAction Stop | Out-Null
-            $hardLinkCount++
-        } catch {
+        $linked = $false
+        if (-not $ForceCopyFallback) {
+            try {
+                New-Item -ItemType HardLink -Path $destPath -Target $file.FullName -ErrorAction Stop | Out-Null
+                $linked = $true
+                $hardLinkCount++
+            } catch {
+                $linked = $false
+            }
+        }
+        if (-not $linked) {
             Copy-Item -LiteralPath $file.FullName -Destination $destPath -Force
             $copyFallbackCount++
+            $copyFallbackBytes += $file.Length
         }
     }
 
@@ -111,12 +147,51 @@ function New-DownloadOnlyPayload {
         throw "New-DownloadOnlyPayload: filtered payload unexpectedly contains station\ at $stationDir -- refusing to run the download-only lane against a payload that still carries a station directory"
     }
 
+    # <gate-a-download-only-lane-review-2> MAJOR (a): ALWAYS print a summary
+    # line, whether or not anything fell back -- the fallback path must
+    # never be silent.
+    $summaryLine = "download-only payload: $($sourceFiles.Count) files, $hardLinkCount hard-linked, $copyFallbackCount copied ($copyFallbackBytes bytes)"
+    Write-Host $summaryLine
+
+    # <gate-a-download-only-lane-review-2> MAJOR (b): write the numbers into
+    # evidence. Written HOST-SIDE, next to the payload directory (i.e. as a
+    # sibling of $PayloadDir, not inside it -- the payload directory itself
+    # is deleted by Remove-DownloadOnlyPayload during cleanup and must not be
+    # the only place this record lives). Run-GateA.ps1 copies this file into
+    # the run's evidence directory once judging is done.
+    $summaryPath = Join-Path (Split-Path -Parent $PayloadDir) 'DOWNLOAD-ONLY-PAYLOAD.txt'
+    $summaryBody = @(
+        "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))",
+        "PAYLOAD_DIR=$PayloadDir",
+        "TOTAL_FILES=$($sourceFiles.Count)",
+        "HARD_LINK_COUNT=$hardLinkCount",
+        "COPY_FALLBACK_COUNT=$copyFallbackCount",
+        "COPY_FALLBACK_BYTES=$copyFallbackBytes",
+        "COPY_FAIL_THRESHOLD_BYTES=$CopyFailThresholdBytes",
+        $summaryLine
+    ) -join [Environment]::NewLine
+    Set-Content -Path $summaryPath -Value $summaryBody -Encoding UTF8
+
+    # <gate-a-download-only-lane-review-2> MAJOR (c): fail closed if the
+    # fallback wasn't small. A handful of odd files copying is a warning; a
+    # broken same-volume assumption (every file falling back) must not
+    # silently let the lane spend its budget copying instead of
+    # hard-linking -- throw instead, naming the exact numbers and pointing
+    # at the summary file.
+    if ($copyFallbackCount -gt 0 -and $copyFallbackBytes -gt $CopyFailThresholdBytes) {
+        throw "New-DownloadOnlyPayload: $copyFallbackCount file(s) fell back to Copy-Item totaling $copyFallbackBytes bytes, over the $CopyFailThresholdBytes-byte threshold -- the same-volume hard-link assumption between the kit and the payload directory appears broken; refusing to silently spend the lane's budget copying instead of hard-linking. See $summaryPath."
+    } elseif ($copyFallbackCount -gt 0) {
+        Write-Warning "New-DownloadOnlyPayload: $copyFallbackCount file(s) fell back to Copy-Item totaling $copyFallbackBytes bytes (within the $CopyFailThresholdBytes-byte threshold) -- see $summaryPath."
+    }
+
     [PSCustomObject]@{
         PayloadDir        = $PayloadDir
         InstallerName     = $installerName
         FileCount         = $sourceFiles.Count
         HardLinkCount     = $hardLinkCount
         CopyFallbackCount = $copyFallbackCount
+        CopyFallbackBytes = $copyFallbackBytes
+        SummaryPath       = $summaryPath
     }
 }
 

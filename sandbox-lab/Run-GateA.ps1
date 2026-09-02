@@ -535,6 +535,24 @@ if ($hasEvidence) {
     Write-Warning "output\ is empty or missing -- nothing to copy to evidence\, nothing to judge."
 }
 
+# <gate-a-download-only-lane-review-2> MAJOR (b): New-DownloadOnlyPayload
+# writes its hard-link/copy-fallback summary HOST-SIDE, next to the payload
+# directory (sandbox-lab\DOWNLOAD-ONLY-PAYLOAD.txt) -- it is not under
+# output\, so the copy above never picks it up. Copy it into this run's
+# evidence directory explicitly so the fallback numbers travel with every
+# other piece of evidence rather than only existing transiently on the
+# runner's own disk (where the try/finally cleanup below never removes it,
+# but a future run's New-DownloadOnlyPayload call overwrites it).
+if ($DownloadOnlyLane -and $hasEvidence) {
+    $downloadOnlyPayloadSummary = Join-Path $Root 'DOWNLOAD-ONLY-PAYLOAD.txt'
+    if (Test-Path -LiteralPath $downloadOnlyPayloadSummary) {
+        Copy-Item -LiteralPath $downloadOnlyPayloadSummary -Destination (Join-Path $evidenceDir 'DOWNLOAD-ONLY-PAYLOAD.txt') -Force
+        Write-Step "DownloadOnlyLane: copied payload build summary into evidence ($evidenceDir\DOWNLOAD-ONLY-PAYLOAD.txt)"
+    } else {
+        Write-Warning "DownloadOnlyLane: no $downloadOnlyPayloadSummary found -- the payload build summary will be missing from this run's evidence."
+    }
+}
+
 # --------------------------------------------------------------------------
 # 6a. Host-launcher exit 3 = Windows Sandbox stayed busy (owned by another,
 #     independent process on this shared box) for the entire
