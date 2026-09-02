@@ -27309,7 +27309,51 @@
           "subscribe"
         ],
         "summary": "Unsubscribe using a signed one-click link",
+        "description": "A resident clicking the unsubscribe link in a notice.",
         "operationId": "unsubscribe_link_api_public_subscribe_unsubscribe_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionConfirmResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "public",
+          "subscribe"
+        ],
+        "summary": "One-click unsubscribe (RFC 8058)",
+        "description": "The mail client acting on the reader's behalf.\n\nRFC 8058 requires a POST for the ``List-Unsubscribe-Post`` header the\nnotice advertises: mail clients will not show a one-click Unsubscribe\ncontrol without it, and a GET-only endpoint risks link-prefetchers\nunsubscribing residents who never asked. Same signed token, same effect.",
+        "operationId": "unsubscribe_one_click_api_public_subscribe_unsubscribe_post",
         "parameters": [
           {
             "name": "token",
@@ -27353,7 +27397,7 @@
           "subscribe"
         ],
         "summary": "Read a public no-PII subscription RSS feed",
-        "description": "Render this target's real published recordings as RSS.\n\nItems are the station's actual published, packaged recordings for this\nchannel or meeting body, newest first, capped at\n:data:`RSS_FEED_MAX_ITEMS`. Links are built from the station's configured\npublic base URL (falling back to this request's own origin) and the\nportal's ``#/watch/{asset_id}`` route. A station with nothing published\nyet gets a valid, configured, empty feed.",
+        "description": "Render this target's real published recordings as RSS.\n\nItems are the station's actual published, packaged recordings for this\nchannel or meeting body, newest first, capped at\n:data:`RSS_FEED_MAX_ITEMS`. Links are built from the station's configured\npublic base URL and the portal's ``#/watch/{asset_id}`` route. A station\nwith nothing published yet gets a valid, configured, empty feed.\n\nWhen no public base URL is configured, this request's own origin is used\nonly if its Host is one the station recognises; an unrecognised Host gets\na 503 telling the operator to set the public web address, because a public\nfeed must never echo a caller-supplied hostname into its links.",
         "operationId": "rss_feed_api_public_subscribe_rss__target_type___target_id__xml_get",
         "parameters": [
           {
@@ -27403,26 +27447,31 @@
           "staff",
           "subscribe"
         ],
-        "summary": "Dispatch deterministic local v0.8 subscription notifications",
+        "summary": "Dispatch a simulated subscription notification for local proof",
+        "description": "Fan out a notice to one target's confirmed subscribers, mocks only.\n\nTwo WP-05 changes. First, ``target_type``/``target_id`` are required: the\nold ``channel``/``government`` defaults meant a mistyped call silently\ntested a target the caller never named. Second, this route refuses with 409\nonce a real mail or webhook provider is configured -- a route named\n\"dispatch-test\" must not put a message in a resident's inbox, and it writes\nno delivery receipt, so a real send here would also be invisible to the\nPublish dashboard's idempotency guard. Real fan-out belongs to publish\napproval, which does both.",
         "operationId": "dispatch_test_api_staff_subscribe_dispatch_test_post",
         "parameters": [
           {
             "name": "target_type",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
+              "enum": [
+                "channel",
+                "meeting_body"
+              ],
               "type": "string",
-              "default": "channel",
               "title": "Target Type"
             }
           },
           {
             "name": "target_id",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
-              "default": "government",
+              "minLength": 1,
+              "maxLength": 120,
               "title": "Target Id"
             }
           }
@@ -27447,6 +27496,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "A real mail or webhook provider is configured"
           },
           "422": {
             "description": "Validation Error",
@@ -47875,6 +47927,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Published At"
+          },
+          "unsubscribe_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unsubscribe Url"
           }
         },
         "additionalProperties": false,

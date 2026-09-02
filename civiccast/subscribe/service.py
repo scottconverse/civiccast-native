@@ -8,6 +8,7 @@ import hashlib
 import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 from civiccast.platform.providers import (
     PROVIDER_KIND_MAIL,
@@ -47,6 +48,11 @@ from civiccast.subscribe.secrets import (
 from civiccast.subscribe.store import SubscribeStore
 
 _LOG = logging.getLogger(__name__)
+
+#: The public unsubscribe route, relative to the station's public base URL.
+#: Answers GET (a human clicking the link in the notice) and POST (RFC 8058
+#: one-click, which mail clients call on the reader's behalf).
+UNSUBSCRIBE_ROUTE = "/api/public/subscribe/unsubscribe"
 
 
 def _subscription_id(channel: str, handle: str, target_type: str, target_id: str) -> str:
@@ -256,6 +262,23 @@ def _intended_deliveries(
     return intended
 
 
+def unsubscribe_url_for(record: SubscriptionRecord, *, base_url: str | None) -> str | None:
+    """This subscription's own one-click unsubscribe link.
+
+    Returns ``None`` when the station has no public web address configured --
+    a relative path in a resident's inbox is not a link, and inventing a
+    hostname is what WP-05 exists to stop. The token is the subscription's
+    existing signed ``unsubscribe_token``; nothing new is minted here.
+    """
+
+    if not base_url:
+        return None
+    return (
+        f"{base_url.rstrip('/')}{UNSUBSCRIBE_ROUTE}"
+        f"?token={quote(record.unsubscribe_token, safe='')}"
+    )
+
+
 def dispatch_notifications(
     payload: NotificationPayload,
     *,
@@ -267,6 +290,7 @@ def dispatch_notifications(
     secret_box: SecretBox | None = None,
     mailbox: LocalMailbox | None = None,
     webhook_client: LocalWebhookClient | None = None,
+    unsubscribe_base_url: str | None = None,
     recorder: DeliveryRecorder | None = None,
 ) -> NotificationDispatchResponse:
     """Send ``payload`` to every confirmed subscription of the given targets.
@@ -309,6 +333,14 @@ def dispatch_notifications(
             # returns the existing logical outcome instead of a second notice.
             skipped += 1
             continue
+        # Every notice carries the RECIPIENT'S OWN unsubscribe link, so the
+        # payload is per-recipient from here on. The base payload never holds
+        # one -- a shared token would let any recipient unsubscribe another.
+        recipient_payload = payload.model_copy(
+            update={
+                "unsubscribe_url": unsubscribe_url_for(subscription, base_url=unsubscribe_base_url)
+            }
+        )
         try:
             handle = box.open(
                 subscription.encrypted_subscriber_handle, aad=subscription.subscription_id
@@ -342,7 +374,7 @@ def dispatch_notifications(
 
         if subscription.channel == "email":
             try:
-                message_id = mail.send_notification(email=handle, payload=payload)
+                message_id = mail.send_notification(email=handle, payload=recipient_payload)
             except Exception as exc:
                 # Before WP-05 an SMTP refusal propagated out of this loop and
                 # took every later recipient (and every earlier receipt) with
@@ -391,7 +423,7 @@ def dispatch_notifications(
                 subscription.encrypted_webhook_secret or "",
                 aad=f"{subscription.subscription_id}:secret",
             )
-            signature = webhooks.post(url=handle, payload=payload, secret=secret)
+            signature = webhooks.post(url=handle, payload=recipient_payload, secret=secret)
         except Exception as exc:
             # Issue #111: a failed real delivery is queued durably and the
             # retry worker re-delivers with backoff; never claim "sent".
@@ -401,6 +433,10 @@ def dispatch_notifications(
             retry = enqueue_failed_webhook_delivery(
                 store=store,
                 subscription_id=subscription.subscription_id,
+                # The BASE payload, without the per-recipient unsubscribe link:
+                # the retry worker rebuilds that from the subscription's own
+                # token at send time, so a durable queue row never stores a
+                # capability token it does not need to hold.
                 payload=payload.model_dump(mode="json"),
                 status_code=status_code,
                 error=detail,

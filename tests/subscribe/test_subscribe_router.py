@@ -79,11 +79,16 @@ def test_bad_token_returns_actionable_400(client: TestClient) -> None:
     assert "Request a new signup link" in response.json()["detail"]
 
 
-def test_rss_endpoint_returns_xml(client: TestClient) -> None:
+def test_rss_endpoint_returns_xml(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # WP-05: the feed needs a configured public web address before it will
+    # build links. Without one it refuses (503) rather than echoing this
+    # request's Host header -- covered in test_public_rss_real_records.py.
+    monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", "https://records.example-city.gov")
     response = client.get("/api/public/subscribe/rss/channel/government.xml")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/rss+xml")
+    assert response.headers["cache-control"] == "public, max-age=300"
     assert '<rss version="2.0">' in response.text
 
 
@@ -98,7 +103,10 @@ def test_staff_dispatch_sends_confirmed_subscriber(client: TestClient) -> None:
     )
 
     response = client.post(
+        # WP-05: target_type/target_id are required now -- the old
+        # channel/government defaults silently tested an unnamed target.
         "/api/staff/subscribe/dispatch-test",
+        params={"target_type": "channel", "target_id": "government"},
         json={
             "asset_id": "council",
             "title": "Council",
@@ -130,3 +138,48 @@ def test_signup_email_rate_limit_returns_429(
 
     assert first.status_code == 200
     assert second.status_code == 429
+
+
+class TestDispatchTestIsSimulatedOnly:
+    """M5: a route named "dispatch-test" must not reach a resident's inbox.
+
+    It writes no delivery receipt, so a real send here would also be invisible
+    to the Publish dashboard's duplicate-send guard -- the same recipient could
+    then be mailed again by a real approval.
+    """
+
+    def test_a_real_mail_provider_refuses_with_409(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_PROVIDER_MAIL", "real")
+        monkeypatch.setenv("CIVICCAST_SMTP_HOST", "relay.invalid")
+        monkeypatch.setenv("CIVICCAST_SMTP_FROM", "notices@station.example")
+
+        response = client.post(
+            "/api/staff/subscribe/dispatch-test",
+            params={"target_type": "channel", "target_id": "government"},
+            json={
+                "asset_id": "council",
+                "title": "Council",
+                "portal_url": "https://records.example-city.gov/#/watch/council",
+                "published_at": "2026-05-14T12:00:00Z",
+            },
+        )
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert "simulated providers" in detail
+        assert "Publish screen" in detail
+
+    def test_missing_target_is_a_422_not_a_silent_default(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/staff/subscribe/dispatch-test",
+            json={
+                "asset_id": "council",
+                "title": "Council",
+                "portal_url": "https://records.example-city.gov/#/watch/council",
+                "published_at": "2026-05-14T12:00:00Z",
+            },
+        )
+
+        assert response.status_code == 422

@@ -19,6 +19,7 @@ import socket
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import pytest
 
@@ -29,13 +30,18 @@ from civiccast.platform.providers import (
     default_registry,
 )
 from civiccast.publish.models import PublishApprovalRequest, PublishRetryRequest
+from civiccast.publish.notifications import deliver_publication_notifications
 from civiccast.publish.service import (
     approve_publish,
     build_publish_asset_status,
+    build_publish_preflight,
     retry_publish_surface,
 )
 from civiccast.publish.store import InMemoryPublishStore
-from civiccast.publish.targets import StaticChannelAssociationLookup
+from civiccast.publish.targets import (
+    StaticChannelAssociationLookup,
+    resolve_publication_targets,
+)
 from civiccast.schedule.models import StaffAssetRow
 from civiccast.subscribe.delivery import LocalMailbox, LocalWebhookClient
 from civiccast.subscribe.models import (
@@ -45,6 +51,7 @@ from civiccast.subscribe.models import (
     SubscriptionWebhookRequest,
 )
 from civiccast.subscribe.outcome_store import InMemoryNotificationDeliveryStore
+from civiccast.subscribe.secrets import load_subscription_secrets
 from civiccast.subscribe.service import (
     confirm_subscription,
     create_email_subscription,
@@ -763,7 +770,10 @@ def test_the_persisted_summary_is_bounded_but_its_counts_are_not() -> None:
             target_type="channel",
             target_id="government",
             transport="email",
-            outcome="failed" if index == 0 else "sent",
+            # N1: deliberately the LAST subscription id, well past the cap, so
+            # the "non-sent rows first" sort key is what saves it. Putting the
+            # failure at index 0 would have passed even with no sort at all.
+            outcome="failed" if index == NOTIFICATION_SUMMARY_MAX_DELIVERIES + 24 else "sent",
             attempts=1,
             created_at=now,
             updated_at=now,
@@ -778,8 +788,12 @@ def test_the_persisted_summary_is_bounded_but_its_counts_are_not() -> None:
     assert summary.failed == 1
     assert len(summary.deliveries) == NOTIFICATION_SUMMARY_MAX_DELIVERIES
     assert summary.deliveries_truncated is True
-    # The row that needs attention survives the truncation.
+    # The row that needs attention survives the truncation even though its id
+    # sorts last of all 225.
     assert summary.deliveries[0].outcome == "failed"
+    assert summary.deliveries[0].subscription_id == (
+        f"sub-{NOTIFICATION_SUMMARY_MAX_DELIVERIES + 24:04d}"
+    )
 
 
 class TestReceiptStorageFailuresAreBounded:
@@ -819,6 +833,16 @@ class TestReceiptStorageFailuresAreBounded:
         assert summary is not None
         assert summary.intended == 1
         assert summary.sent == 1
+        # M3: a run that could not write a receipt must never read as
+        # "no subscribers" or as a clean partial -- the operator is told the
+        # database is the thing to fix.
+        surface = _surface(record)
+        assert surface.state == "failed"
+        assert surface.message == (
+            "Delivery receipts could not be written, so no notices were sent. "
+            "Fix the database and retry."
+        )
+        assert "durable storage" in surface.next_step
 
     def test_an_unwritable_receipt_does_not_stop_later_recipients(self) -> None:
         """The notice already went out; losing the receipt must not abort the fan-out."""
@@ -855,3 +879,473 @@ class TestReceiptStorageFailuresAreBounded:
         assert summary.sent == 1
         assert summary.pending == 1
         assert _surface(record).state == "partial"
+
+
+class TestUnsubscribeIsAlwaysOffered:
+    """B2: a government notice a resident cannot leave is a consent failure."""
+
+    def test_the_mail_body_and_list_unsubscribe_header_carry_the_recipients_own_link(
+        self,
+    ) -> None:
+        subscribe_store = InMemorySubscribeStore()
+        created = _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+        mailbox = LocalMailbox()
+
+        _approve(
+            _asset(),
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            publish_store=InMemoryPublishStore(),
+            mailbox=mailbox,
+        )
+
+        record = subscribe_store.get(created.subscription_id)
+        assert record is not None
+        expected = (
+            f"{_PUBLIC_BASE}/api/public/subscribe/unsubscribe"
+            f"?token={quote(record.unsubscribe_token, safe='')}"
+        )
+        message = mailbox.messages[-1]
+        assert expected in message["body"]
+        assert "Stop receiving these notices" in message["body"]
+        assert message["list_unsubscribe"] == f"<{expected}>"
+
+    def test_a_real_smtp_message_carries_both_unsubscribe_headers(
+        self, smtp_server: _LoopbackSmtpServer
+    ) -> None:
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+
+        _approve(
+            _asset(),
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            publish_store=InMemoryPublishStore(),
+            mailbox=_smtp_mailbox(smtp_server),
+        )
+
+        wire = "\n".join(smtp_server.bodies)
+        assert "List-Unsubscribe: <" in wire
+        assert "List-Unsubscribe-Post: List-Unsubscribe=One-Click" in wire
+        assert "/api/public/subscribe/unsubscribe?token=" in wire
+        # N3: no episode, so no podcast line at all.
+        assert "Podcast:" not in wire
+
+    def test_each_recipient_gets_their_own_token_never_a_shared_one(self) -> None:
+        subscribe_store = InMemorySubscribeStore()
+        first = _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+        second = _confirmed_email(subscribe_store, SECOND_EMAIL)
+        mailbox = LocalMailbox()
+
+        _approve(
+            _asset(),
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            publish_store=InMemoryPublishStore(),
+            mailbox=mailbox,
+        )
+
+        links = {message["list_unsubscribe"] for message in mailbox.messages}
+        assert len(links) == 2, "a shared unsubscribe link would let one resident stop another"
+        first_record = subscribe_store.get(first.subscription_id)
+        second_record = subscribe_store.get(second.subscription_id)
+        assert first_record is not None and second_record is not None
+        assert first_record.unsubscribe_token != second_record.unsubscribe_token
+
+    def test_the_webhook_payload_carries_the_same_link(self) -> None:
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_webhook(subscribe_store, WEBHOOK_URL)
+        seen: list[NotificationPayload] = []
+
+        class _RecordingWebhooks:
+            def post(self, *, url: str, payload: NotificationPayload, secret: str) -> str:
+                seen.append(payload)
+                return "sig"
+
+        _approve(
+            _asset(),
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            publish_store=InMemoryPublishStore(),
+            webhook_client=_RecordingWebhooks(),
+        )
+
+        assert seen[0].unsubscribe_url is not None
+        assert seen[0].unsubscribe_url.startswith(
+            f"{_PUBLIC_BASE}/api/public/subscribe/unsubscribe?token="
+        )
+
+    def test_the_queued_retry_row_stores_no_unsubscribe_token(self) -> None:
+        """A durable queue row should not hold a capability token it can rebuild."""
+
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_webhook(subscribe_store, WEBHOOK_URL)
+
+        class _BrokenWebhooks:
+            def post(self, *, url: str, payload: NotificationPayload, secret: str) -> str:
+                raise RuntimeError("connection refused")
+
+        _approve(
+            _asset(),
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            publish_store=InMemoryPublishStore(),
+            webhook_client=_BrokenWebhooks(),
+        )
+
+        queued = subscribe_store.list_webhook_retries()
+        assert len(queued) == 1
+        assert queued[0].payload.get("unsubscribe_url") is None
+
+    def test_a_retried_webhook_delivery_re_attaches_the_unsubscribe_link(self) -> None:
+        """The retry must not deliver a notice the resident cannot opt out of."""
+
+        from civiccast.subscribe.retry_worker import WebhookRetrySettings, WebhookRetryWorker
+
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_webhook(subscribe_store, WEBHOOK_URL)
+
+        class _BrokenWebhooks:
+            def post(self, *, url: str, payload: NotificationPayload, secret: str) -> str:
+                raise RuntimeError("connection refused")
+
+        _approve(
+            _asset(),
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            publish_store=InMemoryPublishStore(),
+            webhook_client=_BrokenWebhooks(),
+        )
+        queued = subscribe_store.list_webhook_retries()[0]
+        subscribe_store.save_webhook_retry(
+            queued.model_copy(update={"next_attempt_at": datetime(2026, 1, 1, tzinfo=UTC)})
+        )
+
+        seen: list[NotificationPayload] = []
+
+        class _RecordingWebhooks:
+            def post(self, *, url: str, payload: NotificationPayload, secret: str) -> str:
+                seen.append(payload)
+                return "sig"
+
+        WebhookRetryWorker(
+            subscribe_store,
+            _RecordingWebhooks(),  # type: ignore[arg-type]
+            load_subscription_secrets(),
+            settings=WebhookRetrySettings(),
+        ).run_once(now=datetime(2026, 6, 11, tzinfo=UTC))
+
+        assert len(seen) == 1
+        assert seen[0].unsubscribe_url is not None
+        assert "/api/public/subscribe/unsubscribe?token=" in seen[0].unsubscribe_url
+
+
+class TestNoDoubleSendEndToEnd:
+    def test_a_reentrant_second_dispatch_cannot_mail_the_same_recipient_twice(self) -> None:
+        """B1 end-to-end: two runs interleaved mid-send, exactly one message.
+
+        The second run starts WHILE the first is inside the mail adapter, which
+        is precisely the window the old "not already sent" gate left open: the
+        row exists and is still ``pending``, so both callers were cleared.
+        """
+
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+        delivery_store = InMemoryNotificationDeliveryStore()
+        publish_store = InMemoryPublishStore()
+        asset = _asset()
+        sends: list[str] = []
+        reentered: list[str] = []
+
+        class _MailboxThatReentersMidSend:
+            def send_notification(self, *, email: str, payload: NotificationPayload) -> str:
+                sends.append(email)
+                if len(sends) == 1:
+                    # A second worker arrives before this send has recorded a
+                    # result. It must find the delivery already owned.
+                    second = deliver_publication_notifications(
+                        asset_id=asset.asset_id,
+                        title=asset.title,
+                        published_at=datetime(2026, 6, 10, tzinfo=UTC),
+                        targets=resolve_publication_targets(asset),
+                        manifest_url=asset.manifest_url,
+                        public_base_url=_PUBLIC_BASE,
+                        subscribe_store=subscribe_store,
+                        delivery_store=delivery_store,
+                        mailbox=self,
+                    )
+                    reentered.append(second.state)
+                return f"mail:{len(sends)}"
+
+        record = _approve(
+            asset,
+            subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            publish_store=publish_store,
+            mailbox=_MailboxThatReentersMidSend(),
+        )
+
+        assert sends == [RESIDENT_EMAIL], "the interleaved run sent a duplicate notice"
+        # The interleaved run observed the in-flight delivery, not a success.
+        assert reentered == ["pending"]
+        assert _surface(record).state == "succeeded"
+
+
+class TestRetryReachesNewlyConfirmedSubscribers:
+    def test_a_subscriber_confirmed_after_approval_is_reached_by_the_retry(self) -> None:
+        """M2: retry means reach every confirmed subscriber not yet sent."""
+
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+        delivery_store = InMemoryNotificationDeliveryStore()
+        publish_store = InMemoryPublishStore()
+        mailbox = LocalMailbox()
+        asset = _asset()
+
+        first = _approve(
+            asset,
+            subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            publish_store=publish_store,
+            mailbox=mailbox,
+        )
+        first_summary = _surface(first).notification_summary
+        assert first_summary is not None
+        assert first_summary.intended == 1
+
+        # A resident confirms between the approval and the retry.
+        _confirmed_email(subscribe_store, SECOND_EMAIL)
+
+        retried = retry_publish_surface(
+            asset=asset,
+            surface_id="subscriber-notifications",
+            request=PublishRetryRequest(
+                operator_id="staff-1", operator_display_name="Avery Operator"
+            ),
+            store=publish_store,
+            registry=_registry(mailbox=mailbox),
+            subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            target_lookup=StaticChannelAssociationLookup(),
+        )
+
+        summary = _surface(retried).notification_summary
+        assert summary is not None
+        assert summary.intended == 2, "the retry starved a newly-confirmed subscriber"
+        assert summary.sent == 2
+        assert [message["to"] for message in mailbox.messages] == [RESIDENT_EMAIL, SECOND_EMAIL]
+        assert _surface(retried).state == "succeeded"
+
+
+class TestSimulatedDeliveryIsNeverGreen:
+    def test_mock_adapters_mark_the_surface_simulated_and_not_ok(self) -> None:
+        """M4: a mock accepted the notice; nobody received it."""
+
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+
+        record = _approve(
+            _asset(),
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            publish_store=InMemoryPublishStore(),
+            mailbox=LocalMailbox(),
+        )
+
+        surface = _surface(record)
+        assert surface.state == "succeeded"
+        assert surface.simulated is True
+        assert surface.health != "ok"
+        assert "SIMULATED" in surface.message
+        assert "CIVICCAST_PROVIDER_MAIL" in surface.next_step
+
+    def test_a_real_adapter_is_not_marked_simulated(
+        self, smtp_server: _LoopbackSmtpServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+        registry = default_registry()
+        registry.register(PROVIDER_KIND_MAIL, "real", lambda: _smtp_mailbox(smtp_server))
+        monkeypatch.setenv("CIVICCAST_PROVIDER_MAIL", "real")
+
+        record = approve_publish(
+            asset=_asset(),
+            request=PublishApprovalRequest(
+                operator_id="staff-1",
+                operator_display_name="Avery Operator",
+                approved_surface_ids=["subscriber-notifications"],
+            ),
+            store=InMemoryPublishStore(),
+            registry=registry,
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            target_lookup=StaticChannelAssociationLookup(),
+        )
+
+        surface = _surface(record)
+        assert smtp_server.recipients == [RESIDENT_EMAIL]
+        assert surface.state == "succeeded"
+        assert surface.simulated is False
+        assert surface.health == "ok"
+        assert "SIMULATED" not in surface.message
+
+    def test_an_unused_channels_mock_provider_does_not_taint_a_real_one(
+        self, smtp_server: _LoopbackSmtpServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only channels that actually had a recipient count toward simulated."""
+
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(subscribe_store, RESIDENT_EMAIL)  # no webhook subscribers
+        registry = default_registry()
+        registry.register(PROVIDER_KIND_MAIL, "real", lambda: _smtp_mailbox(smtp_server))
+        monkeypatch.setenv("CIVICCAST_PROVIDER_MAIL", "real")
+
+        record = approve_publish(
+            asset=_asset(),
+            request=PublishApprovalRequest(
+                operator_id="staff-1",
+                operator_display_name="Avery Operator",
+                approved_surface_ids=["subscriber-notifications"],
+            ),
+            store=InMemoryPublishStore(),
+            registry=registry,
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            target_lookup=StaticChannelAssociationLookup(),
+        )
+
+        assert _surface(record).simulated is False
+
+
+class TestPreflightAndDeliveryCountTheSameRecipients:
+    """M1: readiness used one hardcoded target while delivery used the real ones."""
+
+    def test_preflight_sees_a_meeting_body_subscriber_delivery_would_reach(self) -> None:
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(
+            subscribe_store,
+            RESIDENT_EMAIL,
+            target_type="meeting_body",
+            target_id="planning-commission",
+        )
+        asset = _asset(meeting_body="planning-commission")
+
+        preflight = build_publish_preflight(
+            asset,
+            registry=_registry(),
+            subscribe_store=subscribe_store,
+            target_lookup=StaticChannelAssociationLookup(),
+        )
+        check = next(c for c in preflight.checks if c.id == "subscriber-notifications")
+
+        # The old hardcoded channel/government target could not see this
+        # recipient at all, so preflight said "nothing to send" and approval
+        # then mailed them.
+        assert "no confirmed subscribers" not in check.message
+        assert "simulated" in check.message
+
+        record = _approve(
+            asset,
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            publish_store=InMemoryPublishStore(),
+            mailbox=LocalMailbox(),
+        )
+        summary = _surface(record).notification_summary
+        assert summary is not None and summary.intended == 1
+
+    def test_preflight_reports_nothing_to_send_when_the_targets_have_no_subscribers(
+        self,
+    ) -> None:
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(
+            subscribe_store,
+            RESIDENT_EMAIL,
+            target_type="meeting_body",
+            target_id="a-different-body",
+        )
+
+        preflight = build_publish_preflight(
+            _asset(meeting_body="planning-commission"),
+            registry=_registry(),
+            subscribe_store=subscribe_store,
+            target_lookup=StaticChannelAssociationLookup(),
+        )
+        check = next(c for c in preflight.checks if c.id == "subscriber-notifications")
+
+        assert "no confirmed subscribers" in check.message
+        assert check.health == "ok"
+
+    def test_one_subscriber_matching_two_targets_is_counted_once(self) -> None:
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+        rows = subscribe_store.list_confirmed_for_target(
+            target_type="channel", target_id="government"
+        )
+
+        class _StoreMatchingEveryTarget(InMemorySubscribeStore):
+            def list_confirmed_for_target(self, *, target_type: str, target_id: str):  # type: ignore[no-untyped-def]
+                return list(rows)
+
+        preflight = build_publish_preflight(
+            _asset(meeting_body="planning-commission"),
+            registry=_registry(),
+            subscribe_store=_StoreMatchingEveryTarget(),
+            target_lookup=StaticChannelAssociationLookup(),
+        )
+        check = next(c for c in preflight.checks if c.id == "subscriber-notifications")
+
+        # One channel reference, not one per matching target.
+        assert check.credential_reference is not None
+        assert check.credential_reference.count("CIVICCAST_PROVIDER_MAIL") == 1
+
+
+def test_the_podcast_surface_uses_the_resolved_channel_not_a_hardcoded_one() -> None:
+    """M1: the episode belongs to the channel the asset actually publishes to."""
+
+    record = approve_publish(
+        asset=_asset(),
+        request=PublishApprovalRequest(
+            operator_id="staff-1",
+            operator_display_name="Avery Operator",
+            approved_surface_ids=["podcast"],
+        ),
+        store=InMemoryPublishStore(),
+        subscribe_store=InMemorySubscribeStore(),
+        delivery_store=InMemoryNotificationDeliveryStore(),
+        target_lookup=StaticChannelAssociationLookup(by_asset_id={"meeting-42": "education"}),
+    )
+
+    podcast = next(surface for surface in record.surfaces if surface.id == "podcast")
+    assert podcast.url is not None
+    assert "/podcast/education.xml" in podcast.url
+
+
+def test_an_unwritable_receipt_store_shows_the_operator_a_degraded_recording() -> None:
+    """M3, at the dashboard level: reach_degraded, never a clean "Complete"."""
+
+    subscribe_store = InMemorySubscribeStore()
+    _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+
+    class _StoreThatCannotClaim(InMemoryNotificationDeliveryStore):
+        def claim(self, **kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("durable storage is unavailable")
+
+    asset = _asset()
+    record = approve_publish(
+        asset=asset,
+        request=PublishApprovalRequest(
+            operator_id="staff-1", operator_display_name="Avery Operator"
+        ),
+        store=InMemoryPublishStore(),
+        subscribe_store=subscribe_store,
+        delivery_store=_StoreThatCannotClaim(),
+        target_lookup=StaticChannelAssociationLookup(),
+    )
+    status = build_publish_asset_status(asset, record)
+    surface = next(s for s in status.surfaces if s.id == "subscriber-notifications")
+
+    assert surface.state == "failed"
+    assert surface.message.startswith("Delivery receipts could not be written")
+    assert status.reach_degraded is True
+    assert status.dashboard_state != "complete"

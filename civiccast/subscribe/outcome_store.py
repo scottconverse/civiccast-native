@@ -3,11 +3,21 @@
 """Persistence seam for durable notification-delivery outcomes (WP-05).
 
 One logical delivery per publication x subscription x target x transport, with
-numbered attempts beneath it. The unique constraint on the logical identity is
-the concurrency guard: :meth:`claim` inserts the row before anything is sent,
-so a second concurrent approval loses the insert, reads back the winner's row,
-and skips a recipient that is already observed ``sent`` instead of mailing them
-twice.
+numbered attempts beneath it.
+
+Two mechanisms together make a double send impossible:
+
+* the UNIQUE constraint on the logical identity settles the INSERT race -- only
+  one caller can create the row;
+* a lease column settles the already-exists race -- ``claim`` grants the send
+  only to the caller whose conditional UPDATE actually touched the row, and a
+  row already observed ``sent`` is never granted at all.
+
+Gating on "not already sent" alone was a real double send: two callers could
+both read the same freshly-inserted ``pending`` row, neither owning it, and
+both deliver. A lease that expires also keeps the guard from becoming a
+deadlock -- a process killed mid-send leaves a stale in-flight row that the
+next caller may take over once the lease lapses.
 
 No subscriber PII, webhook URL, secret or signature is written here -- see the
 PII note on :class:`civiccast.subscribe.models.NotificationDeliveryOutcome`.
@@ -16,13 +26,14 @@ PII note on :class:`civiccast.subscribe.models.NotificationDeliveryOutcome`.
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -68,17 +79,43 @@ def logical_delivery_key(
     return f"ndk-{digest[:40]}"
 
 
+#: How long one caller owns an in-flight delivery before another may take it
+#: over. Long enough that a slow SMTP conversation or a webhook timeout cannot
+#: hand the same recipient to a second worker; short enough that a process
+#: killed mid-send does not strand the delivery forever.
+DELIVERY_LEASE_SECONDS = 900
+
+
+def _lease_seconds() -> int:
+    raw = os.environ.get("CIVICCAST_NOTIFICATION_DELIVERY_LEASE_SECONDS", "").strip()
+    if not raw:
+        return DELIVERY_LEASE_SECONDS
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return DELIVERY_LEASE_SECONDS
+    return parsed if parsed > 0 else DELIVERY_LEASE_SECONDS
+
+
 @dataclass(frozen=True)
 class ClaimedDelivery:
     """Result of :meth:`NotificationDeliveryStore.claim`.
 
-    ``already_sent`` is the guard the caller checks before sending: it is
-    ``True`` only when a previous run (or a concurrent one that won the insert)
-    already observed this recipient delivered.
+    ``granted`` is the ONLY safe send gate. It is true exactly when this caller
+    now owns the delivery lease -- because it inserted the row (``created``), or
+    because it took over a stale in-flight row whose lease had expired, or
+    because it is an explicit retry taking over a terminal-failed/queued row.
+
+    Gating on "not already sent" instead was a genuine double-send: two callers
+    could both read a ``pending`` row neither of them owned and both send.
+    ``created`` is kept separate from ``granted`` because they answer different
+    questions -- "was this recipient new to this publication?" versus "may I
+    send now?" -- and the first is what a caller logs and a test asserts on.
     """
 
     record: NotificationDeliveryOutcomeRecord
     created: bool
+    granted: bool
 
     @property
     def already_sent(self) -> bool:
@@ -95,6 +132,7 @@ class NotificationDeliveryStore(Protocol):
         target_type: str,
         target_id: str,
         transport: str,
+        allow_reattempt: bool = False,
         now: datetime | None = None,
     ) -> ClaimedDelivery: ...
 
@@ -139,9 +177,35 @@ def _new_record(
         transport=transport,  # type: ignore[arg-type]
         outcome="pending",
         attempts=0,
+        lease_expires_at=now + timedelta(seconds=_lease_seconds()),
         created_at=now,
         updated_at=now,
     )
+
+
+def _lease_is_free(record: NotificationDeliveryOutcomeRecord, *, now: datetime) -> bool:
+    """True when nobody currently owns this in-flight delivery."""
+
+    return record.lease_expires_at is None or record.lease_expires_at <= now
+
+
+def _may_take_over(
+    record: NotificationDeliveryOutcomeRecord, *, allow_reattempt: bool, now: datetime
+) -> bool:
+    """Whether a caller may take over an existing row's lease.
+
+    A recipient already observed ``sent`` is never taken over -- that is the
+    duplicate-send guard. A ``pending`` row is taken over only once its lease
+    has expired (the previous sender died mid-send). ``failed``/``queued`` rows
+    are taken over only by an explicit retry, which is what makes a normal
+    re-approval idempotent instead of a second fan-out.
+    """
+
+    if record.outcome == "sent":
+        return False
+    if record.outcome == "pending":
+        return _lease_is_free(record, now=now)
+    return allow_reattempt
 
 
 def _applied(
@@ -166,6 +230,9 @@ def _applied(
             "first_attempted_at": record.first_attempted_at or now,
             "last_attempted_at": now,
             "succeeded_at": now if outcome == "sent" else record.succeeded_at,
+            # The delivery is no longer in flight: release the lease so a retry
+            # (or a lease-recovery scan) sees a result, not an owner.
+            "lease_expires_at": None,
             "updated_at": now,
         }
     )
@@ -193,6 +260,7 @@ class InMemoryNotificationDeliveryStore:
         target_type: str,
         target_id: str,
         transport: str,
+        allow_reattempt: bool = False,
         now: datetime | None = None,
     ) -> ClaimedDelivery:
         resolved_now = now or datetime.now(UTC)
@@ -205,7 +273,16 @@ class InMemoryNotificationDeliveryStore:
         )
         existing = self._records.get(key)
         if existing is not None:
-            return ClaimedDelivery(record=existing, created=False)
+            if not _may_take_over(existing, allow_reattempt=allow_reattempt, now=resolved_now):
+                return ClaimedDelivery(record=existing, created=False, granted=False)
+            taken = existing.model_copy(
+                update={
+                    "lease_expires_at": resolved_now + timedelta(seconds=_lease_seconds()),
+                    "updated_at": resolved_now,
+                }
+            )
+            self._records[key] = taken
+            return ClaimedDelivery(record=taken, created=False, granted=True)
         record = _new_record(
             delivery_key=key,
             publication_id=publication_id,
@@ -217,7 +294,7 @@ class InMemoryNotificationDeliveryStore:
             now=resolved_now,
         )
         self._records[key] = record
-        return ClaimedDelivery(record=record, created=True)
+        return ClaimedDelivery(record=record, created=True, granted=True)
 
     def record_attempt(
         self,
@@ -289,9 +366,21 @@ class PostgresNotificationDeliveryStore:
         target_type: str,
         target_id: str,
         transport: str,
+        allow_reattempt: bool = False,
         now: datetime | None = None,
     ) -> ClaimedDelivery:
+        """Insert-or-lease this logical delivery; ``granted`` says who may send.
+
+        Two concurrent callers cannot both be granted. The insert race is
+        settled by the UNIQUE constraint on the logical identity; the
+        already-exists race is settled by a conditional UPDATE whose WHERE
+        clause repeats the lease predicate, so only the caller whose UPDATE
+        touches a row (``rowcount == 1``) takes the lease -- the loser's WHERE
+        no longer matches once the winner has committed.
+        """
+
         resolved_now = now or datetime.now(UTC)
+        lease_until = resolved_now + timedelta(seconds=_lease_seconds())
         key = logical_delivery_key(
             publication_id=publication_id,
             subscription_id=subscription_id,
@@ -301,47 +390,87 @@ class PostgresNotificationDeliveryStore:
         )
         with self._session_factory() as session:
             existing = session.get(NotificationDeliveryOutcome, key)
-            if existing is not None:
-                return ClaimedDelivery(record=_to_record(existing), created=False)
-            session.add(
-                NotificationDeliveryOutcome(
-                    delivery_key=key,
-                    publication_id=publication_id,
-                    asset_id=asset_id,
-                    subscription_id=subscription_id,
-                    target_type=target_type,
-                    target_id=target_id,
-                    transport=transport,
-                    outcome="pending",
-                    attempts=0,
-                    detail="",
-                    created_at=resolved_now,
-                    updated_at=resolved_now,
+            if existing is None:
+                session.add(
+                    NotificationDeliveryOutcome(
+                        delivery_key=key,
+                        publication_id=publication_id,
+                        asset_id=asset_id,
+                        subscription_id=subscription_id,
+                        target_type=target_type,
+                        target_id=target_id,
+                        transport=transport,
+                        outcome="pending",
+                        attempts=0,
+                        detail="",
+                        lease_expires_at=lease_until,
+                        created_at=resolved_now,
+                        updated_at=resolved_now,
+                    )
                 )
+                try:
+                    session.commit()
+                except IntegrityError:
+                    # Another caller won the insert. Fall through to the
+                    # take-over path below against the winner's row.
+                    session.rollback()
+                    existing = session.get(NotificationDeliveryOutcome, key)
+                    if existing is None:
+                        existing = session.execute(
+                            select(NotificationDeliveryOutcome).where(
+                                NotificationDeliveryOutcome.publication_id == publication_id,
+                                NotificationDeliveryOutcome.subscription_id == subscription_id,
+                                NotificationDeliveryOutcome.target_type == target_type,
+                                NotificationDeliveryOutcome.target_id == target_id,
+                                NotificationDeliveryOutcome.transport == transport,
+                            )
+                        ).scalar_one()
+                else:
+                    row = session.get(NotificationDeliveryOutcome, key)
+                    assert row is not None  # nosec B101 - just committed above
+                    return ClaimedDelivery(record=_to_record(row), created=True, granted=True)
+
+            current = _to_record(existing)
+            if not _may_take_over(current, allow_reattempt=allow_reattempt, now=resolved_now):
+                return ClaimedDelivery(record=current, created=False, granted=False)
+
+            # The WHERE clause is the lock: it re-states the exact condition
+            # that made the take-over legal, so a concurrent caller that
+            # already took the lease makes this UPDATE match zero rows.
+            result = session.execute(
+                update(NotificationDeliveryOutcome)
+                .where(
+                    NotificationDeliveryOutcome.delivery_key == current.delivery_key,
+                    # Optimistic guard: if a concurrent caller recorded a result
+                    # between our read and this write, these no longer match.
+                    NotificationDeliveryOutcome.outcome == current.outcome,
+                    NotificationDeliveryOutcome.attempts == current.attempts,
+                    or_(
+                        NotificationDeliveryOutcome.lease_expires_at.is_(None),
+                        NotificationDeliveryOutcome.lease_expires_at <= resolved_now,
+                    ),
+                )
+                .values(lease_expires_at=lease_until, updated_at=resolved_now)
+                # The lock lives in the database, so the WHERE clause must be
+                # evaluated there and only there. The ORM's default
+                # post-synchronize strategy re-evaluates it in Python against
+                # the identity map, which both defeats the point and breaks on
+                # SQLite (whose round-tripped datetimes are naive).
+                .execution_options(synchronize_session=False)
             )
-            try:
-                session.commit()
-            except IntegrityError:
-                # Another approval won the insert. The UNIQUE constraint --
-                # not an in-memory set -- is what makes this safe across
-                # processes; read back the winner's row and let the caller
-                # decide (it will skip an already-sent recipient).
-                session.rollback()
-                winner = session.get(NotificationDeliveryOutcome, key)
-                if winner is None:
-                    winner = session.execute(
-                        select(NotificationDeliveryOutcome).where(
-                            NotificationDeliveryOutcome.publication_id == publication_id,
-                            NotificationDeliveryOutcome.subscription_id == subscription_id,
-                            NotificationDeliveryOutcome.target_type == target_type,
-                            NotificationDeliveryOutcome.target_id == target_id,
-                            NotificationDeliveryOutcome.transport == transport,
-                        )
-                    ).scalar_one()
-                return ClaimedDelivery(record=_to_record(winner), created=False)
-            row = session.get(NotificationDeliveryOutcome, key)
-            assert row is not None  # nosec B101 - just committed above
-            return ClaimedDelivery(record=_to_record(row), created=True)
+            # ``rowcount`` is the whole point of this statement -- how many rows
+            # the conditional UPDATE actually touched -- but SQLAlchemy types it
+            # only on CursorResult, which an ORM-enabled update returns at
+            # runtime and not in the stub.
+            rows_updated = int(result.rowcount)  # type: ignore[attr-defined]
+            session.commit()
+            if rows_updated != 1:
+                refreshed = session.get(NotificationDeliveryOutcome, current.delivery_key)
+                losing = current if refreshed is None else _to_record(refreshed)
+                return ClaimedDelivery(record=losing, created=False, granted=False)
+            taken = session.get(NotificationDeliveryOutcome, current.delivery_key)
+            assert taken is not None  # nosec B101 - just updated above
+            return ClaimedDelivery(record=_to_record(taken), created=False, granted=True)
 
     def record_attempt(
         self,
@@ -371,6 +500,7 @@ class PostgresNotificationDeliveryStore:
             row.error_code = updated.error_code
             row.detail = updated.detail
             row.retry_id = updated.retry_id
+            row.lease_expires_at = updated.lease_expires_at
             row.first_attempted_at = updated.first_attempted_at
             row.last_attempted_at = updated.last_attempted_at
             row.succeeded_at = updated.succeeded_at
@@ -448,6 +578,7 @@ def _to_record(row: NotificationDeliveryOutcome) -> NotificationDeliveryOutcomeR
         error_code=row.error_code,
         detail=row.detail,
         retry_id=row.retry_id,
+        lease_expires_at=_optional_aware(row.lease_expires_at),
         first_attempted_at=_optional_aware(row.first_attempted_at),
         last_attempted_at=_optional_aware(row.last_attempted_at),
         succeeded_at=_optional_aware(row.succeeded_at),

@@ -42,13 +42,12 @@ from civiccast.publish.models import (
 from civiccast.publish.notifications import deliver_publication_notifications
 from civiccast.publish.readiness import (
     FUTURE_SURFACE_IDS,
-    SUBSCRIBER_TARGET_ID,
-    SUBSCRIBER_TARGET_TYPE,
     SurfaceReadiness,
     describe_surface_readiness,
 )
 from civiccast.publish.store import PublishStore
 from civiccast.publish.targets import (
+    DEFAULT_CHANNEL_ID_FALLBACK,
     ChannelAssociationLookup,
     resolve_publication_targets,
 )
@@ -274,12 +273,18 @@ def _surface_readiness(
     *,
     registry: ProviderRegistry,
     subscribe_store: SubscribeStore | None,
+    subscribe_targets: Sequence[tuple[str, str]],
 ) -> SurfaceReadiness | None:
     """Real readiness for one surface, or ``None`` for a non-provider surface.
 
     The single readiness source shared by :func:`build_publish_preflight` and
     :func:`approve_publish` (WP-03 plan item 8: preflight and approval read
     the same current registry configuration so they cannot disagree).
+
+    WP-05 extends that agreement to the RECIPIENT set: ``subscribe_targets``
+    is the asset's resolved publication targets, so readiness counts exactly
+    the subscribers delivery would contact -- including meeting-body ones the
+    old hardcoded ``channel/government`` target could never see.
     """
 
     if surface.id in FUTURE_SURFACE_IDS:
@@ -289,8 +294,18 @@ def _surface_readiness(
         label=surface.label,
         registry=registry,
         subscribe_store=subscribe_store,
-        subscribe_target_type=SUBSCRIBER_TARGET_TYPE,
-        subscribe_target_id=SUBSCRIBER_TARGET_ID,
+        subscribe_targets=subscribe_targets,
+    )
+
+
+def _target_pairs(
+    asset: StaffAssetRow, lookup: ChannelAssociationLookup | None
+) -> tuple[tuple[str, str], ...]:
+    """The asset's resolved publication targets as ``(type, id)`` pairs."""
+
+    return tuple(
+        (target.target_type, target.target_id)
+        for target in resolve_publication_targets(asset, lookup=lookup)
     )
 
 
@@ -299,6 +314,7 @@ def build_publish_preflight(
     *,
     registry: ProviderRegistry | None = None,
     subscribe_store: SubscribeStore | None = None,
+    target_lookup: ChannelAssociationLookup | None = None,
 ) -> PublishPreflightResponse:
     """Return approval readiness for every v0.7 publish surface.
 
@@ -310,6 +326,7 @@ def build_publish_preflight(
     never raises.
     """
     resolved_registry = registry if registry is not None else default_registry()
+    subscribe_targets = _target_pairs(asset, target_lookup)
     checks: list[PublishPreflightCheck] = []
     for surface in build_initial_surfaces(asset):
         if surface.id == "portal":
@@ -335,7 +352,10 @@ def build_publish_preflight(
             )
             continue
         readiness = _surface_readiness(
-            surface, registry=resolved_registry, subscribe_store=subscribe_store
+            surface,
+            registry=resolved_registry,
+            subscribe_store=subscribe_store,
+            subscribe_targets=subscribe_targets,
         )
         if readiness is None:
             # No provider dependency for this surface (e.g. the Cable file
@@ -433,6 +453,7 @@ def _blocked_selected_surfaces(
     overrides: dict[str, str],
     registry: ProviderRegistry,
     subscribe_store: SubscribeStore | None,
+    subscribe_targets: Sequence[tuple[str, str]],
 ) -> dict[str, SurfaceReadiness]:
     """Readiness failures among the surfaces the operator actually selected.
 
@@ -453,8 +474,7 @@ def _blocked_selected_surfaces(
             label=surface.label,
             registry=registry,
             subscribe_store=subscribe_store,
-            subscribe_target_type=SUBSCRIBER_TARGET_TYPE,
-            subscribe_target_id=SUBSCRIBER_TARGET_ID,
+            subscribe_targets=subscribe_targets,
         )
         if readiness is not None and not readiness.healthy:
             blocked[surface.id] = readiness
@@ -510,12 +530,18 @@ def approve_publish(
         else {surface.id for surface in build_initial_surfaces(asset)}
     )
     resolved_registry = registry if registry is not None else default_registry()
+    # One resolution per approval, shared by the readiness pre-check, the
+    # podcast channel, and the subscriber fan-out, so all three agree.
+    publication_targets = resolve_publication_targets(asset, lookup=target_lookup)
     blocked = _blocked_selected_surfaces(
         asset,
         approved_ids=approved_ids,
         overrides=overrides,
         registry=resolved_registry,
         subscribe_store=subscribe_store,
+        subscribe_targets=[
+            (target.target_type, target.target_id) for target in publication_targets
+        ],
     )
     if blocked:
         raise PublishConfigurationError(blocked)
@@ -675,10 +701,23 @@ def approve_publish(
                     }
                 )
         elif surface.id == "podcast":
+            # WP-05 removes the hardcoded "government" channel here: the
+            # episode belongs to the channel the asset actually publishes to,
+            # resolved once for this approval. Everything else about this
+            # branch is unchanged -- WP-04 owns the real podcast path and the
+            # remaining placeholder URLs below.
+            podcast_channel_id = next(
+                (
+                    target.target_id
+                    for target in publication_targets
+                    if target.target_type == "channel"
+                ),
+                DEFAULT_CHANNEL_ID_FALLBACK,
+            )
             episode = create_podcast_episode(
                 PodcastEpisodeCreate(
                     asset_id=asset.asset_id,
-                    channel_id="government",
+                    channel_id=podcast_channel_id,
                     title=asset.title,
                     portal_url=asset.manifest_url
                     or f"https://portal.example/watch/{asset.asset_id}",
@@ -708,7 +747,7 @@ def approve_publish(
                 asset_id=asset.asset_id,
                 title=asset.title,
                 published_at=at,
-                targets=resolve_publication_targets(asset, lookup=target_lookup, channel_id=None),
+                targets=publication_targets,
                 manifest_url=asset.manifest_url,
                 subscribe_store=subscribe_store,
                 delivery_store=delivery_store,
@@ -723,6 +762,10 @@ def approve_publish(
                     "completed_at": at,
                     "message": outcome.message,
                     "next_step": outcome.next_step,
+                    # Badged exactly like a simulated Internet Archive or
+                    # YouTube surface: a mock adapter accepted the notice and
+                    # nobody received it (GauntletGate TW-1).
+                    "simulated": outcome.simulated,
                     "notification_summary": outcome.summary,
                 }
             )

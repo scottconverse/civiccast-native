@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 import civiccast.subscribe.models  # noqa: F401 -- register the WP-05 tables on Base.metadata
 from civiccast.db import Base
 from civiccast.subscribe.outcome_store import (
+    DELIVERY_LEASE_SECONDS,
     InMemoryNotificationDeliveryStore,
     PostgresNotificationDeliveryStore,
     logical_delivery_key,
@@ -292,3 +293,127 @@ def test_stored_rows_carry_no_recipient_handle(
     rendered = store.get(claimed.record.delivery_key)
     assert rendered is not None
     assert "@" not in rendered.model_dump_json()
+
+
+class TestDoubleSendRace:
+    """B1: two interleaved claims must grant exactly one sender.
+
+    Reproduced by the reviewer against the previous implementation, which
+    inserted a ``pending`` row and then gated the send on "not already sent" --
+    so both workers read the same un-sent row and both were told to send.
+    """
+
+    def test_two_interleaved_claims_grant_exactly_one_sender(
+        self, store: PostgresNotificationDeliveryStore
+    ) -> None:
+        worker_a = store.claim(**_CLAIM)
+        worker_b = store.claim(**_CLAIM)
+
+        assert [worker_a.granted, worker_b.granted] == [True, False]
+        assert [worker_a.created, worker_b.created] == [True, False]
+        # Neither row is "sent" yet -- the OLD gate would have cleared both.
+        assert worker_a.record.outcome == "pending"
+        assert worker_b.already_sent is False
+        assert len(store.list_for_publication("pub:meeting-42")) == 1
+
+    def test_the_loser_is_still_refused_after_the_winner_succeeds(
+        self, store: PostgresNotificationDeliveryStore
+    ) -> None:
+        winner = store.claim(**_CLAIM)
+        store.record_attempt(delivery_key=winner.record.delivery_key, outcome="sent")
+
+        loser = store.claim(**_CLAIM)
+
+        assert loser.granted is False
+        assert loser.already_sent is True
+
+    def test_a_stale_in_flight_row_is_recoverable_once_its_lease_lapses(
+        self, store: PostgresNotificationDeliveryStore
+    ) -> None:
+        """A process killed mid-send must not strand the recipient forever."""
+
+        start = datetime(2026, 6, 10, 12, 0, tzinfo=UTC)
+        dead_worker = store.claim(**_CLAIM, now=start)
+        assert dead_worker.granted is True
+        # ... and then dies without ever recording an attempt.
+
+        still_owned = store.claim(**_CLAIM, now=start + timedelta(seconds=60))
+        assert still_owned.granted is False
+
+        after_lease = store.claim(
+            **_CLAIM, now=start + timedelta(seconds=DELIVERY_LEASE_SECONDS + 1)
+        )
+        assert after_lease.granted is True
+        assert after_lease.created is False
+        assert len(store.list_for_publication("pub:meeting-42")) == 1
+
+    def test_recording_a_result_releases_the_lease(
+        self, store: PostgresNotificationDeliveryStore
+    ) -> None:
+        claimed = store.claim(**_CLAIM)
+        after = store.record_attempt(delivery_key=claimed.record.delivery_key, outcome="failed")
+
+        assert claimed.record.lease_expires_at is not None
+        assert after.lease_expires_at is None
+
+    def test_a_failed_row_is_reattempted_only_by_an_explicit_retry(
+        self, store: PostgresNotificationDeliveryStore
+    ) -> None:
+        claimed = store.claim(**_CLAIM)
+        store.record_attempt(delivery_key=claimed.record.delivery_key, outcome="failed")
+
+        reapproval = store.claim(**_CLAIM)
+        assert reapproval.granted is False, "a normal re-approval must stay idempotent"
+
+        retry = store.claim(**_CLAIM, allow_reattempt=True)
+        assert retry.granted is True
+        assert retry.created is False
+
+    def test_a_queued_row_is_reattempted_only_by_an_explicit_retry(
+        self, store: PostgresNotificationDeliveryStore
+    ) -> None:
+        claimed = store.claim(**_CLAIM)
+        store.record_attempt(
+            delivery_key=claimed.record.delivery_key, outcome="queued", retry_id="swr_1"
+        )
+
+        assert store.claim(**_CLAIM).granted is False
+        assert store.claim(**_CLAIM, allow_reattempt=True).granted is True
+
+    def test_a_sent_row_is_never_reattempted_even_by_an_explicit_retry(
+        self, store: PostgresNotificationDeliveryStore
+    ) -> None:
+        claimed = store.claim(**_CLAIM)
+        store.record_attempt(delivery_key=claimed.record.delivery_key, outcome="sent")
+
+        assert store.claim(**_CLAIM, allow_reattempt=True).granted is False
+
+    def test_the_in_memory_store_applies_the_same_grant_rules(self) -> None:
+        store = InMemoryNotificationDeliveryStore()
+
+        first = store.claim(**_CLAIM)
+        second = store.claim(**_CLAIM)
+
+        assert [first.granted, second.granted] == [True, False]
+        store.record_attempt(delivery_key=first.record.delivery_key, outcome="failed")
+        assert store.claim(**_CLAIM).granted is False
+        assert store.claim(**_CLAIM, allow_reattempt=True).granted is True
+
+
+def test_migration_creates_the_lease_column_and_the_attempt_foreign_key(tmp_path: Path) -> None:
+    url = f"sqlite:///{tmp_path / 'm0085_lease.sqlite'}"
+    command.upgrade(_cfg(url), "head")
+
+    engine = create_engine(url, future=True)
+    try:
+        inspector = inspect(engine)
+        columns = {
+            column["name"] for column in inspector.get_columns("notification_delivery_outcomes")
+        }
+        foreign_keys = inspector.get_foreign_keys("notification_delivery_attempts")
+    finally:
+        engine.dispose()
+
+    assert "lease_expires_at" in columns
+    assert [key["referred_table"] for key in foreign_keys] == ["notification_delivery_outcomes"]
+    assert foreign_keys[0]["constrained_columns"] == ["delivery_key"]

@@ -21,8 +21,14 @@ state into an observation:
   mailing them twice. An in-memory guard cannot do that, which is why this is
   a schema change and not a service-layer set.
 * ``notification_delivery_attempts`` -- the numbered attempts beneath one
-  logical delivery. The attempt number is deliberately NOT part of the logical
-  key.
+  logical delivery, foreign-keyed to it with ``ON DELETE CASCADE``. The attempt
+  number is deliberately NOT part of the logical key.
+
+``lease_expires_at`` on the outcomes table is the second half of the guard: the
+UNIQUE constraint settles the INSERT race, and a conditional UPDATE on the lease
+settles the already-exists race, so only one caller is ever cleared to send.
+A lease that lapses without a recorded result means the sending process died
+mid-send, and the row becomes recoverable rather than stuck forever.
 
 PII: stable ids only. ``subscription_id`` is a salted digest; the subscriber's
 email address and webhook URL stay sealed in
@@ -62,6 +68,10 @@ def _use_schema() -> bool:
     return op.get_bind().dialect.name != "sqlite"
 
 
+def _qualified(target: str, schema: str | None) -> str:
+    return target if schema is None else f"{schema}.{target}"
+
+
 def upgrade() -> None:
     schema = "civiccast" if _use_schema() else None
     op.create_table(
@@ -80,6 +90,10 @@ def upgrade() -> None:
         sa.Column("error_code", sa.String(length=80), nullable=True),
         sa.Column("detail", sa.Text(), nullable=False, server_default=sa.text("''")),
         sa.Column("retry_id", sa.String(length=120), nullable=True),
+        # In-flight lease. While set and in the future, one caller owns this
+        # delivery and no other may send it; a lapsed lease with no result
+        # means the sender died mid-send and the row is recoverable.
+        sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("first_attempted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_attempted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("succeeded_at", sa.DateTime(timezone=True), nullable=True),
@@ -110,6 +124,14 @@ def upgrade() -> None:
         sa.Column("error_code", sa.String(length=80), nullable=True),
         sa.Column("detail", sa.Text(), nullable=False, server_default=sa.text("''")),
         sa.Column("retry_id", sa.String(length=120), nullable=True),
+        # An attempt cannot exist without its logical delivery; deleting the
+        # outcome takes its numbered attempts with it.
+        sa.ForeignKeyConstraint(
+            ["delivery_key"],
+            [_qualified("notification_delivery_outcomes.delivery_key", schema)],
+            name="notification_delivery_attempts_delivery_key_fkey",
+            ondelete="CASCADE",
+        ),
         schema=schema,
     )
 

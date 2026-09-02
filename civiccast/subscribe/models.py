@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from civiccast.db import Base
@@ -108,6 +108,13 @@ class NotificationPayload(BaseModel):
     podcast_url: str | None = None
     summary: str | None = None
     published_at: datetime
+    #: Per-recipient one-click unsubscribe link, carrying that subscription's
+    #: own signed token. Every notice must offer a way out: it goes in the mail
+    #: body AND the ``List-Unsubscribe`` header, and rides in the webhook JSON
+    #: so a webhook subscriber can stop notices without contacting the station.
+    #: ``None`` only when the station has no public web address configured, in
+    #: which case there is no link to any station route at all.
+    unsubscribe_url: str | None = None
 
 
 class NotificationDelivery(BaseModel):
@@ -234,6 +241,11 @@ class NotificationDeliveryOutcomeRecord(BaseModel):
     error_code: Annotated[str, Field(max_length=80)] | None = None
     detail: Annotated[str, Field(max_length=500)] = ""
     retry_id: Annotated[str, Field(max_length=120)] | None = None
+    #: While set and in the future, one caller owns this in-flight delivery and
+    #: no other may send it. Cleared when an attempt records its result. A row
+    #: whose lease has expired without a result is recoverable -- the sending
+    #: process died mid-send -- and the next caller may take it over.
+    lease_expires_at: datetime | None = None
     first_attempted_at: datetime | None = None
     last_attempted_at: datetime | None = None
     succeeded_at: datetime | None = None
@@ -291,6 +303,10 @@ class NotificationDeliveryOutcome(Base):
     # Links a queued webhook delivery back to its retry-queue row so the
     # dead-letter/backoff outcome stays visible from the publish run.
     retry_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    #: In-flight lease. See NotificationDeliveryOutcomeRecord.lease_expires_at.
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     first_attempted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -311,7 +327,11 @@ class NotificationDeliveryAttempt(Base):
 
     __tablename__ = "notification_delivery_attempts"
 
-    delivery_key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    delivery_key: Mapped[str] = mapped_column(
+        String(80),
+        ForeignKey("civiccast.notification_delivery_outcomes.delivery_key", ondelete="CASCADE"),
+        primary_key=True,
+    )
     attempt_number: Mapped[int] = mapped_column(Integer, primary_key=True)
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     outcome: Mapped[str] = mapped_column(String(20), nullable=False)

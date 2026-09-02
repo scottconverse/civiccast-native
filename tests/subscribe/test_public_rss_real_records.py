@@ -57,9 +57,24 @@ def _row(
     )
 
 
-@pytest.fixture(autouse=True)
-def _configured_public_base(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def configured_public_base(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt-IN, not autouse.
+
+    An autouse fixture here would have hidden the whole unconfigured-station
+    branch -- the one where the feed has to decide whether this request's Host
+    header can be trusted. Tests that want the configured path ask for it.
+    """
+
     monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", _PUBLIC_BASE)
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_host_trust(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test from "nothing configured, nothing trusted"."""
+
+    monkeypatch.delenv("CIVICCAST_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("CIVICCAST_TRUSTED_HOSTS", raising=False)
 
 
 def _client(rows: list[StaffAssetRow] | None = None, *, store: object | None = None):
@@ -83,7 +98,9 @@ def _items(xml: str) -> list[dict[str, str]]:
     return [{child.tag: (child.text or "") for child in item} for item in channel.findall("item")]
 
 
-def test_nothing_published_returns_a_valid_empty_feed(client: TestClient) -> None:
+def test_nothing_published_returns_a_valid_empty_feed(
+    client: TestClient, configured_public_base: None
+) -> None:
     response = client.get("/api/public/subscribe/rss/channel/government.xml")
 
     assert response.status_code == 200
@@ -99,7 +116,9 @@ def test_nothing_published_returns_a_valid_empty_feed(client: TestClient) -> Non
     assert (channel.findtext("link") or "").startswith(_PUBLIC_BASE)
 
 
-def test_published_records_appear_with_the_real_watch_route() -> None:
+def test_published_records_appear_with_the_real_watch_route(
+    configured_public_base: None,
+) -> None:
     rows = [
         _row("meeting-42", title="Council Meeting", description="Regular session."),
         _row("meeting-41", title="Budget Workshop"),
@@ -115,7 +134,9 @@ def test_published_records_appear_with_the_real_watch_route() -> None:
     assert "portal.example" not in response.text
 
 
-def test_unpublished_recordings_never_reach_the_public_feed() -> None:
+def test_unpublished_recordings_never_reach_the_public_feed(
+    configured_public_base: None,
+) -> None:
     rows = [
         _row("draft-1", title="Not Yet Public", published=False),
         _row("meeting-42", title="Council Meeting"),
@@ -126,7 +147,9 @@ def test_unpublished_recordings_never_reach_the_public_feed() -> None:
     assert [item["title"] for item in _items(response.text)] == ["Council Meeting"]
 
 
-def test_a_meeting_body_feed_uses_the_same_resolver_as_delivery() -> None:
+def test_a_meeting_body_feed_uses_the_same_resolver_as_delivery(
+    configured_public_base: None,
+) -> None:
     rows = [
         _row("meeting-42", title="Planning Commission", meeting_body="planning-commission"),
         _row("meeting-41", title="Council Meeting"),
@@ -144,7 +167,9 @@ def test_a_meeting_body_feed_uses_the_same_resolver_as_delivery() -> None:
     ]
 
 
-def test_a_feed_for_another_channel_is_empty_not_seeded() -> None:
+def test_a_feed_for_another_channel_is_empty_not_seeded(
+    configured_public_base: None,
+) -> None:
     rows = [_row("meeting-42", title="Council Meeting")]
     with TestClient(_client(rows)) as client:
         response = client.get("/api/public/subscribe/rss/channel/education.xml")
@@ -153,7 +178,9 @@ def test_a_feed_for_another_channel_is_empty_not_seeded() -> None:
     assert "Example CivicCast recording" not in response.text
 
 
-def test_a_store_without_a_staff_projection_yields_an_empty_feed_not_an_error() -> None:
+def test_a_store_without_a_staff_projection_yields_an_empty_feed_not_an_error(
+    configured_public_base: None,
+) -> None:
     with TestClient(_client(store=_StoreWithoutStaffProjection())) as client:
         response = client.get("/api/public/subscribe/rss/channel/government.xml")
 
@@ -161,13 +188,15 @@ def test_a_store_without_a_staff_projection_yields_an_empty_feed_not_an_error() 
     assert _items(response.text) == []
 
 
-def test_unknown_target_type_is_still_a_404(client: TestClient) -> None:
+def test_unknown_target_type_is_still_a_404(
+    client: TestClient, configured_public_base: None
+) -> None:
     response = client.get("/api/public/subscribe/rss/producer/anything.xml")
 
     assert response.status_code == 404
 
 
-def test_the_feed_carries_no_subscriber_pii() -> None:
+def test_the_feed_carries_no_subscriber_pii(configured_public_base: None) -> None:
     rows = [_row("meeting-42", title="Council Meeting")]
     with TestClient(_client(rows)) as client:
         response = client.get("/api/public/subscribe/rss/channel/government.xml")
@@ -176,3 +205,87 @@ def test_the_feed_carries_no_subscriber_pii() -> None:
     assert "@" not in response.text
     assert "subscriber" not in lowered
     assert "unsubscribe" not in lowered
+
+
+class TestUnconfiguredStationHostTrust:
+    """M6: with no public base URL, the feed must not trust a caller's Host.
+
+    There is no ``TrustedHostMiddleware`` in this app, so ``request.base_url``
+    comes from a client-supplied header. Echoing it into a cached public feed
+    would let any caller mint links to a host they control and have the
+    station's own feed vouch for them.
+    """
+
+    def test_an_untrusted_host_gets_an_actionable_503_not_a_poisoned_feed(self) -> None:
+        rows = [_row("meeting-42", title="Council Meeting")]
+        with TestClient(_client(rows)) as client:
+            response = client.get(
+                "/api/public/subscribe/rss/channel/government.xml",
+                headers={"Host": "evil.example"},
+            )
+
+        assert response.status_code == 503
+        assert "evil.example" not in response.text
+        detail = response.json()["detail"]
+        assert "public web address" in detail
+        assert "CIVICCAST_TRUSTED_HOSTS" in detail
+
+    def test_a_loopback_host_is_trusted_so_a_local_station_still_serves_a_feed(self) -> None:
+        rows = [_row("meeting-42", title="Council Meeting")]
+        with TestClient(_client(rows), base_url="http://127.0.0.1:8000") as client:
+            response = client.get("/api/public/subscribe/rss/channel/government.xml")
+
+        assert response.status_code == 200
+        items = _items(response.text)
+        assert items[0]["link"] == "http://127.0.0.1:8000/#/watch/meeting-42"
+
+    def test_an_operator_listed_host_is_trusted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CIVICCAST_TRUSTED_HOSTS", "records.city.example, testserver")
+        rows = [_row("meeting-42", title="Council Meeting")]
+        with TestClient(_client(rows)) as client:
+            response = client.get("/api/public/subscribe/rss/channel/government.xml")
+
+        assert response.status_code == 200
+        assert _items(response.text)[0]["link"] == "http://testserver/#/watch/meeting-42"
+
+    def test_a_configured_base_url_wins_over_any_host_header(
+        self, configured_public_base: None
+    ) -> None:
+        rows = [_row("meeting-42", title="Council Meeting")]
+        with TestClient(_client(rows)) as client:
+            response = client.get(
+                "/api/public/subscribe/rss/channel/government.xml",
+                headers={"Host": "evil.example"},
+            )
+
+        assert response.status_code == 200
+        assert "evil.example" not in response.text
+        assert _items(response.text)[0]["link"].startswith(_PUBLIC_BASE)
+
+
+def test_the_feed_is_bounded_and_cacheable(configured_public_base: None) -> None:
+    """N2: an unauthenticated public route must not scan an unbounded history."""
+
+    from civiccast.subscribe.router import RSS_FEED_MAX_ITEMS
+
+    seen: dict[str, int] = {}
+
+    class _PagedStore(_FakeAssetStore):
+        def list_all(self) -> list[StaffAssetRow]:  # pragma: no cover - must not be used
+            raise AssertionError("the paginated projection must be preferred")
+
+        def list_all_page(
+            self, *, limit: int = 50, offset: int = 0
+        ) -> tuple[list[StaffAssetRow], int]:
+            seen["limit"] = limit
+            seen["offset"] = offset
+            return list(self._rows)[:limit], len(self._rows)
+
+    rows = [_row(f"meeting-{index:03d}", title=f"Meeting {index}") for index in range(120)]
+    with TestClient(_client(store=_PagedStore(rows))) as client:
+        response = client.get("/api/public/subscribe/rss/channel/government.xml")
+
+    assert seen["offset"] == 0
+    assert seen["limit"] >= RSS_FEED_MAX_ITEMS
+    assert len(_items(response.text)) == RSS_FEED_MAX_ITEMS
+    assert response.headers["cache-control"] == "public, max-age=300"

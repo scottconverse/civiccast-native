@@ -39,6 +39,7 @@ from civiccast.platform.providers import (
     PROVIDER_KIND_WEBHOOK,
     ProviderRegistry,
     default_registry,
+    describe_provider,
 )
 from civiccast.publish.models import (
     PublishNotificationDeliveryRow,
@@ -59,7 +60,6 @@ from civiccast.subscribe.models import (
 from civiccast.subscribe.outcome_store import (
     InMemoryNotificationDeliveryStore,
     NotificationDeliveryStore,
-    logical_delivery_key,
 )
 from civiccast.subscribe.secrets import SubscriptionSecrets
 from civiccast.subscribe.service import dispatch_notifications
@@ -138,6 +138,10 @@ class NotificationSurfaceOutcome:
     health: str
     message: str
     next_step: str
+    #: True when the mail/webhook adapters that accepted this run's notices are
+    #: the shipped mocks. The dashboard badges it exactly as it badges a
+    #: simulated Internet Archive or YouTube surface.
+    simulated: bool
     summary: PublishNotificationSummary | None
 
 
@@ -145,10 +149,12 @@ class _OutcomeRecorder:
     """Binds :func:`dispatch_notifications` to the durable outcome table.
 
     ``should_send`` is the duplicate-send guard: it claims the logical delivery
-    key first (the UNIQUE constraint settles a race between two approvals) and
-    refuses only a recipient already observed ``sent``. ``record`` persists the
-    attempt immediately, so an exception on a later recipient cannot erase an
-    earlier receipt.
+    key first and sends only when the store GRANTS it -- i.e. this caller
+    inserted the row, or took over one whose in-flight lease had lapsed, or is
+    an explicit retry taking over a failed/queued row. A recipient another
+    worker currently holds, or one already observed ``sent``, is refused.
+    ``record`` persists the attempt immediately, so an exception on a later
+    recipient cannot erase an earlier receipt.
 
     Both methods absorb their own storage failures rather than letting one bad
     row abort the fan-out (plan item 7). The two failures are handled
@@ -173,53 +179,56 @@ class _OutcomeRecorder:
         self._asset_id = asset_id
         self._retry_only = retry_only
         self._keys: dict[str, str] = {}
+        #: Recipients whose receipt could not be reserved at all. A run with any
+        #: of these cannot honestly report "no subscribers" or "all delivered"
+        #: -- the operator is told the database is the problem (see
+        #: ``deliver_publication_notifications``).
+        self.claim_failures = 0
 
     def should_send(
         self, *, subscription: SubscriptionRecord, target_type: str, target_id: str
     ) -> bool:
         try:
-            return self._should_send(
-                subscription=subscription, target_type=target_type, target_id=target_id
+            claimed = self._store.claim(
+                publication_id=self._publication_id,
+                asset_id=self._asset_id,
+                subscription_id=subscription.subscription_id,
+                target_type=target_type,
+                target_id=target_id,
+                transport=subscription.channel,
+                # An explicit retry means "reach every confirmed subscriber not
+                # yet sent" -- including one who confirmed AFTER the original
+                # approval (they get a fresh row) and one whose delivery is
+                # terminal-failed or sitting in the webhook retry queue. A
+                # normal re-approval takes over neither, which is what makes it
+                # idempotent instead of a second fan-out.
+                allow_reattempt=self._retry_only,
             )
         except Exception:
+            self.claim_failures += 1
             _LOG.exception(
                 "Could not reserve a delivery receipt for subscription %s; skipping it "
                 "rather than sending a notice this run cannot guard against duplicating.",
                 subscription.subscription_id,
             )
             return False
-
-    def _should_send(
-        self, *, subscription: SubscriptionRecord, target_type: str, target_id: str
-    ) -> bool:
-        if self._retry_only:
-            # An explicit retry targets only deliveries that already exist and
-            # are failed/queued/pending. It must not CLAIM a new key -- doing
-            # so would leave a never-attempted `pending` row behind for a
-            # recipient this action was never meant to touch.
-            key = logical_delivery_key(
-                publication_id=self._publication_id,
-                subscription_id=subscription.subscription_id,
-                target_type=target_type,
-                target_id=target_id,
-                transport=subscription.channel,
-            )
-            existing = self._store.get(key)
-            if existing is None or existing.outcome == "sent":
-                return False
-            self._keys[subscription.subscription_id] = key
-            return True
-        claimed = self._store.claim(
-            publication_id=self._publication_id,
-            asset_id=self._asset_id,
-            subscription_id=subscription.subscription_id,
-            target_type=target_type,
-            target_id=target_id,
-            transport=subscription.channel,
-        )
         self._keys[subscription.subscription_id] = claimed.record.delivery_key
-        # Never resend a recipient already observed sent (plan item 6).
-        return not claimed.already_sent
+        if not claimed.granted:
+            _LOG.debug(
+                "Skipping subscription %s: %s.",
+                subscription.subscription_id,
+                "already delivered for this publication"
+                if claimed.already_sent
+                else "another worker holds this delivery",
+            )
+            return False
+        if not claimed.created:
+            _LOG.info(
+                "Took over an existing delivery for subscription %s (outcome %s).",
+                subscription.subscription_id,
+                claimed.record.outcome,
+            )
+        return True
 
     def record(
         self,
@@ -385,6 +394,7 @@ def deliver_publication_notifications(
                 "Open Setup and choose Prepare storage so subscriptions and delivery "
                 "receipts can be kept."
             ),
+            simulated=False,
             summary=None,
         )
 
@@ -408,6 +418,7 @@ def deliver_publication_notifications(
                 "Set the station's public web address in Setup, then retry the "
                 "subscriber notifications surface."
             ),
+            simulated=False,
             summary=None,
         )
 
@@ -421,7 +432,7 @@ def deliver_publication_notifications(
         retry_only=retry_only,
     )
     resolved_registry = registry if registry is not None else default_registry()
-    dispatch_notifications(
+    response = dispatch_notifications(
         payload,
         store=subscribe_store,
         targets=[(target.target_type, target.target_id) for target in targets],
@@ -432,6 +443,9 @@ def deliver_publication_notifications(
             if webhook_client is not None
             else resolved_registry.resolve(PROVIDER_KIND_WEBHOOK)
         ),
+        unsubscribe_base_url=public_base_url
+        if public_base_url is not None
+        else resolve_public_base_url(),
         recorder=recorder,
     )
 
@@ -440,27 +454,86 @@ def deliver_publication_notifications(
         publication_id=publication_id,
         targets=targets,
     )
+    if recorder.claim_failures:
+        # M3: an unwritable receipt store must never read as "no subscribers"
+        # or as a clean run. The operator is told the database is the problem,
+        # in those words, because that is what they have to fix.
+        _LOG.error(
+            "Publish %s subscriber notifications: %d delivery receipts could not be "
+            "written, so those notices were not sent.",
+            asset_id,
+            recorder.claim_failures,
+        )
+        return NotificationSurfaceOutcome(
+            state="failed",
+            health="warning",
+            message=(
+                "Delivery receipts could not be written, so no notices were sent. "
+                "Fix the database and retry."
+            ),
+            next_step=(
+                "Open Setup and check durable storage, then retry the subscriber "
+                "notifications surface."
+            ),
+            simulated=False,
+            summary=summary if summary.intended else None,
+        )
+
     state = _state_for(summary)
     health, message_template, next_step = _STATE_COPY[state]
+    simulated = _simulated_channels(summary, registry=resolved_registry)
+    message = message_template.format(
+        sent=summary.sent,
+        intended=summary.intended,
+        queued=summary.queued,
+        failed=summary.failed,
+        pending=summary.pending,
+    )
+    if simulated and state != "not_configured":
+        # M4, matching the Internet Archive / YouTube branches: a mock adapter
+        # accepted the notice, nobody received it. Never green.
+        health = "warning"
+        message = (
+            f"SIMULATED - no subscriber notice actually left this station. {message} "
+            "An admin must enable the real mail/webhook provider before this counts "
+            "as delivery."
+        )
+        next_step = (
+            "Ask an admin to set CIVICCAST_PROVIDER_MAIL / CIVICCAST_PROVIDER_WEBHOOK "
+            "to a real provider, then retry this surface."
+        )
     _LOG.info(
-        "Publish %s subscriber notifications: %s (%d intended, %d sent, %d queued, %d failed).",
+        "Publish %s subscriber notifications: %s (%d intended, %d sent, %d queued, "
+        "%d failed, %d already delivered).",
         asset_id,
         state,
         summary.intended,
         summary.sent,
         summary.queued,
         summary.failed,
+        response.skipped,
     )
     return NotificationSurfaceOutcome(
         state=state,
         health=health,
-        message=message_template.format(
-            sent=summary.sent,
-            intended=summary.intended,
-            queued=summary.queued,
-            failed=summary.failed,
-            pending=summary.pending,
-        ),
+        message=message,
         next_step=next_step,
+        simulated=simulated,
         summary=summary if summary.intended else None,
     )
+
+
+def _simulated_channels(summary: PublishNotificationSummary, *, registry: ProviderRegistry) -> bool:
+    """True when any channel this run used resolves to a mock adapter.
+
+    Read from the same registry the send itself resolved, and only for channels
+    that actually had a recipient -- a station with no webhook subscribers is
+    not "simulated" because its unused webhook provider is the shipped mock.
+    """
+
+    kinds = {
+        "email": PROVIDER_KIND_MAIL,
+        "webhook": PROVIDER_KIND_WEBHOOK,
+    }
+    used = {row.channel for row in summary.deliveries}
+    return any(describe_provider(kinds[channel], registry).simulated for channel in sorted(used))

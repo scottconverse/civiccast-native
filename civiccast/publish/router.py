@@ -302,6 +302,7 @@ def get_publish_preflight(
     postgres_store: Any = Depends(get_postgres_store),
     provider_registry: ProviderRegistry = Depends(get_provider_registry),
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
+    target_lookup: ChannelAssociationLookup | None = Depends(get_publication_target_lookup),
 ) -> PublishPreflightResponse:
     """Return portal, Internet Archive, NAS, YouTube, and subscriber readiness.
 
@@ -320,6 +321,7 @@ def get_publish_preflight(
         cast(StaffAssetRow, asset),
         registry=provider_registry,
         subscribe_store=subscribe_store,
+        target_lookup=target_lookup,
     )
 
 

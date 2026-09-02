@@ -16,8 +16,46 @@ export type PublishSurfaceState =
   | 'pending'
   | 'running'
   | 'succeeded'
+  // WP-05. `partial`: some intended deliveries landed and some did not.
+  // `unverified`: the run recorded success but kept no delivery receipt, so
+  // the station cannot show it happened. Neither is green.
+  | 'partial'
+  | 'unverified'
   | 'failed'
   | 'overridden'
+
+export type PublishNotificationOutcome = 'pending' | 'sent' | 'failed' | 'queued'
+
+/** One logical subscriber delivery. Carries no recipient address or URL. */
+export interface PublishNotificationDeliveryRow {
+  subscription_id: string
+  channel: 'email' | 'webhook'
+  target_type: 'channel' | 'meeting_body'
+  target_id: string
+  outcome: PublishNotificationOutcome
+  attempts: number
+  error_code?: string | null
+  detail?: string
+  retry_id?: string | null
+  last_attempted_at?: string | null
+}
+
+/**
+ * The per-delivery receipt behind a subscriber-notifications surface. The
+ * counts are always the full totals; `deliveries` is capped (see
+ * `deliveries_truncated`) because this rides in the publish run's JSON.
+ */
+export interface PublishNotificationSummary {
+  publication_id: string
+  intended: number
+  sent: number
+  failed: number
+  queued: number
+  pending: number
+  targets: string[]
+  deliveries_truncated?: boolean
+  deliveries: PublishNotificationDeliveryRow[]
+}
 export type PublishSurfaceApproval = 'pending' | 'approved' | 'overridden'
 
 export interface PublishSurfaceOverride {
@@ -62,6 +100,13 @@ export interface PublishSurfaceStatus {
    * from one that never happened (GauntletGate TW-1).
    */
   simulated?: boolean
+  /**
+   * WP-05: the safe per-delivery receipt behind a fan-out surface's state.
+   * Present on `subscriber-notifications` once a real dispatch has run; absent
+   * on every other surface and on rows written before WP-05 — which is exactly
+   * what makes those rows read `unverified` instead of green.
+   */
+  notification_summary?: PublishNotificationSummary | null
 }
 
 export interface PublishAssetStatus {

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import os
+import socket
+from contextlib import suppress
 from datetime import datetime
 from typing import Any, cast
 
@@ -12,6 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 
 from civiccast.auth.roles import require_any_role
 from civiccast.installer.station_state import resolve_station_display_name
+from civiccast.platform.providers import (
+    PROVIDER_KIND_MAIL,
+    PROVIDER_KIND_WEBHOOK,
+    ProviderRegistry,
+    default_registry,
+    describe_provider,
+)
 from civiccast.platform.stores import resolve_app_store
 from civiccast.publish.notifications import watch_url_for_asset
 from civiccast.publish.targets import (
@@ -28,6 +37,7 @@ from civiccast.subscribe.models import (
     SubscriptionConfirmResponse,
     SubscriptionPublicResponse,
     SubscriptionSignupRequest,
+    SubscriptionTargetType,
     SubscriptionWebhookRequest,
 )
 from civiccast.subscribe.outcome_store import NotificationDeliveryStore
@@ -83,6 +93,15 @@ def get_publication_target_lookup(request: Request) -> ChannelAssociationLookup 
         resolve_app_store(
             request, "publication_target_lookup", surface="Publication target lookup"
         ),
+    )
+
+
+def get_provider_registry(request: Request) -> ProviderRegistry:
+    """The app's single provider registry (mirrors the publish router's)."""
+
+    return cast(
+        ProviderRegistry,
+        getattr(request.app.state, "provider_registry", None) or default_registry(),
     )
 
 
@@ -170,15 +189,8 @@ def confirm(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@public_router.get(
-    "/unsubscribe",
-    response_model=SubscriptionConfirmResponse,
-    summary="Unsubscribe using a signed one-click link",
-)
-def unsubscribe_link(
-    token: str = Query(min_length=1),
-    store: SubscribeStore = Depends(get_subscribe_store),
-    secrets: SubscriptionSecrets = Depends(get_subscribe_secrets),
+def _unsubscribe(
+    token: str, store: SubscribeStore, secrets: SubscriptionSecrets
 ) -> SubscriptionConfirmResponse:
     try:
         return unsubscribe(token, store=store, secrets=secrets)
@@ -191,6 +203,86 @@ def unsubscribe_link(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+@public_router.get(
+    "/unsubscribe",
+    response_model=SubscriptionConfirmResponse,
+    summary="Unsubscribe using a signed one-click link",
+)
+def unsubscribe_link(
+    token: str = Query(min_length=1),
+    store: SubscribeStore = Depends(get_subscribe_store),
+    secrets: SubscriptionSecrets = Depends(get_subscribe_secrets),
+) -> SubscriptionConfirmResponse:
+    """A resident clicking the unsubscribe link in a notice."""
+
+    return _unsubscribe(token, store, secrets)
+
+
+@public_router.post(
+    "/unsubscribe",
+    response_model=SubscriptionConfirmResponse,
+    summary="One-click unsubscribe (RFC 8058)",
+)
+def unsubscribe_one_click(
+    token: str = Query(min_length=1),
+    store: SubscribeStore = Depends(get_subscribe_store),
+    secrets: SubscriptionSecrets = Depends(get_subscribe_secrets),
+) -> SubscriptionConfirmResponse:
+    """The mail client acting on the reader's behalf.
+
+    RFC 8058 requires a POST for the ``List-Unsubscribe-Post`` header the
+    notice advertises: mail clients will not show a one-click Unsubscribe
+    control without it, and a GET-only endpoint risks link-prefetchers
+    unsubscribing residents who never asked. Same signed token, same effect.
+    """
+
+    return _unsubscribe(token, store, secrets)
+
+
+# Hosts a request can legitimately arrive on for a station serving itself.
+# "0.0.0.0" is a bind address, not a Host a browser sends, so it is not here --
+# S104 flags it and it would be meaningless in a link anyway.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def _trusted_hosts() -> frozenset[str]:
+    """Hostnames this station will echo into a public feed's links.
+
+    Loopback and the machine's own hostname/addresses are always trusted; an
+    operator adds anything else (a reverse-proxy name, a vanity domain) through
+    ``CIVICCAST_TRUSTED_HOSTS`` as a comma-separated list.
+    """
+
+    trusted = set(_LOOPBACK_HOSTS)
+    with suppress(OSError):
+        hostname = socket.gethostname()
+        trusted.add(hostname.lower())
+        trusted.add(socket.getfqdn(hostname).lower())
+        trusted.update(address.lower() for address in socket.gethostbyname_ex(hostname)[2])
+    for entry in os.environ.get("CIVICCAST_TRUSTED_HOSTS", "").split(","):
+        cleaned = entry.strip().lower()
+        if cleaned:
+            trusted.add(cleaned)
+    return frozenset(trusted)
+
+
+def _request_base_url_if_trusted(request: Request) -> str | None:
+    """The request's own origin, but only when its Host is one we trust.
+
+    There is no ``TrustedHostMiddleware`` in this app, so ``request.base_url``
+    is derived from a client-supplied ``Host`` header. Echoing that into a
+    cached public RSS feed would let any caller mint links to a host they
+    control and have the station's own feed vouch for them. When the Host is
+    not recognised, the caller gets an actionable 503 instead of a poisoned
+    feed -- the fix is an operator setting, not a guess.
+    """
+
+    host = (request.url.hostname or "").lower()
+    if not host or host not in _trusted_hosts():
+        return None
+    return str(request.base_url).rstrip("/")
+
+
 #: Most-recent published recordings one feed carries. A civic station's
 #: recording history is unbounded; a reader wants the recent record, and an
 #: unbounded feed would grow with every meeting ever held.
@@ -201,17 +293,29 @@ _RSS_SCAN_LIMIT = 400
 
 
 def _published_rows(asset_store: Any) -> list[StaffAssetRow]:
-    """Published, packaged recordings, newest first -- or none, never examples."""
+    """Published, packaged recordings, newest first -- or none, never examples.
 
-    lister = getattr(asset_store, "list_all", None)
-    if lister is None:
-        # An app instance whose asset store has no operator-side projection
-        # (the ephemeral in-memory VOD store). There is nothing published to
-        # report, so the feed is empty -- not seeded with a sample item.
-        return []
-    rows = cast(list[StaffAssetRow], lister())
-    published = [row for row in rows if row.published_at is not None and row.manifest_url]
-    return published[:_RSS_SCAN_LIMIT]
+    Bounded at the STORE, not after the fact: this is an unauthenticated public
+    route, and a station with a decade of meetings must not materialise every
+    asset row per request. ``list_all_page`` is the paginated projection
+    (``civiccast.schedule.store.PostgresAssetStore``), ordered
+    ``published_at DESC NULLS LAST``, so one page of the newest rows is exactly
+    what a feed needs. ``list_all`` is the unpaginated fallback for stores that
+    predate it; a store with neither has nothing published to report.
+    """
+
+    pager = getattr(asset_store, "list_all_page", None)
+    if pager is not None:
+        rows, _total = pager(limit=_RSS_SCAN_LIMIT, offset=0)
+    else:
+        lister = getattr(asset_store, "list_all", None)
+        if lister is None:
+            # An app instance whose asset store has no operator-side projection
+            # (the ephemeral in-memory VOD store). There is nothing published
+            # to report, so the feed is empty -- not seeded with a sample item.
+            return []
+        rows = cast(list[StaffAssetRow], lister())[:_RSS_SCAN_LIMIT]
+    return [row for row in rows if row.published_at is not None and row.manifest_url]
 
 
 @public_router.get(
@@ -243,9 +347,13 @@ def rss_feed(
     Items are the station's actual published, packaged recordings for this
     channel or meeting body, newest first, capped at
     :data:`RSS_FEED_MAX_ITEMS`. Links are built from the station's configured
-    public base URL (falling back to this request's own origin) and the
-    portal's ``#/watch/{asset_id}`` route. A station with nothing published
-    yet gets a valid, configured, empty feed.
+    public base URL and the portal's ``#/watch/{asset_id}`` route. A station
+    with nothing published yet gets a valid, configured, empty feed.
+
+    When no public base URL is configured, this request's own origin is used
+    only if its Host is one the station recognises; an unrecognised Host gets
+    a 503 telling the operator to set the public web address, because a public
+    feed must never echo a caller-supplied hostname into its links.
     """
 
     if target_type not in {"channel", "meeting_body"}:
@@ -253,9 +361,18 @@ def rss_feed(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="RSS feed not found. Use channel or meeting_body feed paths.",
         )
-    # Configured base first; this request's own origin is the fallback, so the
-    # feed is always self-consistent and always points at a host that exists.
-    base_url = resolve_public_base_url() or str(request.base_url).rstrip("/")
+    # Configured base first. The request's own origin is a fallback ONLY when
+    # its Host is trusted -- see _request_base_url_if_trusted.
+    base_url = resolve_public_base_url() or _request_base_url_if_trusted(request)
+    if not base_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "This feed is not available yet because the station has no public web "
+                "address set. Open Setup and set the station's public web address "
+                "(or add this hostname to CIVICCAST_TRUSTED_HOSTS), then reload."
+            ),
+        )
     rows = _published_rows(asset_store)
     channel_ids: dict[str, str] = {}
     if rows and target_lookup is not None:
@@ -297,22 +414,62 @@ def rss_feed(
         public_base_url=base_url,
         station_name=resolve_station_display_name(),
     )
-    return Response(content=xml, media_type="application/rss+xml")
+    return Response(
+        content=xml,
+        media_type="application/rss+xml",
+        # Readers poll feeds on a timer. A short shared cache window keeps a
+        # popular meeting from turning every reader's poll into a database
+        # page scan, while staying far below the interval at which a station
+        # publishes a new recording.
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @staff_router.post(
     "/dispatch-test",
     response_model=NotificationDispatchResponse,
-    summary="Dispatch deterministic local v0.8 subscription notifications",
+    summary="Dispatch a simulated subscription notification for local proof",
     dependencies=[Depends(require_any_role("publish_operator", "support_admin"))],
+    responses={409: {"description": "A real mail or webhook provider is configured"}},
 )
 def dispatch_test(
     payload: NotificationPayload,
-    target_type: str = "channel",
-    target_id: str = "government",
+    target_type: SubscriptionTargetType,
+    target_id: str = Query(min_length=1, max_length=120),
     store: SubscribeStore = Depends(get_subscribe_store),
     secrets: SubscriptionSecrets = Depends(get_subscribe_secrets),
+    registry: ProviderRegistry = Depends(get_provider_registry),
 ) -> NotificationDispatchResponse:
+    """Fan out a notice to one target's confirmed subscribers, mocks only.
+
+    Two WP-05 changes. First, ``target_type``/``target_id`` are required: the
+    old ``channel``/``government`` defaults meant a mistyped call silently
+    tested a target the caller never named. Second, this route refuses with 409
+    once a real mail or webhook provider is configured -- a route named
+    "dispatch-test" must not put a message in a resident's inbox, and it writes
+    no delivery receipt, so a real send here would also be invisible to the
+    Publish dashboard's idempotency guard. Real fan-out belongs to publish
+    approval, which does both.
+    """
+
+    real = [
+        name
+        for kind, name in (
+            (PROVIDER_KIND_MAIL, "mail"),
+            (PROVIDER_KIND_WEBHOOK, "webhook"),
+        )
+        if not describe_provider(kind, registry).simulated
+    ]
+    if real:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This test route only runs against simulated providers, and this "
+                f"station has a real {' and '.join(real)} provider configured. "
+                "Approve the recording on the Publish screen to send real notices; "
+                "they are recorded and cannot be sent twice."
+            ),
+        )
     return dispatch_notifications(
         payload,
         store=store,

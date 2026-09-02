@@ -2703,6 +2703,7 @@ export interface NotificationPayload {
   podcast_url?: string | null
   summary?: string | null
   published_at: string
+  unsubscribe_url?: string | null
 }
 
 export interface NowNextState {

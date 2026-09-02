@@ -82,6 +82,28 @@ class WebhookProvider(Protocol):
     def post(self, *, url: str, payload: NotificationPayload, secret: str) -> str: ...
 
 
+def notification_body(payload: NotificationPayload) -> str:
+    """The resident-facing notice text, identical for the mock and real mailbox.
+
+    Podcast is omitted entirely when there is no episode: the old body printed
+    "Podcast: Not posted" to every resident on every notice, which reads as a
+    broken promise about a surface this beta does not offer at all.
+
+    The unsubscribe line is not optional decoration -- a government
+    notification list that a resident cannot leave from the message itself is
+    a consent failure, so it is part of the shared body rather than something
+    each adapter remembers to add.
+    """
+
+    lines = [payload.title, f"Watch: {payload.portal_url}"]
+    if payload.podcast_url:
+        lines.append(f"Podcast: {payload.podcast_url}")
+    if payload.unsubscribe_url:
+        lines.append("")
+        lines.append(f"Stop receiving these notices: {payload.unsubscribe_url}")
+    return "\n".join(lines)
+
+
 class LocalMailbox:
     """In-memory mailbox for CI and local proof."""
 
@@ -107,10 +129,12 @@ class LocalMailbox:
                 "id": message_id,
                 "to": email,
                 "subject": f"New CivicCast recording: {payload.title}",
-                "body": (
-                    f"{payload.title}\nWatch: {payload.portal_url}\n"
-                    f"Podcast: {payload.podcast_url or 'Not posted'}"
-                ),
+                "body": notification_body(payload),
+                # Mirrors the header SmtpMailbox sets, so a proof run can assert
+                # the unsubscribe contract without a real relay.
+                "list_unsubscribe": f"<{payload.unsubscribe_url}>"
+                if payload.unsubscribe_url
+                else "",
             }
         )
         return message_id
