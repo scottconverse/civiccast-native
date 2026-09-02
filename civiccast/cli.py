@@ -2475,6 +2475,88 @@ def _doctor_check_captions() -> None:
             "PATH here; verified on the gst-engine host)"
         )
 
+    typer.echo("")
+    typer.echo("Recorded-Spanish captions (translation runtime)")
+    for line in _doctor_translation_lines():
+        typer.echo(line)
+
+
+def _doctor_translation_lines() -> list[str]:
+    """Report whether the required Spanish caption track can actually be produced.
+
+    A published recording must carry a reviewed Spanish track alongside
+    English, and the offline caption job blocks — telling the operator to
+    "run 'civiccast doctor'" — when no translation model is available. Doctor
+    used to say nothing whatsoever about translation, so following that
+    instruction produced a screen with no mention of the thing that was
+    broken. This closes that loop.
+
+    Resolves through the SAME seam the worker does: the S13
+    :class:`~civiccast.ai_models.service.AiModelService`, whose
+    ``effective_selection`` is what ``build_translator`` binds to, and whose
+    ``get_availability`` probes the local runtime for the model's presence.
+    Reading a different source would let doctor print OK for a model the
+    worker cannot load.
+
+    Returns lines rather than echoing them so the report can be asserted in a
+    test without capturing stdout.
+    """
+
+    from civiccast.captions.vod_job import CAPTIONS_SPANISH_ENV_VAR
+
+    lines: list[str] = []
+    # The retired switch first: a station still carrying it will fail to
+    # start, and an operator running doctor to find out why deserves the
+    # answer here rather than only in the startup traceback.
+    retired = os.environ.get(CAPTIONS_SPANISH_ENV_VAR, "").strip()
+    if retired:
+        lines.append(
+            f"  {CAPTIONS_SPANISH_ENV_VAR}={retired!r} is set. That switch is retired; "
+            "Spanish captions are required and it can no longer disable them. Remove it "
+            "from the station environment (a false value stops CivicCast from starting)."
+        )
+    try:
+        from civiccast.ai_models.service import AiModelService
+        from civiccast.ai_models.store import AiModelStore
+        from civiccast.platform.hardware import probe
+
+        hardware = probe()
+        service = AiModelService(
+            AiModelStore(_build_cli_session_factory()),
+            system_ram_total_gb=int(hardware.ram.total_gb),
+            has_gpu=hardware.gpu is not None,
+        )
+        availability = service.get_availability()
+    except Exception as exc:
+        lines.append(f"  translation model: UNKNOWN — could not read the model settings ({exc}).")
+        lines.append(
+            "    Recorded recordings cannot publish until this is readable; check that "
+            "the station database is reachable."
+        )
+        return lines
+
+    feature = availability.features.get("translation")
+    if feature is None:  # pragma: no cover — catalog always carries translation
+        lines.append("  translation model: UNKNOWN — no translation entry in the model catalog.")
+        return lines
+
+    lines.append(f"  translation model: {feature.effective_model_key}  ({feature.band})")
+    if feature.model_present is False or feature.runtime_reachable is False:
+        lines.append("  status:            NOT AVAILABLE")
+        lines.append(f"    {feature.detail}")
+        lines.append(
+            "    Published recordings will be HELD, not published in English only: the "
+            "caption job records the gap on each affected recording. Fix the model under "
+            "Settings > AI Models > Translation."
+        )
+    elif feature.model_present is None and feature.runtime_reachable is None:
+        lines.append("  status:            NOT PROBED")
+        lines.append(f"    {feature.detail}")
+    else:
+        lines.append("  status:            OK")
+        lines.append(f"    {feature.detail}")
+    return lines
+
 
 def _tier_explanation(tier: str) -> str:
     """Brief operator-friendly note about the recommended tier."""

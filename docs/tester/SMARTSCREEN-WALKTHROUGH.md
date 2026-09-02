@@ -1,27 +1,21 @@
 # "Windows protected your PC" — what to expect, and what to do
 
-> **Historical: retired WSL2 installer walkthrough, not native CivicCast
-> guidance.** `civiccast-native` has no public installer asset. Preserve the
-> rc-numbered instructions below as historical evidence only.
+## Release State
 
-> **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
-
-> **Release state:** `v1.0.0-rc18` is the current controlled beta and the most recently published release; `v1.0.0-rc17` is the rollback target. Run
-> only the exact installer from its signed GitHub release asset set.
+`v1.0.0-beta.1` is the current release. It was delivered by USB, not by a
+GitHub Release download. `v1.0.0-beta.2` is the current owner-held
+unpublished candidate and is intended to be the first downloadable beta
+candidate: `setup.exe`, `.ccpack` runtime packs, and `SHA256SUMS.txt`,
+published as a **prerelease** at
+<https://github.com/scottconverse/civiccast-native/releases>. See
+[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
+authored release-state record.
 
 When you open a CivicCast installer, Windows may show a blue SmartScreen page.
 That page alone does not prove the file is safe, signed, or approved. Verify the
 exact filename, SHA-256, and signature status in the active handoff first.
 ("Active handoff" means the tester packet you were given for this release —
 see `docs/tester/START-HERE.md` if you don't have one.)
-
-> **Do not install rc13.** `v1.0.0-rc18` is the current controlled beta and the most recently published release; `v1.0.0-rc17` is the rollback target.
-> Use this SmartScreen guidance with its active tester handoff and matching
-> proof assets.
 
 ---
 
@@ -38,7 +32,7 @@ handoff; do not click through an identity or status that differs from it.
 
 ### What you'll see, and exactly what to click
 
-1. You double-click the CivicCast installer (`civiccast-...-windows-setup.exe`).
+1. You double-click the CivicCast installer (`setup.exe`).
 2. A blue screen appears titled **"Windows protected your PC."**
 3. Click the small text link that says **More info**.
 4. Compare the Publisher field with the exact signature status and publisher in
@@ -68,8 +62,7 @@ Use these checks against the exact candidate handoff:
 ### 1. Confirm the signature (identity + integrity)
 
 ```powershell
-$Version = "REPLACE-WITH-APPROVED-VERSION"
-Get-AuthenticodeSignature ".\civiccast-$Version-windows-setup.exe" | Format-List Status, SignerCertificate
+Get-AuthenticodeSignature .\setup.exe | Format-List Status, SignerCertificate
 ```
 
 If the handoff says signed, expect `Status: Valid` and the exact named signer.
@@ -79,13 +72,13 @@ treated as a public beta download.
 ### 2. Confirm the SHA-256 hash matches the handed-off sidecar
 
 ```powershell
-$Version = "REPLACE-WITH-APPROVED-VERSION"
-Get-FileHash ".\civiccast-$Version-windows-setup.exe" -Algorithm SHA256
+Get-FileHash .\setup.exe -Algorithm SHA256
 ```
 
-Compare against the `sha256` value in the `.sidecar.json` published alongside
-the installer in the exact approved replacement release. They must match. Do
-not use rc13, a generic latest link, an older prerelease, or a detached sidecar.
+Compare against the `sha256` value in `setup.exe.sidecar.json` published
+alongside the installer in the exact release, and against `setup.exe`'s own
+line in `SHA256SUMS.txt`. They must match. Do not use a generic "latest"
+link, an older prerelease, or a detached sidecar.
 
 ### 3. Allowlist by publisher or hash
 

@@ -1,10 +1,10 @@
 # CivicCast FAQ
 
-> **Release state: `v1.0.0-rc18` is the published controlled beta.** Its
-> installer is built from the gate-cleared `main`, Authenticode-signed, and proven
-> on a genuinely clean Windows host. rc17 remains the rollback target but carries
-> the sixteen findings rc18 fixes. See `docs/releases/v1.0.0-rc18-verification.md`
-> for exactly what has and has not been proven.
+> **Release state:** `v1.0.0-beta.1` is the current release (USB-delivered);
+> `v1.0.0-beta.2` is the current owner-held unpublished candidate and is
+> intended to be the first downloadable one. See
+> [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
+> the authored release-state record.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -31,12 +31,12 @@ public video without per-minute vendor fees or appliance lock-in.
 
 ## How do I install it?
 
-Do not install rc11, rc12, or rc13. The current release line is `v1.0.0-rc18`,
-the published controlled beta; `v1.0.0-rc17` remains available as the rollback
-target. Use `INSTALL-WINDOWS.md` and the active tester handoff to verify
-the exact release, filename, SHA-256, signature status, and verification record. Do not
-use `releases/latest` for a controlled beta unless that handoff explicitly says
-to do so.
+`v1.0.0-beta.1` is the current release and was delivered by USB. `v1.0.0-beta.2`
+is the current owner-held unpublished candidate and is intended to be the
+first downloadable one. Use `INSTALL-WINDOWS.md` and the active tester
+handoff to verify the exact release, filename, SHA-256, and signature status.
+Do not use a generic "latest" link for a controlled beta unless the handoff
+explicitly says to do so.
 
 CivicCast's Windows product (this repository, [ADR 0021](docs/adr/0021-native-windows-runtime.md))
 runs its services as a native Windows service -- no WSL, no Ubuntu, no
@@ -48,10 +48,10 @@ WSL2/Ubuntu-hosted deployment; that lane's history lives in the separate,
 private `scottconverse/civiccast` repository -- see
 [BRANCHES.md](BRANCHES.md).)
 
-**rc17 and later:** the setup app also sets up the local Ollama AI runtime for you
-(reusing a healthy existing install, or installing a pinned version if none
-is present) and ensures the same three-tag target set of standard summary
-and translation models, downloading only the tags still missing, in the
+The setup app also sets up the local Ollama AI runtime for you (reusing a
+healthy existing install, or installing a pinned version if none is present)
+and ensures the same three-tag target set of standard summary and
+translation models, downloading only the tags still missing, in the
 background once the console is already open, rather than making you install
 Ollama yourself.
 
@@ -69,10 +69,10 @@ signing or attestation status is called out separately in each release.
   `DATABASE_URL` configured by a technical admin.
 - A first local admin account and saved recovery kit from the Setup screen.
 - FFmpeg for packaging video.
-- Ollama and model bundles if you want local summaries or translation.
-  **(rc17 and later: the Windows setup app provisions Ollama and downloads the model
-  bundles for you automatically in the background.)** Bring your own API
-  key instead if you choose a paid hosted model.
+- Ollama and model bundles if you want local summaries or translation. The
+  Windows setup app provisions Ollama and downloads the model bundles for
+  you automatically in the background. Bring your own API key instead if you
+  choose a paid hosted model.
 - The camera, encoder, or NDI/RTMP/RTSP/SRT source you plan to use.
 - Archive and notification credentials only if your station will use those
   providers during the test.
@@ -189,11 +189,10 @@ tokens, passwords, private keys, resident data, or private meeting content.
 - [API guide and reference](docs/API-REFERENCE.md)
 - [ActivityPub ops](docs/ops/activitypub-federation.md)
 - [NDI output ops](docs/ops/ndi-output.md)
-- [v1.0.0-rc18 candidate verification](docs/releases/v1.0.0-rc18-verification.md) (current)
-- [v1.0.0-rc17 candidate verification](docs/releases/v1.0.0-rc17-verification.md) (rollback target)
-- [v1.0.0-rc15 candidate verification](docs/releases/v1.0.0-rc15-verification.md) (superseded, historical)
-- [v1.0.0-rc13 incident record](docs/releases/v1.0.0-rc13-verification.md)
-- [v0.2.0 verification](docs/releases/v0.2.0-verification.md)
-- [v0.1.0-rc6 verification](docs/releases/v0.1.0-rc6-verification.md) (historical clean-Windows evidence, not approval for the current line)
+- [Release-state record](docs/releases/release-truth.yaml) -- the authored
+  source of truth for which tag is current, staging, or historical. (The rc11
+  through rc18 and v0.2.0/v0.1.0-rc6 verification documents this FAQ used to
+  link here belonged to the retired, separate `scottconverse/civiccast`
+  repository and are not present in this repository, so they are not linked.)
 - [LPM beta handoff](docs/tester/lpm-beta-test-handoff.md) for the controlled
   Longmont Public Media tester artifact and station-side proof steps.

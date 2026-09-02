@@ -766,6 +766,7 @@ export interface CaptionReviewItemRequest {
   review_item_id: string
   asset_id: string
   cue: CaptionCue
+  language?: string
   reviewer_note?: string | null
 }
 
@@ -773,6 +774,7 @@ export interface CaptionReviewItemResponse {
   review_item_id: string
   asset_id: string
   cue: CaptionCue
+  language?: string
   status: 'pending' | 'approved' | 'edited' | 'rejected'
   original_text: string
   reviewed_text?: string | null

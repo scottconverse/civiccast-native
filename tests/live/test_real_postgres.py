@@ -397,13 +397,16 @@ class TestSingleAlembicHead:
         # rechained after ``0078_agenda_item_confidence`` (rather than the
         # original 0076) so it lands after the already-merged 0078, and is
         # the current head.
-        # Updated to ``0082_egress_graphics_overlay`` (field evidence,
-        # candidate #17: async summary generation job so a legitimate
-        # multi-minute CPU-only generation survives instead of blocking or
-        # discarding an HTTP request -- civiccast/summary/job.py), chained
-        # after ``0080_watch_folder_daemon``.
-        assert heads[0] == "0082_egress_graphics_overlay", (
-            f"Expected head '0082_egress_graphics_overlay'; got {heads[0]!r}."
+        # ``0082_egress_graphics_overlay`` (field evidence, candidate #17:
+        # async summary generation job so a legitimate multi-minute CPU-only
+        # generation survives instead of blocking or discarding an HTTP
+        # request -- civiccast/summary/job.py) chained after
+        # ``0080_watch_folder_daemon``. Updated to
+        # ``0083_caption_review_language`` (recorded-Spanish captions: a
+        # language column on caption_review_items), chained after
+        # ``0082_egress_graphics_overlay``.
+        assert heads[0] == "0083_caption_review_language", (
+            f"Expected head '0083_caption_review_language'; got {heads[0]!r}."
         )
 
 

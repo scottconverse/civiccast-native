@@ -9,7 +9,13 @@
 > do not resolve or apply here. Kept as historical reference pending a
 > native-line beta-handoff guide.
 
-_Current as of v1.0.0-rc18 (2026-07-23). v1.0.0-rc17 is superseded and is now only the rollback target._
+This whole document describes the retired WSL2 line as of 2026-07-23, when
+`v1.0.0-rc18` was its current published release. For the native line this
+repository ships, use
+[Windows Release Trust And Verification](../install/windows-release-trust.md)
+and [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml)
+instead -- they carry the current `v1.0.0-beta.1` (USB-delivered) /
+`v1.0.0-beta.2` (next, downloadable) release-state story.
 
 This guide was the beta tester path for the CivicCast operator-first
 tester line on the retired WSL2 product. Windows testers used the Windows
@@ -41,7 +47,7 @@ manifest, SHA-256 hashes, and the offline install command. If the Windows
 installer tooling is unavailable, record the tool blocker and do not mark the
 Windows package lane passed.
 
-## Windows First Run
+## Historical: Windows First Run (retired WSL2 line)
 
 1. Verify the Windows tester package or setup executable and release manifest
    hashes before running it. Use
@@ -121,4 +127,14 @@ fresh-user offline wheelhouse install is useful runtime evidence, but at that
 time the final public tester release gate still required a native isolated
 Windows proof or an explicit release-manager waiver.
 
-**Current status:** v1.0.0-rc18 is the current published release. rc18's own bytes have been proven for clean-host install, app launch, reinstall, uninstall, rc17->rc18 upgrade, and an interactive installer wizard walkthrough. The full product path -- WSL2 helper setup, first admin, create/upload recording -> private rehearsal -> package -> Portal approval -> resident playback -- and cold-reboot recovery were last proven end to end against **rc17's** exact bytes on 2026-07-20 and have not yet been repeated on rc18's bytes. See [v1.0.0-rc17 verification](../releases/v1.0.0-rc17-verification.md) for that rc17 evidence; do not read it as proof of the full path on rc18 until an rc18 equivalent exists.
+**Historical status (retired WSL2 line):** `v1.0.0-rc18` was the current
+published release on that line. Its own bytes were proven for clean-host
+install, app launch, reinstall, uninstall, rc17->rc18 upgrade, and an
+interactive installer wizard walkthrough. The full product path -- WSL2
+helper setup, first admin, create/upload recording -> private rehearsal ->
+package -> Portal approval -> resident playback -- and cold-reboot recovery
+were last proven end to end against rc17's exact bytes on 2026-07-20 and had
+not been repeated on rc18's bytes as of that line's retirement. (That
+evidence document is not present in this repository -- it belonged to the
+separate, private `scottconverse/civiccast` repository.) This is historical
+record only, not proof of anything about this repository's native line.

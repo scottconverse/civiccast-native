@@ -9,22 +9,28 @@ with the release owner after the release gates and soak evidence are complete.
 
 ## Install
 
-> **Use `v1.0.0-rc18`** — the current controlled beta. Do not install rc13 or any
-> earlier prerelease. Confirm the filename, size, and SHA-256 against
-> [START-HERE](START-HERE.md) before you run the installer.
+> **`v1.0.0-beta.1` is the current release; it was delivered by USB, not a
+> GitHub download.** `v1.0.0-beta.2` is the next candidate and is intended to
+> be the first downloadable one. Confirm the exact filename, size, and
+> SHA-256 against [START-HERE](START-HERE.md) before you run any installer.
 
-1. Download `civiccast-1.0.0-rc18-windows-setup.exe` from the
-   [public rc18 release](https://github.com/scottconverse/civiccast/releases/tag/v1.0.0-rc18).
-2. Do not use the repository source ZIP, tester handoff files, or Git LFS files
-   for installation.
-3. Open the checksum page if you were given one and confirm the filename and
-   version match the release.
+1. **If you were given a USB-delivered `v1.0.0-beta.1` station:** there is
+   nothing to download; follow the handoff you were given for that station.
+2. **If you were given a downloadable `v1.0.0-beta.2` (or later) candidate:**
+   download `setup.exe`, its `setup.exe.sidecar.json`, and `SHA256SUMS.txt`
+   from the exact tagged release at
+   <https://github.com/scottconverse/civiccast-native/releases>. Do not use
+   the repository source ZIP, tester handoff files, or Git LFS files for
+   installation. A first-time install on a station with no prior CivicCast
+   install also needs the USB model bundle.
+3. Confirm the downloaded `setup.exe`'s SHA-256 matches `SHA256SUMS.txt` and
+   `setup.exe.sidecar.json` before running it.
 4. Run the setup app. Windows will show a blue **"Windows protected your PC"**
    screen — this is expected and not a sign of a problem. Read
    [SMARTSCREEN-WALKTHROUGH.md](SMARTSCREEN-WALKTHROUGH.md) beforehand so you know
    exactly what to click (it's two clicks: **More info**, then **Run anyway**).
-5. Let the setup app finish. WSL2 (Windows Subsystem for Linux) + Ubuntu setup can take several minutes, but
-   the installer must keep showing the current phase, step, elapsed time, and a
+5. Let the setup app finish. Setup can take several minutes, but the
+   installer must keep showing the current phase, step, elapsed time, and a
    regularly updating heartbeat. It must explicitly say when a restart is
    required. If feedback stops updating, record it as a failure.
 6. When the dashboard opens, continue in the operator console.
