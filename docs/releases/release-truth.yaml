@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-rc15
+current: v1.0.0-beta.1
 
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
@@ -38,11 +38,50 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-rc15
+  # Native-Windows program (civiccast-native, THIS repository). Owner
+  # decision 2026-09-02: the coordinating agent cuts beta-candidate releases
+  # going forward via scripts/release/publish_beta_candidate.py; every green
+  # build gets tagged and published as a GitHub pre-release because the beta
+  # tester (Sergio, "LPM") checks GitHub daily.
+  - tag: v1.0.0-beta.1
     status: current
     notes: >-
-      Public beta; assets and clean-Windows walkthrough proof landed
-      2026-07-17, do-not-install notice cleared, flipped from staging.
+      Native line's first published prerelease. USB-delivered only -- the
+      GitHub Release carries no downloadable assets (the ~21 GB AI-model
+      bundle exceeds GitHub's 2 GB/file asset cap, and no publish tooling
+      existed yet to split runtime packs from the model bundle). Current by
+      default until a downloadable beta candidate actually publishes.
+  - tag: v1.0.0-beta.2
+    status: staging
+    notes: >-
+      Owner-held candidate as of this entry; NOT YET PUBLISHED by this
+      change. Intended to be the first downloadable beta-candidate release:
+      setup.exe plus per-pack runtime .ccpack assets (each under GitHub's
+      2 GB/file cap) via publish_beta_candidate.py, reusing AI models already
+      on the machine (upgrade case, PR #127/#126) or the USB bundle
+      (first-install case) rather than shipping the ~21 GB station\ bundle as
+      a release asset. Flips to current, with this entry's status flipped to
+      superseded_by v1.0.0-beta.2, only once an actual publish lands and a
+      human/agent updates this file to match -- this manifest is the SOLE
+      AUTHORED SOURCE and is never inferred from what "should" be live.
+  # Below: the retired, separate WSL2-line product (scottconverse/civiccast,
+  # NOT this repository). None of these tags are live releases on
+  # civiccast-native; retained here only because prior entries already
+  # existed at the time this manifest was repointed to the native repo (see
+  # the `repository:` field above) and removing them outright would discard
+  # a record of what was already tracked. A native-line reader must never
+  # treat any v1.0.0-rcNN entry below as a current or installable target on
+  # this repository.
+  - tag: v1.0.0-rc15
+    status: historical
+    notes: >-
+      Retired WSL2-line release (scottconverse/civiccast, a different
+      repository) -- NOT a civiccast-native release. Kept as a historical
+      record only; was incorrectly carried as this manifest's `current` entry
+      before 2026-09-02 even though this manifest's `repository:` field
+      already named civiccast-native. Public beta; assets and clean-Windows
+      walkthrough proof landed 2026-07-17, do-not-install notice cleared,
+      flipped from staging (on the WSL2 line).
   - tag: v1.0.0-rc14
     status: superseded
     superseded_by: v1.0.0-rc15
