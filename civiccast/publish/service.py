@@ -48,7 +48,6 @@ from civiccast.publish.readiness import (
 )
 from civiccast.publish.store import PublishStore
 from civiccast.schedule.models import StaffAssetRow
-from civiccast.subscribe.models import NotificationPayload
 from civiccast.subscribe.store import SubscribeStore
 
 PUBLIC_RECORD_POLICIES = {"meeting", "permanent"}
@@ -59,6 +58,35 @@ _PODCAST_NOT_YET_AVAILABLE = SurfaceReadiness(
     message="Podcast is not available yet; it is coming in a future release.",
     next_step="No action needed. This surface is not selectable for real delivery yet.",
 )
+
+# Owner decision 2026-09-02: real subscriber notification sends (mail/webhook
+# fan-out on publish) are deferred to a future release -- the implementation
+# is parked on feat/publish-real-subscriber-delivery, not merged. Until that
+# lands, this surface must never claim readiness or delivery it cannot back
+# up. This intentionally bypasses civiccast.publish.readiness.describe_surface_readiness's
+# real per-provider subscriber check (still directly unit-tested in
+# tests/publish/test_provider_readiness.py -- it stays correct and ready for
+# the parked branch to wire back in) so preflight, approval, and the
+# dashboard always agree: coming soon, nothing sent, never blocking.
+_SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE = SurfaceReadiness(
+    healthy=False,
+    reference="not-yet-available",
+    message=(
+        "Subscriber notifications are coming in a future release. No emails or "
+        "webhooks are sent yet."
+    ),
+    next_step="No action needed. This surface is not selectable for real delivery yet.",
+)
+
+# Surfaces service.py answers with a fixed "coming soon" readiness verdict
+# instead of consulting civiccast.publish.readiness at all (see
+# _SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE above). Distinct from
+# civiccast.publish.readiness.FUTURE_SURFACE_IDS (podcast only, which has no
+# provider kind registered anywhere) -- subscriber-notifications DOES have a
+# real, tested readiness path in that module; this set only controls what
+# service.py currently surfaces to operators while the real-send feature is
+# parked.
+_SERVICE_LEVEL_FUTURE_SURFACE_IDS = frozenset({"subscriber-notifications"})
 
 
 class PublishConfigurationError(RuntimeError):
@@ -244,8 +272,8 @@ def build_initial_surfaces(asset: StaffAssetRow) -> list[PublishSurfaceStatus]:
             label="Subscriber notifications",
             kind="audience",
             required=False,
-            message="Confirmed subscribers receive notices after publish; failures do not block archive.",
-            next_step="Approve notification dispatch after the public portal and podcast links are ready.",
+            message=_SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE.message,
+            next_step=_SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE.next_step,
         ),
         _pending_surface(
             surface_id=CABLE_PACKAGE_SURFACE_ID,
@@ -279,6 +307,8 @@ def _surface_readiness(
 
     if surface.id in FUTURE_SURFACE_IDS:
         return _PODCAST_NOT_YET_AVAILABLE
+    if surface.id in _SERVICE_LEVEL_FUTURE_SURFACE_IDS:
+        return _SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE
     return describe_surface_readiness(
         surface.id,
         label=surface.label,
@@ -354,12 +384,14 @@ def build_publish_preflight(
                 label=surface.label,
                 kind=surface.kind,
                 required=surface.required,
-                # Podcast is a real, not-yet-available surface -- "unknown"
-                # (not "error") so it never reads as broken; it is also never
-                # required, so it cannot affect `ready` below either way.
+                # Podcast and subscriber-notifications are real, not-yet-
+                # available surfaces -- "unknown" (not "error") so neither
+                # reads as broken; both are also never required, so this
+                # cannot affect `ready` below either way.
                 health=(
                     "unknown"
                     if surface.id in FUTURE_SURFACE_IDS
+                    or surface.id in _SERVICE_LEVEL_FUTURE_SURFACE_IDS
                     else ("ok" if readiness.healthy else "error")
                 ),
                 credential_reference=readiness.reference,
@@ -414,11 +446,20 @@ def _provider_failure(
 # Surfaces approve_publish never pre-checks against the provider registry:
 # Portal is gated on manifest_url (not a provider); Podcast has no provider
 # kind yet and is out of WP-03's scope (WP-04 owns the real podcast path;
-# see civiccast.publish.readiness.FUTURE_SURFACE_IDS); the Cable file
-# package has its own local configuredness check
-# (build_cable_file_package_for_asset) that already reports
-# "not_configured" without failing the approval (candidate #17).
-_PROVIDER_PRECHECK_EXCLUDED_SURFACE_IDS = {"portal", CABLE_PACKAGE_SURFACE_ID, *FUTURE_SURFACE_IDS}
+# see civiccast.publish.readiness.FUTURE_SURFACE_IDS); Subscriber
+# notifications has real per-channel readiness logic but its send is
+# deferred to a future release (owner decision 2026-09-02, see
+# _SERVICE_LEVEL_FUTURE_SURFACE_IDS above) -- a misconfigured mail/webhook
+# provider must not block an otherwise-ready publish for a surface that
+# never sends anything yet; the Cable file package has its own local
+# configuredness check (build_cable_file_package_for_asset) that already
+# reports "not_configured" without failing the approval (candidate #17).
+_PROVIDER_PRECHECK_EXCLUDED_SURFACE_IDS = {
+    "portal",
+    CABLE_PACKAGE_SURFACE_ID,
+    *FUTURE_SURFACE_IDS,
+    *_SERVICE_LEVEL_FUTURE_SURFACE_IDS,
+}
 
 
 def _blocked_selected_surfaces(
@@ -686,25 +727,23 @@ def approve_publish(
                 }
             )
         elif surface.id == "subscriber-notifications":
-            notification_payload = NotificationPayload(
-                asset_id=asset.asset_id,
-                title=asset.title,
-                portal_url=asset.manifest_url or f"https://portal.example/watch/{asset.asset_id}",
-                podcast_url="https://portal.example/podcast/government.xml",
-                summary=f"New CivicCast recording published: {asset.title}.",
-                published_at=at,
-            )
+            # Owner decision 2026-09-02: real subscriber notification sends
+            # (mail/webhook fan-out on publish) are deferred to a future
+            # release -- the implementation is parked on
+            # feat/publish-real-subscriber-delivery, not merged here. This
+            # surface used to build a NotificationPayload and mark itself
+            # "succeeded" without ever dispatching it (no send call existed),
+            # so an operator saw a green "sent" state for a notification that
+            # never went out. It must never claim delivery it did not
+            # perform: no payload is built and nothing is sent.
             updated = surface.model_copy(
                 update={
-                    "state": "succeeded",
+                    "state": "coming_soon",
                     "approval": "approved",
-                    "health": "ok",
+                    "health": "unknown",
                     "completed_at": at,
-                    "message": (
-                        "Subscriber notification payload prepared for "
-                        f"{notification_payload.title}."
-                    ),
-                    "next_step": "Use the subscription dispatch proof to verify local mailbox/webhook delivery.",
+                    "message": _SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE.message,
+                    "next_step": _SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE.next_step,
                 }
             )
         elif surface.id == CABLE_PACKAGE_SURFACE_ID:

@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
 from typing import cast
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
@@ -15,7 +15,6 @@ from civiccast.platform.stores import resolve_app_store
 from civiccast.subscribe.models import (
     NotificationDispatchResponse,
     NotificationPayload,
-    RssItem,
     SubscriptionConfirmResponse,
     SubscriptionPublicResponse,
     SubscriptionSignupRequest,
@@ -142,29 +141,70 @@ def unsubscribe_link(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+# Hosts trusted as "this station, running locally" -- matches
+# civiccast.activitypub.config._normalize_base_url's own loopback allowlist,
+# which faced the same problem (a public link built from an env value or a
+# request Host header must never be allowed to point somewhere the operator
+# didn't configure).
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver"}
+
+
+def _resolve_public_base_url(request: Request) -> str:
+    """Resolve the station's real public base URL for public feed links.
+
+    Never invents a host. In priority order:
+
+    1. ``CIVICCAST_PUBLIC_BASE_URL`` (the same env var
+       ``civiccast.activitypub.config.load_activitypub_config`` falls back to
+       for its own ``base_url``) -- the operator's configured real public
+       address, when it parses as a valid absolute http(s) URL.
+    2. The incoming request's own scheme+host, but ONLY when that host is
+       loopback/testserver (local dev/test) or matches the configured
+       station host above -- an arbitrary proxied ``Host`` header must never
+       be trusted to build a link a public RSS reader will follow.
+
+    Returns ``""`` when neither is available, so the caller renders a
+    relative link instead of fabricating one.
+    """
+    configured = os.environ.get("CIVICCAST_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    configured_host: str | None = None
+    if configured:
+        parsed_configured = urlparse(configured)
+        if parsed_configured.scheme in {"http", "https"} and parsed_configured.netloc:
+            configured_host = parsed_configured.hostname
+        else:
+            configured = ""
+
+    if configured:
+        return configured
+
+    request_base = str(request.base_url).rstrip("/")
+    request_host = urlparse(request_base).hostname
+    if request_host and (request_host in _LOOPBACK_HOSTS or request_host == configured_host):
+        return request_base
+
+    return ""
+
+
 @public_router.get(
     "/rss/{target_type}/{target_id}.xml",
     summary="Read a public no-PII subscription RSS feed",
 )
-def rss_feed(target_type: str, target_id: str) -> Response:
+def rss_feed(target_type: str, target_id: str, request: Request) -> Response:
     if target_type not in {"channel", "meeting_body"}:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="RSS feed not found. Use channel or meeting_body feed paths.",
         )
-    xml = subscription_rss(
-        target_type,
-        target_id,
-        [
-            RssItem(
-                title="Example CivicCast recording",
-                link=f"https://portal.example/watch/{target_id}",
-                guid=f"civiccast:{target_type}:{target_id}:example",
-                published_at=datetime.now(UTC),
-                description="Subscribe with this RSS feed to receive public recording notices.",
-            )
-        ],
-    )
+    # There is no published-recording resolver wired to this route yet (that
+    # would mean joining subscribe targets against civiccast.publish's real
+    # per-asset records, out of scope for this fix) -- serving a single
+    # invented "Example CivicCast recording" item with a fake
+    # https://portal.example link on every request looked like a real
+    # published item to any reader/aggregator, which it never was. Until a
+    # real resolver exists, this is an honest, valid, empty feed rather than
+    # a fabricated one.
+    xml = subscription_rss(target_type, target_id, [], base_url=_resolve_public_base_url(request))
     return Response(content=xml, media_type="application/rss+xml")
 
 
