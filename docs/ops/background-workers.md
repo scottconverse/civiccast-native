@@ -204,8 +204,15 @@ Rejected cues are dropped. A queue that is rejected in full completes with
 the recording left uncaptioned rather than publishing text an operator
 refused.
 
-**Recorded-Spanish captions.** With the Spanish leg on (the default —
-`CIVICCAST_OFFLINE_CAPTION_SPANISH=off` disables it), `awaiting_review`
+**Recorded-Spanish captions (required, not optional).** A published
+recording carries an operator-reviewed **Spanish** caption track alongside
+English. This is a product requirement, not a station setting: there is no
+supported configuration that publishes a caption-eligible recording in
+English only, and `CIVICCAST_OFFLINE_CAPTION_SPANISH` no longer disables the
+leg (see the variable table below — a false value now stops startup with an
+error rather than silently taking effect).
+
+With the Spanish leg running, `awaiting_review`
 becomes a two-phase gate. Once the **English** review pass is complete and
 something was approved, the approved English cues are translated to Spanish
 through the same operator-selected translation tier the live tap uses (local
@@ -217,11 +224,46 @@ rewrite (English `captions/en/playlist.m3u8` default + `captions.vtt`, Spanish
 `captions/es/playlist.m3u8` secondary + `captions.es.vtt`). The two passes are
 separated by a `language` column on `caption_review_items` (migration
 `0083_caption_review_language`, default `en`); the operator console's review
-queue shows an EN/ES badge and a language filter. If the operator rejects the
-whole Spanish pass, the English track ships alone. Spanish review rows are
+queue shows an EN/ES badge and a language filter. Spanish review rows are
 created `low_confidence=False` (a translation of human-approved English has no
 ASR audio to retain), so the low-confidence audio-evidence approval gate
 cannot deadlock the Spanish track.
+
+Neither way the Spanish leg can come up empty publishes English alone:
+
+* **No translation runtime available.** The job records an attempt with an
+  operator-facing remediation on `last_error` ("CivicCast has no translation
+  model available to produce the required Spanish track…"), retries on the
+  normal backoff, and lands in `failed` — with that same reason on the row —
+  if the runtime is never repaired. Fix it in **Settings → AI models →
+  Translation**, or run `civiccast doctor`.
+* **The operator rejected every Spanish cue.** The job stays in
+  `awaiting_review` with a remediation on `last_error` and does **not** burn
+  the retry budget: the block is a human decision, not a fault. Open the
+  caption review queue, filter to Spanish, and edit the cues with the correct
+  wording (or approve the ones that are right) — review decisions are not
+  terminal, so a rejected row can be edited. Publication continues on the next
+  poll once at least one Spanish cue is approved or edited.
+
+An asset whose *English* pass approved nothing still completes uncaptioned —
+there is no English track either, so there is nothing to hold the recording
+for.
+
+**CDN republish after review.** Attaching captions rewrites the multivariant
+manifest and writes the caption files on **local disk**. When the asset's
+package was published to a CDN (`CIVICCAST_CDN_PROVIDER`, or credentials
+entered in the setup wizard) before caption review finished, the CDN copy
+still has the pre-caption manifest — so the job re-uploads the rewritten
+manifest, both segmented caption tracks, and both flat sidecars to the same
+key prefix the package was published under
+(`civiccast/captions/cdn_republish.py`, through the same
+`upload_package_files` helper the finalization worker publishes with, so the
+manifest still uploads **last**). Only the caption artifacts are re-uploaded;
+the video renditions are unchanged. A republish failure fails the job with the
+provider's message on the row rather than completing it — a green job on a
+stale CDN manifest would be a false claim that the recording is captioned.
+Nothing is uploaded when no CDN is configured, or when this station has no
+record of publishing that package to the configured CDN.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -230,7 +272,7 @@ cannot deadlock the Spanish track.
 | `CIVICCAST_OFFLINE_CAPTION_BACKOFF_SECONDS` | `300` | Base for exponential backoff (300s, 600s, 1200s, …). |
 | `CIVICCAST_OFFLINE_CAPTION_MAX_ATTEMPTS` | `4` | Attempts per stage before the job is marked `failed` with its reason. |
 | `CIVICCAST_OFFLINE_CAPTION_CHUNK_SECONDS` | `30` | Audio handed to the model per call. Offline has no latency budget, so this is Whisper's own encoder window rather than the live tap's 5 s. |
-| `CIVICCAST_OFFLINE_CAPTION_SPANISH` | `on` | Recorded-Spanish leg. `on` (default) translates the operator-approved English captions to Spanish and queues them for a second review pass before both tracks are attached; `off` publishes English only. |
+| `CIVICCAST_OFFLINE_CAPTION_SPANISH` | *(retired — do not set)* | The recorded-Spanish leg always runs. A false value (`off`/`0`/`false`/`no`) now **fails startup** with an error naming this variable, rather than quietly publishing English-only recordings; a true value is accepted as a no-op and logged. Remove it from the station environment. |
 
 Model, device, and compute type are **not** configured here — the job builds
 its runtime through the same seam the live path uses, which resolves the
@@ -278,9 +320,9 @@ a clean 409 rather than two active jobs or a raw 500.
 ### Known follow-ups (out of One v1 scope)
 
 CivicCast One v1 serves uploaded files through the local portal VOD path;
-LIVE broadcast and CDN delivery are deferred to keystone K4. Two gaps below
-are consequences of that scope line, owner-approved to defer rather than
-fix now:
+LIVE broadcast and CDN delivery are deferred to keystone K4. The items below
+are consequences of that scope line. Item 1 is still open (owner-approved to
+defer); item 2 has since been closed.
 
 1. **A live-finalized recording would transcribe but fail to attach.**
    `_queue_offline_captions` (`civiccast/publish/router.py:163`) resolves an
@@ -307,18 +349,14 @@ fix now:
    already does -- prefer `LiveFinalizationJob.local_package_manifest_path`
    when present, and fall back to the upload convention otherwise.
 
-2. **Caption attach never re-uploads to a CDN.** `attach_reviewed_captions`
-   (`civiccast/captions/vod.py:439`, called from
-   `civiccast/captions/vod_job.py:553`) rewrites the multivariant manifest
-   and writes the segmented WebVTT track and the flat `captions.vtt` sidecar
-   **only on local disk**, inside the asset's package directory. That is
-   correct and complete for One v1, which serves VOD from the local portal
-   origin. It is a gap only for a CDN-backed deployment (`CIVICCAST_CDN_PROVIDER`,
-   the same adapter `LiveFinalizationWorker._upload_package` uses at initial
-   finalization time): once a package has already been pushed to the CDN,
-   attaching captions afterward updates only the local copy, so a CDN-served
-   viewer never sees the caption track or the rewritten manifest entry that
-   declares it. The fix, when CDN-backed deployments are in scope: re-run
-   (or extend) the finalization worker's CDN upload for the rewritten
-   manifest and the new caption-track files after `attach_reviewed_captions`
-   returns.
+2. ~~**Caption attach never re-uploads to a CDN.**~~ **Closed.** Caption
+   attach still writes only local disk, but `OfflineCaptionJobWorker` now
+   re-publishes the rewritten manifest and the new caption files to the CDN
+   the package was published to — see "CDN republish after review" above and
+   `civiccast/captions/cdn_republish.py`. What remains scope-limited is the
+   *reachability*: the only writer of CDN-published VOD packages is
+   `LiveFinalizationWorker`, and follow-up 1 above still keeps live-finalized
+   recordings out of the offline caption path, so on a One v1 station the
+   republisher's lookup finds no CDN-published package and correctly does
+   nothing. The code path is proven by the mock-CDN tests in
+   `tests/captions/test_caption_cdn_republish.py`, not by a live CDN run.

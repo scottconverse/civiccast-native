@@ -101,6 +101,7 @@ from civiccast.auth.store import PostgresStaffTokenStore
 from civiccast.auth.tokens import validate_staff_token_config
 from civiccast.cable.router import public_router as cable_public_router
 from civiccast.cable.router import staff_router as cable_staff_router
+from civiccast.captions.cdn_republish import VodPackageCdnRepublisher
 from civiccast.captions.persistence import (
     PostgresCaptionReviewStore,
     PostgresOfflineCaptionJobStore,
@@ -171,6 +172,7 @@ from civiccast.installer.storage import (
     load_managed_database_url,
     load_managed_upload_dir,
 )
+from civiccast.live.cdn_targets import build_asset_cdn_package_target_lookup
 from civiccast.live.contribution.bridge import NullVdoNinjaBridge, UrlVdoNinjaBridge
 from civiccast.live.contribution.coprocess import (
     ContributionCoprocessSettings,
@@ -1322,6 +1324,18 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # factory: a station with nothing queued never loads the model.
         translation_provider_factory=lambda: build_translator(
             _build_ai_model_service(session_factory)
+        ),
+        # Caption attach rewrites the LOCAL manifest. When this asset's
+        # package is served to residents through a CDN, that copy still has
+        # the pre-caption manifest, so the reviewed EN/ES tracks and the
+        # rewritten manifest are pushed back to the same prefix the package
+        # was published under. No-op (returns None) on a station with no CDN
+        # configured, or for a package this station never CDN-published.
+        cdn_republisher=VodPackageCdnRepublisher(
+            # Resolved per call so setup-wizard credentials entered after
+            # startup take effect, same seam the surge switch uses.
+            lambda: app.state.resolve_cdn_adapter(),
+            build_asset_cdn_package_target_lookup(session_factory),
         ),
         settings=offline_caption_settings,
     )
