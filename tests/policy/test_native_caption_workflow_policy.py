@@ -161,7 +161,12 @@ def test_native_junit_workflow_floors_match_current_exact_collections() -> None:
     win_floor = int(win_floor_match.group(1))
 
     pure_count = _collect_native_tests("not windows_only")
-    win_count = _collect_native_tests()
+    # PR #143 review fix: the Windows step now filters -m "not integration"
+    # (test_upgrade_engine_postgres.py's Docker/Postgres-gated D3 engine
+    # proof would otherwise violate this job's own "nothing may skip"
+    # contract on a runner that cannot reliably run Linux containers) --
+    # count the same way the workflow step actually will.
+    win_count = _collect_native_tests("not integration")
 
     assert pure_floor <= pure_count, (
         f"ci-test.yml's pure-suite --floor {pure_floor} exceeds the real "
@@ -195,6 +200,23 @@ def test_linux_pure_native_lane_uses_the_explicit_platform_marker() -> None:
 
     assert '-m "not windows_only"' in pure_run
     assert '-k "not win"' not in pure_run
+
+
+def test_windows_native_lane_excludes_docker_gated_integration_tests() -> None:
+    """PR #143 review fix companion to the pure-lane marker test above: the
+    Windows job's own next step asserts "nothing may skip" across all of
+    tests/native, so anything that can legitimately skip on that platform
+    (Docker/Postgres-gated tests, currently only
+    test_upgrade_engine_postgres.py) must be filtered OUT of what it runs,
+    not left to skip and trip that assertion."""
+    _text, workflow = _workflow(WORKFLOWS[1])
+    win_run = next(
+        step["run"]
+        for step in workflow["jobs"]["windows-native"]["steps"]
+        if step.get("name") == "Run tests/native (junit)"
+    )
+
+    assert '-m "not integration"' in win_run
 
 
 def test_native_marker_collections_match_the_workflow_floors() -> None:
@@ -1040,7 +1062,14 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # onto PR #127's own floor (1697, 1890) after that PR landed first, and
     # re-derived by an actual `--collect-only` run on this POST-REBASE tree,
     # NOT by adding six to it: (1697, 1890) -> (1703, 1896).
-    assert (collect("not windows_only"), collect()) == (1703, 1896)
+    # fix/d3-preupgrade-drill-and-rollback-containment (Gate A run 33681670855):
+    # one new platform-independent end-to-end proof
+    # (tests/native/test_upgrade_engine_postgres.py, Postgres-gated but not
+    # windows_only) that the real D3 upgrade engine migrates a database from
+    # N-1 to head through the actual production seam bundle. Both lanes
+    # advance by one. Re-derived by an actual `--collect-only` run on this
+    # tree: (1703, 1896) -> (1704, 1897).
+    assert (collect("not windows_only"), collect()) == (1704, 1897)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

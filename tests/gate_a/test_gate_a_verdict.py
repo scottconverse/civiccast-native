@@ -714,6 +714,9 @@ def _write_upgrade_evidence(
     current_install_exit: str = "0",
     d3_route: str = "UPGRADE",
     d3_engine_exit: str = "0",
+    post_upgrade_db_revision: str = "0087_head",
+    expected_head: str = "0087_head",
+    post_upgrade_matches: str | None = None,
 ) -> None:
     prep = [
         "UPGRADE_MODE=1",
@@ -725,11 +728,16 @@ def _write_upgrade_evidence(
         f"CURRENT_PRODUCT_VERSION={current_product_version}",
     ]
     (run_dir / "DIRTY-PREP-RESULT.txt").write_text("\n".join(prep) + "\n", encoding="utf-8")
+    if post_upgrade_matches is None:
+        post_upgrade_matches = "1" if post_upgrade_db_revision == expected_head else "0"
     result = [
         "UPGRADE_MODE=1",
         f"UPGRADE_CURRENT_INSTALL_EXIT={current_install_exit}",
         f"D3_ROUTE={d3_route}",
         f"D3_ENGINE_EXIT={d3_engine_exit}",
+        f"POST_UPGRADE_DB_REVISION={post_upgrade_db_revision}",
+        f"EXPECTED_HEAD={expected_head}",
+        f"POST_UPGRADE_DB_REVISION_MATCHES_HEAD={post_upgrade_matches}",
         "DIRTY_PGDATA_PRESERVED=1 detail=same cluster",
         "DIRTY_UPLOADS_PRESERVED=1",
         "DIRTY_ORPHAN_SEEDED=0",
@@ -837,6 +845,31 @@ def test_cross_version_upgrade_lane_requires_d3_upgrade_route_and_engine_success
     assert result["verdict"] == "FAIL"
 
 
+def test_cross_version_upgrade_lane_requires_post_upgrade_db_revision_to_match_head(
+    tmp_path: Path,
+) -> None:
+    """Gate A run 33681670855 regression test. D3_ENGINE_EXIT=0 and healthy
+    station-up evidence are NOT proof the live database is at the running
+    code's migration head -- that exact combination shipped on kit 7971815
+    (beta.2 -> beta.3) with the station serving 500s over an unmigrated
+    database. The judge must fail closed on a revision mismatch even when
+    every other upgrade signal reports success."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(
+        run_dir,
+        post_upgrade_db_revision="0082_old_head",
+        expected_head="0087_new_head",
+    )
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+
+    assert result["checks"]["dirty_survival"]["status"] == "FAIL"
+    detail = result["checks"]["dirty_survival"]["detail"]
+    assert "POST_UPGRADE_DB_REVISION_MATCHES_HEAD" in detail
+    assert "0082_old_head" in detail
+    assert "0087_new_head" in detail
+    assert result["verdict"] == "FAIL"
+
+
 def test_dirty_lane_missing_evidence_fails_closed(tmp_path: Path) -> None:
     run_dir = _synthetic_pass_dir(tmp_path)
     result = gav.judge(run_dir, source_sha="deadbeef", run_id="123", lane="dirty")
@@ -928,13 +961,21 @@ def _write_download_only_result(
     d3_engine_exit: str = "0",
     station_set_product_version: str = "1.0.0-beta.2",
     current_product_version: str = "1.0.0-beta.2",
+    post_upgrade_db_revision: str = "0087_head",
+    expected_head: str = "0087_head",
+    post_upgrade_matches: str | None = None,
 ) -> None:
+    if post_upgrade_matches is None:
+        post_upgrade_matches = "1" if post_upgrade_db_revision == expected_head else "0"
     lines = [
         "PAYLOAD_DIR=C:\\CivicCastPayload",
         f"STATION_DIR_PRESENT={station_dir_present}",
         f"PHASE2_INSTALL_EXIT={phase2_install_exit}",
         f"D3_ROUTE={d3_route}",
         f"D3_ENGINE_EXIT={d3_engine_exit}",
+        f"POST_UPGRADE_DB_REVISION={post_upgrade_db_revision}",
+        f"EXPECTED_HEAD={expected_head}",
+        f"POST_UPGRADE_DB_REVISION_MATCHES_HEAD={post_upgrade_matches}",
         f"STATION_SET_PRODUCT_VERSION={station_set_product_version}",
         f"CURRENT_PRODUCT_VERSION={current_product_version}",
     ]
@@ -955,6 +996,35 @@ def test_download_only_lane_all_pass(tmp_path: Path) -> None:
     for name in DOWNLOAD_ONLY_CHECKS:
         assert result["checks"][name]["status"] == "PASS", result["checks"][name]["detail"]
     assert result["verdict"] == "PASS"
+
+
+def test_download_only_lane_requires_post_upgrade_db_revision_to_match_head(
+    tmp_path: Path,
+) -> None:
+    """Same Gate A run 33681670855 regression, download-only lane."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(
+        run_dir,
+        post_upgrade_db_revision="0082_old_head",
+        expected_head="0087_new_head",
+    )
+    _write_download_only_result(
+        run_dir,
+        post_upgrade_db_revision="0082_old_head",
+        expected_head="0087_new_head",
+    )
+    result = gav.judge(run_dir, source_sha="b" * 40, run_id="123", lane="download-only")
+
+    # dirty_survival is checked first and fails on the same shared evidence;
+    # download_only_no_station_dir carries the same guard independently since
+    # its own DOWNLOAD-ONLY-RESULT.txt is the file it actually reads.
+    assert result["checks"]["dirty_survival"]["status"] == "FAIL"
+    assert result["checks"]["download_only_no_station_dir"]["status"] == "FAIL"
+    assert (
+        "POST_UPGRADE_DB_REVISION_MATCHES_HEAD"
+        in result["checks"]["download_only_no_station_dir"]["detail"]
+    )
+    assert result["verdict"] == "FAIL"
 
 
 def test_download_only_lane_missing_evidence_fails_closed(tmp_path: Path) -> None:

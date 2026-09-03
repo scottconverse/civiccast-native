@@ -2414,7 +2414,19 @@ try {
     $summary.runtime_checks = [ordered]@{}
 
     # ---- health: the ONLY endpoint with the long (20-minute) bound ----
-    $healthRes = [ordered]@{ url = $endpoints.health; status = $null; ok = $false; bytes = 0; snippet = $null; error = $null; polls = 0 }
+    # Gate A run 33681670855 fix: civiccast/app.py's /health docstring is
+    # explicit that HTTP 200 is LIVENESS ONLY ("always 200 while the process
+    # answers, in every schema state") and READINESS is the JSON body's
+    # `status` field (healthy/degraded) plus `schema` (current/behind/...).
+    # Gating on status-code-200-and-nonempty-body alone (the previous
+    # behavior here) reported STATION HEALTHY for a beta.3 station serving
+    # 500s over an unmigrated beta.2 database, whose body read
+    # {"status":"degraded","schema":"behind",...}. STATION HEALTHY now
+    # requires the body itself to say status=="healthy" and schema=="current".
+    $healthRes = [ordered]@{
+        url = $endpoints.health; status = $null; ok = $false; bytes = 0; snippet = $null; error = $null; polls = 0
+        body_status = $null; body_schema = $null; db_revision = $null; expected_head = $null
+    }
     $stationFirstHealthyTime = $null
     $healthDeadline = (Get-Date).AddMinutes(20)
     while ((Get-Date) -lt $healthDeadline) {
@@ -2426,13 +2438,41 @@ try {
             $body = [string]$r.Content
             $healthRes.bytes = $body.Length
             $healthRes.snippet = ($body.Substring(0, [Math]::Min(300, $body.Length))) -replace '\s+', ' '
-            if ($healthRes.status -eq 200 -and $healthRes.bytes -gt 0) {
+
+            $parsed = $null
+            $parseError = $null
+            if ($healthRes.bytes -gt 0) {
+                try {
+                    $parsed = $body | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                    $parseError = "$($_.Exception.Message)"
+                }
+            }
+            if ($parsed) {
+                $healthRes.body_status = [string]$parsed.status
+                $healthRes.body_schema = [string]$parsed.schema
+                if ($parsed.PSObject.Properties.Name -contains 'schema_db_revision') {
+                    $healthRes.db_revision = [string]$parsed.schema_db_revision
+                }
+                if ($parsed.PSObject.Properties.Name -contains 'schema_expected_head') {
+                    $healthRes.expected_head = [string]$parsed.schema_expected_head
+                }
+            }
+
+            $isHealthy = ($healthRes.status -eq 200) -and $parsed -and
+                ($healthRes.body_status -eq 'healthy') -and ($healthRes.body_schema -eq 'current')
+
+            if ($isHealthy) {
                 $healthRes.ok = $true
                 $stationFirstHealthyTime = Get-Date
-                "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) STATION HEALTHY" | Add-Content -Path $stationWaitLog -Encoding UTF8
+                "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) body_status:$($healthRes.body_status) body_schema:$($healthRes.body_schema) STATION HEALTHY" | Add-Content -Path $stationWaitLog -Encoding UTF8
                 break
             }
-            "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) ok:false bytes:$($healthRes.bytes)" | Add-Content -Path $stationWaitLog -Encoding UTF8
+            if ($parsed) {
+                "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) ok:false body_status:$($healthRes.body_status) body_schema:$($healthRes.body_schema) db_revision:$($healthRes.db_revision) expected_head:$($healthRes.expected_head) DEGRADED (readiness body did not report healthy/current)" | Add-Content -Path $stationWaitLog -Encoding UTF8
+            } else {
+                "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) ok:false bytes:$($healthRes.bytes) body_parse_error:$parseError" | Add-Content -Path $stationWaitLog -Encoding UTF8
+            }
         } catch {
             $healthRes.error = "$($_.Exception.Message)"
             "poll #$($healthRes.polls) $pollTs -> ERROR: $($healthRes.error)" | Add-Content -Path $stationWaitLog -Encoding UTF8
@@ -2440,11 +2480,11 @@ try {
         Start-Sleep -Seconds 6
     }
     if (-not $healthRes.ok) {
-        "wait_ended_utc=$((Get-Date).ToUniversalTime().ToString('o')) result=TIMEOUT total_polls=$($healthRes.polls) (20-minute bounded deadline reached, station never answered /api/health)" |
+        "wait_ended_utc=$((Get-Date).ToUniversalTime().ToString('o')) result=TIMEOUT total_polls=$($healthRes.polls) (20-minute bounded deadline reached, station never reported healthy/current at /api/health)" |
             Add-Content -Path $stationWaitLog -Encoding UTF8
     }
     $summary.runtime_checks['health'] = $healthRes
-    "health=status:$($healthRes.status) ok:$($healthRes.ok) bytes:$($healthRes.bytes) polls:$($healthRes.polls) err:$($healthRes.error)" | Add-Content -Path $rt -Encoding UTF8
+    "health=status:$($healthRes.status) ok:$($healthRes.ok) body_status:$($healthRes.body_status) body_schema:$($healthRes.body_schema) db_revision:$($healthRes.db_revision) expected_head:$($healthRes.expected_head) bytes:$($healthRes.bytes) polls:$($healthRes.polls) err:$($healthRes.error)" | Add-Content -Path $rt -Encoding UTF8
 
     $summary.station_up = [bool]$healthRes.ok
     $summary.station_first_healthy_utc = if ($stationFirstHealthyTime) { $stationFirstHealthyTime.ToUniversalTime().ToString('o') } else { $null }
@@ -2543,6 +2583,27 @@ try {
             "UPGRADE_CURRENT_INSTALL_EXIT=$($summary.installer_exit_code)" | Add-Content -Path $dirtyRes -Encoding UTF8
             "D3_ROUTE=$($script:D3Route)" | Add-Content -Path $dirtyRes -Encoding UTF8
             "D3_ENGINE_EXIT=$($script:D3EngineExit)" | Add-Content -Path $dirtyRes -Encoding UTF8
+
+            # Gate A run 33681670855 fix: the station-up health check proved
+            # /health said healthy/current, but D3 rehoming's real defect was
+            # a pre-upgrade DRILL that compared the wrong revision -- the
+            # actual proof an upgrade committed is that the LIVE database's
+            # revision equals the running code's migration head, both read
+            # straight from the same /health poll that declared the station
+            # up (civiccast/app.py now returns schema_db_revision/
+            # schema_expected_head unconditionally, not just when "behind").
+            # POST_UPGRADE_DB_REVISION_MATCHES_HEAD=0 fails this lane even if
+            # station_up=1, because "the process answered 200" was exactly
+            # the weaker claim Gate A run 33681670855 shipped on.
+            $postUpgradeRevision = if ($healthRes.db_revision) { $healthRes.db_revision } else { '<unavailable>' }
+            $postUpgradeExpectedHead = if ($healthRes.expected_head) { $healthRes.expected_head } else { '<unavailable>' }
+            $postUpgradeMatches = [int](
+                $healthRes.ok -and $postUpgradeRevision -ne '<unavailable>' -and
+                ($postUpgradeRevision -eq $postUpgradeExpectedHead)
+            )
+            "POST_UPGRADE_DB_REVISION=$postUpgradeRevision" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "EXPECTED_HEAD=$postUpgradeExpectedHead" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "POST_UPGRADE_DB_REVISION_MATCHES_HEAD=$postUpgradeMatches" | Add-Content -Path $dirtyRes -Encoding UTF8
         }
         $pdRoot = Join-Path $env:ProgramData 'CivicCast'
 
@@ -2627,6 +2688,21 @@ try {
         "PHASE2_INSTALL_EXIT=$($summary.installer_exit_code)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
         "D3_ROUTE=$($script:D3Route)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
         "D3_ENGINE_EXIT=$($script:D3EngineExit)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+
+        # Gate A run 33681670855 fix: same proof as the dirty lane above --
+        # station_up=1 (a 200 with a healthy/current body) is not itself
+        # proof the running database is at the running code's migration
+        # head; read both revisions straight from the same station-up health
+        # poll and judge them explicitly.
+        $postUpgradeRevisionDl = if ($healthRes.db_revision) { $healthRes.db_revision } else { '<unavailable>' }
+        $postUpgradeExpectedHeadDl = if ($healthRes.expected_head) { $healthRes.expected_head } else { '<unavailable>' }
+        $postUpgradeMatchesDl = [int](
+            $healthRes.ok -and $postUpgradeRevisionDl -ne '<unavailable>' -and
+            ($postUpgradeRevisionDl -eq $postUpgradeExpectedHeadDl)
+        )
+        "POST_UPGRADE_DB_REVISION=$postUpgradeRevisionDl" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+        "EXPECTED_HEAD=$postUpgradeExpectedHeadDl" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+        "POST_UPGRADE_DB_REVISION_MATCHES_HEAD=$postUpgradeMatchesDl" | Add-Content -Path $dlOnlyResult -Encoding UTF8
 
         $stationSetHits = @($summary.station_set_json_found)
         $stationSetProductVersion = '<missing>'

@@ -501,7 +501,8 @@ function Invoke-CivicCastApi {
 function Wait-CivicCastStationHealth {
     <#
     .SYNOPSIS
-        Poll /api/health on a single bounded deadline until the station answers 200.
+        Poll /api/health on a single bounded deadline until the station reports
+        healthy readiness, not merely a 200 status code.
     .DESCRIPTION
         ONE endpoint, ONE deadline. Gate A learned this the hard way: probing
         several surfaces on independent unbounded loops meant a station that
@@ -510,10 +511,27 @@ function Wait-CivicCastStationHealth {
         process is alive (civiccast/app.py), so it is the only surface whose
         silence means "not up yet" rather than "not ready yet".
 
+        Gate A run 33681670855 fix: civiccast/app.py's own /health docstring
+        says HTTP 200 is LIVENESS ONLY -- "always 200 while the process
+        answers, in every schema state" -- and READINESS is the ``status``
+        field in the JSON body (``healthy`` vs ``degraded``), with ``schema``
+        reporting migration currency (``current`` / ``behind`` / ...). Gating
+        on status-code-200-and-nonempty-body alone (the previous behavior of
+        this function) is exactly the shape /health's own docstring warns
+        callers not to use: it reported STATION HEALTHY for a beta.3 station
+        serving 500s over a beta.2 (pre-migration) database, because the body
+        was ``{"status":"degraded","schema":"behind",...}`` -- 200, non-empty,
+        and completely unready. STATION HEALTHY now requires the BODY to say
+        ``status == "healthy"`` AND ``schema == "current"``; any other body
+        (including a 200 with a JSON-unparseable body) polls again until the
+        deadline, and the last observed body's status/schema/revision fields
+        are carried on the returned result for the caller to log.
+
         Every poll is logged with its timestamp and outcome, so a failure has a
         trail rather than a single "timed out" line.
 
-        Returns a hashtable: ok, status, polls, first_healthy_utc, error.
+        Returns a hashtable: ok, status, polls, first_healthy_utc, error,
+        body_status, body_schema, db_revision, expected_head.
     #>
     [CmdletBinding()]
     param(
@@ -526,6 +544,7 @@ function Wait-CivicCastStationHealth {
     $result = [ordered]@{
         url = "$BaseUrl/api/health"; ok = $false; status = $null; bytes = 0
         polls = 0; first_healthy_utc = $null; error = $null
+        body_status = $null; body_schema = $null; db_revision = $null; expected_head = $null
     }
     $deadline = (Get-Date).AddMinutes($DeadlineMinutes)
     while ((Get-Date) -lt $deadline) {
@@ -536,18 +555,49 @@ function Wait-CivicCastStationHealth {
             $result.status = [int]$response.StatusCode
             $body = [string]$response.Content
             $result.bytes = $body.Length
-            if ($result.status -eq 200 -and $result.bytes -gt 0) {
+
+            $parsed = $null
+            $parseError = $null
+            if ($result.bytes -gt 0) {
+                try {
+                    $parsed = $body | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                    $parseError = "$($_.Exception.Message)"
+                }
+            }
+
+            if ($parsed) {
+                $result.body_status = [string]$parsed.status
+                $result.body_schema = [string]$parsed.schema
+                if ($parsed.PSObject.Properties.Name -contains 'schema_db_revision') {
+                    $result.db_revision = [string]$parsed.schema_db_revision
+                }
+                if ($parsed.PSObject.Properties.Name -contains 'schema_expected_head') {
+                    $result.expected_head = [string]$parsed.schema_expected_head
+                }
+            }
+
+            $isHealthy = ($result.status -eq 200) -and $parsed -and
+                ($result.body_status -eq 'healthy') -and ($result.body_schema -eq 'current')
+
+            if ($isHealthy) {
                 $result.ok = $true
                 $result.first_healthy_utc = $stamp
                 if ($LogFile) {
-                    "poll #$($result.polls) $stamp -> status:$($result.status) STATION HEALTHY" |
+                    "poll #$($result.polls) $stamp -> status:$($result.status) body_status:$($result.body_status) body_schema:$($result.body_schema) STATION HEALTHY" |
                         Add-Content -LiteralPath $LogFile -Encoding UTF8
                 }
                 return $result
             }
+
             if ($LogFile) {
-                "poll #$($result.polls) $stamp -> status:$($result.status) ok:false bytes:$($result.bytes)" |
-                    Add-Content -LiteralPath $LogFile -Encoding UTF8
+                if ($parsed) {
+                    "poll #$($result.polls) $stamp -> status:$($result.status) ok:false body_status:$($result.body_status) body_schema:$($result.body_schema) db_revision:$($result.db_revision) expected_head:$($result.expected_head) DEGRADED (readiness body did not report healthy/current)" |
+                        Add-Content -LiteralPath $LogFile -Encoding UTF8
+                } else {
+                    "poll #$($result.polls) $stamp -> status:$($result.status) ok:false bytes:$($result.bytes) body_parse_error:$parseError" |
+                        Add-Content -LiteralPath $LogFile -Encoding UTF8
+                }
             }
         } catch {
             $result.error = "$($_.Exception.Message)"

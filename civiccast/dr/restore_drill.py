@@ -1022,6 +1022,7 @@ def run_postgres_restore_drill(
     restore_database_name: str = "civiccast_drill_restore",
     pg_restore_command: list[str] | None = None,
     psql_command: list[str] | None = None,
+    expected_revision: str | None = None,
 ) -> RestoreDrillReport:
     """Restore ``manifest``'s Postgres dump into a brand-new database and verify it.
 
@@ -1076,6 +1077,41 @@ def run_postgres_restore_drill(
     single network-reachable Postgres, no container indirection). Pass it
     explicitly whenever the two views differ, e.g. a host-mapped
     testcontainers URL alongside an in-container exec prefix.
+
+    ``expected_revision`` overrides what ``schema_ok`` is compared against.
+    It defaults to :func:`civiccast.schema_check.expected_migration_head`
+    (the running CODE's migration head) -- the correct question for a
+    disaster-recovery drill, where the restored copy is meant to prove the
+    backup can stand back up as a live replacement for today's code.
+
+    A PRE-UPGRADE backup drill is a different question: it restores a dump
+    taken from the OLD version's database, before the new version's
+    migrations have run, so comparing against the NEW code's head is always
+    false the moment a release ships any migration at all (D3 root cause,
+    Gate A run 33681670855). Callers verifying a pre-upgrade backup should
+    pass ``expected_revision=<the source database's own revision at backup
+    time>`` -- ``schema_ok`` then asks the honest question for that context:
+    does the restored copy match what was actually dumped.
+
+    A second consequence of that same PRE-UPGRADE case (found via a real
+    Postgres end-to-end run of :func:`civiccast.native.upgrade.orchestrator.
+    run_upgrade` in ``tests/native/test_upgrade_engine_postgres.py``, not
+    hypothetically): the ``app_store_reads`` block below queries through
+    this RUNNING code's own ORM models, which only understand the CURRENT
+    schema. Restoring a pre-migration backup on purpose (exactly what
+    ``expected_revision`` above exists for) means the restored copy is
+    missing columns a later migration adds, so an unconditional ORM read
+    raises a real ``psycopg.errors.UndefinedColumn`` there -- not a backup
+    defect, a wrong-tool-for-the-job defect. That block therefore only runs
+    when the restored copy's ACTUAL revision equals the running code's real
+    head (:func:`civiccast.schema_check.expected_migration_head`, never
+    ``expected_revision`` itself, which is deliberately the OLD revision for
+    a pre-upgrade drill) -- the one condition under which the ORM can
+    honestly read the data back. A pre-upgrade drill that skips it still
+    gets the schema-agnostic proof (the row/checksum table comparison,
+    above) and the schema-revision proof; only the ORM-specific query is
+    skipped, and only when it would be answering a question that does not
+    apply.
     """
 
     started_at = datetime.now(UTC)
@@ -1108,7 +1144,11 @@ def run_postgres_restore_drill(
     restored_verify_url = _with_database_name(verify_source_url, restore_database_name)
 
     db_revision = schema_check.read_db_revision(restored_verify_url)
-    expected_head = schema_check.expected_migration_head()
+    expected_head = (
+        expected_revision
+        if expected_revision is not None
+        else schema_check.expected_migration_head()
+    )
     schema_ok = db_revision == expected_head
 
     if source_revision != db_revision:
@@ -1177,16 +1217,39 @@ def run_postgres_restore_drill(
             )
 
         session_factory = sessionmaker(bind=engine, future=True)
-        try:
-            app_store_reads["assets"] = len(PostgresAssetStore(session_factory).list())
-        except Exception as exc:
-            errors.append(f"asset store read-through failed: {exc}")
-        try:
-            app_store_reads["egress_configs"] = len(
-                PostgresEgressStore(session_factory).list_configs()
-            )
-        except Exception as exc:
-            errors.append(f"egress store read-through failed: {exc}")
+        # The app-store read-through below queries through the RUNNING
+        # code's own ORM models (PostgresAssetStore/PostgresEgressStore),
+        # mapped to the CURRENT code's schema -- meaningful proof for a real
+        # DR drill (restoring a CURRENT-head backup, which this ORM can
+        # always read) but not for a PRE-UPGRADE drill restoring an OLD,
+        # pre-migration backup ON PURPOSE (Fix A's whole point:
+        # ``expected_revision`` lets a caller assert the restore matches
+        # what was actually dumped, not today's code). Querying an old-schema
+        # table for a column a LATER migration adds raises a real
+        # ``UndefinedColumn`` there -- not a backup defect, a
+        # mismatched-tool-for-the-job defect this fix closes. Real Postgres
+        # proof: tests/native/test_upgrade_engine_postgres.py hit exactly
+        # this restoring a database one migration behind
+        # 0087_retention_terms (PostgresAssetStore.list() selects
+        # ``assets.retention_term_unit``, which does not exist at N-1).
+        # Gate on the RESTORED COPY's actual revision matching the CODE's
+        # real head (not the caller's ``expected_revision``, which for a
+        # pre-upgrade drill is deliberately the OLD revision) -- that is the
+        # one condition under which this ORM can honestly read the data back.
+        # A pre-upgrade drill that skips this therefore still gets the
+        # schema-agnostic proof (row/checksum table comparison, above) and
+        # the schema-revision proof; only the ORM-specific query is skipped.
+        if db_revision == schema_check.expected_migration_head():
+            try:
+                app_store_reads["assets"] = len(PostgresAssetStore(session_factory).list())
+            except Exception as exc:
+                errors.append(f"asset store read-through failed: {exc}")
+            try:
+                app_store_reads["egress_configs"] = len(
+                    PostgresEgressStore(session_factory).list_configs()
+                )
+            except Exception as exc:
+                errors.append(f"egress store read-through failed: {exc}")
     finally:
         engine.dispose()
 

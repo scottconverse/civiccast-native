@@ -609,6 +609,26 @@ def check_dirty_survival(output_dir: Path) -> CheckResult:
             return _fail(
                 f"DIRTY-RESULT.txt D3_ENGINE_EXIT={d3_engine_exit or '<missing>'} (expected 0)"
             )
+        # Gate A run 33681670855 fix: D3_ENGINE_EXIT=0 and a healthy/current
+        # station-up body are NOT the same claim as "the live database is at
+        # the code's migration head" -- that run shipped exactly this gap
+        # (a pre-upgrade restore-drill false-negative rolled the engine back,
+        # but the flat-layout installer still finished, provisioned, and
+        # started a service that happened to answer /health 200 over the
+        # unmigrated database's OLD schema, which is a legitimately different
+        # state from "the upgrade committed"). Judge the two revisions
+        # explicitly instead of inferring them from exit codes alone.
+        matches = _dirty_line(text, "POST_UPGRADE_DB_REVISION_MATCHES_HEAD")
+        db_revision = _dirty_line(text, "POST_UPGRADE_DB_REVISION")
+        expected_head = _dirty_line(text, "EXPECTED_HEAD")
+        if matches != "1":
+            return _fail(
+                "DIRTY-RESULT.txt POST_UPGRADE_DB_REVISION_MATCHES_HEAD="
+                f"{matches or '<missing>'} (expected 1): POST_UPGRADE_DB_REVISION="
+                f"{db_revision or '<missing>'} EXPECTED_HEAD={expected_head or '<missing>'} -- "
+                "D3_ENGINE_EXIT=0 alone does not prove the live database is at the running "
+                "code's migration head"
+            )
     pg = _dirty_line(text, "DIRTY_PGDATA_PRESERVED")
     if pg != "1":
         return _fail(f"DIRTY-RESULT.txt DIRTY_PGDATA_PRESERVED={pg or '<missing>'} (expected 1)")
@@ -737,6 +757,19 @@ def check_download_only_no_station_dir(output_dir: Path) -> CheckResult:
         return _fail(
             f"DOWNLOAD-ONLY-RESULT.txt D3_ENGINE_EXIT={d3_engine_exit or '<missing>'} (expected 0 "
             "-- the D4 activation step must have exited 0 with no station\\ directory present)"
+        )
+
+    # Gate A run 33681670855 fix: same reasoning as check_dirty_survival's
+    # UPGRADE_MODE branch -- a healthy/current station-up body is not itself
+    # proof the live database is at the running code's migration head.
+    matches = _dirty_line(text, "POST_UPGRADE_DB_REVISION_MATCHES_HEAD")
+    db_revision = _dirty_line(text, "POST_UPGRADE_DB_REVISION")
+    expected_head = _dirty_line(text, "EXPECTED_HEAD")
+    if matches != "1":
+        return _fail(
+            "DOWNLOAD-ONLY-RESULT.txt POST_UPGRADE_DB_REVISION_MATCHES_HEAD="
+            f"{matches or '<missing>'} (expected 1): POST_UPGRADE_DB_REVISION="
+            f"{db_revision or '<missing>'} EXPECTED_HEAD={expected_head or '<missing>'}"
         )
 
     station_set_version = _dirty_line(text, "STATION_SET_PRODUCT_VERSION")

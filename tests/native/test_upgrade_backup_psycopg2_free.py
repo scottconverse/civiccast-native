@@ -222,6 +222,19 @@ def test_d3_step_three_backup_seam_actually_reaches_the_restore_drill(
 
     monkeypatch.setattr(upgrade_seams, "run_full_backup", _fake_full_backup)
     monkeypatch.setattr(upgrade_seams, "run_postgres_restore_drill", _fake_drill)
+    # Gate A run 33681670855 fix (Fix A): _backup now reads the SOURCE
+    # database's own current revision (to pass as run_postgres_restore_drill's
+    # expected_revision -- the pre-upgrade drill's honest question, "does the
+    # restore match what was dumped", not the DR-drill's "does it match
+    # today's code") BEFORE calling the drill. That read goes through
+    # civiccast.schema_check.read_db_revision, which this test's fake
+    # unreachable _BARE_POSTGRES_URL would otherwise hang on for a real
+    # bounded-connect timeout (see the module docstring on why port 1 does
+    # not refuse immediately in every environment) -- fake it out too so this
+    # stays a fast, network-free proof of "the seam reaches the drill".
+    monkeypatch.setattr(
+        "civiccast.schema_check.read_db_revision", lambda database_url: "fake-source-revision"
+    )
 
     context = UpgradeContext(
         install_root=str(tmp_path / "install"),

@@ -131,7 +131,7 @@
 ; year, day-of-week [captured but unused -- this log format has never
 ; carried a weekday and adding one is not this fix's job], hour, minute,
 ; second). Chosen because those seven are used NOWHERE ELSE in this file
-; (confirmed by grep) -- unlike $0, $1, $9, and $R0-$R4, which ARE live
+; (confirmed by grep) -- unlike $0, $1, $9, and $R0-$R3, which ARE live
 ; inside various CIVICCAST_STEP callers' own ${TEXT} argument (e.g.
 ; "...returned $0", "...(old=$R0)", "...$CIVICCAST_TEARDOWN_EXIT") and must
 ; still hold their CALLER's value, unmodified, by the time this macro's own
@@ -376,6 +376,23 @@
 ; the same reason every other D4 step has one: the exit code is the only
 ; signal a support log carries about WHICH step failed.
 !define CIVICCAST_EXIT_D4_ACTIVATION         123
+
+; Gate A run 33681670855 fix (D3 pre-upgrade drill false-negative +
+; flat-layout rollback containment): under --flat-installer-layout, D3 engine
+; exit 10 (ROLLED_BACK) does NOT mean this machine is healthy on the old
+; version. adapt_flat_installer_layout's read_junction/lay_tree/flip_junction
+; are all no-ops over the single "$INSTDIR\runtime" tree the bootstrap already
+; extracted the NEW payload into BEFORE the engine ever ran -- there is no
+; separate app\<version> + junction pair for a rollback to flip back to. So a
+; clean ROLLED_BACK here leaves NEW code sitting over a database the engine
+; deliberately did NOT migrate. Continuing past this point (as the former
+; CIVICCAST_NOTICE branch did) would let D4 register and start the service on
+; that mismatched pair. This code is distinct from CIVICCAST_EXIT_D3_HALTED
+; (113): 113 means the engine's OWN rollback failed and it halted itself;
+; 124 means the engine's rollback succeeded exactly as designed but the flat
+; layout it ran under cannot honor what a "rollback" promises, so the
+; installer -- not the engine -- must fail closed instead.
+!define CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT   124
 
 ; Carries the --civiccast-teardown-native-state CLI's exit code from
 ; NSIS_HOOK_PREUNINSTALL (where the teardown call must run -- see that
@@ -830,12 +847,6 @@ Var CIVICCAST_TEARDOWN_EXIT
   ${EndIf}
   StrCpy $R2 ""
   ReadRegStr $R2 HKLM "Software\CivicCast\Native" "DatabaseUrl"
-  ; CRITICAL fix latch (2026-07-30 adversarial review): "0" (default) means
-  ; the InstalledVersion write at the end of this macro runs normally; the
-  ; exit==10 (clean rollback) branch below sets this to "1" so that write is
-  ; SKIPPED instead -- see the exit==10 branch and the gated write at the end
-  ; of this macro for the full justification.
-  StrCpy $R4 "0"
   ; UPGRADE-VS-FRESH ROUTING (chain K/K2, real-hardware R7, 2026-08-01).
   ;
   ; This block used to hold the routing gate itself:
@@ -902,7 +913,7 @@ Var CIVICCAST_TEARDOWN_EXIT
     ; adopts any preserved PostgreSQL cluster and its credential as-is (its
     ; own decision matrix already treats an existing DatabaseUrl as reuse, not
     ; regenerate). The InstalledVersion write at the end of this macro runs
-    ; normally -- this run really is installing ${VERSION}, so $R4 stays "0".
+    ; normally -- this run really is installing ${VERSION}.
     ; The engine's own reason line (which names the preserved data root it is
     ; adopting) is already in this log via nsExec::ExecToLog and in
     ; $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log.
@@ -919,56 +930,59 @@ Var CIVICCAST_TEARDOWN_EXIT
     DetailPrint "CivicCast (Native): version ${VERSION} is already installed — there is no database migration to run, so the install/upgrade engine did nothing. Your data was not drained, backed up, migrated, or changed."
     !insertmacro CIVICCAST_STEP "step d3-engine: NO-OP (same version ${VERSION} already installed; no migration to run)"
   ${ElseIf} $0 == 10
-    ; CRITICAL fix (2026-07-30 adversarial review): a clean rollback was
-    ; previously recorded as a SUCCESSFUL upgrade -- this branch only
-    ; DetailPrinted and fell through to the InstalledVersion write at the end
-    ; of this macro, stamping ${VERSION} on a machine the D3 engine's own
-    ; contract (civiccast.native.upgrade.orchestrator._rollback) had just left
-    ; healthy and RUNNING on $R0 (junction flipped back, interlock released).
-    ; DESIGN CHOICE (b), not (a) CIVICCAST_FAIL: that healthy, running state
-    ; is why this does NOT abort the whole install -- it would misreport a
-    ; fine box as a failed setup. What must not happen is the write itself:
-    ; the D3 gate's NEXT run trusts InstalledVersion as the TRUE old version
-    ; (see the ReadRegStr above), so a false write here feeds a wrong
-    ; --old-version into the next upgrade. Latch $R4 so the write below is
-    ; skipped, and notify via CIVICCAST_NOTICE (see its definition above for
-    ; why not CIVICCAST_FAIL/CIVICCAST_ALERT -- this is not a failure).
-    StrCpy $R4 "1"
+    ; HISTORY: a 2026-07-30 adversarial-review fix stopped this branch from
+    ; recording a clean rollback as a SUCCESSFUL upgrade (it used to
+    ; DetailPrint only and fall through to the InstalledVersion write at the
+    ; end of this macro). It then continued the install with a non-fatal
+    ; CIVICCAST_NOTICE, correct ONLY for the app\<version> + junction layout,
+    ; where flip_junction really does restore the old binary tree.
     ;
-    ; ===================================================================
-    ; F-03 (2026-08-01 sandbox newcomer re-walk dd7f835f): the operator
-    ; dialog used to be raised RIGHT HERE, and it was false three ways.
+    ; Gate A run 33681670855 CRITICAL fix (2026-09-02) supersedes that
+    ; continue-with-notice behavior. This invocation (see the nsExec::
+    ; ExecToLog call above) always passes --flat-installer-layout, under
+    ; which adapt_flat_installer_layout (civiccast/native/upgrade/seams.py)
+    ; makes read_junction/lay_tree/flip_junction no-ops over the single
+    ; "$INSTDIR\runtime" tree this bootstrap already extracted the NEW
+    ; payload into BEFORE the engine ran, so under that layout a ROLLED_BACK
+    ; report leaves the NEW code sitting in $INSTDIR\runtime regardless of
+    ; what caused the rollback. On real hardware (Gate A run 33681670855, kit
+    ; 7971815, beta.2 -> beta.3) the old DetailPrint-only branch let setup
+    ; fall through to D4, which provisioned, activated, and registered/
+    ; started the service on that mismatched new-code/old-schema pair, so the
+    ; box ended the run serving 500s under a NOTICE-only log with exit code 0.
     ;
-    ;   "could not complete the upgrade to 1.0.0-rc15 and automatically
-    ;    rolled back. The previously installed version is healthy and still
-    ;    running -- no data was lost."
+    ; WHAT CAUSED IT is deliberately NOT named in the operator text below.
+    ; Exit 10 (ROLLED_BACK) is reached from orchestrator._drive_forward's
+    ; single funnel (`except Exception as exc: return _rollback(journal,
+    ; seams, reason=str(exc), attempting=attempting)`) -- ANY operational step
+    ; can raise into it: drain/quiesce, the pre-upgrade backup/restore-drill
+    ; (the Gate A run 33681670855 root cause, but only ONE of several
+    ; possible causes), migrate, or the post-migration health gate. An
+    ; earlier draft of this message named the backup check specifically;
+    ; that was wrong for every other funneled cause. The real, specific
+    ; reason lives in two places an operator or support engineer can read:
+    ; upgrade-engine.log (which __main__.py now appends `outcome.journal.
+    ; error` to, not just the bare phase name -- see that file's outcome-
+    ; logging fix in the same PR) and the full journal at
+    ; upgrade-journal.json beside it. The runtime-generated
+    ; UPGRADE-RECOVERY.md doc (cited by exit 20/CIVICCAST_EXIT_D3_HALTED
+    ; below) is NOT cited here: orchestrator.py only ever writes it from
+    ; _halt, i.e. on HALTED_RESTORE_FAILED (exit 20) -- it does not exist for
+    ; a plain ROLLED_BACK, and citing a file that is not there would be
+    ; exactly the kind of unverified claim this codebase's own audit
+    ; protocol forbids.
     ;
-    ; while the machine held a complete 1.19 GB install, a RUNNING
-    ; CivicCastSupervisor and a live API answering /health 200 "healthy" on
-    ; :8000 -- and had never had a prior install at all (the "previous
-    ; version" was a leftover registry value, F-01).
-    ;
-    ; Two separate defects, both fixed by MOVING the dialog rather than
-    ; rewording it in place:
-    ;
-    ;  (1) TIMING. This point is BEFORE D4 provisioning, service
-    ;      registration and the firewall rule. Any claim made here about
-    ;      what is or is not running on this machine is a claim about a
-    ;      state that has not happened yet. The dialog now runs at the END
-    ;      of this macro, where the final state exists and can be READ.
-    ;  (2) SUBSTANCE. Exit 10 means the D3 UPGRADE ENGINE reverted ITS OWN
-    ;      work. It has never meant setup was undone -- the chain continues
-    ;      past this branch and installs everything. "Automatically rolled
-    ;      back", unqualified, is what the re-walk operator read as the
-    ;      install being undone.
-    ;
-    ; What stays here is a factual, attributed breadcrumb: the engine's own
-    ; report, labelled as the engine's report. Nothing about machine state.
-    ; The $R4 latch (the InstalledVersion write below is skipped) is
-    ; unchanged.
-    ; ===================================================================
-    DetailPrint "CivicCast (Native): the D3 upgrade engine reported a clean rollback of its own work (engine exit 10); setup continues, and this machine's final state is reported at the end of this log."
-    !insertmacro CIVICCAST_STEP "step d3-engine: engine reported a clean rollback of its own work (exit 10); InstalledVersion write latched off"
+    ; So: fail closed here. CIVICCAST_FAIL aborts before any D4 step runs --
+    ; the service is never registered or started on the new payload. The
+    ; previous version's DATABASE is intact regardless of which step
+    ; funneled into this rollback: a pre-mutation failure never touched it,
+    ; and a post-mutation failure only reaches ROLLED_BACK (rather than
+    ; HALTED_RESTORE_FAILED) once _rollback's own restore of the pre-upgrade
+    ; backup has already succeeded (civiccast.native.upgrade.orchestrator.
+    ; _rollback). What is NOT intact is which CODE is on disk under the flat
+    ; layout, which is exactly what this abort communicates and prevents
+    ; from going live.
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT} "CivicCast (Native) setup could not complete: the upgrade engine rolled back its own work before finishing the upgrade to ${VERSION}. Your previous version's database is intact and was not left mid-migration. The service has NOT been started on the new files. See the engine's own reason in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log (the full record is in upgrade-journal.json beside it) and $COMMONPROGRAMDATA\CivicCast\install-progress.log, then re-run setup after resolving the cause."
   ${ElseIf} $0 == 20
     ; F-03: name WHOSE rollback, for the same reason as the exit-10 branch
     ; above -- "rollback", unqualified, is what an operator reads as the
@@ -1074,7 +1088,7 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; downloaded setup.exe on its own.
   ;
   ; Written as two literal nsExec invocations rather than one invocation
-  ; over a computed path register: every $R0-$R4 register live across this
+  ; over a computed path register: every $R0-$R3 register live across this
   ; point still holds D3/D4 chain state (see the D3 rehoming note above and
   ; CIVICCAST_STEP's own register notes), and $0-$9 are unusable inside a
   ; CIVICCAST_STEP breadcrumb argument. Two literals cost a duplicated line
@@ -1204,9 +1218,9 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; !include'd by installer.nsi before this file's own !include site -- the
   ; same precedent CIVICCAST_STEP's own header comment already documents
   ; for ${GetTime}): it only touches the registers it is explicitly Popped
-  ; into ($0 size-in-KB, $1 file count, $2 dir count here), so $R0-$R4
-  ; (the D3 old-version/DatabaseUrl/rollback-latch state still needed
-  ; below) are untouched by this call.
+  ; into ($0 size-in-KB, $1 file count, $2 dir count here), so $R0-$R3
+  ; (the D3 old-version/DatabaseUrl state still needed below) are untouched
+  ; by this call.
   ;
   ; Overwrites Tauri's own write the same way the QuietUninstallString
   ; write below already does: last write to this key in this Section wins.
@@ -1220,64 +1234,17 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; and must leave the marker at its previous value (a failed upgrade did not
   ; change the installed version).
   ;
-  ; CRITICAL fix (2026-07-30 adversarial review): a clean D3 rollback (exit
-  ; 10, above) reaches this point too -- it does not abort -- but must NOT be
-  ; recorded as InstalledVersion=${VERSION}, because the machine never left
-  ; $R0 (see the exit==10 branch's full justification). $R4 == "1" is that
-  ; latch.
-  ${If} $R4 == "1"
-    ;
-    ; ===================================================================
-    ; F-03 (2026-08-01 sandbox newcomer re-walk dd7f835f). What used to be
-    ; here, verbatim from the re-walk's install-progress.log:
-    ;
-    ;   postinstall: SUCCESS (D3 clean rollback; InstalledVersion left at
-    ;                         1.0.0-rc15, NOT 1.0.0-rc15)
-    ;
-    ; Two defects in one line. SUCCESS is the word an operator, a support
-    ; engineer and a fleet log scraper all key on, and this run did not
-    ; succeed. And "left at X, NOT X" is a sentence asserting a thing and
-    ; its negation -- it renders that way whenever the leftover marker
-    ; happens to record the same build being installed, which is exactly the
-    ; case the re-walk hit, because the leftover came from installing this
-    ; same build.
-    ;
-    ; Everything below is either a fact this installer just VERIFIED or a
-    ; report attributed to the component that produced it.
-    ; ===================================================================
-    ;
-    ; The one claim on this path an installer can actually verify at the
-    ; moment it speaks: ask the service control manager. `sc query` on an
-    ; unregistered service fails and prints no STATE line, so findstr finds
-    ; nothing and the NOT-running arm is taken -- which is the correct
-    ; reading for "there is no service". Both arms state that the answer was
-    ; read, so a reader can tell a verified fact from an assumption.
-    nsExec::ExecToLog 'cmd.exe /c "sc.exe query CivicCastSupervisor | findstr /I RUNNING >nul"'
-    Pop $0
-    ${If} $0 == 0
-      StrCpy $R5 "the CivicCast (Native) service is RUNNING on this machine right now (read from the service control manager)"
-    ${Else}
-      StrCpy $R5 "the CivicCast (Native) service is NOT running on this machine right now (read from the service control manager)"
-    ${EndIf}
-    ; The recorded-version sentence, one wording per case, so no branch can
-    ; render a contradiction. $R0 is the literal string "none" on the
-    ; recovery path (a CivicCast database IS registered but no
-    ; InstalledVersion is), and equals ${VERSION} on the F-01 leftover path.
-    ${If} $R0 == "none"
-      StrCpy $R6 "no installed version was recorded before this run, and none was recorded now"
-    ${ElseIf} $R0 == "${VERSION}"
-      StrCpy $R6 "the recorded installed version is unchanged and still reads $R0, which is the same version this setup was installing"
-    ${Else}
-      StrCpy $R6 "the recorded installed version is unchanged at $R0 and was not advanced to ${VERSION}"
-    ${EndIf}
-    DetailPrint "CivicCast (Native): this release's upgrade did not take effect -- the D3 upgrade engine reverted its own work. $R6. $R5."
-    !insertmacro CIVICCAST_STEP "postinstall: COMPLETED WITH A D3 ROLLBACK (the upgrade engine reverted its own work; $R6; $R5)"
-    !insertmacro CIVICCAST_NOTICE "CivicCast (Native) setup finished, but this release's upgrade did not take effect: the D3 upgrade engine reverted its own work and reported a clean rollback.$\r$\n$\r$\nSetup itself was NOT undone. The program files, the Windows service and the firewall rule were all installed by the steps that ran after the engine, and they are on this machine now. What was reverted is the upgrade engine's own work for this release.$\r$\n$\r$\nRead from this machine just now: $R6, and $R5.$\r$\n$\r$\nSee the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log for why the engine did not commit."
-  ${Else}
-    WriteRegStr HKLM "Software\CivicCast\Native" "InstalledVersion" "${VERSION}"
-    DetailPrint "CivicCast (Native): recorded InstalledVersion ${VERSION} for the next install/upgrade run."
-    !insertmacro CIVICCAST_STEP "postinstall: SUCCESS (InstalledVersion ${VERSION} recorded)"
-  ${EndIf}
+  ; Gate A run 33681670855 fix (2026-09-02): a clean D3 rollback (exit 10)
+  ; no longer reaches this point at all -- it now aborts via CIVICCAST_FAIL
+  ; under the flat installer layout this bootstrap always uses (see the
+  ; exit==10 branch above for the full reasoning), so the write below is
+  ; unconditional now (the former $R4 latch that used to gate it is retired).
+  ; It stays keyed off a run that reached this line at all, which -- because
+  ; every failure branch above aborts outright (CIVICCAST_FAIL) -- can only
+  ; be a fully successful chain.
+  WriteRegStr HKLM "Software\CivicCast\Native" "InstalledVersion" "${VERSION}"
+  DetailPrint "CivicCast (Native): recorded InstalledVersion ${VERSION} for the next install/upgrade run."
+  !insertmacro CIVICCAST_STEP "postinstall: SUCCESS (InstalledVersion ${VERSION} recorded)"
   DetailPrint "CivicCast (Native) bootstrap install complete: required component packs staged and D2-verified, D3 install/upgrade engine run, PostgreSQL provisioned, service and firewall rule registered."
   ; Reaching here means SUCCESS and nothing else. The former shared
   ; `civiccast_bootstrap_postinstall_done` unwind label is gone: it existed

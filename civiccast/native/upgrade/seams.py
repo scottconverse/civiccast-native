@@ -95,6 +95,7 @@ def default_backup(
     pg_dumpall_command: list[str] | None = None,
     pg_restore_command: list[str] | None = None,
     psql_command: list[str] | None = None,
+    command_database_url: str | None = None,
 ) -> Callable[[str], BackupRef]:
     """Real pre-upgrade backup: WS2 full backup + a restore-drill spot check.
 
@@ -105,6 +106,21 @@ def default_backup(
     :func:`run_postgres_restore_drill`. A failure of either raises (the
     orchestrator treats a raise or an unverified ref as a hard stop, so no
     mutation proceeds without a proven recovery point).
+
+    ``command_database_url`` is the URL the ``pg_dump``/``pg_dumpall``/
+    ``pg_restore``/``psql`` CLI tools parse for their own ``--host``/
+    ``--port``/``--username`` argv (see :func:`civiccast.dr.backup.
+    run_full_backup`'s own ``command_database_url`` doc) -- the in-container
+    view when ``pg_dump_command``/etc. carry a ``docker exec`` prefix. It
+    defaults to ``None``, in which case every call below defaults it right
+    back to ``context.database_url`` (unchanged production behavior: one
+    reachable Postgres, no container indirection). This parameter exists so
+    a Postgres-container-backed test can reuse this REAL seam unmodified with
+    the same ``docker exec`` pattern ``tests/dr/test_postgres_restore.py``
+    already proves, instead of requiring Postgres client tools on the host
+    running the test -- ``context.database_url`` stays the HOST-reachable URL
+    every direct SQLAlchemy read in this closure and in :func:`default_migrate`/
+    :func:`default_schema_revision` needs.
     """
 
     def _backup(backup_dir: str) -> BackupRef:
@@ -113,27 +129,67 @@ def default_backup(
             database_url=context.database_url,
             dest_dir=dest,
             media_root=media_root,
+            command_database_url=command_database_url,
             pg_dump_command=pg_dump_command,
             pg_dumpall_command=pg_dumpall_command,
         )
         blob_hash = _manifest_blob_hash(manifest)
 
         restore_ok = False
+        drill_errors: list[str] = []
         if manifest.engine == "postgres":
-            report = run_postgres_restore_drill(
-                backup_dir=dest,
-                manifest=manifest,
-                source_database_url=context.database_url,
-                pg_restore_command=pg_restore_command,
-                psql_command=psql_command,
-            )
-            restore_ok = report.ok
+            # The pre-upgrade drill's "schema_ok" question is "does the
+            # restored copy match what we actually dumped", NOT "does it
+            # match the NEW code's migration head" -- migrate() has not run
+            # yet, so on any release that ships a migration the latter is
+            # always false (Gate A run 33681670855 root cause). Pass the
+            # SOURCE database's own current revision -- read from the same
+            # database this backup was just taken from, so it reflects the
+            # exact pre-upgrade state the dump captured.
+            from civiccast.schema_check import read_db_revision
+
+            source_revision = read_db_revision(context.database_url)
+            if source_revision is None:
+                # Fail closed here rather than let run_postgres_restore_drill
+                # silently fall back to its own default (expected_migration_
+                # head()) -- that fallback exists for real DR-drill callers,
+                # but here it would quietly reintroduce this exact fix's root
+                # cause (comparing a pre-upgrade restore against the NEW
+                # code's head) with no signal that it happened because the
+                # SOURCE revision could not be read, rather than by design.
+                restore_ok = False
+                drill_errors = [
+                    "could not read the source database's own current revision "
+                    "before the restore-drill (schema_check.read_db_revision "
+                    "returned None) -- refusing to fall back to comparing "
+                    "against the code's migration head, which is the exact "
+                    "false-negative Gate A run 33681670855 found"
+                ]
+            else:
+                report = run_postgres_restore_drill(
+                    backup_dir=dest,
+                    manifest=manifest,
+                    source_database_url=command_database_url or context.database_url,
+                    verification_database_url=context.database_url,
+                    pg_restore_command=pg_restore_command,
+                    psql_command=psql_command,
+                    expected_revision=source_revision,
+                )
+                restore_ok = report.ok
+                if not restore_ok:
+                    drill_errors = list(report.errors)
+                    if not report.schema_ok:
+                        drill_errors.append(
+                            "schema_ok=False: restored revision "
+                            f"{report.db_revision!r} != expected {report.expected_head!r}"
+                        )
         else:
             # SQLite deployments verify via the same drill entry point in WS2;
             # the native product targets Postgres, so a non-postgres engine
             # here is unexpected — fail closed rather than claim a spot check
             # we did not run.
             restore_ok = False
+            drill_errors = ["backup manifest engine is not 'postgres'; no restore-drill was run"]
 
         return BackupRef(
             backup_id=manifest.backup_id,
@@ -142,6 +198,7 @@ def default_backup(
             db_artifact=manifest.db_artifact,
             verified=bool(manifest.integrity),
             restore_drill_ok=restore_ok,
+            restore_drill_errors=drill_errors,
         )
 
     return _backup
@@ -299,6 +356,7 @@ def build_default_seams(
     pg_dumpall_command: list[str] | None = None,
     pg_restore_command: list[str] | None = None,
     psql_command: list[str] | None = None,
+    command_database_url: str | None = None,
 ) -> UpgradeSeams:
     """Assemble the production seam bundle for ``context``.
 
@@ -310,6 +368,10 @@ def build_default_seams(
     (``resolve_service_control_seams``): SCM start for the maintenance health
     gate, SCM stop for the halt path, and a control-pipe drain-confirm + WS2
     snapshot-equality check for drain; ``__main__`` passes them here.
+
+    ``command_database_url`` passes straight through to :func:`default_backup`
+    (see its own docstring) -- ``None`` in every production call, which keeps
+    behavior unchanged (one reachable Postgres, no container indirection).
     """
 
     return UpgradeSeams(
@@ -323,6 +385,7 @@ def build_default_seams(
             pg_dumpall_command=pg_dumpall_command,
             pg_restore_command=pg_restore_command,
             psql_command=psql_command,
+            command_database_url=command_database_url,
         ),
         restore_backup=default_restore_backup(context, pg_restore_command=pg_restore_command),
         lay_tree=default_lay_tree(context, payload_source=payload_source),

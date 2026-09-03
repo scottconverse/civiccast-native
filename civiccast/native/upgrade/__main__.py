@@ -444,7 +444,18 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("upgrade outcome: unexpected fault\n")
         return 40
     sys.stderr.write(f"upgrade outcome: {outcome.phase.value}\n")
-    _log_engine_event(log_path, args.database_url, f"upgrade outcome: {outcome.phase.value}")
+    outcome_message = f"upgrade outcome: {outcome.phase.value}"
+    if outcome.journal.error:
+        # Coordinator review of PR #143: this file used to log only the
+        # phase name (e.g. "upgrade outcome: rolled_back") -- the NSIS hook's
+        # exit==10 message points an operator at this log for "the exact
+        # reason", but the reason (orchestrator._rollback's `reason=str(exc)`,
+        # which funnels ANY operational step failure: drain, backup/restore-
+        # drill, migrate, health gate) was never actually written here, only
+        # into the journal JSON. Surface it in the durable, operator-readable
+        # log too.
+        outcome_message += f"\nreason: {outcome.journal.error}"
+    _log_engine_event(log_path, args.database_url, outcome_message)
     return _EXIT_CODES.get(outcome.phase, 40)
 
 

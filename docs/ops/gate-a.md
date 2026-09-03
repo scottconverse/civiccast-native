@@ -1156,13 +1156,28 @@ are re-checked, and (when seeded) the supervisor log is grepped for PR #80's
 orphaned-tier WARNING. The last-match rule binds the evidence to the current
 installer, not the previous-candidate install earlier in the same sandbox run.
 
+In upgrade mode (`UPGRADE_MODE=1`), `DIRTY-RESULT.txt` also carries
+`POST_UPGRADE_DB_REVISION`, `EXPECTED_HEAD`, and
+`POST_UPGRADE_DB_REVISION_MATCHES_HEAD` — read straight from the same
+station-up `/health` poll that declared the station up
+(`civiccast/app.py`'s `/health` now returns `schema_db_revision` /
+`schema_expected_head` unconditionally, not just when `schema == "behind"`).
+Gate A run 33681670855 (kit 7971815, beta.2 → beta.3) shipped with
+`D3_ENGINE_EXIT=0` and a healthy station-up body while the live database was
+still at the OLD version's revision — a pre-upgrade backup-verification
+false-negative had rolled the D3 engine back, but the flat installer layout
+let setup continue anyway and start a service that happily answered
+`/health` 200 over the unmigrated schema. `D3_ENGINE_EXIT=0` and a healthy
+body are therefore not proof by themselves; the judge compares the two
+revisions explicitly.
+
 The judge (`scripts/gate_a_verdict.py --lane dirty`) adds three checks on
 top of the unchanged clean set:
 
 | check | PASS means |
 | --- | --- |
 | `dirty_prep` | previous install exit 0, the live-upgrade request is explicit, and previous/current installer SHA-256 identities are valid and distinct |
-| `dirty_survival` | current install exit 0, D3 explicitly reported route `UPGRADE` with engine exit 0, and the SAME pgdata cluster plus byte-identical uploads survived install-over-existing and station-up; successful `FRESH_INSTALL` and `SAME_VERSION_NO_OP` routes fail this check |
+| `dirty_survival` | current install exit 0, D3 explicitly reported route `UPGRADE` with engine exit 0, `POST_UPGRADE_DB_REVISION_MATCHES_HEAD=1` (in upgrade mode), and the SAME pgdata cluster plus byte-identical uploads survived install-over-existing and station-up; successful `FRESH_INSTALL` and `SAME_VERSION_NO_OP` routes fail this check |
 | `dirty_orphaned_tier` | `SKIP` with a loud not-covered reason in automated cross-version mode; this uninstall-only remnant shape is not authored during a live upgrade |
 
 The dirty job posts its full per-check verdict table to the workflow run
@@ -1312,6 +1327,10 @@ to the dirty lane's own upgrade prologue:
    `C:\CivicCastPayload\station`) and `PAYLOAD_DIR`; **after** the station-up
    verdict, `PHASE2_INSTALL_EXIT`, `D3_ROUTE`/`D3_ENGINE_EXIT` (the same D3
    breadcrumb the dirty lane's `DIRTY-RESULT.txt` already captures),
+   `POST_UPGRADE_DB_REVISION`/`EXPECTED_HEAD`/
+   `POST_UPGRADE_DB_REVISION_MATCHES_HEAD` (the same station-up `/health`
+   revision proof the dirty lane's upgrade mode records -- see the dirty-lane
+   section above for the Gate A run 33681670855 failure this closes),
    `STATION_SET_PRODUCT_VERSION` (read directly from the install's own
    `station-set.json`), and `CURRENT_PRODUCT_VERSION` (echoed from the
    shared upgrade prologue's own `DIRTY-PREP-RESULT.txt`).

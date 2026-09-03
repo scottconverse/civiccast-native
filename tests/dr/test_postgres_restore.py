@@ -276,6 +276,113 @@ def test_postgres_restore_drill_verifies_full_round_trip(
         engine.dispose()
 
 
+def test_postgres_restore_drill_expected_revision_overrides_code_head(
+    postgres_container: tuple[str, str], tmp_path: Path
+) -> None:
+    """Gate A run 33681670855 regression test (D3 root cause, Fix A).
+
+    A PRE-UPGRADE backup drill restores a dump taken from the OLD version's
+    database, before the new version's migrations have run. Comparing that
+    restored copy's revision against the running CODE's migration head (the
+    default, and the ONLY behavior before this fix) is always false the
+    moment the running code has shipped any migration since the dump was
+    taken -- this is the exact false-negative that made D3 roll back a
+    healthy upgrade on kit 7971815 (beta.2 -> beta.3).
+
+    This test stamps the source database's ``alembic_version`` at a
+    synthetic PREVIOUS revision after migrating to head (the schema itself
+    is unaffected -- only the bookkeeping marker changes -- so seeding real
+    rows through the current ORM/table shapes stays valid), then proves:
+
+    * without ``expected_revision`` (the pre-fix default / old behavior),
+      the drill's ``schema_ok`` is False and ``report.ok`` is False, even
+      though the restore itself is byte-for-byte faithful; and
+    * with ``expected_revision=<the source's own stamped revision>``, the
+      SAME restored artifact reports ``schema_ok=True`` and ``report.ok``
+      True -- proving the fix asks the honest question for a pre-upgrade
+      drill (does the restored copy match what was actually dumped) rather
+      than the DR-drill question (does it match today's code).
+    """
+    postgres_url, container_id = postgres_container
+    _run_migrations(postgres_url)
+    engine = create_engine(postgres_url, future=True)
+    bind_engine(engine)
+    try:
+        _seed_two_tables(engine)
+
+        synthetic_previous_revision = "0001_synthetic_previous_head"
+        with engine.begin() as conn:
+            real_head = conn.execute(
+                text("SELECT version_num FROM civiccast.alembic_version")
+            ).scalar_one()
+            assert real_head != synthetic_previous_revision
+            conn.execute(
+                text("UPDATE civiccast.alembic_version SET version_num = :rev"),
+                {"rev": synthetic_previous_revision},
+            )
+
+        in_container_url = "postgresql://test:test@localhost:5432/test"
+        backup_dir = tmp_path / "backup"
+        artifact = run_postgres_backup(
+            database_url=in_container_url,
+            dest_dir=backup_dir,
+            pg_dump_command=_exec_prefix(container_id, "pg_dump"),
+        )
+        globals_artifact = run_postgres_globals_backup(
+            database_url=in_container_url,
+            dest_dir=backup_dir,
+            pg_dumpall_command=_exec_prefix(container_id, "pg_dumpall"),
+        )
+        manifest = BackupManifest(
+            backup_id="pg-restore-drill-expected-revision",
+            created_at=datetime.now(UTC),
+            engine="postgres",
+            db_artifact=artifact.name,
+            tables=snapshot_tables(engine),
+            globals_artifact=globals_artifact.name,
+        )
+
+        # Without expected_revision: the pre-fix / DR-drill default question
+        # ("does the restore match today's CODE head") is false, because the
+        # dump was stamped at the synthetic previous revision, not the real
+        # code head.
+        default_report = run_postgres_restore_drill(
+            backup_dir=backup_dir,
+            manifest=manifest,
+            source_database_url=in_container_url,
+            verification_database_url=postgres_url,
+            restore_database_name="civiccast_drill_restore_default_head",
+            pg_restore_command=_exec_prefix(container_id, "pg_restore"),
+            psql_command=_exec_prefix(container_id, "psql"),
+        )
+        assert default_report.db_revision == synthetic_previous_revision
+        assert default_report.expected_head == real_head
+        assert default_report.schema_ok is False
+        assert default_report.ok is False
+
+        # With expected_revision passed explicitly: the honest pre-upgrade
+        # question ("does the restore match what was actually dumped") is
+        # true for the exact same restored artifact.
+        override_report = run_postgres_restore_drill(
+            backup_dir=backup_dir,
+            manifest=manifest,
+            source_database_url=in_container_url,
+            verification_database_url=postgres_url,
+            restore_database_name="civiccast_drill_restore_override_head",
+            pg_restore_command=_exec_prefix(container_id, "pg_restore"),
+            psql_command=_exec_prefix(container_id, "psql"),
+            expected_revision=synthetic_previous_revision,
+        )
+        assert override_report.db_revision == synthetic_previous_revision
+        assert override_report.expected_head == synthetic_previous_revision
+        assert override_report.schema_ok is True
+        assert override_report.errors == [], override_report.errors
+        assert override_report.ok is True
+    finally:
+        reset_engine()
+        engine.dispose()
+
+
 def test_restore_detects_row_mutation(postgres_container: tuple[str, str], tmp_path: Path) -> None:
     """Negative control (i): a post-restore row mutation must be DETECTED.
 

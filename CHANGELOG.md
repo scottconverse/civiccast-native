@@ -215,6 +215,73 @@ kit (see the "Changed" entry below).
 
 ### Fixed
 
+- **Release-blocking: D3 pre-upgrade backup verification compared the
+  restored copy against the wrong revision, and the flat-installer-layout
+  rollback containment let setup continue anyway.** Gate A run 33681670855
+  (kit 7971815, `1.0.0-beta.3` upgrading over `1.0.0-beta.2`): the upgrade
+  rolled back and setup still finished, leaving beta.3 code running over a
+  beta.2 (pre-migration) database serving 500s.
+  - **Root cause (D3 step 3 backup verification).**
+    `civiccast/native/upgrade/seams.py::default_backup` runs its pre-upgrade
+    restore-drill spot check (`civiccast/dr/restore_drill.py::
+    run_postgres_restore_drill`) before any migration has run, but the
+    drill's `schema_ok` compared the restored copy against the running
+    CODE's migration head — always false the moment a release ships any
+    migration at all (beta.1 → beta.2 passed only because it shipped zero).
+    `run_postgres_restore_drill` gains an `expected_revision` parameter
+    (default unchanged: `expected_migration_head()`, preserving DR-drill
+    semantics); `default_backup` now passes the SOURCE database's own
+    current revision, so the pre-upgrade question is "does the restore
+    match what was dumped" instead of "does it match tomorrow's schema".
+    The drill's `errors`/schema detail is also propagated into the
+    orchestrator's raised exception and the journal's `error` field instead
+    of the previous generic "hash or restore-drill spot check" string.
+  - **Containment (flat installer layout).**
+    `civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh`'s D3 exit
+    10 (ROLLED_BACK) branch used to DetailPrint and continue the install —
+    correct for the `app\<version>` + junction layout, where a rollback
+    really does restore the old binary tree, but this bootstrap always
+    invokes the engine with `--flat-installer-layout`, under which
+    `adapt_flat_installer_layout`'s junction seams are no-ops over the
+    single `$INSTDIR\runtime` tree already holding the NEW payload before
+    D3 ever ran. Exit 10 now fails the whole install via `CIVICCAST_FAIL`
+    under a new, distinct exit code (`CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT`,
+    124) before D4 provisioning/activation/service registration ever runs,
+    naming the previous version's data as intact and the service as never
+    started. The retired `$R4` continue-and-report latch/notice path is
+    removed along with it.
+  - **Harness honesty.** `sandbox-lab/common/CivicCastStationHarness.psm1`'s
+    `Wait-CivicCastStationHealth` and `sandbox-lab/scripts/
+    In-Sandbox-Report.ps1`'s station-up wait gated "STATION HEALTHY" on
+    HTTP 200 + non-empty body alone, exactly the shape `/health`'s own
+    docstring warns against (`civiccast/app.py`: 200 is liveness-only in
+    every schema state). Both now parse the JSON body and require
+    `status == "healthy"` **and** `schema == "current"`. `/health` now
+    returns `schema_db_revision`/`schema_expected_head` unconditionally
+    (previously only when `schema == "behind"`), so a caller can prove a
+    post-upgrade migration actually landed rather than trusting the
+    `current` label alone. `scripts/gate_a_verdict.py`'s `dirty_survival`
+    and `download_only_no_station_dir` checks now also assert
+    `POST_UPGRADE_DB_REVISION_MATCHES_HEAD=1` (written into
+    `DIRTY-RESULT.txt`/`DOWNLOAD-ONLY-RESULT.txt` alongside
+    `POST_UPGRADE_DB_REVISION`/`EXPECTED_HEAD`) in upgrade mode — a healthy
+    station-up body and `D3_ENGINE_EXIT=0` are no longer treated as proof by
+    themselves.
+  - **Tests.** `tests/dr/test_postgres_restore.py::
+    test_postgres_restore_drill_expected_revision_overrides_code_head`
+    proves the false-negative and the fix, real Postgres. New
+    `tests/native/test_upgrade_engine_postgres.py` (Postgres-gated,
+    `CIVICCAST_RUN_POSTGRES_TESTS=1` marks it required in CI) runs the real
+    D3 engine through the actual production seam bundle over a database
+    stepped back one real migration revision, asserting `COMPLETE` and
+    `post_schema_revision == expected_migration_head()`. Policy coverage in
+    `tests/policy/test_native_installer_identity.py` and
+    `tests/installer/test_nsis_bootstrap_hooks.py` pins the new fail-closed
+    exit-10 shape. `tests/gate_a/test_gate_a_verdict.py` gains regression
+    tests for the revision-mismatch judge failure. `tests/test_health_
+    readiness.py` covers the unconditional `schema_db_revision`/
+    `schema_expected_head` fields.
+
 - **`test_guard_fails_a_test_that_writes_real_state` no longer collides with
   mutmut in CI.** `tests/test_hermetic_state_guard.py` spawns a nested pytest
   subprocess via `pytester` to prove the hermetic-state teardown guard fails

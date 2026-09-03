@@ -175,8 +175,14 @@ def _drive_forward(journal: UpgradeJournal, seams: UpgradeSeams) -> UpgradeOutco
             )
             backup_ref = seams.backup(backup_dir)
             if not (backup_ref.verified and backup_ref.restore_drill_ok):
+                detail = (
+                    "; ".join(backup_ref.restore_drill_errors)
+                    if backup_ref.restore_drill_errors
+                    else "no detail reported (verified=False before a restore-drill ran)"
+                )
                 raise RuntimeError(
-                    "pre-upgrade backup failed verification (hash or restore-drill spot check)"
+                    "pre-upgrade backup failed verification (hash or restore-drill spot check): "
+                    f"{detail}"
                 )
             journal = _persist(
                 journal,

@@ -2098,9 +2098,15 @@ def create_app() -> FastAPI:
         runtime_build_id = os.environ.get("CIVICCAST_RUNTIME_BUILD_ID")
         if runtime_build_id:
             body["runtime_build_id"] = runtime_build_id
-        if schema_status.state == "behind":
-            body["schema_db_revision"] = schema_status.db_revision or "none"
-            body["schema_expected_head"] = schema_status.expected_head or "unknown"
+        # Gate A run 33681670855: unconditional, not just on "behind". A
+        # harness/judge that wants to assert "post-upgrade DB revision ==
+        # code head" (the actual D3 upgrade proof, not just the healthy/
+        # degraded label) needs both numbers regardless of which state they
+        # landed in -- gating this on "behind" only forced every OTHER
+        # consumer to re-derive schema_expected_head some other way (or, as
+        # happened here, not check it at all and trust the label).
+        body["schema_db_revision"] = schema_status.db_revision or "none"
+        body["schema_expected_head"] = schema_status.expected_head or "unknown"
         mode = getattr(app.state, "supervisor_mode", _SUPERVISOR_MODE_NORMAL)
         body["mode"] = mode
         if mode == _SUPERVISOR_MODE_MAINTENANCE:

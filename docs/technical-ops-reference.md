@@ -1163,8 +1163,10 @@ schema matches the running code. Anything else reads `degraded`:
 | --- | --- | --- |
 | `current` | `healthy` | The station can do its job. |
 | `not-configured` | `degraded` | No database yet — run **Prepare storage** in the console, or set `DATABASE_URL`. |
-| `behind` | `degraded` | The code is newer than the database. Run `alembic upgrade head`. The response also carries `schema_db_revision` and `schema_expected_head`. |
+| `behind` | `degraded` | The code is newer than the database. Run `alembic upgrade head`. |
 | `unknown` | `degraded` | CivicCast could not read the schema version — usually the database is unreachable. |
+
+The response always carries `schema_db_revision` and `schema_expected_head` (not just when `behind`) — `"none"`/`"unknown"` when either could not be read. When `schema` is `current` the two values are, by definition, equal; a caller proving a post-upgrade migration actually landed (rather than trusting the `current` label alone) can compare them directly.
 
 **Alert on the `status` field, not on the status code.** A station with no
 database returns `200` and cannot serve a single recording; on the retired
