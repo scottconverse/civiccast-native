@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -115,3 +116,128 @@ def test_station_activation_uses_the_embedded_app_payload_tree_not_a_third_compo
     ).read_text(encoding="utf-8")
     assert 'gstreamer_runtime_root / "dependencies" / "gstreamer"' in source
     assert "native-gstreamer-runtime" not in source
+
+
+# ---------------------------------------------------------------------------
+# Gate A T4 root cause (2026-09): PATH is load-bearing for the bundled `gi`.
+#
+# girepository resolves a namespace's GTypes by asking GModule to open the
+# typelib's shared library BY BARE NAME (`gstreamer-1.0-0.dll`) -- a plain
+# Win32 LoadLibrary, which searches PATH and NOT the per-process directory
+# list `os.add_dll_directory` feeds (only CPython's own extension loader reads
+# that one). With `<runtime>/dependencies/gstreamer/bin` missing from PATH the
+# symbol lookup fails silently, `Gst.URIHandler.__info__.get_g_type()` returns
+# G_TYPE_NONE, and importing `gi.overrides.Gst` dies with
+# `TypeError: must be an interface` -- exactly how the shipped playout worker
+# died in Gate A run 33790253168. Reproduced with the b78b9c7 kit's own
+# runtime: with the bin dir on PATH the worker imports; with only
+# PYGI_DLL_DIRS + os.add_dll_directory and no PATH entry, it does not.
+# ---------------------------------------------------------------------------
+
+
+def test_bootstrap_puts_the_gstreamer_bin_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The bootstrap inserts the runtime's python dir into sys.path (real behaviour);
+    # restore sys.path on teardown so this fixture tree's stub ``gi`` package can
+    # never shadow the real one for later tests (mutation job 2026-09-03: NameError
+    # from the stub in test_worker_pipe_seam).
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime
+
+    root = _root(tmp_path)
+    bin_dir = str(root / "dependencies/gstreamer/bin")
+    monkeypatch.setenv("CIVICCAST_GSTREAMER_RUNTIME_ROOT", str(root))
+    monkeypatch.setenv("PATH", "inherited")
+    monkeypatch.delenv("GI_TYPELIB_PATH", raising=False)
+    monkeypatch.delenv("GST_PLUGIN_PATH", raising=False)
+
+    assert bootstrap_installed_gstreamer_runtime() is True
+
+    assert os.environ["PATH"].split(os.pathsep)[0] == bin_dir
+    assert "inherited" in os.environ["PATH"], "the inherited PATH must survive"
+    assert os.environ["GI_TYPELIB_PATH"] == str(
+        root / "dependencies/gstreamer/lib/girepository-1.0"
+    )
+    assert os.environ["GST_PLUGIN_PATH"] == str(root / "dependencies/gstreamer/lib/gstreamer-1.0")
+
+
+def test_bootstrap_does_not_duplicate_the_bin_dir_on_repeat_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The bootstrap inserts the runtime's python dir into sys.path (real behaviour);
+    # restore sys.path on teardown so this fixture tree's stub ``gi`` package can
+    # never shadow the real one for later tests (mutation job 2026-09-03: NameError
+    # from the stub in test_worker_pipe_seam).
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime
+
+    root = _root(tmp_path)
+    bin_dir = str(root / "dependencies/gstreamer/bin")
+    monkeypatch.setenv("CIVICCAST_GSTREAMER_RUNTIME_ROOT", str(root))
+    monkeypatch.setenv("PATH", "inherited")
+
+    bootstrap_installed_gstreamer_runtime()
+    bootstrap_installed_gstreamer_runtime()
+
+    assert os.environ["PATH"].split(os.pathsep).count(bin_dir) == 1
+
+
+def test_bootstrap_leaves_an_operator_supplied_typelib_path_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The bootstrap inserts the runtime's python dir into sys.path (real behaviour);
+    # restore sys.path on teardown so this fixture tree's stub ``gi`` package can
+    # never shadow the real one for later tests (mutation job 2026-09-03: NameError
+    # from the stub in test_worker_pipe_seam).
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime
+
+    root = _root(tmp_path)
+    monkeypatch.setenv("CIVICCAST_GSTREAMER_RUNTIME_ROOT", str(root))
+    monkeypatch.setenv("GI_TYPELIB_PATH", "operator-choice")
+
+    bootstrap_installed_gstreamer_runtime()
+
+    assert os.environ["GI_TYPELIB_PATH"] == "operator-choice"
+
+
+def test_bootstrap_gives_a_fresh_subprocess_the_bin_dir_with_no_inherited_gst_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failing production shape: a child process launched with only
+    CIVICCAST_GSTREAMER_RUNTIME_ROOT (the rest of the GStreamer environment
+    lost on the way down) must still end up with the bundled bin directory on
+    its own PATH before anything imports `gi`."""
+    import subprocess
+    import sys
+
+    root = _root(tmp_path)
+    bin_dir = str(root / "dependencies/gstreamer/bin")
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() not in ("GI_TYPELIB_PATH", "GST_PLUGIN_PATH", "PYGI_DLL_DIRS", "PATH")
+    }
+    env["CIVICCAST_GSTREAMER_RUNTIME_ROOT"] = str(root)
+    env["PATH"] = "inherited"
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import os;"
+            "from civiccast.native.gstreamer_runtime import "
+            "bootstrap_installed_gstreamer_runtime as b;"
+            "b();"
+            "print(os.environ['PATH'])",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().split(os.pathsep)[0] == bin_dir

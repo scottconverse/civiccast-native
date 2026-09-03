@@ -1092,7 +1092,10 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # CIVICCAST_SUPERVISED env-var signal, and the guarded call site in
     # civiccast.app.create_app. Both lanes advance by seven. Re-derived by an
     # actual `--collect-only` run: (1774, 1974) -> (1781, 1981).
-    assert (collect("not windows_only"), collect()) == (1781, 1981)
+    # 2026-09-03 GStreamer worker PATH fix (Gate A T4 "must be an interface"):
+    # +5 pure, +6 total (tests/native/test_gstreamer_runtime.py +
+    # test_supervisor_wiring_batch.py): (1781, 1981) -> (1786, 1987).
+    assert (collect("not windows_only"), collect()) == (1786, 1987)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

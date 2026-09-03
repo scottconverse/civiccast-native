@@ -1535,6 +1535,7 @@ def build_control_plane_media_env(
     layout: InstallLayout,
     *,
     logger: logging.Logger | None = None,
+    inherited_path: str | None = None,
 ) -> dict[str, str]:
     """The control plane's only working on-air path (the installer rehearsal
     flow) shells out to ffmpeg/ffprobe by BARE NAME (``civiccast/stream/
@@ -1569,6 +1570,21 @@ def build_control_plane_media_env(
     control-plane child's env only (:func:`build_production_service`); the
     supervisor's own process environment and the machine-wide PATH are never
     touched.
+
+    ``inherited_path`` is the PATH this composition must build ON TOP OF, and
+    it is what the Gate A T4 root cause (2026-09) turned on. Because this dict
+    is merged LAST, its ``PATH`` wins outright -- and reading only
+    ``os.environ`` here meant the composed value was the SUPERVISOR's stock
+    LocalSystem PATH, silently discarding the caller's
+    ``station_environment_for_python`` PATH and with it
+    ``<runtime>\\dependencies\\gstreamer\\bin``. The control plane and the
+    GStreamer playout worker it spawns then ran with no GStreamer bin on PATH,
+    so girepository could not resolve ``gstreamer-1.0-0.dll``'s symbols and
+    ``import gi.repository.Gst`` died with ``TypeError: must be an interface``
+    on every clean box (a machine with a system-wide GStreamer install on PATH
+    -- a dev box -- masked it completely). Callers pass the PATH they already
+    composed; ``None`` keeps the old ``os.environ`` behaviour for callers that
+    have no PATH of their own.
     """
 
     log = logger or logging.getLogger(LOGGER_NAME)
@@ -1580,7 +1596,8 @@ def build_control_plane_media_env(
             layout.ffmpeg_bin_dir,
         )
         return {}
-    inherited_path = os.environ.get("PATH", "")
+    if inherited_path is None:
+        inherited_path = os.environ.get("PATH", "")
     composed_path = (
         f"{layout.ffmpeg_bin_dir}{os.pathsep}{inherited_path}"
         if inherited_path
@@ -1663,11 +1680,18 @@ def build_production_service(
     # Applied AFTER the caller's control_plane_env (station_environment_for_python
     # may itself carry a bare, non-prepended "PATH" key) so the ffmpeg-aware
     # composition always wins for that key; every other caller-supplied key
-    # is preserved untouched.
-    control_plane_env = {
-        **(control_plane_env or {}),
-        **build_control_plane_media_env(layout, logger=logger),
-    }
+    # is preserved untouched. The composition is built ON TOP OF the caller's
+    # own PATH when it has one -- Gate A T4 root cause: composing over
+    # os.environ instead dropped the GStreamer bin dir that
+    # station_environment_for_python had just put there, and the playout
+    # worker died at `import gi.repository.Gst`. See
+    # build_control_plane_media_env's docstring.
+    control_plane_env = dict(control_plane_env or {})
+    control_plane_env.update(
+        build_control_plane_media_env(
+            layout, logger=logger, inherited_path=control_plane_env.get("PATH")
+        )
+    )
     runner = Win32ChildProcessRunner(
         # The stop-command spec must target the SAME absolute pg_ctl + data dir
         # the launch spec uses (audit A1: the relative default resolves against
