@@ -1428,6 +1428,29 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; It stays keyed off a run that reached this line at all, which -- because
   ; every failure branch above aborts outright (CIVICCAST_FAIL) -- can only
   ; be a fully successful chain.
+  ;
+  ; Installer-path audit BL-12: WHY THIS LINE IS SAFE NOW, and was not.
+  ;
+  ; InstalledVersion records WHICH INSTALLER LAST RAN, and decide_route treats
+  ; it as "which schema the database is at". Those are not the same fact. An
+  ; uninstall removes the CivicCastSupervisor service but preserves
+  ; $COMMONPROGRAMDATA\CivicCast and its cluster BY DESIGN, so a later install
+  ; of a newer version routed FRESH_INSTALL (D3 skipped, exit 11), D4
+  ; provisioning took its reuse/adopt path, and this line stamped the new
+  ; version over a database still at the OLD schema. Every future run then
+  ; read old_version == new_version and reported SAME_VERSION_NO_OP: the
+  ; machine was permanently locked out of its own upgrade engine.
+  ;
+  ; Two changes make reaching this line mean what it says:
+  ;   * the provisioning CLI's reuse path now brings the schema to alembic
+  ;     head (BL-12, civiccast/native/provision/__main__.py), so a preserved
+  ;     database is migrated on the FRESH_INSTALL route rather than adopted
+  ;     and left behind; and
+  ;   * D4 service registration now polls /health and REFUSES to report
+  ;     success unless the station is serving with a current schema (BL-11,
+  ;     exit 84 -> ${CIVICCAST_EXIT_D4_SERVICE_NOT_SERVING}). That step runs
+  ;     BEFORE this write and aborts the install on failure, so the marker
+  ;     can no longer be stamped over a schema-behind database.
   WriteRegStr HKLM "Software\CivicCast\Native" "InstalledVersion" "${VERSION}"
   DetailPrint "CivicCast (Native): recorded InstalledVersion ${VERSION} for the next install/upgrade run."
   !insertmacro CIVICCAST_STEP "postinstall: SUCCESS (InstalledVersion ${VERSION} recorded)"

@@ -21,6 +21,14 @@ const SIGNATURE_NAME: &str = "manifest.sig";
 const PAYLOAD_PREFIX: &str = "payload/";
 const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 const CAPTION_COMPONENT: &str = "captions-large-v3";
+/// <installer-path-audit BL-08> The MANDATORY caption baseline's component id.
+///
+/// Its absence from this file was the finding: a grep for `captions-floor` in
+/// `native_packs.rs` found none, so the owner-designated mandatory caption
+/// model reached no branch of `validate_component_contract` at all, and the
+/// only machine checks on it were the four values the publisher chose and
+/// signed in one operation.
+const CAPTION_FLOOR_COMPONENT: &str = "captions-floor";
 const SOURCE_BOUND_COMPONENTS: [&str; 2] = [
     "native-app-payload",
     "native-server-binaries",
@@ -834,6 +842,80 @@ fn validate_component_contract(manifest: &PackManifest) -> Result<(), String> {
             );
         }
     }
+    if manifest.component == CAPTION_FLOOR_COMPONENT {
+        // <installer-path-audit BL-08> THE MANDATORY CAPTION FLOOR MODEL HAD
+        // NO CONTENT CONTRACT AT ALL.
+        //
+        // Before this branch, `validate_component_contract` had exactly three:
+        // SOURCE_BOUND_COMPONENTS, `component == CAPTION_COMPONENT`
+        // ("captions-large-v3"), and the three Ollama ids. A grep for
+        // "captions-floor" in this file found NONE -- the owner-designated
+        // MANDATORY caption baseline hit no branch whatsoever.
+        //
+        // The pinned constants existed and were unreachable on this path:
+        // CAPTION_FLOOR_TIER_MODEL_FILES is only reachable through
+        // `verify_caption_pack_tiers`, whose sole production caller was inside
+        // the large-v3 branch above and passes `present_tier_ids` as BOTH the
+        // present and the required set -- a self-consistency check a
+        // large-v3-only pack satisfies trivially. Stack PR #127 on top and
+        // `pack_identity_expectations` returns (None, None) for
+        // `captions-floor` on a station index, so the declared version pair is
+        // not compared either. The COMPLETE set of machine checks on the
+        // mandatory caption model was therefore: trust-root signature,
+        // `component == "captions-floor"`, outer SHA-256 == the index's, and
+        // byte count == the index's -- **every one of them a value the
+        // publisher chose and signed in one operation**. The builder concedes
+        // it in `scripts/build_native_station_bundle.py`'s own comment, and
+        // `--captions-floor-root` takes whatever directory it is pointed at
+        // with no hash pin.
+        //
+        // The residual gate is not one: `main.rs`'s live inference self-test
+        // only checks that `jfk.wav` transcribes to "and so my fellow
+        // americans", which `small`, `base` and most quantizations also do,
+        // and `station-set.json` records nothing about which floor model
+        // landed. So a release engineer pointing `--captions-floor-root` at
+        // `faster-whisper-small` shipped an unreviewed ASR model to every
+        // station in the fleet, on the legally non-negotiable captions path,
+        // with every gate green.
+        //
+        // This is the large-v3 branch minus the metadata block: the tier's own
+        // pinned inventory (by NAME, SIZE and SHA-256, per file) plus the
+        // pack-wide self-test fixture. Every constant already existed.
+        //
+        // DEVELOPMENT-SIGNED PACKS ARE EXEMPT, and that is not a hole. The
+        // pinned inventory names a real 1.5 GB `model.bin` by SHA-256, so a
+        // pack carrying it cannot be synthesised -- which is why the fixtures
+        // that round-trip a whole signed station bundle sign with a
+        // `development-` key id. Such a pack is unusable on a shipping build
+        // regardless: `embedded_pack_trust` refuses a bootstrap whose embedded
+        // key id starts with `development-` unless it was compiled with
+        // `CIVICCAST_ALLOW_DEVELOPMENT_PACK_KEY=1`, and the pack's signature
+        // must verify against THAT bootstrap's key. So the exemption cannot
+        // widen any path a station takes; it is the same non-release boundary
+        // the trust root already draws. A release-signed floor pack with
+        // substituted bytes is refused -- see
+        // `a_release_signed_floor_pack_with_substituted_model_bytes_is_refused`.
+        if manifest.signing_key_id.starts_with("development-") {
+            return Ok(());
+        }
+        require_pinned_manifest_file(
+            manifest,
+            CAPTION_SELF_TEST_PATH,
+            CAPTION_SELF_TEST_BYTES,
+            CAPTION_SELF_TEST_SHA256,
+        )?;
+        // Deliberately NOT `required_caption_tier_ids(manifest)` on both
+        // sides: passing a pack's OWN declaration as its own requirement is
+        // the self-consistency shape that let the floor model through
+        // untouched. The required set is this binary's constant.
+        let required = [FLOOR_TIER_ID.to_string()];
+        verify_caption_pack_tiers(
+            &manifest.files,
+            &required,
+            &required,
+            &caption_tier_registry(),
+        )?;
+    }
     if matches!(
         manifest.component.as_str(),
         "summary-gemma4-12b" | "summary-gemma4-e4b" | "translation-translategemma-4b"
@@ -1065,14 +1147,19 @@ fn require_pinned_manifest_file(
     expected_bytes: u64,
     expected_sha256: &str,
 ) -> Result<(), String> {
+    // <installer-path-audit BL-08> The component is named from the manifest
+    // rather than hardcoded to "large-v3": this helper now serves the
+    // mandatory FLOOR pack too, and a refusal that names the wrong component
+    // sends a support case to the wrong pack.
+    let component = manifest.component.as_str();
     let item = manifest
         .files
         .iter()
         .find(|item| item.path == path)
-        .ok_or_else(|| format!("Mandatory large-v3 caption pack is missing {path}."))?;
+        .ok_or_else(|| format!("Mandatory {component} caption pack is missing {path}."))?;
     if item.bytes != expected_bytes || item.sha256 != expected_sha256 {
         return Err(format!(
-            "Mandatory large-v3 caption pack substituted unapproved bytes for {path}."
+            "Mandatory {component} caption pack substituted unapproved bytes for {path}."
         ));
     }
     Ok(())
@@ -2088,5 +2175,149 @@ mod tests {
         let error = verify_caption_pack_tiers(&files, &present, &required, &registry)
             .expect_err("unknown declared tier must fail");
         assert!(error.contains("unknown tier"), "unexpected error: {error}");
+    }
+
+    // -----------------------------------------------------------------
+    // <installer-path-audit BL-08> The mandatory caption FLOOR model's
+    // content contract.
+    //
+    // Before this, `validate_component_contract` had three branches --
+    // SOURCE_BOUND_COMPONENTS, `captions-large-v3`, and the three Ollama ids
+    // -- and a grep for "captions-floor" in this file found NONE. The
+    // owner-designated MANDATORY caption baseline hit no branch at all, so
+    // the complete set of machine checks on it was: trust-root signature,
+    // component id, outer SHA-256 == the index's, and byte count == the
+    // index's. Every one of those is a value the publisher chose and signed
+    // in ONE operation. A release engineer pointing `--captions-floor-root`
+    // at `faster-whisper-small` shipped an unreviewed ASR model to every
+    // station on the legally non-negotiable captions path, with every gate
+    // green -- and the residual live self-test only checks that `jfk.wav`
+    // transcribes to "and so my fellow americans", which `small`, `base` and
+    // most quantizations also do.
+    // -----------------------------------------------------------------
+
+    fn floor_manifest(signing_key_id: &str) -> PackManifest {
+        let mut files: Vec<PackManifestFile> = CAPTION_FLOOR_TIER_MODEL_FILES
+            .iter()
+            .map(|(name, bytes, sha256)| PackManifestFile {
+                path: format!("{CAPTION_FLOOR_TIER_MODEL_ROOT}/{name}"),
+                bytes: *bytes,
+                sha256: (*sha256).to_string(),
+            })
+            .collect();
+        files.push(PackManifestFile {
+            path: CAPTION_SELF_TEST_PATH.to_string(),
+            bytes: CAPTION_SELF_TEST_BYTES,
+            sha256: CAPTION_SELF_TEST_SHA256.to_string(),
+        });
+        PackManifest {
+            schema_version: 1,
+            product: "civiccast-native".to_string(),
+            component: "captions-floor".to_string(),
+            product_version: "1.0.0-beta.3".to_string(),
+            compatible_core: "1.0.0-beta.3".to_string(),
+            signing_key_id: signing_key_id.to_string(),
+            file_count: files.len(),
+            total_bytes: files.iter().map(|item| item.bytes).sum(),
+            files,
+            metadata: std::collections::BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_release_signed_floor_pack_carrying_the_reviewed_model_verifies() {
+        validate_component_contract(&floor_manifest("civiccast-release-2026"))
+            .expect("the owner-ruled medium floor model must verify");
+    }
+
+    #[test]
+    fn a_release_signed_floor_pack_with_substituted_model_bytes_is_refused() {
+        // The audit's own proof: a floor pack built from a DIFFERENT
+        // faster-whisper model (small, or a re-quantized medium) verified
+        // before this branch existed.
+        let mut manifest = floor_manifest("civiccast-release-2026");
+        let model = manifest
+            .files
+            .iter_mut()
+            .find(|item| item.path.ends_with("model.bin"))
+            .expect("the floor inventory must name model.bin");
+        model.bytes = 483_546_902; // faster-whisper-small's model.bin
+        model.sha256 = "00".repeat(32);
+
+        let error = validate_component_contract(&manifest)
+            .expect_err("a substituted floor model must be refused");
+        assert!(error.contains("model.bin"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn a_release_signed_floor_pack_missing_a_model_file_is_refused() {
+        let mut manifest = floor_manifest("civiccast-release-2026");
+        manifest.files.retain(|item| !item.path.ends_with("tokenizer.json"));
+        let error = validate_component_contract(&manifest)
+            .expect_err("an incomplete floor inventory must be refused");
+        assert!(error.contains("tokenizer.json"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn a_release_signed_floor_pack_missing_the_self_test_fixture_is_refused() {
+        let mut manifest = floor_manifest("civiccast-release-2026");
+        manifest
+            .files
+            .retain(|item| item.path != CAPTION_SELF_TEST_PATH);
+        let error = validate_component_contract(&manifest)
+            .expect_err("a floor pack without the self-test fixture must be refused");
+        assert!(error.contains(CAPTION_SELF_TEST_PATH), "unexpected error: {error}");
+        assert!(
+            error.contains("captions-floor"),
+            "the refusal must name the FLOOR pack, not large-v3: {error}"
+        );
+    }
+
+    #[test]
+    fn a_floor_pack_borrowing_large_v3s_model_bytes_is_refused() {
+        // The cross-tier substitution `verify_caption_pack_tiers` exists to
+        // prevent -- previously unreachable for this component because the
+        // component reached no branch.
+        let mut manifest = floor_manifest("civiccast-release-2026");
+        let large = &CAPTION_MODEL_FILES
+            .iter()
+            .find(|(name, _, _)| *name == "model.bin")
+            .expect("large-v3 inventory names model.bin");
+        let model = manifest
+            .files
+            .iter_mut()
+            .find(|item| item.path.ends_with("model.bin"))
+            .expect("the floor inventory must name model.bin");
+        model.bytes = large.1;
+        model.sha256 = large.2.to_string();
+
+        validate_component_contract(&manifest)
+            .expect_err("a floor pack carrying large-v3's model bytes must be refused");
+    }
+
+    #[test]
+    fn a_development_signed_floor_pack_is_exempt_and_that_boundary_is_deliberate() {
+        // The exemption exists so the whole-bundle round-trip fixtures (which
+        // cannot synthesise a 1.5 GB model.bin at its pinned SHA-256) keep
+        // working. It cannot widen any shipping path: `embedded_pack_trust`
+        // refuses a bootstrap whose embedded key id starts with
+        // `development-` unless it was compiled with
+        // CIVICCAST_ALLOW_DEVELOPMENT_PACK_KEY=1, and a pack's signature must
+        // verify against THAT bootstrap's key.
+        let mut manifest = floor_manifest("development-test-key");
+        manifest.files.clear();
+        manifest.file_count = 0;
+        manifest.total_bytes = 0;
+        validate_component_contract(&manifest)
+            .expect("a development-signed floor pack is exempt from the pinned inventory");
+
+        // ...and the same manifest under a release key is refused, which is
+        // what makes the boundary a boundary rather than a hole.
+        let mut release = floor_manifest("civiccast-release-2026");
+        release.files.clear();
+        release.file_count = 0;
+        release.total_bytes = 0;
+        validate_component_contract(&release)
+            .expect_err("the same empty pack under a release key must be refused");
     }
 }

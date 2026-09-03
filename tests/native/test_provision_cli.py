@@ -666,6 +666,16 @@ def test_main_noop_path_exits_success_without_generating_a_password_or_journal(
     # question" answer, which is the ordinary D4 case: provisioning runs
     # before the supervisor service starts, so nothing is listening yet.
     monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: None)
+    # <installer-path-audit BL-12> The reuse path now brings the schema to
+    # alembic head, so the real pg_ctl/alembic call has to be stubbed here --
+    # it is asserted on directly by
+    # test_bl12_the_reuse_path_migrates_the_preserved_database below.
+    migrated: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        provision_main,
+        "migrate_provisioned_schema",
+        lambda context, **kwargs: migrated.append(kwargs),
+    )
     install_root = tmp_path / "install"
     program_data_root = tmp_path / "pd"
     paths = resolve_provision_paths(
@@ -692,6 +702,120 @@ def test_main_noop_path_exits_success_without_generating_a_password_or_journal(
     out = capsys.readouterr().out
     assert HANDOFF_MARKER_PREFIX not in out
     assert not pathlib.Path(paths.state_root, "provision-journal.json").exists()
+    assert migrated, "the reuse path must still bring the schema to head"
+
+
+def test_bl12_the_reuse_path_migrates_the_preserved_database(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """<installer-path-audit BL-12> The reuse path was the ONE route through
+    this CLI that never migrated.
+
+    Combined with D3 routing FRESH_INSTALL whenever the supervisor service is
+    absent -- exactly what an uninstall leaves behind, while
+    ``%ProgramData%\\CivicCast`` and its cluster survive BY DESIGN -- a machine
+    could take: D3 -> FRESH_INSTALL (no migration); D4 provisioning ->
+    NOOP_REUSE_EXISTING (no migration); the installer stamps the new
+    ``InstalledVersion`` anyway; and every future run then reports
+    SAME_VERSION_NO_OP, because ``InstalledVersion`` records WHICH INSTALLER
+    LAST RAN, not which schema the database is at. Permanently locked out of
+    its own upgrade engine, with no operator path back.
+
+    The migration must run against the RECORDED DatabaseUrl (the credential
+    this path is contractually forbidden to change) and on that URL's own
+    port -- starting the preserved cluster on a freshly selected port would
+    put it somewhere the recorded credential does not point.
+    """
+    monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: None)
+    captured: list[tuple[object, dict[str, object]]] = []
+    monkeypatch.setattr(
+        provision_main,
+        "migrate_provisioned_schema",
+        lambda context, **kwargs: captured.append((context, kwargs)),
+    )
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    import pathlib
+
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+    existing_url = "postgresql://u:p@127.0.0.1:5544/civiccast"
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": existing_url,
+            },
+        )
+    )
+
+    assert code == EXIT_SUCCESS
+    assert len(captured) == 1, "the reuse path must migrate exactly once"
+    context, kwargs = captured[0]
+    assert kwargs["database_url"] == existing_url, (
+        "the migration must run over the RECORDED DatabaseUrl -- this path must not "
+        "invent a credential"
+    )
+    assert context.postgres_port == 5544, (
+        "the preserved cluster must be started on the port its own recorded URL names, "
+        "not a freshly selected one"
+    )
+    err = capsys.readouterr().err
+    assert "the schema was brought to alembic head" in err
+    # The credential contract is unchanged: nothing generated, nothing handed
+    # back, no journal written.
+    assert HANDOFF_MARKER_PREFIX not in capsys.readouterr().out
+    assert not pathlib.Path(paths.state_root, "provision-journal.json").exists()
+
+
+def test_bl12_a_failed_reuse_migration_is_loud_and_has_its_own_exit_code(
+    tmp_path, monkeypatch
+) -> None:
+    """A reuse path that cannot migrate must NOT report success -- that is the
+    silent lockout BL-12 describes."""
+    monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: None)
+
+    def _boom(context, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("alembic could not reach the reused database")
+
+    monkeypatch.setattr(provision_main, "migrate_provisioned_schema", _boom)
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    import pathlib
+
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "postgresql://u:secret@127.0.0.1:5432/civiccast",
+            },
+        )
+    )
+
+    assert code == EXIT_SCHEMA_MIGRATION_FAILED
+    recovery = pathlib.Path(paths.state_root, "PROVISION-RECOVERY.md")
+    assert recovery.exists(), "a failed reuse migration must leave a recovery document"
+    assert "secret" not in recovery.read_text(encoding="utf-8"), (
+        "the recorded credential must never reach the recovery document"
+    )
 
 
 def test_main_adopts_surviving_cluster_instead_of_fail_loud(tmp_path, capsys, monkeypatch) -> None:

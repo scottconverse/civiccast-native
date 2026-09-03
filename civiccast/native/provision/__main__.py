@@ -360,6 +360,20 @@ def decide_provision_cli_action(
     return ProvisionCliAction.ADOPT_EXISTING
 
 
+#: <installer-path-audit BL-12> A placeholder, NOT a credential.
+#:
+#: ``migrate_provisioned_schema`` reads only the data directory, the
+#: port/host, the state root and the owner run id off the ``ProvisionContext``
+#: it is handed; the connection it migrates over comes from
+#: ``--existing-database-url``, which already carries the real password. The
+#: reuse path must therefore construct a context WITHOUT generating a
+#: password -- creating one there would be a credential that run has no
+#: business creating, on a path whose whole contract is "touch nothing".
+#: Named rather than inlined so it is greppable and so the linter's
+#: hardcoded-password rule is answered once, here, with the reason.
+_MIGRATION_ONLY_UNUSED_PASSWORD = "not-a-credential-see-BL-12"  # noqa: S105  # nosec B105
+
+
 def probe_reused_database_url(database_url: str | None) -> bool | None:
     """Is the registry's ``DatabaseUrl`` actually usable right now?
 
@@ -968,13 +982,100 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if action is ProvisionCliAction.NOOP_REUSE_EXISTING:
+        # <installer-path-audit BL-12> THE SCHEMA STILL HAS TO BE BROUGHT TO
+        # HEAD.
+        #
+        # This branch returned EXIT_SUCCESS here, having touched nothing. That
+        # is correct for the CREDENTIAL and the CLUSTER -- both are reused
+        # as-is, deliberately -- but it left the one path through this CLI
+        # that never migrates. Combined with D3 routing FRESH_INSTALL whenever
+        # the supervisor service is absent (which is exactly what an uninstall
+        # leaves behind, while %ProgramData%\CivicCast and its cluster survive
+        # BY DESIGN), a machine could take: D3 -> FRESH_INSTALL, no migration;
+        # D4 provisioning -> NOOP_REUSE_EXISTING, no migration; the installer
+        # stamps the new InstalledVersion anyway; and every future run then
+        # reports SAME_VERSION_NO_OP, because InstalledVersion records WHICH
+        # INSTALLER LAST RAN, not which schema the database is at. The machine
+        # was permanently locked out of its own upgrade engine, with no
+        # operator path back.
+        #
+        # The RUN and ADOPT_EXISTING paths below already migrate through
+        # `migrate_provisioned_schema`; this reuses the same call, which is
+        # idempotent (alembic skips applied revisions), so an
+        # already-current database is a genuine no-op. Nothing about the
+        # credential or the cluster's contents changes.
+        # The reused cluster's OWN port, not a freshly selected one: this
+        # cluster already exists and is already listening (or will be started)
+        # on whatever the recorded DatabaseUrl names. `_pg_ctl_argv_start`
+        # passes the context's port through to the postmaster, so selecting a
+        # different one here would start the cluster somewhere the recorded
+        # credential does not point.
+        reused_port = args.postgres_port
+        try:
+            parsed_port = urlsplit(args.existing_database_url).port
+            if parsed_port:
+                reused_port = parsed_port
+        except ValueError:
+            pass
+        args.postgres_port = reused_port
+        _, noop_context = build_plan_and_context(
+            paths=paths,
+            args=args,
+            # NOT a credential. `migrate_provisioned_schema` reads only the
+            # data directory, the port/host, the state root and the owner run
+            # id off this context; the connection it migrates over comes from
+            # `--existing-database-url`, which already carries the real
+            # password. Generating a fresh one here would be worse than
+            # useless -- it would be a credential this run has no business
+            # creating on a path whose whole contract is "touch nothing".
+            database_password=_MIGRATION_ONLY_UNUSED_PASSWORD,
+        )
+        try:
+            migrate_provisioned_schema(
+                noop_context,
+                pg_ctl_path=pg_ctl_path_for(paths.initdb_path),
+                database_url=args.existing_database_url,
+                install_root=args.install_root,
+            )
+        except PgDataAclError as exc:
+            write_recovery_document(
+                paths.state_root,
+                reason=f"the preserved cluster's data-directory ACL could not be normalized: {exc}",
+                attempting=(
+                    "starting the preserved cluster to bring its schema to alembic head "
+                    "(reuse path)"
+                ),
+            )
+            sys.stderr.write(
+                "provision outcome: schema migration of the reused database could not start: "
+                f"{exc}\n"
+            )
+            return EXIT_SCHEMA_ACL_NORMALIZATION_FAILED
+        except Exception as exc:
+            detail = str(exc).replace(args.existing_database_url, "[database-url redacted]")
+            write_recovery_document(
+                paths.state_root,
+                reason=(
+                    "the reused database's schema could not be brought to alembic head: "
+                    f"{detail}"
+                ),
+                attempting="'alembic upgrade head' against the reused database (reuse path)",
+            )
+            sys.stderr.write(
+                "provision outcome: the existing database was reused but "
+                f"'alembic upgrade head' did not complete: {detail}\n"
+            )
+            return EXIT_SCHEMA_MIGRATION_FAILED
+
         sys.stderr.write(
             "provision outcome: noop_reuse_existing (an existing PostgreSQL cluster and "
-            "an existing DatabaseUrl registry value were both found; neither was touched"
+            "an existing DatabaseUrl registry value were both found; the credential and the "
+            "cluster's data were not touched, and the schema was brought to alembic head"
             + (
-                "; the value was verified against the live server"
+                "; the recorded DatabaseUrl was verified against the live server"
                 if reused_usable is True
-                else "; the server was not listening yet, so the value could not be verified"
+                else "; the server was not listening yet, so the recorded DatabaseUrl could "
+                "not be verified before use"
             )
             + ")\n"
         )

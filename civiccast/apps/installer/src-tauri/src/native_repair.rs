@@ -399,7 +399,30 @@ pub fn discover_repair_component_universe(
                 }
             } else if file_type.is_dir() {
                 if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
-                    if name != ".acquire-cache" {
+                    // <installer-path-audit MA-30> D5 repair reported
+                    // `Unrepairable` -- exit 79 -- on EVERY healthy activated
+                    // station.
+                    //
+                    // This enrolled every directory under `$INSTDIR\packs`,
+                    // excluding only the literal `.acquire-cache`. But the
+                    // activation step passes
+                    // `--cache-root "$INSTDIR\packs\.station-cache"` and
+                    // `retain_verified_index` does
+                    // `create_dir_all(cache_root.join("indexes"))`, so
+                    // `$INSTDIR\packs\.station-cache\` EXISTS after every
+                    // successful install -- USB side-load and download-only
+                    // alike. `repair_pack_component` then looked for
+                    // `$INSTDIR\packs\.station-cache.ccpack`, found nothing,
+                    // returned NotRepairableLocally, and `overall_outcome`'s
+                    // `any()` turned that into Unrepairable, with a message
+                    // telling the operator to obtain a signed
+                    // `.station-cache.ccpack` that does not and cannot exist.
+                    //
+                    // Every DOT-prefixed directory here is installer
+                    // bookkeeping, never a component: skipping the whole
+                    // class closes this rather than adding a second literal
+                    // beside `.acquire-cache` for the next one to miss.
+                    if !name.starts_with('.') {
                         set.insert(name.to_string());
                     }
                 }
@@ -1455,6 +1478,60 @@ mod tests {
         let universe = discover_repair_component_universe(&instdir, &required);
         assert!(!universe.contains(&".acquire-cache".to_string()));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ma30_the_station_cache_directory_is_never_treated_as_a_component() {
+        // <installer-path-audit MA-30> D5 repair returned `Unrepairable` --
+        // exit 79 -- on EVERY healthy activated station.
+        //
+        // The activation step passes
+        // `--cache-root "$INSTDIR\packs\.station-cache"` and
+        // `retain_verified_index` does `create_dir_all(cache_root.join(
+        // "indexes"))`, so `$INSTDIR\packs\.station-cache\` exists after every
+        // successful install -- USB side-load and download-only alike. The
+        // universe excluded only the literal `.acquire-cache`, so
+        // `.station-cache` was enrolled as a component,
+        // `repair_pack_component` found no `.station-cache.ccpack`, returned
+        // NotRepairableLocally, and `overall_outcome`'s `any()` made the whole
+        // repair Unrepairable -- with a remedy the operator cannot follow,
+        // because that pack does not and cannot exist.
+        let root = scratch_dir("universe-station-cache");
+        let instdir = root.join("instdir");
+        fs::create_dir_all(instdir.join("packs").join(".station-cache").join("indexes"))
+            .expect("mkdir the station cache exactly as activation leaves it");
+        fs::create_dir_all(instdir.join("packs").join("captions-floor"))
+            .expect("mkdir a real staged component beside it");
+        let required: Vec<String> = Vec::new();
+
+        let universe = discover_repair_component_universe(&instdir, &required);
+
+        assert!(
+            !universe.contains(&".station-cache".to_string()),
+            "the per-SHA pack cache is installer bookkeeping, not a component: {universe:?}"
+        );
+        assert!(
+            universe.contains(&"captions-floor".to_string()),
+            "a real staged component beside it must still be discovered: {universe:?}"
+        );
+    }
+
+    #[test]
+    fn ma30_every_dot_prefixed_directory_is_bookkeeping_not_a_component() {
+        // Skipping the whole DOT-prefixed class rather than adding a second
+        // literal is the fix: the next bookkeeping directory someone adds
+        // must not resurrect this defect.
+        let root = scratch_dir("universe-dot-dirs");
+        let instdir = root.join("instdir");
+        for name in [".acquire-cache", ".station-cache", ".partials", ".tmp"] {
+            fs::create_dir_all(instdir.join("packs").join(name)).expect("mkdir bookkeeping dir");
+        }
+        let required: Vec<String> = Vec::new();
+        let universe = discover_repair_component_universe(&instdir, &required);
+        assert!(
+            universe.is_empty(),
+            "no dot-prefixed directory may be enrolled as a component: {universe:?}"
+        );
     }
 
     // ---- run_repair_with: full orchestration with injected fakes (no
