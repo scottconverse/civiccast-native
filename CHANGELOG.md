@@ -17,6 +17,30 @@ came across and what deliberately did not.
 candidate; it does not change the `v1.0.0-beta.3` install story documented
 below.
 
+### Fixed
+
+- **The GStreamer egress engine now actually puts MPEG-TS on the wire.**
+  `civiccast/egress/gst/worker.py` imported its sibling modules by path
+  (`import graph`) while `engine.py` prefers the package form
+  (`from civiccast.egress.gst.graph import ...`). On the native Windows line the
+  bundled GStreamer closure makes the engine's package import succeed, so the
+  two halves bound two distinct `PlaylistLeg` classes compiled from the same
+  file. `engine._instantiate_source_leg`'s `isinstance(leg, PlaylistLeg)`
+  dispatch therefore missed on every program leg (`bridge.graph_from_config`
+  always builds one), fell through to the `SourceLeg` branch, and raised
+  `AttributeError: 'PlaylistLeg' object has no attribute 'elements'` inside
+  `GstPlayoutEngine.__init__` — the worker died before the pipeline reached
+  PLAYING, so the configured `udp-ts` sink never emitted a packet. Gate A's T4
+  probe saw exactly that: `engine_state=FALLBACK_SLATE` and a TSDuck capture
+  that timed out with zero packets, while the ffmpeg fallback on the same box
+  passed. The worker now publishes each by-path sibling module under its
+  `civiccast.egress.gst.<name>` key in `sys.modules`, so the engine's
+  package-form imports resolve to the same objects — without importing the
+  `civiccast` package (which would drag `civiccast/egress/__init__.py`, 771
+  modules with sqlalchemy and pydantic, into the worker). Verified against the
+  shipped runtime closure: 2651 TS packets, 0 invalid syncs, 0 transport
+  errors, 1 service.
+
 ### Changed
 
 - **Release prep: bump product version to `v1.0.0-beta.4`.** Every surface

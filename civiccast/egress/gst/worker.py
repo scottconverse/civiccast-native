@@ -17,14 +17,27 @@ Reads a serialized ``PlayoutGraph`` (JSON, ``argv[1]``), builds + runs
 - Smoke/test: set ``SWAPS`` to run a fixed program↔role swap schedule.
 
 Launched by file path (not ``-m``) so it needs only ``gi`` + the sibling
-``graph``/``engine`` modules — never the full civiccast package (no pydantic in the
-worker process, on either platform).
+``graph``/``engine``/``control``/``audio_tap`` modules. This module's own import
+block pulls in NO civiccast package module at all (proven in
+``tests/egress/test_gst_worker_module_identity.py``), which is what keeps
+``civiccast/egress/__init__.py`` — 771 modules, sqlalchemy + pydantic — out of
+the worker process.
+
+Measured boundary, so nobody reads more into that than it says: the worker
+process as a whole is NOT pydantic-free today. ``engine.py`` unconditionally
+imports ``civiccast.native.gstreamer_runtime`` to bootstrap the bundled
+GStreamer closure, and ``civiccast/native/__init__.py`` re-exports
+``civiccast.native.models``, which is pydantic. A real worker on the shipped
+runtime lands at 321 modules including pydantic, without sqlalchemy and without
+``civiccast.egress``. That is engine.py's import, it predates this seam, and
+narrowing it is a separate change.
 
 Usage:  python3 worker.py <graph.json>
 """
 
 import base64
 import contextlib
+import importlib
 import json
 import os
 import sys
@@ -34,10 +47,61 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import control as controlmod  # type: ignore[import-not-found]
-import engine as enginemod  # type: ignore[import-not-found]
-import graph as graphmod  # type: ignore[import-not-found]
+_GST_DIR = Path(__file__).resolve().parent
+_PACKAGE = "civiccast.egress.gst"
+
+
+def _sibling_module(name: str) -> Any:
+    """Import one sibling gst module BY PATH and publish it under its package name.
+
+    Gate A T4 root cause (2026-09), and why this is not a plain ``import graph``:
+    ``engine.py`` imports these siblings in the PACKAGE form
+    (``from civiccast.egress.gst.graph import ...``) and only falls back to the
+    by-path form when that raises. On the native Windows line the bundled
+    GStreamer closure makes the engine's ``gi`` import succeed, so the engine
+    takes its package branch while this worker had taken the by-path branch --
+    binding two DISTINCT ``PlaylistLeg`` classes compiled from the same file.
+    ``engine._instantiate_source_leg``'s ``isinstance(leg, PlaylistLeg)`` then
+    missed on every program leg (``bridge.graph_from_config`` always builds a
+    ``PlaylistLeg``), fell through to the ``SourceLeg`` branch, and killed the
+    worker at construction with ``AttributeError: 'PlaylistLeg' object has no
+    attribute 'elements'`` -- before the pipeline reached PLAYING, so the udp-ts
+    sink never emitted a packet.
+
+    Registering the by-path module object in ``sys.modules`` under
+    ``civiccast.egress.gst.<name>`` makes the engine's package-form import
+    resolve to THIS object. ``importlib`` returns a ``sys.modules`` hit before it
+    walks parent packages, so this does NOT import ``civiccast``,
+    ``civiccast.egress`` (771 modules, sqlalchemy + pydantic) or
+    ``civiccast.egress.gst``. A package-first import here (``from
+    civiccast.egress.gst import graph``) would fix the identity split just as
+    well and break exactly that -- see this module's docstring for the isolation
+    contract, and for what the worker process really does end up importing once
+    ``engine.py`` runs its own bootstrap.
+
+    A module already present under the package name wins: in an in-process
+    caller that legitimately imported the package (the test suite), adopting its
+    object is what keeps the two halves on ONE identity in that direction too.
+    """
+    package_name = f"{_PACKAGE}.{name}"
+    existing = sys.modules.get(package_name)
+    if existing is not None:
+        return existing
+    if str(_GST_DIR) not in sys.path:
+        sys.path.insert(0, str(_GST_DIR))
+    module = importlib.import_module(name)
+    sys.modules[package_name] = module
+    return module
+
+
+# ORDER IS LOAD-BEARING: every sibling the engine imports in package form must be
+# published BEFORE ``engine`` itself is imported, or the engine's own package
+# import of the missing one falls through to the real ``civiccast.egress.gst``
+# package and re-creates the split identity this fixes.
+controlmod = _sibling_module("control")
+graphmod = _sibling_module("graph")
+_sibling_module("audio_tap")  # engine imports RollingWavSegmentWriter from it
+enginemod = _sibling_module("engine")
 
 # -- D2 Windows worker-pipe seam (spec-supervisor D2, design.md sec4) --------------
 #
@@ -95,10 +159,11 @@ def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, st
             engine_instance.swap.swap_to(command[1])
             return "applied", None
         if verb == "reload":
-            with Path(command[1]).open(encoding="utf-8") as handle:
+            reload_path = Path(command[1])
+            with reload_path.open(encoding="utf-8") as handle:
                 new_graph = graphmod.graph_from_json(handle.read())
             with contextlib.suppress(OSError):
-                Path(command[1]).unlink()  # one-shot graph file: consumed after read
+                reload_path.unlink()  # one-shot graph file: consumed after read
             engine_instance.reload_program(new_graph.sources[0])
             # BLOCKER fix: re-apply the graphics-overlay leg too (mirrors the FIFO
             # dispatch path, engine._dispatch_control) -- otherwise a content-reload

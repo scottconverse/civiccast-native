@@ -427,11 +427,22 @@ entries:
       # file. Blob IDs re-hashed with `git hash-object --path <file> <file>`
       # per D2; worker.py/control.py/audio_tap.py are byte-identical and keep
       # their recorded blobs.
+      # Re-provisioned (fix/gst-engine-emits-ts, 2026-09-03): worker.py now
+      # publishes its by-path sibling modules under their package names so the
+      # engine's package-form imports resolve to the SAME objects, and
+      # engine.py's stale "Windows can't reach the package branch" comment was
+      # corrected. Both files' recorded evidence predates this change; the
+      # current-source proof for THESE bytes is the on-the-wire capture in that
+      # PR (shipped GStreamer closure -> udpsink -> TSDuck tsp analyze: 1771 TS
+      # packets, 0 invalid syncs, 0 transport errors), which the WSL/session-0
+      # evidence docs do not themselves cover. Blob IDs re-hashed with
+      # `git hash-object --path <file> <file>` per D2; graph.py/control.py/
+      # audio_tap.py are byte-identical and keep their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 50544a91533383e714dface4cdd5bdff0336966b
+          blob: 824d3a162e36cc85431da0779208554aa4413bf2
         - path: civiccast/egress/gst/engine.py
-          blob: 30b847776130be31700ab1d5a9144370fd1f0811
+          blob: 3eaee8b6112afc4d5e500b6e556eb22c6979fdc2
         - path: civiccast/egress/gst/graph.py
           blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
         - path: civiccast/egress/gst/control.py
@@ -563,11 +574,22 @@ entries:
       # file. Blob IDs re-hashed with `git hash-object --path <file> <file>`
       # per D2; worker.py/control.py/audio_tap.py are byte-identical and keep
       # their recorded blobs.
+      # Re-provisioned (fix/gst-engine-emits-ts, 2026-09-03): worker.py now
+      # publishes its by-path sibling modules under their package names so the
+      # engine's package-form imports resolve to the SAME objects, and
+      # engine.py's stale "Windows can't reach the package branch" comment was
+      # corrected. Both files' recorded evidence predates this change; the
+      # current-source proof for THESE bytes is the on-the-wire capture in that
+      # PR (shipped GStreamer closure -> udpsink -> TSDuck tsp analyze: 1771 TS
+      # packets, 0 invalid syncs, 0 transport errors), which the WSL/session-0
+      # evidence docs do not themselves cover. Blob IDs re-hashed with
+      # `git hash-object --path <file> <file>` per D2; graph.py/control.py/
+      # audio_tap.py are byte-identical and keep their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 50544a91533383e714dface4cdd5bdff0336966b
+          blob: 824d3a162e36cc85431da0779208554aa4413bf2
         - path: civiccast/egress/gst/engine.py
-          blob: 30b847776130be31700ab1d5a9144370fd1f0811
+          blob: 3eaee8b6112afc4d5e500b6e556eb22c6979fdc2
         - path: civiccast/egress/gst/graph.py
           blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
         - path: civiccast/egress/gst/control.py

@@ -71,7 +71,11 @@ import gi  # type: ignore[import-not-found] # noqa: E402
 gi.require_version("Gst", "1.0")
 from gi.repository import GLib, Gst  # type: ignore[import-not-found] # noqa: E402
 
-try:  # package context (Windows can't reach here — gi import fails first)
+try:  # package context — the native Windows line reaches this branch too:
+    # the bundled GStreamer runtime (bootstrapped above) makes the `gi` import
+    # succeed there, so `worker.py` must import these modules through the SAME
+    # package path or the two halves bind two distinct copies of `PlaylistLeg`
+    # (see worker.py's import note — that mismatch was the Gate A T4 defect).
     from civiccast.egress.gst.audio_tap import RollingWavSegmentWriter
     from civiccast.egress.gst.graph import (
         AudioTapLeg,
