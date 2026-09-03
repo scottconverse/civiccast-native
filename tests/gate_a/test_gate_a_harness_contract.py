@@ -1567,3 +1567,181 @@ def test_judge_download_only_lane_is_registered() -> None:
     assert (
         "dirty_orphaned_tier" not in judge.split("DOWNLOAD_ONLY_CHECKS", 1)[1].split("}", 1)[0]
     ), "DOWNLOAD_ONLY_CHECKS must never include dirty_orphaned_tier"
+
+
+# --------------------------------------------------------------------------
+# Installer-path audit batch (2026-09-03). The audit's own finding was that
+# "the entire PowerShell half of PR #143 has zero tests" -- these close that
+# for the harness contracts this batch establishes. Static, like everything
+# else in this file: they read the script text, they do not run Sandbox.
+# --------------------------------------------------------------------------
+
+
+def test_harness_completed_is_promoted_by_the_try_not_the_finally() -> None:
+    """<gate-a-audit-BL-09> A crashed lane must not report completion.
+
+    The `finally` block used to set ``harness_completed = $true``
+    unconditionally -- including after the `catch` that swallows any throw
+    from the 1500-line `try` -- so a run that died on
+    ``throw "No *setup.exe found in mapped payload"`` still shipped
+    DONE.json.harness_completed=true and the judge called it complete.
+    """
+    code = _code_only(_driver_executable_text())
+    assert "harness_completed          = $false" in code, (
+        "the summary must initialise harness_completed to $false"
+    )
+    promotion = "$summary.harness_completed = $true"
+    assert code.count(promotion) == 1, (
+        "there must be exactly ONE promotion of harness_completed, at the end of the try block"
+    )
+    promoted_at = code.index(promotion)
+    catch_at = code.index('$summary.errors += "top-level failure: $_"')
+    assert promoted_at < catch_at, "the promotion must be the try block's last statement"
+    assert "$summary.harness_completed = $false" in code, "the catch must demote it"
+    assert '$summary.top_level_error = "$_"' in code
+    # The finally must consume the flag, never author it.
+    finally_tail = code[code.index("Save-Summary -Step 'finally-block'") :]
+    assert "harness_completed     = [bool]$summary.harness_completed" in finally_tail
+    assert promotion not in finally_tail
+
+
+def test_watchdog_timeout_retraction_is_gated_on_real_completion() -> None:
+    """<gate-a-audit-BL-09> A run the watchdog declared dead cannot erase it."""
+    code = _code_only(_driver_executable_text())
+    retraction = "$wd = Join-Path $OutDir 'WATCHDOG-TIMEOUT.txt'"
+    assert retraction in code
+    guard = "if ($summary.harness_completed -eq $true) {"
+    assert guard in code
+    assert code.index(guard) < code.index(retraction), (
+        "the WATCHDOG-TIMEOUT.txt retraction must sit inside the completion guard"
+    )
+
+
+def test_post_upgrade_revision_has_two_independent_operands() -> None:
+    """<gate-a-audit-BL-10> The audit's central finding.
+
+    Both operands of the old guard came from one ``SchemaStatus`` in one
+    process, and ``schema=="current"`` is DEFINED as those two being equal,
+    so the guard was 1 whenever the station-up check passed. The database's
+    own ``alembic_version`` row and the CI job's build-time head are the two
+    origins that cannot agree by construction.
+    """
+    driver = _driver_executable_text()
+    assert "function Get-CivicCastDbRevisionViaPsql" in driver
+    assert "alembic_version" in driver
+    assert "function Get-CivicCastKitExpectedHead" in driver
+    assert "EXPECTED-MIGRATION-HEAD.txt" in driver
+    # Both upgrade lanes, not just one.
+    assert driver.count("POST_UPGRADE_DB_REVISION_PSQL=$") == 2
+    assert driver.count("KIT_EXPECTED_HEAD=$(Get-CivicCastKitExpectedHead)") == 2
+
+
+def test_expected_migration_head_flows_from_the_workflow_to_the_guest() -> None:
+    """<gate-a-audit-BL-10> The build-time head's whole path, end to end."""
+    workflow = _read(_WORKFLOW)
+    assert "scripts/gate_a_expected_head.py" in workflow
+    assert workflow.count("-ExpectedMigrationHead") == 3, (
+        "all three lanes must pass the build-time head"
+    )
+    run_gate_a = _read(_RUN_GATE_A)
+    assert "[string]$ExpectedMigrationHead" in run_gate_a
+    assert "-ExpectedMigrationHead $resolvedExpectedHead" in run_gate_a
+    launcher = _read(_HOST_LAUNCHER)
+    assert "[string]$ExpectedMigrationHead" in launcher
+    assert "'EXPECTED-MIGRATION-HEAD.txt'" in launcher
+
+
+def test_the_health_body_predicate_is_shared_by_station_up_t3_and_t5() -> None:
+    """<gate-a-audit-MA-26> PR #143 fixed the station-up loop and left T3/T5
+    reading ``.StatusCode`` alone -- which is how one run recorded
+    ``T5_RESULT=PASS beats=2 unhealthy=0`` and ``T3 health-200 -> 200 ok``
+    over a body reading ``{"status":"degraded","schema":"behind",...}``."""
+    code = _code_only(_driver_executable_text())
+    assert "function Invoke-CivicCastHealthProbe" in code
+    # One definition, three consumers.
+    assert code.count("Invoke-CivicCastHealthProbe -Url") >= 3
+    # The T5 beat no longer grades a bare status code.
+    assert "if (-not $hp.ok) { $soakFail++ }" in code
+    assert "$hs = [int](Invoke-WebRequest" not in code, (
+        "the T5 soak beat must not read a bare status code any more"
+    )
+    # And it records what the body said, per beat.
+    assert "body_status=$($hp.body_status) body_schema=$($hp.body_schema)" in code
+
+
+def test_tsduck_proof_fails_closed_on_an_empty_or_incomplete_report() -> None:
+    """<gate-a-audit-MA-27> ``Get-Content -Raw`` on a 0-byte file returns
+    ``$null``; PowerShell's pipeline drops ``$null``, so the old
+    ``... | ConvertFrom-Json`` never ran and never threw, the counters stayed
+    at 0, and the verdict was ``pass`` over zero analysed packets."""
+    code = _code_only(_driver_executable_text())
+    assert "fail-empty-report" in code
+    assert "fail-zero-packets" in code
+    assert "fail-timed-out" in code
+    assert "fail-no-ts-packets-node" in code
+    assert "$raw = Get-Content -Raw -LiteralPath $report" in code, (
+        "the report must be read into a variable before parsing, never piped straight from "
+        "Get-Content -Raw (which silently vanishes on an empty file)"
+    )
+    assert "[string]::IsNullOrWhiteSpace($raw)" in code
+    assert "packets_total" in code
+
+
+def test_install_progress_capture_is_scoped_to_this_phase() -> None:
+    """<gate-a-audit-MA-23> install-progress.log is append-only across both
+    install phases; the capture used to keep the last match in the WHOLE file,
+    so a phase-2 installer that died before its d3-engine line inherited
+    phase 1's ``route=FRESH_INSTALL engine_exit=11``."""
+    code = _code_only(_driver_executable_text())
+    assert "$script:InstallProgressPhase2Mark" in code
+    assert "Select-Object -Skip $script:InstallProgressPhase2Mark" in code
+    mark_at = code.index("$script:InstallProgressPhase2Mark = 0\n        try {")
+    install_at = code.index(_INSTALLER_LAUNCH)
+    assert mark_at < install_at, "the phase mark must be taken before setup.exe launches"
+
+
+def test_d4_and_postinstall_breadcrumbs_are_captured_and_shipped() -> None:
+    """<gate-a-audit-MA-24/MA-25> D3's exit code is not D4's, and the clean
+    lane had no check on install-progress.log at all."""
+    code = _code_only(_driver_executable_text())
+    assert "step d4-activate-station: returned (-?\\d+)" in code
+    assert "postinstall: (SUCCESS|FAILED|COMPLETED WITH A D3 ROLLBACK)" in code
+    assert "INSTALL-PROGRESS-RESULT.txt" in code
+    for field in (
+        "D4_ACTIVATE_EXIT=",
+        "POSTINSTALL_OUTCOME=",
+        "POSTINSTALL_ALERTS=",
+        "POSTINSTALL_NONZERO_STEPS=",
+    ):
+        assert field in code, f"{field} must be shipped for the judge to grade"
+    judge = _read(_JUDGE)
+    assert "check_install_progress" in judge
+    assert '"install_progress": check_install_progress' in judge
+
+
+def test_tsduck_firewall_rules_are_authored_before_the_first_bind() -> None:
+    """<gate-a-batch-item-1> The Windows Security prompt the operator saw on
+    every install test, raised inside the sandbox when ``tsp -I ip <port>``
+    first opened its listening socket. The harness runs elevated; it authors
+    the allow rules itself."""
+    code = _code_only(_driver_executable_text())
+    assert "function Add-CivicCastFirewallAllowRule" in code
+    assert "netsh.exe advfirewall firewall add rule" in code
+    assert "dir=$direction action=allow" in code
+    assert "foreach ($direction in @('in', 'out'))" in code, (
+        "both directions must be authored, not just the inbound one that raises the prompt"
+    )
+    authored_at = code.index("Add-CivicCastFirewallAllowRule -Name 'CivicCast Gate A - TSDuck tsp'")
+    first_tsp_at = code.index("$tsProof = Test-TsProof")
+    assert authored_at < first_tsp_at, "the rules must be authored before tsp ever runs"
+
+
+def test_hoststore_reset_states_its_post_condition() -> None:
+    """<gate-a-audit-MN-19> The delete is -ErrorAction SilentlyContinue and
+    ``hoststore\\install`` IS the guest's install root, so a silent no-op
+    means the next run installs over the previous run's tree and calls it
+    clean."""
+    code = _code_only(_read(_RUN_GATE_A))
+    assert "$hoststoreRemnants" in code
+    assert "hoststore reset did NOT complete" in code
+    assert "-- verified empty" in code

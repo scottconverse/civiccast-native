@@ -465,9 +465,19 @@ class TestInstallerApiContract:
         monkeypatch,
         tmp_path,
     ) -> None:
-        """Auth works, the token works, migrations are missing. Still not ready."""
+        """Auth works, the token works, migrations are missing. Still not ready.
 
-        self._native_station_with_database(monkeypatch, tmp_path, "0001_an_ancestor_revision")
+        <installer-path-audit MA-06> The revision is now a REAL ancestor from
+        this build's own migration graph. ``"0001_an_ancestor_revision"`` was
+        never in the graph, which is the "a newer build migrated this database"
+        case, not the "behind" case this test is named for.
+        """
+
+        from civiccast import schema_check
+
+        head = schema_check.expected_migration_head()
+        ancestor = sorted(schema_check.known_revisions() - {head})[0]
+        self._native_station_with_database(monkeypatch, tmp_path, ancestor)
 
         summary = service.build_installer_summary()
         lanes = {lane.id: lane for lane in summary.lanes}
@@ -478,6 +488,31 @@ class TestInstallerApiContract:
         assert lanes["dashboard"].ready is False
         assert "older version of CivicCast" in lanes["storage"].next_step
         # Distinguishable from unreachable on screen, not one shared red.
+        assert "could not reach" not in lanes["storage"].next_step
+
+    def test_native_station_with_a_schema_ahead_database_is_not_ready(
+        self,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        """<installer-path-audit MA-06> A NEWER build migrated this database.
+
+        The operator must not be told to "bring the database up to date": on
+        an ahead database ``alembic upgrade head`` cannot find the revision it
+        is stamped with, so that instruction fails.
+        """
+
+        self._native_station_with_database(
+            monkeypatch, tmp_path, "9999_a_revision_from_a_future_build"
+        )
+
+        summary = service.build_installer_summary()
+        lanes = {lane.id: lane for lane in summary.lanes}
+
+        assert summary.ready is False
+        assert lanes["storage"].ready is False
+        assert "NEWER version of CivicCast" in lanes["storage"].next_step
+        assert "older version of CivicCast" not in lanes["storage"].next_step
         assert "could not reach" not in lanes["storage"].next_step
 
     def test_native_station_with_a_current_database_reaches_ready(

@@ -44,12 +44,18 @@ _LOCK_TIMEOUT_SECONDS = 60.0
 EXTERNAL_DATABASE_READY = "ready"
 EXTERNAL_DATABASE_UNREACHABLE = "unreachable"
 EXTERNAL_DATABASE_SCHEMA_BEHIND = "schema_behind"
+#: <installer-path-audit MA-06> The database was migrated by a NEWER build
+#: than the one running. Its own status because the remedy is the opposite of
+#: ``schema_behind``'s: running the migrations cannot help, since this build's
+#: graph does not contain the revision the database is stamped with.
+EXTERNAL_DATABASE_SCHEMA_AHEAD = "schema_ahead"
 EXTERNAL_DATABASE_MISSING = "database_missing"
 EXTERNAL_DATABASE_MISCONFIGURED = "misconfigured"
 EXTERNAL_DATABASE_NOT_READY_STATUSES = frozenset(
     {
         EXTERNAL_DATABASE_UNREACHABLE,
         EXTERNAL_DATABASE_SCHEMA_BEHIND,
+        EXTERNAL_DATABASE_SCHEMA_AHEAD,
         EXTERNAL_DATABASE_MISSING,
         EXTERNAL_DATABASE_MISCONFIGURED,
     }
@@ -317,12 +323,40 @@ def _probe_external_database(database_url: str) -> ExternalDatabaseProbe:
             ),
         )
 
-    if evaluate_schema_currency(db_revision, expected_head).state == "current":
+    from civiccast.schema_check import known_revisions
+
+    try:
+        known = known_revisions()
+    except Exception:  # pragma: no cover - a branched graph; classify as before
+        known = None
+    state = evaluate_schema_currency(db_revision, expected_head, known=known).state
+    if state == "current":
         return ExternalDatabaseProbe(
             status=EXTERNAL_DATABASE_READY,
             migrations_applied=True,
             operator_message="Durable database storage is configured and ready.",
             next_step="Open the operator console and continue setup.",
+        )
+    if state == "ahead":
+        # <installer-path-audit MA-06> A NEWER CivicCast migrated this
+        # database. The "bring the database up to date" advice below cannot
+        # work here: `alembic upgrade head` cannot locate a revision this
+        # build's graph does not contain, so it simply fails. This is also
+        # exactly the state a failed rollback leaves behind (new schema, old
+        # binary), so it is not a hypothetical.
+        return ExternalDatabaseProbe(
+            status=EXTERNAL_DATABASE_SCHEMA_AHEAD,
+            migrations_applied=False,
+            operator_message=(
+                "CivicCast reached its database, but the database was set up by a NEWER "
+                "version of CivicCast than the one running here. Meeting records saved now "
+                "could be lost or rejected."
+            ),
+            next_step=(
+                "Install the newer version of CivicCast again on this computer, or ask "
+                "whoever set it up to restore the backup taken before the upgrade. Updating "
+                "the database will NOT fix this."
+            ),
         )
     return ExternalDatabaseProbe(
         status=EXTERNAL_DATABASE_SCHEMA_BEHIND,

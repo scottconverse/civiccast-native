@@ -142,6 +142,17 @@ param(
     # mapping for it. See docs/ops/gate-a.md, "Download-only lane".
     [switch]$DownloadOnlyMode,
 
+    # <gate-a-audit-BL-10> The migration head the CI job computed at BUILD
+    # time from the candidate's own source tree, handed to the guest as
+    # EXPECTED-MIGRATION-HEAD.txt over the same host-to-guest input channel
+    # as SOAK_MINUTES.txt. This is half of the post-upgrade schema proof; the
+    # other half is the database's own alembic_version row, read in the guest
+    # with psql. Neither comes from the running control plane, which is what
+    # made PR #143's own guard unfailable. Empty means "the caller did not
+    # provide one" -- the guest writes KIT_EXPECTED_HEAD=<not-provided> and
+    # the judge FAILs the upgrade lanes on it rather than assuming a pass.
+    [string]$ExpectedMigrationHead,
+
     # HARDENED <gate-a-orphan-guard> 2026-08-26: minutes a WindowsSandbox
     # server/client process may sit with NO vmmemWindowsSandbox (the actual
     # VM) before the pre-launch busy guard stops treating it as someone
@@ -311,7 +322,11 @@ if ($UpgradeMode) {
 if ($DownloadOnlyMode) {
     Set-Content -Path (Join-Path $OutDir 'DOWNLOAD_ONLY_MODE.txt') -Value "download_only_mode=1 requested_utc=$((Get-Date).ToUniversalTime().ToString('o'))" -Encoding UTF8
 }
-Write-Host "Output dir stamped clean: $OutDir (SOAK_MINUTES=$SoakMinutes, DirtyMode=$([bool]$DirtyMode), UpgradeMode=$([bool]$UpgradeMode), DownloadOnlyMode=$([bool]$DownloadOnlyMode))"
+if (-not [string]::IsNullOrWhiteSpace($ExpectedMigrationHead)) {
+    # <gate-a-audit-BL-10> See the -ExpectedMigrationHead parameter comment.
+    Set-Content -Path (Join-Path $OutDir 'EXPECTED-MIGRATION-HEAD.txt') -Value $ExpectedMigrationHead.Trim() -Encoding UTF8
+}
+Write-Host "Output dir stamped clean: $OutDir (SOAK_MINUTES=$SoakMinutes, DirtyMode=$([bool]$DirtyMode), UpgradeMode=$([bool]$UpgradeMode), DownloadOnlyMode=$([bool]$DownloadOnlyMode), ExpectedMigrationHead=$(if ([string]::IsNullOrWhiteSpace($ExpectedMigrationHead)) { '<not-provided>' } else { $ExpectedMigrationHead }))"
 
 # 1b. Guard: wait for a free sandbox. Windows Sandbox only ever runs ONE
 #     instance system-wide -- if any of $SandboxProcessNames is already

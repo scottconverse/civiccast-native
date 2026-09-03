@@ -370,6 +370,20 @@ fn health_response_is_ok(
     if !compact.contains(&format!("\"version\":\"{CIVICCAST_VERSION}\"")) {
         return false;
     }
+    // <installer-path-audit MA-07> 200 + a matching version string is
+    // LIVENESS, not readiness -- civiccast/app.py's own /health docstring
+    // says so ("always 200 while the process answers, in every schema
+    // state"). PR #143 fixed exactly this shape in the Gate A harness and
+    // left it in the product: this probe is what decides whether the
+    // installer's lane is "ready", and it would declare a station ready over
+    // a schema-behind or schema-ahead database whose staff endpoints 500.
+    // Both fields have been unconditional in the body since PR #143.
+    if !compact.contains("\"status\":\"healthy\"") {
+        return false;
+    }
+    if !compact.contains("\"schema\":\"current\"") {
+        return false;
+    }
     if let Some(expected) = expected_instance_id {
         if !compact.contains(&format!("\"bootstrap_instance_id\":\"{expected}\"")) {
             return false;
@@ -1853,51 +1867,82 @@ try {{
         // Chain J (2026-08-02): this test exercises the REAL comparison
         // health_response_is_ok makes against the live CIVICCAST_VERSION
         // constant, so its fixtures are built FROM that constant via
-        // format! rather than a re-typed literal -- a hardcoded
-        // "1.0.0-rc15" here is exactly what silently went stale (and
-        // masked a real assertion failure) the moment the constant's
-        // value last changed.
+        // format! rather than a re-typed literal.
+        //
+        // <installer-path-audit MA-07> Every fixture below now carries the
+        // readiness pair as well. That is the point of the finding: this
+        // probe decides whether the installer declares its lane READY, and
+        // a 200 with a matching version is LIVENESS ONLY -- app.py's own
+        // /health docstring says so. The old fixtures proved a station
+        // ready over a body that never mentioned readiness or schema
+        // currency at all.
+        const READY: &str = "\"status\":\"healthy\",\"schema\":\"current\"";
+        const HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n";
+
         assert!(health_response_is_ok(
+            &format!("{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\"}}"),
+            None,
+            None,
+        ));
+        // The Gate A run 33681670855 body: a 200, a matching version, and a
+        // station serving 500s. The pre-MA-07 probe accepted it.
+        assert!(!health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\"}}"
+                "{HEAD}{{\"status\":\"degraded\",\"schema\":\"behind\",\"version\":\"{CIVICCAST_VERSION}\"}}"
+            ),
+            None,
+            None,
+        ));
+        // Healthy but schema-behind is still not ready.
+        assert!(!health_response_is_ok(
+            &format!(
+                "{HEAD}{{\"status\":\"healthy\",\"schema\":\"behind\",\"version\":\"{CIVICCAST_VERSION}\"}}"
+            ),
+            None,
+            None,
+        ));
+        // A body that says nothing about readiness fails closed too.
+        assert!(!health_response_is_ok(
+            &format!("{HEAD}{{\"version\":\"{CIVICCAST_VERSION}\"}}"),
+            None,
+            None,
+        ));
+        assert!(!health_response_is_ok(
+            &format!(
+                "HTTP/1.1 503 Service Unavailable\r\n\r\n{{{READY},\"version\":\"{CIVICCAST_VERSION}\"}}"
             ),
             None,
             None,
         ));
         assert!(!health_response_is_ok(
-            &format!("HTTP/1.1 503 Service Unavailable\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\"}}"),
-            None,
-            None,
-        ));
-        assert!(!health_response_is_ok(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"version\":\"2.1.0\"}",
+            &format!("{HEAD}{{{READY},\"version\":\"2.1.0\"}}"),
             None,
             None,
         ));
         assert!(health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"proof-123\"}}"
+                "{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"proof-123\"}}"
             ),
             Some("proof-123"),
             None,
         ));
         assert!(!health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"other\"}}"
+                "{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"other\"}}"
             ),
             Some("proof-123"),
             None,
         ));
         assert!(health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"build-123\"}}"
+                "{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"build-123\"}}"
             ),
             None,
             Some("build-123"),
         ));
         assert!(!health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"stale\"}}"
+                "{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"stale\"}}"
             ),
             None,
             Some("build-123"),
@@ -4561,6 +4606,17 @@ fn run_native_repair_cli(args: &[String]) -> Option<i32> {
             return Some(65);
         }
     }
+    // <installer-path-audit MA-31, honesty half> Say what this verdict does
+    // NOT cover, on stderr where an operator reads it, not only as a field in
+    // the JSON. `AllVerified` / exit 0 is derived from pack hashes, pack
+    // versions, the selector and service/firewall registration -- it says
+    // nothing about the database schema or the station's activation
+    // artifacts, so on a new-code-over-old-schema station (the exact machine
+    // the installer-path audit is about) it reports "healthy" over a station
+    // that cannot serve.
+    for line in &report.not_checked {
+        eprintln!("NOT CHECKED BY THIS REPAIR -- {line}");
+    }
     // Repair rebuilds a tree only after stopping the supervisor service, and
     // nothing here starts it again -- re-registration is not a start. Say so,
     // or an operator reads exit 76 as "repaired and running" over a station
@@ -5790,10 +5846,29 @@ fn run_native_service_registration_cli(args: &[String]) -> Option<i32> {
         Some(
             match native_service_registration::register_native_service(Path::new(&install_root)) {
                 Ok(()) => match native_service_registration::start_native_service() {
-                    Ok(()) => {
-                        println!("CivicCast (Native) service registered and RUNNING.");
-                        0
-                    }
+                    // <installer-path-audit BL-11> SCM `RUNNING` used to be
+                    // the ONLY success signal the entire elevated install
+                    // chain had. It means `pythonservice.exe` told the SCM it
+                    // had started -- nothing about Postgres being up, the
+                    // control plane binding 8000, or the schema matching the
+                    // code. Gate A run 33681670855 is exactly that: service
+                    // registered, SCM RUNNING, /health 200
+                    // {"status":"degraded","schema":"behind"}, InstalledVersion
+                    // written, exit 0, success page over a box serving 500s.
+                    // Poll /health and require it to say the station can serve.
+                    Ok(()) => match native_service_registration::wait_for_control_plane_ready() {
+                        Ok(()) => {
+                            println!(
+                                "CivicCast (Native) service registered, RUNNING, and serving \
+                                 (/health reports healthy with a current schema)."
+                            );
+                            0
+                        }
+                        Err(error) => {
+                            eprintln!("{error}");
+                            native_service_registration::SERVICE_NOT_SERVING_EXIT_CODE
+                        }
+                    },
                     Err(error) => {
                         eprintln!(
                             "CivicCast (Native) service was registered but could not be \
@@ -5928,9 +6003,15 @@ fn run_native_provision_cli(args: &[String]) -> Option<i32> {
                     );
                     0
                 }
-                Err(error) => {
-                    eprintln!("{error}");
-                    75
+                // <installer-path-audit BL-13> The failure now carries its
+                // own exit code: an unprovable ActiveRuntime selector
+                // (SELECTOR_UNPROVABLE_EXIT_CODE) is a different operator
+                // situation from a provisioning failure, and the exit code is
+                // the only signal a silent install's support log carries
+                // about which precondition failed.
+                Err(failure) => {
+                    eprintln!("{failure}");
+                    failure.exit_code
                 }
             },
         )
@@ -5938,7 +6019,7 @@ fn run_native_provision_cli(args: &[String]) -> Option<i32> {
     #[cfg(not(target_os = "windows"))]
     {
         eprintln!("Native provisioning requires Windows.");
-        Some(75)
+        Some(native_service_registration::ProvisionFailure::GENERIC_EXIT_CODE)
     }
 }
 
@@ -6196,6 +6277,42 @@ fn main() {
     }
     if command_line_has_arg(&args, "--civiccast-runtime-host") {
         std::process::exit(run_civiccast_runtime_host());
+    }
+
+    // <installer-path-audit MA-22> AN UNRECOGNISED `--civiccast-*` FLAG USED
+    // TO LAUNCH THE GUI AND BLOCK THE INSTALLER FOREVER.
+    //
+    // `main()` dispatches through a chain of `if let Some(exit_code)` guards
+    // and anything unmatched fell straight through to the Tauri event loop
+    // below, which never exits. That matters because PREINSTALL invokes the
+    // OLD, ALREADY-INSTALLED binary:
+    //
+    //     nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" \
+    //         --civiccast-stop-native-service'
+    //
+    // and nothing checks the old binary's version before assuming its CLI
+    // contract. If a future release renames or removes that flag, upgrading
+    // FROM that version launches its GUI under nsExec with NO TIMEOUT -- the
+    // installer sits alive with no children and no visible position in the
+    // chain, which is precisely the run-3/run-4 hang
+    // `nsis-hooks-bootstrap.nsh`'s own header was written to make
+    // diagnosable.
+    //
+    // A no-argument launch is still the GUI, deliberately: that is what a
+    // user double-clicking setup.exe gets. Only a `--civiccast-*` argument
+    // this binary does not implement is fatal, and it names the flag.
+    if let Some(unknown) = args
+        .iter()
+        .find(|argument| argument.starts_with("--civiccast-"))
+    {
+        eprintln!(
+            "CivicCast Installer {CIVICCAST_VERSION} does not implement {unknown}. This is \
+             almost always a version mismatch: an installer is invoking a command-line step on \
+             a DIFFERENT CivicCast build than the one that shipped it. Refusing to open the \
+             setup window instead, so an unattended install fails visibly rather than hanging \
+             forever."
+        );
+        std::process::exit(native_service_registration::UNKNOWN_CIVICCAST_FLAG_EXIT_CODE);
     }
 
     tauri::Builder::default()

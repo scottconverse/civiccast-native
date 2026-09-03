@@ -105,6 +105,21 @@ class RestoreDrillReport(BaseModel):
 
     @property
     def ok(self) -> bool:
+        """Did this drill PROVE the restore is faithful?
+
+        <installer-path-audit MA-11> ``all(t.matched for t in [])`` is True,
+        so a drill that compared ZERO tables reported ``ok=True`` -- and
+        ``_table_results`` returns ``[]`` whenever both sides are empty, which
+        every Postgres cross-check can produce because they all hardcode
+        ``schema="civiccast"``. ``report.py`` then printed "confirmed every row
+        came back exactly as it was" and ``installer/service.py`` summarised
+        "0 tables verified, schema_ok=True". An empty comparison is a failure
+        to observe, not an observation of correctness, and this gate is what
+        the pre-upgrade backup is allowed to proceed on.
+        """
+
+        if not self.tables:
+            return False
         return self.schema_ok and not self.errors and all(t.matched for t in self.tables)
 
 

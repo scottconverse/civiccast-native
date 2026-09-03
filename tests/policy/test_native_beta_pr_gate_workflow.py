@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -63,8 +64,27 @@ def _assert_windows_release_gate(workflow: dict[str, object]) -> None:
     pack_run = pack_steps["Run exact native beta pack contract tests"]["run"]
     for required in PACK_TESTS:
         assert required in pack_run
-    for forbidden in ("apt-get", "gstreamer1.0", "not windows_only", "-m ", "wsl"):
+    # <installer-path-audit MA-39> The blanket `-m ` ban is narrowed to the
+    # filter it was actually written to forbid.
+    #
+    # This is the WINDOWS job, and its point is that windows_only tests really
+    # run here -- which is why "not windows_only" is forbidden. The bare "-m "
+    # caught EVERY marker expression, including the one this audit requires:
+    # `-m "not integration"`, which makes the job's existing behaviour
+    # EXPLICIT. tests/native/test_upgrade_engine_postgres.py -- the only test
+    # in this repository that crosses a real version boundary through the real
+    # production seam bundle -- was ALREADY being skipped here, silently,
+    # because windows-latest cannot run this project's Linux Postgres
+    # container. The filter removes no coverage; it names a gap that was
+    # invisible. Where the lane actually runs fail-closed is pinned by
+    # test_ma39_the_ubuntu_job_still_runs_the_integration_lane_fail_closed.
+    for forbidden in ("apt-get", "gstreamer1.0", "not windows_only", "wsl"):
         assert forbidden not in pack_run.lower()
+    markers = re.findall(r'-m\s+"([^"]+)"', pack_run)
+    assert markers == ["not integration"], (
+        "the only marker filter this Windows job may carry is the explicit "
+        f"integration exclusion; found {markers}"
+    )
 
     installer = jobs["native-beta-installer"]
     assert installer["if"].strip() == release_if
@@ -252,6 +272,67 @@ def test_changed_workflows_remain_valid_under_actions_budget_policy() -> None:
     for path in (HOST, INSTALLER, LINT):
         text, _workflow_data = _workflow(path)
         assert validate_workflow(path, text) == []
+
+
+def test_ma39_the_release_branch_job_names_its_integration_exclusion() -> None:
+    """<installer-path-audit MA-39> On release-branch PRs -- the ones that
+    matter most -- this job ran ``pytest -q tests/native`` on windows-latest
+    with no marker filter, no Docker, no ``CIVICCAST_RUN_POSTGRES_TESTS`` and
+    no junit floor. So ``tests/native/test_upgrade_engine_postgres.py``, the
+    ONLY test in this repository that crosses a real version boundary through
+    the real production seam bundle, silently SKIPPED.
+
+    It cannot run here (windows-latest cannot run this project's Linux
+    Postgres container), so the fix is to say so rather than to appear to run
+    it. This pins the saying-so.
+    """
+    text, _workflow_data = _workflow(HOST)
+    assert 'uv run pytest -q tests/native -m "not integration"' in text, (
+        "the release-branch native job must EXCLUDE the integration lane "
+        "explicitly, not skip it by accident"
+    )
+    assert "MA-39" in text, "the exclusion must carry the finding it answers"
+    # It must point at the job that DOES run the lane, or the exclusion reads
+    # as a gap nobody covers. It cannot name that workflow's FILE, though:
+    # test_gate_excludes_release_lint_and_signing_authority forbids that
+    # literal here on purpose (this gate must not appear to depend on the
+    # release lint/test authority), so the reference is by job name.
+    assert 'ubuntu "Unit tests" job' in text
+    assert "ci-test.yml" not in text, (
+        "the release gate must not name the release test workflow's file -- see "
+        "test_gate_excludes_release_lint_and_signing_authority"
+    )
+
+
+def test_ma39_the_ubuntu_job_still_runs_the_integration_lane_fail_closed() -> None:
+    """The other half: naming the boundary is only honest if the lane really
+    is covered somewhere. ci-test.yml's ubuntu 'Unit tests' job runs that
+    module non-skipped with a real Postgres, fail-closed three ways."""
+    ci_test = ROOT / ".github" / "workflows" / "ci-test.yml"
+    text = ci_test.read_text(encoding="utf-8")
+    assert 'CIVICCAST_RUN_POSTGRES_TESTS: "1"' in text, (
+        "the job-level flag is what turns the module's own skip into a pytest.fail"
+    )
+    assert "Probe Docker" in text, "an unreachable Docker socket must fail the job"
+    assert "verify_native_junit_floor.py" in text, (
+        "and the junit floor must reject any skipped/failed/errored tests.native case"
+    )
+
+
+def test_ma38_the_restore_drill_floor_is_derived_not_typed() -> None:
+    """<installer-path-audit MA-38> The floor was the literal ``20`` while
+    ``grep -c "^def test_"`` returned 21: PR #143 added the file's ONLY proof
+    of its own fix and did not bump it, so that test could be skipped or
+    deleted with the guard still green.
+
+    Deriving the floor from the source closes the class rather than the
+    instance -- a stale floor becomes impossible by construction.
+    """
+    ci_test = ROOT / ".github" / "workflows" / "ci-test.yml"
+    text = ci_test.read_text(encoding="utf-8")
+    assert "floor = 20" not in text, "the hardcoded floor must be gone"
+    assert 'floor = len(re.findall(r"^def test_", source, re.MULTILINE))' in text
+    assert "MA-38" in text
 
 
 def test_actions_budget_rejects_unreviewed_static_concurrency_identity() -> None:

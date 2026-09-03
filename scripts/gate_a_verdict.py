@@ -160,6 +160,17 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 
+#: <gate-a-audit-BL-09> A floor on ``DONE.json.step_seq`` -- the harness's
+#: MONOTONIC progress counter, incremented on every ``Save-Summary``. This
+#: replaces the old self-comparison (summary.json.last_completed_step vs
+#: DONE.json.last_completed_step, both written by one `finally` block from
+#: one variable microseconds apart, so always equal). A genuine acceptance
+#: run advances well past this; a run that crashed in its install phase
+#: cannot reach it. Deliberately conservative: it is a floor on "the flow
+#: actually ran", not a pin on the current step list, so adding or removing
+#: a diagnostic step does not break the gate.
+MINIMUM_STEP_SEQ = 25
+
 #: Markers that mean "the harness broke", not "the product failed". Each maps
 #: a filename dropped into the evidence directory to the explanation that
 #: goes into the verdict document. A run carrying any of these is reported as
@@ -351,6 +362,19 @@ def check_captions(output_dir: Path) -> CheckResult:
 
 
 def check_t4_engine(output_dir: Path) -> CheckResult:
+    """The product egress engine ran AND its transport stream was analysed.
+
+    <gate-a-audit-MA-27> The ``T4_RESULT=`` string alone is not enough. In
+    Gate A run 33681670855 the harness's own ``Test-TsProof`` reported
+    ``verdict: "pass"`` over a **0-byte** ``tsduck-engine-government-report.json``
+    (``Get-Content -Raw`` on an empty file returns ``$null``, PowerShell's
+    pipeline drops ``$null``, so ``ConvertFrom-Json`` never ran and never
+    threw, and the three counters stayed at their initialised zeroes) --
+    alongside ``"timed_out": true, "exit_code": null``. That produced
+    ``T4_RESULT=PASS_PRODUCT_ENGINE`` and a judge PASS with **zero transport
+    stream analysed**. The harness side is fixed; this reads the artifact so
+    a future regression there cannot pass here either.
+    """
     t35_text, err = _read_text(output_dir, "T3T5-RESULT.txt")
     if err is not None:
         return _fail(err)
@@ -366,7 +390,47 @@ def check_t4_engine(output_dir: Path) -> CheckResult:
         )
     if value != "PASS_PRODUCT_ENGINE":
         return _fail(f"T4_RESULT={value} (expected PASS_PRODUCT_ENGINE)")
-    return _pass("T4_RESULT=PASS_PRODUCT_ENGINE")
+
+    proof, perr = _read_json(output_dir, "egress-verify-engine.json")
+    if perr is not None:
+        return _fail(
+            f"T4_RESULT=PASS_PRODUCT_ENGINE but the TSDuck proof artifact is unusable: {perr}"
+        )
+    assert isinstance(proof, dict)
+    if proof.get("verdict") != "pass":
+        return _fail(
+            f"egress-verify-engine.json verdict={proof.get('verdict')!r} (expected 'pass')"
+        )
+    if proof.get("timed_out") is True:
+        return _fail(
+            "egress-verify-engine.json timed_out=true -- tsp was killed at its deadline, so "
+            "nothing it left behind describes a completed analysis"
+        )
+    exit_code = proof.get("exit_code")
+    if exit_code != 0:
+        return _fail(f"egress-verify-engine.json exit_code={exit_code!r} (expected 0)")
+    packets = proof.get("packets_total")
+    if not isinstance(packets, int) or isinstance(packets, bool) or packets <= 0:
+        return _fail(
+            f"egress-verify-engine.json packets_total={packets!r} (expected an int > 0) -- a "
+            "TSDuck report over zero packets is a report about nothing"
+        )
+    for field in ("invalid_syncs", "transport_errors", "discontinuities"):
+        got = proof.get(field)
+        if got != 0:
+            return _fail(f"egress-verify-engine.json {field}={got!r} (expected 0)")
+    return _pass(
+        f"T4_RESULT=PASS_PRODUCT_ENGINE; tsp exited 0 over {packets} analysed packets with "
+        "0 invalid syncs / transport errors / discontinuities"
+    )
+
+
+#: <gate-a-audit-MN-20> The floor on a soak that is allowed to say PASS. The
+#: harness beats every 300s, so any nonzero soak window produces at least one
+#: beat; the previous contract asserted only ``status=='PASS'`` and
+#: ``unhealthy==0``, both of which a ``beats=0`` soak (``-SoakMinutes 0``,
+#: whose loop body never executed) satisfied trivially.
+T5_MINIMUM_BEATS = 1
 
 
 def check_t5_soak(output_dir: Path) -> CheckResult:
@@ -380,9 +444,66 @@ def check_t5_soak(output_dir: Path) -> CheckResult:
     status, beats, unhealthy = match.group(1), int(match.group(2)), int(match.group(3))
     if status != "PASS":
         return _fail(f"T5_RESULT={status} (expected PASS)")
+    if beats < T5_MINIMUM_BEATS:
+        return _fail(
+            f"T5 beats={beats} (expected at least {T5_MINIMUM_BEATS}) -- a soak that never "
+            "sampled the station proves nothing, and 'PASS with unhealthy=0' over zero beats is "
+            "vacuously true"
+        )
     if unhealthy != 0:
         return _fail(f"T5 unhealthy={unhealthy} (expected 0) over beats={beats}")
     return _pass(f"T5_RESULT=PASS beats={beats} unhealthy=0")
+
+
+def check_install_progress(output_dir: Path) -> CheckResult:
+    """The installer's own breadcrumb log says the postinstall chain SUCCEEDED.
+
+    <gate-a-audit-MA-25> ``check_install`` asserts only
+    ``installer_exit_code == 0`` plus a truthy ``station_set_json_found``
+    *path string* it never opens, and the ``D3_ENGINE_EXIT`` gate existed
+    only in the dirty and download-only lanes. The pre-#143 installer exited
+    0 on a rolled-back upgrade and today's evidence carries the proof:
+
+        [16:37:51] postinstall: COMPLETED WITH A D3 ROLLBACK (... unchanged at
+        1.0.0-beta.2 ...)     installer_exit_code=0
+
+    Phase 1 of that same run logged ``route=FRESH_INSTALL engine_exit=11``
+    and no check in any lane looked at it. install-progress.log is already
+    copied into every evidence directory; this grades it, in every lane.
+    """
+    text, err = _read_text(output_dir, "INSTALL-PROGRESS-RESULT.txt")
+    if err is not None:
+        return _fail(err)
+    assert text is not None
+
+    outcome = _dirty_line(text, "POSTINSTALL_OUTCOME")
+    if outcome != "SUCCESS":
+        return _fail(
+            f"INSTALL-PROGRESS-RESULT.txt POSTINSTALL_OUTCOME={outcome or '<missing>'} "
+            "(expected SUCCESS) -- 'FAILED' and 'COMPLETED WITH A D3 ROLLBACK' are both "
+            "compatible with installer_exit_code=0 and neither is a completed install"
+        )
+    alerts = _dirty_line(text, "POSTINSTALL_ALERTS")
+    if alerts != "0":
+        return _fail(
+            f"INSTALL-PROGRESS-RESULT.txt POSTINSTALL_ALERTS={alerts or '<missing>'} (expected 0) "
+            "-- the installer raised at least one operator ALERT during this install"
+        )
+    nonzero = _dirty_line(text, "POSTINSTALL_NONZERO_STEPS")
+    if nonzero != "none":
+        return _fail(
+            f"INSTALL-PROGRESS-RESULT.txt POSTINSTALL_NONZERO_STEPS={nonzero or '<missing>'} "
+            "(expected none) -- a d2/d3/d4 step returned a nonzero exit during this install"
+        )
+    d4 = _dirty_line(text, "D4_ACTIVATE_EXIT")
+    if d4 not in ("0", "MISSING"):
+        # MISSING is legitimate on a route that skips activation entirely;
+        # a recorded nonzero never is.
+        return _fail(f"INSTALL-PROGRESS-RESULT.txt D4_ACTIVATE_EXIT={d4} (expected 0)")
+    return _pass(
+        f"postinstall reached SUCCESS with 0 ALERTs, no nonzero d2/d3/d4 step, "
+        f"D4_ACTIVATE_EXIT={d4}"
+    )
 
 
 def detect_harness_error(output_dir: Path) -> str | None:
@@ -470,18 +591,61 @@ def check_completion(output_dir: Path) -> CheckResult:
         return _fail(
             f"DONE.json.harness_completed={done.get('harness_completed')!r} (expected true)"
         )
+    top_level_error = done.get("top_level_error")
+    if top_level_error:
+        return _fail(
+            f"DONE.json.top_level_error={top_level_error!r} -- the harness's main try block threw "
+            "and its catch recorded the failure; this run did not complete its acceptance flow"
+        )
     summary, serr = _read_json(output_dir, "summary.json")
     if serr is not None:
         return _fail(serr)
     assert isinstance(summary, dict)
-    done_step = done.get("last_completed_step")
-    summary_step = summary.get("last_completed_step")
-    if summary_step != done_step:
+
+    # <gate-a-audit-BL-09> The OLD cross-check here compared
+    # summary.json.last_completed_step to DONE.json.last_completed_step --
+    # two fields the harness's own `finally` block writes microseconds apart
+    # from the SAME $summary variable, so they were always equal and always
+    # 'finally-block'. That is the textbook self-comparison, sitting in the
+    # check whose entire job is to prove the run happened. It is replaced by
+    # assertions on values a crashed run genuinely cannot produce.
+    summary_error = summary.get("top_level_error")
+    if summary_error:
         return _fail(
-            f"summary.json.last_completed_step={summary_step!r} does not match "
-            f"DONE.json.last_completed_step={done_step!r}"
+            f"summary.json.top_level_error={summary_error!r} -- the harness recorded a top-level "
+            "failure; this run did not complete its acceptance flow"
         )
-    return _pass(f"DONE.json present, harness_completed=true, last_completed_step={done_step!r}")
+    if summary.get("harness_completed") is not True:
+        return _fail(
+            f"summary.json.harness_completed={summary.get('harness_completed')!r} (expected true)"
+        )
+    errors = summary.get("errors")
+    if isinstance(errors, list):
+        fatal = [e for e in errors if isinstance(e, str) and e.startswith("top-level failure:")]
+        if fatal:
+            return _fail(
+                f"summary.json.errors carries {len(fatal)} top-level failure entr"
+                f"{'y' if len(fatal) == 1 else 'ies'}: {fatal[0]!r}"
+            )
+    write_errors, _werr = _read_text(output_dir, "summary-write-errors.log")
+    if write_errors is not None and write_errors.strip():
+        return _fail(
+            "summary-write-errors.log is non-empty -- the harness could not write part of its own "
+            f"evidence: {write_errors.strip().splitlines()[0]!r}"
+        )
+    if not done.get("run_end_utc"):
+        return _fail("DONE.json.run_end_utc is missing -- the harness never reached its own end")
+    step_seq = done.get("step_seq")
+    if not isinstance(step_seq, int) or isinstance(step_seq, bool) or step_seq < MINIMUM_STEP_SEQ:
+        return _fail(
+            f"DONE.json.step_seq={step_seq!r} (expected an int >= {MINIMUM_STEP_SEQ}) -- a run "
+            "that advanced fewer steps than the acceptance flow contains did not run it"
+        )
+    done_step = done.get("last_completed_step")
+    return _pass(
+        f"DONE.json present, harness_completed=true, step_seq={step_seq}, "
+        f"run_end_utc recorded, last_completed_step={done_step!r}"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -506,6 +670,86 @@ def check_completion(output_dir: Path) -> CheckResult:
 def _dirty_line(text: str, key: str) -> str | None:
     match = _line_matching(text, rf"^{re.escape(key)}=(\S+)")
     return match.group(1) if match else None
+
+
+def _post_upgrade_revision_failure(text: str, source: str) -> str | None:
+    """Return a FAIL detail when the post-upgrade schema proof does not hold.
+
+    <gate-a-audit-BL-10> THE central finding of the installer-path audit.
+    PR #143 added ``POST_UPGRADE_DB_REVISION_MATCHES_HEAD`` to both upgrade
+    lanes on the stated ground that "a healthy station-up body and
+    ``D3_ENGINE_EXIT=0`` are no longer treated as proof by themselves." The
+    flag was computed as::
+
+        $healthRes.ok -and $rev -ne '<unavailable>' -and ($rev -eq $expectedHead)
+
+    Follow the operands back: ``$healthRes.ok`` requires
+    ``body_schema -eq 'current'``; ``civiccast/app.py`` sources BOTH
+    ``schema_db_revision`` and ``schema_expected_head`` from one
+    ``SchemaStatus``; and ``civiccast/schema_check.py``'s
+    ``evaluate_schema_currency`` returns ``state="current"`` **if and only
+    if** ``db_revision == expected_head``. So ``MATCHES_HEAD`` was 1 whenever
+    ``ok`` was 1 -- always. The guard written to stop trusting a label was
+    itself the label, and this judge only read the two revisions to build an
+    error message, never re-deriving the match from them.
+
+    The contract now, in the order it is checked:
+
+    1. ``POST_UPGRADE_DB_REVISION_PSQL`` -- the LIVE database's own
+       ``alembic_version`` row, read in the sandbox with ``psql`` straight out
+       of the station's Postgres. It does not travel through ``/health``, the
+       running control plane, or any code path that also computes a head.
+    2. ``KIT_EXPECTED_HEAD`` -- the head the CI job derived at BUILD time from
+       the candidate's own migration files
+       (``scripts/gate_a_expected_head.py``), handed to the run as an input.
+    3. The judge re-derives ``matches`` from those two and FAILs on
+       inequality -- so this check can fail on its own, with the station-up
+       check green.
+    4. Cross-checks: the harness's own ``MATCHES_HEAD`` flag must agree with
+       the re-derived answer, and ``/health``'s reported revision must agree
+       with the database's. Disagreement is a FAIL naming the inconsistency,
+       because inconsistent evidence supports no verdict in either direction.
+    """
+    psql_revision = _dirty_line(text, "POST_UPGRADE_DB_REVISION_PSQL")
+    kit_head = _dirty_line(text, "KIT_EXPECTED_HEAD")
+    health_revision = _dirty_line(text, "POST_UPGRADE_DB_REVISION")
+    reported_matches = _dirty_line(text, "POST_UPGRADE_DB_REVISION_MATCHES_HEAD")
+
+    if psql_revision is None or psql_revision.startswith("<"):
+        return (
+            f"{source} POST_UPGRADE_DB_REVISION_PSQL={psql_revision or '<missing>'} -- the "
+            "database's own alembic_version row could not be read. This is the ONLY operand of "
+            "the post-upgrade schema proof that does not come from the station's own /health "
+            "self-report, so its absence is a FAIL, never an assumed pass"
+        )
+    if kit_head is None or kit_head.startswith("<"):
+        return (
+            f"{source} KIT_EXPECTED_HEAD={kit_head or '<missing>'} -- no build-time migration "
+            "head was recorded for this candidate (Run-GateA.ps1 -ExpectedMigrationHead / the "
+            "workflow's 'Record the candidate's migration head' step). Without it the only "
+            "available expected head is the one the station under test computed about itself, "
+            "which is exactly the self-comparison this check exists to end"
+        )
+    derived_matches = psql_revision == kit_head
+    if not derived_matches:
+        return (
+            f"{source}: the live database is at revision {psql_revision!r} (read directly with "
+            f"psql) but the candidate's build-time migration head is {kit_head!r}. The upgrade "
+            "did not land the schema the shipped code expects"
+        )
+    if reported_matches != "1":
+        return (
+            f"{source} POST_UPGRADE_DB_REVISION_MATCHES_HEAD={reported_matches or '<missing>'} "
+            f"while the independent evidence agrees (psql revision {psql_revision!r} == "
+            f"build-time head {kit_head!r}). Inconsistent evidence supports no verdict"
+        )
+    if health_revision and not health_revision.startswith("<") and health_revision != psql_revision:
+        return (
+            f"{source}: /health reported schema_db_revision={health_revision!r} but the database "
+            f"itself is at {psql_revision!r}. The station's self-report disagrees with its own "
+            "database -- most likely /health's boot-time snapshot is stale"
+        )
+    return None
 
 
 def check_dirty_prep(output_dir: Path) -> CheckResult:
@@ -618,16 +862,28 @@ def check_dirty_survival(output_dir: Path) -> CheckResult:
         # unmigrated database's OLD schema, which is a legitimately different
         # state from "the upgrade committed"). Judge the two revisions
         # explicitly instead of inferring them from exit codes alone.
-        matches = _dirty_line(text, "POST_UPGRADE_DB_REVISION_MATCHES_HEAD")
-        db_revision = _dirty_line(text, "POST_UPGRADE_DB_REVISION")
-        expected_head = _dirty_line(text, "EXPECTED_HEAD")
-        if matches != "1":
+        # <gate-a-audit-BL-10> Judged from the database's own alembic_version
+        # row and the candidate's build-time head, not from two fields of one
+        # /health body. See _post_upgrade_revision_failure.
+        revision_failure = _post_upgrade_revision_failure(text, "DIRTY-RESULT.txt")
+        if revision_failure is not None:
+            return _fail(revision_failure)
+
+        # <gate-a-audit-MA-24> D3's exit code says nothing about D4. Today's
+        # evidence has them diverging in one run:
+        # `route=UPGRADE engine_exit=0` then `step d4-activate-station:
+        # returned 66` then `postinstall: FAILED`.
+        d4_exit = _dirty_line(text, "D4_ACTIVATE_EXIT")
+        if d4_exit != "0":
             return _fail(
-                "DIRTY-RESULT.txt POST_UPGRADE_DB_REVISION_MATCHES_HEAD="
-                f"{matches or '<missing>'} (expected 1): POST_UPGRADE_DB_REVISION="
-                f"{db_revision or '<missing>'} EXPECTED_HEAD={expected_head or '<missing>'} -- "
-                "D3_ENGINE_EXIT=0 alone does not prove the live database is at the running "
-                "code's migration head"
+                f"DIRTY-RESULT.txt D4_ACTIVATE_EXIT={d4_exit or '<missing>'} (expected 0) -- the "
+                "D4 station-activation step is a separate outcome from D3's engine exit"
+            )
+        postinstall = _dirty_line(text, "POSTINSTALL_OUTCOME")
+        if postinstall != "SUCCESS":
+            return _fail(
+                f"DIRTY-RESULT.txt POSTINSTALL_OUTCOME={postinstall or '<missing>'} "
+                "(expected SUCCESS)"
             )
     pg = _dirty_line(text, "DIRTY_PGDATA_PRESERVED")
     if pg != "1":
@@ -752,25 +1008,49 @@ def check_download_only_no_station_dir(output_dir: Path) -> CheckResult:
             f"DOWNLOAD-ONLY-RESULT.txt PHASE2_INSTALL_EXIT={phase2_exit or '<missing>'} (expected 0)"
         )
 
+    # <gate-a-audit-MA-23> D3_ROUTE must be this phase's own, and it must be
+    # UPGRADE. install-progress.log is append-only across both install
+    # phases; before the harness fix the capture kept the LAST match in the
+    # whole file, so a phase-2 installer that died before its d3-engine line
+    # left phase 1's `route=FRESH_INSTALL engine_exit=11` in place -- and
+    # this check, gating only on D3_ENGINE_EXIT=0, passed on stale data.
+    d3_route = _dirty_line(text, "D3_ROUTE")
+    if d3_route != "UPGRADE":
+        return _fail(
+            f"DOWNLOAD-ONLY-RESULT.txt D3_ROUTE={d3_route or '<missing>'} (expected UPGRADE); "
+            "FRESH_INSTALL/SAME_VERSION_NO_OP/MISSING do not prove the phase-2 install drove the "
+            "cross-version upgrade this lane exists to exercise"
+        )
+
     d3_engine_exit = _dirty_line(text, "D3_ENGINE_EXIT")
     if d3_engine_exit != "0":
         return _fail(
-            f"DOWNLOAD-ONLY-RESULT.txt D3_ENGINE_EXIT={d3_engine_exit or '<missing>'} (expected 0 "
-            "-- the D4 activation step must have exited 0 with no station\\ directory present)"
+            f"DOWNLOAD-ONLY-RESULT.txt D3_ENGINE_EXIT={d3_engine_exit or '<missing>'} (expected 0)"
         )
 
-    # Gate A run 33681670855 fix: same reasoning as check_dirty_survival's
-    # UPGRADE_MODE branch -- a healthy/current station-up body is not itself
-    # proof the live database is at the running code's migration head.
-    matches = _dirty_line(text, "POST_UPGRADE_DB_REVISION_MATCHES_HEAD")
-    db_revision = _dirty_line(text, "POST_UPGRADE_DB_REVISION")
-    expected_head = _dirty_line(text, "EXPECTED_HEAD")
-    if matches != "1":
+    # <gate-a-audit-MA-24> The check that CLAIMED to prove "the D4 activation
+    # step exited 0" was reading D3's number. The two diverge:
+    # gate-a-download-only-33623737236/install-progress.log:346-353 records
+    # `route=UPGRADE engine_exit=0`, then `step d4-activate-station:
+    # returned 66`, then `postinstall: FAILED`. Judge D4's own breadcrumb.
+    d4_exit = _dirty_line(text, "D4_ACTIVATE_EXIT")
+    if d4_exit != "0":
         return _fail(
-            "DOWNLOAD-ONLY-RESULT.txt POST_UPGRADE_DB_REVISION_MATCHES_HEAD="
-            f"{matches or '<missing>'} (expected 1): POST_UPGRADE_DB_REVISION="
-            f"{db_revision or '<missing>'} EXPECTED_HEAD={expected_head or '<missing>'}"
+            f"DOWNLOAD-ONLY-RESULT.txt D4_ACTIVATE_EXIT={d4_exit or '<missing>'} (expected 0 -- "
+            "the D4 activation step must have exited 0 with no station\\ directory present)"
         )
+    postinstall = _dirty_line(text, "POSTINSTALL_OUTCOME")
+    if postinstall != "SUCCESS":
+        return _fail(
+            f"DOWNLOAD-ONLY-RESULT.txt POSTINSTALL_OUTCOME={postinstall or '<missing>'} "
+            "(expected SUCCESS)"
+        )
+
+    # <gate-a-audit-BL-10> Independent post-upgrade schema proof; see
+    # _post_upgrade_revision_failure for why the previous flag could not fail.
+    revision_failure = _post_upgrade_revision_failure(text, "DOWNLOAD-ONLY-RESULT.txt")
+    if revision_failure is not None:
+        return _fail(revision_failure)
 
     station_set_version = _dirty_line(text, "STATION_SET_PRODUCT_VERSION")
     current_version = _dirty_line(text, "CURRENT_PRODUCT_VERSION")
@@ -812,6 +1092,8 @@ CHECKS: dict[str, Callable[[Path], CheckResult]] = {
     "captions": check_captions,
     "t4_engine": check_t4_engine,
     "t5_soak": check_t5_soak,
+    # <gate-a-audit-MA-25> Runs in EVERY lane, including clean.
+    "install_progress": check_install_progress,
     "completion": check_completion,
 }
 

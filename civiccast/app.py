@@ -19,6 +19,7 @@ from __future__ import annotations
 import builtins
 import logging
 import os
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager, suppress
@@ -2078,6 +2079,20 @@ def create_app() -> FastAPI:
         """
         from civiccast.schema_check import SchemaStatus
 
+        # <installer-path-audit MA-13> The schema verdict used to be a
+        # BOOT-TIME snapshot that was never refreshed: computed once in the
+        # lifespan, with the only other write reachable solely from
+        # _install_durable_store_wiring. So a database unreachable at boot read
+        # `unknown` forever; an operator who then ran `alembic upgrade head`
+        # still saw `behind` until the service was bounced, and a monitor keyed
+        # on the (correct) status=="healthy" && schema=="current" rule alerted
+        # indefinitely. In the other direction a database changed under a
+        # running app kept reporting `current` -- and that is the exact field
+        # Gate A's post-upgrade guard and the installer's own D4 readiness gate
+        # now read. Recompute with a short TTL, reusing the existing 15s
+        # bounded read; the TTL keeps a hot liveness path from opening a
+        # connection per request.
+        _maybe_refresh_schema_status(app)
         schema_status: SchemaStatus = getattr(
             app.state, "schema_status", SchemaStatus(state="unknown")
         )
@@ -3093,6 +3108,38 @@ def _refresh_schema_status(app: FastAPI) -> None:
     from civiccast.schema_check import check_schema_currency
 
     app.state.schema_status = check_schema_currency(os.environ.get("DATABASE_URL"))
+    app.state.schema_status_checked_monotonic = time.monotonic()
+
+
+#: <installer-path-audit MA-13> How long ``/health`` may serve a cached schema
+#: verdict before recomputing it. Short enough that an operator who just ran
+#: ``alembic upgrade head`` sees the truth on their next refresh, and that the
+#: post-upgrade guards Gate A and the installer now key on cannot read a
+#: pre-upgrade snapshot; long enough that a liveness path a supervisor polls
+#: every second does not open a database connection per request. The read
+#: itself is already hard-bounded at 15s by
+#: ``schema_check._READ_DB_REVISION_CEILING_SECONDS``.
+SCHEMA_STATUS_TTL_SECONDS = 5.0
+
+
+def _maybe_refresh_schema_status(app: FastAPI) -> None:
+    """Recompute ``app.state.schema_status`` when the cached one is stale.
+
+    Never raises: ``check_schema_currency`` is itself total (it reports
+    ``unknown`` rather than propagating), and a failure to refresh must leave
+    the previous verdict rather than break the liveness path.
+    """
+
+    if not getattr(app.state, "lifespan_started", False):
+        return
+    last = getattr(app.state, "schema_status_checked_monotonic", None)
+    now = time.monotonic()
+    if last is not None and (now - last) < SCHEMA_STATUS_TTL_SECONDS:
+        return
+    try:
+        _refresh_schema_status(app)
+    except Exception:  # pragma: no cover - defensive; the callee is total
+        _LOG.exception("Schema-status refresh failed; keeping the previous verdict.")
 
 
 def _ensure_default_local_recording_target(app: FastAPI) -> None:

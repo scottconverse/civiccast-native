@@ -25,6 +25,7 @@ import base64
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from civiccast.native.provision import __main__ as provision_main
 from civiccast.native.provision.__main__ import (
     EXIT_PROVISIONING_FAILED,
     EXIT_REPAIR_NEEDED,
@@ -46,6 +47,7 @@ from civiccast.native.provision.__main__ import (
     probe_cluster_exists,
     probe_credential_lost_journal,
     probe_resumable_journal,
+    probe_reused_database_url,
     resolve_provision_paths,
 )
 from civiccast.native.provision.journal import JournalError, journal_path, write_journal
@@ -653,8 +655,27 @@ def test_build_plan_and_context_assembles_expected_fields(tmp_path) -> None:
 
 
 def test_main_noop_path_exits_success_without_generating_a_password_or_journal(
-    tmp_path, capsys
+    tmp_path, capsys, monkeypatch
 ) -> None:
+    # <installer-path-audit MA-32> The no-op path now PROBES the recorded
+    # DatabaseUrl before reusing it. This test's URL is
+    # 127.0.0.1:5432 -- the standard Postgres port -- so without this stub the
+    # test's outcome would depend on whether the machine running it happens to
+    # have a Postgres listening there (it flipped to ADOPT_EXISTING on a
+    # developer box that did). Stub the probe to its "cannot ask the
+    # question" answer, which is the ordinary D4 case: provisioning runs
+    # before the supervisor service starts, so nothing is listening yet.
+    monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: None)
+    # <installer-path-audit BL-12> The reuse path now brings the schema to
+    # alembic head, so the real pg_ctl/alembic call has to be stubbed here --
+    # it is asserted on directly by
+    # test_bl12_the_reuse_path_migrates_the_preserved_database below.
+    migrated: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        provision_main,
+        "migrate_provisioned_schema",
+        lambda context, **kwargs: migrated.append(kwargs),
+    )
     install_root = tmp_path / "install"
     program_data_root = tmp_path / "pd"
     paths = resolve_provision_paths(
@@ -681,6 +702,118 @@ def test_main_noop_path_exits_success_without_generating_a_password_or_journal(
     out = capsys.readouterr().out
     assert HANDOFF_MARKER_PREFIX not in out
     assert not pathlib.Path(paths.state_root, "provision-journal.json").exists()
+    assert migrated, "the reuse path must still bring the schema to head"
+
+
+def test_bl12_the_reuse_path_migrates_the_preserved_database(tmp_path, capsys, monkeypatch) -> None:
+    """<installer-path-audit BL-12> The reuse path was the ONE route through
+    this CLI that never migrated.
+
+    Combined with D3 routing FRESH_INSTALL whenever the supervisor service is
+    absent -- exactly what an uninstall leaves behind, while
+    ``%ProgramData%\\CivicCast`` and its cluster survive BY DESIGN -- a machine
+    could take: D3 -> FRESH_INSTALL (no migration); D4 provisioning ->
+    NOOP_REUSE_EXISTING (no migration); the installer stamps the new
+    ``InstalledVersion`` anyway; and every future run then reports
+    SAME_VERSION_NO_OP, because ``InstalledVersion`` records WHICH INSTALLER
+    LAST RAN, not which schema the database is at. Permanently locked out of
+    its own upgrade engine, with no operator path back.
+
+    The migration must run against the RECORDED DatabaseUrl (the credential
+    this path is contractually forbidden to change) and on that URL's own
+    port -- starting the preserved cluster on a freshly selected port would
+    put it somewhere the recorded credential does not point.
+    """
+    monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: None)
+    captured: list[tuple[object, dict[str, object]]] = []
+    monkeypatch.setattr(
+        provision_main,
+        "migrate_provisioned_schema",
+        lambda context, **kwargs: captured.append((context, kwargs)),
+    )
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    import pathlib
+
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+    existing_url = "postgresql://u:p@127.0.0.1:5544/civiccast"
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": existing_url,
+            },
+        )
+    )
+
+    assert code == EXIT_SUCCESS
+    assert len(captured) == 1, "the reuse path must migrate exactly once"
+    context, kwargs = captured[0]
+    assert kwargs["database_url"] == existing_url, (
+        "the migration must run over the RECORDED DatabaseUrl -- this path must not "
+        "invent a credential"
+    )
+    assert context.postgres_port == 5544, (
+        "the preserved cluster must be started on the port its own recorded URL names, "
+        "not a freshly selected one"
+    )
+    err = capsys.readouterr().err
+    assert "the schema was brought to alembic head" in err
+    # The credential contract is unchanged: nothing generated, nothing handed
+    # back, no journal written.
+    assert HANDOFF_MARKER_PREFIX not in capsys.readouterr().out
+    assert not pathlib.Path(paths.state_root, "provision-journal.json").exists()
+
+
+def test_bl12_a_failed_reuse_migration_is_loud_and_has_its_own_exit_code(
+    tmp_path, monkeypatch
+) -> None:
+    """A reuse path that cannot migrate must NOT report success -- that is the
+    silent lockout BL-12 describes."""
+    monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: None)
+
+    def _boom(context, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("alembic could not reach the reused database")
+
+    monkeypatch.setattr(provision_main, "migrate_provisioned_schema", _boom)
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    import pathlib
+
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "postgresql://u:secret@127.0.0.1:5432/civiccast",
+            },
+        )
+    )
+
+    assert code == EXIT_SCHEMA_MIGRATION_FAILED
+    recovery = pathlib.Path(paths.state_root, "PROVISION-RECOVERY.md")
+    assert recovery.exists(), "a failed reuse migration must leave a recovery document"
+    assert "secret" not in recovery.read_text(encoding="utf-8"), (
+        "the recorded credential must never reach the recovery document"
+    )
 
 
 def test_main_adopts_surviving_cluster_instead_of_fail_loud(tmp_path, capsys, monkeypatch) -> None:
@@ -1768,6 +1901,115 @@ def test_main_pgdata_acl_failure_inside_migrate_exits_its_own_code_not_alembics(
     assert recovery_doc.exists(), "an ACL-normalization failure must write the recovery document"
     content = recovery_doc.read_text(encoding="utf-8")
     assert generated[0] not in content, "the generated password reached the recovery document"
+
+
+# ---------------------------------------------------------------------------
+# <installer-path-audit MA-32> "Already provisioned" used to be the PRESENCE
+# of a registry string.
+#
+#     if has_registry_value: return ProvisionCliAction.NOOP_REUSE_EXISTING
+#
+# where has_registry_value was bool(existing_database_url.strip()) -- no
+# connection attempt, no credential check. The installer then printed
+# "provisioning complete (or already provisioned; no-op)" and exited 0, and
+# (before BL-11) nothing downstream ever noticed that the control plane could
+# not authenticate to its own database. Reachable by a %ProgramData%\CivicCast
+# restored from a different station, a hand-edited or partially-written
+# DatabaseUrl, or a cluster whose password was reset out of band.
+# ---------------------------------------------------------------------------
+
+
+def test_a_live_server_rejecting_the_recorded_credential_routes_to_adoption() -> None:
+    assert (
+        decide_provision_cli_action(
+            cluster_exists=True,
+            existing_database_url="postgresql://u:wrong@127.0.0.1:5432/civiccast",
+            reused_database_url_usable=False,
+        )
+        is ProvisionCliAction.ADOPT_EXISTING
+    )
+
+
+def test_an_unaskable_credential_question_keeps_the_previous_no_op_behaviour() -> None:
+    """The ORDINARY D4 case: provisioning runs before the service starts, so
+    nothing is listening and the value cannot be verified. Behaviour must be
+    exactly what it was before the probe existed -- otherwise every healthy
+    reinstall would turn into an adoption."""
+    for unaskable in (None, True):
+        assert (
+            decide_provision_cli_action(
+                cluster_exists=True,
+                existing_database_url="postgresql://u:p@127.0.0.1:5432/civiccast",
+                reused_database_url_usable=unaskable,
+            )
+            is ProvisionCliAction.NOOP_REUSE_EXISTING
+        ), f"reused_database_url_usable={unaskable!r} must not change the route"
+
+
+def test_the_probe_default_preserves_every_pre_existing_caller() -> None:
+    """The parameter defaults to None (unaskable), so a caller that never
+    passes it behaves exactly as it did before this parameter existed."""
+    assert (
+        decide_provision_cli_action(
+            cluster_exists=True,
+            existing_database_url="postgresql://u:p@127.0.0.1:5432/civiccast",
+        )
+        is ProvisionCliAction.NOOP_REUSE_EXISTING
+    )
+
+
+def test_probe_returns_none_for_an_absent_or_unparseable_url() -> None:
+    assert probe_reused_database_url(None) is None
+    assert probe_reused_database_url("") is None
+    assert probe_reused_database_url("   ") is None
+    assert probe_reused_database_url("not-a-url-at-all") is None
+
+
+def test_probe_returns_none_when_nothing_is_listening() -> None:
+    """A closed port is 'the question cannot be asked', never 'the credential
+    is bad'. This is what keeps an ordinary pre-service-start reinstall on the
+    no-op path.
+
+    Port 1 is reserved (tcpmux) and is not bound on any machine this suite
+    runs on; a connection there refuses immediately rather than hanging.
+    """
+    assert probe_reused_database_url("postgresql://u:p@127.0.0.1:1/civiccast") is None
+
+
+def test_probe_returns_false_when_a_live_listener_refuses_the_credential() -> None:
+    """A LIVE server that rejects the credential is a real, actionable answer.
+
+    A plain TCP listener that accepts and immediately closes is enough: step 1
+    (is anything there?) succeeds, step 2 (does the credential work?) cannot,
+    and the probe must say False rather than shrug.
+    """
+    import socket
+    import threading
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    port = listener.getsockname()[1]
+    stop = threading.Event()
+
+    def _accept_and_close() -> None:
+        listener.settimeout(0.5)
+        while not stop.is_set():
+            try:
+                connection, _ = listener.accept()
+            except OSError:
+                continue
+            connection.close()
+
+    thread = threading.Thread(target=_accept_and_close, daemon=True)
+    thread.start()
+    try:
+        assert probe_reused_database_url(f"postgresql://u:p@127.0.0.1:{port}/civiccast") is False
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+        listener.close()
 
 
 # Setup-nonce generation + handoff (native front door) was retired

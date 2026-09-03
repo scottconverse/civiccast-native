@@ -240,3 +240,128 @@ def test_upgrade_engine_migrates_a_real_database_from_n_minus_1_to_head(
         "the live database's revision (read independently of the journal) must "
         "actually be at the code's migration head after a COMPLETE outcome"
     )
+
+
+def test_bl01_a_post_migration_failure_rolls_back_cleanly_through_the_real_restore_seam(
+    postgres_container: tuple[str, str], tmp_path: Path
+) -> None:
+    """<installer-path-audit BL-01> The audit's "proof needed", exactly.
+
+    ``default_restore_backup`` restored into ``context.database_url`` -- the
+    LIVE database, which still holds every object in the dump PLUS whatever
+    the partial migration added -- with no ``--clean``, no ``--if-exists`` and
+    no ``--create`` anywhere in the argv. So ``pg_restore`` replayed
+    ``CREATE TABLE``, hit ``relation "..." already exists``,
+    ``--exit-on-error`` exited nonzero, ``run_postgres_restore`` raised, and
+    the orchestrator went to ``_halt``. **The clean-rollback outcome (exit 10)
+    that PR #143 was written around was UNREACHABLE for every post-migration
+    failure**, while two shipped comments asserted the opposite as established
+    fact and reasoned from it -- including the operator text for the brand-new
+    exit 124, which tells the operator their database is intact.
+
+    Every existing test of this seam was ``lambda backup: None`` or a call
+    recorder; a grep for ``restore_backup`` under ``tests/`` found no
+    execution of the real seam at all, which is exactly why this survived.
+
+    This drives the REAL ``default_restore_backup``, over a REAL Postgres,
+    with a ``migrate`` seam that lands one migration and THEN raises, and
+    asserts all three things the audit asks for: ``ROLLED_BACK`` (not
+    ``HALTED_RESTORE_FAILED``), the database back at its pre-upgrade
+    revision, and source row parity.
+    """
+    from sqlalchemy import create_engine, text
+
+    postgres_url, container_id = postgres_container
+    in_container_url = "postgresql://test:test@localhost:5432/test"
+
+    _migrate_to_head(postgres_url)
+    _downgrade_one_revision(postgres_url)
+    pre_revision = read_db_revision(postgres_url)
+    assert pre_revision is not None
+    assert pre_revision != expected_migration_head()
+
+    # Plant a row so "the database came back" is a claim about DATA, not only
+    # about a revision marker.
+    engine = create_engine(postgres_url, future=True)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE civiccast.bl01_witness (id integer primary key)"))
+            connection.execute(text("INSERT INTO civiccast.bl01_witness (id) VALUES (1), (2), (3)"))
+    finally:
+        engine.dispose()
+
+    install_root = tmp_path / "install"
+    runtime = install_root / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "python.exe").write_bytes(b"MZ")
+
+    context = UpgradeContext(
+        install_root=str(install_root),
+        state_root=str(tmp_path / "state"),
+        database_url=postgres_url,
+        owner_run_id="installer-path-audit-bl01",
+    )
+    base_seams = build_default_seams(
+        context,
+        payload_source=str(runtime),
+        drain_and_verify_quiescence=lambda: True,
+        health_gate=lambda: True,
+        stop_service=lambda: None,
+        pg_dump_command=_exec_prefix(container_id, "pg_dump"),
+        pg_dumpall_command=_exec_prefix(container_id, "pg_dumpall"),
+        pg_restore_command=_exec_prefix(container_id, "pg_restore"),
+        psql_command=_exec_prefix(container_id, "psql"),
+        command_database_url=in_container_url,
+    )
+
+    real_migrate = base_seams.migrate
+
+    def _migrate_then_fail() -> None:
+        # The migration REALLY LANDS first -- this is the post-mutation
+        # frontier, which is the only place BL-01's restore is reachable.
+        real_migrate()
+        raise RuntimeError("injected post-migration failure (the D3 rollback must restore)")
+
+    base_seams = dataclasses.replace(
+        base_seams,
+        acquire_interlock=lambda: None,
+        release_interlock=lambda: None,
+        migrate=_migrate_then_fail,
+    )
+    seams = adapt_flat_installer_layout(base_seams, context)
+
+    outcome = run_upgrade(UpgradePlan(old_version="n-minus-1", new_version="bl01"), context, seams)
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK, (
+        f"expected ROLLED_BACK (exit 10) -- got {outcome.phase} with error "
+        f"{outcome.journal.error!r}. HALTED_RESTORE_FAILED here means the restore could not "
+        "replay into the live database, which is BL-01 itself"
+    )
+    assert read_db_revision(postgres_url) == pre_revision, (
+        "the database must be back at the PRE-upgrade revision, not the migrated one"
+    )
+
+    engine = create_engine(postgres_url, future=True)
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT id FROM civiccast.bl01_witness ORDER BY id")
+            ).fetchall()
+    finally:
+        engine.dispose()
+    assert [row[0] for row in rows] == [1, 2, 3], (
+        "the planted rows must survive the drop/recreate/restore cycle exactly"
+    )
+
+
+def test_bl01_exit_10_is_the_code_the_cli_reports_for_that_rollback() -> None:
+    """The exit code is the half the installer branches on.
+
+    The audit's point is not only that the journal says ROLLED_BACK -- it is
+    that ``exit 10`` is REACHABLE for a post-mutation failure at all. This
+    pins the mapping the NSIS ladder reads.
+    """
+    from civiccast.native.upgrade.__main__ import _EXIT_CODES
+
+    assert _EXIT_CODES[UpgradePhase.ROLLED_BACK] == 10
+    assert _EXIT_CODES[UpgradePhase.HALTED_RESTORE_FAILED] == 20

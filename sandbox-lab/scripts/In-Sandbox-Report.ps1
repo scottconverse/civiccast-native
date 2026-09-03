@@ -807,6 +807,10 @@ $summary = [ordered]@{
     service_start_attempt     = $null
     install_progress_log_found = $false
     install_progress_log_bytes = $null
+    # <gate-a-audit-MA-23> the append-only log's line count at the instant
+    # before this phase's setup.exe ran, and the number of lines it wrote.
+    install_progress_phase_mark  = 0
+    install_progress_phase_lines = $null
     install_progress_log_tail  = @()
     installer_nsis_log_found   = $false
     event_log_errors           = @()
@@ -822,6 +826,16 @@ $summary = [ordered]@{
     step_seq                   = 0
     step_utc                   = $null
     run_end_utc                = $null
+    # harness_completed / top_level_error <gate-a-audit-BL-09>. These start
+    # FALSE and are only promoted by the LAST statement of the main try block.
+    # The previous shape set harness_completed=$true unconditionally in the
+    # `finally`, including after the catch that swallows any throw from the
+    # 1500-line try -- so a lane that crashed internally (e.g. "No *setup.exe
+    # found in mapped payload") still shipped DONE.json.harness_completed=true
+    # and the judge read it as a genuine completion. A crashed run must be
+    # able to SAY it crashed; that is what top_level_error carries.
+    harness_completed          = $false
+    top_level_error            = $null
 }
 
 # --------------------------------------------------------------------------
@@ -979,6 +993,23 @@ function Save-Summary {
 $script:InstallProgressCaptured = $false
 $script:D3Route = 'MISSING'
 $script:D3EngineExit = 'MISSING'
+# <gate-a-audit-MA-23> install-progress.log is APPEND-ONLY across both install
+# phases. The old capture walked the WHOLE file forward keeping the last
+# match, so a phase-2 installer that died before emitting its d3-engine line
+# left $script:D3Route / $script:D3EngineExit silently holding PHASE 1's
+# values -- and check_download_only_no_station_dir, which gates only on
+# D3_ENGINE_EXIT=0, then passed on stale data. Evidence:
+# gate-a-cross-version-33681670855/install-progress.log:163 is phase 1's
+# `route=FRESH_INSTALL engine_exit=11`. This mark is the line count of the log
+# at the instant before the phase-2 setup.exe launches; the capture scans only
+# lines after it, so a phase 2 that emitted nothing reports MISSING (a FAIL)
+# rather than inheriting phase 1's success.
+$script:InstallProgressPhase2Mark = 0
+# <gate-a-audit-MA-24/MA-25> The d4/postinstall breadcrumbs no lane read.
+$script:D4ActivateExit = 'MISSING'
+$script:PostinstallOutcome = 'MISSING'
+$script:PostinstallAlerts = 0
+$script:PostinstallNonZeroSteps = @()
 function Invoke-InstallProgressCapture {
     param([string]$Phase)
     if ($script:InstallProgressCaptured) {
@@ -1024,16 +1055,54 @@ function Invoke-InstallProgressCapture {
     }
     Save-Summary -Step "install-progress-read-$Phase"
 
-    # The log is append-only and may contain the previous candidate's D3 line
-    # from phase 1. Walk forward and retain the LAST structured breadcrumb,
-    # which is the current installer invocation captured immediately above.
-    foreach ($line in $lines) {
+    # <gate-a-audit-MA-23/MA-24/MA-25> Scan ONLY the tail this installer
+    # invocation wrote (everything after $script:InstallProgressPhase2Mark),
+    # and reset first, so an installer that emitted no breadcrumb of a given
+    # kind reports MISSING rather than inheriting the previous phase's value.
+    $script:D3Route = 'MISSING'
+    $script:D3EngineExit = 'MISSING'
+    $script:D4ActivateExit = 'MISSING'
+    $script:PostinstallOutcome = 'MISSING'
+    $script:PostinstallAlerts = 0
+    $script:PostinstallNonZeroSteps = @()
+    $phaseLines = @($lines | Select-Object -Skip $script:InstallProgressPhase2Mark)
+    $summary.install_progress_phase_lines = $phaseLines.Count
+    foreach ($line in $phaseLines) {
         $d3Match = [regex]::Match($line, 'step d3-engine: evidence route=(UPGRADE|FRESH_INSTALL|SAME_VERSION_NO_OP) engine_exit=(-?\d+)')
         if ($d3Match.Success) {
             $script:D3Route = $d3Match.Groups[1].Value
             $script:D3EngineExit = $d3Match.Groups[2].Value
         }
+        $d4Match = [regex]::Match($line, 'step d4-activate-station: returned (-?\d+)')
+        if ($d4Match.Success) { $script:D4ActivateExit = $d4Match.Groups[1].Value }
+        $poMatch = [regex]::Match($line, 'postinstall: (SUCCESS|FAILED|COMPLETED WITH A D3 ROLLBACK)')
+        if ($poMatch.Success) { $script:PostinstallOutcome = $poMatch.Groups[1].Value }
+        if ($line -match 'ALERT:') { $script:PostinstallAlerts++ }
+        # Any d2/d3/d4 step that returned nonzero. `step vc-redist` is
+        # deliberately excluded: the hook itself treats a nonzero there as
+        # non-fatal when a runtime is already present (nsh:495-542).
+        $stepMatch = [regex]::Match($line, 'step (d[234]-[a-z0-9-]+): returned (-?\d+)')
+        if ($stepMatch.Success -and [int]$stepMatch.Groups[2].Value -ne 0) {
+            $script:PostinstallNonZeroSteps += "$($stepMatch.Groups[1].Value)=$($stepMatch.Groups[2].Value)"
+        }
     }
+
+    # <gate-a-audit-MA-25> The clean lane has no D3/postinstall check at all:
+    # check_install asserts installer_exit_code == 0 and a station-set.json
+    # PATH STRING, and the pre-#143 installer exited 0 on a rolled-back
+    # upgrade. Ship these breadcrumbs as a file the judge grades in EVERY
+    # lane. (This log is already copied into every evidence directory and is
+    # currently asserted on by nothing.)
+    $ipResult = Join-Path $OutDir 'INSTALL-PROGRESS-RESULT.txt'
+    "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $ipResult -Encoding UTF8
+    "PHASE=$Phase" | Add-Content -Path $ipResult -Encoding UTF8
+    "PHASE_LINE_COUNT=$($phaseLines.Count)" | Add-Content -Path $ipResult -Encoding UTF8
+    "D3_ROUTE=$($script:D3Route)" | Add-Content -Path $ipResult -Encoding UTF8
+    "D3_ENGINE_EXIT=$($script:D3EngineExit)" | Add-Content -Path $ipResult -Encoding UTF8
+    "D4_ACTIVATE_EXIT=$($script:D4ActivateExit)" | Add-Content -Path $ipResult -Encoding UTF8
+    "POSTINSTALL_OUTCOME=$($script:PostinstallOutcome)" | Add-Content -Path $ipResult -Encoding UTF8
+    "POSTINSTALL_ALERTS=$($script:PostinstallAlerts)" | Add-Content -Path $ipResult -Encoding UTF8
+    "POSTINSTALL_NONZERO_STEPS=$(if ($script:PostinstallNonZeroSteps.Count -gt 0) { $script:PostinstallNonZeroSteps -join ',' } else { 'none' })" | Add-Content -Path $ipResult -Encoding UTF8
 
     try {
         Set-Content -Path $progressLogCopy -Value $lines -Encoding UTF8
@@ -1631,6 +1700,241 @@ function Test-RenderAssert {
     return $r
 }
 
+# THE station-readiness predicate <gate-a-audit-MA-26>. ONE function, used by
+# the 20-minute station-up wait, the T3 `health-200` surface probe, and every
+# T5 soak beat. PR #143 taught the station-up wait to read the /health BODY
+# (civiccast/app.py's own docstring: 200 is LIVENESS ONLY; readiness is the
+# body's `status`, and migration currency is `schema`) but left T3 and T5
+# reading `.StatusCode` alone. Gate A run 33681670855's evidence shows exactly
+# what that costs: `T5_RESULT=PASS beats=2 unhealthy=0` and `T3 health-200 ->
+# 200 ok` recorded against a station whose body read
+# {"status":"degraded","schema":"behind",...}. Three call sites, one
+# predicate, so a future fix cannot land on one and miss the others.
+function Invoke-CivicCastHealthProbe {
+    param([string]$Url, [int]$TimeoutSec = 10)
+    $probe = [ordered]@{
+        url = $Url; status = -1; ok = $false; bytes = 0; snippet = $null; error = $null
+        body_status = $null; body_schema = $null; db_revision = $null; expected_head = $null
+        body_parse_error = $null
+    }
+    try {
+        $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSec -ErrorAction Stop
+        $probe.status = [int]$r.StatusCode
+        $body = [string]$r.Content
+        $probe.bytes = $body.Length
+        if ($probe.bytes -gt 0) {
+            $probe.snippet = ($body.Substring(0, [Math]::Min(300, $body.Length))) -replace '\s+', ' '
+        }
+        $parsed = $null
+        if ($probe.bytes -gt 0) {
+            try { $parsed = $body | ConvertFrom-Json -ErrorAction Stop }
+            catch { $probe.body_parse_error = "$($_.Exception.Message)" }
+        }
+        if ($parsed) {
+            $probe.body_status = [string]$parsed.status
+            $probe.body_schema = [string]$parsed.schema
+            if ($parsed.PSObject.Properties.Name -contains 'schema_db_revision') {
+                $probe.db_revision = [string]$parsed.schema_db_revision
+            }
+            if ($parsed.PSObject.Properties.Name -contains 'schema_expected_head') {
+                $probe.expected_head = [string]$parsed.schema_expected_head
+            }
+            $probe.ok = ($probe.status -eq 200) -and ($probe.body_status -eq 'healthy') -and
+                ($probe.body_schema -eq 'current')
+        }
+    } catch {
+        $probe.error = "$($_.Exception.Message)"
+        try { $probe.status = [int]$_.Exception.Response.StatusCode.value__ } catch { $probe.status = -1 }
+    }
+    return $probe
+}
+
+# INDEPENDENT post-upgrade schema proof <gate-a-audit-BL-10>.
+#
+# THE BUG THIS EXISTS FOR. PR #143 added
+# POST_UPGRADE_DB_REVISION_MATCHES_HEAD to both upgrade lanes on the stated
+# ground that "a healthy station-up body and D3_ENGINE_EXIT=0 are no longer
+# treated as proof by themselves." It was computed as
+#   $healthRes.ok -and $rev -ne '<unavailable>' -and ($rev -eq $expectedHead)
+# where $healthRes.ok requires body_schema=='current', civiccast/app.py
+# sources BOTH schema_db_revision and schema_expected_head from ONE
+# SchemaStatus, and civiccast/schema_check.py returns state=="current" IF AND
+# ONLY IF db_revision == expected_head. So MATCHES_HEAD was 1 whenever ok was
+# 1 -- ALWAYS. The guard written to stop trusting a label was itself the
+# label, and both sides of its comparison were one process's self-report.
+#
+# THE FIX, in two halves that must come from genuinely different origins:
+#   (a) the DATABASE's own alembic_version row, read here with psql straight
+#       out of the station's Postgres -- not through /health, not through the
+#       running control plane, not through any code path that also computes
+#       the expected head; and
+#   (b) the expected head string, recorded by the CI job at BUILD time from
+#       the candidate's own source tree and handed to this run as
+#       EXPECTED-MIGRATION-HEAD.txt (see Run-GateA.ps1 -ExpectedMigrationHead
+#       and .github/workflows/gate-a-station-acceptance.yml).
+# scripts/gate_a_verdict.py re-derives the match from those two values and
+# FAILs on evidence that disagrees with the harness's own flag.
+#
+# Fails LOUD, never silently: every failure path returns a '<...>' sentinel
+# the judge treats as a FAIL, and none of them ever emits the credential.
+function Get-CivicCastDbRevisionViaPsql {
+    param([string]$InstallDir, [string]$LogFile)
+
+    $probe = [ordered]@{
+        revision = '<unavailable>'; method = 'psql'; psql_path = $null
+        database_url_found = $false; exit_code = $null; error = $null
+    }
+    $psql = $null
+    foreach ($candidate in @(
+        (Join-Path $InstallDir 'packs\native-server-binaries\payload\bin\psql.exe'),
+        (Join-Path $InstallDir 'runtime\bin\psql.exe')
+    )) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) { $psql = $candidate; break }
+    }
+    if (-not $psql) {
+        $probe.revision = '<no-psql>'
+        $probe.error = 'psql.exe not found under the install tree'
+        if ($LogFile) { "POST_UPGRADE_DB_REVISION_SOURCE=psql result=NOT-FOUND" | Add-Content -Path $LogFile -Encoding UTF8 }
+        return $probe
+    }
+    $probe.psql_path = $psql
+
+    $dbUrl = $null
+    try {
+        $dbUrl = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast' -Name 'DatabaseUrl' -ErrorAction Stop).DatabaseUrl
+    } catch {}
+    if ([string]::IsNullOrWhiteSpace($dbUrl)) {
+        $probe.revision = '<no-database-url>'
+        $probe.error = 'HKLM\SOFTWARE\CivicCast\DatabaseUrl is absent or empty'
+        if ($LogFile) { "POST_UPGRADE_DB_REVISION_SOURCE=psql result=NO-DATABASE-URL" | Add-Content -Path $LogFile -Encoding UTF8 }
+        return $probe
+    }
+    $probe.database_url_found = $true
+
+    # SQLAlchemy's driver suffix ('postgresql+psycopg://') is not a scheme
+    # libpq understands; strip it before handing the URL to psql. The
+    # credential lives only in this local variable and psql's own argv/env --
+    # nothing below ever writes $dbUrl or $conn.UserInfo to evidence.
+    $libpqUrl = $dbUrl -replace '^postgresql\+[a-z0-9_]+://', 'postgresql://'
+    try {
+        $conn = [uri]$libpqUrl
+    } catch {
+        $probe.revision = '<unparseable-database-url>'
+        $probe.error = 'DatabaseUrl is not a parseable URI'
+        return $probe
+    }
+
+    # Same two-namespace search order civiccast/schema_check.py:173 uses.
+    $sql = "SELECT version_num FROM civiccast.alembic_version UNION ALL SELECT version_num FROM public.alembic_version LIMIT 1"
+    $userInfo = $conn.UserInfo -split ':', 2
+    $env:PGPASSWORD = if ($userInfo.Count -gt 1) { [uri]::UnescapeDataString($userInfo[1]) } else { '' }
+    $stdout = Join-Path $OutDir 'post-upgrade-db-revision.psql.stdout.log'
+    $stderr = Join-Path $OutDir 'post-upgrade-db-revision.psql.stderr.log'
+    try {
+        $argv = @(
+            '--host', $conn.Host, '--port', "$($conn.Port)",
+            '--username', [uri]::UnescapeDataString($userInfo[0]),
+            '--dbname', $conn.AbsolutePath.TrimStart('/'),
+            '--no-password', '--tuples-only', '--no-align',
+            '--set', 'ON_ERROR_STOP=1', '-c', $sql
+        )
+        $p = Start-Process -FilePath $psql -ArgumentList $argv -PassThru -NoNewWindow -Wait `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $probe.exit_code = $p.ExitCode
+        if ($p.ExitCode -eq 0) {
+            $out = (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue)
+            if ($null -ne $out) { $out = $out.Trim() }
+            if (-not [string]::IsNullOrWhiteSpace($out)) {
+                $probe.revision = ($out -split "`n" | Select-Object -First 1).Trim()
+            } else {
+                $probe.revision = '<no-alembic-version-row>'
+            }
+        } else {
+            $probe.revision = '<psql-failed>'
+            $probe.error = "psql exited $($p.ExitCode)"
+        }
+    } catch {
+        $probe.revision = '<psql-threw>'
+        $probe.error = "$_"
+    } finally {
+        Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
+    }
+    if ($LogFile) {
+        "POST_UPGRADE_DB_REVISION_SOURCE=psql exit=$($probe.exit_code) revision=$($probe.revision)" |
+            Add-Content -Path $LogFile -Encoding UTF8
+    }
+    return $probe
+}
+
+# The BUILD-time expected migration head <gate-a-audit-BL-10>, dropped into
+# the mapped output directory by the host (Run-GateA.ps1 -ExpectedMigrationHead
+# writes it the same way SOAK_MINUTES.txt / DIRTY_MODE.txt already ride in).
+# It is computed on the RUNNER from the candidate's own checked-out source, so
+# it does not come from the station under test.
+function Get-CivicCastKitExpectedHead {
+    $path = Join-Path $OutDir 'EXPECTED-MIGRATION-HEAD.txt'
+    if (-not (Test-Path -LiteralPath $path)) { return '<not-provided>' }
+    try {
+        $value = (Get-Content -LiteralPath $path -ErrorAction Stop | Select-Object -First 1)
+        if ($null -ne $value) { $value = $value.Trim() }
+        if ([string]::IsNullOrWhiteSpace($value)) { return '<empty>' }
+        return $value
+    } catch {
+        return '<read-error>'
+    }
+}
+
+# Windows Firewall pre-authorization <gate-a-batch-item-1>.
+#
+# THE BUG THIS EXISTS FOR. On every install test the operator saw a Windows
+# Security dialog INSIDE the sandbox -- "Do you want to allow public and
+# private networks to access this app? TSDuck (tsp.exe)" -- raised by the
+# Windows Defender Firewall the first time `tsp -I ip <port>` opened its
+# listening socket for the egress verify. The prompt is modal, it is on the
+# guest desktop nobody is watching, and it makes every Gate A run look like
+# it needs a human. This harness already runs ELEVATED in the sandbox, so it
+# can simply author the allow rules itself before the first bind.
+#
+# `netsh advfirewall firewall add rule` is idempotent in the sense that
+# matters here (a duplicate rule name adds a second identical rule rather
+# than failing), but we delete by name first anyway so a re-run does not
+# accumulate. Both directions are authored: `dir=in` is the one that raises
+# the prompt for a listening socket, `dir=out` is authored for symmetry so a
+# future outbound-blocking profile cannot reintroduce the dialog. Failure to
+# author a rule is recorded and NEVER fatal -- the firewall is a convenience
+# here, not part of the acceptance contract.
+function Add-CivicCastFirewallAllowRule {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$ProgramPath,
+        [string]$ResultFile
+    )
+    $note = ''
+    if ([string]::IsNullOrWhiteSpace($ProgramPath) -or -not (Test-Path -LiteralPath $ProgramPath)) {
+        $note = "firewall_rule name=$Name program=$ProgramPath result=SKIPPED(program-not-found)"
+        if ($ResultFile) { $note | Add-Content -Path $ResultFile -Encoding UTF8 }
+        return $false
+    }
+    $resolved = (Resolve-Path -LiteralPath $ProgramPath).ProviderPath
+    $ok = $true
+    try {
+        & netsh.exe advfirewall firewall delete rule name="$Name" 2>&1 | Out-Null
+        foreach ($direction in @('in', 'out')) {
+            $out = & netsh.exe advfirewall firewall add rule name="$Name" dir=$direction action=allow program="$resolved" enable=yes profile=any 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $ok = $false
+                $note += "firewall_rule name=$Name dir=$direction result=FAILED exit=$LASTEXITCODE detail=$($out -join ' ')`n"
+            }
+        }
+    } catch {
+        $ok = $false
+        $note += "firewall_rule name=$Name result=THREW detail=$_`n"
+    }
+    if ($ok) { $note = "firewall_rule name=$Name program=$resolved dir=in+out result=ALLOWED" }
+    if ($ResultFile) { $note.TrimEnd() | Add-Content -Path $ResultFile -Encoding UTF8 }
+    return $ok
+}
+
 # TSDuck tsp verification -- same command pattern as the kit's own
 # verify-egress.ps1 (-I ip <port> -P until --seconds N -P analyze --json),
 # reimplemented standalone here because verify-egress.ps1 hardcodes a fixed
@@ -1641,7 +1945,7 @@ function Test-TsProof {
     param([string]$TspExe, [int]$Port, [int]$Seconds, [string]$OutDir, [string]$Label)
     $result = [ordered]@{
         label = $Label; port = $Port; tsp_found = $false; ran = $false; timed_out = $false
-        exit_code = $null; report_found = $false
+        exit_code = $null; report_found = $false; report_bytes = $null; packets_total = $null
         invalid_syncs = $null; transport_errors = $null; discontinuities = $null
         verdict = 'not-run'
     }
@@ -1671,30 +1975,78 @@ function Test-TsProof {
         $result.verdict = "error: $_"
         return $result
     }
-    if (Test-Path $report) {
-        $result.report_found = $true
-        try {
-            $j = Get-Content -Raw -Path $report | ConvertFrom-Json
-            $invalidSyncs = 0
-            $transportErrors = 0
-            if ($j.ts -and $j.ts.packets) {
-                if ($j.ts.packets.PSObject.Properties.Name -contains 'invalid-syncs') { $invalidSyncs = [int]$j.ts.packets.'invalid-syncs' }
-                if ($j.ts.packets.PSObject.Properties.Name -contains 'transport-errors') { $transportErrors = [int]$j.ts.packets.'transport-errors' }
-            }
-            $disc = 0
-            foreach ($pidRow in @($j.pids)) {
-                if ($pidRow.packets -and ($pidRow.packets.PSObject.Properties.Name -contains 'discontinuities')) { $disc += [int]$pidRow.packets.discontinuities }
-            }
-            $result.invalid_syncs = $invalidSyncs
-            $result.transport_errors = $transportErrors
-            $result.discontinuities = $disc
-            if ($invalidSyncs -eq 0 -and $transportErrors -eq 0 -and $disc -eq 0) { $result.verdict = 'pass' } else { $result.verdict = 'fail' }
-        } catch {
-            $result.verdict = "report-parse-error: $_"
-        }
-    } else {
-        $result.verdict = 'fail-no-report'
+    # <gate-a-audit-MA-27> A tsp run that TIMED OUT or exited nonzero analysed
+    # nothing, whatever it left on disk. Judge the RUN before the report.
+    if ($result.timed_out) {
+        $result.verdict = 'fail-timed-out'
+        return $result
     }
+    if ($null -eq $result.exit_code -or [int]$result.exit_code -ne 0) {
+        $result.verdict = "fail-exit-$($result.exit_code)"
+        return $result
+    }
+    if (-not (Test-Path $report)) {
+        $result.verdict = 'fail-no-report'
+        return $result
+    }
+    $result.report_found = $true
+    # <gate-a-audit-MA-27> `Get-Content -Raw` on a 0-byte file returns $null,
+    # and PowerShell's pipeline DROPS $null -- so `... | ConvertFrom-Json`
+    # never ran, never threw, $j stayed $null, the three counters stayed at
+    # their initialised 0, and the verdict was 'pass'. Gate A run 33681670855
+    # shipped exactly that: a 0-byte tsduck-engine-government-report.json,
+    # `configuration file 'dtv' not found` on stderr, verdict=pass, and zero
+    # transport stream analysed. Read into a variable first and fail on empty.
+    $raw = $null
+    try { $raw = Get-Content -Raw -LiteralPath $report -ErrorAction Stop } catch {
+        $result.verdict = "report-read-error: $_"
+        return $result
+    }
+    $result.report_bytes = if ($null -eq $raw) { 0 } else { $raw.Length }
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        $result.verdict = 'fail-empty-report'
+        return $result
+    }
+    try {
+        $j = $raw | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        $result.verdict = "report-parse-error: $_"
+        return $result
+    }
+    if (-not $j -or -not $j.ts -or -not $j.ts.packets) {
+        $result.verdict = 'fail-no-ts-packets-node'
+        return $result
+    }
+    # A ts.packets node with no positive total count is a report about
+    # nothing. `total` is TSDuck's own analyze field name; fall back to
+    # summing the per-PID counts when a future schema drops it.
+    $totalPackets = 0
+    if ($j.ts.packets.PSObject.Properties.Name -contains 'total') {
+        $totalPackets = [int]$j.ts.packets.total
+    } else {
+        foreach ($pidRow in @($j.pids)) {
+            if ($pidRow.packets -and ($pidRow.packets.PSObject.Properties.Name -contains 'total')) {
+                $totalPackets += [int]$pidRow.packets.total
+            }
+        }
+    }
+    $result.packets_total = $totalPackets
+    if ($totalPackets -le 0) {
+        $result.verdict = 'fail-zero-packets'
+        return $result
+    }
+    $invalidSyncs = 0
+    $transportErrors = 0
+    if ($j.ts.packets.PSObject.Properties.Name -contains 'invalid-syncs') { $invalidSyncs = [int]$j.ts.packets.'invalid-syncs' }
+    if ($j.ts.packets.PSObject.Properties.Name -contains 'transport-errors') { $transportErrors = [int]$j.ts.packets.'transport-errors' }
+    $disc = 0
+    foreach ($pidRow in @($j.pids)) {
+        if ($pidRow.packets -and ($pidRow.packets.PSObject.Properties.Name -contains 'discontinuities')) { $disc += [int]$pidRow.packets.discontinuities }
+    }
+    $result.invalid_syncs = $invalidSyncs
+    $result.transport_errors = $transportErrors
+    $result.discontinuities = $disc
+    if ($invalidSyncs -eq 0 -and $transportErrors -eq 0 -and $disc -eq 0) { $result.verdict = 'pass' } else { $result.verdict = 'fail' }
     return $result
 }
 
@@ -2101,6 +2453,20 @@ try {
         # instead of the Sandbox's ~40GB virtual C:. /D must be the LAST argument
         # and unquoted (NSIS quirk); the path has no spaces so this is clean.
         $summary.silent_flag_used = '/S /D=C:\CivicCastHostStore\install'
+        # <gate-a-audit-MA-23> Mark the append-only install-progress.log HERE,
+        # before this phase's setup.exe runs, so the capture below can never
+        # read a previous phase's d3-engine/d4-activate/postinstall lines as
+        # this one's. Absent log => mark 0, which is correct (nothing to skip).
+        $script:InstallProgressPhase2Mark = 0
+        try {
+            $preLog = Join-Path $env:ProgramData 'CivicCast\install-progress.log'
+            if (Test-Path -LiteralPath $preLog) {
+                $script:InstallProgressPhase2Mark = @(Get-Content -LiteralPath $preLog -ErrorAction Stop).Count
+            }
+        } catch {
+            $summary.errors += "install-progress phase mark failed: $_"
+        }
+        $summary.install_progress_phase_mark = $script:InstallProgressPhase2Mark
         Write-Marker -Name '_BEFORE_INSTALL.marker' -Content (Get-Date).ToString('o')
         # QUIESCE the shipper for the duration of the install. The installer
         # reads ~21 GB from C:\CivicCastPayload and writes ~12 GB to
@@ -2432,50 +2798,27 @@ try {
     while ((Get-Date) -lt $healthDeadline) {
         $healthRes.polls++
         $pollTs = (Get-Date).ToUniversalTime().ToString('o')
-        try {
-            $r = Invoke-WebRequest -Uri $endpoints.health -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-            $healthRes.status = [int]$r.StatusCode
-            $body = [string]$r.Content
-            $healthRes.bytes = $body.Length
-            $healthRes.snippet = ($body.Substring(0, [Math]::Min(300, $body.Length))) -replace '\s+', ' '
-
-            $parsed = $null
-            $parseError = $null
-            if ($healthRes.bytes -gt 0) {
-                try {
-                    $parsed = $body | ConvertFrom-Json -ErrorAction Stop
-                } catch {
-                    $parseError = "$($_.Exception.Message)"
-                }
-            }
-            if ($parsed) {
-                $healthRes.body_status = [string]$parsed.status
-                $healthRes.body_schema = [string]$parsed.schema
-                if ($parsed.PSObject.Properties.Name -contains 'schema_db_revision') {
-                    $healthRes.db_revision = [string]$parsed.schema_db_revision
-                }
-                if ($parsed.PSObject.Properties.Name -contains 'schema_expected_head') {
-                    $healthRes.expected_head = [string]$parsed.schema_expected_head
-                }
-            }
-
-            $isHealthy = ($healthRes.status -eq 200) -and $parsed -and
-                ($healthRes.body_status -eq 'healthy') -and ($healthRes.body_schema -eq 'current')
-
-            if ($isHealthy) {
-                $healthRes.ok = $true
-                $stationFirstHealthyTime = Get-Date
-                "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) body_status:$($healthRes.body_status) body_schema:$($healthRes.body_schema) STATION HEALTHY" | Add-Content -Path $stationWaitLog -Encoding UTF8
-                break
-            }
-            if ($parsed) {
-                "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) ok:false body_status:$($healthRes.body_status) body_schema:$($healthRes.body_schema) db_revision:$($healthRes.db_revision) expected_head:$($healthRes.expected_head) DEGRADED (readiness body did not report healthy/current)" | Add-Content -Path $stationWaitLog -Encoding UTF8
-            } else {
-                "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) ok:false bytes:$($healthRes.bytes) body_parse_error:$parseError" | Add-Content -Path $stationWaitLog -Encoding UTF8
-            }
-        } catch {
-            $healthRes.error = "$($_.Exception.Message)"
+        # <gate-a-audit-MA-26> ONE predicate, shared with T3 and T5 below.
+        $probe = Invoke-CivicCastHealthProbe -Url $endpoints.health
+        $healthRes.status = $probe.status
+        $healthRes.bytes = $probe.bytes
+        if ($probe.snippet) { $healthRes.snippet = $probe.snippet }
+        $healthRes.body_status = $probe.body_status
+        $healthRes.body_schema = $probe.body_schema
+        $healthRes.db_revision = $probe.db_revision
+        $healthRes.expected_head = $probe.expected_head
+        if ($probe.error) {
+            $healthRes.error = $probe.error
             "poll #$($healthRes.polls) $pollTs -> ERROR: $($healthRes.error)" | Add-Content -Path $stationWaitLog -Encoding UTF8
+        } elseif ($probe.ok) {
+            $healthRes.ok = $true
+            $stationFirstHealthyTime = Get-Date
+            "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) body_status:$($healthRes.body_status) body_schema:$($healthRes.body_schema) STATION HEALTHY" | Add-Content -Path $stationWaitLog -Encoding UTF8
+            break
+        } elseif ($probe.body_parse_error) {
+            "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) ok:false bytes:$($healthRes.bytes) body_parse_error:$($probe.body_parse_error)" | Add-Content -Path $stationWaitLog -Encoding UTF8
+        } else {
+            "poll #$($healthRes.polls) $pollTs -> status:$($healthRes.status) ok:false body_status:$($healthRes.body_status) body_schema:$($healthRes.body_schema) db_revision:$($healthRes.db_revision) expected_head:$($healthRes.expected_head) DEGRADED (readiness body did not report healthy/current)" | Add-Content -Path $stationWaitLog -Encoding UTF8
         }
         Start-Sleep -Seconds 6
     }
@@ -2583,6 +2926,8 @@ try {
             "UPGRADE_CURRENT_INSTALL_EXIT=$($summary.installer_exit_code)" | Add-Content -Path $dirtyRes -Encoding UTF8
             "D3_ROUTE=$($script:D3Route)" | Add-Content -Path $dirtyRes -Encoding UTF8
             "D3_ENGINE_EXIT=$($script:D3EngineExit)" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "D4_ACTIVATE_EXIT=$($script:D4ActivateExit)" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "POSTINSTALL_OUTCOME=$($script:PostinstallOutcome)" | Add-Content -Path $dirtyRes -Encoding UTF8
 
             # Gate A run 33681670855 fix: the station-up health check proved
             # /health said healthy/current, but D3 rehoming's real defect was
@@ -2604,6 +2949,14 @@ try {
             "POST_UPGRADE_DB_REVISION=$postUpgradeRevision" | Add-Content -Path $dirtyRes -Encoding UTF8
             "EXPECTED_HEAD=$postUpgradeExpectedHead" | Add-Content -Path $dirtyRes -Encoding UTF8
             "POST_UPGRADE_DB_REVISION_MATCHES_HEAD=$postUpgradeMatches" | Add-Content -Path $dirtyRes -Encoding UTF8
+
+            # <gate-a-audit-BL-10> The two INDEPENDENT operands. The three
+            # lines above all descend from one SchemaStatus in one process
+            # and can therefore never disagree; these two cannot agree by
+            # construction. See Get-CivicCastDbRevisionViaPsql's header.
+            $psqlProbe = Get-CivicCastDbRevisionViaPsql -InstallDir $installDir -LogFile $dirtyRes
+            "POST_UPGRADE_DB_REVISION_PSQL=$($psqlProbe.revision)" | Add-Content -Path $dirtyRes -Encoding UTF8
+            "KIT_EXPECTED_HEAD=$(Get-CivicCastKitExpectedHead)" | Add-Content -Path $dirtyRes -Encoding UTF8
         }
         $pdRoot = Join-Path $env:ProgramData 'CivicCast'
 
@@ -2688,6 +3041,14 @@ try {
         "PHASE2_INSTALL_EXIT=$($summary.installer_exit_code)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
         "D3_ROUTE=$($script:D3Route)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
         "D3_ENGINE_EXIT=$($script:D3EngineExit)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+        # <gate-a-audit-MA-24> The judge's download-only check claimed to
+        # verify "the D4 activation step exited 0" while reading D3's number.
+        # Today's evidence proves the two diverge:
+        # gate-a-download-only-33623737236/install-progress.log:346-353 shows
+        # `route=UPGRADE engine_exit=0` immediately followed by
+        # `step d4-activate-station: returned 66` and `postinstall: FAILED`.
+        "D4_ACTIVATE_EXIT=$($script:D4ActivateExit)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+        "POSTINSTALL_OUTCOME=$($script:PostinstallOutcome)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
 
         # Gate A run 33681670855 fix: same proof as the dirty lane above --
         # station_up=1 (a 200 with a healthy/current body) is not itself
@@ -2703,6 +3064,13 @@ try {
         "POST_UPGRADE_DB_REVISION=$postUpgradeRevisionDl" | Add-Content -Path $dlOnlyResult -Encoding UTF8
         "EXPECTED_HEAD=$postUpgradeExpectedHeadDl" | Add-Content -Path $dlOnlyResult -Encoding UTF8
         "POST_UPGRADE_DB_REVISION_MATCHES_HEAD=$postUpgradeMatchesDl" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+
+        # <gate-a-audit-BL-10> Same two independent operands as the dirty
+        # lane above: the database's own alembic_version row read with psql,
+        # and the build-time head the CI job recorded from source.
+        $psqlProbeDl = Get-CivicCastDbRevisionViaPsql -InstallDir $installDir -LogFile $dlOnlyResult
+        "POST_UPGRADE_DB_REVISION_PSQL=$($psqlProbeDl.revision)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
+        "KIT_EXPECTED_HEAD=$(Get-CivicCastKitExpectedHead)" | Add-Content -Path $dlOnlyResult -Encoding UTF8
 
         $stationSetHits = @($summary.station_set_json_found)
         $stationSetProductVersion = '<missing>'
@@ -2780,6 +3148,17 @@ try {
         $env:BASE_URL = $BASE
         $env:RUN_ROOT = $runRoot
         "ffmpeg_present=$([bool](Test-Path $ffmpeg)) tsp_present=$([bool](Test-Path (Join-Path $tsdukBin 'tsp.exe')))" | Add-Content -Path $t35 -Encoding UTF8
+
+        # <gate-a-batch-item-1> Author the firewall allow rules BEFORE the
+        # first tsp/ffmpeg bind, so the guest's Windows Security prompt never
+        # appears. Resolved from the same TSDuck path the verify itself uses,
+        # so the rule can never name a different binary than the one that
+        # runs. See Add-CivicCastFirewallAllowRule for why this is safe and
+        # non-fatal.
+        Add-CivicCastFirewallAllowRule -Name 'CivicCast Gate A - TSDuck tsp' -ProgramPath (Join-Path $tsdukBin 'tsp.exe') -ResultFile $t35 | Out-Null
+        Add-CivicCastFirewallAllowRule -Name 'CivicCast Gate A - ffmpeg' -ProgramPath $ffmpeg -ResultFile $t35 | Out-Null
+        Add-CivicCastFirewallAllowRule -Name 'CivicCast Gate A - ffprobe' -ProgramPath (Join-Path $installDir 'dependencies\ffmpeg\bin\ffprobe.exe') -ResultFile $t35 | Out-Null
+        Save-Summary -Step 'firewall-rules-authored'
     }
 
     if ($stationUp) {
@@ -2792,8 +3171,14 @@ try {
             "T3 $label -> $st (expect $expect) $(if($ok){'ok'}else{'FAIL'})" | Add-Content -Path $t35 -Encoding UTF8
             return $ok
         }
+        # <gate-a-audit-MA-26> The health surface is graded on its BODY, not
+        # its status line -- see Invoke-CivicCastHealthProbe. The other three
+        # T3 surfaces are genuine status-code contracts (a 200 shell, a 401
+        # auth refusal) and stay on Test-Endpoint.
         $t3 = $true
-        $t3 = (Test-Endpoint 'health-200'            "$BASE/api/health"        200) -and $t3
+        $t3HealthProbe = Invoke-CivicCastHealthProbe -Url "$BASE/api/health"
+        "T3 health-body -> status:$($t3HealthProbe.status) body_status:$($t3HealthProbe.body_status) body_schema:$($t3HealthProbe.body_schema) db_revision:$($t3HealthProbe.db_revision) expected_head:$($t3HealthProbe.expected_head) err:$($t3HealthProbe.error) $(if($t3HealthProbe.ok){'ok'}else{'FAIL'})" | Add-Content -Path $t35 -Encoding UTF8
+        $t3 = ([bool]$t3HealthProbe.ok) -and $t3
         $t3 = (Test-Endpoint 'operator-console-200'  "$BASE/operator/"         200) -and $t3
         $t3 = (Test-Endpoint 'resident-portal-200'   "$BASE/"                  200) -and $t3
         $t3 = (Test-Endpoint 'staff-agendas-401'     "$BASE/api/staff/agendas" 401) -and $t3
@@ -3316,17 +3701,25 @@ try {
         $soakMin = 20
         try { if (Test-Path (Join-Path $OutDir 'SOAK_MINUTES.txt')) { $soakMin = [int]((Get-Content (Join-Path $OutDir 'SOAK_MINUTES.txt') | Select-Object -First 1).Trim()) } } catch {}
         "T5_soak_minutes=$soakMin" | Add-Content -Path $t35 -Encoding UTF8
-        $soakEnd = (Get-Date).AddMinutes($soakMin)
+        $soakStart = Get-Date
+        $soakEnd = $soakStart.AddMinutes($soakMin)
         $beat = 0; $soakFail = 0
-        while ((Get-Date) -lt $soakEnd) {
+        # <gate-a-audit-MA-26> Every beat is graded on the /health BODY, and
+        # each beat's body_status/body_schema are recorded, so a soak over a
+        # degraded/schema-behind station can never record unhealthy=0 again.
+        # The first beat runs BEFORE the deadline test so a zero-minute soak
+        # still produces one real observation rather than beats=0 (MN-20).
+        do {
             $beat++
-            $hs = -1
-            try { $hs = [int](Invoke-WebRequest -Uri "$BASE/api/health" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop).StatusCode } catch { $hs = -1 }
-            if ($hs -ne 200) { $soakFail++ }
-            "T5 beat=$beat health=$hs $((Get-Date).ToString('o'))" | Add-Content -Path $t35 -Encoding UTF8
+            $hp = Invoke-CivicCastHealthProbe -Url "$BASE/api/health"
+            if (-not $hp.ok) { $soakFail++ }
+            "T5 beat=$beat health=$($hp.status) body_status=$($hp.body_status) body_schema=$($hp.body_schema) ok=$($hp.ok) $((Get-Date).ToString('o'))" | Add-Content -Path $t35 -Encoding UTF8
             Save-Summary -Step "t5-beat-$beat"
+            if ((Get-Date) -ge $soakEnd) { break }
             Start-Sleep -Seconds 300
-        }
+        } while ((Get-Date) -lt $soakEnd)
+        $soakElapsed = [Math]::Round((New-TimeSpan -Start $soakStart -End (Get-Date)).TotalSeconds, 1)
+        "T5_elapsed_seconds=$soakElapsed" | Add-Content -Path $t35 -Encoding UTF8
         "T5_RESULT=$(if($soakFail -eq 0){'PASS'}else{'FAIL'}) beats=$beat unhealthy=$soakFail" | Add-Content -Path $t35 -Encoding UTF8
         Save-Summary -Step 't5-soak-complete'
     } else {
@@ -3427,8 +3820,17 @@ try {
     }
     Save-Summary -Step 'event-log-checked'
 
+    # <gate-a-audit-BL-09> THE completion promotion, and the only one. Every
+    # statement of the acceptance flow above ran without throwing. Anything
+    # that reaches the catch below leaves this $false.
+    $summary.harness_completed = $true
+    Save-Summary -Step 'harness-completed'
+
 } catch {
     $summary.errors += "top-level failure: $_"
+    $summary.harness_completed = $false
+    $summary.top_level_error = "$_"
+    try { Save-Summary -Step 'top-level-failure' } catch {}
 } finally {
     # Station diagnostics -- THIRD and final capture point, unconditional,
     # regardless of pass/fail/exception. This is the one capture guaranteed
@@ -3445,7 +3847,10 @@ try {
     try { Save-Summary -Step 'final-diag-captured' } catch {}
 
     $summary.run_end_utc = (Get-Date).ToUniversalTime().ToString('o')
-    $summary.harness_completed = $true
+    # <gate-a-audit-BL-09> harness_completed is NOT set here. It was promoted
+    # by the last statement of the try, or it is still $false because the
+    # catch fired. The `finally` records the end of the run; it does not get
+    # to decide whether the run succeeded.
     Save-Summary -Step 'finally-block'
 
     try { Stop-Transcript | Out-Null } catch {}
@@ -3471,8 +3876,11 @@ try {
     $doneObj = [ordered]@{
         done_utc              = (Get-Date).ToUniversalTime().ToString('o')
         last_completed_step   = $summary.last_completed_step
+        step_seq              = $summary.step_seq
+        run_end_utc           = $summary.run_end_utc
         installer_exit_code   = $summary.installer_exit_code
-        harness_completed     = $true
+        harness_completed     = [bool]$summary.harness_completed
+        top_level_error       = $summary.top_level_error
         watchdog_timeout       = $false
         station_up             = $summary.station_up
         station_first_healthy_utc = $summary.station_first_healthy_utc
@@ -3487,10 +3895,17 @@ try {
     # so the same ship tick that carries DONE.json out also carries the
     # retraction; the shipper's retraction list removes any copy that
     # already reached the host.
-    try {
-        $wd = Join-Path $OutDir 'WATCHDOG-TIMEOUT.txt'
-        if (Test-Path $wd) { Remove-Item -Path $wd -Force -ErrorAction SilentlyContinue }
-    } catch {}
+    #
+    # <gate-a-audit-BL-09> The retraction is now GATED on the run having
+    # actually completed. Previously it ran unconditionally, so a run the
+    # watchdog had already declared dead could retroactively erase that
+    # finding merely by limping as far as this `finally`.
+    if ($summary.harness_completed -eq $true) {
+        try {
+            $wd = Join-Path $OutDir 'WATCHDOG-TIMEOUT.txt'
+            if (Test-Path $wd) { Remove-Item -Path $wd -Force -ErrorAction SilentlyContinue }
+        } catch {}
+    }
 
     ($doneObj | ConvertTo-Json -Depth 3) | Set-Content -Path (Join-Path $OutDir 'DONE.json') -Encoding UTF8
 

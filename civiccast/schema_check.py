@@ -26,7 +26,7 @@ _LOG = logging.getLogger(__name__)
 class SchemaStatus:
     """Outcome of the startup schema-currency comparison."""
 
-    state: str  # "current" | "behind" | "not-configured" | "unknown"
+    state: str  # "current" | "behind" | "ahead" | "not-configured" | "unknown"
     db_revision: str | None = None
     expected_head: str | None = None
 
@@ -78,11 +78,66 @@ def expected_migration_head() -> str:
     return heads[0]
 
 
-def evaluate_schema_currency(db_revision: str | None, expected_head: str) -> SchemaStatus:
-    """Pure comparison: None or any non-head revision counts as behind."""
+def known_revisions() -> frozenset[str]:
+    """Every revision id THIS build's migration graph contains.
+
+    <installer-path-audit MA-06> The one fact that distinguishes "behind" from
+    "ahead", and it was available and unused: ``ScriptDirectory`` already
+    knows whether a revision exists in the graph.
+    """
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    ini, script_location, version_locations = _alembic_runtime_paths()
+    config = Config(str(ini))
+    config.set_main_option("script_location", str(script_location.resolve()))
+    config.set_main_option(
+        "version_locations",
+        "\n".join(str(path.resolve()) for path in version_locations),
+    )
+    config.set_main_option("path_separator", "newline")
+    return frozenset(
+        revision.revision for revision in ScriptDirectory.from_config(config).walk_revisions()
+    )
+
+
+def evaluate_schema_currency(
+    db_revision: str | None,
+    expected_head: str,
+    *,
+    known: frozenset[str] | None = None,
+) -> SchemaStatus:
+    """Classify the database's revision against this build's expected head.
+
+    <installer-path-audit MA-06> There used to be NO ``ahead`` state: any
+    non-equal revision -- newer, older, or entirely unknown to this build's
+    script directory -- was reported ``behind``, and
+    :func:`check_schema_currency` then logged "DATABASE SCHEMA IS BEHIND THE
+    CODE ... until 'alembic upgrade head' runs" while
+    ``civiccast/installer/storage.py`` rendered it to the operator as "the
+    database is set up for an older version of CivicCast ... bring the
+    CivicCast database up to date."
+
+    That advice CANNOT WORK on an ahead database: ``alembic upgrade head``
+    cannot locate a revision this build's graph does not contain, so it fails.
+    And "ahead" is not hypothetical -- it is exactly the state a failed
+    rollback leaves (new schema, old binary), which is the state the D3 halt
+    path is designed around. The honest instruction there is "restore the
+    pre-upgrade backup" or "install the newer version again".
+
+    ``known`` is injected so this stays a pure function; production passes
+    :func:`known_revisions`. When it is ``None`` the classification degrades
+    to the previous two-state behaviour rather than guessing.
+    """
 
     if db_revision == expected_head:
         return SchemaStatus(state="current", db_revision=db_revision, expected_head=expected_head)
+    if db_revision is not None and known is not None and db_revision not in known:
+        # This build's own migration graph has never heard of the revision the
+        # database is stamped with. The only way that happens is a NEWER build
+        # having migrated it.
+        return SchemaStatus(state="ahead", db_revision=db_revision, expected_head=expected_head)
     return SchemaStatus(state="behind", db_revision=db_revision, expected_head=expected_head)
 
 
@@ -193,7 +248,9 @@ def check_schema_currency(database_url: str | None) -> SchemaStatus:
         return SchemaStatus(state="not-configured")
     try:
         head = expected_migration_head()
-        status = evaluate_schema_currency(read_db_revision(database_url), head)
+        status = evaluate_schema_currency(
+            read_db_revision(database_url), head, known=known_revisions()
+        )
     except Exception:
         _LOG.exception("Schema-currency check failed; reporting 'unknown'.")
         return SchemaStatus(state="unknown")
@@ -202,6 +259,20 @@ def check_schema_currency(database_url: str | None) -> SchemaStatus:
             "DATABASE SCHEMA IS BEHIND THE CODE: db revision %r, expected head %r. "
             "Endpoints touching newer columns will fail until 'alembic upgrade "
             "head' runs. The server will NOT auto-migrate.",
+            status.db_revision,
+            status.expected_head,
+        )
+    elif status.state == "ahead":
+        # <installer-path-audit MA-06> Deliberately NOT the "behind" message.
+        # `alembic upgrade head` cannot find a revision this build does not
+        # have, so telling the operator to run it sends them to a command that
+        # fails.
+        _LOG.error(
+            "DATABASE SCHEMA IS NEWER THAN THIS BUILD: db revision %r is not in this build's "
+            "migration graph (this build expects head %r). A NEWER version of CivicCast "
+            "migrated this database. Running 'alembic upgrade head' CANNOT fix this. Either "
+            "install that newer version again, or restore the pre-upgrade backup taken before "
+            "it ran. The server will NOT auto-migrate.",
             status.db_revision,
             status.expected_head,
         )

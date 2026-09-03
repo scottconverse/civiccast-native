@@ -110,7 +110,7 @@ def _fake_command_factory(
                     (
                         lane
                         for lane in m.GATE_A_LANES
-                        if name == m.GATE_A_ARTIFACT_NAMES[lane].format(run_id="222")
+                        if name == m.GATE_A_ARTIFACT_NAMES[lane].format(run_id="111")
                     ),
                     None,
                 )
@@ -315,8 +315,36 @@ def test_gate_a_missing_lane_refuses(tmp_path, monkeypatch):
         m.download_gate_a_verdicts(
             repository="scottconverse/civiccast-native",
             gate_a_run_id="222",
+            build_run_id="111",
             dest_dir=tmp_path / "gate-a",
         )
+
+
+def test_gate_a_artifact_name_uses_build_run_id_not_gate_a_run_id(tmp_path, monkeypatch):
+    """Regression: gate-a-station-acceptance.yml's uploaded artifact names
+    are suffixed with the BUILD run id (github.event.inputs.run_id), not the
+    Gate A workflow's own run id -- confirmed live on Gate A run 33713004718
+    validating build 33711079441, whose artifacts are named
+    gate-a-verdict-33711079441 etc, never *-33713004718. A distinct
+    gate_a_run_id must still select which run's artifacts `gh run download`
+    fetches from, but must NOT be used to format the artifact name."""
+
+    fake = _fake_command_factory()
+    monkeypatch.setattr(m, "run_command", fake)
+    verdicts = m.download_gate_a_verdicts(
+        repository="scottconverse/civiccast-native",
+        gate_a_run_id="222",
+        build_run_id="111",
+        dest_dir=tmp_path / "gate-a",
+    )
+    assert set(verdicts) == set(m.GATE_A_LANES)
+    download_calls = _gh_calls(fake.calls, "gh", "run", "download")
+    assert len(download_calls) == len(m.GATE_A_LANES)
+    for call in download_calls:
+        # gh run download <run-id> ... selects the Gate A run, not the build run.
+        assert call[3] == "222"
+        artifact_name = call[call.index("-n") + 1]
+        assert artifact_name.endswith("111")
 
 
 def test_gate_a_non_pass_verdict_refuses():

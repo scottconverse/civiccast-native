@@ -26,7 +26,15 @@ use crate::native_packs::{self, PackTrust};
 // TIER changed. See `native_distribution.rs::REQUIRED_COMPONENTS` (same
 // swap, kept in lockstep) and `station_runtime.py::_resolve_caption_tier`
 // (the runtime half of this contract).
-const REQUIRED_COMPONENTS: [&str; 5] = [
+// <installer-path-audit MA-19> `pub(crate)` so `native_distribution` can pin
+// its own copy EQUAL to this one. The comment above says the two are "kept in
+// lockstep"; nothing enforced it, and a grep for
+// `native_activation::REQUIRED_COMPONENTS` across `src/*.rs` found no hits.
+// If they ever drift, activation requires a component the distribution
+// allowlist does not exempt from the exact-version check, every model pack
+// fails identity, and activation exits 66 -> installer 123: the PR #127
+// defect class, re-armed.
+pub(crate) const REQUIRED_COMPONENTS: [&str; 5] = [
     "core",
     "captions-floor",
     "summary-gemma4-12b",
@@ -526,6 +534,46 @@ fn validate_complete_distribution(distribution: &AcquiredDistribution) -> Result
         .map(|pack| (pack.component.as_str(), pack))
         .collect();
     let required: BTreeSet<_> = REQUIRED_COMPONENTS.into_iter().collect();
+    // <installer-path-audit MA-15> An index component this build does not know
+    // is downloaded, fully verified -- and then SILENTLY DROPPED.
+    //
+    // `verify_distribution_bytes` accepts any lowercase-alnum-dash component
+    // id up to 64 chars and `acquire_verified_distribution` fetches and
+    // verifies it. After that, `validate_complete_distribution` iterated only
+    // REQUIRED_COMPONENTS (so the index entry's own `required: true` flag was
+    // NEVER READ), `extract_flat_distribution_components` iterated the same
+    // two lists (so it was never extracted), and `station_manifest_value`
+    // filtered `packs` by the known set (so it was never recorded). A future
+    // index adding, say, `native-gstreamer-runtime` with `required: true`
+    // would be downloaded and verified by a station running an older
+    // setup.exe -- same product version, so the version gate does not catch
+    // it -- which would then report exit 0 with the component never laid
+    // down and no trace of it in station-set.json.
+    //
+    // Fail closed, matching this module's posture everywhere else: an index
+    // that names something this build cannot honour is refused, by name.
+    let known: BTreeSet<&str> = REQUIRED_COMPONENTS
+        .into_iter()
+        .chain(OPTIONAL_COMPONENTS)
+        .collect();
+    let unknown: Vec<&str> = indexed
+        .keys()
+        .copied()
+        .filter(|component| !known.contains(component))
+        .collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "Native station index names {} this installer does not know how to stage: {}. \
+             This setup.exe is older than the station bundle it was given; install the \
+             matching CivicCast (Native) release instead.",
+            if unknown.len() == 1 {
+                "a component"
+            } else {
+                "components"
+            },
+            unknown.join(", ")
+        ));
+    }
     if indexed.len() != distribution.index.packs.len()
         || acquired.len() != distribution.packs.len()
         || !required.is_subset(&indexed.keys().copied().collect())
@@ -772,6 +820,65 @@ pub struct FlatStationActivation {
 /// therefore exists ONLY to satisfy [`validate_complete_distribution`]'s
 /// structural contract (component identity, present in both the index and
 /// the acquisition) -- its actual payload is never unpacked in this layout.
+/// The extracted size a component tree is assumed to need, as a multiple of
+/// its compressed pack's byte count.
+///
+/// <installer-path-audit MA-03> The packs are stored (not deflated) inside
+/// the `.ccpack` container, so extraction is close to 1:1 -- but the pack
+/// file itself stays on disk in the per-SHA cache while its tree is written,
+/// so a component transiently needs BOTH. 1.0 is therefore the honest
+/// multiplier for the extracted bytes, and the cached pack's own bytes are
+/// already on disk and are not counted again.
+const ACTIVATION_EXTRACTED_BYTES_PER_PACK_BYTE: f64 = 1.0;
+
+/// Headroom above the measured requirement, in bytes.
+///
+/// Not a fudge factor: filesystem metadata, the atomic-write temporaries for
+/// the manifest and receipt, and the self-test's own scratch all land on the
+/// same volume, and a check that refuses only when the payload will not fit
+/// EXACTLY would still let the run die a few megabytes later -- with the old
+/// trees already deleted, which is the failure this exists to prevent.
+const ACTIVATION_FREE_SPACE_HEADROOM_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+fn require_free_space_for_activation(
+    install_root: &Path,
+    distribution: &AcquiredDistribution,
+) -> Result<(), String> {
+    let required_bytes: u64 = distribution
+        .index
+        .packs
+        .iter()
+        .map(|pack| (pack.bytes as f64 * ACTIVATION_EXTRACTED_BYTES_PER_PACK_BYTE) as u64)
+        .sum::<u64>()
+        .saturating_add(ACTIVATION_FREE_SPACE_HEADROOM_BYTES);
+
+    #[cfg(target_os = "windows")]
+    let free = crate::hardware_inventory::windows_collectors::collect_free_disk_bytes(install_root);
+    #[cfg(not(target_os = "windows"))]
+    let free: Option<u64> = None;
+
+    // `None` is "the volume could not be measured", NOT "zero free" -- the
+    // same distinction hardware_inventory's own G011.1 note records. Refusing
+    // an install because a free-space probe failed would be a worse failure
+    // than the one this guards against, so an unreadable answer proceeds.
+    let Some(free_bytes) = free else {
+        return Ok(());
+    };
+    if free_bytes >= required_bytes {
+        return Ok(());
+    }
+    Err(format!(
+        "Not enough free disk space to activate this station. The station's components need \
+         about {} GB, plus {} GB of working room, on the drive holding {} -- but only {} GB is \
+         free. Nothing has been changed or deleted. Free up space (or install to a drive that \
+         has it) and run setup again.",
+        required_bytes.saturating_sub(ACTIVATION_FREE_SPACE_HEADROOM_BYTES) / 1_000_000_000,
+        ACTIVATION_FREE_SPACE_HEADROOM_BYTES / 1_000_000_000,
+        install_root.display(),
+        free_bytes / 1_000_000_000,
+    ))
+}
+
 pub fn activate_flat_station_with<E, T>(
     install_root: &Path,
     distribution: &AcquiredDistribution,
@@ -798,6 +905,31 @@ where
             already_activated: true,
         });
     }
+
+    // <installer-path-audit MA-03> MEASURE BEFORE TEARING DOWN.
+    //
+    // Everything below this point is destructive: the manifest and the
+    // receipt are removed, then `extract_flat_distribution_components` does
+    // `fs::remove_dir_all` per component BEFORE extracting it. The versioned
+    // path does not have this shape -- it stages into `.{version}.staging`
+    // behind a StagingGuard and promotes atomically -- and the flat path's own
+    // doc already concedes "there is no staging-directory-plus-atomic-rename
+    // to fall back on", then protected only the two JSON files rather than the
+    // ~21 GB of trees they describe.
+    //
+    // A grep for free_space/GetDiskFreeSpace/available_space across
+    // native_activation.rs, native_distribution.rs and native_pack_staging.rs
+    // found NONE: the crate's only free-space probe served the GUI first-run
+    // flow. So the disk filling during the third Ollama component's
+    // extraction returned Err -> exit 67 -> NSIS 123, leaving a station with
+    // no station-set.json, no receipt, and two or three component trees
+    // DELETED -- while the abort text told the operator to check their
+    // station folder and said nothing about the disk.
+    //
+    // This refuses BEFORE the first removal, naming the byte figure. It is
+    // the cheap half of the audit's fix; the extract-to-`.incoming`-and-swap
+    // half is not attempted here (see the PR body).
+    require_free_space_for_activation(install_root, distribution)?;
 
     // A stale pair (present but not matching this distribution) is cleared
     // before rewriting -- never left for the writes below to merge with or
@@ -884,7 +1016,32 @@ where
         extract(pack, &destination)?;
         ensure_existing_directory(&destination, "extracted native component")?;
     }
-    compose_ollama_model_store(install_root)
+    compose_ollama_model_store(install_root)?;
+    // <installer-path-audit MA-04> The staged-layout contract now runs on the
+    // path that SHIPS.
+    //
+    // A grep for `validate_staged_runtime_layout` across `src/` found exactly
+    // one non-test call -- inside `stage_acquired_distribution`, the VERSIONED
+    // path -- and `main.rs` says so plainly: "This flow (the flat
+    // `--civiccast-activate-station` path) never calls
+    // native_activation::validate_staged_runtime_layout." The flat path
+    // instead ran a five-entry existence check over python/postgres/pg_ctl/
+    // ffmpeg/ollama, so all SIX validate_staged_runtime_layout_* tests
+    // exercised a function the shipping path did not call.
+    //
+    // What that check adds here, over the five-entry probe: the four floor-tier
+    // model files, `packs/captions-floor/self-test/jfk.wav`, the three
+    // `models/ollama/manifests/...` entries, the three
+    // `runtime/Lib/site-packages/{faster_whisper,ctranslate2}` entries -- and,
+    // for ALL of them, the no-symlink/regular-file discipline
+    // `require_staged_files` applies, which nothing on this path enforced.
+    // Every path in REQUIRED_STAGED_RUNTIME_FILES is install-root-relative and
+    // is exactly what the flat layout lays down, which is why the constant
+    // needs no change.
+    //
+    // Placed AFTER `compose_ollama_model_store` because three of the required
+    // entries are the manifests that function composes.
+    validate_staged_runtime_layout(install_root)
 }
 
 /// Production entry point for `--civiccast-activate-station`
@@ -964,9 +1121,24 @@ where
 /// JSON object (not null/array/scalar). Anything short of that structural
 /// completeness returns `false`, falling through to the full self-test
 /// rewrite -- which is safe (just slower) because it re-derives a correct
-/// receipt. This guarantees the CLI never reports "already activated" on a
-/// receipt the runtime would reject, so a stale or damaged receipt is always
-/// re-activated rather than skipped forever.
+/// receipt.
+///
+/// <installer-path-audit MA-37> THE GUARANTEE THIS USED TO CLAIM IS NOT TRUE,
+/// and the sentence that made it has been removed rather than softened.
+///
+/// It read: "This guarantees the CLI never reports 'already activated' on a
+/// receipt the runtime would reject." The runtime additionally requires
+/// `caption_inference` to EXACTLY EQUAL `_expected_caption_receipt(tier_id)`
+/// for the tier it resolves on disk, and this probe deliberately does not
+/// reproduce that (see the paragraph above for why). So a receipt naming the
+/// FLOOR tier on a station where large-v3 is now staged passes this probe,
+/// the CLI reports "already activated", the self-test is skipped -- and the
+/// service then refuses to start with `NativeStationConfigurationError`.
+///
+/// What is actually true, and all that is claimed here: every receipt this
+/// probe accepts is STRUCTURALLY complete by the runtime's own structural
+/// rules. The tier-identity half is enforced by the runtime, not here, and a
+/// station that fails it re-activates on the next run.
 ///
 /// Any read/parse failure (absent, corrupt, foreign content) is treated as
 /// "does not match" rather than propagated: a caller that cannot even read
@@ -1497,6 +1669,28 @@ mod tests {
             "summary-gemma4-e4b",
             "translation-translategemma-4b",
         ];
+        // <installer-path-audit MA-04> The flat path now validates the staged
+        // layout, so this fake extraction has to produce what the mandatory
+        // caption FLOOR pack really carries -- the four model files and the
+        // self-test fixture -- rather than a single `payload.bin`. That is
+        // the point of the finding: the shipping path never checked, so a
+        // component tree that looked nothing like the real one satisfied it.
+        if pack.component == "captions-floor" {
+            for relative in [
+                "models/faster-whisper-medium/config.json",
+                "models/faster-whisper-medium/model.bin",
+                "models/faster-whisper-medium/tokenizer.json",
+                "models/faster-whisper-medium/vocabulary.txt",
+                "self-test/jfk.wav",
+            ] {
+                let path = destination.join(relative);
+                std::fs::create_dir_all(path.parent().expect("floor file has a parent"))
+                    .map_err(|error| error.to_string())?;
+                std::fs::write(&path, pack.component.as_bytes())
+                    .map_err(|error| error.to_string())?;
+            }
+            return Ok(());
+        }
         if OLLAMA_MODEL_COMPONENTS.contains(&pack.component.as_str()) {
             std::fs::create_dir_all(destination.join("blobs")).map_err(|error| error.to_string())?;
             std::fs::create_dir_all(destination.join("manifests"))
@@ -1505,7 +1699,23 @@ mod tests {
                 destination.join("blobs").join(format!("sha256-{}", pack.component)),
                 pack.component.as_bytes(),
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+            // <installer-path-audit MA-04> The composed model store's three
+            // manifest entries are among the files the staged-layout contract
+            // requires, and the flat path now runs that contract. Write the
+            // real registry paths each component contributes, so
+            // `compose_ollama_model_store` composes a store that looks like a
+            // real one.
+            let manifest_relative = match pack.component.as_str() {
+                "summary-gemma4-12b" => "registry.ollama.ai/library/gemma4/12b",
+                "summary-gemma4-e4b" => "registry.ollama.ai/library/gemma4/e4b",
+                _ => "registry.ollama.ai/library/translategemma/4b",
+            };
+            let manifest_path = destination.join("manifests").join(manifest_relative);
+            std::fs::create_dir_all(manifest_path.parent().expect("manifest has a parent"))
+                .map_err(|error| error.to_string())?;
+            std::fs::write(&manifest_path, pack.component.as_bytes())
+                .map_err(|error| error.to_string())
         } else {
             std::fs::create_dir_all(destination).map_err(|error| error.to_string())?;
             std::fs::write(destination.join("payload.bin"), pack.component.as_bytes())
@@ -1513,9 +1723,130 @@ mod tests {
         }
     }
 
+    /// Lay down the runtime files `validate_staged_runtime_layout` requires.
+    ///
+    /// <installer-path-audit MA-04> The flat activation path now runs that
+    /// check -- it previously ran only on the versioned path, so all six
+    /// `validate_staged_runtime_layout_*` tests exercised a function the
+    /// SHIPPING path did not call. These fixtures therefore have to look like
+    /// a real staged station: the three ollama manifests are written by
+    /// `compose_ollama_model_store` from the extracted packs, and the caption
+    /// floor tier's four model files plus its self-test fixture come from the
+    /// `captions-floor` pack, so only the payload/runtime files the INSTALLER
+    /// (not activation) stages are seeded here.
+    fn seed_installer_staged_runtime(root: &Path) {
+        for relative in [
+            "runtime/python.exe",
+            "packs/native-server-binaries/payload/bin/postgres.exe",
+            "packs/native-server-binaries/payload/bin/pg_ctl.exe",
+            "dependencies/ffmpeg/bin/ffmpeg.exe",
+            "dependencies/ollama/ollama.exe",
+            "runtime/Lib/site-packages/faster_whisper/__init__.py",
+            "runtime/Lib/site-packages/ctranslate2/__init__.py",
+            "runtime/Lib/site-packages/ctranslate2/_ext.cp312-win_amd64.pyd",
+        ] {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().expect("staged file has a parent"))
+                .expect("create staged runtime directory");
+            std::fs::write(&path, b"staged-by-the-installer").expect("write staged runtime file");
+        }
+    }
+
+    #[test]
+    fn ma04_the_flat_path_now_validates_the_staged_runtime_layout() {
+        // <installer-path-audit MA-04> A grep for
+        // `validate_staged_runtime_layout` across `src/` found exactly ONE
+        // non-test call -- inside the VERSIONED path -- and main.rs said so
+        // plainly. All six validate_staged_runtime_layout_* tests exercised a
+        // function the shipping path did not call, and the flat path made do
+        // with a five-entry existence check that never saw the floor-tier
+        // model files, the self-test fixture, the ollama manifests, the
+        // faster_whisper/ctranslate2 site-packages entries, or the
+        // no-symlink discipline.
+        let root = temporary_root("flat-activate-layout-gate");
+        seed_installer_staged_runtime(&root);
+        // Remove one required file the INSTALLER stages: activation must now
+        // refuse rather than write a receipt over an incomplete station.
+        std::fs::remove_file(
+            root.join("runtime/Lib/site-packages/ctranslate2/_ext.cp312-win_amd64.pyd"),
+        )
+        .expect("remove a required staged runtime file");
+
+        let error = activate_flat_station_with(
+            &root,
+            &acquired(),
+            fake_component_extract,
+            |_staging, distribution| Ok(fake_receipt(distribution)),
+        )
+        .expect_err("an incomplete staged runtime must fail activation");
+        assert!(error.contains("_ext.cp312-win_amd64.pyd"), "unexpected error: {error}");
+        assert!(
+            !root.join("station-set.json").exists(),
+            "no manifest may be written over a station whose runtime is incomplete"
+        );
+    }
+
+    #[test]
+    fn ma15_an_index_component_this_build_cannot_stage_is_refused_by_name() {
+        // <installer-path-audit MA-15> `verify_distribution_bytes` accepts any
+        // lowercase-alnum-dash component id and `acquire_verified_distribution`
+        // downloads and fully verifies it -- then
+        // `validate_complete_distribution` iterated only the known lists (so
+        // the entry's own `required: true` was never read),
+        // `extract_flat_distribution_components` iterated the same lists (so
+        // it was never extracted), and `station_manifest_value` filtered it
+        // out (so it was never recorded). Exit 0, component never laid down,
+        // no trace in station-set.json.
+        let mut distribution = acquired();
+        let template = distribution.index.packs[1].clone();
+        distribution.index.packs.push(DistributionPack {
+            component: "native-gstreamer-runtime".to_string(),
+            required: true,
+            ..template
+        });
+
+        let error = validate_complete_distribution(&distribution)
+            .expect_err("an unknown index component must be refused");
+        assert!(error.contains("native-gstreamer-runtime"), "unexpected error: {error}");
+        assert!(
+            error.contains("older than the station bundle"),
+            "the refusal must tell the operator which side is out of date: {error}"
+        );
+    }
+
+    #[test]
+    fn ma03_activation_refuses_before_deleting_anything_when_the_disk_is_too_small() {
+        // <installer-path-audit MA-03> Everything after this check is
+        // destructive -- the manifest, the receipt, then `remove_dir_all` per
+        // component BEFORE extracting -- and the crate's only free-space probe
+        // served the GUI first-run flow. A disk filling during the third
+        // Ollama component's extraction left no station-set.json, no receipt,
+        // and two or three component trees deleted, while the abort text
+        // talked about the station folder and never mentioned the disk.
+        let root = temporary_root("flat-activate-no-space");
+        seed_installer_staged_runtime(&root);
+        let mut distribution = acquired();
+        // A pack whose declared size no volume can satisfy.
+        distribution.index.packs[1].bytes = u64::MAX / 4;
+
+        let error = activate_flat_station_with(
+            &root,
+            &distribution,
+            |_pack, _destination| panic!("nothing may be extracted after a space refusal"),
+            |_staging, _distribution| panic!("the self-test must never run"),
+        )
+        .expect_err("activation must refuse when the payload cannot fit");
+        assert!(error.contains("free disk space"), "unexpected error: {error}");
+        assert!(
+            error.contains("Nothing has been changed or deleted"),
+            "the operator must be told the machine is untouched: {error}"
+        );
+    }
+
     #[test]
     fn flat_activation_writes_both_files_directly_at_install_root_and_they_parse() {
         let root = temporary_root("flat-activate");
+        seed_installer_staged_runtime(&root);
         let distribution = acquired();
 
         let activation = activate_flat_station_with(
@@ -1539,10 +1870,21 @@ mod tests {
         assert!(!root.join("payload.bin").exists());
         // The other required components ARE extracted, at their pinned
         // destinations.
+        // <installer-path-audit MA-04> The floor pack's fake extraction now
+        // lays down the tier's real file shape (see fake_component_extract),
+        // because the flat path validates the staged layout.
         assert!(root
             .join("packs")
             .join("captions-floor")
-            .join("payload.bin")
+            .join("models")
+            .join("faster-whisper-medium")
+            .join("model.bin")
+            .is_file());
+        assert!(root
+            .join("packs")
+            .join("captions-floor")
+            .join("self-test")
+            .join("jfk.wav")
             .is_file());
         assert!(root
             .join("components")
@@ -1576,6 +1918,7 @@ mod tests {
     #[test]
     fn flat_activation_is_idempotent_and_never_reruns_self_test_on_an_already_activated_root() {
         let root = temporary_root("flat-activate-idempotent");
+        seed_installer_staged_runtime(&root);
         let distribution = acquired();
 
         let first = activate_flat_station_with(
@@ -1607,6 +1950,7 @@ mod tests {
     #[test]
     fn flat_activation_failure_leaves_no_partial_manifest_or_receipt() {
         let root = temporary_root("flat-activate-self-test-fails");
+        seed_installer_staged_runtime(&root);
         let distribution = acquired();
 
         let error = activate_flat_station_with(
@@ -1633,6 +1977,7 @@ mod tests {
         // `create_new` open fails) -- the receipt, written first and
         // successfully, must be rolled back rather than left standing alone.
         let root = temporary_root("flat-activate-manifest-write-fails");
+        seed_installer_staged_runtime(&root);
         std::fs::create_dir_all(root.join("station-set.json.partial"))
             .expect("occupy manifest partial path");
 
@@ -1655,6 +2000,7 @@ mod tests {
     #[test]
     fn flat_activation_cleanly_rewrites_stale_content_for_a_different_distribution() {
         let root = temporary_root("flat-activate-stale-rewrite");
+        seed_installer_staged_runtime(&root);
         let first_distribution = acquired();
         let first = activate_flat_station_with(
             &root,
@@ -1706,6 +2052,7 @@ mod tests {
         // is untouched proves core extraction really is skipped, not just
         // that no *new* core files happen to appear.
         let root = temporary_root("flat-activate-core-untouched");
+        seed_installer_staged_runtime(&root);
         std::fs::create_dir_all(root.join("runtime")).expect("simulate staged runtime dir");
         std::fs::write(root.join("runtime").join("python.exe"), b"already-staged-by-stage-packs")
             .expect("simulate staged runtime file");

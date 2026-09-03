@@ -119,6 +119,21 @@ class MaintenanceRecord(BaseModel):
     owner_run_id: str
     taken_utc: str
     released_utc: str | None = None
+    #: <installer-path-audit BL-05> The PID of the process that took the
+    #: interlock.
+    #:
+    #: Without it there was no liveness or expiry record of any kind, so a
+    #: killed engine left ``state="held"`` forever and every subsequent upgrade
+    #: died at step 1 -> exit 10 -> NSIS 124: a permanent, unexplained wedge.
+    #: Recording it lets :func:`civiccast.native.win_probes.take_interlock`
+    #: report a held-by-a-dead-process interlock as EXPLICITLY STALE, naming
+    #: the run id and pid, instead of a bare "cannot take interlock: held".
+    #: It is deliberately diagnostic, not an auto-steal: a live upgrade's
+    #: interlock must never be taken from underneath it.
+    #:
+    #: Optional with a default so a record written by an older build still
+    #: parses under ``extra="forbid"``.
+    owner_pid: int | None = None
 
 
 class InterlockRead(BaseModel):

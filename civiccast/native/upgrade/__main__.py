@@ -24,6 +24,9 @@ number, not stderr text:
                                  no migration between a version and itself)
     20 HALTED_RESTORE_FAILED    (operator recovery document emitted)
     30 REFUSED_NON_RESTORABLE   (declared non-restorable; needs operator ack)
+    31 REFUSED_STALE_JOURNAL    (a PREVIOUS run ended terminally and its journal
+                                 is preserved; THIS run did nothing -- move or
+                                 archive the journal to retry)
     40 unexpected error         (programming/environment fault)
 
 11 and 12 come from the ROUTING decision (chain K/K2,
@@ -65,7 +68,11 @@ from civiccast.native.upgrade.routing import (
     decide_route,
     default_installed_product_probe,
 )
-from civiccast.native.upgrade.seams import adapt_flat_installer_layout, build_default_seams
+from civiccast.native.upgrade.seams import (
+    adapt_flat_installer_layout,
+    build_default_seams,
+    default_expected_schema_head,
+)
 from civiccast.native.upgrade.service_control import resolve_service_control_seams
 
 _EXIT_CODES: dict[UpgradePhase, int] = {
@@ -73,6 +80,16 @@ _EXIT_CODES: dict[UpgradePhase, int] = {
     UpgradePhase.ROLLED_BACK: 10,
     UpgradePhase.HALTED_RESTORE_FAILED: 20,
     UpgradePhase.REFUSED_NON_RESTORABLE: 30,
+    # <installer-path-audit BL-06> A PREVIOUS run's terminal journal. Its own
+    # code because the old behaviour returned the STALE journal's phase --
+    # usually ROLLED_BACK, i.e. exit 10 -- which nsis-hooks-bootstrap.nsh
+    # (post-#143) turns into a fatal 124 telling the operator to "re-run setup
+    # after resolving the cause". Every re-run returned 10 again. Forever.
+    # Whatever was fixed. Nothing deletes this journal:
+    # %ProgramData%\CivicCast is preserved by uninstall BY DESIGN, so even
+    # uninstall/reinstall did not clear it. 31 is the next free number in the
+    # engine's own low band (0/10/11/12/20/30/40).
+    UpgradePhase.REFUSED_STALE_JOURNAL: 31,
 }
 
 #: Exit codes for the runs that never enter the D3 sequence at all (chain
@@ -87,6 +104,11 @@ _EXIT_CODES: dict[UpgradePhase, int] = {
 _ROUTE_EXIT_CODES: dict[UpgradeRoute, int] = {
     UpgradeRoute.FRESH_INSTALL: 11,
     UpgradeRoute.SAME_VERSION_NO_OP: 12,
+    # <installer-path-audit MA-05> Unlike 11 and 12 this one IS a refusal: a
+    # newer product is installed and this setup would drive the database
+    # backwards. Its own code so the hook can abort with an accurate sentence
+    # rather than continuing an install that must not proceed.
+    UpgradeRoute.REFUSED_DOWNGRADE: 13,
 }
 
 # Sibling to journal.JOURNAL_FILENAME ("upgrade-journal.json") under the same
@@ -194,6 +216,9 @@ def installed_product_probe() -> bool | None:
 
 def _resolve_service_control_seams(
     context: UpgradeContext,
+    *,
+    expected_version: str | None = None,
+    expected_schema_head: str | None = None,
 ) -> tuple[Callable[[], bool], Callable[[], bool], Callable[[], None]]:
     """Return ``(drain_and_verify_quiescence, health_gate, stop_service)`` bound
     to the real production callables (WP-4).
@@ -211,7 +236,11 @@ def _resolve_service_control_seams(
     Resolving is inert (no Win32/Postgres); the real OS/DB calls fire only when
     a seam is INVOKED on the elevated install host (the WP-5 live matrix)."""
 
-    return resolve_service_control_seams(context)
+    return resolve_service_control_seams(
+        context,
+        expected_version=expected_version,
+        expected_schema_head=expected_schema_head,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +417,44 @@ def main(argv: list[str] | None = None) -> int:
     # stderr so the installer log keeps the full diagnosis; it is now ALSO
     # teed (redacted) into the durable engine log above.
     try:
-        drain, health, stop = _resolve_service_control_seams(context)
+        # <installer-path-audit BL-04> The maintenance health gate is the LAST
+        # gate before COMPLETE / exit 0, and its attestation names no version,
+        # build identity or schema revision -- so a supervisor left running
+        # from BEFORE the upgrade, in maintenance mode precisely because the
+        # interlock is held, certifies the upgrade by attesting to itself.
+        # Bind the gate to what THIS payload is: the version being installed,
+        # and the migration head this code's own alembic script directory
+        # declares.
+        expected_schema_head = default_expected_schema_head()()
+        if expected_schema_head is None:
+            # Review of PR #145: passing None through here SILENTLY UN-WIRED
+            # the gate. `build_health_gate_seam` treats a None expected head
+            # as "no identity gate requested" and returns True on the bare
+            # maintenance attestation -- which is exactly BL-04, restored, on
+            # any machine where the head could not be resolved. Refuse before
+            # a single seam is assembled, so the failure is one clear line
+            # rather than an upgrade that quietly loses two of its gates.
+            reason = (
+                "expected schema head unavailable: this payload's own migration head could "
+                "not be resolved (alembic missing from the runtime, an unreadable script "
+                "directory, or a branched migration graph). The upgrade engine refuses to "
+                "run without it, because neither 'the migration landed' nor 'the new code is "
+                "the process attesting health' can be checked."
+            )
+            _log_engine_event(log_path, args.database_url, f"upgrade outcome: refused -- {reason}")
+            sys.stderr.write(f"upgrade outcome: refused\n{reason}\n")
+            return 40
+        drain, health, stop = _resolve_service_control_seams(
+            context,
+            expected_version=plan.new_version,
+            expected_schema_head=expected_schema_head,
+        )
+        _log_engine_event(
+            log_path,
+            args.database_url,
+            "health gate bound to "
+            f"version={plan.new_version!r} expected_schema_head={expected_schema_head!r}",
+        )
         # Sandbox run 22: without these four, dr/backup.py falls back to bare
         # command names resolved through PATH, and step 3 (BACKUP_VERIFIED)
         # dies with a filename-less WinError 2 on every real machine. The

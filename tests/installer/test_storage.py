@@ -142,10 +142,19 @@ def test_schema_behind_external_database_is_never_ready(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """The worst masked case: auth works, tokens work, migrations are missing."""
+    """The worst masked case: auth works, tokens work, migrations are missing.
+
+    <installer-path-audit MA-06> The revision injected here is now a REAL
+    ancestor from this build's own migration graph, not the invented string
+    ``"0001_an_ancestor_revision"``. That string was never in the graph, so it
+    describes an UNKNOWN revision -- which is the "ahead" case (a newer build
+    migrated this database), not the "behind" case this test is named for. The
+    old fixture could only ever have proved the two-state collapse the finding
+    is about.
+    """
 
     monkeypatch.setenv("DATABASE_URL", _EXTERNAL_URL)
-    _inject_db_revision(monkeypatch, "0001_an_ancestor_revision")
+    _inject_db_revision(monkeypatch, _a_real_ancestor_revision())
 
     status = durable_storage_status(tmp_path)
 
@@ -154,6 +163,48 @@ def test_schema_behind_external_database_is_never_ready(
     assert "older version of CivicCast" in status.operator_message
     # ...and it must be distinguishable from "unreachable", not collapsed.
     assert status.status != storage.EXTERNAL_DATABASE_UNREACHABLE
+
+
+def _a_real_ancestor_revision() -> str:
+    """Any revision in this build's graph that is NOT the head.
+
+    Read from the graph rather than hardcoded so it cannot go stale, and so
+    the "behind" and "ahead" tests below are genuinely different inputs rather
+    than two invented strings.
+    """
+
+    head = schema_check.expected_migration_head()
+    ancestors = sorted(schema_check.known_revisions() - {head})
+    assert ancestors, "this build's migration graph has only one revision"
+    return ancestors[0]
+
+
+def test_schema_ahead_external_database_is_never_ready_and_says_so_honestly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """<installer-path-audit MA-06> A database a NEWER build migrated.
+
+    There used to be no ``ahead`` state at all: any non-equal revision was
+    ``behind``, and the operator was told to "bring the CivicCast database up
+    to date". On an ahead database that advice CANNOT WORK -- ``alembic
+    upgrade head`` cannot locate a revision this build's graph does not
+    contain, so it fails. This is also exactly the state a failed rollback
+    leaves behind (new schema, old binary), which is what the D3 halt path is
+    designed around, so it is not hypothetical.
+    """
+
+    monkeypatch.setenv("DATABASE_URL", _EXTERNAL_URL)
+    _inject_db_revision(monkeypatch, "9999_a_revision_from_a_future_build")
+
+    status = durable_storage_status(tmp_path)
+
+    assert status.status == storage.EXTERNAL_DATABASE_SCHEMA_AHEAD
+    assert status.status != storage.EXTERNAL_DATABASE_SCHEMA_BEHIND
+    assert status.migrations_applied is False
+    assert "NEWER version of CivicCast" in status.operator_message
+    assert "Updating the database will NOT fix this" in status.next_step
+    assert status.status in storage.EXTERNAL_DATABASE_NOT_READY_STATUSES
 
 
 def test_external_database_with_no_alembic_version_table_is_schema_behind(

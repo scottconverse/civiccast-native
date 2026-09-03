@@ -319,7 +319,7 @@ def take_interlock(
     resolved_root = _hklm() if root is None else root
     current = read_interlock(root=resolved_root, key_path=key_path)
     if current.status in ("held", "unreadable"):
-        raise RuntimeError(f"cannot take interlock: {current.detail}")
+        raise RuntimeError(f"cannot take interlock: {_held_interlock_detail(current)}")
 
     next_generation = (current.record.generation + 1) if current.record is not None else 1
     now = (clock or _utc_now_iso)()
@@ -330,6 +330,8 @@ def take_interlock(
         owner_run_id=owner_run_id,
         taken_utc=now,
         released_utc=None,
+        # <installer-path-audit BL-05> See MaintenanceRecord.owner_pid.
+        owner_pid=os.getpid(),
     )
     with winreg.CreateKeyEx(
         resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)
@@ -338,14 +340,88 @@ def take_interlock(
     return record
 
 
+def _pid_is_alive(pid: int) -> bool | None:
+    """True/False if the PID's liveness is knowable, None if it is not.
+
+    Used ONLY to make a held interlock's error message honest (BL-05); never
+    to decide that an interlock may be taken. ``psutil`` is already a runtime
+    dependency of this module.
+    """
+
+    try:
+        return psutil.pid_exists(pid)
+    except Exception:
+        return None
+
+
+def _held_interlock_detail(read: InterlockRead) -> str:
+    """The refusal text for an interlock that cannot be taken.
+
+    <installer-path-audit BL-05> "cannot take interlock: held" told an
+    operator nothing about WHO holds it or whether that holder still exists.
+    A killed engine leaves ``state="held"`` forever, and every subsequent
+    upgrade then dies at step 1 -> exit 10 -> NSIS 124 (which, post-#143,
+    aborts the install): a permanent, unexplained wedge. This names the
+    holder, when it took the interlock, and -- when the record carries a PID
+    -- whether that process is still alive, so a genuinely stale interlock is
+    an EXPLICIT, loud finding rather than something the next run silently
+    steals or dies on.
+    """
+
+    record = read.record
+    if record is None or record.state != "held":
+        return read.detail
+    parts = [
+        f"held by run {record.owner_run_id!r}",
+        f"taken {record.taken_utc}",
+        f"generation {record.generation}",
+    ]
+    if record.owner_pid is None:
+        parts.append(
+            "no owning pid was recorded (an older build took it), so its liveness cannot be checked"
+        )
+    else:
+        alive = _pid_is_alive(record.owner_pid)
+        if alive is True:
+            parts.append(f"owning process pid={record.owner_pid} is STILL RUNNING")
+        elif alive is False:
+            parts.append(
+                f"owning process pid={record.owner_pid} is GONE -- this interlock is STALE. "
+                "It is not taken automatically, because doing so could tear the interlock out "
+                "from under a live upgrade. Clear "
+                f"HKLM\\{MAINTENANCE_KEY}\\{MAINTENANCE_VALUE_NAME} deliberately, after "
+                "confirming no upgrade is in progress, then re-run setup"
+            )
+        else:
+            parts.append(f"owning process pid={record.owner_pid} liveness could not be checked")
+    return "; ".join(parts)
+
+
 def release_interlock(
     *,
+    owner_run_id: str | None = None,
     root: _RegKeyType | None = None,
     key_path: str = MAINTENANCE_KEY,
     clock: Callable[[], str] | None = None,
 ) -> MaintenanceRecord:
     """Release the D7a interlock (idempotent if already released). Raises
-    RuntimeError if nothing is there to release or the record is unreadable."""
+    RuntimeError if nothing is there to release or the record is unreadable.
+
+    <installer-path-audit BL-05> ``owner_run_id``, when supplied, must MATCH
+    the held record's owner. Without that check this function verified only
+    that a record existed and was ``held``, so the D3 orchestrator's
+    unconditional release on the rollback path could release ANOTHER run's
+    interlock: run A is inside ``migrate()``, run B (a second setup.exe, a
+    retry, an operator double-click) fails to take the interlock, funnels into
+    ``_rollback``, and releases A's. The supervisor then re-permits writers
+    against a schema mid-migration, B reports ROLLED_BACK/exit 10 and A
+    reports COMPLETE/exit 0 -- both journals internally consistent, both wrong
+    about the machine.
+
+    Left optional so a deliberate operator-side release (a recovery tool, the
+    documented manual step in UPGRADE-RECOVERY.md) can still clear an
+    interlock whose owner is gone.
+    """
 
     import winreg
 
@@ -355,6 +431,13 @@ def release_interlock(
         raise RuntimeError(f"cannot release interlock: {current.detail}")
     if current.record.state == "released":
         return current.record
+    if owner_run_id is not None and current.record.owner_run_id != owner_run_id:
+        raise RuntimeError(
+            "refusing to release the D7a maintenance interlock: it is held by run "
+            f"{current.record.owner_run_id!r} (taken {current.record.taken_utc}), not by this "
+            f"run {owner_run_id!r}. Releasing another run's interlock would re-permit writers "
+            "against a database that run may be mid-migration on."
+        )
 
     now = (clock or _utc_now_iso)()
     record = current.record.model_copy(update={"state": "released", "released_utc": now})

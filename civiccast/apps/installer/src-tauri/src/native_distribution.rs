@@ -2024,7 +2024,33 @@ mod tests {
             "core",
             "core must stay first in REQUIRED_COMPONENTS: the model allowlist slices it off"
         );
-        for component in &super::REQUIRED_COMPONENTS[1..] {
+        // <installer-path-audit MA-20> The loop that used to sit here was a
+        // TAUTOLOGY: `is_station_model_component` is DEFINED as
+        // `REQUIRED_COMPONENTS[1..].contains(&component)`, so asserting that
+        // the elements of an array are in that array cannot fail. It read as
+        // coverage only because the genuinely valuable first assertion sits
+        // beside it. The replacement states the four model ids
+        // INDEPENDENTLY, so a reordering, a rename, or a component moved in
+        // or out of the model allowlist is caught by a value this test
+        // asserts rather than one it re-derives.
+        assert_eq!(
+            super::REQUIRED_COMPONENTS,
+            [
+                "core",
+                "captions-floor",
+                "summary-gemma4-12b",
+                "summary-gemma4-e4b",
+                "translation-translategemma-4b",
+            ],
+            "REQUIRED_COMPONENTS changed -- update the model allowlist expectations below \
+             deliberately, and check native_activation's copy and the station bundle publisher"
+        );
+        for component in [
+            "captions-floor",
+            "summary-gemma4-12b",
+            "summary-gemma4-e4b",
+            "translation-translategemma-4b",
+        ] {
             assert!(
                 super::is_station_model_component(component),
                 "{component} must be treated as a station model component"
@@ -2037,6 +2063,23 @@ mod tests {
             );
         }
         assert!(!super::is_station_model_component("core"));
+    }
+
+    #[test]
+    fn the_two_required_component_lists_are_pinned_equal() {
+        // <installer-path-audit MA-19> Two hand-maintained copies, a comment
+        // claiming "kept in lockstep", and NOTHING binding them: a grep for
+        // `native_activation::REQUIRED_COMPONENTS` across `src/*.rs` found no
+        // hits. Drift makes `is_station_model_component` -- which derives the
+        // model allowlist from THIS module's copy plus native_activation's
+        // OPTIONAL_COMPONENTS -- disagree with what activation requires, so
+        // every model pack fails the exact-version identity check and
+        // activation exits 66 -> installer 123.
+        assert_eq!(
+            super::REQUIRED_COMPONENTS,
+            crate::native_activation::REQUIRED_COMPONENTS,
+            "native_distribution and native_activation disagree about the required components"
+        );
     }
 
     #[test]

@@ -101,3 +101,89 @@ def test_restore_drill_uses_a_fresh_file_never_the_original(
     restored_files = list((tmp_path / "restore").glob("restored-*.sqlite3"))
     assert len(restored_files) == 1
     assert restored_files[0] != seeded_station_db
+
+
+# ---------------------------------------------------------------------------
+# <installer-path-audit MA-11 / MA-10> The verdict must not be vacuous.
+# ---------------------------------------------------------------------------
+
+
+def test_a_drill_that_compared_zero_tables_is_never_ok() -> None:
+    """``all(t.matched for t in [])`` is True.
+
+    ``_table_results`` returns ``[]`` whenever both sides are empty, and every
+    Postgres cross-check hardcodes ``schema="civiccast"`` -- so a
+    schema-resolution regression empties both, ``[] == []`` "passes",
+    ``report.py`` prints "confirmed every row came back exactly as it was",
+    and ``installer/service.py`` summarises "0 tables verified,
+    schema_ok=True".
+    """
+    from datetime import UTC, datetime
+
+    from civiccast.dr.models import RestoreDrillReport
+
+    empty = RestoreDrillReport(
+        backup_id="b",
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+        schema_ok=True,
+        db_revision="0087_head",
+        expected_head="0087_head",
+        tables=[],
+        errors=[],
+    )
+    assert empty.ok is False, "a comparison over zero tables proves nothing"
+
+
+def test_the_sqlite_manifest_snapshot_is_taken_from_the_source_database(
+    seeded_station_db, tmp_path
+) -> None:
+    """<installer-path-audit MA-10> The manifest used to be snapshotted from
+    the ARTIFACT, and the drill then copies that same artifact and
+    re-snapshots it -- so the whole comparison was
+    artifact-vs-copy-of-artifact and could never see a backup that diverged
+    from the live database.
+
+    Proven by making the two differ: the manifest must describe the SOURCE.
+    """
+    import civiccast.dr.backup as backup_module
+
+    real_backup = backup_module.run_sqlite_backup
+
+    def _lossy_backup(*, db_path, dest_dir):  # type: ignore[no-untyped-def]
+        artifact = real_backup(db_path=db_path, dest_dir=dest_dir)
+        # A "copy" that silently lost every row -- the exact class of failure
+        # (partial page copy / wrong source / schema_translate_map regression)
+        # the drill exists to catch.
+        import sqlite3
+
+        connection = sqlite3.connect(str(artifact))
+        try:
+            names = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name != 'alembic_version'"
+                )
+            ]
+            for name in names:
+                connection.execute(f'DELETE FROM "{name}"')  # nosec B608
+            connection.commit()
+        finally:
+            connection.close()
+        return artifact
+
+    backup_module.run_sqlite_backup = _lossy_backup  # type: ignore[assignment]
+    try:
+        manifest = run_full_backup(
+            database_url=f"sqlite:///{seeded_station_db}",
+            dest_dir=tmp_path / "backup",
+            media_root=None,
+        )
+    finally:
+        backup_module.run_sqlite_backup = real_backup  # type: ignore[assignment]
+
+    assert any(table.row_count > 0 for table in manifest.tables), (
+        "the manifest must describe the SOURCE's real rows; snapshotting the emptied "
+        "artifact would record zeroes and the drill would then 'confirm' them"
+    )
