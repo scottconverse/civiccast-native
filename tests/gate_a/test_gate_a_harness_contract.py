@@ -2036,27 +2036,29 @@ def test_t6_scheduling_too_slow_threshold_is_derived_not_hardcoded() -> None:
     )
 
 
-def test_t6_scheduling_too_slow_recommits_anchor_instead_of_failing_early() -> None:
-    """F4 fix: a slow scheduling phase must NOT FAIL_EARLY the soak anymore.
-    Instead it schedules + Commit-to-Air one fresh premiere of the longest
-    clip, timestamped 5s in the past, on each channel -- so the channel's
-    first item is guaranteed current when config+start runs right after --
-    and logs anchor_recommitted=true with the measured phase duration, then
-    falls through to the normal configure+start step."""
+def test_t6_scheduling_too_slow_is_a_logged_measurement_not_a_recommit() -> None:
+    """F5 fix (review finding): migration 0071 EXCLUDEs overlapping
+    scheduled/published premieres on the same channel, so the old F4
+    "recommit a fresh anchor" path always got 409 on its own commit and was
+    inert dead code. $schedulingTooSlow must never FAIL_EARLY the soak and
+    must never trigger a recommit -- it is only ever logged, alongside the
+    derived threshold and the measured phase duration, as a single
+    scheduling_commit_phase_seconds=... threshold_seconds=... slow=...
+    line. The beats 1-2 liveness abort remains the only real guard against a
+    stale first item."""
     code = _code_only(_driver_executable_text())
     assert "reason=scheduling-too-slow" not in code, (
-        "scheduling-too-slow must no longer produce a FAIL_EARLY t6Result"
+        "scheduling-too-slow must never produce a FAIL_EARLY t6Result"
     )
-    assert "anchor_recommitted=$anchorRecommitted phase_seconds=$schedulingPhaseSeconds" in code
-    assert "$anchorAt = (Get-Date).ToUniversalTime().AddSeconds(-5)" in code
-    assert "$anchorAsset = $t6Assets[0]" in code
-    assert "/api/staff/playout/commit" in code
-    # The recommit must happen inside the elseif ($schedulingTooSlow) branch,
-    # and must fall through to configure+start (no early return/break).
-    elseif_at = code.index("} elseif ($schedulingTooSlow) {")
-    recommit_at = code.index("anchor_recommitted=$anchorRecommitted")
-    config_start_at = code.index("if (-not $scheduleTooLong) {")
-    assert elseif_at < recommit_at < config_start_at
+    assert (
+        "\"scheduling_commit_phase_seconds=$schedulingPhaseSeconds threshold_seconds=$schedulingTooSlowSeconds slow=$schedulingTooSlow\" | Add-Content"
+        in code
+    ), "the derived threshold must be logged as a plain measurement line"
+    # No trace of the removed always-409 recommit path may remain.
+    assert "anchor_recommitted" not in code
+    assert "anchorRecommitted" not in code
+    assert "} elseif ($schedulingTooSlow) {" not in code
+    assert "recommitting a fresh anchor item per channel" not in code
 
 
 def test_t6_config_and_beat_loop_no_longer_gated_on_scheduling_too_slow() -> None:

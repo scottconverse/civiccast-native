@@ -4112,19 +4112,34 @@ try {
                         # accidentally colliding with T4's (or a prior T6's)
                         # leftover config. router.py's GET .../config 404s
                         # when store.get_config(channel_id) is None; that is
-                        # the expected/required result here. A non-404 is
-                        # logged as a hard collision warning (not fatal on its
-                        # own -- the upsert below will just overwrite it) so
-                        # the run has an honest trail either way.
+                        # the expected/required result here. A genuine 200
+                        # means a config row really does already exist for a
+                        # T6-owned channel id -- a real collision with a prior
+                        # run's leftover state -- so T6 FAILs EARLY instead of
+                        # silently overwriting it and scheduling on top. Any
+                        # other non-404 status ($null, a timeout, a transient
+                        # 5xx, ...) is not a confirmed collision and stays a
+                        # WARNING only; the run proceeds (T6's own config PUT
+                        # below will overwrite it) so a flaky probe can never
+                        # sink an otherwise-healthy soak.
+                        $t6PreexistingConfigId = $null
                         foreach ($ch in $t6Channels) {
                             $preCheckR = Invoke-CivicCastApi -Method 'Get' -Url $t6ChanState[$ch.id].config_url -LogFile $t6NoteLog -BearerToken $t6Token
                             $preCheckNoConfig = ($preCheckR.status -eq 404)
                             "pre_scheduling_config_check channel=$($ch.id) status=$($preCheckR.status) no_existing_config=$preCheckNoConfig" | Add-Content -Path $t6NoteLog -Encoding UTF8
-                            if (-not $preCheckNoConfig) {
-                                "WARNING: channel=$($ch.id) already had a config row before T6's scheduling phase (status=$($preCheckR.status)) -- expected 404. Proceeding (T6's own config PUT below will overwrite it), but this is not the clean T6-owned-channel state the id scheme is meant to guarantee." | Add-Content -Path $t6NoteLog -Encoding UTF8
+                            if ($preCheckR.status -eq 200) {
+                                if (-not $t6PreexistingConfigId) { $t6PreexistingConfigId = $ch.id }
+                                "WARNING: channel=$($ch.id) already had a config row before T6's scheduling phase (status=200) -- expected 404. This is a confirmed collision, not a clean T6-owned-channel state; T6 will FAIL_EARLY and skip scheduling/start." | Add-Content -Path $t6NoteLog -Encoding UTF8
+                            } elseif (-not $preCheckNoConfig) {
+                                "WARNING: channel=$($ch.id) pre-scheduling config check returned status=$($preCheckR.status) -- expected 404. Not a confirmed preexisting-config collision (only a 200 is), so this stays a warning only; proceeding (T6's own config PUT below will overwrite it)." | Add-Content -Path $t6NoteLog -Encoding UTF8
                             }
                         }
+                        if ($t6PreexistingConfigId) {
+                            $t6Result = "FAIL_EARLY reason=preexisting-config-$t6PreexistingConfigId"
+                        }
                         Save-Summary -Step 't6-pre-scheduling-config-check'
+
+                        if (-not $t6Result) {
 
                         # Move the LONGEST staged clip to index 0 so the
                         # FIRST item scheduled+committed for every channel is
@@ -4237,74 +4252,34 @@ try {
                         # the longest clip) or the channel we are about to
                         # start would already be past its first item's end.
                         #
-                        # F4 fix (review finding): the guard threshold is now
-                        # DERIVED from the actual first item's own window
-                        # instead of a hardcoded 500s -- [Math]::Max(120,
-                        # $t6Assets[0].duration_seconds - 180). $t6Assets[0]
-                        # is guaranteed to be the longest staged clip (the
-                        # reorder above, "Move the LONGEST staged clip to
-                        # index 0"), and that clip is also the FIRST item
-                        # scheduled+committed for every channel (cursor starts
-                        # at assetIdx=0), with scheduled_at = phase-start -
-                        # 60s. So the first item's window runs from
-                        # phase-start-60s to phase-start-60s+duration, i.e.
-                        # it is still current until phase-start +
-                        # (duration-60)s. Subtracting a further 120s safety
-                        # margin (60s already spent by the -60s anchor, 60s
-                        # more for the config+start calls and daemon startup
-                        # that happen right after this check) gives
-                        # duration-180s as the real budget, floored at 120s so
-                        # a very short clip still gets a workable window
-                        # instead of an unusably tiny or negative one.
+                        # F5 fix (review finding): migration 0071 EXCLUDEs
+                        # overlapping scheduled/published premieres on the
+                        # same channel, so the F4 "recommit a fresh anchor"
+                        # path below always got 409 on the anchor's own
+                        # commit (it collides with the very schedule this
+                        # phase just committed) and never actually
+                        # recommitted anything -- it was inert, and has been
+                        # removed. The derived threshold below is kept as a
+                        # LOGGED measurement only ($t6Assets[0] is guaranteed
+                        # to be the longest staged clip -- see "Move the
+                        # LONGEST staged clip to index 0" above -- and is
+                        # also the first item scheduled+committed for every
+                        # channel, so its own window bounds how long the
+                        # scheduling+commit phase can safely take): it tells
+                        # a human reading T6-ENGINE-NOTES.txt whether this
+                        # phase ran comfortably inside that window. It is
+                        # never used to fail the run or to trigger a
+                        # recommit -- the real guard against a stale first
+                        # item is the beats 1-2 liveness abort below, which
+                        # observes whether the channel is actually airing
+                        # instead of estimating it from wall-clock time.
                         $schedulingPhaseSeconds = [Math]::Round((New-TimeSpan -Start $schedulingPhaseStart -End (Get-Date)).TotalSeconds, 1)
-                        "scheduling_commit_phase_seconds=$schedulingPhaseSeconds" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         Save-Summary -Step 't6-schedule-populated'
                         $schedulingTooSlowSeconds = [Math]::Max(120, [int]$t6Assets[0].duration_seconds - 180)
                         $schedulingTooSlow = ($schedulingPhaseSeconds -gt $schedulingTooSlowSeconds)
-                        "scheduling_too_slow_threshold_seconds=$schedulingTooSlowSeconds (derived from first_item_duration_seconds=$($t6Assets[0].duration_seconds))" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                        "scheduling_commit_phase_seconds=$schedulingPhaseSeconds threshold_seconds=$schedulingTooSlowSeconds slow=$schedulingTooSlow" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         if ($scheduleTooLong) {
                             $t6Result = 'FAIL_EARLY reason=schedule-too-long'
-                        } elseif ($schedulingTooSlow) {
-                            # F4 fix: a slow scheduling phase no longer FAILs
-                            # the soak early -- the anchor item every channel
-                            # was given at the start of scheduling may already
-                            # be stale (or about to go stale) by the time
-                            # config+start actually runs below, so replace it
-                            # with a FRESH anchor: one more premiere of the
-                            # same longest clip, scheduled to start 5s in the
-                            # past (so it is immediately current) on each
-                            # channel, scheduled + committed right here before
-                            # falling through to the normal config+start step.
-                            # This keeps the soak running instead of throwing
-                            # away a run over a scheduling phase that was slow
-                            # but still succeeded.
-                            "scheduling_too_slow=true scheduling_commit_phase_seconds=$schedulingPhaseSeconds threshold_seconds=$schedulingTooSlowSeconds -- recommitting a fresh anchor item per channel instead of failing early" | Add-Content -Path $t6NoteLog -Encoding UTF8
-                            $anchorAsset = $t6Assets[0]
-                            $anchorAt = (Get-Date).ToUniversalTime().AddSeconds(-5)
-                            foreach ($ch in $t6Channels) {
-                                $anchorBody = [ordered]@{
-                                    asset_id          = $anchorAsset.id
-                                    channel_id        = $ch.id
-                                    mode              = 'premiere'
-                                    scheduled_at      = $anchorAt.ToString('o')
-                                    duration_seconds  = [int]$anchorAsset.duration_seconds
-                                    notes             = 'Gate A T6 engine soak -- recommitted anchor (slow scheduling phase)'
-                                }
-                                $anchorItemR = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/schedule" -LogFile $t6NoteLog -BodyObj $anchorBody -BearerToken $t6Token
-                                $anchorRecommitted = $false
-                                if ($anchorItemR.status -eq 201 -and $anchorItemR.body_json -and $anchorItemR.body_json.id) {
-                                    $anchorOccId = "gate-a-t6-$($ch.id)-anchor-recommit"
-                                    $anchorCommitBody = [ordered]@{
-                                        channel_id       = $ch.id
-                                        occurrence_id    = $anchorOccId
-                                        schedule_item_id = "$($anchorItemR.body_json.id)"
-                                    }
-                                    $anchorCommitR = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/playout/commit" -LogFile $t6NoteLog -BodyObj $anchorCommitBody -BearerToken $t6Token
-                                    $anchorRecommitted = ($anchorCommitR.status -eq 201)
-                                }
-                                "channel=$($ch.id) anchor_recommitted=$anchorRecommitted phase_seconds=$schedulingPhaseSeconds asset_id=$($anchorAsset.id) scheduled_at=$($anchorAt.ToString('o'))" | Add-Content -Path $t6NoteLog -Encoding UTF8
-                            }
-                            Save-Summary -Step 't6-anchor-recommitted'
                         }
 
                         # (e) NOW configure + start each channel -- only once
@@ -4322,10 +4297,8 @@ try {
                         # dark for the rest of the soak. T4's own channel
                         # (line ~3632, above) is untouched.
                         #
-                        # F4 fix: $schedulingTooSlow no longer gates this --
-                        # a slow scheduling phase gets a fresh recommitted
-                        # anchor item per channel above and then falls
-                        # through to configure+start same as a fast phase.
+                        # F5 fix: $schedulingTooSlow is a logged measurement
+                        # only (see F5 note above) -- it never gates this.
                         # Only $scheduleTooLong (a channel that would need
                         # more than 2000 items to reach the deadline -- a
                         # real "this soak cannot be covered" condition, not a
@@ -4380,12 +4353,11 @@ try {
                         # keeps seeing forward progress). Skipped entirely only
                         # when the schedule could not cover the whole soak
                         # window ($scheduleTooLong -- $t6Result is already
-                        # FAIL_EARLY and no channel was ever started). F4 fix:
-                        # a slow scheduling phase ($schedulingTooSlow) no
-                        # longer skips this -- it gets a fresh recommitted
-                        # anchor item per channel above, channels are started
-                        # same as any other run, and the beat loop proceeds
-                        # normally.
+                        # FAIL_EARLY and no channel was ever started). A slow
+                        # scheduling phase ($schedulingTooSlow) is a logged
+                        # measurement only (see F5 note above) and never
+                        # skips this -- channels are started same as any
+                        # other run, and the beat loop proceeds normally.
                         if (-not $scheduleTooLong) {
                         $soakStart = Get-Date
                         $soakEnd = $soakStart.AddMinutes($soakMin)
@@ -4585,6 +4557,7 @@ try {
                             }
                         }
                         }
+                        } # end: if (-not $t6Result) -- gated on the pre-scheduling config check (F1)
 
                         # (f) Collect the gst worker logs, then stop every channel.
                         foreach ($ch in $t6Channels) {
