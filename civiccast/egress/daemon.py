@@ -738,6 +738,29 @@ class EgressDaemon:
         last_error: str | None = None,
         pid: int | None = None,
     ) -> None:
+        # Gate A T4 diagnosability fix (2026-09): this is the ONE choke point
+        # every pipeline state transition passes through -- every
+        # FALLBACK_SLATE / ERROR entry above sets ``last_error`` here, never
+        # anywhere else. Logging it at INFO (rather than leaving it as a
+        # store-only field) is what actually reaches an operator or a Gate A
+        # probe reading ``control_plane-app.log``: before this fix the
+        # control-plane child process had no configured handler for the
+        # ``civiccast`` logger at any level, so this record was silently
+        # dropped even though the STATE it describes was durably persisted.
+        # ``current_source_label`` is never secret-bearing -- it is a
+        # human-facing label (e.g. "Council meeting", "Fallback slate"), not
+        # the underlying URI; the URI itself is redacted via
+        # ``redact_source_uri`` before it ever reaches proof-event storage
+        # (see ``_build_proof_event`` below) and is never passed to this
+        # method at all.
+        _LOG.info(
+            "channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s)",
+            channel_id,
+            state,
+            current_source_label or "-",
+            pid if pid is not None else "-",
+            last_error or "-",
+        )
         self._store.write_state(
             EgressStateRow(
                 channel_id=channel_id,

@@ -1085,7 +1085,14 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # tool wiring (the URL psql/pg_restore parse, and the resolved psql path)
     # -- the two defects that made BL-01's Postgres proof unrunnable in CI.
     # Re-derived by an actual `--collect-only` run: (1771, 1971) -> (1774, 1974).
-    assert (collect("not windows_only"), collect()) == (1774, 1974)
+    # fix/egress-engine-visibility (Gate A T4 diagnosability): seven new
+    # platform-independent cases in the new
+    # tests/native/test_supervisor_control_plane_logging.py (none
+    # windows_only), covering configure_control_plane_logging, the
+    # CIVICCAST_SUPERVISED env-var signal, and the guarded call site in
+    # civiccast.app.create_app. Both lanes advance by seven. Re-derived by an
+    # actual `--collect-only` run: (1774, 1974) -> (1781, 1981).
+    assert (collect("not windows_only"), collect()) == (1781, 1981)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

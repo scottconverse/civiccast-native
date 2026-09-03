@@ -263,6 +263,48 @@ class _DurableRotatingFileHandler(logging.handlers.RotatingFileHandler):
             os.fsync(stream.fileno())
 
 
+def _attach_rotating_file_logger(
+    *,
+    log_root: Path | str | None,
+    log_file_name: str,
+    logger_names: tuple[str, ...],
+) -> logging.Logger:
+    """Shared implementation behind :func:`configure_logging` and
+    :func:`configure_control_plane_logging`: attach ONE
+    :class:`_DurableRotatingFileHandler` (10 MiB x 10, ``fsync``'d per
+    record) at INFO to every logger named in ``logger_names``, creating
+    ``log_root`` if needed. Idempotent: re-running replaces the handler(s) a
+    prior call left behind rather than stacking a new one each call. Returns
+    the first logger in ``logger_names``."""
+
+    root = Path(log_root) if log_root is not None else default_log_root()
+    root.mkdir(parents=True, exist_ok=True)
+
+    loggers = [logging.getLogger(name) for name in logger_names]
+    for logger in loggers:
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+    # Replace any handlers a prior call left behind (idempotent). The ONE
+    # handler instance is shared by every logger in ``loggers`` (below), so
+    # it is removed from each before being closed exactly once.
+    for owner in loggers:
+        for handler in list(owner.handlers):
+            owner.removeHandler(handler)
+            if not any(handler in other.handlers for other in loggers):
+                handler.close()
+
+    file_handler = _DurableRotatingFileHandler(
+        root / log_file_name,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    for logger in loggers:
+        logger.addHandler(file_handler)
+    return loggers[0]
+
+
 def configure_logging(*, log_root: Path | str | None = None) -> logging.Logger:
     """Configure the supervisor's rotating file logger (10 MiB x 10) under the
     log root, creating the directory if needed. Idempotent: re-running replaces
@@ -270,43 +312,71 @@ def configure_logging(*, log_root: Path | str | None = None) -> logging.Logger:
 
     Uses :class:`_DurableRotatingFileHandler` so every record is ``fsync``'d
     immediately -- see that class's docstring for the diagnosability defect
-    this closes."""
+    this closes.
 
-    root = Path(log_root) if log_root is not None else default_log_root()
-    root.mkdir(parents=True, exist_ok=True)
+    Wires BOTH ``LOGGER_NAME`` (``civiccast.native.supervisor``) and
+    ``PACKAGE_LOGGER_NAME`` (``civiccast``) to the SAME handler instance
+    (never a second handler opening the same file, which would race rotation
+    renames on Windows), so library records emitted in the supervisor HOST
+    process -- e.g. station_runtime's orphaned-caption-tier degrade WARNING
+    -- reach ``supervisor.log`` instead of a handlerless root logger. No
+    duplicate lines: ``LOGGER_NAME``'s records stop at its own handler
+    (``propagate=False``) and never climb to the package root.
 
-    logger = logging.getLogger(LOGGER_NAME)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    package_logger = logging.getLogger(PACKAGE_LOGGER_NAME)
-    package_logger.setLevel(logging.INFO)
-    package_logger.propagate = False
-    # Replace any handlers a prior configure_logging left behind (idempotent).
-    # The ONE handler instance is shared by both loggers (below), so it is
-    # removed from both before being closed exactly once.
-    for owner in (logger, package_logger):
-        for handler in list(owner.handlers):
-            owner.removeHandler(handler)
-            if handler not in logger.handlers and handler not in package_logger.handlers:
-                handler.close()
+    This function is called ONLY by the supervisor HOST process
+    (``service_host.py``'s ``SvcDoRun``) -- the control-plane CHILD process
+    (``python -m uvicorn civiccast.app:create_app``) is a separate OS
+    process with its own unconfigured root logger and needs
+    :func:`configure_control_plane_logging` instead; see that function's
+    docstring for the diagnosability gap this split closes."""
 
-    file_handler = _DurableRotatingFileHandler(
-        root / SUPERVISOR_LOG_NAME,
-        maxBytes=LOG_MAX_BYTES,
-        backupCount=LOG_BACKUP_COUNT,
-        encoding="utf-8",
+    return _attach_rotating_file_logger(
+        log_root=log_root,
+        log_file_name=SUPERVISOR_LOG_NAME,
+        logger_names=(LOGGER_NAME, PACKAGE_LOGGER_NAME),
     )
-    file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
-    logger.addHandler(file_handler)
-    # The SAME handler instance (never a second handler opening the same
-    # file, which would race rotation renames on Windows) also serves the
-    # ``civiccast`` package root, so library records emitted in the
-    # supervisor host process -- e.g. station_runtime's orphaned-caption-tier
-    # degrade WARNING -- reach supervisor.log instead of a handlerless root
-    # logger. No duplicate lines: ``LOGGER_NAME``'s records stop at its own
-    # handler (``propagate=False``) and never climb to the package root.
-    package_logger.addHandler(file_handler)
-    return logger
+
+
+#: The control-plane child's OWN log file name -- deliberately distinct from
+#: ``control_plane.log`` (``child_log_path("control_plane")``), which is the
+#: child runner's raw OS-level redirect of this SAME process's stdout/stderr
+#: (uvicorn's own access log). A SECOND ``RotatingFileHandler`` opening THAT
+#: same path from inside the child would race the OS redirect's open handle
+#: on Windows every time it rotates (the redirect handle can block the
+#: rename); a distinct file name sidesteps that entirely.
+CONTROL_PLANE_LOG_NAME = "control_plane-app.log"
+
+
+def configure_control_plane_logging(*, log_root: Path | str | None = None) -> logging.Logger:
+    """Configure the ``civiccast`` package logger's INFO file handler for the
+    CONTROL-PLANE CHILD process -- the ``python -I -u -m uvicorn
+    civiccast.app:create_app --factory`` process
+    ``children.control_plane_child_spec`` spawns. Called from
+    ``civiccast.app.create_app`` (the uvicorn factory entrypoint), guarded so
+    it only runs when the process was actually launched by the supervisor --
+    see that module's ``_maybe_configure_control_plane_logging``.
+
+    Bug this closes (Gate A T4 diagnosis, 2026-09): :func:`configure_logging`
+    is called ONLY by the supervisor HOST process
+    (``service_host.py``'s ``SvcDoRun``); the control-plane child is a
+    SEPARATE OS process with its own unconfigured root logger, so every
+    ``civiccast.*`` INFO record the egress daemon and the FastAPI app emit
+    (encoder command lines, pipeline state transitions, FALLBACK_SLATE
+    reasons, ``last_error``) was silently dropped -- only WARNING+ reached
+    ``control_plane.log``, and only via Python's handlerless-root
+    ``lastResort`` writer. Gate A's T4 probe found
+    ``engine_state=FALLBACK_SLATE`` on both beta.3 and beta.4 with no
+    diagnostic trail explaining why.
+
+    Writes to :data:`CONTROL_PLANE_LOG_NAME` (``control_plane-app.log``),
+    NOT ``control_plane.log`` -- see that constant's docstring for why they
+    must stay separate files."""
+
+    return _attach_rotating_file_logger(
+        log_root=log_root,
+        log_file_name=CONTROL_PLANE_LOG_NAME,
+        logger_names=(PACKAGE_LOGGER_NAME,),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2233,6 +2303,7 @@ def main(
 
 
 __all__ = [
+    "CONTROL_PLANE_LOG_NAME",
     "DEFAULT_LOG_ROOT",
     "LOG_BACKUP_COUNT",
     "LOG_MAX_BYTES",
@@ -2256,6 +2327,7 @@ __all__ = [
     "build_service_class",
     "build_singleton_mutex",
     "child_log_path",
+    "configure_control_plane_logging",
     "configure_logging",
     "default_dependency_provider",
     "main",

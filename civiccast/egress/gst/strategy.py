@@ -734,6 +734,14 @@ class GstPlayoutStrategy:
         else:
             control_channel = str(self.control_fifo_path(request.work_dir, request.channel_id))
         argv = [self._python, _WORKER_PATH, str(graph_path), control_channel]
+        # Gate A T4 diagnosability fix (2026-09): safe to log VERBATIM -- this
+        # argv is only the worker interpreter path, the worker script path,
+        # the serialized graph-spec path, and the control channel name/pipe.
+        # Sink credentials (SRT passphrase, RTMP stream key, RTSP userinfo)
+        # never touch the command line for this strategy -- they are resolved
+        # into ``graph_path``'s JSON body by ``graph_from_config`` above, which
+        # is never logged here or elsewhere.
+        logger.info("channel %s: starting GStreamer worker: %s", request.channel_id, argv)
         process = self._launch(argv, stdout_path, stderr_path)
         return EncoderStartResult(
             process=process,
