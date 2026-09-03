@@ -408,6 +408,60 @@ from civiccast.vod.store import InMemoryAssetStore
 
 _LOG = logging.getLogger(__name__)
 
+#: Read by :func:`_maybe_configure_control_plane_logging`; written
+#: unconditionally by ``civiccast.native.supervisor.children.
+#: control_plane_child_spec`` (``CIVICCAST_SUPERVISED_ENV_VAR``) into the
+#: control-plane child's env. Duplicated as a plain string (not imported)
+#: so importing this module never pulls in the ``civiccast.native.supervisor``
+#: package at collection time -- ``_maybe_configure_control_plane_logging``
+#: imports that package lazily, only when the var is actually set.
+_CONTROL_PLANE_SUPERVISED_ENV_VAR = "CIVICCAST_SUPERVISED"
+
+#: Process-global idempotency guard -- see
+#: :func:`_maybe_configure_control_plane_logging`.
+_control_plane_logging_configured = False
+
+
+def _maybe_configure_control_plane_logging() -> None:
+    """Attach the ``civiccast`` package's INFO file logger for this process
+    when (and only when) it is running as the native supervisor's
+    control-plane child -- see ``civiccast.native.supervisor.children.
+    control_plane_child_spec`` (sets ``CIVICCAST_SUPERVISED=1``
+    unconditionally into the child's env) and
+    ``civiccast.native.supervisor.service.configure_control_plane_logging``
+    for what gets attached and the diagnosability gap it closes (Gate A T4:
+    ``engine_state=FALLBACK_SLATE`` with no INFO trail explaining why).
+
+    Guarded on ``CIVICCAST_SUPERVISED`` so calling ``create_app()`` in tests,
+    a bare ``uvicorn civiccast.app:create_app`` dev run, or any other
+    unsupervised context -- none of which set the var -- never touches
+    ``%ProgramData%\\CivicCast\\logs``; ``default_log_root()`` would
+    otherwise create real directories a test run has no business writing,
+    every time ``create_app()`` is called (which test suites do a lot).
+
+    ALSO guarded on a process-global flag so a second ``create_app()`` call
+    in the SAME supervised process never double-attaches a handler.
+    ``configure_control_plane_logging`` is itself idempotent (replaces its
+    own prior handler rather than stacking), but re-running it still means
+    re-opening the log file for no reason; the flag skips the work entirely
+    after the first call, which is what makes "configures the logger exactly
+    once" a property this function actually holds, not just an accident of
+    idempotent replacement."""
+
+    global _control_plane_logging_configured
+    if _control_plane_logging_configured:
+        return
+    if os.environ.get(_CONTROL_PLANE_SUPERVISED_ENV_VAR) != "1":
+        return
+    # Lazy import: civiccast.native.supervisor is Windows-service-layer code
+    # (harmless to import off-Windows -- see that module's own docstring --
+    # but there is no reason for every civiccast.app import, including every
+    # test collecting this module, to pull it in when unsupervised).
+    from civiccast.native.supervisor.service import configure_control_plane_logging
+
+    configure_control_plane_logging()
+    _control_plane_logging_configured = True
+
 
 def _build_eas_health_hook(session_factory: Callable[[], Any]) -> SourceHealthHook:
     """S11c: route EAS source-poll health into the S8 operational alert hub.
@@ -1859,6 +1913,7 @@ def create_app() -> FastAPI:
     can reach a CDN is not the defect; a municipal station that cannot is. Any
     deployment without the flag keeps both UIs exactly as before.
     """
+    _maybe_configure_control_plane_logging()
     lan_only_station = _lan_only_station()
     app = FastAPI(
         title="CivicCast",

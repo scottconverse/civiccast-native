@@ -3564,6 +3564,7 @@ try {
                 $configPath = $egressPaths | Where-Object { $_ -like '*channels/{channel_id}/config' } | Select-Object -First 1
                 $commandsPath = $egressPaths | Where-Object { $_ -like '*channels/{channel_id}/commands' } | Select-Object -First 1
                 $statePath = $egressPaths | Where-Object { $_ -like '*channels/{channel_id}/state' } | Select-Object -First 1
+                $healthPath = $egressPaths | Where-Object { $_ -like '*channels/{channel_id}/health' } | Select-Object -First 1
 
                 if (-not $configPath -or -not $commandsPath) {
                     $t4EngineBlockReason = 'no config+commands egress route discovered in openapi.json'
@@ -3618,13 +3619,76 @@ try {
                             $t4EngineBlockReason = "start command failed: status=$($startR.status)"
                             "$t4EngineBlockReason" | Add-Content -Path $t4notes -Encoding UTF8
                         } else {
-                            # Bounded settle window -- give the daemon time to spin
-                            # up and start emitting before the tsp capture window.
-                            Start-Sleep -Seconds 20
-                            if ($statePath) {
-                                $stateUrl = "$BASE" + ($statePath -replace '\{channel_id\}', $engineChannel)
-                                $stR = Invoke-CivicCastApi -Method 'Get' -Url $stateUrl -LogFile $t4notes -BearerToken $engineToken
-                                if ($stR.body_json) { "engine_state=$($stR.body_json.state)" | Add-Content -Path $t4notes -Encoding UTF8 }
+                            # Gate A T4 diagnosis fix (2026-09): a FIXED 20s sleep gave
+                            # the daemon no more than an arbitrary head start and then
+                            # opened the tsp capture window regardless of whether the
+                            # engine's sink had actually connected -- both beta.3 and
+                            # beta.4 were found at engine_state=FALLBACK_SLATE with the
+                            # capture racing a channel that was never on air, and the
+                            # probe recorded only $stR.body_json.state (no last_error,
+                            # no sink map), so there was no trail explaining why. Replace
+                            # the fixed sleep with a BOUNDED poll (5s interval, 60s
+                            # budget total -- same order of magnitude as the old fixed
+                            # wait, but adaptive) of BOTH /state (engine_state +
+                            # last_error) and /health (the sink_connected map): open the
+                            # tsp capture window as soon as EITHER report shows a
+                            # connected sink, so the capture never races a cold start on
+                            # a healthy box and never hangs past the budget on a broken
+                            # one. Every poll tick, and the full final state/health
+                            # bodies, are written to T4-ENGINE-NOTES.txt (and two sibling
+                            # JSON files) so a FALLBACK_SLATE this run hits has an actual
+                            # diagnostic trail instead of a bare state string.
+                            # Test-TsProof's own verdict logic is UNCHANGED below.
+                            $stateUrl = if ($statePath) { "$BASE" + ($statePath -replace '\{channel_id\}', $engineChannel) } else { $null }
+                            $healthUrl = if ($healthPath) { "$BASE" + ($healthPath -replace '\{channel_id\}', $engineChannel) } else { $null }
+                            "state_url=$stateUrl" | Add-Content -Path $t4notes -Encoding UTF8
+                            "health_url=$healthUrl" | Add-Content -Path $t4notes -Encoding UTF8
+
+                            $pollBudgetSeconds = 60
+                            $pollIntervalSeconds = 5
+                            $pollElapsed = 0
+                            $sinkConnected = $false
+                            $lastStateBody = $null
+                            $lastHealthBody = $null
+                            while ($true) {
+                                if ($stateUrl) {
+                                    $stR = Invoke-CivicCastApi -Method 'Get' -Url $stateUrl -LogFile $t4notes -BearerToken $engineToken
+                                    if ($stR.body_json) {
+                                        $lastStateBody = $stR.body_json
+                                        "poll t=${pollElapsed}s engine_state=$($lastStateBody.state) last_error=$($lastStateBody.last_error)" | Add-Content -Path $t4notes -Encoding UTF8
+                                    }
+                                }
+                                if ($healthUrl) {
+                                    $hR = Invoke-CivicCastApi -Method 'Get' -Url "${healthUrl}?limit=1" -LogFile $t4notes -BearerToken $engineToken
+                                    if ($hR.body_json -and @($hR.body_json).Count -gt 0) {
+                                        $lastHealthBody = @($hR.body_json)[0]
+                                        $sinkMap = $lastHealthBody.sink_connected
+                                        $sinkJson = if ($sinkMap) { ($sinkMap | ConvertTo-Json -Compress -Depth 4) } else { '{}' }
+                                        "poll t=${pollElapsed}s health_state=$($lastHealthBody.state) sink_connected=$sinkJson" | Add-Content -Path $t4notes -Encoding UTF8
+                                        if ($sinkMap) {
+                                            $sinkConnected = @($sinkMap.PSObject.Properties | Where-Object { $_.Value -eq $true }).Count -gt 0
+                                        }
+                                    }
+                                }
+                                if ($sinkConnected) {
+                                    "poll t=${pollElapsed}s: sink reported connected -- opening tsp capture window now" | Add-Content -Path $t4notes -Encoding UTF8
+                                    break
+                                }
+                                if ($pollElapsed -ge $pollBudgetSeconds) {
+                                    "poll budget exhausted (${pollBudgetSeconds}s) without a connected sink -- opening tsp capture window anyway (best-effort, same posture as the prior fixed-sleep behavior)" | Add-Content -Path $t4notes -Encoding UTF8
+                                    break
+                                }
+                                Start-Sleep -Seconds $pollIntervalSeconds
+                                $pollElapsed += $pollIntervalSeconds
+                            }
+                            "poll_timeline_seconds=$pollElapsed sink_connected_before_capture=$sinkConnected" | Add-Content -Path $t4notes -Encoding UTF8
+                            if ($lastStateBody) {
+                                "engine_state=$($lastStateBody.state)" | Add-Content -Path $t4notes -Encoding UTF8
+                                "engine_last_error=$($lastStateBody.last_error)" | Add-Content -Path $t4notes -Encoding UTF8
+                                ($lastStateBody | ConvertTo-Json -Depth 8) | Set-Content -Path (Join-Path $OutDir 'T4-ENGINE-STATE-BODY.json') -Encoding UTF8
+                            }
+                            if ($lastHealthBody) {
+                                ($lastHealthBody | ConvertTo-Json -Depth 8) | Set-Content -Path (Join-Path $OutDir 'T4-ENGINE-HEALTH-BODY.json') -Encoding UTF8
                             }
                             $tspExe = Join-Path $tsdukBin 'tsp.exe'
                             $tsProof = Test-TsProof -TspExe $tspExe -Port $enginePort -Seconds 8 -OutDir $OutDir -Label 'engine-government'

@@ -547,6 +547,44 @@ def test_daemon_writes_fallback_slate_when_no_source_plan(tmp_path: Path) -> Non
     assert "Slate generation is required" in (state.last_error or "")
 
 
+def test_daemon_logs_last_error_at_info_on_fallback_slate_transition(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Gate A T4 diagnosability fix (2026-09): ``_write_state`` is the ONE
+    choke point every pipeline state transition passes through, including
+    every ``FALLBACK_SLATE`` entry's ``last_error``. Before this fix the
+    control-plane child process had no configured handler for the
+    ``civiccast`` logger at any level, so this record was silently dropped
+    even though the STATE it describes was durably persisted -- Gate A's T4
+    probe found ``engine_state=FALLBACK_SLATE`` with no trail explaining
+    why. Proves the daemon actually emits an INFO record naming both the
+    new state and the fallback reason (``last_error``), which is the record
+    ``configure_control_plane_logging`` now makes reach a file."""
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+
+    with caplog.at_level("INFO", logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert state.last_error is not None
+
+    info_records = [r for r in caplog.records if r.levelname == "INFO"]
+    assert any(
+        "FALLBACK_SLATE" in r.getMessage() and state.last_error in r.getMessage()
+        for r in info_records
+    ), [r.getMessage() for r in info_records]
+
+
 def test_daemon_runs_fallback_slate_provider_when_no_source_plan(tmp_path: Path) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())

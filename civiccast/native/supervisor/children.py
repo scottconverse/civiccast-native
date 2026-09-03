@@ -58,6 +58,10 @@ they differ):
   the PROTECTED SDDL treatment is reserved for credential-bearing state
   roots, not operator media) and is set unconditionally in
   ``control_plane_child_spec``, the same shape as the egress work dir.
+  ``CIVICCAST_SUPERVISED_ENV_VAR`` (``CIVICCAST_SUPERVISED=1``) is likewise
+  set unconditionally -- see its own docstring -- so the child's
+  ``civiccast.app.create_app`` entrypoint knows to attach the control-plane
+  INFO file logger (Gate A T4 diagnostic-visibility fix, 2026-09).
 
 D5 restart policy: :func:`backoff_with_jitter` applies the +/-20% jitter on
 top of ``states.backoff_base_seconds`` (that module's docstring: "jitter
@@ -94,6 +98,17 @@ that ended because a service STOP was requested did not exhaust its readiness
 budget and says nothing about the child's health, so it must never be read (or
 logged) as a readiness failure. See :func:`poll_until_ready`'s ``should_abort``."""
 ControlPlaneMode = Literal["normal", "maintenance"]
+
+#: Set unconditionally (both normal AND maintenance mode) in the
+#: control-plane child's env, the SAME shape as ``CIVICCAST_EGRESS_WORK_DIR``
+#: / ``CIVICCAST_UPLOAD_DIR`` above -- signals to ``civiccast.app.create_app``
+#: (the uvicorn ``--factory`` entrypoint this argv launches) that it is
+#: running as the supervisor's spawned child, not a bare dev run or a test's
+#: direct ``create_app()`` call, so it should attach the control-plane INFO
+#: file logger (``service.configure_control_plane_logging``) -- see that
+#: function's docstring for the diagnosability gap this closes. Read by
+#: ``civiccast.app``'s ``_maybe_configure_control_plane_logging``.
+CIVICCAST_SUPERVISED_ENV_VAR = "CIVICCAST_SUPERVISED"
 
 # D6 postgres readiness budget (spec value, verbatim). control-plane has no
 # spec-fixed budget number -- this is a WS5-chosen, disclosed default
@@ -484,6 +499,7 @@ def control_plane_child_spec(
     env = dict(extra_env or {})
     env["CIVICCAST_EGRESS_WORK_DIR"] = egress_work_dir or default_egress_work_dir()
     env["CIVICCAST_UPLOAD_DIR"] = upload_dir or default_upload_dir()
+    env[CIVICCAST_SUPERVISED_ENV_VAR] = "1"
     if mode == "maintenance":
         env["CIVICCAST_SUPERVISOR_MODE"] = "maintenance"
         env["CIVICCAST_SUPERVISOR_MODE_CONTRACT"] = "1"
@@ -792,6 +808,7 @@ def restart_storm_check(
 
 
 __all__ = [
+    "CIVICCAST_SUPERVISED_ENV_VAR",
     "DEFAULT_CONTROL_PLANE_READY_BUDGET_SECONDS",
     "DEFAULT_GRACEFUL_STOP_DEADLINE_SECONDS",
     "DEFAULT_OLLAMA_HOST",

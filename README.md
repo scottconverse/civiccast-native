@@ -145,6 +145,15 @@ things outside this repository's control:
   reconnecting that one leg in place without a full pipeline rebuild; a
   full pipeline rebuild is the current recovery path. This is tracked, not
   silently accepted.
+- **GStreamer engine egress: not yet proven in Gate A.** Gate A's
+  station-acceptance run includes a product-engine check (`t4_engine`) that
+  starts the real GStreamer playout engine and verifies its output with
+  TSDuck; the beta.3 grader read a false PASS from a bug in the capture
+  tool (fixed in #145) -- re-run correctly, the engine's own state was
+  `FALLBACK_SLATE`, not on-air, for both the beta.3 and beta.4 kits. See
+  [`docs/ops/gate-a.md`](docs/ops/gate-a.md#known-limitation-test-tsproof-null-pipeline-bug-let-a-false-t4-pass-through-fixed-in-145)
+  for the full account. The ffmpeg fallback path Gate A also exercises is
+  proven; the GStreamer default-engine path is not yet proven by Gate A.
 
 ## Install and run
 

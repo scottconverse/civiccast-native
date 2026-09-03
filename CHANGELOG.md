@@ -43,6 +43,55 @@ below.
   staging`, mirroring how beta.3 was originally recorded before it
   published. `v1.0.0-beta.3` remains `current`.
 
+### Fixed
+
+- **Control-plane child process had no INFO-level logging at all, hiding
+  the real cause of Gate A T4's `FALLBACK_SLATE` finding.** The supervisor
+  host process configures a rotating `civiccast` package logger
+  (`service.configure_logging`), but that call was never reached inside the
+  separate `python -m uvicorn civiccast.app:create_app` child process the
+  supervisor spawns -- so every INFO record the egress daemon and app emit
+  (pipeline state transitions, fallback reasons, `last_error`, the
+  GStreamer worker's launch command line) was silently dropped; only
+  WARNING+ reached `control_plane.log`, via Python's handlerless-root
+  `lastResort` writer. Gate A's T4 probe found
+  `engine_state=FALLBACK_SLATE` on both the beta.3 and beta.4 kits with no
+  diagnostic trail explaining why. Fixed with a new
+  `service.configure_control_plane_logging`, called from
+  `civiccast.app.create_app` when (and only when) the supervisor's
+  `children.control_plane_child_spec` marks the child as supervised
+  (`CIVICCAST_SUPERVISED=1`, set unconditionally, same shape as
+  `CIVICCAST_EGRESS_WORK_DIR`/`CIVICCAST_UPLOAD_DIR`) -- writes to
+  `%ProgramData%\CivicCast\logs\control_plane-app.log`, a file distinct
+  from the child runner's raw stdout/stderr capture (`control_plane.log`)
+  so the two never race a rotation rename on Windows. `EgressDaemon._write_state`
+  (the one choke point every pipeline state transition and every
+  `last_error` write already passes through) and `GstPlayoutStrategy.start`
+  (the worker subprocess launch, argv-safe to log verbatim -- sink
+  credentials are resolved into the graph JSON file, never the command
+  line) now log at INFO.
+- **`sandbox-lab/scripts/In-Sandbox-Report.ps1`'s T4 probe raced a cold
+  start with a fixed 20s sleep and recorded only a bare `engine_state`
+  string.** Replaced with a bounded poll (5s interval, 60s budget) of both
+  `/state` (`engine_state` + `last_error`) and `/health` (the
+  `sink_connected` map): the TSDuck capture window now opens as soon as the
+  engine reports a connected sink instead of racing an arbitrary head
+  start, and every poll tick plus the full final state/health bodies are
+  written to `T4-ENGINE-NOTES.txt` (and `T4-ENGINE-STATE-BODY.json` /
+  `T4-ENGINE-HEALTH-BODY.json`). `Test-TsProof`'s own verdict logic is
+  unchanged.
+- **Docs honesty: retracted the beta.3 claim that Gate A proved GStreamer
+  engine egress.** The beta.3 `t4_engine` PASS was graded from a
+  PowerShell null-pipeline bug in `Test-TsProof` (fixed in #145) that read
+  a 0-byte, timed-out TSDuck capture on `udp/19003` as passing.
+  `docs/releases/v1.0.0-beta.3-verification.md` and `docs/ops/gate-a.md`
+  now say plainly that GStreamer engine egress is NOT yet proven in Gate A
+  for beta.3 (re-run under the fixed grader, the engine's own state was
+  `FALLBACK_SLATE`); the ffmpeg fallback path
+  (`T4_RESULT=PASS_FFMPEG_FALLBACK`) is proven and remains what CivicCast
+  falls back to. README's "Honestly scoped" section carries the same
+  Known-limitation entry.
+
 ## [1.0.0-beta.3] - 2026-09-03
 
 Published as [`v1.0.0-beta.3`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3),

@@ -81,6 +81,35 @@ fallback path has not proven what a real station actually runs — so Gate A's
 `t4_engine` check treats `PASS_FFMPEG_FALLBACK` as a named FAIL, not a
 degraded pass, and only accepts `T4_RESULT=PASS_PRODUCT_ENGINE`.
 
+### Known limitation: `Test-TsProof` null-pipeline bug let a false T4 PASS through (fixed in #145)
+
+**GStreamer engine egress is NOT yet proven in Gate A.** A PowerShell
+null-pipeline bug in `sandbox-lab/scripts/In-Sandbox-Report.ps1`'s
+`Test-TsProof` graded the beta.3 Gate A run's `t4_engine` check as PASS
+(`T4_RESULT=PASS_PRODUCT_ENGINE`) from a TSDuck capture that actually timed
+out at 0 bytes on `udp/19003` -- an empty capture read as passing rather
+than as the absence of evidence it was. The bug is fixed in #145. Once
+fixed, re-running the same check against both the beta.3 and the beta.4
+kits found the product engine's own state at `engine_state=FALLBACK_SLATE`
+for the `government` channel, with no diagnostic trail explaining why: the
+control-plane child process (the `uvicorn civiccast.app:create_app`
+process the supervisor spawns) had no configured log handler above
+WARNING, so the egress daemon's own INFO-level state-transition and
+`last_error` records were silently dropped rather than written anywhere.
+Both halves are now fixed: the control-plane child gets the same
+package-level INFO file logging the supervisor host process already had
+(`civiccast.native.supervisor.service.configure_control_plane_logging`,
+`%ProgramData%\CivicCast\logs\control_plane-app.log`), and T4's probe now
+polls `/state` and `/health` (writing every tick, the full final state and
+health bodies, and `last_error` to `T4-ENGINE-NOTES.txt`) instead of a
+fixed sleep before a single unlabelled `state` read. **The ffmpeg fallback
+path (`T4_RESULT=PASS_FFMPEG_FALLBACK`) is proven** -- it is graded a named
+FAIL by policy (not "unproven"; see above) precisely because it is not the
+shipped default engine, not because it doesn't work. Until a Gate A run
+records a genuine `T4_RESULT=PASS_PRODUCT_ENGINE` under the fixed grader,
+no release note, README claim, or verification doc should say the
+GStreamer engine's egress was proven by Gate A for beta.3 or beta.4.
+
 ## Shared Windows Sandbox: the busy guard
 
 Windows Sandbox is **single-instance per machine** — only one VM can run at a
