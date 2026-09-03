@@ -33,20 +33,28 @@ def test_mandatory_audit_protocol_is_repo_local() -> None:
 
 
 def test_active_public_docs_link_validated_current_candidate() -> None:
+    """Every public front door must name the current release tag and link
+    its validated verification record (docs/releases/v<version>-verification.md)
+    -- not a floating "latest" link, and not stale "unpublished candidate"
+    language once the tag is actually published (see
+    docs/releases/release-truth.yaml for which is true right now)."""
+
     public_release_docs = (
         REPO_ROOT / "README.md",
         REPO_ROOT / "docs/index.html",
         REPO_ROOT / "docs/install-windows.html",
     )
+    verification_doc_name = f"{CURRENT_BETA_RELEASE_TAG}-verification.md"
 
     for path in public_release_docs:
         text = path.read_text(encoding="utf-8")
         normalized = " ".join(text.lower().split())
         assert "github.com/scottconverse/civiccast/releases/latest" not in text
         assert CURRENT_BETA_RELEASE_TAG in text
-        assert "owner-held unpublished candidate" in normalized
-        assert "no installer" in normalized or "no public installer" in normalized
-        assert "not a public or production release" in normalized
+        assert verification_doc_name.lower() in normalized, (
+            f"{path.name} does not link the validated candidate's verification "
+            f"record ({verification_doc_name})."
+        )
 
 
 def test_retired_adoption_docs_are_classified_as_historical() -> None:

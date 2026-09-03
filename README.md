@@ -27,7 +27,10 @@ superseded; `v1.0.0-beta.2` was never published -- it exists only as an
 internal Gate A upgrade-baseline kit (see
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
 See [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml)
-for the authored release-state record and
+for the authored release-state record,
+[`docs/releases/v1.0.0-beta.3-verification.md`](docs/releases/v1.0.0-beta.3-verification.md)
+for the release's verification record (Gate A run, asset/hash/signature
+checks), and
 [`docs/releases/2026-09-03-beta3-first-downloadable-release.md`](docs/releases/2026-09-03-beta3-first-downloadable-release.md)
 for the publish record.
 
