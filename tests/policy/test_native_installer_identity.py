@@ -404,10 +404,26 @@ def test_bootstrap_postinstall_resolves_the_station_index_kit_first_then_embedde
     activation_block = postinstall.split("--civiccast-activate-station", 1)[1].split(
         '!insertmacro CIVICCAST_STEP "step d4-service-registration', 1
     )[0]
-    assert activation_block.count("!insertmacro CIVICCAST_FAIL") == 2, (
-        "exactly two fail-closed branches: neither index present, and a "
-        "present index whose activation failed"
+    # <installer-path-audit MA-08> The count moved from 2 to 6, deliberately.
+    # `run_native_flat_activation_cli` emits FIVE distinct exit codes -- 64
+    # (arguments), 65 (render), 66 (acquisition), 67 (activation/self-test),
+    # 78 (embedded pack trust) -- and this block used to collapse all of them
+    # into ONE sentence about the station folder and the pack cache. Correct
+    # for 66-with-a-cache-miss; wrong for a failed self-test (the packs were
+    # fine), for 78 (a BUILD defect, not a machine problem), and for 64/65 (an
+    # installer-authoring bug). So: neither-index-present, plus one arm each
+    # for 67 / 66 / 78 / 64+65, plus the catch-all.
+    assert activation_block.count("!insertmacro CIVICCAST_FAIL") == 6, (
+        "every activation exit code with its own operator remedy needs its own "
+        "fail-closed branch: neither index present, 67, 66, 78, 64/65, and the "
+        "catch-all"
     )
+    for code in ("67", "66", "78", "64"):
+        assert f"$0 == {code}" in activation_block, (
+            f"activation exit {code} must have its own branch -- this file's own header "
+            "says the exit code is the only signal a support log carries about WHICH "
+            "step failed"
+        )
     assert "${CIVICCAST_EXIT_D4_ACTIVATION}" in activation_block
     assert "!insertmacro CIVICCAST_ALERT" not in activation_block
 

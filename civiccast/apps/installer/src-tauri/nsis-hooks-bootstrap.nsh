@@ -395,7 +395,7 @@ Var CIVICCAST_PAYLOAD_REPLACED
 ; in both directions: it omitted thirteen live codes, and 40 is a D3 ENGINE
 ; phase code, not a CLI code. What is actually true, read off main.rs and its
 ; modules:
-;   * D3 engine (`python -m civiccast.native.upgrade`) phase codes:
+;   * D3 engine (the upgrade CLI this hook invokes below) phase codes:
 ;     0 COMPLETE, 10 ROLLED_BACK, 11 FRESH_INSTALL, 12 SAME_VERSION_NO_OP,
 ;     20 HALTED_RESTORE_FAILED, 30 REFUSED_NON_RESTORABLE, 40 unexpected fault.
 ;   * `CivicCast Native.exe` CLI codes: 0, 1, and the 64-85 band --
@@ -490,6 +490,22 @@ Var CIVICCAST_PAYLOAD_REPLACED
 ; and start a service whose control plane the guard blocks, and reported
 ; success over a station that can never serve.
 !define CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP   127
+
+; Installer-path audit BL-06: the D3 engine refused to start because a PREVIOUS
+; run's terminal journal is still on disk. Distinct from every other D3 code
+; because THIS run did nothing at all -- no seam ran, nothing was written --
+; and the operator action is a file move, not a retry. Before it existed the
+; engine returned the stale journal's own phase (usually 10), which the
+; exit-10 branch turns into a fatal 124 saying "re-run setup after resolving
+; the cause"; every re-run returned 10 again, forever, because nothing deletes
+; that journal.
+!define CIVICCAST_EXIT_D3_STALE_JOURNAL       128
+
+; Installer-path audit MA-05: an OLDER setup.exe was run over a NEWER
+; installed station. Refused by the routing decision before the interlock, the
+; drain, the backup or any mutation -- so unlike every other code in this band
+; it means "nothing at all happened", which is what its operator text says.
+!define CIVICCAST_EXIT_D3_REFUSED_DOWNGRADE   129
 
 ; Carries the --civiccast-teardown-native-state CLI's exit code from
 ; NSIS_HOOK_PREUNINSTALL (where the teardown call must run -- see that
@@ -1004,6 +1020,8 @@ Var CIVICCAST_TEARDOWN_EXIT
     !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=FRESH_INSTALL engine_exit=11"
   ${ElseIf} $0 == 12
     !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=SAME_VERSION_NO_OP engine_exit=12"
+  ${ElseIf} $0 == 13
+    !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=REFUSED_DOWNGRADE engine_exit=13"
   ${Else}
     !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=UPGRADE engine_exit=$0"
   ${EndIf}
@@ -1032,6 +1050,15 @@ Var CIVICCAST_TEARDOWN_EXIT
     ; what actually normalizes an installed tree.
     DetailPrint "CivicCast (Native): version ${VERSION} is already installed — there is no database migration to run, so the install/upgrade engine did nothing. Your data was not drained, backed up, migrated, or changed."
     !insertmacro CIVICCAST_STEP "step d3-engine: NO-OP (same version ${VERSION} already installed; no migration to run)"
+  ${ElseIf} $0 == 13
+    ; Installer-path audit MA-05. decide_route had exactly ONE version
+    ; comparison -- string equality -- and no ordering comparison anywhere, so
+    ; running an older setup.exe over a newer station routed to UPGRADE and
+    ; drove `alembic upgrade head` toward an OLDER head. This refuses before
+    ; the interlock, the drain, the backup or any mutation.
+    !insertmacro CIVICCAST_STEP "step d3-engine: REFUSED (a newer CivicCast (Native) is installed; this setup would move the database backwards)"
+    DetailPrint "CivicCast (Native): a NEWER version is already installed; this older setup was refused before changing anything."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_REFUSED_DOWNGRADE} "A NEWER version of CivicCast (Native) is already installed on this computer, and this setup installs an OLDER one.$\r$\n$\r$\nCivicCast cannot move a station's database backwards, so setup stopped before changing anything at all -- no recordings, database or settings were touched.$\r$\n$\r$\nTo continue: run the newer version's setup again, or uninstall CivicCast (Native) first if you genuinely mean to go back (your data in $COMMONPROGRAMDATA\CivicCast is preserved by uninstall, and an older version may not be able to read it).$\r$\n$\r$\nSee $COMMONPROGRAMDATA\CivicCast\install-progress.log for the two version numbers."
   ${ElseIf} $0 == 10
     ; HISTORY: a 2026-07-30 adversarial-review fix stopped this branch from
     ; recording a clean rollback as a SUCCESSFUL upgrade (it used to
@@ -1098,6 +1125,18 @@ Var CIVICCAST_TEARDOWN_EXIT
   ${ElseIf} $0 == 30
     DetailPrint "CivicCast (Native): this release declares a non-restorable migration and needs operator acknowledgement; automatic upgrade was refused."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_REFUSED} "This CivicCast (Native) release includes a database migration that cannot be automatically rolled back. Automatic upgrade was refused. Use the manual upgrade path with operator acknowledgement."
+  ${ElseIf} $0 == 31
+    ; Installer-path audit BL-06. A PREVIOUS run ended in a terminal failure
+    ; and left its journal behind; THIS run did nothing at all. Before this
+    ; branch existed the engine returned that stale journal's own phase --
+    ; usually 10 -- which the exit-10 branch above turns into a fatal 124
+    ; telling the operator to "re-run setup after resolving the cause". Every
+    ; re-run returned 10 again, forever, whatever was fixed, because nothing
+    ; deletes the journal ($COMMONPROGRAMDATA\CivicCast is preserved by
+    ; uninstall BY DESIGN, so even uninstall/reinstall did not clear it). The
+    ; message names the ONE action that unwedges the machine.
+    DetailPrint "CivicCast (Native): a previous upgrade attempt's record is still present; this run did nothing."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_STALE_JOURNAL} "CivicCast (Native) setup stopped before doing anything, because an EARLIER upgrade attempt on this machine ended in a failure whose record is still on disk.$\r$\n$\r$\nThat record is deliberately kept so support can read it -- but until it is moved aside, every new attempt refuses to start, so that a fresh upgrade cannot overwrite the recovery point it describes.$\r$\n$\r$\nTo continue: move (do not delete) the file$\r$\n$\r$\n    $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-journal.json$\r$\n$\r$\nsomewhere safe -- keep it for support -- and run setup again.$\r$\n$\r$\nNothing on this machine was changed by this run. Its reason is recorded in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log."
   ${Else}
     DetailPrint "CivicCast (Native): the install/upgrade engine reported an unexpected fault (exit $0)."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_FAULT} "CivicCast (Native) setup hit an unexpected fault while running the install/upgrade engine (exit code $0). See the installer log."

@@ -310,14 +310,28 @@ jobs:
                   sys.exit(1)
               ran += 1
 
-          # Floor = the full committed test count in tests/dr/test_postgres_restore.py
-          # (`grep -c "^def test_"` at WS2 round 5, three new report-level
-          # cold-standby negative controls: standby-only membership edge,
-          # PUBLIC table grant difference, GRANT OPTION difference) --
-          # must be bumped to match whenever a test is added to that file, so a
-          # collection error or an accidentally-skipped new test cannot hide
-          # behind a stale, too-low floor.
-          floor = 20
+          # <installer-path-audit MA-38> The floor is now DERIVED, not typed.
+          #
+          # It used to be the literal `20`, with a comment saying it "must be
+          # bumped to match whenever a test is added to that file". It was not:
+          # `grep -c "^def test_"` returned 21, because PR #143 added
+          # test_postgres_restore_drill_expected_revision_overrides_code_head --
+          # the file's ONLY proof of its own fix -- and did not bump the
+          # number. That test could then be skipped or deleted with this guard
+          # still green, which is precisely the failure the guard exists to
+          # prevent. Counting the definitions closes the class rather than the
+          # instance: a stale floor is now impossible by construction.
+          #
+          # Parametrized tests expand into several junit cases, so `ran` is
+          # always >= the definition count; this is a floor, not an equality.
+          import re
+          from pathlib import Path
+
+          source = Path("tests/dr/test_postgres_restore.py").read_text(encoding="utf-8")
+          floor = len(re.findall(r"^def test_", source, re.MULTILINE))
+          if floor == 0:
+              print("::error::Could not derive the restore-drill floor: no test definitions found.")
+              sys.exit(1)
           print(f"Postgres restore-drill tests passed: {ran} (skipped: {skipped}; floor: {floor})")
           if ran < floor:
               print(
@@ -400,7 +414,7 @@ jobs:
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1694 \
+            --floor 1763 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -536,7 +550,7 @@ jobs:
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 1887 \
+            --floor 1960 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit

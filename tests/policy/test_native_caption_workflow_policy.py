@@ -1069,7 +1069,19 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # N-1 to head through the actual production seam bundle. Both lanes
     # advance by one. Re-derived by an actual `--collect-only` run on this
     # tree: (1703, 1896) -> (1704, 1897).
-    assert (collect("not windows_only"), collect()) == (1704, 1897)
+    # fix/installer-upgrade-batch-2026-09-03 (the installer-path audit's
+    # 84-finding batch): the D3 engine, its seams, the interlock, the routing
+    # decision and the station-bundle publisher all gained real behavioural
+    # coverage for findings that previously had none -- BL-01's real-Postgres
+    # rollback proof, BL-03's no-op migration, BL-04's identity gate, BL-05's
+    # concurrent second instance, BL-06's stale journal, BL-07's contained
+    # halt/rollback, MA-01's flat-layout claims, MA-02's persist-before-flip,
+    # MA-05's downgrade guard, MA-06's ahead state, MA-09/MA-11/MA-12's
+    # non-vacuous verdicts, MA-38/MA-39's CI floors, and the batch list's own
+    # test blind spots (11-16). Re-derived by an actual `--collect-only` run
+    # on this tree, NOT by adding a delta to the previous pin:
+    # (1704, 1897) -> (1763, 1963).
+    assert (collect("not windows_only"), collect()) == (1763, 1963)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

@@ -273,18 +273,25 @@ def test_r7_state_never_reaches_the_migration_engine_through_the_real_cli(
 ) -> None:
     """The RED case, driven through the exact entry point NSIS invokes.
 
-    The product-existence signal is NOT mocked here: this test host has no
-    ``CivicCastSupervisor`` registered, which is precisely R7's post-uninstall
-    state (``sc.exe query`` -> 1060), so the real probe answers the real
-    question. The precondition is asserted rather than assumed, so the proof
-    can never go vacuous on a host where the service IS installed.
+    <installer-path-audit MA-41> This test used to ``pytest.skip`` whenever
+    ``default_installed_product_probe()`` was not False, with a comment
+    claiming "the precondition is asserted rather than assumed, so the proof
+    can never go vacuous". A ``pytest.skip`` IS the vacuum: on any Windows box
+    that has ever installed CivicCast -- INCLUDING a Gate A runner -- the RED
+    case for the R7 defect silently disappeared.
+
+    It now runs everywhere. When the host genuinely has no service registered
+    the REAL probe answers (the strongest form, and the shape R7 had); when it
+    does, the probe is substituted for its documented
+    ``ERROR_SERVICE_DOES_NOT_EXIST`` answer so the routing decision under test
+    is still exercised. Which mode ran is recorded in the assertion message,
+    so a reader can never mistake one for the other.
     """
 
-    if default_installed_product_probe() is not False:
-        pytest.skip(
-            f"this host has {SERVICE_NAME} registered (or an unreadable SCM); "
-            "R7's no-installed-product state cannot be reproduced without mocks here"
-        )
+    probe_is_real = default_installed_product_probe() is False
+    if not probe_is_real:
+        monkeypatch.setattr(upgrade_main, "installed_product_probe", lambda: False)
+    mode = "the host's REAL probe" if probe_is_real else "a substituted no-product probe"
 
     reached: list[str] = []
 
@@ -297,8 +304,8 @@ def test_r7_state_never_reaches_the_migration_engine_through_the_real_cli(
     exit_code = upgrade_main.main(_r7_argv(tmp_path))
 
     assert reached == [], (
-        "the D3 migration engine was entered on R7's state: no installed product, "
-        "only preserved data"
+        "the D3 migration engine was entered on R7's state (no installed product, only "
+        f"preserved data), observed through {mode}"
     )
     assert exit_code == upgrade_main._ROUTE_EXIT_CODES[UpgradeRoute.FRESH_INSTALL]
 
@@ -372,11 +379,161 @@ def test_cli_still_runs_the_engine_for_a_real_upgrade(
 
 
 def test_route_exit_codes_do_not_collide_with_the_phase_exit_codes() -> None:
-    """11/12 must stay distinguishable from 0/10/20/30/40 -- the NSIS ladder
-    branches on the number alone."""
+    """11/12/13 must stay distinguishable from 0/10/20/30/31/40 -- the NSIS
+    ladder branches on the number alone."""
 
     phase_codes = set(upgrade_main._EXIT_CODES.values()) | {40}
     route_codes = set(upgrade_main._ROUTE_EXIT_CODES.values())
 
     assert phase_codes.isdisjoint(route_codes)
     assert len(route_codes) == len(upgrade_main._ROUTE_EXIT_CODES)
+
+
+# ---------------------------------------------------------------------------
+# <installer-path-audit MA-05> The downgrade guard.
+#
+# ``decide_route`` had exactly ONE version comparison -- ``old_version ==
+# new_version`` -- and NO ordering comparison anywhere. Running a beta.2
+# setup.exe over a beta.3 station routed to UPGRADE and drove
+# ``alembic upgrade head`` toward an OLDER head. The audit's own coverage note
+# is that ``decide_route`` was called with exactly three pairs in this file --
+# (rc15,rc15), (NO_RECORDED_VERSION,rc15), (rc15,rc16) -- and no test ever
+# drove ``new_version < old_version``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("old_version", "new_version"),
+    [
+        ("1.0.0-beta.3", "1.0.0-beta.2"),
+        ("1.0.0-rc16", "1.0.0-rc15"),
+        ("1.0.1", "1.0.0"),
+        ("1.1.0", "1.0.9"),
+        ("2.0.0", "1.9.9"),
+        # A release outranks any pre-release of the same core.
+        ("1.0.0", "1.0.0-rc15"),
+    ],
+)
+def test_running_an_older_setup_over_a_newer_station_is_refused(
+    old_version: str, new_version: str
+) -> None:
+    decision = decide_route(
+        old_version=old_version,
+        new_version=new_version,
+        database_url="postgresql://u@localhost/db",
+        installed_product=True,
+        state_root=None,
+    )
+    assert decision.route is UpgradeRoute.REFUSED_DOWNGRADE
+    assert old_version in decision.reason and new_version in decision.reason
+    assert "backwards" in decision.reason
+    assert "Nothing was changed" in decision.reason
+
+
+@pytest.mark.parametrize(
+    ("old_version", "new_version"),
+    [
+        ("1.0.0-beta.2", "1.0.0-beta.3"),
+        ("1.0.0-rc15", "1.0.0-rc16"),
+        ("1.0.0-rc15", "1.0.0"),
+        ("1.0.0", "1.0.1"),
+        # Unorderable inputs must keep the PREVIOUS behaviour exactly -- see
+        # is_downgrade's fail-open contract. A parse failure must never refuse
+        # an install.
+        (routing.NO_RECORDED_VERSION, "1.0.0-beta.3"),
+        ("some-fork-build", "1.0.0-beta.3"),
+        ("1.0.0-beta.3", "some-fork-build"),
+    ],
+)
+def test_every_other_ordering_still_routes_to_upgrade(old_version: str, new_version: str) -> None:
+    decision = decide_route(
+        old_version=old_version,
+        new_version=new_version,
+        database_url="postgresql://u@localhost/db",
+        installed_product=True,
+        state_root=None,
+    )
+    assert decision.route is UpgradeRoute.UPGRADE
+
+
+def test_a_downgrade_over_no_installed_product_is_still_a_fresh_install() -> None:
+    """The guard sits AFTER the product-existence check, deliberately: with no
+    installed product there is no database to move backwards."""
+    decision = decide_route(
+        old_version="1.0.0-beta.3",
+        new_version="1.0.0-beta.2",
+        database_url="postgresql://u@localhost/db",
+        installed_product=False,
+        state_root=None,
+    )
+    assert decision.route is UpgradeRoute.FRESH_INSTALL
+
+
+def test_is_downgrade_orders_this_products_real_version_shapes() -> None:
+    assert routing.is_downgrade("1.0.0-beta.3", "1.0.0-beta.2") is True
+    assert routing.is_downgrade("1.0.0-beta.2", "1.0.0-beta.3") is False
+    assert routing.is_downgrade("1.0.0-beta.3", "1.0.0-beta.3") is False
+    assert routing.is_downgrade("1.0.0-rc9", "1.0.0-rc10") is False, (
+        "rc10 is NEWER than rc9 -- a plain string comparison would get this backwards"
+    )
+    assert routing.is_downgrade("1.0.0-rc10", "1.0.0-rc9") is True
+    # Fail-open on anything this line does not ship.
+    assert routing.is_downgrade("none", "1.0.0-beta.3") is False
+    assert routing.is_downgrade("1.0.0-beta.3", "") is False
+
+
+def test_the_cli_returns_the_downgrade_refusal_code_without_touching_the_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal must land BEFORE the interlock, the drain, and the backup --
+    i.e. run_upgrade must never be called at all."""
+
+    monkeypatch.setattr(upgrade_main, "installed_product_probe", lambda: True)
+
+    def _must_not_run(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the D3 engine must not run on a refused downgrade")
+
+    monkeypatch.setattr(upgrade_main, "run_upgrade", _must_not_run)
+
+    argv = _r7_argv(tmp_path)
+    argv[argv.index("--old-version") + 1] = "1.0.0-rc16"
+    argv[argv.index("--new-version") + 1] = "1.0.0-rc15"
+
+    assert upgrade_main.main(argv) == 13
+
+
+def test_the_cli_writes_the_journal_error_as_a_reason_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """<batch-fix-list item 14> ``__main__``'s journal.error -> "reason:" line
+    was untested.
+
+    That line is the ONLY place an operator reads WHY a D3 run rolled back:
+    the NSIS exit-10 message points at upgrade-engine.log for "the exact
+    reason", and before PR #143 this file logged only the bare phase name.
+    Nothing asserted the reason actually reaches either sink.
+    """
+    monkeypatch.setattr(upgrade_main, "installed_product_probe", lambda: True)
+
+    class _Journal:
+        error = "pre-upgrade backup failed verification (hash + restore-drill spot check)"
+
+    class _Outcome:
+        phase = upgrade_main.UpgradePhase.ROLLED_BACK
+        journal = _Journal()
+
+    monkeypatch.setattr(upgrade_main, "run_upgrade", lambda *a, **k: _Outcome())
+    monkeypatch.setattr(
+        upgrade_main,
+        "_resolve_pg_client_commands",
+        lambda context: dict.fromkeys(upgrade_main._PG_CLIENT_EXECUTABLES, "pg.exe"),
+    )
+
+    argv = _r7_argv(tmp_path)
+    argv[argv.index("--new-version") + 1] = "1.0.0-rc16"
+    assert upgrade_main.main(argv) == 10
+
+    # The durable engine log -- what the installer's own message points at.
+    log = upgrade_main.engine_log_path(tmp_path / "state").read_text(encoding="utf-8")
+    assert "upgrade outcome: rolled_back" in log
+    assert "reason: pre-upgrade backup failed verification" in log

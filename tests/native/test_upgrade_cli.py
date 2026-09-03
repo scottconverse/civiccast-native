@@ -79,12 +79,55 @@ def test_parser_accepts_full_arg_set(tmp_path) -> None:
 
 
 def test_flat_layout_flag_adapts_the_production_seams(tmp_path, monkeypatch) -> None:
+    """<batch-fix-list item 15> This used to prove only that the adapter was
+    CALLED, not that its RESULT is used.
+
+    The old fake returned its input unchanged, so a regression that dropped
+    the adapter's return value on the floor -- and therefore ran the whole
+    upgrade under the generic ``app\\<version>`` + junction seams on a machine
+    that has neither -- passed this test. The fake now returns a DISTINCT
+    bundle and the assertion is that run_upgrade received THAT one.
+    """
+    import dataclasses
+
     import civiccast.native.upgrade.__main__ as cli
 
     adapted_install_roots: list[str] = []
+    marker: list[str] = []
+    seams_seen_by_run_upgrade: list[object] = []
 
     def _adapt(seams, context):  # type: ignore[no-untyped-def]
         adapted_install_roots.append(context.install_root)
+        # A genuinely different bundle: its read_junction is identifiable.
+        return dataclasses.replace(
+            seams, read_junction=lambda: marker.append("adapted-read_junction") or "adapted"
+        )
+
+    def _stop(plan, context, seams):  # type: ignore[no-untyped-def]
+        seams_seen_by_run_upgrade.append(seams)
+        assert seams.read_junction() == "adapted", (
+            "run_upgrade was handed the UNADAPTED seam bundle -- the adapter's return "
+            "value was dropped"
+        )
+        raise RuntimeError("stop after seam assembly")
+
+    monkeypatch.setattr(cli, "adapt_flat_installer_layout", _adapt)
+    monkeypatch.setattr(cli, "run_upgrade", _stop)
+
+    assert cli.main([*_base_args(tmp_path), "--flat-installer-layout"]) == 40
+    assert adapted_install_roots == [str(tmp_path / "install")]
+    assert marker == ["adapted-read_junction"]
+    assert seams_seen_by_run_upgrade, "run_upgrade must have been reached"
+
+
+def test_without_the_flat_layout_flag_the_adapter_is_not_applied(tmp_path, monkeypatch) -> None:
+    """The negative control the pair above needs to mean anything."""
+    import civiccast.native.upgrade.__main__ as cli
+
+    called: list[str] = []
+
+    def _adapt(seams, context):  # type: ignore[no-untyped-def]
+        called.append("adapt")
         return seams
 
     def _stop(plan, context, seams):  # type: ignore[no-untyped-def]
@@ -93,8 +136,8 @@ def test_flat_layout_flag_adapts_the_production_seams(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(cli, "adapt_flat_installer_layout", _adapt)
     monkeypatch.setattr(cli, "run_upgrade", _stop)
 
-    assert cli.main([*_base_args(tmp_path), "--flat-installer-layout"]) == 40
-    assert adapted_install_roots == [str(tmp_path / "install")]
+    assert cli.main(_base_args(tmp_path)) == 40
+    assert called == []
 
 
 def test_refused_non_restorable_maps_to_exit_30(tmp_path) -> None:

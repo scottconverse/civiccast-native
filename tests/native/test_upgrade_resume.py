@@ -161,12 +161,65 @@ def test_resume_from_migrated_rolls_back_when_health_fails(tmp_path) -> None:
 
 
 def test_resume_over_terminal_failure_journal_does_not_bulldoze(tmp_path) -> None:
-    # A preserved HALTED journal must NOT be silently overwritten by a fresh run.
+    """A preserved HALTED journal must NOT be silently overwritten by a fresh
+    run -- and the refusal must say THAT, not replay the old run's outcome.
+
+    <installer-path-audit BL-06> The refusal used to return the STALE journal's
+    own phase and error verbatim, so the CLI logged
+    "upgrade outcome: rolled_back" (or halted) with the PREVIOUS run's reason
+    and returned that phase's exit code. Post-#143 an exit 10 is a fatal NSIS
+    124 telling the operator to "re-run setup after resolving the cause" --
+    and every re-run returned 10 again, forever, whatever was fixed, because
+    nothing deletes this journal. The refusal now has its own phase, its own
+    exit code, and text naming the file to move.
+    """
     h = _make(tmp_path)
     _seed_journal(h, UpgradePhase.HALTED_RESTORE_FAILED, error="prior halt")
     outcome = run_upgrade(UpgradePlan(old_version="1.0", new_version="1.1"), _context(h), h.seams())
-    assert outcome.phase is UpgradePhase.HALTED_RESTORE_FAILED
+    assert outcome.phase is UpgradePhase.REFUSED_STALE_JOURNAL
     assert h.calls == []  # nothing re-run over a preserved recovery point
+    # The refusal names the earlier phase, the file to move, and says plainly
+    # that THIS run did nothing.
+    assert outcome.journal.error is not None
+    assert "halted_restore_failed" in outcome.journal.error
+    assert "upgrade-journal.json" in outcome.journal.error
+    assert "did NOTHING" in outcome.journal.error
+    assert "prior halt" in outcome.journal.error, (
+        "the previous run's own reason must still be surfaced, as context rather than as this "
+        "run's outcome"
+    )
+
+
+def test_the_preserved_journal_on_disk_is_not_rewritten_by_the_refusal(tmp_path) -> None:
+    """<installer-path-audit BL-06> The recovery point survives byte-for-byte.
+
+    The refusal is an in-memory copy: rewriting the journal to record the
+    refusal would destroy the very artifact the refusal exists to protect.
+    """
+    from civiccast.native.upgrade.journal import journal_path
+
+    h = _make(tmp_path)
+    _seed_journal(h, UpgradePhase.HALTED_RESTORE_FAILED, error="prior halt")
+    path = journal_path(Path(h.state_root))
+    before = path.read_bytes()
+    run_upgrade(UpgradePlan(old_version="1.0", new_version="1.1"), _context(h), h.seams())
+    assert path.read_bytes() == before
+
+
+def test_the_stale_journal_refusal_has_its_own_exit_code(tmp_path) -> None:
+    """<installer-path-audit BL-06> and it is NOT ROLLED_BACK's.
+
+    A terminal exit code that asserts an outcome this run never produced is
+    the exact shape PR #143 was written to end; making it fatal converted a
+    misleading log line into a bricked upgrade path.
+    """
+    from civiccast.native.upgrade.__main__ import _EXIT_CODES
+
+    stale = _EXIT_CODES[UpgradePhase.REFUSED_STALE_JOURNAL]
+    assert stale == 31
+    for phase, code in _EXIT_CODES.items():
+        if phase is not UpgradePhase.REFUSED_STALE_JOURNAL:
+            assert code != stale, f"{phase} shares the stale-journal exit code"
 
 
 def test_resume_is_deterministic_across_double_run(tmp_path) -> None:
@@ -181,4 +234,24 @@ def test_resume_is_deterministic_across_double_run(tmp_path) -> None:
     # A COMPLETE journal re-run starts fresh (previous upgrade committed) — but
     # the world is already at the target, so it still lands COMPLETE.
     assert Path(h.read_junction()).name == "1.1"
-    assert len(calls_after_first) >= 1
+    # <batch-fix-list item 14> `assert len(calls_after_first) >= 1` was
+    # VACUOUS: it inspected the FIRST run's call list -- which obviously ran
+    # steps -- and never looked at the SECOND run's at all. So a second run
+    # that behaved completely differently still passed, in the one test whose
+    # name is "deterministic across a double run".
+    #
+    # What determinism means here, given run_upgrade's own contract (a
+    # COMPLETE journal is the ONE terminal phase it starts fresh from, because
+    # the previous upgrade committed): the second run walks the SAME sequence
+    # and leaves the world in the SAME state. Every forward step is
+    # individually idempotent, which is what makes that safe -- and this
+    # asserts it rather than assuming it.
+    calls_after_second = h.calls[len(calls_after_first) :]
+    assert calls_after_first, "the first run must have driven the sequence"
+    assert calls_after_second == calls_after_first, (
+        "the second run must walk the identical sequence; "
+        f"first={calls_after_first} second={calls_after_second}"
+    )
+    assert h.db_schema == "new-rev", "the committed schema must be unchanged by the re-run"
+    assert h.interlock_held is False, "the re-run must leave the interlock released"
+    assert second.journal.post_schema_revision == "new-rev"

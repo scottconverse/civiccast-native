@@ -78,11 +78,22 @@ def default_acquire_interlock(owner_run_id: str) -> Callable[[], None]:
     return _acquire
 
 
-def default_release_interlock() -> Callable[[], None]:
+def default_release_interlock(owner_run_id: str) -> Callable[[], None]:
+    """Release the D7a interlock, but ONLY if this run is the one holding it.
+
+    <installer-path-audit BL-05> The release used to be unconditional on both
+    sides: the orchestrator called it on every rollback (including one caused
+    by ``acquire_interlock`` itself failing) and ``release_interlock`` checked
+    only that a record existed and was ``held``, never comparing
+    ``owner_run_id``. So a second concurrent installer released the first
+    one's interlock mid-migration. The orchestrator's phase guard is the other
+    half of this fix.
+    """
+
     def _release() -> None:
         from civiccast.native.win_probes import release_interlock
 
-        release_interlock()
+        release_interlock(owner_run_id=owner_run_id)
 
     return _release
 
@@ -208,16 +219,97 @@ def default_restore_backup(
     context: UpgradeContext,
     *,
     pg_restore_command: list[str] | None = None,
+    psql_command: list[str] | None = None,
 ) -> Callable[[BackupRef], None]:
+    """Restore the pre-upgrade backup INTO THE LIVE DATABASE.
+
+    <installer-path-audit BL-01> This used to be a bare ``pg_restore`` into
+    ``context.database_url`` -- the live database, which still holds every
+    object in the dump PLUS whatever the partial migration added. The argv was
+
+        pg_restore --host --port --username --dbname --no-owner
+                   --exit-on-error --no-password
+
+    and a grep for ``--clean`` / ``--if-exists`` / ``--create`` across
+    ``civiccast/dr/*.py`` and ``civiccast/native/upgrade/*.py`` found none.
+    Nothing dropped or recreated the target first. So on any post-mutation
+    failure ``pg_restore`` replayed ``CREATE TABLE``, hit
+    ``relation "..." already exists``, ``--exit-on-error`` exited nonzero,
+    ``run_postgres_restore`` raised, and the orchestrator went to ``_halt``:
+    the station got HALTED_RESTORE_FAILED / exit 20 / service stopped / a
+    manual recovery document. **The clean-rollback outcome (exit 10) that
+    PR #143 was written around was unreachable for every post-migration
+    failure**, while two shipped comments asserted the opposite as established
+    fact and reasoned from it.
+
+    The fix restores into the drill's own verified path: drop and recreate the
+    target database (``create_fresh_postgres_database`` with the live
+    database's own name, under the D7a interlock this whole phase holds), then
+    replay the dump into a genuinely empty database inside ONE transaction so a
+    mid-replay failure cannot leave production half-clobbered.
+
+    Two integrity gates run before any of that:
+
+    * the artifact's own bytes are re-hashed against the backup manifest
+      (``verify_backup_integrity``, installer-path audit MA-09) -- a truncated
+      dump written after the manifest used to pass ``verified=True``, because
+      ``verified`` was ``bool(manifest.integrity)``, a non-emptiness check;
+    * the manifest must name the artifact this ``BackupRef`` points at.
+
+    A failure of either raises BEFORE the target is dropped, so an unusable
+    backup can never destroy a live database that still had its data.
+    """
+
     def _restore(backup: BackupRef) -> None:
-        artifact = Path(backup.backup_dir) / backup.db_artifact
+        from civiccast.dr.backup import (
+            create_fresh_postgres_database,
+            read_backup_manifest,
+            verify_backup_integrity,
+        )
+
+        backup_dir = Path(backup.backup_dir)
+        artifact = backup_dir / backup.db_artifact
+        if not artifact.is_file():
+            raise RuntimeError(
+                f"refusing to drop the live database: the backup artifact {artifact} does not "
+                "exist, so there would be nothing to restore from"
+            )
+        manifest = read_backup_manifest(backup_dir)
+        errors = verify_backup_integrity(backup_dir, manifest)
+        if errors:
+            raise RuntimeError(
+                "refusing to drop the live database: the pre-upgrade backup no longer matches "
+                "its own integrity manifest (" + "; ".join(errors) + ")"
+            )
+
+        target_name = _database_name(context.database_url)
+        recreated_url = create_fresh_postgres_database(
+            database_url=context.database_url,
+            database_name=target_name,
+            psql_command=psql_command,
+            allow_dropping_the_connection_url_database=True,
+        )
         run_postgres_restore(
             artifact,
-            context.database_url,
+            recreated_url,
             pg_restore_command=pg_restore_command,
+            single_transaction=True,
         )
 
     return _restore
+
+
+def _database_name(database_url: str) -> str:
+    """The database name a URL addresses, for the drop/recreate above."""
+
+    from urllib.parse import urlsplit
+
+    name = urlsplit(database_url).path.lstrip("/")
+    if not name:
+        raise RuntimeError(
+            f"cannot determine which database to restore into: {database_url!r} names none"
+        )
+    return name
 
 
 def default_lay_tree(
@@ -298,6 +390,18 @@ def adapt_flat_installer_layout(
         read_junction=_require_runtime,
         lay_tree=lambda _new_version: _require_runtime(),
         flip_junction=_select_runtime,
+        # <installer-path-audit MA-01> Say so, in the bundle and therefore in
+        # the journal. Under this adapter read_junction, lay_tree and
+        # flip_junction all return the SAME <install_root>\runtime string, so
+        # previous_junction_target == new_junction_target and the rollback's
+        # flip-back is a tautology -- the guard at _select_runtime compares the
+        # argument against a value the same adapter produced and can never fire
+        # on the rollback path. There is no old tree to revert to, and the
+        # journal used to claim "junction/tree reverted" anyway. The
+        # orchestrator now branches its rollback detail and its operator
+        # recovery document on this flag instead of asserting a revert that did
+        # not happen.
+        filesystem_rollback=False,
     )
 
 
@@ -333,6 +437,34 @@ def default_migrate(context: UpgradeContext) -> Callable[[], None]:
         command.upgrade(cfg, "head")
 
     return _migrate
+
+
+def default_expected_schema_head() -> Callable[[], str | None]:
+    """The migration head THIS payload's own alembic script directory declares.
+
+    <installer-path-audit BL-03> The orchestrator compares
+    ``post_schema_revision`` to this after ``migrate()``. It is deliberately a
+    property of the SHIPPED CODE (read through the same
+    ``schema_check._alembic_runtime_paths`` resolution ``default_migrate``
+    itself uses), not of the database and not of anything the running control
+    plane reports -- so "the migration landed" is judged against the payload's
+    own expectation rather than against a value the migration itself produced.
+
+    Returns None if the head cannot be resolved (e.g. a branched graph, which
+    ``expected_migration_head`` raises on). The orchestrator records that the
+    assertion was UNAVAILABLE rather than treating an unresolvable head as a
+    pass.
+    """
+
+    def _head() -> str | None:
+        from civiccast.schema_check import expected_migration_head
+
+        try:
+            return expected_migration_head()
+        except Exception:
+            return None
+
+    return _head
 
 
 def default_schema_revision(context: UpgradeContext) -> Callable[[], str | None]:
@@ -376,7 +508,7 @@ def build_default_seams(
 
     return UpgradeSeams(
         acquire_interlock=default_acquire_interlock(context.owner_run_id),
-        release_interlock=default_release_interlock(),
+        release_interlock=default_release_interlock(context.owner_run_id),
         drain_and_verify_quiescence=drain_and_verify_quiescence,
         backup=default_backup(
             context,
@@ -395,4 +527,5 @@ def build_default_seams(
         health_gate=health_gate,
         schema_revision=default_schema_revision(context),
         stop_service=stop_service,
+        expected_schema_head=default_expected_schema_head(),
     )

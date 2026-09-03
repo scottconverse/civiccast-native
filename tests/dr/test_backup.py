@@ -6,12 +6,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from civiccast.dr.backup import (
     _parse_postgres_url,
     build_media_manifest,
     build_sqlite_engine,
+    create_fresh_postgres_database,
+    read_backup_manifest,
     run_full_backup,
     snapshot_tables,
+    verify_backup_integrity,
     write_integrity_manifest,
 )
 
@@ -131,3 +136,162 @@ def test_integrity_manifest_covers_every_backed_up_file(
     }
     assert members == on_disk
     assert len(entries) > 0
+
+
+# ---------------------------------------------------------------------------
+# <installer-path-audit MA-09> Integrity that actually re-hashes bytes.
+#
+# ``BackupRef.verified`` was ``bool(manifest.integrity)`` -- a NON-EMPTINESS
+# check -- while the orchestrator gated on it and wrote the journal detail
+# "hash + restore-drill spot check". ``_manifest_blob_hash`` folds the
+# manifest's OWN recorded hashes, so both sides of any later tamper check came
+# from the same manifest, and a grep across ``civiccast/`` found NO
+# re-derivation anywhere in the product. A dump truncated after the manifest
+# was written passed ``verified=True``, and the only thing that would catch it
+# -- the drill -- restores the same bytes.
+# ---------------------------------------------------------------------------
+
+
+def test_a_faithful_backup_verifies_clean(seeded_station_db: Path, tmp_path: Path) -> None:
+    dest = tmp_path / "backup"
+    manifest = run_full_backup(
+        database_url=f"sqlite:///{seeded_station_db}", dest_dir=dest, media_root=None
+    )
+    assert manifest.integrity, "this fixture must produce integrity entries to be meaningful"
+    assert verify_backup_integrity(dest, manifest) == []
+
+
+def test_a_truncated_artifact_is_reported_even_though_the_manifest_is_intact(
+    seeded_station_db: Path, tmp_path: Path
+) -> None:
+    """THE finding: the manifest still says what it always said."""
+    dest = tmp_path / "backup"
+    manifest = run_full_backup(
+        database_url=f"sqlite:///{seeded_station_db}", dest_dir=dest, media_root=None
+    )
+    artifact = dest / manifest.db_artifact
+    artifact.write_bytes(artifact.read_bytes()[: len(artifact.read_bytes()) // 2])
+
+    errors = verify_backup_integrity(dest, manifest)
+    assert errors, "a truncated dump must not verify"
+    assert manifest.db_artifact in errors[0]
+    assert "does not match the manifest" in errors[0]
+    # ...and the old non-emptiness check would still have said "verified".
+    assert bool(manifest.integrity) is True
+
+
+def test_a_missing_member_is_reported(seeded_station_db: Path, tmp_path: Path) -> None:
+    dest = tmp_path / "backup"
+    manifest = run_full_backup(
+        database_url=f"sqlite:///{seeded_station_db}", dest_dir=dest, media_root=None
+    )
+    (dest / manifest.db_artifact).unlink()
+    errors = verify_backup_integrity(dest, manifest)
+    assert errors and "missing from the backup directory" in errors[0]
+
+
+def test_an_empty_integrity_block_is_itself_a_finding(
+    seeded_station_db: Path, tmp_path: Path
+) -> None:
+    dest = tmp_path / "backup"
+    manifest = run_full_backup(
+        database_url=f"sqlite:///{seeded_station_db}", dest_dir=dest, media_root=None
+    )
+    stripped = manifest.model_copy(update={"integrity": []})
+    errors = verify_backup_integrity(dest, stripped)
+    assert errors and "nothing about these bytes has been verified" in errors[0]
+
+
+def test_the_manifest_round_trips_through_the_reader(
+    seeded_station_db: Path, tmp_path: Path
+) -> None:
+    dest = tmp_path / "backup"
+    written = run_full_backup(
+        database_url=f"sqlite:///{seeded_station_db}", dest_dir=dest, media_root=None
+    )
+    assert read_backup_manifest(dest).backup_id == written.backup_id
+
+
+# ---------------------------------------------------------------------------
+# <installer-path-audit MN-09> DROP DATABASE ... WITH (FORCE) runs against the
+# PRODUCTION cluster, and nothing refused when the name equalled the source
+# database's own -- so a station provisioned with the default drill name would
+# have lost production data to a drill.
+# ---------------------------------------------------------------------------
+
+
+def test_dropping_the_connection_urls_own_database_is_refused_by_default() -> None:
+    with pytest.raises(RuntimeError, match="refusing to DROP DATABASE"):
+        create_fresh_postgres_database(
+            database_url="postgresql://u:p@127.0.0.1:5432/civiccast_drill_restore",
+            database_name="civiccast_drill_restore",
+        )
+
+
+def test_the_guard_can_be_opted_out_of_deliberately(monkeypatch) -> None:
+    """The D3 rollback restore is the one caller that MUST drop the live
+    database -- under the held interlock, with a verified backup in hand."""
+    import civiccast.dr.backup as backup_module
+
+    class _Result:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    seen: dict[str, object] = {}
+
+    def _fake_spawn(argv, **kwargs):  # type: ignore[no-untyped-def]
+        seen["argv"] = argv
+        return _Result()
+
+    monkeypatch.setattr(backup_module, "_spawn_pg_tool", _fake_spawn)
+    monkeypatch.setattr(
+        backup_module,
+        "read_database_locale",
+        lambda **kwargs: backup_module.DatabaseLocale("UTF8", "en_US.UTF-8", "en_US.UTF-8"),
+    )
+
+    url = create_fresh_postgres_database(
+        database_url="postgresql://u:p@127.0.0.1:5432/civiccast",
+        database_name="civiccast",
+        allow_dropping_the_connection_url_database=True,
+    )
+    assert url.endswith("/civiccast")
+    argv = " ".join(str(part) for part in seen["argv"])
+    # <installer-path-audit MN-08> The clone must copy the SOURCE's encoding
+    # and collation, not inherit template1's. On a Windows-installed cluster
+    # template1 is commonly SQL_ASCII/C while the product's database is UTF-8,
+    # and snapshot_tables' primary-key ORDER BY then differs between source
+    # and copy -- an unexplained checksum mismatch on an otherwise perfect
+    # backup, which (because the drill gates the pre-upgrade backup) fails the
+    # whole upgrade.
+    assert "TEMPLATE template0" in argv
+    assert "ENCODING 'UTF8'" in argv
+    assert "LC_COLLATE 'en_US.UTF-8'" in argv
+
+
+def test_an_unreadable_source_locale_falls_back_rather_than_failing(monkeypatch) -> None:
+    import civiccast.dr.backup as backup_module
+
+    def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise OSError("psql not found")
+
+    monkeypatch.setattr(backup_module, "_spawn_pg_tool", _boom)
+    locale = backup_module.read_database_locale(
+        database_url="postgresql://u:p@127.0.0.1:5432/civiccast",
+        source_database_name="civiccast",
+    )
+    assert locale == backup_module._FALLBACK_DATABASE_LOCALE
+
+
+def test_a_hostile_source_database_name_never_reaches_the_ddl(monkeypatch) -> None:
+    import civiccast.dr.backup as backup_module
+
+    spawned: list[object] = []
+    monkeypatch.setattr(backup_module, "_spawn_pg_tool", lambda *a, **k: spawned.append(a) or None)
+    locale = backup_module.read_database_locale(
+        database_url="postgresql://u:p@127.0.0.1:5432/civiccast",
+        source_database_name="civiccast'; DROP DATABASE civiccast; --",
+    )
+    assert locale == backup_module._FALLBACK_DATABASE_LOCALE
+    assert spawned == [], "a name that fails validation must not reach psql at all"

@@ -722,7 +722,11 @@ def test_build_station_index_with_captions_large_v3_present_sorts_it_after_the_r
 
 
 def _bundle_from_root(
-    parent: Path, *, output_name: str, models: dict[str, dict[str, object]]
+    parent: Path,
+    *,
+    output_name: str,
+    models: dict[str, dict[str, object]],
+    product_version: str = "1.0.0-rc15",
 ) -> dict[str, object]:
     """One complete `build_station_bundle` run whose every build input lives
     under `parent` -- so two calls with different `parent`s differ in nothing
@@ -754,7 +758,7 @@ def _bundle_from_root(
         captions_large_v3_root=None,
         signing_private_key=_dev_key(),
         signing_key_id="development-test-key",
-        product_version="1.0.0-rc15",
+        product_version=product_version,
         compatible_core=None,
         channel="beta",
         created_epoch=1_700_000_000,
@@ -812,6 +816,67 @@ def test_model_packs_are_byte_identical_when_built_from_different_roots(
     first_index = Path(str(first["station_index"])).read_bytes()
     second_index = Path(str(second["station_index"])).read_bytes()
     assert first_index == second_index
+
+
+def test_model_packs_are_identical_across_candidates_while_core_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """<batch-fix-list item 11> The test above CANNOT see the defect it names.
+
+    "Cross-candidate reproducibility" is the property PR #127 exists for: a
+    station that already cached the ~21 GB of model packs must reuse them when
+    the NEXT candidate installs, which requires those packs' SHA-256 to be
+    identical across product versions while `core` -- which legitimately
+    embeds the version -- differs. The existing test hardcodes
+    ``product_version="1.0.0-rc15"`` on BOTH ``_bundle_from_root`` calls and
+    varies only the build path, so a product version leaking into a MODEL
+    pack's bytes (the exact defect it is named for) passes it unchanged.
+
+    This builds candidate N and candidate N+1 and asserts both halves.
+    """
+    models = _write_test_ollama_lock(tmp_path)
+    monkeypatch.setattr(native_packs, "OLLAMA_MODEL_LOCK_PATH", models["_lock_path"])
+
+    candidate_n = _bundle_from_root(
+        tmp_path / "candidate-n",
+        output_name="station",
+        models=models,
+        product_version="1.0.0-rc15",
+    )
+    candidate_n1 = _bundle_from_root(
+        tmp_path / "candidate-n-plus-1",
+        output_name="station",
+        models=models,
+        product_version="1.0.0-rc16",
+    )
+
+    n_packs: dict[str, dict[str, object]] = candidate_n["packs"]  # type: ignore[assignment]
+    n1_packs: dict[str, dict[str, object]] = candidate_n1["packs"]  # type: ignore[assignment]
+    assert set(n_packs) == set(n1_packs)
+
+    model_components = sorted(component for component in n_packs if component != "core")
+    assert model_components, "there must be model packs for this test to mean anything"
+
+    drifted = {
+        component: (n_packs[component]["sha256"], n1_packs[component]["sha256"])
+        for component in model_components
+        if n_packs[component]["sha256"] != n1_packs[component]["sha256"]
+    }
+    assert not drifted, (
+        "a MODEL pack's bytes changed between candidates, so no station could reuse its "
+        f"~21 GB cache across an upgrade -- the whole point of PR #127: {drifted}"
+    )
+    for component in model_components:
+        assert n_packs[component]["bytes"] == n1_packs[component]["bytes"], component
+
+    # The negative control: `core` MUST differ, or the comparison above would
+    # be satisfied by a builder that ignores product_version entirely -- which
+    # would make this test as vacuous as the one it replaces.
+    assert n_packs["core"]["sha256"] != n1_packs["core"]["sha256"], (
+        "core embeds the product version, so it must change between candidates; if it "
+        "does not, product_version is not reaching the build at all and the model-pack "
+        "assertion above proves nothing"
+    )
 
 
 def test_no_signed_pack_metadata_carries_a_build_input_path(

@@ -42,10 +42,12 @@ it.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from civiccast.db import connect_options
@@ -107,6 +109,12 @@ _SERVICE_QUERY_TIMEOUT_SECONDS = 5.0
 
 ClockFn = Callable[[], float]
 SleepFn = Callable[[float], None]
+
+#: <installer-path-audit MA-12> The digest ``_real_snapshot_digest`` produces
+#: when the table enumeration returns NOTHING -- sha256 over an empty byte
+#: stream. Named here so the drain seam can refuse it explicitly instead of
+#: comparing two copies of it and calling the equality proof of quiescence.
+EMPTY_SNAPSHOT_DIGEST = hashlib.sha256().hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +202,19 @@ def build_drain_seam(
 
         for _ in range(quiescence_attempts):
             first = snapshot_digest()
+            # <installer-path-audit MA-12> The digest is sha256 over
+            # `snapshot_tables(engine)`, whose table names come from
+            # `inspect(engine).get_table_names(schema=...)`. If that returns []
+            # -- wrong schema resolved, schema absent, a dialect/schema-
+            # translate regression -- the digest is sha256-over-nothing, a
+            # CONSTANT, so `first == second` passed on the first attempt and
+            # this gate (the one proving no writers are landing before a backup
+            # is taken) was vacuously true. Both sides came from the same
+            # source and could not disagree. EMPTY_SNAPSHOT_DIGEST is that
+            # constant; matching it means the enumeration found nothing, which
+            # is a failure to observe, not an observation of quiet.
+            if first == EMPTY_SNAPSHOT_DIGEST:
+                return False
             sleep(settle_seconds)
             second = snapshot_digest()
             if first == second:
@@ -203,10 +224,75 @@ def build_drain_seam(
     return _drain_and_verify_quiescence
 
 
+@dataclass(frozen=True)
+class ControlPlaneIdentity:
+    """Who answered ``/health``, and what schema they are running against.
+
+    <installer-path-audit BL-04> The maintenance attestation
+    (``200 + mode=="maintenance" + workers_started is False +
+    mutating_disabled is True + mode_contract==1``) names NO product version,
+    NO build identity and NO schema revision -- and it is the last gate before
+    COMPLETE / exit 0. So a supervisor left running from BEFORE the upgrade,
+    which is in maintenance mode precisely because the interlock is held,
+    answers green on the first poll: the upgrade is certified by the OLD code
+    attesting to itself. Any other process listening on 8000 that returns that
+    JSON shape passes too.
+
+    These are the fields PR #143 made unconditional in ``civiccast/app.py``
+    for exactly this consumer.
+    """
+
+    version: str | None = None
+    schema_db_revision: str | None = None
+    schema_expected_head: str | None = None
+
+
+IdentityProbe = Callable[[], ControlPlaneIdentity]
+"""``() -> ControlPlaneIdentity``. Reads /health and reports who answered."""
+
+
+def evaluate_control_plane_identity(
+    identity: ControlPlaneIdentity,
+    *,
+    expected_version: str,
+    expected_schema_head: str,
+) -> str | None:
+    """Return a refusal reason, or None when the attester is the right process.
+
+    Pure, so the gate's judgement is testable without a live control plane.
+    """
+
+    if identity.version is None:
+        return "the /health attestation carries no product version"
+    if identity.version != expected_version:
+        return (
+            f"the process attesting maintenance health reports version {identity.version!r}, "
+            f"but this upgrade is installing {expected_version!r} -- the OLD supervisor is "
+            "still the one answering"
+        )
+    if identity.schema_db_revision is None or identity.schema_expected_head is None:
+        return "the /health attestation carries no schema revision pair"
+    if identity.schema_db_revision != expected_schema_head:
+        return (
+            f"the attesting process reports the database at revision "
+            f"{identity.schema_db_revision!r}, but this payload expects {expected_schema_head!r}"
+        )
+    if identity.schema_expected_head != expected_schema_head:
+        return (
+            f"the attesting process expects migration head "
+            f"{identity.schema_expected_head!r}, but this payload expects "
+            f"{expected_schema_head!r} -- it is not running this upgrade's code"
+        )
+    return None
+
+
 def build_health_gate_seam(
     *,
     ensure_started: Callable[[], None],
     maintenance_ready_probe: MaintenanceReadyProbe,
+    identity_probe: IdentityProbe | None = None,
+    expected_version: str | None = None,
+    expected_schema_head: str | None = None,
     clock: ClockFn = time.monotonic,
     sleep: SleepFn = time.sleep,
     health_budget_seconds: float = DEFAULT_HEALTH_BUDGET_SECONDS,
@@ -219,14 +305,46 @@ def build_health_gate_seam(
     ``maintenance_ready_probe`` until it attests green or the budget expires.
     Returns True iff green within budget; False otherwise (the orchestrator then
     rolls back). The start is issued BEFORE the first probe so a not-yet-running
-    service is brought up rather than instantly failed."""
+    service is brought up rather than instantly failed.
+
+    <installer-path-audit BL-04> When ``identity_probe`` and both expectations
+    are supplied, a green attestation is not enough: the attester must also be
+    the NEW code reporting the NEW schema (see
+    :func:`evaluate_control_plane_identity`). The three parameters are optional
+    together so a fake-seam test that only exercises the poll loop is
+    unaffected; production supplies all three.
+    """
+
+    identity_gate_wired = (
+        identity_probe is not None
+        and expected_version is not None
+        and expected_schema_head is not None
+    )
 
     def _health_gate() -> bool:
         ensure_started()
         deadline = clock() + health_budget_seconds
         while True:
             if maintenance_ready_probe():
-                return True
+                if not identity_gate_wired:
+                    return True
+                assert identity_probe is not None
+                assert expected_version is not None
+                assert expected_schema_head is not None
+                refusal = evaluate_control_plane_identity(
+                    identity_probe(),
+                    expected_version=expected_version,
+                    expected_schema_head=expected_schema_head,
+                )
+                if refusal is None:
+                    return True
+                # Keep polling: the OLD supervisor answering first is exactly
+                # the case this gate exists for, and the NEW one may still be
+                # coming up. The budget is what bounds it.
+                if clock() >= deadline:
+                    return False
+                sleep(poll_interval_seconds)
+                continue
             if clock() >= deadline:
                 return False
             sleep(poll_interval_seconds)
@@ -528,8 +646,47 @@ def _real_scm_stop(service_name: str = SERVICE_NAME) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _real_identity_probe() -> ControlPlaneIdentity:
+    """GET ``<control-plane>/health`` and report who answered (BL-04).
+
+    Separate from :func:`_real_health_check` because that one parses only the
+    four maintenance-contract fields (``_HEALTH_BODY_FIELDS``) into the
+    supervisor's own typed probe; widening that model would change a shape the
+    supervisor also uses. Never raises -- an unreadable body yields an empty
+    identity, which :func:`evaluate_control_plane_identity` refuses.
+    """
+
+    import json
+    import urllib.parse
+    import urllib.request
+
+    health_url = _control_plane_url().rstrip("/") + "/health"
+    try:
+        if urllib.parse.urlparse(health_url).scheme not in ("http", "https"):
+            raise ValueError(f"refusing non-HTTP control-plane URL: {health_url!r}")
+        with urllib.request.urlopen(health_url, timeout=_HEALTH_HTTP_TIMEOUT_SECONDS) as resp:  # noqa: S310  # nosec B310 - scheme checked immediately above
+            parsed = json.loads(resp.read())
+    except Exception:
+        return ControlPlaneIdentity()
+    if not isinstance(parsed, dict):
+        return ControlPlaneIdentity()
+
+    def _string(key: str) -> str | None:
+        value = parsed.get(key)
+        return value if isinstance(value, str) else None
+
+    return ControlPlaneIdentity(
+        version=_string("version"),
+        schema_db_revision=_string("schema_db_revision"),
+        schema_expected_head=_string("schema_expected_head"),
+    )
+
+
 def resolve_service_control_seams(
     context: UpgradeContext,
+    *,
+    expected_version: str | None = None,
+    expected_schema_head: str | None = None,
 ) -> tuple[Callable[[], bool], Callable[[], bool], Callable[[], None]]:
     """Return ``(drain_and_verify_quiescence, health_gate, stop_service)`` bound
     to the real production primitives for ``context``.
@@ -546,6 +703,11 @@ def resolve_service_control_seams(
     health = build_health_gate_seam(
         ensure_started=_real_scm_start,
         maintenance_ready_probe=build_maintenance_ready_probe(_real_health_check),
+        # <installer-path-audit BL-04> The attester must be the NEW code on the
+        # NEW schema, not merely A process in maintenance mode.
+        identity_probe=_real_identity_probe,
+        expected_version=expected_version,
+        expected_schema_head=expected_schema_head,
     )
     stop = build_stop_service_seam(scm_stop=_real_scm_stop)
     return drain, health, stop

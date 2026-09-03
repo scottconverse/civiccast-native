@@ -123,7 +123,7 @@ entries:
         blob: 8252517551419e6c8dab9ae6d2a12b6aa49955a7
       code:
         path: civiccast/dr/backup.py
-        blob: ac618621211771eeda024dee8a32163ed1a8059a
+        blob: 46c4ead59629f3ad182beb559af5848793650c22
       test:
         path: tests/dr/test_postgres_backup.py
         blob: 6f3ab03eb95bf1a1f079594d39fb8436f3caaf77
@@ -135,7 +135,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9bf4e3d8a9727386f5e597c44bc774aafef4368e
+        blob: eb9dab2212d124da5b840711e8cd9b685b162f47
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -199,7 +199,7 @@ entries:
         blob: ac8ac5c40e05c3591c5d250f8381797903907b2a
       code:
         - path: civiccast/dr/restore_drill.py
-          blob: f55356070bbc579db7fb7787794ba7c2f3475b71
+          blob: a69eb4cddc92215c8aea90ed70b4b02eba92d9a5
         - path: civiccast/dr/report.py
           blob: 37c2bd2bc951eb0bfe8d5b4b2fdef1eda6027e1c
       test:
@@ -213,7 +213,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9bf4e3d8a9727386f5e597c44bc774aafef4368e
+        blob: eb9dab2212d124da5b840711e8cd9b685b162f47
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -256,10 +256,10 @@ entries:
         blob: 8252517551419e6c8dab9ae6d2a12b6aa49955a7
       code:
         path: civiccast/dr/restore_drill.py
-        blob: f55356070bbc579db7fb7787794ba7c2f3475b71
+        blob: a69eb4cddc92215c8aea90ed70b4b02eba92d9a5
       test:
         path: tests/dr/test_restore_drill.py
-        blob: a0d8f82317ea29d755d3f808773536a0e4cb6bc5
+        blob: f237e38adff676d9ed670bfcfec7fc9efb8d5688
         node_id: "tests/dr/test_restore_drill.py::test_restore_drill_catches_a_dropped_row"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -268,7 +268,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9bf4e3d8a9727386f5e597c44bc774aafef4368e
+        blob: eb9dab2212d124da5b840711e8cd9b685b162f47
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -331,7 +331,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9bf4e3d8a9727386f5e597c44bc774aafef4368e
+        blob: eb9dab2212d124da5b840711e8cd9b685b162f47
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -449,7 +449,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9bf4e3d8a9727386f5e597c44bc774aafef4368e
+        blob: eb9dab2212d124da5b840711e8cd9b685b162f47
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -585,7 +585,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 9bf4e3d8a9727386f5e597c44bc774aafef4368e
+        blob: eb9dab2212d124da5b840711e8cd9b685b162f47
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1

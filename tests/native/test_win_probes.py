@@ -318,6 +318,142 @@ def test_interlock_double_take_raises(hkcu_test_key: str) -> None:
         take_interlock("run-2", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
 
 
+# ---------------------------------------------------------------------------
+# <installer-path-audit BL-05> Interlock OWNERSHIP.
+#
+# `release_interlock` checked only that a record existed and was `held` -- it
+# never compared `owner_run_id`. Combined with the orchestrator's
+# unconditional release on the rollback path, run B (a second setup.exe, a
+# retry, an operator double-click) failing to TAKE the interlock released
+# run A's, mid-migration: the supervisor re-permits writers against a schema
+# A is halfway through changing, B reports ROLLED_BACK/exit 10, A reports
+# COMPLETE/exit 0, and both journals are internally consistent and wrong.
+# ---------------------------------------------------------------------------
+
+
+def test_a_second_run_cannot_release_the_interlock_it_does_not_own(
+    hkcu_test_key: str,
+) -> None:
+    from civiccast.native.win_probes import read_interlock, release_interlock, take_interlock
+
+    take_interlock("run-A", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+
+    with pytest.raises(RuntimeError, match="held by run 'run-A'"):
+        release_interlock(
+            owner_run_id="run-B", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key
+        )
+
+    still_held = read_interlock(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    assert still_held.status == "held"
+    assert still_held.record is not None
+    assert still_held.record.owner_run_id == "run-A"
+
+
+def test_the_owning_run_can_release_its_own_interlock(hkcu_test_key: str) -> None:
+    from civiccast.native.win_probes import read_interlock, release_interlock, take_interlock
+
+    take_interlock("run-A", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    released = release_interlock(
+        owner_run_id="run-A", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key
+    )
+    assert released.state == "released"
+    assert read_interlock(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key).status == "free"
+
+
+def test_an_operator_side_release_without_an_owner_still_works(hkcu_test_key: str) -> None:
+    """The recovery path documented in UPGRADE-RECOVERY.md must stay usable:
+    an operator clearing an interlock whose owner is gone has no run id."""
+    from civiccast.native.win_probes import release_interlock, take_interlock
+
+    take_interlock("run-A", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    assert (
+        release_interlock(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key).state == "released"
+    )
+
+
+def test_taking_the_interlock_records_the_owning_process(hkcu_test_key: str) -> None:
+    import os
+
+    from civiccast.native.win_probes import take_interlock
+
+    record = take_interlock("run-A", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    assert record.owner_pid == os.getpid()
+
+
+def test_a_held_interlock_names_its_holder_and_that_holders_liveness(
+    hkcu_test_key: str,
+) -> None:
+    """ "cannot take interlock: held" told an operator nothing.
+
+    A killed engine leaves ``state="held"`` FOREVER, and every subsequent
+    upgrade then dies at step 1 -> exit 10 -> NSIS 124, which post-#143 aborts
+    the install: a permanent, unexplained wedge. The refusal must name the
+    holder and say whether it still exists.
+    """
+    from civiccast.native.win_probes import take_interlock
+
+    take_interlock("run-A", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    with pytest.raises(RuntimeError) as excinfo:
+        take_interlock("run-B", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+
+    message = str(excinfo.value)
+    assert "held by run 'run-A'" in message
+    assert "generation 1" in message
+    # This process took it, so it is trivially alive.
+    assert "STILL RUNNING" in message
+
+
+def test_an_interlock_held_by_a_dead_process_is_named_stale_not_silently_stolen(
+    hkcu_test_key: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stale is a LOUD finding, not an automatic steal.
+
+    Auto-stealing would be its own defect -- it could tear the interlock out
+    from under a live upgrade whose PID this process merely failed to see.
+    """
+    import civiccast.native.win_probes as win_probes
+
+    win_probes.take_interlock("run-A", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    monkeypatch.setattr(win_probes, "_pid_is_alive", lambda _pid: False)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        win_probes.take_interlock("run-B", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+
+    message = str(excinfo.value)
+    assert "is GONE" in message
+    assert "STALE" in message
+    assert "Clear" in message, "the operator must be told the exact remedy"
+    # And it really did NOT take it.
+    read_back = win_probes.read_interlock(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    assert read_back.record is not None
+    assert read_back.record.owner_run_id == "run-A"
+
+
+def test_a_record_written_by_an_older_build_without_a_pid_still_parses(
+    hkcu_test_key: str,
+) -> None:
+    """``MaintenanceRecord`` is ``extra="forbid"``; the new field must be
+    optional so an interlock an older build took is still readable."""
+    from civiccast.native.win_probes import read_interlock, take_interlock
+
+    legacy = (
+        '{"v":1,"state":"held","generation":3,"owner_run_id":"old-run",'
+        '"taken_utc":"2026-09-01T00:00:00+00:00","released_utc":null}'
+    )
+    with winreg.CreateKeyEx(
+        winreg.HKEY_CURRENT_USER, hkcu_test_key, 0, winreg.KEY_SET_VALUE
+    ) as key:
+        winreg.SetValueEx(key, "Maintenance", 0, winreg.REG_SZ, legacy)
+
+    read_back = read_interlock(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    assert read_back.status == "held"
+    assert read_back.record is not None
+    assert read_back.record.owner_pid is None
+
+    with pytest.raises(RuntimeError, match="no owning pid was recorded"):
+        take_interlock("run-B", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+
+
 def test_interlock_malformed_json_is_unreadable(hkcu_test_key: str) -> None:
     with winreg.CreateKeyEx(
         winreg.HKEY_CURRENT_USER, hkcu_test_key, 0, winreg.KEY_SET_VALUE
