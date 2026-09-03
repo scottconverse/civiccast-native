@@ -495,18 +495,28 @@ def test_m3_no_claim_asserts_a_thing_and_its_negation() -> None:
 
 
 def test_m3_the_rollback_path_verifies_the_service_state_instead_of_asserting_it() -> None:
+    """SUPERSEDED (Gate A run 33681670855, 2026-09-02): the M3-era rollback
+    path used to CONTINUE past exit 10 and describe machine state at the end
+    of the macro, so it had to read the service control manager rather than
+    assert. That path is gone -- exit 10 under the flat installer layout
+    (the only layout this bootstrap ever invokes) now fails the install
+    outright via CIVICCAST_FAIL before D4 provisioning/service registration
+    ever runs, so there is no live service to query and nothing here needs to
+    verify a running-service claim it no longer makes."""
     macro = _postinstall_macro(_hooks_source())
 
     assert "healthy and still running" not in macro, (
-        'the rollback path tells the operator an installation "is healthy and still '
-        'running". Nothing in this macro ever checked either. On the re-walk it was said '
-        "about a previous version that did not exist"
+        'the rollback path must not tell the operator an installation "is healthy and '
+        'still running" -- exit 10 now fails the install before any service is registered '
+        "or started, so no such claim can ever be true here"
     )
-    assert re.search(r"sc(\.exe)?\s+query\s+CivicCastSupervisor", macro), (
-        "the rollback path must READ the service state before describing it. It is the "
-        "one claim on this path an installer can actually verify, with the service "
-        "control manager, at the moment it speaks"
+    d3_arm = _slice(macro, "${ElseIf} $0 == 10", "${ElseIf} $0 == 20")
+    assert "!insertmacro CIVICCAST_FAIL" in _code(d3_arm), (
+        "exit 10 (D3 clean rollback) under the flat installer layout must fail the "
+        "install via CIVICCAST_FAIL -- see the Gate A run 33681670855 fix comment above "
+        "the branch for why a bare continue-with-notice is unsafe under this layout"
     )
+    assert "${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT}" in d3_arm
 
 
 def test_m3_the_rollback_path_never_claims_the_install_itself_was_undone() -> None:
@@ -532,24 +542,25 @@ def test_m3_the_rollback_path_never_claims_the_install_itself_was_undone() -> No
         )
 
 
-def test_m3_the_recorded_version_sentence_has_a_branch_for_every_case_it_can_render() -> None:
-    """The self-contradiction was not a typo -- it was one template covering
-    three different situations. The equal case (`$R0 == ${VERSION}`, which is
-    what the F-01 leftover produces) needs a wording of its own, or the
-    template renders "left at X, NOT X" again the next time it is edited."""
+def test_m3_the_rollback_arm_is_retired_in_favor_of_an_unconditional_write() -> None:
+    """SUPERSEDED (Gate A run 33681670855, 2026-09-02): the `$R4 == "1"`
+    rollback-report arm this test used to pin (three-way $R0-vs-${VERSION}
+    wording) existed to describe a D3 clean-rollback state that CONTINUED
+    past exit 10. That state is no longer reachable -- exit 10 now aborts via
+    CIVICCAST_FAIL before this point in the macro, so $R4 is never set to
+    "1" and the InstalledVersion write at the end of POSTINSTALL is
+    unconditional (reachable only by a fully successful chain, since every
+    failure branch above it aborts outright)."""
     macro = _postinstall_macro(_hooks_source())
-    rollback_arm = macro[macro.rfind('${If} $R4 == "1"') :]
-    assert rollback_arm, "the rollback arm at the end of POSTINSTALL is gone"
+    executable = _code(macro)
 
-    assert '${If} $R0 == "none"' in rollback_arm, (
-        "the no-recorded-version case must have its own wording; a template that says "
-        '"the previously installed version (none)" is operator nonsense'
+    assert '$R4 == "1"' not in executable, (
+        "the retired rollback-report arm must not reappear -- exit 10 fails closed now, "
+        "so there is nothing left for a $R4 latch to gate"
     )
-    assert '${ElseIf} $R0 == "${VERSION}"' in rollback_arm, (
-        "the case where the recorded version EQUALS the version being installed -- the "
-        "one the F-01 leftover produces, and the one that rendered 'left at X, NOT X' -- "
-        "must have its own wording rather than falling into a contrast template"
-    )
+    assert 'WriteRegStr HKLM "Software\\CivicCast\\Native" "InstalledVersion" "${VERSION}"' in (
+        executable
+    ), "the InstalledVersion write must still happen, unconditionally, at the end of POSTINSTALL"
 
 
 # --------------------------------------------------------------------------

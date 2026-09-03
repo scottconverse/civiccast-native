@@ -570,43 +570,52 @@ def test_bootstrap_postinstall_every_failure_branch_actually_fails_the_install()
                 "SetErrorLevel without an immediately following Abort still runs "
                 f".onInstSuccess (measured); found {line!r} followed by {following!r}"
             )
-    # 3. CIVICCAST_NOTICE must be reachable ONLY on the D3 clean-rollback path
-    #    -- otherwise this carve-out-free rule could be quietly defeated by
-    #    routing some OTHER (real) failure through NOTICE instead of FAIL.
+    # 3. CIVICCAST_NOTICE must not be reachable anywhere in POSTINSTALL.
     #
-    #    RETARGETED (chain M3, F-03, 2026-08-01 sandbox newcomer re-walk). This
-    #    used to assert exactly TWO uses, both INSIDE the `${ElseIf} $0 == 10`
-    #    branch -- the branch's two mutually exclusive wordings. Both facts
-    #    changed, and the change is the fix:
+    #    RETARGETED (Gate A run 33681670855, 2026-09-02). Chain M3 (F-03) had
+    #    given the D3 clean-rollback path (exit 10) its own non-failure
+    #    CIVICCAST_NOTICE dialog, raised at the end of the macro from read
+    #    machine state, because that path deliberately CONTINUED past the
+    #    engine's rollback -- the D3 engine's own database work reverted
+    #    cleanly, but setup itself kept going and finished the install.
     #
-    #      * the dialog MOVED OUT of that branch. The exit==10 branch runs
-    #        BEFORE D4 provisioning, service registration and the firewall
-    #        rule, so every claim it made about what was running on the machine
-    #        was a claim about a state that had not happened yet. That is why
-    #        the re-walk's dialog said a previous version was "healthy and
-    #        still running" on a machine that had never had one. It is now
-    #        raised at the END of the macro, from state the installer reads;
-    #      * ONE use, not two. The wording is assembled from three explicit
-    #        cases into $R6 before the single NOTICE, which is also what
-    #        removed the "left at X, NOT X" self-contradiction.
-    #
-    #    Containment is what this rule is actually for, so it is now enforced
-    #    against the $R4 latch (set ONLY by the exit==10 branch) rather than
-    #    against the branch's own text.
+    #    Gate A run 33681670855 (kit 7971815, beta.2 -> beta.3, real hardware)
+    #    proved that "continue" is unsafe under the flat installer layout this
+    #    bootstrap always uses (--flat-installer-layout, see the D3 engine
+    #    invocation above): adapt_flat_installer_layout
+    #    (civiccast/native/upgrade/seams.py) makes the engine's
+    #    read_junction/lay_tree/flip_junction seams no-ops over the single
+    #    "$INSTDIR\\runtime" tree the bootstrap already extracted the NEW
+    #    payload into before D3 ran, so a clean engine-level rollback leaves
+    #    NEW code on disk over an UNMIGRATED database. Continuing into D4 let
+    #    that mismatched pair get a registered, started service. The fix
+    #    retires the notice-and-continue path entirely: exit 10 now fails the
+    #    whole install via CIVICCAST_FAIL (${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT}),
+    #    the same as every other D3 failure code, and CIVICCAST_NOTICE has no
+    #    remaining caller in POSTINSTALL.
     assert "${ElseIf} $0 == 10" in executable
     assert "${ElseIf} $0 == 20" in executable
-    notice_uses = executable.count("!insertmacro CIVICCAST_NOTICE")
-    assert notice_uses == 1, (
-        "expected CIVICCAST_NOTICE to be used exactly once in POSTINSTALL (the single "
-        "operator report for the D3 clean-rollback path, raised at the end from read "
-        "state); any further use needs its own justification"
+    assert "${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT}" in executable, (
+        "D3 exit 10 must fail the install under a distinct exit code -- the flat "
+        "installer layout this bootstrap always uses cannot honor what a rollback "
+        "promises (see the Gate A run 33681670855 comment above the exit==10 branch)"
     )
-    # The OUTER ${Else} (two-space indent) closes the $R4 arm; the ${Else}s
-    # nested inside it belong to the service-state and recorded-version reads.
-    rollback_report = executable.split('${If} $R4 == "1"', 1)[1].split("\n  ${Else}", 1)[0]
-    assert rollback_report.count("!insertmacro CIVICCAST_NOTICE") == notice_uses, (
-        "every CIVICCAST_NOTICE use must live inside the $R4 clean-rollback report, the "
-        "latch only the D3 exit==10 branch sets"
+    d3_arm = executable.split("${ElseIf} $0 == 10", 1)[1].split("${ElseIf} $0 == 20", 1)[0]
+    assert "!insertmacro CIVICCAST_FAIL" in d3_arm, (
+        "exit 10 must abort through CIVICCAST_FAIL, exactly like every other D3 failure "
+        "code -- there is no more non-failure continuation path for a clean rollback "
+        "under the flat installer layout"
+    )
+    notice_uses = executable.count("!insertmacro CIVICCAST_NOTICE")
+    assert notice_uses == 0, (
+        "CIVICCAST_NOTICE must have no remaining caller in POSTINSTALL -- the D3 "
+        "clean-rollback path it existed for now fails closed via CIVICCAST_FAIL instead "
+        "(Gate A run 33681670855); a reintroduced use needs its own justification"
+    )
+    assert '$R4 == "1"' not in executable, (
+        "the retired $R4 clean-rollback latch/report arm must not reappear -- the "
+        "InstalledVersion write at the end of POSTINSTALL is unconditional now, reachable "
+        "only by a fully successful chain since every failure branch above it aborts"
     )
 
 
@@ -888,40 +897,40 @@ def test_bootstrap_d3_writes_machine_parseable_route_and_engine_evidence() -> No
 
 
 def test_bootstrap_postinstall_d3_exit_code_contract_is_preserved_exactly() -> None:
-    """The retired block's 5-way exit-code contract (0 / 10 / 20 / 30 /
-    unexpected) must survive the rehoming byte-for-byte in its branching
-    logic and operator-facing messages -- this is the load-bearing safety
-    contract (halt vs rollback vs refuse) and must not drift silently."""
+    """The D3 engine's 5-way exit-code contract (0 / 10 / 20 / 30 / unexpected)
+    must be branched on distinctly in operator-facing messages -- this is the
+    load-bearing safety contract (commit vs rollback-containment vs halt vs
+    refuse) and must not drift silently.
+
+    RETARGETED (Gate A run 33681670855, 2026-09-02): exit 10's own behavior
+    changed from chain M3's "continue, notify" to "fail closed" (see the
+    exit==10 branch's header comment for the real-hardware failure this
+    closes), so what this test pins for exit 10 changed with it -- it now
+    asserts the branch fails through CIVICCAST_FAIL under its own distinct
+    exit code, the same shape every other D3 failure branch already had."""
     postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
 
     assert "install/upgrade committed" in postinstall
-    # RETARGETED (chain M3, F-03): was `"upgrade rolled back cleanly"`. That
-    # exact phrase is what the re-walk operator read as the INSTALL having been
-    # undone, on a machine that then held a complete 1.19 GB install, a running
-    # service and a live API. Exit 10 has only ever meant the D3 UPGRADE ENGINE
-    # reverted ITS OWN work, so the branch now says whose rollback it was. The
-    # branch, its exit code and its non-aborting behaviour are unchanged; what
-    # is pinned here is that the exit-10 arm still reports, and still names the
-    # engine.
-    assert "clean rollback of its own work" in postinstall
     assert "upgrade HALTED" in postinstall
     assert "UPGRADE-RECOVERY.md" in postinstall
     assert "non-restorable migration" in postinstall
     assert "unexpected fault" in postinstall
 
-    # The three erroring branches (20, 30, unexpected) must each fail the
-    # install outright, with a code that says WHICH of them happened -- a
-    # halt needing manual database restore and a refused non-restorable
-    # migration call for different operator action, so one shared "setup
-    # failed" code would be a downgrade (AUDIT-001).
+    # The four erroring branches (10-under-flat-layout, 20, 30, unexpected)
+    # must each fail the install outright, with a code that says WHICH of
+    # them happened -- a rollback-containment abort, a halt needing manual
+    # database restore, and a refused non-restorable migration call for
+    # different operator action, so one shared "setup failed" code would be
+    # a downgrade (AUDIT-001).
     # Sliced to the D3 block's OWN end label rather than a fixed character
     # window: a 4000-char window silently excluded the CIVICCAST_FAIL
     # branches the moment the exit==10 branch grew a second wording, which
     # made this assertion report a contract regression that had not happened.
     d3_start = postinstall.index("-m civiccast.native.upgrade")
     d3_region = postinstall[d3_start : postinstall.index("civiccast_bootstrap_d3_done:", d3_start)]
-    assert d3_region.count("!insertmacro CIVICCAST_FAIL") >= 3
+    assert d3_region.count("!insertmacro CIVICCAST_FAIL") >= 4
     for code_name in (
+        "CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT",
         "CIVICCAST_EXIT_D3_HALTED",
         "CIVICCAST_EXIT_D3_REFUSED",
         "CIVICCAST_EXIT_D3_FAULT",
@@ -1457,89 +1466,71 @@ def test_service_host_member_is_restored_after_service_registration() -> None:
 
 
 def test_d3_clean_rollback_does_not_record_new_installed_version() -> None:
-    """CRITICAL fix (2026-07-30 adversarial review): D3's exit==10 branch
-    (clean rollback) previously only DetailPrinted and fell through --
-    execution then reached D4 below and, on success, the InstalledVersion
-    write at the end of this macro, stamping ${VERSION} on a machine that
-    the D3 engine's own contract had just left on the OLD version
-    (civiccast.native.upgrade.orchestrator._rollback: the junction is flipped
-    back and the interlock released "so the (rolled-back, old-version)
-    runtime resumes"). The NEXT upgrade would then pass this release's
-    version as --old-version to an engine that never ran it, corrupting the
-    rollback contract every future upgrade depends on.
+    """History: a 2026-07-30 adversarial-review fix stopped D3's exit==10
+    branch (clean rollback) from falling through to the InstalledVersion
+    write on a machine the engine's own contract had just left on the OLD
+    version, using a `$R4` latch register gating that write.
 
-    This pins the MECHANISM the fix uses -- a latch register defaulted
-    before the D3 call, set in the exit==10 branch, and gating the
-    InstalledVersion write in an ${Else} -- not just prose, so a revert to
-    the old fall-through shape fails this test. It also pins that the
-    operator notice on this path routes through the dedicated
-    CIVICCAST_NOTICE macro (never a bare CIVICCAST_ALERT, which
-    test_bootstrap_postinstall_every_failure_branch_actually_fails_the_install
-    forbids in POSTINSTALL), and directly asserts the rollback branch's own
-    text never contains the InstalledVersion write -- the actual defect this
-    fix closes: a machine still on the old version recording the new one and
-    feeding a false --old-version to the next upgrade."""
+    SUPERSEDED (Gate A run 33681670855, 2026-09-02): the whole
+    continue-and-report shape that latch protected is gone. Under the flat
+    installer layout this bootstrap always uses, a D3 engine ROLLED_BACK
+    report does not mean "the machine is on the old version, still healthy" --
+    adapt_flat_installer_layout's read_junction/lay_tree/flip_junction are
+    no-ops over the single "$INSTDIR\\runtime" tree already holding the NEW
+    payload before D3 ever ran (see the exit==10 branch's own header comment
+    for the full reasoning and the real-hardware failure this closes).
+    Continuing past it -- which is exactly what the old $R4-gated path did --
+    let D4 register and start a service on that mismatched pair. The fix
+    retires the $R4 latch and the notice-and-continue path entirely: exit 10
+    now fails the WHOLE install via CIVICCAST_FAIL
+    (${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT}), before the InstalledVersion write
+    is ever reached, exactly like every other D3 failure branch. This test now
+    pins THAT mechanism instead: the write is unconditional and unreachable
+    from exit==10 because CIVICCAST_FAIL aborts first."""
     postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
 
     marker_write = 'WriteRegStr HKLM "Software\\CivicCast\\Native" "InstalledVersion" "${VERSION}"'
 
-    d3_start = postinstall.index("-m civiccast.native.upgrade")
-    assert 'StrCpy $R4 "0"' in postinstall[:d3_start], (
-        'expected the InstalledVersion-write latch ($R4) defaulted to "0" before the D3 engine call'
+    executable = "\n".join(
+        line for line in postinstall.splitlines() if not line.lstrip().startswith(";")
+    )
+    assert "$R4" not in executable, (
+        "the retired InstalledVersion-write latch ($R4) must not reappear in executable "
+        "NSIS code -- exit 10 fails closed now, so there is nothing left for a latch to "
+        "gate (prose may still discuss the retired mechanism historically)"
     )
 
+    d3_start = postinstall.index("-m civiccast.native.upgrade")
     assert "${ElseIf} $0 == 10" in postinstall
     assert "${ElseIf} $0 == 20" in postinstall
     rollback_branch = postinstall.split("${ElseIf} $0 == 10", 1)[1].split("${ElseIf} $0 == 20", 1)[
         0
     ]
-    assert 'StrCpy $R4 "1"' in rollback_branch, (
-        'expected the D3 exit==10 (clean rollback) branch to set $R4 to "1" '
-        "so the InstalledVersion write below is skipped -- without this, a "
-        "clean rollback is recorded as a successful upgrade to ${VERSION}"
+    assert "!insertmacro CIVICCAST_FAIL" in rollback_branch, (
+        "the D3 exit==10 (clean rollback under the flat installer layout) branch must "
+        "abort via CIVICCAST_FAIL -- see the Gate A run 33681670855 fix comment above "
+        "the branch for why a bare continue is unsafe under this layout"
     )
-    # RETARGETED (chain M3, F-03, 2026-08-01 sandbox newcomer re-walk): the
-    # NOTICE used to be asserted INSIDE this branch. It has deliberately moved
-    # to the $R4-gated report at the END of the macro, because this branch runs
-    # BEFORE D4 provisioning, service registration and the firewall rule -- so
-    # every claim it made about machine state was a claim about a state that
-    # had not happened yet ("the previously installed version is healthy and
-    # still running", said on a machine that had never had one). What this test
-    # is actually protecting -- that the report routes through CIVICCAST_NOTICE
-    # and never a bare CIVICCAST_ALERT -- is unchanged; it is now asserted
-    # where the report lives.
-    rollback_report = postinstall.split('${If} $R4 == "1"', 1)[1].split("\n  ${Else}", 1)[0]
-    assert "!insertmacro CIVICCAST_NOTICE" in rollback_report, (
-        "expected the operator notice on this path to route through "
-        "CIVICCAST_NOTICE, not a bare CIVICCAST_ALERT (POSTINSTALL forbids "
-        "the latter for any non-CIVICCAST_FAIL report)"
+    assert "${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT}" in rollback_branch
+    assert "!insertmacro CIVICCAST_ALERT" not in rollback_branch, (
+        "the D3 exit==10 path must not use a bare CIVICCAST_ALERT -- it must go "
+        "through CIVICCAST_FAIL, which wraps CIVICCAST_ALERT with SetErrorLevel + Abort"
     )
-    for block in (rollback_branch, rollback_report):
-        assert "!insertmacro CIVICCAST_ALERT" not in block, (
-            "the D3 exit==10 path must not use a bare CIVICCAST_ALERT"
-        )
-    # The actual defect this fix closes: the rollback branch's own text must
-    # never reach the InstalledVersion write directly (it is only reachable
-    # later, through the $R4-gated ${Else} checked below).
+    assert "!insertmacro CIVICCAST_NOTICE" not in postinstall, (
+        "CIVICCAST_NOTICE must have no remaining caller in POSTINSTALL -- the D3 "
+        "clean-rollback continuation path it existed for is retired"
+    )
+    # The actual defect this fix closes, restated for the new mechanism: the
+    # rollback branch's own text must never reach the InstalledVersion write
+    # -- CIVICCAST_FAIL's Abort makes that structurally true, and the write
+    # itself is now unconditional (unreachable except via a fully successful
+    # chain, since every failure branch above it aborts outright).
     assert marker_write not in rollback_branch, (
         "the D3 exit==10 (clean rollback) branch must not reach the "
-        "InstalledVersion write -- a machine still on the OLD version must "
-        "never have the NEW version recorded"
+        "InstalledVersion write -- CIVICCAST_FAIL aborts before it"
     )
-
-    marker_index = postinstall.index(marker_write)
-    guard = '${If} $R4 == "1"'
-    assert guard in postinstall, (
-        'expected an ${If} $R4 == "1" guard around the InstalledVersion write'
-    )
-    guard_index = postinstall.index(guard)
-    assert d3_start < guard_index < marker_index, (
-        "the $R4 guard must sit between the D3 call and the InstalledVersion write"
-    )
-    else_index = postinstall.index("${Else}", guard_index)
-    assert guard_index < else_index < marker_index, (
-        "the InstalledVersion write must live in the ${Else} branch of the "
-        '$R4 == "1" guard (i.e. skipped when a clean rollback set the latch)'
+    assert d3_start < postinstall.index(marker_write), (
+        "sanity: the InstalledVersion write still lives after the D3 engine call"
     )
 
 
