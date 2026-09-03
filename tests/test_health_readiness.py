@@ -128,7 +128,18 @@ def test_schema_at_head_is_healthy(
 def test_schema_behind_the_code_is_degraded(
     health_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("DATABASE_URL", _sqlite_at_revision(tmp_path, "0001_ancient_revision"))
+    # <installer-path-audit MA-06> "behind" now specifically means "a revision
+    # THIS build's own migration graph recognizes, just not the head" -- a
+    # revision the graph has never heard of is "ahead" instead (see
+    # civiccast/schema_check.py's evaluate_schema_currency). The old fixture
+    # value "0001_ancient_revision" was never a real revision id in this
+    # repo's migration graph, so under that (correct, deliberate) distinction
+    # it always classifies as "ahead", not "behind" -- this fixture predates
+    # the ahead/behind split and was pinning an obsolete pairing. Use a real,
+    # superseded revision id that IS in the graph so this test still exercises
+    # "behind" rather than "ahead".
+    ancient_revision = "0001_create_assets_table"
+    monkeypatch.setenv("DATABASE_URL", _sqlite_at_revision(tmp_path, ancient_revision))
     from civiccast.app import create_app
 
     with TestClient(create_app()) as client:
@@ -137,7 +148,7 @@ def test_schema_behind_the_code_is_degraded(
     assert body["schema"] == "behind"
     assert body["status"] == "degraded"
     # The drift detail that makes the state actionable must survive the change.
-    assert body["schema_db_revision"] == "0001_ancient_revision"
+    assert body["schema_db_revision"] == ancient_revision
     assert body["schema_expected_head"] == expected_migration_head()
 
 
