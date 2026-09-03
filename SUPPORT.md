@@ -1,11 +1,13 @@
 # Support
 
-> **Current native release posture:** `v1.0.0-beta.1` is the current
-> release (USB-delivered). `v1.0.0-beta.2` was never published -- it exists
-> only as an internal Gate A upgrade-baseline kit. `v1.0.0-beta.3` is the
-> current owner-held unpublished candidate. It has no installer asset and
-> is not a public or production release. Community
-> support does not turn this source candidate into a supported field release.
+> **Current native release posture:** `v1.0.0-beta.3` is the current
+> release and the first downloadable one -- `setup.exe` and the runtime
+> `.ccpack` packs are attached to its
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3).
+> `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now superseded.
+> `v1.0.0-beta.2` was never published -- it exists only as an internal
+> Gate A upgrade-baseline kit. Community support does not turn this beta
+> into a supported, SLA'd field release.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -69,28 +71,29 @@ development.
 ## Native Windows Beta
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
-is **not a public beta**. Its current development candidate, `v1.0.0-beta.3`,
-is owner-held and unpublished with no installer asset, so there is no public
-installer to support yet and no dedicated support intake for it.
+is a **public beta**, not a finished production release. Its current
+release, `v1.0.0-beta.3`, is downloadable (setup.exe and the runtime packs
+on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3)),
+but there is still no dedicated, SLA'd support intake for it -- the same
+community-driven, no-SLA posture above applies.
 
-If you are working on or evaluating the native line as a contributor:
+If you are working on, evaluating, or running the native line:
 
 - Read [ADR 0021](docs/adr/0021-native-windows-runtime.md) and
   [BRANCHES.md](BRANCHES.md) first.
 - Use a regular [GitHub Issue](https://github.com/scottconverse/civiccast-native/issues)
   for questions (GitHub Discussions is not enabled on this repository), and say explicitly in the report
-  that it concerns the native line and which source commit you're on -- the templates don't yet
+  that it concerns the native line and which release tag or source commit you're on -- the templates don't yet
   have a native-specific path, so context has to be spelled out by hand.
 - Do not treat anything reported against the native line as a supported,
-  SLA'd, or field-proven path. The same "community-driven, no SLA" posture
-  above applies, and the native line additionally has no public installer
-  release or field-proof boundary yet. A clean-machine verification record exists at
+  SLA'd, or fully field-proven path. The same "community-driven, no SLA"
+  posture above applies. A clean-machine verification record exists at
   `.agent-runs/native-windows/k1-clean-box-proof/evidence/` (clean-box
   install → activation → clerk loop → captions → product-engine egress,
   2026-08-19); it is an engineering proof, not a support commitment.
 
 This section will be replaced with a real support surface once the native
-line has a published release and its own proof boundary document.
+line has its own proof boundary document beyond the K1 clean-box record above.
 
 ## What Is Not Supported
 

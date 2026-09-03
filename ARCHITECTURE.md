@@ -1,9 +1,10 @@
 # CivicCast Architecture
 
-> **Release state: `v1.0.0-beta.3` is the current owner-held unpublished candidate.**
-> It is not a public or production release,
-> and no installer download exists for it; it describes the state a technical
-> reviewer finds by checking out `main` today. See
+> **Release state: `v1.0.0-beta.3` is the current release and the first
+> downloadable one** -- `setup.exe` and the runtime `.ccpack` packs are
+> attached to its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3).
+> It is still a beta, not a finished production release; it describes the
+> state a technical reviewer finds by checking out `main` today. See
 > [BRANCHES.md](BRANCHES.md) for release identity and status.
 >
 > Treat the repository state as bounded source and local contract-lab proof,

@@ -29,42 +29,39 @@ CURRENT_RELEASE_TAG = (
     )
 )
 
+# Owner decision 2026-09-03: v1.0.0-beta.3 published as the first
+# downloadable release (see
+# docs/releases/2026-09-03-beta3-first-downloadable-release.md). Every
+# front door below must now claim publication, pinned to the exact release
+# tag, and must never fall back to a floating "releases/latest" link -- not
+# claim "owner-held unpublished" or "no installer," which would now be
+# false. This dict's phrase set was last updated for that release; the next
+# release cut must update it again in the same commit that publishes.
 REQUIRED_DOCS: dict[Path, tuple[str, ...]] = {
     Path("README.md"): (
         CURRENT_RELEASE_TAG,
-        "owner-held unpublished candidate",
-        "no installer download",
-        "not a public or production release",
+        "releases/tag/v1.0.0-beta.3",
     ),
     Path("INSTALL-WINDOWS.md"): (
         CURRENT_RELEASE_TAG,
-        "owner-held unpublished",
-        "no installer asset",
-        "not a public or production release",
+        "releases/tag/v1.0.0-beta.3",
     ),
     Path("ARCHITECTURE.md"): (
         CURRENT_RELEASE_TAG,
-        "owner-held unpublished",
-        "no installer download",
-        "not a public or production release",
+        "releases/tag/v1.0.0-beta.3",
     ),
     Path("SUPPORT.md"): (
         CURRENT_RELEASE_TAG,
-        "owner-held unpublished",
-        "no installer asset",
-        "not a public or production release",
+        "releases/tag/v1.0.0-beta.3",
     ),
     Path("docs/index.html"): (
         CURRENT_RELEASE_TAG,
-        "owner-held unpublished candidate",
-        "no installer download",
-        "not a public or production release",
+        "releases/tag/v1.0.0-beta.3",
         "Physical DeckLink SDI capture and acceptance",
     ),
     Path("docs/install-windows.html"): (
         CURRENT_RELEASE_TAG,
-        "owner-held unpublished candidate",
-        "no public Windows installer",
+        "releases/tag/v1.0.0-beta.3",
         "SHA-256",
         "Authenticode",
         "Physical DeckLink",

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Truth contracts for the current owner-held release candidate."""
+"""Truth contracts for the current release's front-door docs."""
 
 from __future__ import annotations
 
@@ -31,26 +31,26 @@ def test_current_candidate_surfaces_match_the_release_posture() -> None:
         text = (ROOT / relative).read_text(encoding="utf-8")
         normalized = " ".join(text.lower().split())
         assert CURRENT_RELEASE_TAG in text, relative
-        assert "owner-held unpublished candidate" in normalized, relative
-        assert "no installer" in normalized or "no public installer" in normalized, relative
-        assert "not a public or production release" in normalized, relative
+        assert "releases/tag/v1.0.0-beta.3" in normalized, relative
 
 
 def test_front_doors_name_the_current_candidate_state() -> None:
     for relative in FRONT_DOORS:
         text = " ".join((ROOT / relative).read_text(encoding="utf-8").lower().split())
         assert CURRENT_RELEASE_TAG.lower() in text, relative
-        assert "owner-held unpublished candidate" in text, relative
-        assert "not a public or production release" in text, relative
+        assert "releases/tag/v1.0.0-beta.3" in text, relative
 
 
 def test_front_doors_do_not_offer_an_unproven_candidate_download() -> None:
+    """Front doors must never point at a floating `releases/latest` link --
+    the release identity has to be pinned to the exact tag a reader is being
+    told about, not to whatever GitHub happens to consider "latest" later."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     install_html = (ROOT / "docs/install-windows.html").read_text(encoding="utf-8")
     assert "releases/latest" not in readme
     assert "releases/latest" not in install_html
-    assert "no installer" in readme.lower()
-    assert "no public windows installer download" in install_html.lower()
+    assert "releases/tag/v1.0.0-beta.3" in readme.lower()
+    assert "releases/tag/v1.0.0-beta.3" in install_html.lower()
 
 
 def test_retired_tester_docs_do_not_masquerade_as_native_proof() -> None:

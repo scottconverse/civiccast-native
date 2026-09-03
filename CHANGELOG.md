@@ -13,10 +13,17 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
-Current owner-held unpublished candidate: `v1.0.0-beta.3`. It has no tag or
-installer asset and is not a public or production release. `v1.0.0-beta.2`
-was never published -- it exists only as an internal Gate A upgrade-baseline
-kit (see the "Changed" entry below).
+## [1.0.0-beta.3] - 2026-09-03
+
+Published as [`v1.0.0-beta.3`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3),
+the first downloadable CivicCast release: `setup.exe` and the runtime
+`.ccpack` packs are attached to the GitHub Release, verified by
+`SHA256SUMS.txt` and a signed sidecar. See
+[`docs/releases/2026-09-03-beta3-first-downloadable-release.md`](docs/releases/2026-09-03-beta3-first-downloadable-release.md)
+for the publish record. `v1.0.0-beta.1` (USB-delivered, no downloadable
+assets) is now superseded. `v1.0.0-beta.2` was never published -- it exists
+only as an internal Gate A upgrade-baseline kit (see the "Changed" entry
+below).
 
 ### Added
 

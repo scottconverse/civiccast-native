@@ -16,23 +16,20 @@ See [BRANCHES.md](BRANCHES.md) for the full explanation, including where an
 earlier, retired WSL2/Ubuntu lane's history now lives (a separate, private
 repository, not this one).
 
-**Current version: `v1.0.0-beta.3`** -- the current owner-held unpublished
-candidate, not a public or production release. It has no installer download attached;
-this README describes
-the state a technical reviewer would find by checking out this repository
-today.
-
-This version number and the release a tester can actually install are two
-different axes: `v1.0.0-beta.3` above is the code's own version identity as
-of this commit (what `main` reports right now), while `v1.0.0-beta.1` in
-"Install and run" below is the separate, already-published release a tester
-downloads or receives -- the same relationship as a project's `main` branch
-being ahead of its latest tagged release. `v1.0.0-beta.2` was never
-published: it exists only as an internal Gate A upgrade-baseline kit (see
+**Current version: `v1.0.0-beta.3`** -- CivicCast's first downloadable
+public release. `setup.exe` and the five runtime `.ccpack` packs are
+attached to the
+[`v1.0.0-beta.3` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3),
+each verified by `SHA256SUMS.txt` and a signed sidecar; the ~21 GB AI-model
+`station\` bundle is deliberately not a release asset (see "Install and run"
+below). `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now
+superseded; `v1.0.0-beta.2` was never published -- it exists only as an
+internal Gate A upgrade-baseline kit (see
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
-`v1.0.0-beta.1` will stay the release to install until `v1.0.0-beta.3` (or
-later) is itself published with downloadable assets and this file's own
-version line above moves again.
+See [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml)
+for the authored release-state record and
+[`docs/releases/2026-09-03-beta3-first-downloadable-release.md`](docs/releases/2026-09-03-beta3-first-downloadable-release.md)
+for the publish record.
 
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
@@ -148,20 +145,19 @@ things outside this repository's control:
   see [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
   [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
   for the setup path, Authenticode signature verification, and the pack-trust
-  model. `v1.0.0-beta.1` is the current release and was delivered by **USB**,
-  not by a GitHub download -- the GitHub Release page carries no installer
-  asset for it. `v1.0.0-beta.2` was never published -- it exists only as an
-  internal Gate A upgrade-baseline kit, not a release a tester can obtain.
-  `v1.0.0-beta.3` is the current owner-held unpublished candidate and has no
-  installer download attached; it is intended to be the first
-  **downloadable** candidate (setup.exe, runtime packs, and checksums on the
-  [GitHub Releases page](https://github.com/scottconverse/civiccast-native/releases)).
+  model. `v1.0.0-beta.3` is the current release and the first
+  **downloadable** one: `setup.exe`, the five runtime `.ccpack` packs,
+  `SHA256SUMS.txt`, and a signed sidecar are attached to the
+  [GitHub Releases page](https://github.com/scottconverse/civiccast-native/releases).
+  `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now superseded.
+  `v1.0.0-beta.2` was never published -- it exists only as an internal
+  Gate A upgrade-baseline kit, not a release a tester can obtain.
   A **first-time install**, and the one-time `v1.0.0-beta.1` -> `v1.0.0-beta.3`
   upgrade (a fresh install from the `beta.3` kit, not an in-place upgrade --
   see
   [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)),
-  still need the USB model bundle (~21 GB) even once a download exists -- the
-  GitHub download alone does not include it. From `v1.0.0-beta.3` on, a
+  still need the USB/LAN-delivered model bundle (~21 GB) -- the GitHub
+  download alone does not include it. From `v1.0.0-beta.3` on, a
   download-only **upgrade** of an already-installed station keeps the
   station's recordings, database, and AI models. See
   [BRANCHES.md](BRANCHES.md) for release identity and status.
@@ -249,7 +245,7 @@ status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
 candidate — the "What's proven in this candidate" and "Honestly scoped"
 sections above are the accurate summary for a reader deciding whether to
-run beta.1 today.
+run beta.3 today.
 
 Proprietary-appliance capabilities are **out of scope** for V1 by explicit
 decision, documented in

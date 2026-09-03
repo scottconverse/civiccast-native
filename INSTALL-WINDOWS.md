@@ -9,24 +9,10 @@
 
 ## Current Release
 
-`v1.0.0-beta.1` is the current release. It was delivered by USB, not by a
-GitHub Release download -- the GitHub Release page carries no installer
-asset for it (the ~21 GB AI-model bundle it needs exceeds GitHub's 2 GB
-per-file asset cap, and the publish tooling that splits runtime packs from
-the model bundle did not exist yet when it shipped). If you already have a
-USB-delivered `v1.0.0-beta.1` station, it is the real, current, testable
-native install -- there is nothing further to download for it.
-
-`v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
-upgrade-baseline kit used to prove the download-only install/upgrade lanes,
-never a release a station receives.
-
-**Next release:** `v1.0.0-beta.3` is the current owner-held unpublished
-candidate. It has no installer asset and is not a public or production release.
-It is intended to be the first **downloadable** beta candidate:
-a `setup.exe`, per-pack runtime `.ccpack` assets, and a `SHA256SUMS.txt`
-checksum file (each asset under GitHub's 2 GB/file cap), published as a
-prerelease at <https://github.com/scottconverse/civiccast-native/releases>.
+`v1.0.0-beta.3` is the current release and the first **downloadable** one:
+`setup.exe`, per-pack runtime `.ccpack` assets, and a `SHA256SUMS.txt`
+checksum file (each asset under GitHub's 2 GB/file cap) are published as a
+prerelease at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3>.
 Watch that page, not `scottconverse/civiccast` (the retired, separate
 WSL2-line repository) and not any `v1.0.0-rcNN` tag, which belongs to that
 other repository. See
@@ -34,13 +20,21 @@ other repository. See
 the authored release-state record -- it is the single source of truth for
 which tag is current.
 
-**First install vs. upgrade, once `v1.0.0-beta.3` publishes:**
+`v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now superseded.
+If you already have a USB-delivered `v1.0.0-beta.1` station, it still runs,
+but the fresh install below is how it gets to the current release.
+
+`v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
+upgrade-baseline kit used to prove the download-only install/upgrade lanes,
+never a release a station receives.
+
+**First install vs. upgrade:**
 
 - **First-time install on a station with no prior CivicCast install** still
-  needs the USB model bundle (~21 GB of AI models). The GitHub download
-  alone is not enough for a first install -- it ships the setup executable
-  and runtime packs, not the model bundle, because that bundle is too large
-  for a GitHub Release asset.
+  needs the USB/LAN-delivered model bundle (~21 GB of AI models). The
+  GitHub download alone is not enough for a first install -- it ships the
+  setup executable and runtime packs, not the model bundle, because that
+  bundle is too large for a GitHub Release asset.
 - **Upgrade of an already-installed station** can be download-only starting
   with `v1.0.0-beta.3`: it reuses the AI models already on the machine. An
   upgrade keeps the station's existing recordings, database, and AI models --
