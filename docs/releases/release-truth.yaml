@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.1
+current: v1.0.0-beta.3
 
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
@@ -43,8 +43,28 @@ entries:
   # going forward via scripts/release/publish_beta_candidate.py; every green
   # build gets tagged and published as a GitHub pre-release because the beta
   # tester (Sergio, "LPM") checks GitHub daily.
-  - tag: v1.0.0-beta.1
+  - tag: v1.0.0-beta.3
     status: current
+    notes: >-
+      The first downloadable CivicCast release. Published by
+      publish_beta_candidate.py from source SHA
+      9573d4a82e1e1d9993589f633bad6dacba792afb, build run 33711079441, Gate A
+      run 33713004718 (clean, cross-version-upgrade, and download-only lanes
+      all PASS against the beta.2 upgrade baseline). GitHub Release assets:
+      setup.exe (sha256 76df8f3bcc5e6b20a41448cddae8a3433e088ebd821a81870b4e40ea052492dc,
+      Authenticode Valid, verified publisher Scott Converse) plus the five
+      runtime .ccpack packs (native-app-payload, native-cuda-runtime,
+      native-ffmpeg-runtime, native-ollama-runtime, native-server-binaries),
+      SHA256SUMS.txt, and setup.exe.sidecar.json -- every asset under
+      GitHub's 2 GB/file cap. The ~21 GB station\ AI-model bundle is
+      deliberately NOT a release asset: a beta.1 station does one fresh
+      install from a USB/LAN-delivered kit (the one-time beta.1 -> beta.3
+      path), and every install from beta.3 onward can upgrade in place by
+      downloading only setup.exe + packs, reusing AI models already present
+      on the machine. See docs/releases/2026-09-03-beta3-first-downloadable-release.md.
+  - tag: v1.0.0-beta.1
+    status: superseded
+    superseded_by: v1.0.0-beta.3
     notes: >-
       Native line's first published prerelease. USB-delivered only -- the
       GitHub Release carries no downloadable assets (the ~21 GB AI-model
@@ -69,21 +89,6 @@ entries:
       GitHub release/tag exists or will exist for this entry; a live-mode
       run of `check_release_truth.py` against this manifest is expected to
       report it as having no matching live release for exactly that reason.
-  - tag: v1.0.0-beta.3
-    status: staging
-    notes: >-
-      Owner-held candidate as of this entry; NOT YET PUBLISHED by this
-      change. Now the first downloadable beta-candidate release (beta.2
-      never publishes -- see the entry above): setup.exe plus per-pack
-      runtime .ccpack assets (each under GitHub's 2 GB/file cap) via
-      publish_beta_candidate.py, reusing AI models already on the machine
-      (download-only upgrade case, from beta.3 onward) or the USB bundle
-      (first-install case, and the one-time beta.1 -> beta.3 fresh install)
-      rather than shipping the ~21 GB station\ bundle as a release asset.
-      Flips to current, with the v1.0.0-beta.1 entry's status flipped to
-      superseded_by v1.0.0-beta.3, only once an actual publish lands and a
-      human/agent updates this file to match -- this manifest is the SOLE
-      AUTHORED SOURCE and is never inferred from what "should" be live.
   # Below: the retired, separate WSL2-line product (scottconverse/civiccast,
   # NOT this repository). None of these tags are live releases on
   # civiccast-native; retained here only because prior entries already

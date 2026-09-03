@@ -17,8 +17,10 @@ CURRENT_VERSION = (
     .split('__version__ = "', 1)[1]
     .split('"', 1)[0]
 )
-# The owner-held candidate identity. This is intentionally distinct from a
-# published-release claim: rc11 must remain unavailable until owner approval.
+# The current release tag, derived the same way CURRENT_VERSION is. The name
+# predates v1.0.0-beta.3's publish (when it named an owner-held, unpublished
+# candidate); it still just means "the tag civiccast/_version.py names," now
+# a published release.
 HELD_CANDIDATE_TAG = f"v{CURRENT_VERSION}"
 
 ACTIVE_RELEASE_SURFACES = [
@@ -136,8 +138,7 @@ def test_readme_keeps_source_and_field_proof_distinct() -> None:
     normalized = " ".join(text.split())
     # The false "nothing changed since rc6" claim must never return.
     assert "only installer unit tests and the version stamp changed" not in text
-    assert "not a public or production release" in normalized
-    assert "has no installer download attached" in normalized
+    assert "first downloadable" in normalized
     assert "has not been proven against physical SDI" in normalized
 
 
