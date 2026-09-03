@@ -10,13 +10,24 @@
 
   Idempotent. Safe to re-run. PowerShell 5.1 only. Run ELEVATED.
 
+  Correct on ANY pre-existing state: a leftover single-branch clone from an
+  earlier mission is detected and replaced, and a narrow fetch refspec is
+  widened, so origin/main and this mission's branch always resolve.
+
 .PARAMETER DryRun
   Parse/plan only: create no tasks, clone nothing, touch no state. Used by the
   coordinator to smoke-test this file without side effects.
+
+.PARAMETER SkipTasks
+  Do the clones, write the loop scripts, and run the proof by invoking the
+  scripts directly instead of registering scheduled tasks. Needs no elevation.
+  Coordinator test mode -- pair with CIVICCAST_SOAK_NO_AUTORUN=1 to exercise the
+  loop on a machine that must not have the product installed onto it.
 #>
 [CmdletBinding()]
 param(
   [switch]$DryRun,
+  [switch]$SkipTasks,
   [string]$Root = 'C:\CivicCastSoak'
 )
 
@@ -33,7 +44,7 @@ Say "mission=$Mission root=$Root branch=$TesterBranch dryrun=$($DryRun.IsPresent
 
 # ---------------------------------------------------------------- 0. elevation
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin -and -not $DryRun) {
+if (-not $isAdmin -and -not $DryRun -and -not $SkipTasks) {
   Write-Host "LOOP FAILED: not elevated. Re-run this script in an ELEVATED PowerShell (Run as administrator)."
   exit 2
 }
@@ -76,32 +87,77 @@ Say "git available: $(if($gitOk){'yes'}else{'dry-run-skipped'})"
 $dir  = Join-Path $Root 'directives'
 $repo = Join-Path $Root 'repo'
 if (-not $DryRun) {
-  if (-not (Test-Path (Join-Path $dir '.git'))) {
-    Say 'cloning directives branch (single-branch)'
-    Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
-    & git clone --quiet --single-branch --branch $DirectiveBranch $RepoUrl $dir
-    if ($LASTEXITCODE -ne 0) { Write-Host "LOOP FAILED: could not clone $DirectiveBranch"; exit 4 }
-  } else {
-    & git -C $dir fetch --quiet origin $DirectiveBranch
-    & git -C $dir reset --quiet --hard "origin/$DirectiveBranch"
+  # --- directives clone -------------------------------------------------------
+  # A previous mission left a SINGLE-BRANCH clone here whose refspec only knows
+  # ITS branch. Detect that and re-clone rather than fetching into a clone that
+  # can never resolve origin/<this mission's branch>.
+  $dirStale = $true
+  if (Test-Path (Join-Path $dir '.git')) {
+    $head    = (& git -C $dir rev-parse --abbrev-ref HEAD 2>$null)
+    $refspec = (& git -C $dir config --get-all remote.origin.fetch 2>$null) -join ' '
+    $urlOk   = ((& git -C $dir config --get remote.origin.url 2>$null) -like '*civiccast-native*')
+    if ($urlOk -and "$head".Trim() -eq $DirectiveBranch -and
+        ("$refspec" -like "*$DirectiveBranch*" -or "$refspec" -like '*refs/heads/`**')) { $dirStale = $false }
+    if ($dirStale) { Say "existing $dir is from another mission (head='$head' refspec='$refspec') -- re-cloning" }
   }
+  if ($dirStale) {
+    Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+    Say 'cloning directives branch (single-branch)'
+    & git clone --quiet --single-branch --branch $DirectiveBranch $RepoUrl $dir
+    if ($LASTEXITCODE -ne 0) { Write-Host "LOOP FAILED: could not clone $DirectiveBranch into $dir"; exit 4 }
+  }
+  # FETCH_HEAD, never origin/<branch>: correct in a single-branch clone whatever
+  # remote-tracking refs happen to exist.
+  & git -C $dir fetch --quiet origin $DirectiveBranch
+  if ($LASTEXITCODE -ne 0) { Write-Host "LOOP FAILED: could not fetch $DirectiveBranch in $dir"; exit 4 }
+  & git -C $dir reset --quiet --hard FETCH_HEAD
+  Say "directives clone on $DirectiveBranch @ $((& git -C $dir rev-parse --short HEAD))"
+
+  # --- full repo clone --------------------------------------------------------
   if (-not (Test-Path (Join-Path $repo '.git'))) {
     Say 'cloning full repo (all branches -- the tester branch lives here)'
     Remove-Item $repo -Recurse -Force -ErrorAction SilentlyContinue
     & git clone --quiet $RepoUrl $repo
-    if ($LASTEXITCODE -ne 0) { Write-Host "LOOP FAILED: could not clone the full repo"; exit 5 }
+    if ($LASTEXITCODE -ne 0) { Write-Host "LOOP FAILED: could not clone the full repo into $repo"; exit 5 }
   }
-  & git -C $repo fetch --quiet origin
+  # A leftover clone may carry a NARROW refspec (single-branch). Force the full
+  # one -- set, not add -- so origin/main and every other branch resolve.
+  & git -C $repo config remote.origin.url $RepoUrl
+  & git -C $repo config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+  & git -C $repo fetch --quiet --prune origin
+  if ($LASTEXITCODE -ne 0) { Write-Host "LOOP FAILED: could not fetch origin in $repo"; exit 5 }
   & git -C $repo config user.name  "soak-tester-$env:COMPUTERNAME"
   & git -C $repo config user.email 'soak-tester@civiccast.invalid'
-  $remoteHas = (& git -C $repo ls-remote --heads origin $TesterBranch)
-  if ($remoteHas) {
-    & git -C $repo checkout --quiet -B $TesterBranch "origin/$TesterBranch"
-  } else {
-    & git -C $repo checkout --quiet -B $TesterBranch origin/main
+
+  $checkedOut = $false
+  if (& git -C $repo ls-remote --heads origin $TesterBranch) {
+    & git -C $repo fetch --quiet origin $TesterBranch
+    if ($LASTEXITCODE -eq 0) {
+      & git -C $repo checkout --quiet -B $TesterBranch FETCH_HEAD
+      if ($LASTEXITCODE -eq 0) { $checkedOut = $true; Say 'tester branch resumed from its remote head' }
+    }
+  }
+  if (-not $checkedOut) {
+    & git -C $repo rev-parse --verify --quiet origin/main *>$null
+    if ($LASTEXITCODE -eq 0) {
+      & git -C $repo checkout --quiet -B $TesterBranch origin/main
+      if ($LASTEXITCODE -eq 0) { $checkedOut = $true }
+    }
+  }
+  if (-not $checkedOut) {
+    Say 'origin/main did not resolve -- falling back to an explicit fetch of main'
+    & git -C $repo fetch --quiet origin main
+    if ($LASTEXITCODE -eq 0) {
+      & git -C $repo checkout --quiet -B $TesterBranch FETCH_HEAD
+      if ($LASTEXITCODE -eq 0) { $checkedOut = $true }
+    }
+  }
+  if (-not $checkedOut) {
+    Write-Host "LOOP FAILED: could not create or check out $TesterBranch in $repo (neither its remote head, origin/main, nor an explicit fetch of main resolved)."
+    exit 5
   }
   Set-Content (Join-Path $Root 'state\mission.txt') -Value $Mission -Encoding ascii
-  Say "tester branch checked out: $TesterBranch"
+  Say "tester branch checked out: $TesterBranch @ $((& git -C $repo rev-parse --short HEAD))"
 }
 
 # ------------------------------------------------------------- 5. loop scripts
@@ -113,9 +169,22 @@ $branch='soak8-e1acfe6-directives'; $mission='soak8-e1acfe6'
 $br="tester/soak8-e1acfe6-$env:COMPUTERNAME"
 $repoUrl='https://github.com/scottconverse/civiccast-native.git'
 $stamp=(Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
-if (-not (Test-Path "$d\.git")) { git clone --quiet --single-branch --branch $branch $repoUrl $d | Out-Null }
+# The directives clone may be a leftover from ANOTHER mission whose refspec only
+# knows its own branch -- re-clone rather than fetch into something that can never
+# resolve this branch. Then always reset to FETCH_HEAD, never origin/<branch>.
+$dirStale = $true
+if (Test-Path "$d\.git") {
+  $head    = (git -C $d rev-parse --abbrev-ref HEAD 2>$null)
+  $refspec = (git -C $d config --get-all remote.origin.fetch 2>$null) -join ' '
+  if ("$head".Trim() -eq $branch -and ("$refspec" -like "*$branch*" -or "$refspec" -like '*refs/heads/`**')) { $dirStale = $false }
+}
+if ($dirStale) {
+  Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue
+  git clone --quiet --single-branch --branch $branch $repoUrl $d | Out-Null
+}
 git -C $d fetch --quiet origin $branch
-git -C $d reset --quiet --hard "origin/$branch"
+if ($LASTEXITCODE -ne 0) { Add-Content "$root\reports\poll.log" "$stamp FETCH FAILED for $branch"; exit 1 }
+git -C $d reset --quiet --hard FETCH_HEAD
 $cur=''
 $m = Select-String -Path "$d\LATEST-TEST-DIRECTIVE.md" -Pattern '^Current:\s*(\S+)' -ErrorAction SilentlyContinue
 if ($m) { $cur = $m.Matches[0].Groups[1].Value }
@@ -136,7 +205,13 @@ if ($cur -and ($cur.Trim() -ne $seen.Trim())) {
 # --- executor: run each AUTORUN-*.ps1 from the directives branch exactly once ---
 $ranDir="$root\state\autorun-done"
 New-Item -Force -ItemType Directory $ranDir | Out-Null
-Get-ChildItem "$d\soak\autorun" -Filter 'AUTORUN-*.ps1' -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object {
+# Safety valve: CIVICCAST_SOAK_NO_AUTORUN=1 exercises the whole loop (fetch, ack,
+# push, heartbeat) WITHOUT executing mission autoruns -- how the coordinator tests
+# this loop on a machine that must not be installed onto.
+$noAutorun = ($env:CIVICCAST_SOAK_NO_AUTORUN -eq '1')
+if ($noAutorun) { Add-Content "$root\reports\poll.log" "$stamp CIVICCAST_SOAK_NO_AUTORUN=1 -- autorun execution suppressed" }
+Get-ChildItem "$d\soak\autorun" -Filter 'AUTORUN-*.ps1' -ErrorAction SilentlyContinue |
+  Where-Object { -not $noAutorun } | Sort-Object Name | ForEach-Object {
   $mark = Join-Path $ranDir ($_.Name + '.done')
   if (-not (Test-Path $mark)) {
     Set-Content $mark -Value $stamp -Encoding ascii
@@ -154,7 +229,7 @@ Get-ChildItem "$d\soak\autorun" -Filter 'AUTORUN-*.ps1' -ErrorAction SilentlyCon
   }
 }
 # --- recurring step: egress/TSDuck verify, once the soak is running ---
-if (Test-Path "$d\soak\autorun\AUTORUN-3.ps1") {
+if ((Test-Path "$d\soak\autorun\AUTORUN-3.ps1") -and -not $noAutorun) {
   if (Test-Path "$root\state\soak-started") {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$d\soak\autorun\AUTORUN-3.ps1" *> "$root\reports\egress-$stamp.log"
   }
@@ -249,9 +324,9 @@ git -C $repo push --quiet origin $br 2>&1 | Out-Null
 
 $binDir = Join-Path $Root 'bin'
 if (-not $DryRun) {
-  Set-Content (Join-Path $binDir 'poll-directives.ps1') -Value $pollScript -Encoding ascii
-  Set-Content (Join-Path $binDir 'heartbeat.ps1')       -Value $hbScript   -Encoding ascii
-  Set-Content (Join-Path $binDir 'boot-marker.ps1')     -Value $bootScript -Encoding ascii
+  Set-Content (Join-Path $binDir 'poll-directives.ps1') -Value ($pollScript -replace [regex]::Escape("`$root='C:\CivicCastSoak'"), ("`$root='" + $Root + "'")) -Encoding ascii
+  Set-Content (Join-Path $binDir 'heartbeat.ps1')       -Value ($hbScript   -replace [regex]::Escape("`$root='C:\CivicCastSoak'"), ("`$root='" + $Root + "'")) -Encoding ascii
+  Set-Content (Join-Path $binDir 'boot-marker.ps1')     -Value ($bootScript -replace [regex]::Escape("`$root='C:\CivicCastSoak'"), ("`$root='" + $Root + "'")) -Encoding ascii
 }
 Say 'loop scripts written (poll-directives.ps1, heartbeat.ps1, boot-marker.ps1)'
 
@@ -280,7 +355,8 @@ $taskSpecs = @(
   @{ n='CivicCastSoak-Heartbeat'; f='heartbeat.ps1';       every=30 },
   @{ n='CivicCastSoak-Boot';      f='boot-marker.ps1';     every=0  }
 )
-if (-not $DryRun) {
+if ($SkipTasks) { Say 'SkipTasks: not registering scheduled tasks (test mode)' }
+if (-not $DryRun -and -not $SkipTasks) {
   $pr = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
   $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
            -ExecutionTimeLimit (New-TimeSpan -Hours 4) -MultipleInstances IgnoreNew
@@ -307,19 +383,28 @@ if ($DryRun) {
   exit 0
 }
 
-Say 'proving the loop: starting Poll and Heartbeat once, then watching the remote branch'
-Start-ScheduledTask -TaskName 'CivicCastSoak-Poll'
-Start-Sleep -Seconds 15
-Start-ScheduledTask -TaskName 'CivicCastSoak-Heartbeat'
+Say 'proving the loop: running Poll and Heartbeat once, then watching the remote branch'
+if ($SkipTasks) {
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$binDir\poll-directives.ps1"
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$binDir\heartbeat.ps1"
+} else {
+  Start-ScheduledTask -TaskName 'CivicCastSoak-Poll'
+  Start-Sleep -Seconds 15
+  Start-ScheduledTask -TaskName 'CivicCastSoak-Heartbeat'
+}
 
 $deadline = (Get-Date).AddMinutes(3)
 $sawAck = $false; $sawHb = $false
 while ((Get-Date) -lt $deadline -and (-not ($sawAck -and $sawHb))) {
   Start-Sleep -Seconds 15
+  # Explicit fetch + FETCH_HEAD: a remote-tracking ref may not exist yet for a
+  # branch this clone has never seen.
   & git -C $repo fetch --quiet origin $TesterBranch 2>&1 | Out-Null
-  $names = @(& git -C $repo ls-tree -r --name-only "origin/$TesterBranch" 2>$null)
-  if ($names -contains 'soak/AUTO-ACK-1.md') { $sawAck = $true }
-  if ($names | Where-Object { $_ -like 'soak/heartbeats/heartbeat-*.json' }) { $sawHb = $true }
+  if ($LASTEXITCODE -eq 0) {
+    $names = @(& git -C $repo ls-tree -r --name-only FETCH_HEAD 2>$null)
+    if ($names -contains 'soak/AUTO-ACK-1.md') { $sawAck = $true }
+    if ($names | Where-Object { $_ -like 'soak/heartbeats/heartbeat-*.json' }) { $sawHb = $true }
+  }
   Say "  watching remote: ack=$sawAck heartbeat=$sawHb"
 }
 
@@ -340,17 +425,36 @@ if (-not $sawAck) { $reason += 'soak/AUTO-ACK-1.md never appeared on the remote 
 if (-not $sawHb)  { $reason += 'no soak/heartbeats/heartbeat-*.json on the remote tester branch (heartbeat task did not push)' }
 $remoteProbe = ''
 try { $remoteProbe = (& git -C $repo ls-remote --heads origin $TesterBranch) -join ' ' } catch { $remoteProbe = "ls-remote failed: $($_.Exception.Message)" }
+$pollTail = @(Get-Content "$Root\reports\poll.log" -Tail 10 -ErrorAction SilentlyContinue)
+$taskInfo = (Get-ScheduledTask -TaskName 'CivicCastSoak-*' -ErrorAction SilentlyContinue | Get-ScheduledTaskInfo |
+  Select-Object TaskName, LastRunTime, LastTaskResult | Format-Table | Out-String)
+
+# Push the failure report ourselves -- a human relaying it is exactly what this
+# mission exists to avoid. Best-effort: if the push is what's broken, the console
+# output above is still the record.
+try {
+  New-Item -Force -ItemType Directory "$repo\soak" | Out-Null
+  $rep = @("# LOOP FAILED -- $Mission bootstrap", "", "- Hostname: $env:COMPUTERNAME", "- UTC: $(Stamp)",
+           "- Bootstrap: $PSCommandPath", "") + @($reason | ForEach-Object { "- reason: $_" }) +
+         @("", "## remote branch probe", '```', "$remoteProbe", '```',
+           "", "## poll log tail", '```') + $pollTail + @('```', "", "## scheduled tasks", '```', $taskInfo, '```')
+  Set-Content "$repo\soak\LOOP-FAILED.md" -Value ($rep -join "`n") -Encoding utf8
+  & git -C $repo add soak/LOOP-FAILED.md
+  & git -C $repo commit --quiet -m "test: LOOP FAILED report $(Stamp) $Mission"
+  & git -C $repo push --quiet origin $TesterBranch 2>&1 | Out-Null
+} catch { }
+
 Write-Host ''
 Write-Host 'LOOP FAILED'
 foreach ($r in $reason) { Write-Host "  reason: $r" }
 Write-Host "  remote branch probe: $(if($remoteProbe){$remoteProbe}else{'(branch does not exist on origin)'})"
 Write-Host "  poll log tail:"
-Get-Content "$Root\reports\poll.log" -Tail 10 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
+$pollTail | ForEach-Object { Write-Host "    $_" }
 Write-Host "  last task results:"
-Get-ScheduledTask -TaskName 'CivicCastSoak-*' -ErrorAction SilentlyContinue | Get-ScheduledTaskInfo |
-  Select-Object TaskName, LastRunTime, LastTaskResult | Format-Table | Out-String | Write-Host
+Write-Host $taskInfo
 Write-Host "  MOST LIKELY CAUSE: 'git push' has no stored GitHub credential for this user."
 Write-Host "  Fix: run once, interactively, as the SAME user --"
 Write-Host "    git -C $repo push -u origin $TesterBranch"
 Write-Host "  complete the GitHub sign-in it asks for, then re-run this bootstrap."
 exit 7
+
