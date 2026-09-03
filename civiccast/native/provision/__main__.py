@@ -90,10 +90,12 @@ from __future__ import annotations
 import argparse
 import os
 import secrets
+import socket
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -304,11 +306,40 @@ def decide_provision_cli_action(
     existing_database_url: str | None,
     journal_resumable: bool = False,
     credential_lost: bool = False,
+    reused_database_url_usable: bool | None = None,
 ) -> ProvisionCliAction:
+    """Choose the provisioning action for the observed machine state.
+
+    ``reused_database_url_usable`` (installer-path audit MA-32) is the
+    outcome of actually TRYING the registry's ``DatabaseUrl`` against a
+    listening server:
+
+    * ``True``  -- a connection succeeded; the reused value is real.
+    * ``None``  -- the question could not be asked, almost always because the
+      cluster is not running yet (D4 provisioning runs before the service
+      starts, so this is the ORDINARY case on a healthy reinstall). Behaviour
+      is unchanged from before this parameter existed: reuse the value.
+    * ``False`` -- the server IS listening and rejected the credential, or the
+      database it names does not exist. THAT is the state the old code
+      accepted as "already provisioned": ``bool(existing_database_url.strip())``
+      with no connection attempt, so a ``%ProgramData%\\CivicCast`` restored
+      from a different station, a hand-edited or partially-written
+      ``DatabaseUrl``, or a cluster whose password was reset out of band all
+      produced a no-op, an exit 0, and a control plane that could not
+      authenticate to its own database. Adopt the surviving cluster instead
+      and re-establish a credential on it (which never drops data --
+      ``reset_cluster_credential``).
+
+    The default is ``None`` so every existing caller and test keeps its
+    previous meaning explicitly rather than by omission.
+    """
+
     if not cluster_exists:
         return ProvisionCliAction.RUN
     has_registry_value = bool(existing_database_url and existing_database_url.strip())
     if has_registry_value:
+        if reused_database_url_usable is False:
+            return ProvisionCliAction.ADOPT_EXISTING
         return ProvisionCliAction.NOOP_REUSE_EXISTING
     if journal_resumable:
         return ProvisionCliAction.RUN
@@ -327,6 +358,68 @@ def decide_provision_cli_action(
     # LIVE ownership check inside the adoption seam, which fails loud
     # (AdoptionForeignClusterError) rather than ever taking over foreign data.
     return ProvisionCliAction.ADOPT_EXISTING
+
+
+def probe_reused_database_url(database_url: str | None) -> bool | None:
+    """Is the registry's ``DatabaseUrl`` actually usable right now?
+
+    Installer-path audit MA-32. Returns exactly the tri-state
+    :func:`decide_provision_cli_action`'s ``reused_database_url_usable``
+    documents, and never raises.
+
+    The two-step shape is load-bearing and is why this is not simply a
+    ``SELECT 1``. D4 provisioning runs BEFORE the supervisor service starts,
+    so on an ordinary healthy reinstall the cluster is not listening at all --
+    a bare connection attempt would fail on every machine and turn every
+    reinstall into an adoption (which resets the credential). So:
+
+    1. Open a plain TCP socket to the URL's host/port. Connection refused or
+       an unparseable URL means the question cannot be asked -> ``None``, and
+       the caller's behaviour is exactly what it was before this probe
+       existed.
+    2. Only when something IS listening there, try the credential. A refusal
+       from a live server is a real, actionable answer -> ``False``.
+    """
+
+    if not database_url or not database_url.strip():
+        return None
+    try:
+        from civiccast.db.url import normalize_database_url
+
+        normalized = normalize_database_url(database_url.strip())
+        parts = urlsplit(normalized)
+        host = parts.hostname
+        port = parts.port or 5432
+    except Exception:
+        return None
+    if not host:
+        return None
+
+    try:
+        with socket.create_connection((host, port), timeout=3):
+            pass
+    except OSError:
+        # Nothing is listening (the normal pre-service-start case) -- the
+        # credential question cannot be asked, so do not answer it.
+        return None
+
+    try:
+        from sqlalchemy import create_engine, text
+
+        from civiccast.db import connect_options
+
+        engine = create_engine(normalized, poolclass=None, **connect_options(normalized))
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+        finally:
+            engine.dispose()
+    except Exception:
+        # A LIVE server refused this credential, or the database it names does
+        # not exist. Either way the registry value is not the working value
+        # this station needs.
+        return False
+    return True
 
 
 def probe_cluster_exists(postgres_data_dir: str) -> bool:
@@ -848,17 +941,42 @@ def main(argv: list[str] | None = None) -> int:
             )
             return EXIT_UNEXPECTED
 
+    # <installer-path-audit MA-32> "Already provisioned" used to be the mere
+    # PRESENCE of a registry string -- no connection attempt, no credential
+    # check -- after which the installer printed "provisioning complete (or
+    # already provisioned; no-op)" and exited 0 over a control plane that
+    # could not authenticate to its own database. See
+    # probe_reused_database_url for why this is a two-step probe rather than
+    # a bare SELECT 1.
+    reused_usable = probe_reused_database_url(args.existing_database_url)
+
     action = decide_provision_cli_action(
         cluster_exists=cluster_exists,
         existing_database_url=args.existing_database_url,
         journal_resumable=journal_resumable,
         credential_lost=credential_lost_journal is not None,
+        reused_database_url_usable=reused_usable,
     )
+
+    if reused_usable is False:
+        sys.stderr.write(
+            "provision note: the DatabaseUrl recorded in HKLM\\SOFTWARE\\CivicCast\\Native was "
+            "rejected by the PostgreSQL server that is listening at its host/port (bad "
+            "credential, or the database it names does not exist), so it is NOT reused. "
+            "Adopting the surviving cluster and re-establishing a credential on it instead; "
+            "no data is dropped.\n"
+        )
 
     if action is ProvisionCliAction.NOOP_REUSE_EXISTING:
         sys.stderr.write(
             "provision outcome: noop_reuse_existing (an existing PostgreSQL cluster and "
-            "an existing DatabaseUrl registry value were both found; neither was touched)\n"
+            "an existing DatabaseUrl registry value were both found; neither was touched"
+            + (
+                "; the value was verified against the live server"
+                if reused_usable is True
+                else "; the server was not listening yet, so the value could not be verified"
+            )
+            + ")\n"
         )
         return EXIT_SUCCESS
 

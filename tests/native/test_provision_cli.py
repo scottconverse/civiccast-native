@@ -25,6 +25,7 @@ import base64
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from civiccast.native.provision import __main__ as provision_main
 from civiccast.native.provision.__main__ import (
     EXIT_PROVISIONING_FAILED,
     EXIT_REPAIR_NEEDED,
@@ -46,6 +47,7 @@ from civiccast.native.provision.__main__ import (
     probe_cluster_exists,
     probe_credential_lost_journal,
     probe_resumable_journal,
+    probe_reused_database_url,
     resolve_provision_paths,
 )
 from civiccast.native.provision.journal import JournalError, journal_path, write_journal
@@ -653,8 +655,17 @@ def test_build_plan_and_context_assembles_expected_fields(tmp_path) -> None:
 
 
 def test_main_noop_path_exits_success_without_generating_a_password_or_journal(
-    tmp_path, capsys
+    tmp_path, capsys, monkeypatch
 ) -> None:
+    # <installer-path-audit MA-32> The no-op path now PROBES the recorded
+    # DatabaseUrl before reusing it. This test's URL is
+    # 127.0.0.1:5432 -- the standard Postgres port -- so without this stub the
+    # test's outcome would depend on whether the machine running it happens to
+    # have a Postgres listening there (it flipped to ADOPT_EXISTING on a
+    # developer box that did). Stub the probe to its "cannot ask the
+    # question" answer, which is the ordinary D4 case: provisioning runs
+    # before the supervisor service starts, so nothing is listening yet.
+    monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: None)
     install_root = tmp_path / "install"
     program_data_root = tmp_path / "pd"
     paths = resolve_provision_paths(
@@ -1768,6 +1779,115 @@ def test_main_pgdata_acl_failure_inside_migrate_exits_its_own_code_not_alembics(
     assert recovery_doc.exists(), "an ACL-normalization failure must write the recovery document"
     content = recovery_doc.read_text(encoding="utf-8")
     assert generated[0] not in content, "the generated password reached the recovery document"
+
+
+# ---------------------------------------------------------------------------
+# <installer-path-audit MA-32> "Already provisioned" used to be the PRESENCE
+# of a registry string.
+#
+#     if has_registry_value: return ProvisionCliAction.NOOP_REUSE_EXISTING
+#
+# where has_registry_value was bool(existing_database_url.strip()) -- no
+# connection attempt, no credential check. The installer then printed
+# "provisioning complete (or already provisioned; no-op)" and exited 0, and
+# (before BL-11) nothing downstream ever noticed that the control plane could
+# not authenticate to its own database. Reachable by a %ProgramData%\CivicCast
+# restored from a different station, a hand-edited or partially-written
+# DatabaseUrl, or a cluster whose password was reset out of band.
+# ---------------------------------------------------------------------------
+
+
+def test_a_live_server_rejecting_the_recorded_credential_routes_to_adoption() -> None:
+    assert (
+        decide_provision_cli_action(
+            cluster_exists=True,
+            existing_database_url="postgresql://u:wrong@127.0.0.1:5432/civiccast",
+            reused_database_url_usable=False,
+        )
+        is ProvisionCliAction.ADOPT_EXISTING
+    )
+
+
+def test_an_unaskable_credential_question_keeps_the_previous_no_op_behaviour() -> None:
+    """The ORDINARY D4 case: provisioning runs before the service starts, so
+    nothing is listening and the value cannot be verified. Behaviour must be
+    exactly what it was before the probe existed -- otherwise every healthy
+    reinstall would turn into an adoption."""
+    for unaskable in (None, True):
+        assert (
+            decide_provision_cli_action(
+                cluster_exists=True,
+                existing_database_url="postgresql://u:p@127.0.0.1:5432/civiccast",
+                reused_database_url_usable=unaskable,
+            )
+            is ProvisionCliAction.NOOP_REUSE_EXISTING
+        ), f"reused_database_url_usable={unaskable!r} must not change the route"
+
+
+def test_the_probe_default_preserves_every_pre_existing_caller() -> None:
+    """The parameter defaults to None (unaskable), so a caller that never
+    passes it behaves exactly as it did before this parameter existed."""
+    assert (
+        decide_provision_cli_action(
+            cluster_exists=True,
+            existing_database_url="postgresql://u:p@127.0.0.1:5432/civiccast",
+        )
+        is ProvisionCliAction.NOOP_REUSE_EXISTING
+    )
+
+
+def test_probe_returns_none_for_an_absent_or_unparseable_url() -> None:
+    assert probe_reused_database_url(None) is None
+    assert probe_reused_database_url("") is None
+    assert probe_reused_database_url("   ") is None
+    assert probe_reused_database_url("not-a-url-at-all") is None
+
+
+def test_probe_returns_none_when_nothing_is_listening() -> None:
+    """A closed port is 'the question cannot be asked', never 'the credential
+    is bad'. This is what keeps an ordinary pre-service-start reinstall on the
+    no-op path.
+
+    Port 1 is reserved (tcpmux) and is not bound on any machine this suite
+    runs on; a connection there refuses immediately rather than hanging.
+    """
+    assert probe_reused_database_url("postgresql://u:p@127.0.0.1:1/civiccast") is None
+
+
+def test_probe_returns_false_when_a_live_listener_refuses_the_credential() -> None:
+    """A LIVE server that rejects the credential is a real, actionable answer.
+
+    A plain TCP listener that accepts and immediately closes is enough: step 1
+    (is anything there?) succeeds, step 2 (does the credential work?) cannot,
+    and the probe must say False rather than shrug.
+    """
+    import socket
+    import threading
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    port = listener.getsockname()[1]
+    stop = threading.Event()
+
+    def _accept_and_close() -> None:
+        listener.settimeout(0.5)
+        while not stop.is_set():
+            try:
+                connection, _ = listener.accept()
+            except OSError:
+                continue
+            connection.close()
+
+    thread = threading.Thread(target=_accept_and_close, daemon=True)
+    thread.start()
+    try:
+        assert probe_reused_database_url(f"postgresql://u:p@127.0.0.1:{port}/civiccast") is False
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+        listener.close()
 
 
 # Setup-nonce generation + handoff (native front door) was retired

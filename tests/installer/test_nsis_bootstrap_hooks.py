@@ -882,3 +882,142 @@ def test_station_activation_logs_which_index_source_it_used() -> None:
     assert "step d4-activate-station: no station index at" in step, (
         "the neither-present case must also name itself in the breadcrumb log"
     )
+
+
+# ---------------------------------------------------------------------------
+# Installer-path audit batch (2026-09-03). Source-shape contracts, in this
+# file's established convention -- the .nsh is NSIS script, and no test in
+# this repository executes an installer route.
+# ---------------------------------------------------------------------------
+
+
+def test_bl02_a_failed_postinstall_disarms_the_service_before_aborting() -> None:
+    r"""BL-02. The upgrade sequence is: PREINSTALL stops the service while
+    PRESERVING its registration -> Tauri replaces $INSTDIR -> POSTINSTALL
+    stages the NEW payload into $INSTDIR\runtime -> and only THEN does D3 run.
+    So by the time ANY POSTINSTALL failure branch fires, the machine holds new
+    code, the old unmigrated database, and CivicCastSupervisor still
+    registered `--startup auto`, merely stopped. The operator reads "the
+    service has NOT been started on the new files" -- true at that instant --
+    reboots, and the SCM starts the supervisor on the new payload against the
+    old schema. PR #143's fix moved that from "immediately" to "next boot".
+    """
+    source = _hooks_source()
+    fail_macro = _slice(source, "!macro CIVICCAST_FAIL CODE TEXT", "!macroend")
+
+    assert "--civiccast-stop-native-service" in fail_macro, (
+        "CIVICCAST_FAIL must stop the service before aborting"
+    )
+    assert "sc.exe" in fail_macro and "start= demand" in fail_macro, (
+        "CIVICCAST_FAIL must set the service to manual start so it does not "
+        "auto-start onto the new payload at the next reboot"
+    )
+    assert "$CIVICCAST_PAYLOAD_REPLACED" in fail_macro, (
+        "containment must be gated on the payload having been replaced -- a "
+        "PREINSTALL failure aborts before any file changes and must leave the "
+        "existing install's auto-start service exactly as it was"
+    )
+    assert "Var CIVICCAST_PAYLOAD_REPLACED" in source
+    assert 'StrCpy $CIVICCAST_PAYLOAD_REPLACED "1"' in source
+
+    # The flag is armed at the top of POSTINSTALL, before any failure branch.
+    postinstall = _postinstall_macro(source)
+    armed_at = postinstall.index('StrCpy $CIVICCAST_PAYLOAD_REPLACED "1"')
+    first_fail_at = postinstall.index("!insertmacro CIVICCAST_FAIL")
+    assert armed_at < first_fail_at
+
+
+def test_bl02_the_exit_124_message_is_true_across_a_reboot() -> None:
+    """The operator text that motivated the finding must now describe the
+    state the machine is actually left in."""
+    source = _hooks_source()
+    branch = _slice(source, "CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT}", "${EndIf}")
+    assert "manual start" in branch, (
+        "the message must say the service will not come up at the next restart"
+    )
+    assert "The service has NOT been started on the new files." not in branch, (
+        "the old sentence was true only at that instant and is what BL-02 is about"
+    )
+
+
+def test_bl11_a_running_but_not_serving_service_gets_its_own_code_and_message() -> None:
+    """BL-11. Nothing in the elevated install chain ever contacted /health;
+    SCM `RUNNING` was the only success signal the installer had."""
+    source = _hooks_source()
+    assert "!define CIVICCAST_EXIT_D4_SERVICE_NOT_SERVING 125" in source
+    assert "!define CIVICCAST_EXIT_D4_SERVICE_NOT_STARTING 126" in source
+
+    step = _slice(
+        source,
+        '!insertmacro CIVICCAST_STEP "step d4-service-registration: begin"',
+        '!insertmacro CIVICCAST_STEP "step d4-firewall-rule: begin"',
+    )
+    assert "${If} $0 == 84" in step, "exit 84 (running, not serving) needs its own branch"
+    assert "${ElseIf} $0 == 83" in step, (
+        "exit 83 (registered, would not start) needs its own branch"
+    )
+    assert "${CIVICCAST_EXIT_D4_SERVICE_NOT_SERVING}" in step
+    assert "${CIVICCAST_EXIT_D4_SERVICE_NOT_STARTING}" in step
+    # MA-29: 83 must no longer be described as a registration failure.
+    not_starting_arm = _slice(step, "${ElseIf} $0 == 83", "${ElseIf} $0 != 0")
+    assert "startup failure, not a registration failure" in not_starting_arm
+
+
+def test_bl13_an_unprovable_runtime_selector_aborts_the_install() -> None:
+    """BL-13. The Rust side printed one sentence -- which itself said "The
+    native runtime will not start until an operator sets it" -- and returned
+    Ok, after which setup registered and started a service whose control
+    plane the guard blocks, and reported success."""
+    source = _hooks_source()
+    assert "!define CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP   127" in source
+    step = _slice(
+        source,
+        '!insertmacro CIVICCAST_STEP "step d4-provision: begin"',
+        "K1 FIX: FLAT-LAYOUT STATION ACTIVATION",
+    )
+    assert "${ElseIf} $0 == 85" in step
+    assert "${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP}" in step
+    arm = _slice(step, "${ElseIf} $0 == 85", "${Else}")
+    assert "ActiveRuntime" in arm, "the message must name the value an administrator has to set"
+
+
+def test_ma08_activation_exit_codes_do_not_collapse_to_one_message() -> None:
+    """MA-08. Five distinct activation exit codes shared one sentence about
+    the station folder and the pack cache -- correct for 66-with-a-cache-miss
+    and wrong for 67 (self-test), 78 (a build defect), and 64/65."""
+    step = _activate_station_step(_hooks_source())
+    for code in ("67", "66", "78", "64"):
+        assert f"$0 == {code}" in step, f"activation exit {code} has no branch of its own"
+
+    self_test_arm = _slice(step, "${ElseIf} $0 == 67", "${ElseIf} $0 == 66")
+    assert "self-test" in self_test_arm
+    assert "pack cache" not in self_test_arm, (
+        "a self-test failure must not tell the operator their packs are missing"
+    )
+
+    trust_arm = _slice(step, "${ElseIf} $0 == 78", "${ElseIf} $0 == 64")
+    assert "not a valid release build" in trust_arm
+    assert "Nothing is wrong with this machine" in trust_arm
+
+
+def test_ma28_the_cli_contract_comment_names_the_codes_that_actually_exist() -> None:
+    """MA-28. The comment above the exit-code band used to say the product's
+    CLI codes were "(40, 70, 73, 75, 76, 79, 81)" -- omitting thirteen live
+    codes, and listing 40, which is a D3 ENGINE phase code."""
+    source = _hooks_source()
+    band_comment = _slice(
+        source, "; POSTINSTALL failure exit codes.", "!define CIVICCAST_EXIT_PACK_DELIVERY"
+    )
+    # The old set is still quoted, deliberately -- but only inside the
+    # sentence that RETRACTS it. Asserting the retraction is the real
+    # contract; asserting the string's absence would just invite someone to
+    # delete the correction along with the error.
+    assert '"(40, 70, 73, 75, 76, 79, 81)". That set was wrong' in band_comment, (
+        "the corrected comment must name what it is correcting, or the next "
+        "person picking an exit code learns nothing from it"
+    )
+    for code in ("83", "84", "85"):
+        assert code in band_comment, f"the new CLI code {code} must be recorded in the band comment"
+    assert "40 unexpected fault" in band_comment, (
+        "40 must be named as what it is -- a D3 engine phase code, not a CLI code"
+    )

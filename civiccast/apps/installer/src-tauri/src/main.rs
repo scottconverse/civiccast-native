@@ -370,6 +370,20 @@ fn health_response_is_ok(
     if !compact.contains(&format!("\"version\":\"{CIVICCAST_VERSION}\"")) {
         return false;
     }
+    // <installer-path-audit MA-07> 200 + a matching version string is
+    // LIVENESS, not readiness -- civiccast/app.py's own /health docstring
+    // says so ("always 200 while the process answers, in every schema
+    // state"). PR #143 fixed exactly this shape in the Gate A harness and
+    // left it in the product: this probe is what decides whether the
+    // installer's lane is "ready", and it would declare a station ready over
+    // a schema-behind or schema-ahead database whose staff endpoints 500.
+    // Both fields have been unconditional in the body since PR #143.
+    if !compact.contains("\"status\":\"healthy\"") {
+        return false;
+    }
+    if !compact.contains("\"schema\":\"current\"") {
+        return false;
+    }
     if let Some(expected) = expected_instance_id {
         if !compact.contains(&format!("\"bootstrap_instance_id\":\"{expected}\"")) {
             return false;
@@ -1853,51 +1867,82 @@ try {{
         // Chain J (2026-08-02): this test exercises the REAL comparison
         // health_response_is_ok makes against the live CIVICCAST_VERSION
         // constant, so its fixtures are built FROM that constant via
-        // format! rather than a re-typed literal -- a hardcoded
-        // "1.0.0-rc15" here is exactly what silently went stale (and
-        // masked a real assertion failure) the moment the constant's
-        // value last changed.
+        // format! rather than a re-typed literal.
+        //
+        // <installer-path-audit MA-07> Every fixture below now carries the
+        // readiness pair as well. That is the point of the finding: this
+        // probe decides whether the installer declares its lane READY, and
+        // a 200 with a matching version is LIVENESS ONLY -- app.py's own
+        // /health docstring says so. The old fixtures proved a station
+        // ready over a body that never mentioned readiness or schema
+        // currency at all.
+        const READY: &str = "\"status\":\"healthy\",\"schema\":\"current\"";
+        const HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n";
+
         assert!(health_response_is_ok(
+            &format!("{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\"}}"),
+            None,
+            None,
+        ));
+        // The Gate A run 33681670855 body: a 200, a matching version, and a
+        // station serving 500s. The pre-MA-07 probe accepted it.
+        assert!(!health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\"}}"
+                "{HEAD}{{\"status\":\"degraded\",\"schema\":\"behind\",\"version\":\"{CIVICCAST_VERSION}\"}}"
+            ),
+            None,
+            None,
+        ));
+        // Healthy but schema-behind is still not ready.
+        assert!(!health_response_is_ok(
+            &format!(
+                "{HEAD}{{\"status\":\"healthy\",\"schema\":\"behind\",\"version\":\"{CIVICCAST_VERSION}\"}}"
+            ),
+            None,
+            None,
+        ));
+        // A body that says nothing about readiness fails closed too.
+        assert!(!health_response_is_ok(
+            &format!("{HEAD}{{\"version\":\"{CIVICCAST_VERSION}\"}}"),
+            None,
+            None,
+        ));
+        assert!(!health_response_is_ok(
+            &format!(
+                "HTTP/1.1 503 Service Unavailable\r\n\r\n{{{READY},\"version\":\"{CIVICCAST_VERSION}\"}}"
             ),
             None,
             None,
         ));
         assert!(!health_response_is_ok(
-            &format!("HTTP/1.1 503 Service Unavailable\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\"}}"),
-            None,
-            None,
-        ));
-        assert!(!health_response_is_ok(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"version\":\"2.1.0\"}",
+            &format!("{HEAD}{{{READY},\"version\":\"2.1.0\"}}"),
             None,
             None,
         ));
         assert!(health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"proof-123\"}}"
+                "{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"proof-123\"}}"
             ),
             Some("proof-123"),
             None,
         ));
         assert!(!health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"other\"}}"
+                "{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\",\"bootstrap_instance_id\":\"other\"}}"
             ),
             Some("proof-123"),
             None,
         ));
         assert!(health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"build-123\"}}"
+                "{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"build-123\"}}"
             ),
             None,
             Some("build-123"),
         ));
         assert!(!health_response_is_ok(
             &format!(
-                "HTTP/1.1 200 OK\r\n\r\n{{\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"stale\"}}"
+                "{HEAD}{{{READY},\"version\":\"{CIVICCAST_VERSION}\",\"runtime_build_id\":\"stale\"}}"
             ),
             None,
             Some("build-123"),
@@ -5790,10 +5835,29 @@ fn run_native_service_registration_cli(args: &[String]) -> Option<i32> {
         Some(
             match native_service_registration::register_native_service(Path::new(&install_root)) {
                 Ok(()) => match native_service_registration::start_native_service() {
-                    Ok(()) => {
-                        println!("CivicCast (Native) service registered and RUNNING.");
-                        0
-                    }
+                    // <installer-path-audit BL-11> SCM `RUNNING` used to be
+                    // the ONLY success signal the entire elevated install
+                    // chain had. It means `pythonservice.exe` told the SCM it
+                    // had started -- nothing about Postgres being up, the
+                    // control plane binding 8000, or the schema matching the
+                    // code. Gate A run 33681670855 is exactly that: service
+                    // registered, SCM RUNNING, /health 200
+                    // {"status":"degraded","schema":"behind"}, InstalledVersion
+                    // written, exit 0, success page over a box serving 500s.
+                    // Poll /health and require it to say the station can serve.
+                    Ok(()) => match native_service_registration::wait_for_control_plane_ready() {
+                        Ok(()) => {
+                            println!(
+                                "CivicCast (Native) service registered, RUNNING, and serving \
+                                 (/health reports healthy with a current schema)."
+                            );
+                            0
+                        }
+                        Err(error) => {
+                            eprintln!("{error}");
+                            native_service_registration::SERVICE_NOT_SERVING_EXIT_CODE
+                        }
+                    },
                     Err(error) => {
                         eprintln!(
                             "CivicCast (Native) service was registered but could not be \
@@ -5928,9 +5992,15 @@ fn run_native_provision_cli(args: &[String]) -> Option<i32> {
                     );
                     0
                 }
-                Err(error) => {
-                    eprintln!("{error}");
-                    75
+                // <installer-path-audit BL-13> The failure now carries its
+                // own exit code: an unprovable ActiveRuntime selector
+                // (SELECTOR_UNPROVABLE_EXIT_CODE) is a different operator
+                // situation from a provisioning failure, and the exit code is
+                // the only signal a silent install's support log carries
+                // about which precondition failed.
+                Err(failure) => {
+                    eprintln!("{failure}");
+                    failure.exit_code
                 }
             },
         )
@@ -5938,7 +6008,7 @@ fn run_native_provision_cli(args: &[String]) -> Option<i32> {
     #[cfg(not(target_os = "windows"))]
     {
         eprintln!("Native provisioning requires Windows.");
-        Some(75)
+        Some(native_service_registration::ProvisionFailure::GENERIC_EXIT_CODE)
     }
 }
 

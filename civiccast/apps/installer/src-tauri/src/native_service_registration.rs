@@ -592,17 +592,44 @@ pub fn stop_native_service() -> Result<(), String> {
 /// service registered cleanly but could NOT be brought to RUNNING.
 ///
 /// Deliberately distinct from that subcommand's existing registration-failure
-/// code (70) so the installer log says which half failed. Chosen from a gap in
-/// this binary's existing 64-82 CLI band (64/65/66/67/70/71/72/73/75/76/77/78/
-/// 79/80/81/82 are taken; 74 is free) and clear of the NSIS-side 110-119 band
-/// in `nsis-hooks-bootstrap.nsh` -- the same way
-/// [`TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE`] (82) was picked.
+/// code (70) so the installer log says which half failed.
 ///
-/// `NSIS_HOOK_POSTINSTALL` needs NO change to honor it: its
-/// `d4-service-registration` block already aborts the install via
-/// `CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_SERVICE}` on ANY nonzero exit from this
-/// subcommand.
-pub const SERVICE_START_FAILED_EXIT_CODE: i32 = 74;
+/// **Moved 74 -> 83 by the installer-path audit (MA-28).** The comment this
+/// replaces asserted "74 is free". It was not: 74 was already
+/// [`crate::native_uninstall::TRANSFER_ACK_REQUIRED_EXIT_CODE`] ("an
+/// ActiveRuntime transfer must be acknowledged") AND
+/// `--civiccast-stage-packs`' required-pack-staging failure (`main.rs`). Three
+/// unrelated meanings on one number, in a band whose entire purpose that same
+/// comment states: "the exit code is the only signal a support log carries
+/// about WHICH step failed". No live collision existed -- each caller branches
+/// within one subcommand -- but the comment is what the next person picking a
+/// code reads, so the code moved and the comment now says what is true.
+///
+/// 83 is genuinely free: this binary emits 0, 1, 64-82, and this module's own
+/// 83/84. It stays clear of the NSIS-side 110-124 band in
+/// `nsis-hooks-bootstrap.nsh`.
+pub const SERVICE_START_FAILED_EXIT_CODE: i32 = 83;
+
+/// The exit code `--civiccast-register-native-service` reports when the
+/// service is RUNNING but the control plane is not actually SERVING.
+///
+/// **Installer-path audit BL-11.** Before this, nothing in the entire
+/// elevated install chain ever contacted `/health`: `sc.exe query` reporting
+/// `RUNNING` -- i.e. `pythonservice.exe` told the SCM it had started -- was
+/// the only success signal the installer had. That says nothing about
+/// Postgres being up, the control plane binding 8000, or the schema matching
+/// the code. Gate A run 33681670855 is the exact shape: the service
+/// registered, SCM said RUNNING, `/health` returned 200
+/// `{"status":"degraded","schema":"behind"}`, the installer wrote
+/// `InstalledVersion`, exited 0, and the wizard showed its success page over
+/// a box serving 500s. PR #143 taught the HARNESS to read the body; it did
+/// not teach the INSTALLER.
+///
+/// Distinct from [`SERVICE_START_FAILED_EXIT_CODE`] because the operator
+/// remedy is completely different: 83 means the service will not run at all;
+/// 84 means it runs and refuses to serve, which on this product almost always
+/// means the database schema did not advance.
+pub const SERVICE_NOT_SERVING_EXIT_CODE: i32 = 84;
 
 /// Pure command construction for `sc.exe start CivicCastSupervisor` -- the
 /// same `sc <command> <servicename>` grammar [`service_stop_command`] uses.
@@ -742,6 +769,216 @@ pub fn start_native_service() -> Result<(), String> {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Control-plane READINESS gate (installer-path audit BL-11)
+//
+// Same pure/thin-wrapper split as the start machinery above: the body
+// classification is pure and unit-tested; the socket read and the poll loop
+// are thin wrappers.
+// ---------------------------------------------------------------------------
+
+/// What the control plane's own `/health` body says about whether the station
+/// can actually serve.
+///
+/// `civiccast/app.py`'s `/health` docstring is explicit that HTTP 200 is
+/// LIVENESS ONLY -- "always 200 while the process answers, in every schema
+/// state" -- and that readiness is the body's `status` field, with `schema`
+/// reporting migration currency. Every variant here is a distinct operator
+/// situation with a distinct remedy, which is why this is an enum and not a
+/// bool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlPlaneReadiness {
+    /// `status == "healthy"` AND `schema == "current"` AND the reported
+    /// revision equals the reported head. The station can serve.
+    Serving,
+    /// The process answers, but the database is not at the schema this code
+    /// expects. This is the Gate A run 33681670855 state.
+    SchemaNotCurrent {
+        schema: String,
+        db_revision: String,
+        expected_head: String,
+    },
+    /// The process answers and the schema is current, but readiness is not
+    /// `healthy` for some other reason.
+    NotHealthy { status: String },
+    /// No 200, no parseable body, or a body missing the fields the contract
+    /// requires. Fails CLOSED -- never treated as serving.
+    Unreadable { detail: String },
+}
+
+/// Pull a `"key":"value"` string field out of a whitespace-stripped JSON body.
+///
+/// Deliberately the same primitive [`crate::health_response_is_ok`] already
+/// uses (substring matching over a compacted body) rather than a new JSON
+/// dependency: this crate parses `/health` in exactly one shape, from one
+/// producer, and adding serde_json to the installer for four fields would be
+/// a heavier change than the finding warrants.
+fn compact_json_string_field(compact: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\":\"");
+    let start = compact.find(&needle)? + needle.len();
+    let rest = &compact[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+/// Compact a raw HTTP response into its body with all whitespace removed, or
+/// `None` when it is not a 200.
+fn compact_health_body(response: &str) -> Option<String> {
+    if !(response.starts_with("HTTP/1.1 200 ") || response.starts_with("HTTP/1.0 200 ")) {
+        return None;
+    }
+    let body = response.split_once("\r\n\r\n").map(|(_, body)| body)?;
+    Some(body.chars().filter(|c| !c.is_whitespace()).collect())
+}
+
+/// Pure classification of a raw `/health` HTTP response. Unit-tested; no I/O.
+pub fn classify_control_plane_readiness(response: &str) -> ControlPlaneReadiness {
+    let Some(compact) = compact_health_body(response) else {
+        return ControlPlaneReadiness::Unreadable {
+            detail: "the control plane did not answer /health with HTTP 200".to_string(),
+        };
+    };
+    let Some(status) = compact_json_string_field(&compact, "status") else {
+        return ControlPlaneReadiness::Unreadable {
+            detail: "the /health body carries no \"status\" field".to_string(),
+        };
+    };
+    let Some(schema) = compact_json_string_field(&compact, "schema") else {
+        return ControlPlaneReadiness::Unreadable {
+            detail: "the /health body carries no \"schema\" field".to_string(),
+        };
+    };
+    // These two are unconditional in app.py as of PR #143 -- their absence
+    // means an older control plane than this installer ships, which is itself
+    // a state the installer must not call success.
+    let Some(db_revision) = compact_json_string_field(&compact, "schema_db_revision") else {
+        return ControlPlaneReadiness::Unreadable {
+            detail: "the /health body carries no \"schema_db_revision\" field".to_string(),
+        };
+    };
+    let Some(expected_head) = compact_json_string_field(&compact, "schema_expected_head") else {
+        return ControlPlaneReadiness::Unreadable {
+            detail: "the /health body carries no \"schema_expected_head\" field".to_string(),
+        };
+    };
+    // Judge the REVISIONS, not only the label. `schema == "current"` is
+    // computed by the same process that reports the two revisions, so it adds
+    // nothing on its own; requiring both means a control plane whose label and
+    // revisions disagree cannot pass either.
+    if schema != "current" || db_revision != expected_head {
+        return ControlPlaneReadiness::SchemaNotCurrent {
+            schema,
+            db_revision,
+            expected_head,
+        };
+    }
+    if status != "healthy" {
+        return ControlPlaneReadiness::NotHealthy { status };
+    }
+    ControlPlaneReadiness::Serving
+}
+
+/// The operator-facing sentence for a readiness outcome that is not serving.
+///
+/// Split out from the poll loop so the message contract is unit-testable and
+/// so the NSIS side's own text (which cannot see this string) stays honest
+/// about what the exit code means.
+pub fn control_plane_readiness_failure_message(outcome: &ControlPlaneReadiness) -> String {
+    match outcome {
+        ControlPlaneReadiness::Serving => String::new(),
+        ControlPlaneReadiness::SchemaNotCurrent {
+            schema,
+            db_revision,
+            expected_head,
+        } => format!(
+            "The CivicCast (Native) service is running, but its database schema is not the one \
+             this version needs (schema: {schema}; database revision {db_revision}, this build \
+             expects {expected_head}). The station would answer its staff pages with errors. \
+             Nothing was deleted -- your recordings, database and settings are intact. See \
+             %ProgramData%\\CivicCast\\upgrade\\upgrade-engine.log and \
+             %ProgramData%\\CivicCast\\install-progress.log, then re-run setup."
+        ),
+        ControlPlaneReadiness::NotHealthy { status } => format!(
+            "The CivicCast (Native) service is running, but it reports itself as \"{status}\" \
+             rather than healthy, so it is not ready to serve. See \
+             %ProgramData%\\CivicCast\\logs and the Windows Application event log."
+        ),
+        ControlPlaneReadiness::Unreadable { detail } => format!(
+            "The CivicCast (Native) service is running, but Windows could not confirm the \
+             station is actually serving: {detail}. See %ProgramData%\\CivicCast\\logs and the \
+             Windows Application event log."
+        ),
+    }
+}
+
+/// How long [`wait_for_control_plane_ready`] polls before giving up.
+///
+/// The service reaching SCM RUNNING only means `pythonservice.exe` started;
+/// the supervisor then brings up Postgres and the control plane behind it,
+/// which on a first boot includes creating the cluster's shared buffers and
+/// the app's own startup work. This bound is deliberately the same order as
+/// [`SERVICE_START_POLL_TIMEOUT_SECS`]'s own derivation: long enough that a
+/// slow-but-healthy first boot is not failed, short enough that a silent
+/// install cannot hang the operator's machine indefinitely.
+pub const CONTROL_PLANE_READY_TIMEOUT_SECS: u64 = 180;
+
+/// The `/health` endpoint the install chain probes. Same address `main.rs`'s
+/// GUI-side probe uses; stated here so the elevated chain does not depend on
+/// a constant defined for a different lane.
+const CONTROL_PLANE_HEALTH_ADDR: &str = "127.0.0.1:8000";
+
+/// One `/health` request over a bounded TCP connection. Returns the raw HTTP
+/// response, or `None` when the socket could not be used at all.
+#[cfg(target_os = "windows")]
+fn read_control_plane_health_once() -> Option<String> {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+
+    let address: SocketAddr = CONTROL_PLANE_HEALTH_ADDR.parse().ok()?;
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(3)).ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+    stream
+        .write_all(
+            b"GET /health HTTP/1.1\r\nHost: 127.0.0.1:8000\r\nConnection: close\r\n\r\n",
+        )
+        .ok()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    Some(response)
+}
+
+/// Poll `/health` until the control plane reports it can actually SERVE.
+///
+/// **Installer-path audit BL-11.** This is the gate the elevated install
+/// chain never had. `start_native_service()` returning `Ok(())` proves the
+/// SCM reached RUNNING and nothing more. The last observed outcome (not the
+/// first, and not a generic timeout string) is what the operator is told, so
+/// a schema-behind station says so by name instead of "the service did not
+/// start".
+#[cfg(target_os = "windows")]
+pub fn wait_for_control_plane_ready() -> Result<(), String> {
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(CONTROL_PLANE_READY_TIMEOUT_SECS);
+    let mut last = ControlPlaneReadiness::Unreadable {
+        detail: "the control plane never answered /health on 127.0.0.1:8000".to_string(),
+    };
+    loop {
+        if let Some(response) = read_control_plane_health_once() {
+            let outcome = classify_control_plane_readiness(&response);
+            if outcome == ControlPlaneReadiness::Serving {
+                return Ok(());
+            }
+            last = outcome;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(control_plane_readiness_failure_message(&last));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
     }
 }
 
@@ -1668,6 +1905,57 @@ pub enum ProvisionOutcome {
     NoOp,
 }
 
+/// The exit code `--civiccast-provision` reports when this machine's runtime
+/// ownership could not be established at all.
+///
+/// **Installer-path audit BL-13.** `claim_install_selector`'s
+/// `LeaveUnprovable` outcome -- reached whenever the ActiveRuntime probe is
+/// `Unreadable`, or the selector is `Absent` while the WSL ARP probe returns
+/// `Unknown` (which `probe_wsl_arp_hkey_users` returns on ANY `HKEY_USERS`
+/// enumeration failure, e.g. access denied) -- used to print one sentence and
+/// return `Ok`. That sentence itself says "The native runtime will not start
+/// until an operator sets it". Exit 0 followed; the service registered,
+/// `sc start` succeeded, the SCM reported RUNNING (the host process runs; the
+/// guard blocks the control plane), and setup showed "installation complete"
+/// over a station that can never serve.
+///
+/// Its own code rather than provisioning's generic 75 for the reason the
+/// whole band exists: the exit code is the only signal a silent install's
+/// support log carries about WHICH precondition failed, and the operator
+/// remedy here (set ActiveRuntime, or fix the permission that made it
+/// unreadable) shares nothing with a provisioning failure's.
+pub const SELECTOR_UNPROVABLE_EXIT_CODE: i32 = 85;
+
+/// A provisioning failure that carries the exit code its caller must report.
+///
+/// Introduced for BL-13: before it, every failure inside
+/// [`run_native_provision`] was an untyped `String` that `main.rs` mapped to
+/// a single 75, so a new, genuinely different precondition failure had no way
+/// to reach the operator as itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionFailure {
+    pub exit_code: i32,
+    pub message: String,
+}
+
+impl ProvisionFailure {
+    /// The generic provisioning failure code the CLI has always reported.
+    pub const GENERIC_EXIT_CODE: i32 = 75;
+
+    fn generic(message: String) -> Self {
+        Self {
+            exit_code: Self::GENERIC_EXIT_CODE,
+            message,
+        }
+    }
+}
+
+impl std::fmt::Display for ProvisionFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
 /// Thin execution wrapper (untested directly, matching
 /// `register_native_service`/`write_database_url`'s convention -- the HARD
 /// RULE forbids unit-testing real SCM/registry/subprocess execution):
@@ -1684,8 +1972,8 @@ pub fn run_native_provision(
     install_root: &Path,
     owner_run_id: &str,
     existing_database_url: &str,
-) -> Result<ProvisionOutcome, String> {
-    let trust = crate::native_packs::embedded_pack_trust()?;
+) -> Result<ProvisionOutcome, ProvisionFailure> {
+    let trust = crate::native_packs::embedded_pack_trust().map_err(ProvisionFailure::generic)?;
     let (python_exe, args) = provision_command(
         install_root,
         owner_run_id,
@@ -1699,10 +1987,10 @@ pub fn run_native_provision(
         .args(&args)
         .output()
         .map_err(|error| {
-            format!(
+            ProvisionFailure::generic(format!(
                 "Could not run CivicCast (Native) provisioning ({}): {error}",
                 python_exe.display()
-            )
+            ))
         })?;
     if !output.status.success() {
         // Deliberately NOT forwarding captured stdout/stderr here (unlike
@@ -1715,12 +2003,12 @@ pub fn run_native_provision(
         // the provisioning journal/recovery document on disk, which is
         // ProgramData-ACL'd, not printed to an installer log a screenshot
         // could capture.
-        return Err(format!(
+        return Err(ProvisionFailure::generic(format!(
             "CivicCast (Native) provisioning failed (exit {:?}); see the provisioning journal \
              and recovery document under %ProgramData%\\CivicCast\\provision for the failure \
              detail.",
             output.status.code()
-        ));
+        )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Chain G: claim the dual-runtime selector this install just earned the
@@ -1744,14 +2032,39 @@ pub fn run_native_provision(
         // Fails LOUD: an install that finishes without the selector it
         // decided to claim produces a station whose control plane can never
         // start.
-        return Err(format!(
+        return Err(ProvisionFailure::generic(format!(
             "CivicCast (Native) provisioning could not claim the dual-runtime selector, so the \
              station's control plane would never be authorized to start: {error}"
-        ));
+        )));
+    }
+    // <installer-path-audit BL-13> `write_error` is `Some` ONLY on
+    // ClaimNative + a failed write. `LeaveUnprovable` -- reached whenever the
+    // selector probe is Unreadable, or the selector is Absent while the WSL
+    // ARP probe returns Unknown (which `probe_wsl_arp_hkey_users` returns on
+    // ANY HKEY_USERS enumeration failure, e.g. access denied) -- printed its
+    // sentence and returned Ok. Exit 0. The chain then registered the
+    // service, `sc start` succeeded, the SCM reported RUNNING (the host
+    // process runs; the guard blocks the control plane), and setup showed
+    // "installation complete" over a station that can never start. The
+    // printed sentence itself SAYS "The native runtime will not start until
+    // an operator sets it" -- a step that failed to establish a precondition,
+    // logged it, and did not propagate.
+    if selector_claim.action == crate::native_uninstall::SelectorClaimAction::LeaveUnprovable {
+        return Err(ProvisionFailure {
+            exit_code: SELECTOR_UNPROVABLE_EXIT_CODE,
+            message: format!(
+                "CivicCast (Native) setup could not establish which runtime owns this machine, \
+                 so the station's control plane would be blocked from starting and setup would \
+                 otherwise have reported success over a station that can never serve. {} An \
+                 administrator must set HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime to \"native\" \
+                 (or resolve the condition that made it unreadable) and re-run setup.",
+                selector_claim.detail
+            ),
+        });
     }
     match parse_provision_handoff(&stdout) {
         Some(database_url) => {
-            write_database_url(&database_url)?;
+            write_database_url(&database_url).map_err(ProvisionFailure::generic)?;
             Ok(ProvisionOutcome::Provisioned)
         }
         None => Ok(ProvisionOutcome::NoOp),
@@ -2301,6 +2614,141 @@ pub fn teardown_exit_code(steps: &[TeardownStepOutcome]) -> i32 {
     }
 }
 
+/// Control-plane readiness gate (installer-path audit BL-11).
+///
+/// The classifier is pure, so these are real behavioural tests of the gate
+/// the elevated install chain never had -- not a lint over its source text.
+/// Every body here is one the OLD chain accepted, because the OLD chain never
+/// looked at a body at all: `sc.exe query` reporting RUNNING was the whole
+/// contract.
+#[cfg(test)]
+mod control_plane_readiness_tests {
+    use super::*;
+
+    fn response(body: &str) -> String {
+        format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{body}")
+    }
+
+    const SERVING_BODY: &str = r#"{"status":"healthy","version":"1.0.0-beta.2","schema":"current","schema_db_revision":"0087_retention_terms","schema_expected_head":"0087_retention_terms"}"#;
+
+    #[test]
+    fn a_healthy_current_body_is_serving() {
+        assert_eq!(
+            classify_control_plane_readiness(&response(SERVING_BODY)),
+            ControlPlaneReadiness::Serving
+        );
+    }
+
+    #[test]
+    fn gate_a_run_33681670855s_own_body_is_not_serving() {
+        // Verbatim shape from that run's summary.json.runtime_checks.health
+        // snippet: a 200, a non-empty body, and a station serving 500s.
+        let body = r#"{"status":"degraded","schema":"behind","schema_db_revision":"0082_x","schema_expected_head":"0087_y"}"#;
+        let outcome = classify_control_plane_readiness(&response(body));
+        assert_eq!(
+            outcome,
+            ControlPlaneReadiness::SchemaNotCurrent {
+                schema: "behind".to_string(),
+                db_revision: "0082_x".to_string(),
+                expected_head: "0087_y".to_string(),
+            }
+        );
+        let message = control_plane_readiness_failure_message(&outcome);
+        assert!(message.contains("0082_x"), "{message}");
+        assert!(message.contains("0087_y"), "{message}");
+    }
+
+    #[test]
+    fn a_current_label_over_mismatched_revisions_is_still_not_serving() {
+        // The label and the revisions come from the same process, so the
+        // label alone proves nothing; requiring BOTH means a control plane
+        // whose self-report is internally inconsistent cannot pass either.
+        let body = r#"{"status":"healthy","schema":"current","schema_db_revision":"0082_x","schema_expected_head":"0087_y"}"#;
+        assert!(matches!(
+            classify_control_plane_readiness(&response(body)),
+            ControlPlaneReadiness::SchemaNotCurrent { .. }
+        ));
+    }
+
+    #[test]
+    fn a_degraded_status_with_a_current_schema_is_not_serving() {
+        let body = r#"{"status":"degraded","schema":"current","schema_db_revision":"0087_a","schema_expected_head":"0087_a"}"#;
+        assert_eq!(
+            classify_control_plane_readiness(&response(body)),
+            ControlPlaneReadiness::NotHealthy {
+                status: "degraded".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_non_200_is_unreadable_not_serving() {
+        let raw = "HTTP/1.1 503 Service Unavailable\r\n\r\n{}";
+        assert!(matches!(
+            classify_control_plane_readiness(raw),
+            ControlPlaneReadiness::Unreadable { .. }
+        ));
+    }
+
+    #[test]
+    fn a_body_missing_the_revision_fields_fails_closed() {
+        // An older control plane than this installer ships. PR #143 made both
+        // fields unconditional; their absence is itself a state the installer
+        // must not call success.
+        let body = r#"{"status":"healthy","schema":"current"}"#;
+        assert!(matches!(
+            classify_control_plane_readiness(&response(body)),
+            ControlPlaneReadiness::Unreadable { .. }
+        ));
+    }
+
+    #[test]
+    fn whitespace_and_field_order_do_not_change_the_verdict() {
+        let body = "{\n  \"schema_expected_head\": \"0087_a\",\n  \"schema\": \"current\",\n  \"schema_db_revision\": \"0087_a\",\n  \"status\": \"healthy\"\n}";
+        assert_eq!(
+            classify_control_plane_readiness(&response(body)),
+            ControlPlaneReadiness::Serving
+        );
+    }
+
+    #[test]
+    fn the_three_service_exit_codes_are_distinct_and_outside_the_nsis_band() {
+        // Installer-path audit MA-28: 74 already meant three different things
+        // when the comment beside SERVICE_START_FAILED_EXIT_CODE asserted
+        // "74 is free". These three must never collide with each other, with
+        // 74/75, or with the NSIS 110-127 band.
+        let codes = [
+            SERVICE_START_FAILED_EXIT_CODE,
+            SERVICE_NOT_SERVING_EXIT_CODE,
+            SELECTOR_UNPROVABLE_EXIT_CODE,
+        ];
+        for (index, code) in codes.iter().enumerate() {
+            assert!(
+                (83..=85).contains(code),
+                "code {code} is outside the newly claimed 83-85 range"
+            );
+            assert_ne!(*code, ProvisionFailure::GENERIC_EXIT_CODE);
+            assert_ne!(*code, crate::native_uninstall::TRANSFER_ACK_REQUIRED_EXIT_CODE);
+            assert!(!(110..=127).contains(code), "{code} collides with the NSIS band");
+            for other in codes.iter().skip(index + 1) {
+                assert_ne!(code, other, "two service failures share exit code {code}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_provision_failure_carries_its_own_exit_code() {
+        let generic = ProvisionFailure::generic("boom".to_string());
+        assert_eq!(generic.exit_code, ProvisionFailure::GENERIC_EXIT_CODE);
+        assert_eq!(generic.to_string(), "boom");
+        let unprovable = ProvisionFailure {
+            exit_code: SELECTOR_UNPROVABLE_EXIT_CODE,
+            message: "no ownership".to_string(),
+        };
+        assert_ne!(unprovable.exit_code, generic.exit_code);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2777,15 +3225,26 @@ mod tests {
     #[test]
     fn the_start_failure_exit_code_is_distinct_and_outside_every_reserved_band() {
         // Distinct from the registration-failure code (70) so the installer
-        // log says which half failed, free in this binary's 64-82 CLI band,
-        // and clear of the NSIS-side 110-119 band.
-        assert_eq!(SERVICE_START_FAILED_EXIT_CODE, 74);
+        // log says which half failed, and clear of the NSIS-side band.
+        //
+        // <installer-path-audit MA-28> Moved 74 -> 83. The comment this test
+        // used to pin said "74 is free"; it was not -- 74 was already
+        // native_uninstall::TRANSFER_ACK_REQUIRED_EXIT_CODE and
+        // --civiccast-stage-packs' required-pack failure. The distinctness
+        // this test really cares about is now asserted against the actual
+        // occupants rather than against a literal.
+        assert_eq!(SERVICE_START_FAILED_EXIT_CODE, 83);
         assert_ne!(SERVICE_START_FAILED_EXIT_CODE, 70);
+        assert_ne!(
+            SERVICE_START_FAILED_EXIT_CODE,
+            crate::native_uninstall::TRANSFER_ACK_REQUIRED_EXIT_CODE
+        );
         assert_ne!(
             SERVICE_START_FAILED_EXIT_CODE,
             TEARDOWN_SERVICE_STOP_UNCONFIRMED_EXIT_CODE
         );
-        assert!(!(110..=119).contains(&SERVICE_START_FAILED_EXIT_CODE));
+        // The NSIS band grew to 110-127 with BL-11/BL-13's new codes.
+        assert!(!(110..=127).contains(&SERVICE_START_FAILED_EXIT_CODE));
     }
 
     #[test]
