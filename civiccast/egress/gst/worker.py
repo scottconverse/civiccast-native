@@ -34,10 +34,32 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import control as controlmod  # type: ignore[import-not-found]
-import engine as enginemod  # type: ignore[import-not-found]
-import graph as graphmod  # type: ignore[import-not-found]
+# Import the sibling gst modules through the ``civiccast`` PACKAGE whenever that
+# package is importable, and only fall back to the by-path (top-level ``graph`` /
+# ``engine`` / ``control``) import when it is not.
+#
+# Why the order matters (Gate A T4 root cause, 2026-09): ``engine.py`` itself
+# prefers the package form of these imports, so a by-path import here bound
+# ``graphmod.PlaylistLeg`` to the module ``graph`` while the engine's own
+# ``PlaylistLeg`` came from ``civiccast.egress.gst.graph`` -- two DISTINCT class
+# objects for the same source file. ``graph_from_json`` then produced legs the
+# engine's ``isinstance(leg, PlaylistLeg)`` dispatch could not recognise, so the
+# program leg (always a ``PlaylistLeg``, bridge.graph_from_config) fell through
+# to the ``SourceLeg`` branch and the worker died at construction with
+# ``AttributeError: 'PlaylistLeg' object has no attribute 'elements'`` -- before
+# the pipeline ever reached PLAYING, so nothing was ever put on the wire.
+# The engine's own docstring assumed Windows could never reach the package
+# branch ("gi import fails first"); the bundled native GStreamer runtime makes
+# that import succeed, so both halves must agree on ONE module identity.
+try:
+    from civiccast.egress.gst import control as controlmod
+    from civiccast.egress.gst import engine as enginemod
+    from civiccast.egress.gst import graph as graphmod
+except ImportError:  # standalone context: no civiccast package on sys.path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import control as controlmod  # type: ignore[import-not-found,no-redef]
+    import engine as enginemod  # type: ignore[import-not-found,no-redef]
+    import graph as graphmod  # type: ignore[import-not-found,no-redef]
 
 # -- D2 Windows worker-pipe seam (spec-supervisor D2, design.md sec4) --------------
 #
@@ -89,16 +111,21 @@ def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, st
     command = controlmod.parse_control_line(line)
     if command is None:
         return "error", f"unparseable control line: {line!r}"
-    verb = command[0]
+    # Narrow on ``command[0]`` directly (not on a ``verb`` alias): ``ControlCommand``
+    # is a Literal-discriminated tuple union, so indexing the tuple in the test is
+    # what lets the type checker see ``command[1]``'s real type on each branch. The
+    # by-path import this module used to do made ``command`` an untyped ``Any``, so
+    # nothing here was checked at all.
     try:
-        if verb == "swap":
+        if command[0] == "swap":
             engine_instance.swap.swap_to(command[1])
             return "applied", None
-        if verb == "reload":
-            with Path(command[1]).open(encoding="utf-8") as handle:
+        if command[0] == "reload":
+            reload_path = Path(command[1])
+            with reload_path.open(encoding="utf-8") as handle:
                 new_graph = graphmod.graph_from_json(handle.read())
             with contextlib.suppress(OSError):
-                Path(command[1]).unlink()  # one-shot graph file: consumed after read
+                reload_path.unlink()  # one-shot graph file: consumed after read
             engine_instance.reload_program(new_graph.sources[0])
             # BLOCKER fix: re-apply the graphics-overlay leg too (mirrors the FIFO
             # dispatch path, engine._dispatch_control) -- otherwise a content-reload
@@ -106,7 +133,7 @@ def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, st
             # text update just like the FIFO path used to.
             engine_instance.reload_graphics_overlay(new_graph.graphics_overlay)
             return "applied", None
-        if verb == "caption":
+        if command[0] == "caption":
             text = base64.b64decode(command[3]).decode("utf-8", "replace")
             pushed = engine_instance.push_caption_cue(
                 text=text, pts_seconds=command[1] / 1000.0, duration_seconds=command[2] / 1000.0
@@ -114,13 +141,17 @@ def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, st
             if not pushed:
                 return "error", "no live caption source"
             return "applied", None
-        if verb == "stop":
+        if command[0] == "stop":
             if engine_instance._loop is not None:
                 engine_instance._loop.quit()
             return "applied", None
     except Exception as exc:  # a bad command must never kill the channel
         return "error", repr(exc)
-    return "error", f"unknown verb: {verb!r}"
+    # Unreachable while this dispatch covers all four ``ControlCommand`` verbs (the
+    # type checker proves that, hence the ignore) -- kept as a runtime safety net so
+    # a verb added to control.py later is REPORTED here rather than silently
+    # falling off the end of the function as ``None``.
+    return "error", f"unknown verb: {command[0]!r}"  # type: ignore[unreachable]
 
 
 def _windows_pipe_connect(pipe_name: str, timeout_s: float = 10.0) -> Any:
