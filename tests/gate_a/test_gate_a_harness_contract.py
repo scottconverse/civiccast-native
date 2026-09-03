@@ -1828,3 +1828,99 @@ def test_soak_480_scales_both_bounds_in_the_documented_order() -> None:
     assert in_sandbox_bound == 630
     assert host_bound == 650
     assert in_sandbox_bound < host_bound
+
+
+# --------------------------------------------------------------------------
+# <gate-a-engine-soak> T6 hostile-review fixes (B1-B5).
+# --------------------------------------------------------------------------
+
+
+def test_t6_publishes_scheduled_items_via_commit_to_air() -> None:
+    """B1a: a bare POST /api/staff/schedule item is created 'scheduled', and
+    egress/source_plan.py only plans items whose state is
+    SCHEDULE_STATE_PUBLISHED (civiccast/schedule/models.py, civiccast/egress/
+    source_plan.py). T6 must publish every item it schedules via
+    POST /api/staff/playout/commit (civiccast/schedule/playout_router.py)
+    or the beat loop can only ever observe fill_policy='slate', never real
+    content -- the false-pass the hostile review found."""
+    code = _code_only(_driver_executable_text())
+    assert "/api/staff/playout/commit" in code
+    assert "occurrence_id" in code
+    assert "schedule_item_id" in code
+    assert "commitR.status -eq 201" in code
+
+
+def test_t6_beat_predicate_requires_real_content_not_just_slate() -> None:
+    """B1b: ON_AIR + packets>0 alone is satisfied by slate fill -- the beat
+    predicate must also require TSDuck's own pass verdict (Test-TsProof,
+    the same judgement T4 already uses) AND that the engine's
+    current_source_label (civiccast/egress/daemon.py _write_state /
+    EgressStateRow) is populated and is not the slate generator's literal
+    label (civiccast/egress/source_plan.py SlateSourceGenerator)."""
+    code = _code_only(_driver_executable_text())
+    assert "current_source_label" in code
+    assert "'CivicCast slate'" in code or '"CivicCast slate"' in code
+    assert "tspPass = ($chBeat.tsp_verdict -eq 'pass')" in code
+    assert "source_is_asset" in code
+    assert re.search(
+        r"-not \$isLive -or -not \$hasPackets -or -not \$tspPass -or -not \$chBeat\.source_is_asset",
+        code,
+    ), "the beat predicate must AND together liveness, packets, tsp_verdict, and source-is-asset"
+
+
+def test_t6_never_falls_back_to_a_synthetic_clip() -> None:
+    """B4: real LPM sample clips ARE present for our soak kits (Run-GateA.ps1
+    junctions the whole kit dir, samples\\*.mp4 included, at
+    C:\\CivicCastPayload via the .wsb). Per the owner's standing rule, real
+    LPM videos are mandatory for content tests -- T6 must FAIL_EARLY when no
+    usable real clip is found rather than generating a synthetic clip."""
+    driver = _read(_DRIVER)
+    t6_start = driver.index("$t6 = Join-Path $OutDir 'T6-SOAK.txt'")
+    t6_end = driver.index("Save-Summary -Step 't6-soak-complete'")
+    t6_block = _code_only(driver[t6_start:t6_end])
+    assert "reason=no-real-clips" in t6_block
+    assert "testsrc=size=1280x720" not in t6_block, "T6 must not generate a synthetic clip"
+    assert "t6-synthetic-asset.mp4" not in t6_block
+
+
+def test_t6_asset_staging_calls_save_summary_every_step() -> None:
+    """B2: asset staging (upload/package/ready-poll/approve, per clip) and the
+    schedule POST loop can each run long enough to exceed the watchdog's
+    8-minute stall threshold -- every step must call Save-Summary so the
+    watchdog keeps seeing forward progress."""
+    code = _code_only(_driver_executable_text())
+    assert re.search(r"Save-Summary -Step \"t6-clip-uploaded-\$aId\"", code)
+    assert re.search(r"Save-Summary -Step \"t6-clip-packaged-\$aId\"", code)
+    assert re.search(r"Save-Summary -Step \"t6-clip-ready-poll-\$aId-\$pollN\"", code)
+    assert re.search(r"Save-Summary -Step \"t6-clip-approved-\$aId\"", code)
+    assert re.search(r"if \(\(\$postCount % 50\) -eq 0\) \{ Save-Summary", code)
+
+
+def test_t6_staging_stays_under_the_200mb_upload_ceiling() -> None:
+    """B3: Invoke-CivicCastApi's default TimeoutSec=30 and the multipart
+    upload's full in-memory [IO.File]::ReadAllBytes copy cannot safely
+    handle the ~858MB 1080p sample in a 16GB sandbox. Only clips <=200MB may
+    be staged, package/approve/upload get a 900s timeout, and skipped clips
+    must be logged, not silently dropped."""
+    code = _code_only(_driver_executable_text())
+    assert "$maxClipBytes = 200MB" in code
+    assert "clip_skipped_too_large" in code
+    assert "-TimeoutSec 900" in code
+    assert "'validated' -or $aState -eq 'recorded'" in code
+
+
+def test_t6_schedule_window_anchored_at_start_command_and_no_silent_cap() -> None:
+    """B5: the schedule window must be anchored at start-command time (not
+    staging time, which can itself run long), begin 60s before that anchor
+    so the first item is already CURRENT when build_source_plan_from_
+    schedule resolves it, run through soak_end+15min, use 0s back-to-back
+    gaps, and FAIL_EARLY rather than silently truncate when a channel would
+    need more than 2000 items to reach the deadline."""
+    code = _code_only(_driver_executable_text())
+    assert "$scheduleStart = Get-Date" in code
+    assert "$scheduleStart.AddSeconds(-60)" in code
+    assert "$scheduleEnd = $scheduleStart.AddMinutes($soakMin + 15)" in code
+    assert "$scheduleCapPerChannel = 2000" in code
+    assert "reason=schedule-too-long" in code
+    assert "$cursor.AddSeconds([int]$asset.duration_seconds)" in code
+    assert "+ 2)" not in code, "no back-to-back gap padding should remain in the T6 schedule loop"

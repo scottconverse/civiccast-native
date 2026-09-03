@@ -3851,52 +3851,92 @@ try {
             if (-not $t6Token) {
                 $t6Result = 'FAIL_EARLY reason=no-bearer-token'
             } else {
-                # (a) Stage assets: prefer the real LPM sample clips shipped in
-                # the kit's mapped samples\ folder (real speech -> a proof that
-                # actually exercises encode+mux, not just a slate). Fall back to
-                # ONE synthetic clip, generated once and reused, when absent.
+                # (a) Stage assets: the real LPM sample clips shipped in the
+                # kit's mapped samples\ folder are MANDATORY for T6 (owner
+                # rule: real LPM videos are required for content tests --
+                # synthetic sine-tone/testsrc clips make a content-airing
+                # verdict meaningless). B4: this path DOES exist for our soak
+                # kits -- Run-GateA.ps1 junctions sandbox-lab\kit-download to
+                # the whole kit dir C:\CivicCastTester\kit-staging\<sha>\
+                # (samples\*.mp4 included) and the .wsb maps kit-download to
+                # C:\CivicCastPayload -- so $PayloadDir\samples is kept as the
+                # lookup path. Only clips under 200MB are staged: the upload
+                # path below does [IO.File]::ReadAllBytes plus a full in-
+                # memory multipart copy, and the 1080p sample (~858MB) can OOM
+                # the 16GB sandbox; the 360p samples are the usable ones. A
+                # skipped oversized clip is logged, never silently dropped.
+                # If no usable real clip exists, T6 fails early rather than
+                # falling back to a synthetic clip -- there is no synthetic
+                # fallback for T6.
                 $samplesDir = Join-Path $PayloadDir 'samples'
-                $realClips = @()
+                $maxClipBytes = 200MB
+                $allSampleClips = @()
+                $usableClips = @()
+                $skippedClips = @()
                 if (Test-Path $samplesDir) {
-                    $realClips = @(Get-ChildItem -Path $samplesDir -Filter '*.mp4' -File -ErrorAction SilentlyContinue | Select-Object -First 4)
+                    $allSampleClips = @(Get-ChildItem -Path $samplesDir -Filter '*.mp4' -File -ErrorAction SilentlyContinue | Sort-Object Name)
+                    foreach ($sc in $allSampleClips) {
+                        if ($sc.Length -le $maxClipBytes) { $usableClips += $sc } else { $skippedClips += $sc }
+                    }
                 }
-                "asset_source=$(if($realClips.Count -gt 0){'real-lpm-clips'}else{'synthetic-fallback'}) real_clip_count=$($realClips.Count)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                foreach ($sk in $skippedClips) {
+                    "clip_skipped_too_large path=$($sk.FullName) size_bytes=$($sk.Length) max_bytes=$maxClipBytes" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                }
+                "asset_source=$(if($usableClips.Count -gt 0){'real-lpm-clips'}else{'none'}) real_clip_count_total=$($allSampleClips.Count) usable_clip_count=$($usableClips.Count) skipped_too_large=$($skippedClips.Count)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                Save-Summary -Step 't6-clip-inventory'
 
-                $stagedClips = @()
-                if ($realClips.Count -gt 0) {
-                    foreach ($rc in $realClips) { $stagedClips += $rc.FullName }
-                } else {
-                    $synthPath = Join-Path $runRoot 't6-synthetic-asset.mp4'
-                    $genArgs = @(
-                        '-y','-hide_banner','-loglevel','warning',
-                        '-f','lavfi','-i','testsrc=size=1280x720:rate=30','-t','30',
-                        '-f','lavfi','-i','sine=frequency=1000:sample_rate=48000','-t','30',
-                        '-map','0:v:0','-map','1:a:0',
-                        '-c:v','libopenh264','-b:v','1500k','-g','60',
-                        '-c:a','aac','-b:a','96k',
-                        '-movflags','+faststart',
-                        $synthPath
-                    )
-                    $sp = Start-Process -FilePath $ffmpeg -ArgumentList $genArgs -PassThru -NoNewWindow -Wait -RedirectStandardError (Join-Path $OutDir 't6-generate-mp4.stderr.log')
-                    "synthetic_asset_generate_exit=$($sp.ExitCode) path=$synthPath" | Add-Content -Path $t6NoteLog -Encoding UTF8
-                    if ((Test-Path $synthPath) -and ((Get-Item $synthPath -ErrorAction SilentlyContinue).Length -gt 0)) { $stagedClips += $synthPath }
+                $stagedClips = @($usableClips | Select-Object -First 4 | ForEach-Object { $_.FullName })
+
+                if ($stagedClips.Count -eq 0) {
+                    "no_usable_real_clips=true -- T6 refuses the synthetic fallback (owner rule: real LPM videos are mandatory for content tests)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                    $t6Result = 'FAIL_EARLY reason=no-real-clips'
                 }
 
                 foreach ($clipPath in $stagedClips) {
                     $aSuffix = -join ((97..122) | Get-Random -Count 4 | ForEach-Object { [char]$_ })
                     $aId = 't6-soak-' + (Get-Date -Format 'yyMMddHHmmss') + '-' + $aSuffix
                     $aTitle = 'Gate A T6 Soak Asset ' + [System.IO.Path]::GetFileNameWithoutExtension($clipPath) + ' ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-                    $aUp = Invoke-AssetUpload -BaseUrl $BASE -Token $t6Token -AssetId $aId -Title $aTitle -FilePath $clipPath -LogFile $t6NoteLog
+                    $aUp = Invoke-AssetUpload -BaseUrl $BASE -Token $t6Token -AssetId $aId -Title $aTitle -FilePath $clipPath -LogFile $t6NoteLog -TimeoutSec 900
+                    Save-Summary -Step "t6-clip-uploaded-$aId"
                     if ($aUp.status -ne 201) {
                         "asset_upload_failed clip=$clipPath status=$($aUp.status)" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         continue
                     }
-                    $aPkg = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/assets/$aId/package" -LogFile $t6NoteLog -BearerToken $t6Token
+                    $aPkg = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/assets/$aId/package" -LogFile $t6NoteLog -BearerToken $t6Token -TimeoutSec 900
+                    Save-Summary -Step "t6-clip-packaged-$aId"
                     if ($aPkg.status -ne 200) {
                         "asset_package_failed asset_id=$aId status=$($aPkg.status)" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         continue
                     }
-                    $aAppr = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/publish/assets/$aId/approve" -LogFile $t6NoteLog -BodyObj (@{ operator_id = 'sandboxproof'; operator_display_name = 'Sandbox Proof Admin' }) -BearerToken $t6Token
+
+                    # Poll GET /api/staff/assets/{id} until the asset reports a
+                    # PLAYABLE state (civiccast/egress/source_plan.py's
+                    # _PLAYABLE_ASSET_STATES: validated/recorded) before
+                    # approving it -- belt-and-suspenders on top of the
+                    # synchronous /package call above, up to 15 minutes per
+                    # clip, with Save-Summary every poll so a slow box can
+                    # never look like a stall to the watchdog.
+                    $readyDeadline = (Get-Date).AddMinutes(15)
+                    $assetReady = $false
+                    $aState = $null
+                    $pollN = 0
+                    do {
+                        $pollN++
+                        $aGet = Invoke-CivicCastApi -Method 'Get' -Url "$BASE/api/staff/assets/$aId" -LogFile $t6NoteLog -BearerToken $t6Token
+                        $aState = if ($aGet.body_json) { $aGet.body_json.state } else { $null }
+                        "asset_ready_poll id=$aId poll=$pollN state=$aState" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                        Save-Summary -Step "t6-clip-ready-poll-$aId-$pollN"
+                        if ($aState -eq 'validated' -or $aState -eq 'recorded') { $assetReady = $true; break }
+                        if ((Get-Date) -ge $readyDeadline) { break }
+                        Start-Sleep -Seconds 10
+                    } while ((Get-Date) -lt $readyDeadline)
+                    if (-not $assetReady) {
+                        "asset_never_ready asset_id=$aId last_state=$aState" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                        continue
+                    }
+
+                    $aAppr = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/publish/assets/$aId/approve" -LogFile $t6NoteLog -BodyObj (@{ operator_id = 'sandboxproof'; operator_display_name = 'Sandbox Proof Admin' }) -BearerToken $t6Token -TimeoutSec 900
+                    Save-Summary -Step "t6-clip-approved-$aId"
                     if ($aAppr.status -ne 200) {
                         "asset_approve_failed asset_id=$aId status=$($aAppr.status)" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         continue
@@ -3907,7 +3947,7 @@ try {
                 }
 
                 if ($t6Assets.Count -eq 0) {
-                    $t6Result = 'FAIL_EARLY reason=no-assets-staged'
+                    if (-not $t6Result) { $t6Result = 'FAIL_EARLY reason=no-assets-staged' }
                 } else {
                     # (b) Discover the egress routes once (same shape as T4).
                     $specR6 = Invoke-CivicCastApi -Method 'Get' -Url "$BASE/openapi.json" -LogFile $t6NoteLog
@@ -3961,23 +4001,40 @@ try {
                             }
                             "channel=$($ch.id) port=$($ch.port) config_ok=$($t6ChanState[$ch.id].config_ok) start_ok=$($t6ChanState[$ch.id].start_ok)" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         }
+                        # Anchor the schedule window at start-command time, not
+                        # at staging time (asset upload/package/approve above
+                        # can itself take minutes) -- B5.
+                        $scheduleStart = Get-Date
                         Save-Summary -Step 't6-channels-configured'
 
-                        # (d) Schedule back-to-back premieres per channel, from
-                        # now to now+SOAK_MINUTES+10min, cycling the staged
-                        # assets. A 2s gap between items avoids racing the
-                        # EXCLUDE constraint's boundary. Capped per channel so a
-                        # very short clip set can't runaway into thousands of
-                        # HTTP calls; a channel that hits the cap before the
-                        # deadline is a real, logged finding, not silently
-                        # dropped.
-                        $scheduleEnd = (Get-Date).AddMinutes($soakMin + 10)
-                        $scheduleCapPerChannel = 400
+                        # (d) Schedule back-to-back premieres per channel,
+                        # published immediately (Commit-to-Air gate: egress/
+                        # source_plan.py only resolves items whose state is
+                        # SCHEDULE_STATE_PUBLISHED -- a bare POST /api/staff/
+                        # schedule item is created 'scheduled' and is never
+                        # picked up by the engine on its own; B1). Coverage
+                        # runs from 60s BEFORE the start command (so the first
+                        # item is already CURRENT the moment the engine
+                        # resolves its source plan -- build_source_plan_from_
+                        # schedule's _current_item_index needs scheduled_at <=
+                        # now) through soak_end + 15min, using each clip's REAL
+                        # ffprobe duration, back-to-back with 0s gap (source_
+                        # plan's gap_tolerance is 1.0s), cycling the staged
+                        # clips. No cap that silently truncates: a channel that
+                        # would need more than 2000 items to reach the deadline
+                        # fails the whole soak early instead of quietly airing
+                        # a shorter schedule than requested (B5).
+                        $scheduleEnd = $scheduleStart.AddMinutes($soakMin + 15)
+                        $scheduleCapPerChannel = 2000
+                        $scheduleTooLong = $false
                         foreach ($ch in $t6Channels) {
-                            $cursor = (Get-Date).AddSeconds(15)
+                            $cursor = $scheduleStart.AddSeconds(-60)
                             $assetIdx = 0
                             $scheduled = 0
                             $scheduleFailed = 0
+                            $committed = 0
+                            $commitFailed = 0
+                            $postCount = 0
                             while (($cursor -lt $scheduleEnd) -and ($scheduled -lt $scheduleCapPerChannel)) {
                                 $asset = $t6Assets[$assetIdx % $t6Assets.Count]
                                 $itemBody = [ordered]@{
@@ -3989,26 +4046,60 @@ try {
                                     notes             = 'Gate A T6 engine soak'
                                 }
                                 $itemR = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/schedule" -LogFile $t6NoteLog -BodyObj $itemBody -BearerToken $t6Token
-                                if ($itemR.status -eq 201) {
+                                if ($itemR.status -eq 201 -and $itemR.body_json -and $itemR.body_json.id) {
                                     $scheduled++
-                                    $cursor = $cursor.AddSeconds([int]$asset.duration_seconds + 2)
+                                    # Commit-to-Air: POST /api/staff/playout/commit flips the
+                                    # item scheduled -> published (civiccast/schedule/
+                                    # commit_service.py CommitService.commit, via playout_router.py)
+                                    # so egress/source_plan.py actually plans it. occurrence_id is
+                                    # free-form provenance (see playout_router.py module docstring
+                                    # + commit_service.py CommitDryRunService.prepare_commit) --
+                                    # a per-item id is enough here.
+                                    $occId = "gate-a-t6-$($ch.id)-$scheduled"
+                                    $commitBody = [ordered]@{
+                                        channel_id       = $ch.id
+                                        occurrence_id    = $occId
+                                        schedule_item_id = "$($itemR.body_json.id)"
+                                    }
+                                    $commitR = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/playout/commit" -LogFile $t6NoteLog -BodyObj $commitBody -BearerToken $t6Token
+                                    if ($commitR.status -eq 201) {
+                                        $committed++
+                                    } else {
+                                        $commitFailed++
+                                        "schedule_item_commit_failed channel=$($ch.id) asset=$($asset.id) schedule_item_id=$($itemR.body_json.id) status=$($commitR.status)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                                    }
                                 } else {
                                     $scheduleFailed++
                                     "schedule_item_failed channel=$($ch.id) asset=$($asset.id) status=$($itemR.status)" | Add-Content -Path $t6NoteLog -Encoding UTF8
-                                    # advance the cursor anyway so one bad asset
-                                    # cannot spin the loop forever
-                                    $cursor = $cursor.AddSeconds([int]$asset.duration_seconds + 2)
                                 }
+                                # advance the cursor 0s-gap back-to-back regardless of
+                                # outcome, so one bad asset cannot spin the loop forever
+                                $cursor = $cursor.AddSeconds([int]$asset.duration_seconds)
                                 $assetIdx++
+                                $postCount++
+                                if (($postCount % 50) -eq 0) { Save-Summary -Step "t6-schedule-$($ch.id)-item-$postCount" }
                             }
-                            "channel=$($ch.id) schedule_items_created=$scheduled schedule_items_failed=$scheduleFailed capped=$($scheduled -ge $scheduleCapPerChannel)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                            if (($cursor -lt $scheduleEnd) -and ($scheduled -ge $scheduleCapPerChannel)) {
+                                $scheduleTooLong = $true
+                                "schedule_too_long channel=$($ch.id) scheduled=$scheduled cap=$scheduleCapPerChannel cursor_reached=$($cursor.ToUniversalTime().ToString('o')) needed_until=$($scheduleEnd.ToUniversalTime().ToString('o'))" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                            }
+                            "channel=$($ch.id) schedule_items_created=$scheduled schedule_items_committed=$committed schedule_items_commit_failed=$commitFailed schedule_items_failed=$scheduleFailed capped=$($scheduled -ge $scheduleCapPerChannel)" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         }
                         Save-Summary -Step 't6-schedule-populated'
+                        if ($scheduleTooLong) {
+                            $t6Result = 'FAIL_EARLY reason=schedule-too-long'
+                        }
 
                         # (e) Beat loop: every 300s until the deadline (well
                         # inside the watchdog's 8-minute stall threshold, and
                         # every beat also calls Save-Summary so the watchdog
-                        # keeps seeing forward progress).
+                        # keeps seeing forward progress). Skipped entirely when
+                        # the schedule could not cover the whole soak window
+                        # ($t6Result is already FAIL_EARLY reason=schedule-too-
+                        # long) -- burning the full window on a soak that will
+                        # run dry mid-way is not worth it, and channels started
+                        # above are still stopped below regardless.
+                        if (-not $scheduleTooLong) {
                         $soakStart = Get-Date
                         $soakEnd = $soakStart.AddMinutes($soakMin)
                         $beat = 0
@@ -4046,13 +4137,23 @@ try {
                                     engine_state = $null; last_error = $null; pid = $null; sink_connected = $null
                                     rss_mb = $null; relaunched_this_beat = $false
                                     packets_total = $null; invalid_syncs = $null; transport_errors = $null; discontinuities = $null
-                                    tsp_verdict = $null; channel_failed = $false
+                                    tsp_verdict = $null; current_source_label = $null; source_is_asset = $false; channel_failed = $false
                                 }
                                 $stR6 = Invoke-CivicCastApi -Method 'Get' -Url $cs.state_url -LogFile $t6NoteLog -BearerToken $t6Token
                                 if ($stR6.body_json) {
                                     $chBeat.engine_state = $stR6.body_json.state
                                     $chBeat.last_error = $stR6.body_json.last_error
                                     $chBeat.pid = $stR6.body_json.pid
+                                    # current_source_label distinguishes real content from
+                                    # slate (civiccast/egress/daemon.py _write_state; the
+                                    # slate generator's segment label is the literal string
+                                    # "CivicCast slate" -- civiccast/egress/source_plan.py
+                                    # SlateSourceGenerator -- while a real airing item's label
+                                    # is the asset's title, e.g. this beat's own "Gate A T6
+                                    # Soak Asset ..." title). A beat only counts as proving
+                                    # real content airing when the label is present and is NOT
+                                    # the slate literal.
+                                    $chBeat.current_source_label = $stR6.body_json.current_source_label
                                 }
                                 if ($chBeat.pid) {
                                     if ($cs.last_pid -and ($cs.last_pid -ne $chBeat.pid)) {
@@ -4079,15 +4180,27 @@ try {
                                 $chBeat.transport_errors = $tsp6.transport_errors
                                 $chBeat.discontinuities = $tsp6.discontinuities
 
+                                # B1: a beat only PASSES when the engine is genuinely
+                                # airing real content, not merely "on air on slate with
+                                # packets flowing" (which a never-published schedule item
+                                # + fill_policy='slate' satisfies trivially). All four
+                                # conditions are required: ON_AIR, real TS packets flowing,
+                                # TSDuck's own transport-integrity verdict is 'pass' (the
+                                # same judgement T4 already uses -- Test-TsProof, reused
+                                # unchanged), AND the current source is an asset segment,
+                                # not the slate (civiccast/egress/source_plan.py's slate
+                                # segment label is the literal "CivicCast slate").
                                 $isLive = ($chBeat.engine_state -eq 'ON_AIR')
                                 $hasPackets = ($null -ne $chBeat.packets_total) -and ([int]$chBeat.packets_total -gt 0)
-                                if (-not $isLive -or -not $hasPackets) {
+                                $tspPass = ($chBeat.tsp_verdict -eq 'pass')
+                                $chBeat.source_is_asset = ($null -ne $chBeat.current_source_label) -and ($chBeat.current_source_label -ne 'CivicCast slate')
+                                if (-not $isLive -or -not $hasPackets -or -not $tspPass -or -not $chBeat.source_is_asset) {
                                     $chBeat.channel_failed = $true
                                     $cs.failed_beats++
                                     $beatFailed = $true
                                 }
                                 $beatObj.channels[$ch.id] = $chBeat
-                                "T6 beat=$beat channel=$($ch.id) engine_state=$($chBeat.engine_state) pid=$($chBeat.pid) rss_mb=$($chBeat.rss_mb) relaunched=$($chBeat.relaunched_this_beat) tsp=$($chBeat.tsp_verdict) packets=$($chBeat.packets_total) failed=$($chBeat.channel_failed)" | Add-Content -Path $t6 -Encoding UTF8
+                                "T6 beat=$beat channel=$($ch.id) engine_state=$($chBeat.engine_state) pid=$($chBeat.pid) rss_mb=$($chBeat.rss_mb) relaunched=$($chBeat.relaunched_this_beat) tsp=$($chBeat.tsp_verdict) packets=$($chBeat.packets_total) source_label=$($chBeat.current_source_label) source_is_asset=$($chBeat.source_is_asset) failed=$($chBeat.channel_failed)" | Add-Content -Path $t6 -Encoding UTF8
                             }
 
                             ($beatObj | ConvertTo-Json -Depth 8) | Set-Content -Path (Join-Path $OutDir "T6-beat-$beat.json") -Encoding UTF8
@@ -4140,6 +4253,7 @@ try {
                             } else {
                                 $t6Result = "PASS beats=$beat failed_beats=$totalFailedBeats"
                             }
+                        }
                         }
 
                         # (f) Collect the gst worker logs, then stop every channel.
