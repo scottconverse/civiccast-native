@@ -67,6 +67,7 @@ the signals it can read and branches on the engine's exit code.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections.abc import Callable
 from enum import StrEnum
@@ -114,6 +115,9 @@ class UpgradeRoute(StrEnum):
     version being installed. There is no migration between a version and
     itself, so the migration engine must not run.
 
+    <installer-path-audit MA-05> See REFUSED_DOWNGRADE below for the case
+    this used to fall through to.
+
     Repair semantics were considered and NOT adopted: the codebase's repair
     path (D5, ``--civiccast-verify-native-install``) is not wired into the
     install chain at all (grep ``--civiccast-verify-native-install`` in
@@ -123,6 +127,70 @@ class UpgradeRoute(StrEnum):
     and after this engine regardless of the route. Inventing a repair
     invocation here would be new, unproven behavior on the install path. So
     this is an honest, loudly-logged no-op instead of a silent one."""
+
+    REFUSED_DOWNGRADE = "refused_downgrade"
+    """<installer-path-audit MA-05> The installed product is NEWER than the
+    version this setup installs.
+
+    ``decide_route`` used to have exactly one version comparison -- string
+    equality -- and no ordering comparison anywhere, so this case routed to
+    UPGRADE and drove ``alembic upgrade head`` toward an OLDER head. Alembic
+    cannot locate the database's current revision in the older build's graph,
+    so the migration fails, the engine rolls back, and (before BL-01) the
+    rollback's own restore could not succeed either -- turning "the operator
+    ran the wrong installer" into a halted station needing manual recovery.
+
+    Refused BEFORE the interlock, the drain, the backup, or any mutation:
+    nothing on the machine is touched."""
+
+
+#: The version shapes this line ships: ``1.0.0-beta.3``, ``1.0.0-rc15``,
+#: ``1.0.0``. Anything else is deliberately NOT ordered (see
+#: :func:`is_downgrade`).
+_VERSION_PATTERN = re.compile(
+    r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
+    r"(?:-(?P<pre_label>[A-Za-z]+)\.?(?P<pre_number>\d+))?$"
+)
+
+
+def _version_sort_key(version: str) -> tuple[int, int, int, int, str, int] | None:
+    """A comparable key for a version string, or None if it is not ours.
+
+    Pre-release ordering follows semver: a version WITH a pre-release sorts
+    BEFORE the same version without one (``1.0.0-rc15`` < ``1.0.0``), and two
+    pre-releases of the same core sort by label then number.
+    """
+
+    match = _VERSION_PATTERN.match(version.strip())
+    if match is None:
+        return None
+    pre_label = match.group("pre_label")
+    return (
+        int(match.group("major")),
+        int(match.group("minor")),
+        int(match.group("patch")),
+        1 if pre_label is None else 0,  # a release outranks any pre-release
+        pre_label or "",
+        int(match.group("pre_number") or 0),
+    )
+
+
+def is_downgrade(old_version: str, new_version: str) -> bool:
+    """Is ``new_version`` strictly OLDER than the installed ``old_version``?
+
+    <installer-path-audit MA-05> Fails OPEN by design: when either string is
+    not one this product line ships (including
+    :data:`NO_RECORDED_VERSION`), the ordering is unknown and this returns
+    False, leaving the pre-existing behaviour untouched. Refusing an install
+    because a version string could not be parsed would be a worse failure than
+    the one this guard exists to prevent.
+    """
+
+    old_key = _version_sort_key(old_version)
+    new_key = _version_sort_key(new_version)
+    if old_key is None or new_key is None:
+        return False
+    return new_key < old_key
 
 
 class RouteDecision:
@@ -279,6 +347,26 @@ def decide_route(
             "the database.",
         )
 
+    # <installer-path-audit MA-05> THE DOWNGRADE GUARD.
+    #
+    # `decide_route` used to have exactly ONE version comparison -- the string
+    # equality above -- and no ordering comparison anywhere. Running a beta.2
+    # setup.exe over a beta.3 station therefore routed to UPGRADE and drove
+    # `alembic upgrade head` toward an OLDER head: alembic cannot locate the
+    # database's current revision in the older build's graph, so the migration
+    # fails, the engine rolls back, and (before BL-01) the rollback restore
+    # could not succeed either. Refuse before any of that, with a route of its
+    # own so the installer can say what happened.
+    if is_downgrade(old_version, new_version):
+        return RouteDecision(
+            UpgradeRoute.REFUSED_DOWNGRADE,
+            f"a NEWER version of CivicCast (Native) is installed on this machine "
+            f"({old_version}); this setup installs {new_version}. CivicCast does not "
+            "support moving a station's database backwards, so the install/upgrade "
+            "engine refused before draining, backing up, or migrating anything. "
+            "Nothing was changed.",
+        )
+
     return RouteDecision(
         UpgradeRoute.UPGRADE,
         f"an installed CivicCast (Native) product was found (the {SERVICE_NAME} "
@@ -293,4 +381,5 @@ __all__ = [
     "UpgradeRoute",
     "decide_route",
     "default_installed_product_probe",
+    "is_downgrade",
 ]

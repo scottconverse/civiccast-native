@@ -215,6 +215,151 @@ kit (see the "Changed" entry below).
 
 ### Fixed
 
+- **Installer-path audit (2026-09-03) — the whole install / upgrade /
+  activation / health path, in one batch.** A read-only audit of the NSIS
+  bootstrap, the installer Rust CLIs, the D3 upgrade engine, the DR
+  backup/restore drill, schema currency + `/health`, the pack/station-index/
+  cache path, the Gate A harness and the test suites returned 84 findings
+  against `main` @ `9573d4a`. Its central observation is one defect class:
+  *a verdict is read from a proxy — a status code, an exit code, a label, a
+  file's existence, a non-empty list — instead of from the substantive value,
+  and the test that should have caught it constructs both sides of the
+  comparison from the same source at the same head.* Every BLOCKER and every
+  release-path MAJOR is fixed here, one entry per finding id.
+
+  Gate A's instruments first, because everything else is graded by them:
+
+  - **BL-10** — `POST_UPGRADE_DB_REVISION_MATCHES_HEAD`, added by PR #143 to
+    stop trusting a label, *was itself the label and could not fail*:
+    `$healthRes.ok` requires `body_schema == "current"`, `civiccast/app.py`
+    sources both revisions from one `SchemaStatus`, and
+    `evaluate_schema_currency` returns `"current"` **iff** they are equal.
+    The check now compares the live database's own `alembic_version` row
+    (read in the sandbox with `psql`) against the migration head the CI job
+    derives at build time from the candidate's own migration files
+    (`scripts/gate_a_expected_head.py`), and the judge re-derives the match
+    instead of reading the flag.
+  - **BL-09** — `In-Sandbox-Report.ps1`'s `finally` set
+    `harness_completed = $true` unconditionally, including after the `catch`
+    that swallows any throw from its 1500-line `try`, and it deleted
+    `WATCHDOG-TIMEOUT.txt` on the way past. Completion is now promoted by the
+    last statement of the `try`; the judge's own self-comparison
+    (`summary.json.last_completed_step` vs `DONE.json.last_completed_step`,
+    written microseconds apart from one variable) is replaced by assertions a
+    crashed run cannot satisfy.
+  - **MA-23 / MA-24 / MA-25** — `install-progress.log` is append-only across
+    both install phases and the capture kept the last match in the whole
+    file, so a phase-2 installer that died early inherited phase 1's
+    `route=FRESH_INSTALL engine_exit=11`; the download-only check claimed to
+    prove D4 activation while reading D3's exit code; and the clean lane
+    graded that log not at all. Now phase-scoped, with D4's own exit and the
+    postinstall outcome judged in every lane.
+  - **MA-26 / MA-27 / MN-20** — T3's `health-200` and every T5 soak beat read
+    `.StatusCode` alone (one run recorded `T5_RESULT=PASS beats=2
+    unhealthy=0` over a `degraded`/`schema:behind` station); a 0-byte TSDuck
+    report produced `verdict=pass` because `Get-Content -Raw` returns `$null`
+    and PowerShell's pipeline drops it, so `ConvertFrom-Json` never ran; and
+    `beats=0` passed the soak. All three now fail closed.
+  - **MA-38 / MA-39 / MA-40 / MA-41 / MN-19** — the DR test floor was one
+    below the real count (so PR #143's only DR proof could vanish silently)
+    and is now derived from the source; the release-branch job's silent skip
+    of the one cross-version D3 proof is named; an `or` clause that subsumed
+    its own ordering assertion is deleted; a `pytest.skip` that erased the R7
+    regression case on any machine that has ever installed CivicCast is
+    replaced; and the Gate A hoststore reset now states its post-condition.
+
+  The product side of the same class:
+
+  - **BL-11** — nothing in the entire elevated install chain ever contacted
+    `/health`; SCM `RUNNING` was the only success signal the installer had,
+    which is why Gate A run 33681670855 wrote `InstalledVersion`, exited 0
+    and showed a success page over a station serving 500s. D4 service
+    registration now polls `/health` and requires `status: healthy` with a
+    current schema, failing with its own exit code and a truthful message.
+  - **BL-02** — every failed POSTINSTALL left `CivicCastSupervisor`
+    registered `--startup auto` over the NEW payload, so the operator's next
+    reboot restored the exact state PR #143 was written to prevent. Failures
+    now stop the service and set it to manual start before aborting.
+  - **BL-12** — a reinstall over a preserved cluster could route
+    FRESH_INSTALL, take provisioning's reuse path (the one route that never
+    migrated), stamp the new `InstalledVersion` anyway, and report
+    SAME_VERSION_NO_OP forever afterwards. The reuse path now migrates, and
+    BL-11's gate runs before the marker is written.
+  - **BL-13 / MA-32** — an unprovable `ActiveRuntime` selector printed a
+    sentence saying the runtime would not start and returned `Ok`; and
+    "already provisioned" was the mere presence of a registry string. Both
+    are now real, fail-loud checks with their own exit codes.
+  - **MA-07 / MA-08 / MA-28 / MA-29** — the installer's own health probe was
+    200-only; five distinct activation exit codes collapsed into one message
+    naming the wrong cause; exit code 74 meant three different things while
+    the comment beside it said "74 is free"; and the `.nsh`'s CLI-contract
+    comment listed a set that was wrong in both directions.
+
+  The D3 engine:
+
+  - **BL-01** — the rollback's `pg_restore` had no `--clean`/`--if-exists`/
+    `--create` and restored into the live database, so it always hit
+    `relation already exists`: **the clean-rollback outcome (exit 10) was
+    unreachable for every post-migration failure**, while three shipped
+    comments and one operator dialog asserted the opposite. The restore now
+    drops and recreates the target under the held interlock and replays in
+    one transaction, after re-hashing the artifact against its manifest.
+  - **BL-03 / BL-04** — `post_schema_revision` was written and never read, so
+    a no-op `alembic upgrade head` committed COMPLETE; and the maintenance
+    health gate names no version or revision, so the OLD supervisor could
+    certify the upgrade by attesting to itself. Both now check.
+  - **BL-05 / BL-06 / BL-07** — a second concurrent installer released the
+    first one's interlock mid-migration; a preserved terminal journal
+    returned the previous run's outcome forever (which PR #143 made a fatal
+    abort, bricking the upgrade path); and a raise from `stop_service` or the
+    recovery-document write escaped as "unexpected fault", leaving no journal
+    and no `UPGRADE-RECOVERY.md` — the one artifact designed for exactly that
+    case.
+  - **MA-01 / MA-02 / MA-05 / MA-06** — under the only layout production runs
+    the journal claimed a payload revert that cannot happen and the recovery
+    document named a junction that does not exist; the previous junction
+    target was persisted after the flip rather than before; there was no
+    ordering comparison anywhere, so an older setup.exe drove `alembic
+    upgrade head` toward an older head; and there was no `ahead` schema
+    state, so a newer database was reported as "behind" with advice that
+    cannot work.
+  - **MA-09 / MA-10 / MA-11 / MA-12 / MA-13 / MN-08 / MN-09** — `verified`
+    was a non-emptiness check; the SQLite manifest was snapshotted from the
+    artifact the drill then compares to a copy of itself; the drill's verdict
+    was true over zero compared tables; the quiescence proof compared two
+    copies of sha256-over-nothing; `/health`'s schema verdict was a boot-time
+    snapshot never refreshed; a drill database inherited `template1`'s
+    encoding; and `DROP DATABASE ... WITH (FORCE)` had no same-name guard.
+
+  Packs, activation and repair:
+
+  - **BL-08** — the owner-designated **mandatory** caption FLOOR model
+    reached no branch of `validate_component_contract` at all, so the
+    complete set of machine checks on it was the signature, the component id,
+    and two values the publisher chose and signed in one operation. Pointing
+    `--captions-floor-root` at a different model shipped an unreviewed ASR
+    model to every station on the legally non-negotiable captions path with
+    every gate green. It now has the same pinned content contract large-v3
+    has always had.
+  - **MA-04 / MA-15** — `validate_staged_runtime_layout` never ran on the
+    path that ships, and an index component this build does not know was
+    downloaded, fully verified, then silently dropped. Both are fixed on the
+    flat activation path.
+  - **MA-03** — flat activation deleted the manifest, the receipt and every
+    component tree before extracting, with no free-space check anywhere in
+    the crate; it now measures and refuses first, naming the byte figure.
+  - **MA-19 / MA-20 / MA-30 / MA-37** — two hand-maintained
+    `REQUIRED_COMPONENTS` copies with nothing binding them; a guard test
+    asserting that an array's elements are in that array; D5 repair returning
+    `Unrepairable` on **every** healthy activated station because the
+    per-SHA cache directory was enrolled as a component; and an idempotency
+    probe whose doc guarantee was stronger than its code.
+
+  Also fixed from the same batch's owner-observed list: the "TSDuck
+  (`tsp.exe`)" Windows Security prompt that appeared inside the sandbox on
+  every install test — the elevated in-sandbox harness now authors the
+  firewall allow rules itself before the first bind.
+
 - **UI walkthrough batch (2026-09-03), items 6-10.** Five findings from the
   2026-09-03 full UI walkthrough
   (`CIVICCAST-UI-WALKTHROUGH-2026-09-03.md`), triaged and fixed together:
@@ -968,6 +1113,40 @@ kit (see the "Changed" entry below).
   reachable from any code path in this repo. Documented in
   `security/pip-audit-allowlist.json` with a review-by date of 2026-10-01;
   re-check when nltk ships a fix.
+
+
+### Known limitations
+
+- **Uninstall destroys the downloaded model-pack cache, so a later
+  download-only reinstall cannot activate (installer-path audit MA-17).**
+  `RMDir /r "$INSTDIR\packs"` removes `$INSTDIR\packs\.station-cache` along
+  with everything else. That is correct for an uninstall in isolation, but it
+  means a machine that uninstalls and then reinstalls from `setup.exe` ALONE
+  (no `station\` folder beside it) cannot activate: the signed station index
+  is embedded in `setup.exe`, the ~21 GB of model packs are not, and the
+  per-SHA cache they would have been served from is gone — so activation
+  exits 66 and the installer aborts with 123. This collides with the standing
+  "download install is the floor" rule for that one sequence.
+
+  **Not fixed in this release, deliberately.** Preserving the cache means
+  either leaving a multi-gigabyte `$INSTDIR` behind — which contradicts the
+  bootstrap's own "everything gone" uninstall contract and changes what a
+  silent uninstall reports to winget/Intune — or relocating the cache to
+  `%ProgramData%\CivicCast` and teaching the activation step's `--cache-root`
+  a second search location (audit MA-16). Both are decisions about what an
+  uninstall *means*, and belong to the owner rather than to a batch fix.
+
+  **What changed instead:** the uninstaller now says so, before it removes
+  anything, on every path. Interactive uninstalls get a dialog; silent ones
+  get the same text in `install-progress.log` (the notice is silent-safe by
+  construction). It names what is being deleted, states plainly that
+  recordings, the database and settings in `%ProgramData%\CivicCast` are
+  **kept**, and gives the two remedies that actually work: reinstall from the
+  full CivicCast kit folder, or copy `$INSTDIR\packs\.station-cache` aside
+  first.
+
+  **Workaround, unchanged:** installing from the full kit folder
+  (`setup.exe` together with its `station\` folder) is unaffected.
 
 ## [1.0.0-beta.1] - 2026-08-31
 

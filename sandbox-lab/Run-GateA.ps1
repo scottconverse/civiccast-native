@@ -154,7 +154,16 @@ param(
     # note P6). When present it is staged to hoststore\dirty-seed\ for the
     # sandbox to plant after the phase-1 uninstall. When absent, the dirty
     # lane still runs but reports the orphaned-tier sub-shape as SKIP.
-    [string]$DirtySeedLargeV3Dir = 'C:\CivicCastTester\dirty-seed\captions-large-v3'
+    [string]$DirtySeedLargeV3Dir = 'C:\CivicCastTester\dirty-seed\captions-large-v3',
+
+    # <gate-a-audit-BL-10> The candidate's migration head, computed by the CI
+    # job at BUILD time from the checked-out source (NOT from the station
+    # under test) and forwarded to the guest. See
+    # Host-Launch-Sandbox-Test.ps1's -ExpectedMigrationHead comment and
+    # scripts/gate_a_verdict.py's post-upgrade revision check. When empty,
+    # this script computes it locally from the repo it is running out of,
+    # which is still an origin independent of the guest.
+    [string]$ExpectedMigrationHead
 )
 
 $ErrorActionPreference = 'Stop'
@@ -478,7 +487,24 @@ if (Test-Path $hoststore) {
 } else {
     New-Item -ItemType Directory -Force -Path $hoststore | Out-Null
 }
-Write-Step "hoststore reset (fresh-install guarantee)"
+# <gate-a-audit-MN-19> RE-ENUMERATE. The delete above is -ErrorAction
+# SilentlyContinue and the old code printed the "fresh-install guarantee"
+# line whether or not anything was actually removed. hoststore\install IS the
+# install root the guest writes to (.wsb.template:26-29), and a previous run
+# that left handles open (see TEARDOWN-DRAIN-TIMEOUT.txt's
+# `vm_gone=False handles_free=False ... remaining_pids=22300`) makes the
+# delete a silent no-op -- after which the next run installs over the
+# previous run's tree and calls it a clean box. State the post-condition.
+$hoststoreRemnants = @(Get-ChildItem -Path $hoststore -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '.gitkeep' })
+if ($hoststoreRemnants.Count -gt 0) {
+    Exit-HarnessError ("hoststore reset did NOT complete: " +
+        "$($hoststoreRemnants.Count) entr$(if ($hoststoreRemnants.Count -eq 1) { 'y' } else { 'ies' }) remain under $hoststore " +
+        "($(($hoststoreRemnants | Select-Object -First 5 | ForEach-Object { $_.Name }) -join ', ')). " +
+        "This is the install root the guest writes to, so the fresh-install guarantee is void; " +
+        "most often a previous run's processes still hold handles (see TEARDOWN-DRAIN-TIMEOUT.txt). " +
+        "Clear them and re-run rather than installing over the previous run's tree.")
+}
+Write-Step "hoststore reset (fresh-install guarantee) -- verified empty"
 
 # Dirty lane only: stage the optional orphaned-tier seed AFTER the reset so
 # it rides into the sandbox via the already-mapped hoststore folder (no .wsb
@@ -511,8 +537,36 @@ if (-not (Test-Path $launcherPath)) {
     Exit-HarnessError "Host-Launch-Sandbox-Test.ps1 not found at $launcherPath"
 }
 
+# <gate-a-audit-BL-10> Resolve the BUILD-time migration head. Preference
+# order: the caller's explicit value (the CI job computed it from the
+# candidate's checked-out source), then a local computation from the repo
+# this script lives in. Either way it is computed on the HOST, out of source,
+# never read back from the station under test -- that independence is the
+# whole point. When neither is available the guest records
+# KIT_EXPECTED_HEAD=<not-provided> and the judge FAILs the upgrade lanes.
+$resolvedExpectedHead = $ExpectedMigrationHead
+if ([string]::IsNullOrWhiteSpace($resolvedExpectedHead)) {
+    try {
+        $repoRoot = Split-Path $Root -Parent
+        # scripts/gate_a_expected_head.py is standard-library only on purpose
+        # -- no alembic, no civiccast import, no installed environment -- so
+        # this works on a bare runner.
+        $headOut = & python (Join-Path $repoRoot 'scripts\gate_a_expected_head.py') --repo-root $repoRoot 2>&1
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($headOut)) {
+            $resolvedExpectedHead = ([string]($headOut | Select-Object -Last 1)).Trim()
+            Write-Step "Expected migration head computed locally from $repoRoot : $resolvedExpectedHead"
+        } else {
+            Write-Warning "Could not compute the expected migration head locally (python exit $LASTEXITCODE): $headOut"
+        }
+    } catch {
+        Write-Warning "Could not compute the expected migration head locally: $_"
+    }
+} else {
+    Write-Step "Expected migration head supplied by the caller: $resolvedExpectedHead"
+}
+
 Write-Step "Launching Host-Launch-Sandbox-Test.ps1 (TimeoutMinutes=$TimeoutMinutes, SoakMinutes=$SoakMinutes, SandboxWaitMinutes=$SandboxWaitMinutes, QuietShareMinutes=$QuietShareMinutes, TeardownDrainSeconds=$TeardownDrainSeconds, TeardownDrainPollSeconds=$TeardownDrainPollSeconds, OrphanGraceMinutes=$OrphanGraceMinutes, DownloadOnlyLane=$([bool]$DownloadOnlyLane))..."
-& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds -OrphanGraceMinutes $OrphanGraceMinutes -DirtyMode:$dirtyLaneActive -UpgradeMode:$upgradeMode -PreviousSourceSha $PreviousSourceSha -DownloadOnlyMode:$DownloadOnlyLane
+& $launcherPath -Root $Root -TimeoutMinutes $TimeoutMinutes -SoakMinutes $SoakMinutes -SandboxWaitMinutes $SandboxWaitMinutes -QuietShareMinutes $QuietShareMinutes -TeardownDrainSeconds $TeardownDrainSeconds -TeardownDrainPollSeconds $TeardownDrainPollSeconds -OrphanGraceMinutes $OrphanGraceMinutes -DirtyMode:$dirtyLaneActive -UpgradeMode:$upgradeMode -PreviousSourceSha $PreviousSourceSha -DownloadOnlyMode:$DownloadOnlyLane -ExpectedMigrationHead $resolvedExpectedHead
 $launcherExit = $LASTEXITCODE
 Write-Step "Host launcher exited with code $launcherExit"
 

@@ -261,7 +261,7 @@ fn vendor_name_for_pci_id(vendor_id: u32) -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "windows")]
-mod windows_collectors {
+pub(crate) mod windows_collectors {
     use super::{round1, vendor_name_for_pci_id, GpuFacts};
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;

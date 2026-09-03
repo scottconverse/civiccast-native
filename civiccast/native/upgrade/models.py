@@ -54,6 +54,19 @@ class UpgradePhase(StrEnum):
     ROLLED_BACK = "rolled_back"  # junction + DB unwound cleanly, old version healthy
     HALTED_RESTORE_FAILED = "halted_restore_failed"  # restore failed; service STOPPED, doc emitted
     REFUSED_NON_RESTORABLE = "refused_non_restorable"  # declared non-restorable, no operator ack
+    # <installer-path-audit BL-06> "a PREVIOUS run ended terminally; this run
+    # did nothing". Its own phase because the old behaviour was to return the
+    # STALE journal's phase and error verbatim -- so `__main__` logged
+    # "upgrade outcome: rolled_back" with the OLD run's reason and returned
+    # 10, which nsis-hooks-bootstrap.nsh (post-#143) turns into a fatal 124
+    # telling the operator to "re-run setup after resolving the cause". Every
+    # re-run returned 10 again, forever, whatever was fixed -- and nothing in
+    # the product, the NSIS chain, or native_uninstall.rs deletes the journal
+    # (%ProgramData%\CivicCast is preserved by uninstall BY DESIGN), so
+    # uninstall/reinstall did not clear it either. That is the PR #143 shape
+    # exactly: a terminal exit code asserting an outcome this run never
+    # produced.
+    REFUSED_STALE_JOURNAL = "refused_stale_journal"
 
     @property
     def rank(self) -> int:
@@ -92,6 +105,7 @@ _PHASE_RANK: dict[UpgradePhase, int] = {
     UpgradePhase.ROLLED_BACK: 100,
     UpgradePhase.HALTED_RESTORE_FAILED: 101,
     UpgradePhase.REFUSED_NON_RESTORABLE: 102,
+    UpgradePhase.REFUSED_STALE_JOURNAL: 103,
 }
 
 _TERMINAL_PHASES: frozenset[UpgradePhase] = frozenset(
@@ -100,6 +114,7 @@ _TERMINAL_PHASES: frozenset[UpgradePhase] = frozenset(
         UpgradePhase.ROLLED_BACK,
         UpgradePhase.HALTED_RESTORE_FAILED,
         UpgradePhase.REFUSED_NON_RESTORABLE,
+        UpgradePhase.REFUSED_STALE_JOURNAL,
     }
 )
 
@@ -191,6 +206,22 @@ class UpgradeJournal(BaseModel):
     #: exactly (D3 "flip junction back"). None until TREE_LAID.
     previous_junction_target: str | None = None
     new_junction_target: str | None = None
+    #: <installer-path-audit MA-01> Whether this run's seam bundle can revert
+    #: the ON-DISK payload at all.
+    #:
+    #: FALSE under ``adapt_flat_installer_layout`` -- the only layout
+    #: production ever runs (``nsis-hooks-bootstrap.nsh`` passes
+    #: ``--flat-installer-layout`` on EVERY invocation). There, ``read_junction``,
+    #: ``lay_tree`` and ``flip_junction`` all resolve to the same
+    #: ``<install_root>\runtime`` string that the bootstrap already extracted
+    #: the NEW payload into before the engine ran, so
+    #: ``previous_junction_target == new_junction_target`` and the rollback's
+    #: flip-back is a tautology. The journal used to record
+    #: "junction/tree reverted" on that path -- a false claim in the durable
+    #: record, and the one the operator recovery document then reasoned from.
+    #: With this flag the rollback says what actually happened and the recovery
+    #: document branches on it.
+    filesystem_rollback: bool = True
     #: Append-only (phase, iso-timestamp, detail) log.
     history: list[tuple[str, str, str]] = Field(default_factory=list)
     #: Populated only on the HALTED_RESTORE_FAILED terminal state.
@@ -332,3 +363,24 @@ class UpgradeSeams:
     health_gate: Callable[[], bool]
     schema_revision: Callable[[], str | None]
     stop_service: Callable[[], None]
+    #: <installer-path-audit BL-03> The migration head the SHIPPED payload
+    #: expects, read from the new code's own alembic script directory.
+    #:
+    #: Before this seam existed, ``post_schema_revision`` was written to the
+    #: journal and never read: nothing compared it to the expected head and
+    #: nothing compared it to ``pre_schema_revision``. So an
+    #: ``alembic upgrade head`` that silently NO-OPS -- the version-location
+    #: discovery regression ``alembic/env.py``'s own docstring warns about,
+    #: across 110 migration files in 32 per-module ``versions/`` directories --
+    #: left the control plane maintenance-attested, D3 committing COMPLETE,
+    #: exit 0, and the station running new code on the old schema. The only
+    #: thing that would have caught it was an external CI check, not the
+    #: product.
+    #:
+    #: Optional so a fake-seam test that does not care about the migration
+    #: contract keeps working; when it is ``None`` the orchestrator records
+    #: that the assertion was UNAVAILABLE rather than silently skipping it.
+    expected_schema_head: Callable[[], str | None] | None = None
+    #: <installer-path-audit MA-01> Whether this bundle can revert the on-disk
+    #: payload. See ``UpgradeJournal.filesystem_rollback``.
+    filesystem_rollback: bool = True

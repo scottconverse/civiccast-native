@@ -1162,7 +1162,24 @@ def run_postgres_restore_drill(
     table_results: list[RestoreTableResult] = []
     app_store_reads: dict[str, int] = {}
     try:
-        table_results = _table_results(manifest.tables, snapshot_tables(engine))
+        restored_snapshot = snapshot_tables(engine)
+        table_results = _table_results(manifest.tables, restored_snapshot)
+        # <installer-path-audit MA-11> Name the vacuum explicitly rather than
+        # leaving RestoreDrillReport.ok's own empty-list guard to be the only
+        # thing standing between "[] == []" and "confirmed every row came back
+        # exactly as it was". Both sides can be empty at once -- every Postgres
+        # cross-check here hardcodes schema="civiccast", so a schema-resolution
+        # regression empties both.
+        if not manifest.tables:
+            errors.append(
+                "the backup manifest names ZERO tables, so there was nothing to compare the "
+                "restored copy against -- this drill proves nothing"
+            )
+        if not restored_snapshot:
+            errors.append(
+                "the restored copy enumerated ZERO tables, so the comparison had no left-hand "
+                "side -- this drill proves nothing"
+            )
 
         restored_extensions = _pg_extension_names(engine)
         if restored_extensions != source_extensions:

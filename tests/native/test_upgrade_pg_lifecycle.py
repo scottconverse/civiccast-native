@@ -157,7 +157,15 @@ def test_restore_restarts_scoped_postgres_after_failed_service_handoff() -> None
 def test_unreachable_service_absent_stop_called_even_when_work_raises() -> None:
     """The finally-block contract __main__.py implements: work() (standing in
     for run_upgrade) raises AFTER schema_revision started postgres, and the
-    stop must still fire because state.started_by_us is True."""
+    stop must still fire because state.started_by_us is True.
+
+    <batch-fix-list item 13> Kept as the unit-level statement of the contract,
+    but it is NOT the proof: the ``try/finally`` below is written INSIDE this
+    test, so it demonstrates that a try/finally works, not that
+    ``__main__.main`` has one. The real proof is
+    ``test_the_production_finally_stops_a_postgres_this_process_started``
+    below, which drives ``upgrade_main.main`` itself.
+    """
 
     calls, state = _harness()
 
@@ -184,6 +192,66 @@ def test_unreachable_service_absent_stop_called_even_when_work_raises() -> None:
             stop_if_started()
 
     assert calls == ["start", "schema", "stop"]
+
+
+def test_the_production_finally_stops_a_postgres_this_process_started(
+    tmp_path, monkeypatch
+) -> None:
+    """<batch-fix-list item 13> Drive ``upgrade_main.main``, not a hand-written
+    ``try/finally``.
+
+    ``attach_pg_lifecycle`` returns a stop callable the CLI ``MUST`` run in a
+    finally, so that a postgres THIS process started is never left running for
+    D4 provisioning to trip over. Nothing asserted that ``main`` actually has
+    that finally: the existing test wrote its own. This one deletes the
+    production ``try/finally``'s alibi by making ``run_upgrade`` raise and
+    asserting the stop still fired -- through the real entry point NSIS
+    invokes.
+    """
+    import civiccast.native.upgrade.__main__ as upgrade_main
+
+    calls: list[str] = []
+
+    def _fake_attach(seams, context):  # type: ignore[no-untyped-def]
+        calls.append("attach")
+        return seams, lambda: calls.append("stop_postgres")
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        calls.append("run_upgrade")
+        raise RuntimeError("engine blew up inside run_upgrade")
+
+    monkeypatch.setattr(upgrade_main, "installed_product_probe", lambda: True)
+    monkeypatch.setattr(upgrade_main, "attach_pg_lifecycle", _fake_attach)
+    monkeypatch.setattr(upgrade_main, "run_upgrade", _boom)
+    monkeypatch.setattr(
+        upgrade_main,
+        "_resolve_pg_client_commands",
+        lambda context: dict.fromkeys(upgrade_main._PG_CLIENT_EXECUTABLES, "pg.exe"),
+    )
+
+    argv = [
+        "--old-version",
+        "1.0.0-rc15",
+        "--new-version",
+        "1.0.0-rc16",
+        "--install-root",
+        str(tmp_path / "install"),
+        "--state-root",
+        str(tmp_path / "state"),
+        "--database-url",
+        "postgresql://u:p@127.0.0.1:5432/civiccast",
+        "--owner-run-id",
+        "run-1",
+        "--payload-source",
+        str(tmp_path / "payload"),
+    ]
+
+    # An uncaught engine fault is exit 40 by the CLI's documented contract.
+    assert upgrade_main.main(argv) == 40
+    assert calls == ["attach", "run_upgrade", "stop_postgres"], (
+        "the production finally in __main__.main must run the stop callable even when "
+        f"run_upgrade raises; observed {calls}"
+    )
 
 
 @pytest.mark.parametrize("registered", [True, None])

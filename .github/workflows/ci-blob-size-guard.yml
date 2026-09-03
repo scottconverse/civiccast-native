@@ -219,10 +219,28 @@ jobs:
       - name: Install project (dev)
         run: uv sync --group dev
 
+      # <installer-path-audit MA-39> This job ran `pytest -q tests/native` on
+      # windows-latest with NO marker filter, no Docker, no
+      # CIVICCAST_RUN_POSTGRES_TESTS and no junit floor -- so
+      # `tests/native/test_upgrade_engine_postgres.py`, the ONLY test in this
+      # repository that crosses a real version boundary through the real
+      # production seam bundle, SILENTLY SKIPPED on release-branch PRs: the
+      # ones that matter most. It now says so.
+      #
+      # The exclusion is explicit rather than accidental, and it is NOT the
+      # whole fix: the ubuntu "Unit tests" job in the main test workflow runs it
+      # non-skipped against a real Postgres with a Docker daemon, fail-closed
+      # three ways (job-level CIVICCAST_RUN_POSTGRES_TESTS=1 turns the skip
+      # into a pytest.fail; a Probe Docker step exits 1 if the socket is
+      # absent; scripts/verify_native_junit_floor.py rejects any skipped/
+      # failed/errored tests.native case). Running the integration lane HERE
+      # HERE is not possible -- windows-latest cannot run this project's Linux
+      # Postgres container -- so naming the boundary is the honest fix, and
+      # tests/policy/test_native_beta_pr_gate_workflow.py pins both halves.
       - name: Run exact native beta pack contract tests
         shell: pwsh
         run: |
-          uv run pytest -q tests/native `
+          uv run pytest -q tests/native -m "not integration" `
             tests/installer/test_native_packs.py `
             tests/installer/test_native_distribution.py `
             tests/installer/test_native_distribution_builder.py `

@@ -22,12 +22,15 @@ import pytest
 from civiccast.native.supervisor.children import ControlPlaneHealthProbe
 from civiccast.native.upgrade.models import UpgradeContext
 from civiccast.native.upgrade.service_control import (
+    EMPTY_SNAPSHOT_DIGEST,
+    ControlPlaneIdentity,
     _real_snapshot_digest,
     build_drain_seam,
     build_health_gate_seam,
     build_maintenance_ready_probe,
     build_stop_service_seam,
     classify_writers_active,
+    evaluate_control_plane_identity,
     resolve_service_control_seams,
 )
 
@@ -626,3 +629,183 @@ def test_snapshot_engine_connect_timeout_pinned_against_env_tuning(
     _real_snapshot_digest("postgresql://u:secret@127.0.0.1/db")
 
     assert captured["kwargs"]["connect_args"]["connect_timeout"] == 10
+
+
+# ---------------------------------------------------------------------------
+# Installer-path audit (2026-09-03)
+# ---------------------------------------------------------------------------
+
+
+def test_ma12_a_quiescence_proof_over_zero_tables_fails_closed() -> None:
+    """<installer-path-audit MA-12> The proof was VACUOUSLY TRUE on an empty
+    enumeration.
+
+    The digest is sha256 over ``snapshot_tables(engine)``, whose names come
+    from ``inspect(engine).get_table_names(schema=...)``. If that returns
+    ``[]`` -- wrong schema resolved, schema absent, a dialect/schema-translate
+    regression -- the digest is sha256-over-nothing, a CONSTANT, so
+    ``first == second`` passed on the first attempt. Both sides came from the
+    same source and could not disagree. And this is the gate that proves no
+    writers are landing before a backup is taken.
+    """
+    clock = _FakeClock()
+    calls = {"n": 0}
+
+    def _empty_digest() -> str:
+        calls["n"] += 1
+        return EMPTY_SNAPSHOT_DIGEST
+
+    drain = build_drain_seam(
+        writers_active_probe=lambda: False,
+        snapshot_digest=_empty_digest,
+        clock=clock.clock,
+        sleep=clock.sleep,
+    )
+    assert drain() is False
+    assert calls["n"] >= 1, "the digest must actually have been sampled"
+
+
+def test_ma12_a_real_nonempty_quiescent_digest_still_passes() -> None:
+    """The negative control: the fix must not fail a genuinely quiet database."""
+    clock = _FakeClock()
+    drain = build_drain_seam(
+        writers_active_probe=lambda: False,
+        snapshot_digest=lambda: "a" * 64,
+        clock=clock.clock,
+        sleep=clock.sleep,
+    )
+    assert drain() is True
+
+
+# --- BL-04: the maintenance attestation names no version and no schema -------
+
+
+def _serving_identity() -> ControlPlaneIdentity:
+    return ControlPlaneIdentity(
+        version="1.0.0-beta.3",
+        schema_db_revision="0087_head",
+        schema_expected_head="0087_head",
+    )
+
+
+def test_bl04_the_old_supervisor_attesting_to_itself_does_not_pass_the_gate() -> None:
+    """<installer-path-audit BL-04> THE defect.
+
+    The maintenance attestation (200 + mode=="maintenance" + workers_started
+    is False + mutating_disabled is True + mode_contract==1) names NO product
+    version, NO build identity and NO schema revision -- and it is the LAST
+    gate before COMPLETE / exit 0. A supervisor left running from BEFORE the
+    upgrade is in maintenance mode precisely BECAUSE the interlock is held, so
+    it answers green on the first poll: the upgrade is certified by the old
+    code attesting to itself.
+    """
+    clock = _FakeClock()
+    gate = build_health_gate_seam(
+        ensure_started=lambda: None,
+        maintenance_ready_probe=lambda: True,  # green, as the OLD supervisor is
+        identity_probe=lambda: ControlPlaneIdentity(
+            version="1.0.0-beta.2",  # the version being REPLACED
+            schema_db_revision="0087_head",
+            schema_expected_head="0087_head",
+        ),
+        expected_version="1.0.0-beta.3",
+        expected_schema_head="0087_head",
+        clock=clock.clock,
+        sleep=clock.sleep,
+        health_budget_seconds=10.0,
+    )
+    assert gate() is False
+
+
+def test_bl04_the_new_supervisor_on_the_new_schema_passes_the_gate() -> None:
+    clock = _FakeClock()
+    gate = build_health_gate_seam(
+        ensure_started=lambda: None,
+        maintenance_ready_probe=lambda: True,
+        identity_probe=_serving_identity,
+        expected_version="1.0.0-beta.3",
+        expected_schema_head="0087_head",
+        clock=clock.clock,
+        sleep=clock.sleep,
+    )
+    assert gate() is True
+
+
+def test_bl04_the_gate_keeps_polling_until_the_new_supervisor_answers() -> None:
+    """The old supervisor answering FIRST is exactly the case this exists for,
+    and the new one may still be coming up -- so a wrong identity must keep
+    the poll alive rather than fail the upgrade instantly."""
+    clock = _FakeClock()
+    answers = [
+        ControlPlaneIdentity(
+            version="1.0.0-beta.2",
+            schema_db_revision="0087_head",
+            schema_expected_head="0087_head",
+        ),
+        _serving_identity(),
+    ]
+
+    def _identity() -> ControlPlaneIdentity:
+        return answers.pop(0) if len(answers) > 1 else answers[0]
+
+    gate = build_health_gate_seam(
+        ensure_started=lambda: None,
+        maintenance_ready_probe=lambda: True,
+        identity_probe=_identity,
+        expected_version="1.0.0-beta.3",
+        expected_schema_head="0087_head",
+        clock=clock.clock,
+        sleep=clock.sleep,
+    )
+    assert gate() is True
+
+
+@pytest.mark.parametrize(
+    ("identity", "needle"),
+    [
+        (ControlPlaneIdentity(), "no product version"),
+        (
+            ControlPlaneIdentity(version="1.0.0-beta.2"),
+            "is still the one answering",
+        ),
+        (
+            ControlPlaneIdentity(version="1.0.0-beta.3"),
+            "no schema revision pair",
+        ),
+        (
+            ControlPlaneIdentity(
+                version="1.0.0-beta.3",
+                schema_db_revision="0082_old",
+                schema_expected_head="0087_head",
+            ),
+            "0082_old",
+        ),
+        (
+            ControlPlaneIdentity(
+                version="1.0.0-beta.3",
+                schema_db_revision="0087_head",
+                schema_expected_head="0086_other",
+            ),
+            "not running this upgrade's code",
+        ),
+    ],
+)
+def test_bl04_every_wrong_attester_is_refused_by_name(
+    identity: ControlPlaneIdentity, needle: str
+) -> None:
+    refusal = evaluate_control_plane_identity(
+        identity, expected_version="1.0.0-beta.3", expected_schema_head="0087_head"
+    )
+    assert refusal is not None
+    assert needle in refusal
+
+
+def test_bl04_the_identity_gate_is_optional_so_fake_seam_tests_are_unaffected() -> None:
+    clock = _FakeClock()
+    gate = build_health_gate_seam(
+        ensure_started=lambda: None,
+        maintenance_ready_probe=lambda: True,
+        clock=clock.clock,
+        sleep=clock.sleep,
+    )
+    assert gate() is True

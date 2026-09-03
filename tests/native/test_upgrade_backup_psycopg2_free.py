@@ -216,8 +216,19 @@ def test_d3_step_three_backup_seam_actually_reaches_the_restore_drill(
     def _fake_full_backup(**kwargs: object) -> BackupManifest:
         return _postgres_manifest()
 
+    observed_expected_revision: list[object] = []
+
     def _fake_drill(**kwargs: object) -> object:
         calls.append(str(kwargs["source_database_url"]))
+        # <batch-fix-list item 12> This used to capture ONLY
+        # source_database_url, so a refactor that dropped PR #143's own fix --
+        # passing the SOURCE database's revision as expected_revision instead
+        # of letting the drill default to the NEW code's migration head --
+        # passed this test unchanged. That default IS the Gate A run
+        # 33681670855 root cause: on any release shipping a migration, the
+        # pre-upgrade drill's schema_ok was always False, so the engine rolled
+        # back before touching the database. Assert the tuple.
+        observed_expected_revision.append(kwargs.get("expected_revision"))
         raise AssertionError("stop: the seam reached the drill")
 
     monkeypatch.setattr(upgrade_seams, "run_full_backup", _fake_full_backup)
@@ -248,3 +259,46 @@ def test_d3_step_three_backup_seam_actually_reaches_the_restore_drill(
         backup(str(tmp_path / "backups" / "pre-1.0.0-rc15"))
 
     assert calls == [_BARE_POSTGRES_URL]
+    assert observed_expected_revision == ["fake-source-revision"], (
+        "the pre-upgrade drill must be told the SOURCE database's own revision; letting it "
+        "default to the NEW code's migration head is the Gate A run 33681670855 root cause"
+    )
+
+
+def test_an_unreadable_source_revision_fails_the_backup_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """<batch-fix-list item 12> The other half of PR #143's fix, previously
+    guarded only by a Docker-gated test.
+
+    When ``read_db_revision`` returns None the seam must NOT fall back to
+    ``run_postgres_restore_drill``'s own default (``expected_migration_head()``),
+    because that silently reintroduces the exact false negative -- comparing a
+    pre-upgrade restore against the NEW code's head -- with no signal that it
+    happened because the SOURCE revision could not be read rather than by
+    design.
+    """
+    reached_drill: list[str] = []
+
+    monkeypatch.setattr(upgrade_seams, "run_full_backup", lambda **kwargs: _postgres_manifest())
+    monkeypatch.setattr(
+        upgrade_seams,
+        "run_postgres_restore_drill",
+        lambda **kwargs: reached_drill.append("drill"),
+    )
+    monkeypatch.setattr("civiccast.schema_check.read_db_revision", lambda database_url: None)
+
+    context = UpgradeContext(
+        install_root=str(tmp_path / "install"),
+        state_root=str(tmp_path / "state"),
+        database_url=_BARE_POSTGRES_URL,
+        owner_run_id="test-run",
+    )
+    backup_ref = upgrade_seams.default_backup(context)(str(tmp_path / "backups" / "pre-1.0.0-rc15"))
+
+    assert reached_drill == [], "the drill must NOT run against an unknown source revision"
+    assert backup_ref.restore_drill_ok is False
+    assert backup_ref.restore_drill_errors
+    detail = " ".join(backup_ref.restore_drill_errors)
+    assert "could not read the source database's own current revision" in detail
+    assert "33681670855" in detail, "the failure must name the defect it is refusing to reintroduce"

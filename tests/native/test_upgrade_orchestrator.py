@@ -18,8 +18,11 @@ is refused. A negative-control test proves the harness can actually distinguish
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import pytest
 
 from civiccast.native.upgrade import junction
 from civiccast.native.upgrade.models import (
@@ -58,6 +61,22 @@ class Harness:
     fail_migrate: bool = False
     fail_health: bool = False
     fail_restore: bool = False
+    # <installer-path-audit> injections the pre-batch harness could not
+    # express, each named for the finding it exists to prove. Before these,
+    # `acquire_interlock` could never fail (so the concurrent-second-instance
+    # shape had no test at all), and neither could the rollback's own
+    # flip-back, interlock release, or the halt's service stop -- the three
+    # paths BL-07 shows escaping as exit 40 with no terminal journal.
+    fail_interlock: bool = False  # BL-05: a second concurrent engine instance
+    fail_flip_back: bool = False  # BL-07: a raise inside _rollback
+    fail_release_interlock: bool = False  # BL-07: a raise inside _rollback
+    fail_stop_service: bool = False  # BL-07: a raise inside _halt
+    no_op_migrate: bool = False  # BL-03: `alembic upgrade head` silently no-ops
+    #: BL-03: what the SHIPPED payload expects. None models a bundle with no
+    #: expected_schema_head seam wired at all.
+    expected_head: str | None = "new-rev"
+    #: MA-01: what adapt_flat_installer_layout sets on the production bundle.
+    filesystem_rollback: bool = True
 
     def _record(self, name: str) -> None:
         self.calls.append(name)
@@ -66,10 +85,19 @@ class Harness:
 
     def acquire_interlock(self) -> None:
         self._record("acquire_interlock")
+        if self.fail_interlock:
+            # The real take_interlock's message shape when another run holds
+            # it (civiccast.native.win_probes._held_interlock_detail).
+            raise RuntimeError(
+                "cannot take interlock: held by run 'run-A'; taken 2026-09-03T00:00:00+00:00; "
+                "generation 4; owning process pid=4242 is STILL RUNNING"
+            )
         self.interlock_held = True
 
     def release_interlock(self) -> None:
         self._record("release_interlock")
+        if self.fail_release_interlock:
+            raise RuntimeError("injected interlock release failure (registry ACL denied)")
         self.interlock_held = False
 
     def drain_and_verify_quiescence(self) -> bool:
@@ -108,6 +136,8 @@ class Harness:
 
     def flip_junction(self, target: str) -> None:
         self._record(f"flip_junction:{Path(target).name}")
+        if self.fail_flip_back and Path(target).name == "1.0":
+            raise RuntimeError("injected junction flip-back failure (target locked)")
         junction.point_current_at(self.install_root, target)
 
     def read_junction(self) -> str | None:
@@ -117,6 +147,12 @@ class Harness:
         self._record("migrate")
         if self.fail_migrate:
             raise RuntimeError("injected migration failure")
+        if self.no_op_migrate:
+            # <installer-path-audit BL-03> `alembic upgrade head` silently
+            # doing NOTHING -- the version-location discovery regression
+            # alembic/env.py's own docstring warns about. The seam returns
+            # cleanly; the database simply never moved.
+            return
         self.db_schema = "new-rev"
 
     def health_gate(self) -> bool:
@@ -126,8 +162,16 @@ class Harness:
     def schema_revision(self) -> str | None:
         return self.db_schema
 
+    def expected_schema_head(self) -> str | None:
+        return self.expected_head
+
     def stop_service(self) -> None:
         self._record("stop_service")
+        if self.fail_stop_service:
+            # The real build_stop_service_seam documents that a failing SCM
+            # stop PROPAGATES ("the halt must not falsely believe it stopped
+            # the service") -- e.g. a service wedged in STOP_PENDING.
+            raise RuntimeError("injected SCM stop failure (service stuck in STOP_PENDING)")
         self.service_stopped = True
 
     def seams(self) -> UpgradeSeams:
@@ -144,6 +188,8 @@ class Harness:
             health_gate=self.health_gate,
             schema_revision=self.schema_revision,
             stop_service=self.stop_service,
+            expected_schema_head=self.expected_schema_head,
+            filesystem_rollback=self.filesystem_rollback,
         )
 
 
@@ -270,9 +316,329 @@ def test_halt_never_leaves_old_binary_on_new_schema(tmp_path) -> None:
     h.fail_migrate = True
     h.fail_restore = True
     run_upgrade(_plan(), _context(h), h.seams())
-    # stop_service is the last lifecycle action; nothing starts after it.
-    assert h.calls[-1] == "stop_service" or "stop_service" in h.calls
+    # <installer-path-audit MA-40> The `or "stop_service" in h.calls` disjunct
+    # SUBSUMED the ordering assertion this test's own name makes, so a
+    # regression that ran health_gate AFTER stop_service passed. Deleted.
+    assert h.calls[-1] == "stop_service", (
+        f"stop_service must be the LAST lifecycle action on the halt path; got {h.calls}"
+    )
     assert h.service_stopped is True
+
+
+# ---------------------------------------------------------------------------
+# Installer-path audit (2026-09-03): the engine's own blind spots.
+# ---------------------------------------------------------------------------
+
+
+def test_bl03_a_migration_that_silently_no_ops_rolls_back_instead_of_committing(
+    tmp_path,
+) -> None:
+    """<installer-path-audit BL-03> ``post_schema_revision`` was written to the
+    journal and NEVER READ.
+
+    Nothing compared it to the expected head and nothing compared it to
+    ``pre_schema_revision``. So an ``alembic upgrade head`` that silently
+    no-ops left the control plane maintenance-attested, D3 committing
+    COMPLETE, exit 0, and the station running new code on the old schema --
+    with the only backstop an external CI check, not the product.
+    """
+    h = _make(tmp_path)
+    h.no_op_migrate = True
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK, (
+        "a migration that did not land must never commit"
+    )
+    assert outcome.journal.error is not None
+    assert "migration did not land" in outcome.journal.error
+    assert "old-rev" in outcome.journal.error and "new-rev" in outcome.journal.error
+    assert "health_gate" not in h.calls, "the health gate must not even be reached"
+
+
+def test_bl03_a_landed_migration_records_the_head_it_was_verified_against(
+    tmp_path,
+) -> None:
+    h = _make(tmp_path)
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+    assert outcome.phase is UpgradePhase.COMPLETE
+    assert outcome.journal.post_schema_revision == "new-rev"
+    migrated = [entry for entry in outcome.journal.history if entry[0] == "migrated"]
+    assert migrated and "verified at new-rev" in migrated[0][2]
+
+
+def test_bl03_an_unwired_expected_head_seam_says_so_rather_than_passing_silently(
+    tmp_path,
+) -> None:
+    """A bundle with NO expected-head seam at all must RECORD that the
+    assertion was unavailable, not quietly behave as though it passed.
+
+    This is the fake-seam case only: `build_default_seams` always supplies the
+    seam, so production never takes this branch. A bundle that HAS the seam
+    and gets no answer is the next test, and it refuses.
+    """
+    h = _make(tmp_path)
+    seams = dataclasses.replace(h.seams(), expected_schema_head=None)
+    outcome = run_upgrade(_plan(), _context(h), seams)
+    assert outcome.phase is UpgradePhase.COMPLETE
+    migrated = [entry for entry in outcome.journal.history if entry[0] == "migrated"]
+    assert migrated and "UNAVAILABLE" in migrated[0][2]
+
+
+def test_bl03_a_wired_seam_that_cannot_answer_refuses_instead_of_committing(
+    tmp_path,
+) -> None:
+    """Review of PR #145: an unresolvable head was FAIL-OPEN.
+
+    `default_expected_schema_head` swallowed every exception and returned
+    None, and the orchestrator turned that None into a journal string -- so
+    the run committed COMPLETE with the migration unverified. (And because
+    `__main__` hands the same value to the health gate, BL-04's identity gate
+    had already been silently un-wired for that run too.) A wired seam that
+    cannot answer must halt.
+    """
+    h = _make(tmp_path)
+    h.expected_head = None  # the seam IS wired; it just cannot answer
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK, (
+        "an unverifiable migration must never reach COMPLETE"
+    )
+    assert "expected schema head unavailable" in (outcome.journal.error or "")
+    assert "health_gate" not in h.calls, "the health gate must not be reached either"
+
+
+def test_bl03_a_branched_migration_graph_propagates_its_own_reason(tmp_path) -> None:
+    """The narrowed `except` is load-bearing.
+
+    `expected_migration_head` raises `RuntimeError` for a branched graph. That
+    must NOT be laundered into the generic "unavailable" refusal: the specific
+    message names the heads, which is the whole diagnosis.
+    """
+    h = _make(tmp_path)
+
+    def _branched() -> str | None:
+        raise RuntimeError("Expected exactly one migration head, found ['0087_a', '0088_b'].")
+
+    seams = dataclasses.replace(h.seams(), expected_schema_head=_branched)
+    outcome = run_upgrade(_plan(), _context(h), seams)
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK
+    assert "Expected exactly one migration head" in (outcome.journal.error or "")
+    assert "0088_b" in outcome.journal.error
+
+
+def test_bl05_a_second_engine_instance_never_releases_the_first_ones_interlock(
+    tmp_path,
+) -> None:
+    """<installer-path-audit BL-05> THE concurrency defect.
+
+    Run A holds the interlock inside ``migrate()``. Run B (a second setup.exe,
+    a retry, an operator double-click) cannot take it, funnels into
+    ``_rollback`` -- and the unconditional ``seams.release_interlock()`` there
+    released **A's**. The supervisor then re-permits writers against a schema
+    mid-migration; B reports ROLLED_BACK/exit 10 and A reports COMPLETE/exit
+    0, both journals internally consistent and both wrong about the machine.
+
+    The engine's own guard is "release only when this run recorded acquiring
+    it"; ``win_probes.release_interlock``'s owner check is the second half.
+    """
+    h = _make(tmp_path)
+    h.fail_interlock = True
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK
+    assert "release_interlock" not in h.calls, (
+        "the loser must not touch the interlock it never took"
+    )
+    assert outcome.journal.error is not None
+    assert "interlock NOT released" in outcome.journal.error
+    # It also says WHY it could not proceed, carrying the holder's identity
+    # through from the real probe's message.
+    assert "cannot take interlock" in outcome.journal.error
+
+
+def test_bl07_a_raising_flip_back_still_lands_a_terminal_journal(tmp_path) -> None:
+    """<installer-path-audit BL-07> ``_rollback`` had no failure containment.
+
+    A raise from ``flip_junction`` escaped ``_rollback``, escaped
+    ``run_upgrade`` (the try in ``_drive_forward`` has already been exited),
+    and reached ``__main__`` as exit 40 "unexpected fault" -- leaving a
+    NON-TERMINAL journal and a leaked interlock.
+    """
+    h = _make(tmp_path)
+    h.fail_health = True  # a pre-mutation failure, so the flip-back runs
+    h.fail_flip_back = True
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK
+    assert outcome.journal.phase.is_terminal
+    assert "junction flip-back failed" in (outcome.journal.error or "")
+    assert h.interlock_held is False, "the interlock must still be released"
+
+
+def test_bl07_a_raising_interlock_release_still_lands_a_terminal_journal(tmp_path) -> None:
+    h = _make(tmp_path)
+    h.fail_health = True
+    h.fail_release_interlock = True
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK
+    assert "interlock release failed" in (outcome.journal.error or "")
+
+
+def test_bl07_a_wedged_service_stop_still_writes_the_recovery_document(tmp_path) -> None:
+    """The halt's own worst case, and the whole point of the finding.
+
+    Migration fails, the restore fails, AND the SCM stop fails -- a service
+    stuck in STOP_PENDING, which is common when a child hangs. Previously:
+    no HALTED_RESTORE_FAILED journal, no UPGRADE-RECOVERY.md, a journal frozen
+    at TREE_LAID/MIGRATED, a possibly-RUNNING service on a half-migrated
+    schema, and an operator told "unexpected fault, see the installer log".
+    **The one artifact designed for exactly this case was the one that did not
+    get written.**
+    """
+    h = _make(tmp_path)
+    h.fail_migrate = True
+    h.fail_restore = True
+    h.fail_stop_service = True
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+
+    assert outcome.phase is UpgradePhase.HALTED_RESTORE_FAILED
+    doc = outcome.journal.recovery_document_path
+    assert doc is not None and Path(doc).exists(), (
+        "the recovery document must be written even when the stop that follows it fails"
+    )
+    assert "could not be confirmed STOPPED" in (outcome.journal.error or "")
+    assert "sc.exe stop" in outcome.journal.error
+
+
+def test_ma01_a_flat_layout_rollback_does_not_claim_it_reverted_the_payload(
+    tmp_path,
+) -> None:
+    """<installer-path-audit MA-01> The journal used to state a false fact.
+
+    Under ``--flat-installer-layout`` -- which
+    ``nsis-hooks-bootstrap.nsh`` passes on EVERY invocation, so it is the only
+    layout production runs -- ``read_junction``/``lay_tree``/``flip_junction``
+    all resolve to the same ``<install_root>\\runtime`` string, so
+    ``previous_junction_target == new_junction_target`` and the flip-back is a
+    tautology. The journal wrote "junction/tree reverted" anyway. After
+    PR #143 the installer and the journal told different stories about the
+    same event, with only the installer right.
+    """
+    h = _make(tmp_path)
+    h.filesystem_rollback = False
+    h.fail_health = True
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK
+    assert outcome.journal.filesystem_rollback is False
+    rolled_back = [e for e in outcome.journal.history if e[0] == "rolled_back"]
+    assert rolled_back
+    detail = rolled_back[0][2]
+    assert "was NOT reverted" in detail
+    assert "junction/tree reverted" not in detail
+
+
+def test_ma01_the_flat_layout_recovery_document_names_the_step_that_matters(
+    tmp_path,
+) -> None:
+    """The old document told the operator to "re-point the 'current' junction"
+    -- a junction that does not exist under this layout -- at a path that
+    already holds the NEW code, and omitted the reinstall that actually
+    matters. The worst-case recovery document for the only layout that ships.
+    """
+    h = _make(tmp_path)
+    h.filesystem_rollback = False
+    h.fail_migrate = True
+    h.fail_restore = True
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+
+    assert outcome.phase is UpgradePhase.HALTED_RESTORE_FAILED
+    text = Path(outcome.journal.recovery_document_path).read_text(encoding="utf-8")
+    assert "re-install 1.0" in text.lower() or "re-install 1.0" in text
+    assert "Restoring the database alone is NOT enough" in text
+    assert "re-point the 'current' junction" not in text
+
+
+@pytest.mark.parametrize(
+    "failing_seam",
+    ["backup", "lay_tree", "restore_backup"],
+)
+def test_item16_a_real_enospc_lands_a_terminal_journal_not_a_string_labelled_one(
+    tmp_path, failing_seam: str
+) -> None:
+    """<batch-fix-list item 16> "disk full" was a LABEL IN A STRING.
+
+    ``test_upgrade_orchestrator.py``'s only disk-full coverage was
+    ``RuntimeError("injected restore failure (disk full)")`` -- a
+    ``RuntimeError`` whose message happens to contain the words. A real
+    ``OSError(errno.ENOSPC)`` is a different type entirely, and the engine's
+    funnel is ``except Exception``, so the distinction matters only if
+    something along the way narrows it. Nothing should: an out-of-space
+    failure at ANY seam must still land a terminal journal and a documented
+    exit code, never escape as the CLI's exit-40 "unexpected fault".
+    """
+    import errno
+
+    h = _make(tmp_path)
+    seams = h.seams()
+
+    def _enospc(*args: object, **kwargs: object) -> object:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    if failing_seam == "restore_backup":
+        # Reachable only past the mutation frontier.
+        h.fail_migrate = True
+        seams = dataclasses.replace(h.seams(), restore_backup=_enospc)
+        expected = UpgradePhase.HALTED_RESTORE_FAILED
+    else:
+        seams = dataclasses.replace(h.seams(), **{failing_seam: _enospc})
+        expected = UpgradePhase.ROLLED_BACK
+
+    outcome = run_upgrade(_plan(), _context(h), seams)
+
+    assert outcome.phase is expected, (
+        f"an ENOSPC at {failing_seam} landed {outcome.phase}, not a terminal phase"
+    )
+    assert outcome.journal.phase.is_terminal
+    assert "No space left on device" in (outcome.journal.error or ""), (
+        "the real OS error must reach the journal, so the operator reads 'disk full' "
+        "rather than a generic step name"
+    )
+
+
+def test_ma02_the_previous_junction_target_is_persisted_before_the_flip(tmp_path) -> None:
+    """<installer-path-audit MA-02> ``junction.py`` already CLAIMS the journal
+    records the previous target "BEFORE the flip". The code recorded it after.
+
+    A journal write that raised between the flip and the persist left
+    ``previous_junction_target=None``, so ``_rollback``'s guard skipped the
+    flip-back entirely while reporting "junction/tree reverted" -- PR #143's
+    own defect, one level up. Proven by reading the journal from disk at the
+    instant ``lay_tree`` runs, i.e. after ``read_junction`` and before
+    ``flip_junction``.
+    """
+    from civiccast.native.upgrade.journal import load_journal
+
+    h = _make(tmp_path)
+    observed: list[str | None] = []
+    real_lay_tree = h.lay_tree
+
+    def _observing_lay_tree(new_version: str) -> str:
+        journal = load_journal(str(h.state_root))
+        observed.append(journal.previous_junction_target if journal else None)
+        return real_lay_tree(new_version)
+
+    seams = dataclasses.replace(h.seams(), lay_tree=_observing_lay_tree)
+    outcome = run_upgrade(_plan(), _context(h), seams)
+
+    assert outcome.phase is UpgradePhase.COMPLETE
+    assert observed, "lay_tree must have run"
+    assert observed[0] is not None, (
+        "previous_junction_target must already be on disk before the flip; it was None"
+    )
+    assert Path(observed[0]).name == "1.0"
 
 
 # --- declared-non-restorable refusal ------------------------------------------

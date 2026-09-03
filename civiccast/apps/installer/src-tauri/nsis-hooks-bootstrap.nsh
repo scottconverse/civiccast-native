@@ -332,8 +332,84 @@
 ;     watcher report a clean machine that is not clean.
 ; So a failed install stays visible and removable; what changes is that it no
 ; longer claims to have succeeded.
+; <installer-path-audit BL-02> Set to "1" by NSIS_HOOK_POSTINSTALL's first
+; step. From that instant on, $INSTDIR holds the NEW payload (Tauri's own
+; generated section replaced the files before this hook runs, and pack
+; staging writes the new runtime into $INSTDIR\runtime a few steps later),
+; while the database is still the OLD, unmigrated one until D3 commits.
+; CIVICCAST_FAIL consults this to decide whether a failure needs service
+; containment. Deliberately NOT set during PREINSTALL: a PREINSTALL failure
+; aborts before any file is replaced, so the existing install is intact and
+; its auto-start service is exactly what the operator should keep.
+Var CIVICCAST_PAYLOAD_REPLACED
+
+; <review of PR #145> "1" only when failure containment actually SUCCEEDED --
+; both the service stop and the `sc config start= demand` reported 0.
+;
+; Containment is best-effort by design (see CIVICCAST_FAIL), so any
+; operator-facing sentence that states it as fact -- "the service has been
+; stopped AND set to manual start" -- is a claim the code does not check.
+; That is the same shape as the exit-124 text this batch was fixing in the
+; first place: true at the instant it is printed only if nothing went wrong,
+; and silent about the case where something did.
+Var CIVICCAST_CONTAINED
+
 !macro CIVICCAST_FAIL CODE TEXT
   SetErrors
+  ; <installer-path-audit BL-02> CONTAIN THE SERVICE BEFORE ANNOUNCING THE
+  ; FAILURE.
+  ;
+  ; The upgrade sequence is: PREINSTALL stops the service while deliberately
+  ; PRESERVING its registration -> Tauri's generated section replaces
+  ; $INSTDIR -> POSTINSTALL stages the packs, writing the NEW payload into
+  ; $INSTDIR\runtime -> and only THEN does D3 run. So by the time any
+  ; POSTINSTALL failure branch fires -- 110, 111, 112, 113, 114, 115, 116,
+  ; 117, 118, 119, 121, 122, 123, 124, 125, 126, 127 -- the machine holds new
+  ; code at $INSTDIR\runtime, the old unmigrated database, and
+  ; CivicCastSupervisor still registered with `--startup auto`, merely
+  ; stopped. This macro used to do SetErrors + alert + SetErrorLevel + Abort
+  ; and nothing else, so the operator read "The service has NOT been started
+  ; on the new files" -- true at that instant -- and then rebooted, at which
+  ; point the SCM auto-started the supervisor on the new payload against the
+  ; old schema. That is precisely the 500s state Gate A run 33681670855
+  ; produced and PR #143 was written to prevent; the fix moved it from
+  ; "immediately" to "next boot".
+  ;
+  ; Both actions are best-effort by design: a containment step that could
+  ; itself abort would replace an honest, specific failure message with a
+  ; different one. Each records its own breadcrumb so the installer log says
+  ; whether containment actually took. A successful re-run of setup
+  ; re-registers `auto` on its own (register_native_service always sets
+  ; SERVICE_STARTUP_MODE), so this is not a state an operator has to undo.
+  StrCpy $CIVICCAST_CONTAINED "0"
+  ${If} $CIVICCAST_PAYLOAD_REPLACED == "1"
+    !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT begin (new payload is on disk; the service must not auto-start onto it)"
+    nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-stop-native-service'
+    Pop $R9
+    !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT service stop returned $R9"
+    StrCpy $R8 $R9
+    nsExec::ExecToLog '"$SYSDIR\sc.exe" config CivicCastSupervisor start= demand'
+    Pop $R9
+    !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT sc config start=demand returned $R9"
+    ; Review of PR #145: containment is BEST-EFFORT by design (a step that
+    ; could itself abort would replace an honest, specific failure message
+    ; with a different one) -- so no operator-facing text may state it as
+    ; fact. "1" here means BOTH the stop and the start-type change actually
+    ; reported success; the exit-124 branch reads this Var and says one thing
+    ; or the other, never the optimistic one unconditionally.
+    ;
+    ; `sc config` on an absent service (1060) is a legitimate 0-payload case
+    ; -- a FRESH_INSTALL failure has no registered service to disarm -- but it
+    ; is reported honestly rather than counted as containment, because the
+    ; distinction only matters when a service DOES exist.
+    ${If} $R8 == "0"
+    ${AndIf} $R9 == "0"
+      StrCpy $CIVICCAST_CONTAINED "1"
+      !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT confirmed (service stopped and set to manual start)"
+    ${Else}
+      !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT NOT confirmed (stop=$R8 config=$R9) -- the service may still auto-start onto the new payload"
+    ${EndIf}
+  ${EndIf}
   !insertmacro CIVICCAST_ALERT "${TEXT}"
   !insertmacro CIVICCAST_STEP "postinstall: FAILED, aborting with exit code ${CODE}"
   SetErrorLevel ${CODE}
@@ -341,9 +417,32 @@
 !macroend
 
 ; POSTINSTALL failure exit codes. Deliberately in a band of their own: the
-; product's own CLI contract codes (40, 70, 73, 75, 76, 79, 81) and the D3
-; engine's phase codes (0/10/20/30) travel through nsExec as $0 and must stay
-; distinguishable from the installer process's own exit code.
+; product's own CLI contract codes and the D3 engine's phase codes travel
+; through nsExec as $0 and must stay distinguishable from the installer
+; process's own exit code.
+;
+; Corrected by the installer-path audit (MA-28). This comment used to say the
+; CLI contract codes were "(40, 70, 73, 75, 76, 79, 81)". That set was wrong
+; in both directions: it omitted thirteen live codes, and 40 is a D3 ENGINE
+; phase code, not a CLI code. What is actually true, read off main.rs and its
+; modules:
+;   * D3 engine (the upgrade CLI this hook invokes below) phase codes:
+;     0 COMPLETE, 10 ROLLED_BACK, 11 FRESH_INSTALL, 12 SAME_VERSION_NO_OP,
+;     20 HALTED_RESTORE_FAILED, 30 REFUSED_NON_RESTORABLE, 40 unexpected fault.
+;   * `CivicCast Native.exe` CLI codes: 0, 1, and the 64-85 band --
+;     64 arguments, 65 render/serde, 66 acquisition, 67 activation/self-test,
+;     68 install-tree verify, 69, 70 service registration, 71, 72 database-url
+;     write, 73 uninstall preflight, 74 ActiveRuntime transfer acknowledgement
+;     required AND required-pack staging failure, 75 provisioning failure AND
+;     optional-pack staging failure, 76 repair-needed, 77 uninstall blocked,
+;     78 embedded pack trust, 79 unrepairable, 80, 81, 82 teardown
+;     service-stop unconfirmed, 83 service registered but would not start,
+;     84 service running but the control plane is not serving (BL-11),
+;     85 runtime ownership unprovable (BL-13).
+; 74 and 75 each still carry two meanings; there is no live collision because
+; each caller branches within one subcommand, but the duplication is recorded
+; here rather than left for the next person to rediscover. 83/84/85 were
+; picked from the first genuinely free numbers above that band.
 !define CIVICCAST_EXIT_PACK_DELIVERY        110
 !define CIVICCAST_EXIT_D2_SERVER_BINARIES   111
 !define CIVICCAST_EXIT_D2_APP_PAYLOAD       112
@@ -394,6 +493,76 @@
 ; installer -- not the engine -- must fail closed instead.
 !define CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT   124
 
+; Installer-path audit BL-11: the service is RUNNING but the control plane is
+; not SERVING. Until this code existed, NOTHING in the entire elevated install
+; chain ever contacted /health -- SCM `RUNNING` (i.e. pythonservice.exe told
+; the SCM it had started) was the only success signal the installer had, which
+; says nothing about PostgreSQL being up, the control plane binding 8000, or
+; the schema matching the code. Gate A run 33681670855 is the exact shape:
+; service registers, SCM says RUNNING, /health returns 200
+; {"status":"degraded","schema":"behind"}, the installer writes
+; InstalledVersion, exits 0, and the wizard shows its success page over a box
+; serving 500s. Distinct from ${CIVICCAST_EXIT_D4_SERVICE} (118, "could not
+; register") and from the service-start failure below because the operator
+; remedy differs in each case.
+!define CIVICCAST_EXIT_D4_SERVICE_NOT_SERVING 125
+
+; Installer-path audit MA-29: exit 83 from --civiccast-register-native-service
+; means the service WAS registered and would not start. Mapping it to 118
+; ("could not register the ... Windows service") pointed the operator at
+; registration when the fault is startup.
+!define CIVICCAST_EXIT_D4_SERVICE_NOT_STARTING 126
+
+; Installer-path audit BL-13: --civiccast-provision could not establish which
+; runtime owns this machine (HKLM\SOFTWARE\CivicCast\ActiveRuntime unreadable,
+; or absent while the WSL-product probe cannot answer). The Rust side used to
+; print one sentence -- which itself said "The native runtime will not start
+; until an operator sets it" -- and return Ok, so setup went on to register
+; and start a service whose control plane the guard blocks, and reported
+; success over a station that can never serve.
+!define CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP   127
+
+; Installer-path audit BL-06: the D3 engine refused to start because a PREVIOUS
+; run's terminal journal is still on disk. Distinct from every other D3 code
+; because THIS run did nothing at all -- no seam ran, nothing was written --
+; and the operator action is a file move, not a retry. Before it existed the
+; engine returned the stale journal's own phase (usually 10), which the
+; exit-10 branch turns into a fatal 124 saying "re-run setup after resolving
+; the cause"; every re-run returned 10 again, forever, because nothing deletes
+; that journal.
+!define CIVICCAST_EXIT_D3_STALE_JOURNAL       128
+
+; Installer-path audit MA-05: an OLDER setup.exe was run over a NEWER
+; installed station. Refused by the routing decision before the interlock, the
+; drain, the backup or any mutation -- so unlike every other code in this band
+; it means "nothing at all happened", which is what its operator text says.
+!define CIVICCAST_EXIT_D3_REFUSED_DOWNGRADE   129
+
+; UNINSTALL refusal / incompletion codes (installer-path audit MA-34, MA-35).
+;
+; Three uninstall refusals -- the operator declined the ownership-transfer
+; prompt, an acknowledged transfer failed, and any other nonzero preflight --
+; all did SetErrors + Abort with NO SetErrorLevel, so all three returned
+; NSIS's own generic script-abort code 2, indistinguishable from each other
+; AND from an unrelated script abort. This file's own comment beside the
+; teardown refusal explains that exact ambiguity as the reason 82 was given a
+; distinct code, and then left these three at 2.
+;
+; And two POSTUNINSTALL paths did SetErrors + alert and then returned 0,
+; because -- per this file's own measured evidence table -- `SetErrors` alone
+; does not change the process exit code. An uninstall that deliberately left
+; multi-gigabyte trees and a running service behind reported success to
+; winget/Intune.
+;
+; 130-134 continues this file's own band rather than reusing the CLI's, so a
+; support log can tell an uninstall refusal from an install failure by the
+; number alone.
+!define CIVICCAST_EXIT_UNINSTALL_DECLINED        130
+!define CIVICCAST_EXIT_UNINSTALL_TRANSFER_FAILED 131
+!define CIVICCAST_EXIT_UNINSTALL_BLOCKED         132
+!define CIVICCAST_EXIT_UNINSTALL_TREES_RETAINED  133
+!define CIVICCAST_EXIT_UNINSTALL_INCOMPLETE      134
+
 ; Carries the --civiccast-teardown-native-state CLI's exit code from
 ; NSIS_HOOK_PREUNINSTALL (where the teardown call must run -- see that
 ; macro's header comment for why) to NSIS_HOOK_POSTUNINSTALL (where the
@@ -409,6 +578,25 @@
 ; delete a tree a still-running service may depend on, rather than assuming
 ; it is safe.
 Var CIVICCAST_TEARDOWN_EXIT
+
+; <installer-path-audit MA-36> "1" once this uninstaller's own preflight
+; reported that it ARMED the post-uninstall selector-clear plan (exit 73).
+;
+; `native_uninstall_preflight` begins with an unconditional
+; `clear_postclear_marker()`, and the marker value is a fixed constant with no
+; owner in it. So: uninstaller A's preflight arms the marker and returns 73; A
+; proceeds into teardown and Tauri's file deletion; the operator opens Apps &
+; Features again and B's preflight CLEARS A's marker. A's POSTUNINSTALL then
+; reads no marker and takes the "no plan was armed" path, leaving
+; HKLM\Software\CivicCast\ActiveRuntime set to "native" on a machine with no
+; native product -- silently, with the uninstall still exiting 0.
+;
+; PREUNINSTALL and POSTUNINSTALL run in the SAME uninstaller process, so this
+; Var is the one thing that can tell "no plan was ever armed" (legitimate,
+; silent) apart from "this run armed a plan and something removed it"
+; (MA-36's state, which must be loud). Left at its NSIS default (empty) so an
+; unset value behaves exactly as before.
+Var CIVICCAST_POSTCLEAR_ARMED
 
 !macro NSIS_HOOK_PREINSTALL
   ; F-10 fix: declare the space the POSTINSTALL pack-staging chain below adds
@@ -488,6 +676,12 @@ Var CIVICCAST_TEARDOWN_EXIT
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  ; <installer-path-audit BL-02> From here on, $INSTDIR is the NEW payload
+  ; (Tauri's generated section already replaced it) while the database is
+  ; still the old one until D3 commits, so every failure branch below must
+  ; contain the service rather than leave it registered `--startup auto` over
+  ; new code. See CIVICCAST_FAIL and this Var's own declaration.
+  StrCpy $CIVICCAST_PAYLOAD_REPLACED "1"
   !insertmacro CIVICCAST_STEP "postinstall: begin"
   !insertmacro CIVICCAST_STEP "step vc-redist: begin"
   DetailPrint "Installing the offline Microsoft Visual C++ runtime prerequisite..."
@@ -901,6 +1095,8 @@ Var CIVICCAST_TEARDOWN_EXIT
     !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=FRESH_INSTALL engine_exit=11"
   ${ElseIf} $0 == 12
     !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=SAME_VERSION_NO_OP engine_exit=12"
+  ${ElseIf} $0 == 13
+    !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=REFUSED_DOWNGRADE engine_exit=13"
   ${Else}
     !insertmacro CIVICCAST_STEP "step d3-engine: evidence route=UPGRADE engine_exit=$0"
   ${EndIf}
@@ -929,6 +1125,15 @@ Var CIVICCAST_TEARDOWN_EXIT
     ; what actually normalizes an installed tree.
     DetailPrint "CivicCast (Native): version ${VERSION} is already installed — there is no database migration to run, so the install/upgrade engine did nothing. Your data was not drained, backed up, migrated, or changed."
     !insertmacro CIVICCAST_STEP "step d3-engine: NO-OP (same version ${VERSION} already installed; no migration to run)"
+  ${ElseIf} $0 == 13
+    ; Installer-path audit MA-05. decide_route had exactly ONE version
+    ; comparison -- string equality -- and no ordering comparison anywhere, so
+    ; running an older setup.exe over a newer station routed to UPGRADE and
+    ; drove `alembic upgrade head` toward an OLDER head. This refuses before
+    ; the interlock, the drain, the backup or any mutation.
+    !insertmacro CIVICCAST_STEP "step d3-engine: REFUSED (a newer CivicCast (Native) is installed; this setup would move the database backwards)"
+    DetailPrint "CivicCast (Native): a NEWER version is already installed; this older setup was refused before changing anything."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_REFUSED_DOWNGRADE} "A NEWER version of CivicCast (Native) is already installed on this computer, and this setup installs an OLDER one.$\r$\n$\r$\nCivicCast cannot move a station's database backwards, so setup stopped before changing anything at all -- no recordings, database or settings were touched.$\r$\n$\r$\nTo continue: run the newer version's setup again, or uninstall CivicCast (Native) first if you genuinely mean to go back (your data in $COMMONPROGRAMDATA\CivicCast is preserved by uninstall, and an older version may not be able to read it).$\r$\n$\r$\nSee $COMMONPROGRAMDATA\CivicCast\install-progress.log for the two version numbers."
   ${ElseIf} $0 == 10
     ; HISTORY: a 2026-07-30 adversarial-review fix stopped this branch from
     ; recording a clean rollback as a SUCCESSFUL upgrade (it used to
@@ -982,7 +1187,19 @@ Var CIVICCAST_TEARDOWN_EXIT
     ; _rollback). What is NOT intact is which CODE is on disk under the flat
     ; layout, which is exactly what this abort communicates and prevents
     ; from going live.
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT} "CivicCast (Native) setup could not complete: the upgrade engine rolled back its own work before finishing the upgrade to ${VERSION}. Your previous version's database is intact and was not left mid-migration. The service has NOT been started on the new files. See the engine's own reason in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log (the full record is in upgrade-journal.json beside it) and $COMMONPROGRAMDATA\CivicCast\install-progress.log, then re-run setup after resolving the cause."
+    ; Review of PR #145: the containment sentence is CONDITIONAL on what
+    ; actually succeeded. Containment is best-effort (CIVICCAST_FAIL), so
+    ; asserting "stopped AND set to manual start" unconditionally would be a
+    ; second instance of the exact defect BL-02 is about -- a message true
+    ; only when nothing went wrong, silent when something did.
+    ;
+    ; CIVICCAST_FAIL runs containment BEFORE it shows this text, so
+    ; $CIVICCAST_CONTAINED is already set when either branch is inserted.
+    ${If} $CIVICCAST_CONTAINED == "1"
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT} "CivicCast (Native) setup could not complete: the upgrade engine rolled back its own work before finishing the upgrade to ${VERSION}. Your previous version's database is intact and was not left mid-migration.$\r$\n$\r$\nThe station's service has been stopped AND set to manual start, so it will not come up on the new files at the next restart either. A successful re-run of setup puts it back to automatic start.$\r$\n$\r$\nSee the engine's own reason in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log (the full record is in upgrade-journal.json beside it) and $COMMONPROGRAMDATA\CivicCast\install-progress.log, then re-run setup after resolving the cause."
+    ${Else}
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT} "CivicCast (Native) setup could not complete: the upgrade engine rolled back its own work before finishing the upgrade to ${VERSION}. Your previous version's database is intact and was not left mid-migration.$\r$\n$\r$\nIMPORTANT: setup could NOT confirm that it stopped the station's service and set it to manual start, so the service may still start automatically the next time this computer restarts -- on the NEW program files, against your previous version's database. Before restarting, stop it and set it to manual: run 'sc stop CivicCastSupervisor' and 'sc config CivicCastSupervisor start= demand' from an administrator command prompt, or use services.msc.$\r$\n$\r$\nSee the engine's own reason in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log (the full record is in upgrade-journal.json beside it) and $COMMONPROGRAMDATA\CivicCast\install-progress.log, then re-run setup after resolving the cause."
+    ${EndIf}
   ${ElseIf} $0 == 20
     ; F-03: name WHOSE rollback, for the same reason as the exit-10 branch
     ; above -- "rollback", unqualified, is what an operator reads as the
@@ -995,6 +1212,18 @@ Var CIVICCAST_TEARDOWN_EXIT
   ${ElseIf} $0 == 30
     DetailPrint "CivicCast (Native): this release declares a non-restorable migration and needs operator acknowledgement; automatic upgrade was refused."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_REFUSED} "This CivicCast (Native) release includes a database migration that cannot be automatically rolled back. Automatic upgrade was refused. Use the manual upgrade path with operator acknowledgement."
+  ${ElseIf} $0 == 31
+    ; Installer-path audit BL-06. A PREVIOUS run ended in a terminal failure
+    ; and left its journal behind; THIS run did nothing at all. Before this
+    ; branch existed the engine returned that stale journal's own phase --
+    ; usually 10 -- which the exit-10 branch above turns into a fatal 124
+    ; telling the operator to "re-run setup after resolving the cause". Every
+    ; re-run returned 10 again, forever, whatever was fixed, because nothing
+    ; deletes the journal ($COMMONPROGRAMDATA\CivicCast is preserved by
+    ; uninstall BY DESIGN, so even uninstall/reinstall did not clear it). The
+    ; message names the ONE action that unwedges the machine.
+    DetailPrint "CivicCast (Native): a previous upgrade attempt's record is still present; this run did nothing."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_STALE_JOURNAL} "CivicCast (Native) setup stopped before doing anything, because an EARLIER upgrade attempt on this machine ended in a failure whose record is still on disk.$\r$\n$\r$\nThat record is deliberately kept so support can read it -- but until it is moved aside, every new attempt refuses to start, so that a fresh upgrade cannot overwrite the recovery point it describes.$\r$\n$\r$\nTo continue: move (do not delete) the file$\r$\n$\r$\n    $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-journal.json$\r$\n$\r$\nsomewhere safe -- keep it for support -- and run setup again.$\r$\n$\r$\nNothing on this machine was changed by this run. Its reason is recorded in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log."
   ${Else}
     DetailPrint "CivicCast (Native): the install/upgrade engine reported an unexpected fault (exit $0)."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_FAULT} "CivicCast (Native) setup hit an unexpected fault while running the install/upgrade engine (exit code $0). See the installer log."
@@ -1028,6 +1257,13 @@ Var CIVICCAST_TEARDOWN_EXIT
   ${ElseIf} $0 == 75
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning FAILED (exit 75) — see the installer log above and $COMMONPROGRAMDATA\CivicCast\provision\PROVISION-RECOVERY.md."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAILED} "CivicCast (Native) setup could not provision the PostgreSQL server. See the installer log and $COMMONPROGRAMDATA\CivicCast\provision\PROVISION-RECOVERY.md for details."
+  ${ElseIf} $0 == 85
+    ; Installer-path audit BL-13: the ActiveRuntime selector could not be
+    ; established. This used to be a printed sentence and an exit 0, after
+    ; which setup registered and started a service whose control plane the
+    ; dual-runtime guard blocks, then reported "installation complete".
+    DetailPrint "CivicCast (Native): D4 could not establish this machine's runtime ownership (exit 85) — see the installer log above."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP} "CivicCast (Native) setup could not determine which CivicCast runtime owns this machine, so it stopped rather than finish an installation that could never start.$\r$\n$\r$\nAn administrator must set HKLM\SOFTWARE\CivicCast\ActiveRuntime to the value $\"native$\" -- or resolve whatever prevented setup from reading it (most often a permissions problem on HKEY_USERS) -- and then run setup again.$\r$\n$\r$\nNothing was deleted. Your recordings, database and settings in $COMMONPROGRAMDATA\CivicCast are intact. See $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact observation."
   ${Else}
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning reported an unexpected fault (exit $0) — see the installer log above."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAULT} "CivicCast (Native) setup hit an unexpected fault while provisioning the PostgreSQL server (exit code $0). See the installer log."
@@ -1116,11 +1352,35 @@ Var CIVICCAST_TEARDOWN_EXIT
   !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station: no signed station index (station-index.json) was found beside setup.exe at $EXEDIR\station, and this setup.exe does not carry the embedded copy it normally ships with. Download the CivicCast (Native) setup again from the official release page, or copy the full CivicCast kit folder (setup.exe together with its station folder) onto this machine and run setup from there. See the installer log above for details."
   civiccast_activate_station_ran:
   !insertmacro CIVICCAST_STEP "step d4-activate-station: returned $0"
+  ; Installer-path audit MA-08: run_native_flat_activation_cli emits FIVE
+  ; distinct exit codes -- 64 (arguments), 65 (render), 66 (acquisition), 67
+  ; (activation / self-test), 78 (embedded pack trust) -- and this branch used
+  ; to collapse all of them into one fixed sentence about the station folder
+  ; and the pack cache. That sentence is correct for 66-with-a-cache-miss and
+  ; WRONG for the other four: 67 means the packs were fine and the station's
+  ; own self-test failed; 78 means the shipped trust key is a development key
+  ; without the matching opt-in, i.e. a BUILD defect; 64/65 are
+  ; installer-authoring bugs. This file's own header (:374-377) states the
+  ; rationale that was being discarded: "the exit code is the only signal a
+  ; support log carries about WHICH step failed".
   ${If} $0 == 0
     DetailPrint "CivicCast (Native): station activation complete (or already activated; no-op)."
+  ${ElseIf} $0 == 67
+    DetailPrint "CivicCast (Native): station activation self-test FAILED (exit $0) — see the installer log above."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup laid down the station's components, but the station's own self-test did not pass, so setup stopped rather than leave you with a station that looks installed and does not work.$\r$\n$\r$\nThis is NOT a missing-files problem -- the component packs were obtained and verified. The self-test that failed is named in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log.$\r$\n$\r$\nYour recordings, database and settings in $COMMONPROGRAMDATA\CivicCast were not deleted."
+  ${ElseIf} $0 == 66
+    DetailPrint "CivicCast (Native): station activation could not obtain its component packs (exit $0) — see the installer log above."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not obtain the station's component packs from the signed station index it found.$\r$\n$\r$\nIf you installed from a CivicCast kit folder, make sure its station folder was copied across whole. If you ran setup.exe on its own, the packs it needs must already be in this machine's pack cache from a previous install.$\r$\n$\r$\nSee the installer log above for the exact underlying error -- it names either the missing pack or the signature/version check that refused one."
+  ${ElseIf} $0 == 78
+    DetailPrint "CivicCast (Native): station activation refused this setup.exe's embedded trust key (exit $0)."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "This copy of CivicCast (Native) setup is not a valid release build: its embedded signing key was refused.$\r$\n$\r$\nNothing is wrong with this machine. Download CivicCast (Native) setup again from the official release page and run that copy.$\r$\n$\r$\nNothing was deleted. The exact refusal is recorded in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+  ${ElseIf} $0 == 64
+  ${OrIf} $0 == 65
+    DetailPrint "CivicCast (Native): station activation was invoked incorrectly (exit $0)."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "This copy of CivicCast (Native) setup is defective: its own station-activation step was invoked with arguments it does not accept.$\r$\n$\r$\nNothing is wrong with this machine. Download CivicCast (Native) setup again from the official release page and run that copy.$\r$\n$\r$\nNothing was deleted. The exact refusal is recorded in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log."
   ${Else}
     DetailPrint "CivicCast (Native): station activation FAILED (exit $0) — see the installer log above."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station from the signed station index it found. If you installed from a CivicCast kit folder, make sure its station folder was copied across whole; otherwise the station's component packs could not be obtained from this machine's pack cache. See the installer log above for the exact underlying error."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station from the signed station index it found (exit code $0). See the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact underlying error.$\r$\n$\r$\nYour recordings, database and settings in $COMMONPROGRAMDATA\CivicCast were not deleted."
   ${EndIf}
   ;
   ; ===================================================================
@@ -1181,7 +1441,20 @@ Var CIVICCAST_TEARDOWN_EXIT
   civiccast_svc_host_restore_missing:
   !insertmacro CIVICCAST_STEP "step d4-service-registration: WARNING source $INSTDIR\runtime\pythonservice.exe missing; site-packages member NOT restored (next D5 verify will report a repair)"
   civiccast_svc_host_restore_done:
-  ${If} $0 != 0
+  ; Installer-path audit MA-29 / BL-11: this used to map ANY nonzero to
+  ; ${CIVICCAST_EXIT_D4_SERVICE} with one fixed "could not register the ...
+  ; Windows service" string. The subcommand emits three genuinely different
+  ; outcomes and the operator remedy differs for each, so each gets its own
+  ; installer exit code and its own sentence. The exit code is the only
+  ; signal a silent install's support log carries about WHICH step failed --
+  ; this file's own header says so at :374-377.
+  ${If} $0 == 84
+    DetailPrint "CivicCast (Native): the service is running but the station is not serving (exit $0) — see the installer log above."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_SERVICE_NOT_SERVING} "CivicCast (Native) setup started the station's Windows service, but the station did not come up ready to serve.$\r$\n$\r$\nThe most common cause is that the database schema is not the one this version needs, which would make the staff pages return errors.$\r$\n$\r$\nNothing was deleted. Your recordings, database and settings in $COMMONPROGRAMDATA\CivicCast are intact.$\r$\n$\r$\nThe exact reason the station reported is in $COMMONPROGRAMDATA\CivicCast\install-progress.log, and the upgrade engine's own record is in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log. Resolve the cause and run setup again."
+  ${ElseIf} $0 == 83
+    DetailPrint "CivicCast (Native): the service was registered but would not start (exit $0) — see the installer log above."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_SERVICE_NOT_STARTING} "CivicCast (Native) setup registered the station's Windows service, but Windows could not start it.$\r$\n$\r$\nThis is a startup failure, not a registration failure -- the service exists and can be inspected in services.msc.$\r$\n$\r$\nNothing was deleted. See $COMMONPROGRAMDATA\CivicCast\logs and the Windows Application event log for the exact startup error, then run setup again."
+  ${ElseIf} $0 != 0
     DetailPrint "CivicCast (Native): D4 service registration FAILED (exit $0) — see the installer log above."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_SERVICE} "CivicCast (Native) setup could not register the CivicCast (Native) Windows service. See the installer log for the exact error."
   ${EndIf}
@@ -1242,6 +1515,29 @@ Var CIVICCAST_TEARDOWN_EXIT
   ; It stays keyed off a run that reached this line at all, which -- because
   ; every failure branch above aborts outright (CIVICCAST_FAIL) -- can only
   ; be a fully successful chain.
+  ;
+  ; Installer-path audit BL-12: WHY THIS LINE IS SAFE NOW, and was not.
+  ;
+  ; InstalledVersion records WHICH INSTALLER LAST RAN, and decide_route treats
+  ; it as "which schema the database is at". Those are not the same fact. An
+  ; uninstall removes the CivicCastSupervisor service but preserves
+  ; $COMMONPROGRAMDATA\CivicCast and its cluster BY DESIGN, so a later install
+  ; of a newer version routed FRESH_INSTALL (D3 skipped, exit 11), D4
+  ; provisioning took its reuse/adopt path, and this line stamped the new
+  ; version over a database still at the OLD schema. Every future run then
+  ; read old_version == new_version and reported SAME_VERSION_NO_OP: the
+  ; machine was permanently locked out of its own upgrade engine.
+  ;
+  ; Two changes make reaching this line mean what it says:
+  ;   * the provisioning CLI's reuse path now brings the schema to alembic
+  ;     head (BL-12, civiccast/native/provision/__main__.py), so a preserved
+  ;     database is migrated on the FRESH_INSTALL route rather than adopted
+  ;     and left behind; and
+  ;   * D4 service registration now polls /health and REFUSES to report
+  ;     success unless the station is serving with a current schema (BL-11,
+  ;     exit 84 -> ${CIVICCAST_EXIT_D4_SERVICE_NOT_SERVING}). That step runs
+  ;     BEFORE this write and aborts the install on failure, so the marker
+  ;     can no longer be stamped over a schema-behind database.
   WriteRegStr HKLM "Software\CivicCast\Native" "InstalledVersion" "${VERSION}"
   DetailPrint "CivicCast (Native): recorded InstalledVersion ${VERSION} for the next install/upgrade run."
   !insertmacro CIVICCAST_STEP "postinstall: SUCCESS (InstalledVersion ${VERSION} recorded)"
@@ -1434,6 +1730,13 @@ Var CIVICCAST_TEARDOWN_EXIT
     DetailPrint "CivicCast Native uninstall was declined at the ownership transfer prompt; nothing was removed and ActiveRuntime was left unchanged."
     !insertmacro CIVICCAST_ALERT "CivicCast (Native) uninstall was cancelled. ActiveRuntime ownership was NOT transferred and nothing was removed."
     SetErrors
+    ; Installer-path audit MA-34: this used to Abort with NO SetErrorLevel,
+    ; so it returned NSIS's own generic script-abort code 2 -- the SAME code
+    ; the other two refusal branches returned, and the same code NSIS emits
+    ; for an unrelated script abort. This file's own comment beside the
+    ; teardown refusal explains that exact ambiguity as the reason 82 was
+    ; given its own code, and then left these three at 2.
+    SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_DECLINED}
     Abort
     civiccast_native_transfer_acknowledged:
     DetailPrint "Operator acknowledged the ActiveRuntime ownership transfer; transferring to the WSL product before removal proceeds..."
@@ -1444,6 +1747,8 @@ Var CIVICCAST_TEARDOWN_EXIT
       DetailPrint "CivicCast Native ownership transfer failed after acknowledgment: $1"
       !insertmacro CIVICCAST_ALERT "CivicCast (Native) could not complete the ActiveRuntime ownership transfer. Nothing was removed.$\r$\n$\r$\nDetails: $1"
       SetErrors
+      ; Installer-path audit MA-34: its own code, not NSIS's generic 2.
+      SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_TRANSFER_FAILED}
       Abort
     ${EndIf}
     DetailPrint "CivicCast Native ActiveRuntime ownership transferred to the WSL product; proceeding with uninstall."
@@ -1452,7 +1757,17 @@ Var CIVICCAST_TEARDOWN_EXIT
     DetailPrint "CivicCast Native uninstall was blocked before process termination: $1"
     !insertmacro CIVICCAST_ALERT "CivicCast (Native) cannot be uninstalled while it is the active runtime and the WSL product remains, or when lifecycle state cannot be safely read.$\r$\n$\r$\nDetails: $1"
     SetErrors
+    ; Installer-path audit MA-34: its own code, not NSIS's generic 2.
+    SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_BLOCKED}
     Abort
+  ${EndIf}
+  ; <installer-path-audit MA-36> Exit 73 is the preflight's "I armed the
+  ; post-uninstall selector-clear plan" answer. Record it so POSTUNINSTALL can
+  ; tell a plan that was never armed from one that was armed and then removed
+  ; by a second uninstaller instance.
+  ${If} $0 == 73
+    StrCpy $CIVICCAST_POSTCLEAR_ARMED "1"
+    !insertmacro CIVICCAST_STEP "preuninstall: post-uninstall selector-clear plan armed"
   ${EndIf}
   ;
   ; ===================================================================
@@ -1630,8 +1945,22 @@ Var CIVICCAST_TEARDOWN_EXIT
     StrCpy $R2 "1"
     !insertmacro CIVICCAST_ALERT "CivicCast (Native) uninstall could not confirm that the CivicCastSupervisor service was fully stopped, so the program files were NOT removed -- deleting them now could corrupt data out from under a still-running service and its database/messaging processes.$\r$\n$\r$\nTo finish removing CivicCast (Native): stop the service manually (services.msc, or 'sc stop CivicCastSupervisor'), or reboot this machine, then run Uninstall again.$\r$\n$\r$\nSee the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact error."
     SetErrors
+    ; Installer-path audit MA-35: SetErrors ALONE DOES NOT CHANGE THE
+    ; PROCESS EXIT CODE -- this file's own measured evidence table says so.
+    ; An uninstall that deliberately left multi-gigabyte trees AND a running
+    ; service behind therefore returned 0 to winget/Intune, which read it as
+    ; a clean removal. Reachable today mainly through the fail-closed
+    ; unset-Var default above -- which exists precisely because PREUNINSTALL
+    ; might not have run at all.
+    SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_TREES_RETAINED}
   ${ElseIf} $CIVICCAST_TEARDOWN_EXIT != 0
     !insertmacro CIVICCAST_ALERT "CivicCast (Native) uninstall could not fully remove the supervisor service, firewall rule, and/or registry state (exit $CIVICCAST_TEARDOWN_EXIT). See the installer log for exactly which step failed; you may need to remove it manually (services.msc / Windows Defender Firewall / HKLM\Software\CivicCast\Native)."
+    ; Installer-path audit MA-35: the same shape as the branch above -- alert,
+    ; continue, delete the trees, exit 0. An uninstall that could not remove
+    ; the service, the firewall rule or the registry state has NOT completed,
+    ; and unattended tooling has to be able to see that.
+    SetErrors
+    SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_INCOMPLETE}
   ${Else}
     DetailPrint "CivicCast (Native): supervisor service, firewall rule, and registry state removed."
   ${EndIf}
@@ -1643,7 +1972,26 @@ Var CIVICCAST_TEARDOWN_EXIT
   ClearErrors
   ReadRegStr $R0 HKLM "Software\CivicCast" "NativeUninstallPostclearPending"
   ${If} ${Errors}
-    ; No sole-active plan was armed; leave ActiveRuntime untouched.
+    ; <installer-path-audit MA-36> "No marker" is TWO different states, and
+    ; this branch used to treat them as one.
+    ;
+    ; If this run's own preflight never armed a plan, leaving ActiveRuntime
+    ; untouched is exactly right and silent -- unchanged.
+    ;
+    ; If it DID arm one (exit 73, recorded in $CIVICCAST_POSTCLEAR_ARMED) and
+    ; the marker is gone now, something removed it mid-uninstall. The only
+    ; thing that does is a SECOND uninstaller instance, whose preflight begins
+    ; with an unconditional clear_postclear_marker(). The consequence is not
+    ; cosmetic: ActiveRuntime stays "native" on a machine with no native
+    ; product, which is the state the dual-runtime guard reads to decide
+    ; whether anything may start. Say so, and do not report a clean uninstall.
+    ${If} $CIVICCAST_POSTCLEAR_ARMED == "1"
+      !insertmacro CIVICCAST_STEP "postuninstall: ARMED post-uninstall plan is MISSING (a second uninstaller instance cleared it); ActiveRuntime left unchanged"
+      DetailPrint "CivicCast (Native): the post-uninstall ActiveRuntime plan armed by this uninstall is gone; ActiveRuntime was left unchanged."
+      !insertmacro CIVICCAST_ALERT "CivicCast (Native) was removed, but it could not finish handing back this computer's CivicCast runtime ownership -- another CivicCast uninstall was started while this one was running and cleared the plan.$\r$\n$\r$\nThis machine's HKLM\Software\CivicCast\ActiveRuntime still reads $\"native$\" even though the native product is gone. Nothing was left running and no data was lost.$\r$\n$\r$\nAn administrator should clear or correct that value before installing CivicCast again. Do not run two CivicCast uninstalls at the same time."
+      SetErrors
+      SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_INCOMPLETE}
+    ${EndIf}
     Goto civiccast_native_postuninstall_done
   ${EndIf}
   ${If} $R0 != "civiccast-native-sole-active-v1"
@@ -1716,8 +2064,30 @@ Var CIVICCAST_TEARDOWN_EXIT
     DetailPrint "CivicCast (Native): skipping removal of the runtime and component-pack trees -- the supervisor service could not be confirmed stopped (see the alert above)."
     !insertmacro CIVICCAST_STEP "postuninstall: recursive removal of runtime/packs/INSTDIR: SKIPPED (service stop unconfirmed, teardown exit 82)"
   ${Else}
+    ; Installer-path audit MA-17 -- KNOWN LIMITATION, stated rather than
+    ; silently shipped. See the CHANGELOG's "Known limitations" entry.
+    ;
+    ; `RMDir /r "$INSTDIR\packs"` removes `$INSTDIR\packs\.station-cache`
+    ; along with everything else. That is correct for an uninstall in
+    ; isolation, but it means a DOWNLOAD-ONLY reinstall on this machine
+    ; (setup.exe alone, no `station\` folder) cannot activate afterwards: the
+    ; signed station index is embedded in setup.exe, the ~21 GB of model packs
+    ; are not, and the per-SHA cache they would have been served from is now
+    ; gone -- so activation exits 66 and the installer aborts with 123. That
+    ; collides with the owner's standing "download install is the floor" rule.
+    ;
+    ; NOT FIXED HERE, deliberately. Preserving the cache means either leaving
+    ; a multi-gigabyte `$INSTDIR` behind (which contradicts this file's own
+    ; "everything gone" uninstall contract and changes what a silent uninstall
+    ; reports to winget/Intune) or relocating the cache to
+    ; $COMMONPROGRAMDATA -- which additionally requires the activation step's
+    ; `--cache-root` to search a second location (audit MA-16). Both are owner
+    ; decisions about what an uninstall means, not batch-fix decisions. What
+    ; is fixed here is that the operator is TOLD, on every path, instead of
+    ; discovering it at the next install.
+    !insertmacro CIVICCAST_NOTICE "CivicCast (Native) is being removed, including the downloaded AI model packs (about 21 GB) kept in this folder.$\r$\n$\r$\nYour recordings, database and settings in $COMMONPROGRAMDATA\CivicCast are NOT affected and are being kept.$\r$\n$\r$\nIf you reinstall later by running setup.exe on its own, it will need those model packs again and cannot download them -- reinstall from the full CivicCast kit folder (setup.exe together with its station folder), or copy $INSTDIR\packs\.station-cache somewhere safe now if you want to reuse it."
     DetailPrint "Removing the CivicCast (Native) runtime and component-pack trees..."
-    !insertmacro CIVICCAST_STEP "postuninstall: recursive removal of runtime/packs/INSTDIR: begin"
+    !insertmacro CIVICCAST_STEP "postuninstall: recursive removal of runtime/packs/INSTDIR: begin (INCLUDING the per-SHA model pack cache -- see audit MA-17)"
     RMDir /r "$INSTDIR\runtime"
     RMDir /r "$INSTDIR\packs"
     RMDir /r "$INSTDIR"

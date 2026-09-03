@@ -21,10 +21,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -339,6 +341,7 @@ def run_postgres_restore(
     *,
     pg_restore_command: list[str] | None = None,
     preserve_ownership: bool = False,
+    single_transaction: bool = False,
 ) -> None:
     """Restore a ``pg_dump --format=custom`` artifact into ``target_database_url``.
 
@@ -382,6 +385,16 @@ def run_postgres_restore(
         "--dbname",
         conn["dbname"],
         *(() if preserve_ownership else ("--no-owner",)),
+        # <installer-path-audit BL-01> ``--single-transaction`` wraps the whole
+        # replay in ONE transaction, so a failure part-way through rolls the
+        # target back to empty instead of leaving it half-restored. Opt-in
+        # rather than default because the drill's throwaway target does not
+        # need it and a single transaction is a real cost on a large dump; the
+        # D3 rollback -- which restores into the LIVE database -- always asks
+        # for it, because "half-clobbered production" is the failure mode that
+        # matters there. It implies --exit-on-error, which is passed anyway so
+        # the non-transactional path keeps its existing behaviour.
+        *(("--single-transaction",) if single_transaction else ()),
         "--exit-on-error",
         "--no-password",
     ]
@@ -397,13 +410,108 @@ def run_postgres_restore(
         raise RuntimeError(f"pg_restore failed (exit {result.returncode}): {stderr}")
 
 
+@dataclass(frozen=True)
+class DatabaseLocale:
+    """A database's encoding + collation, for a comparable clone (MN-08)."""
+
+    encoding: str
+    lc_collate: str
+    lc_ctype: str
+
+
+#: What a database inherits when its own row cannot be read. UTF8 + C is the
+#: safest pair: UTF8 because that is what this product's own provisioning
+#: creates, and C because it is byte-ordering, i.e. deterministic on every
+#: platform -- so a fallback clone still orders rows identically to itself,
+#: even if it may not match a differently-collated source.
+_FALLBACK_DATABASE_LOCALE = DatabaseLocale(encoding="UTF8", lc_collate="C", lc_ctype="C")
+
+#: Characters a Postgres encoding / locale name can contain. Anything else is
+#: refused rather than interpolated into DDL.
+_LOCALE_TOKEN = re.compile(r"^[A-Za-z0-9_.:@ +-]{1,64}$")
+
+
+def read_database_locale(
+    *,
+    database_url: str,
+    source_database_name: str,
+    psql_command: list[str] | None = None,
+) -> DatabaseLocale:
+    """Read ``source_database_name``'s encoding/collation from ``pg_database``.
+
+    Never raises: an unreadable row (an old server, a permission refusal, a
+    database that does not exist yet) yields
+    :data:`_FALLBACK_DATABASE_LOCALE`, because failing a backup over a
+    cosmetic-looking metadata read would be worse than cloning with the safe
+    default. Every value is validated against :data:`_LOCALE_TOKEN` before it
+    is interpolated into DDL -- these strings come from the server, not from a
+    caller, but they still end up in a ``CREATE DATABASE`` statement.
+    """
+
+    if not _LOCALE_TOKEN.match(source_database_name):
+        # The name comes from the caller's OWN connection URL, but it still
+        # reaches a SQL literal below; refuse anything that is not a plain
+        # identifier rather than quoting defensively.
+        return _FALLBACK_DATABASE_LOCALE
+    conn = _parse_postgres_url(database_url)
+    env = dict(os.environ)
+    if conn["password"]:
+        env["PGPASSWORD"] = conn["password"]
+    query = f"SELECT pg_encoding_to_char(encoding), datcollate, datctype FROM pg_database WHERE datname = '{source_database_name}'"  # noqa: S608 -- name validated against _LOCALE_TOKEN immediately above  # nosec B608
+    argv = [
+        *(psql_command or ["psql"]),
+        "--host",
+        conn["host"],
+        "--port",
+        conn["port"],
+        "--username",
+        conn["user"],
+        "--no-password",
+        "--dbname",
+        "postgres",
+        "--tuples-only",
+        "--no-align",
+        "--field-separator",
+        "|",
+        "-c",
+        query,
+    ]
+    try:
+        result = _spawn_pg_tool(argv, tool="psql (source database locale)", env=env, timeout=60)
+    except Exception:
+        return _FALLBACK_DATABASE_LOCALE
+    if result.returncode != 0:
+        return _FALLBACK_DATABASE_LOCALE
+    line = result.stdout.decode("utf-8", "replace").strip().splitlines()
+    if not line:
+        return _FALLBACK_DATABASE_LOCALE
+    parts = line[0].split("|")
+    if len(parts) != 3 or not all(_LOCALE_TOKEN.match(part.strip()) for part in parts):
+        return _FALLBACK_DATABASE_LOCALE
+    return DatabaseLocale(
+        encoding=parts[0].strip(), lc_collate=parts[1].strip(), lc_ctype=parts[2].strip()
+    )
+
+
 def create_fresh_postgres_database(
     *,
     database_url: str,
     database_name: str = "civiccast_drill_restore",
     psql_command: list[str] | None = None,
+    allow_dropping_the_connection_url_database: bool = False,
 ) -> str:
     """Drop-if-exists then create ``database_name`` on the same server; return its URL.
+
+    <installer-path-audit MN-09> ``DROP DATABASE ... WITH (FORCE)`` runs
+    against the PRODUCTION cluster, and nothing used to refuse when
+    ``database_name`` equalled the database ``database_url`` itself addresses:
+    a station provisioned with the default drill name would have lost
+    production data to a drill. That guard now exists, and
+    ``allow_dropping_the_connection_url_database`` is the ONE deliberate
+    opt-out -- the D3 rollback restore (installer-path audit BL-01), which
+    must drop and recreate the live database so ``pg_restore`` replays into an
+    empty target, and which does so under the held D7a maintenance interlock
+    with a verified backup in hand.
 
     Idempotent on both ends of the drop/create pair: ``DROP DATABASE IF
     EXISTS ... WITH (FORCE)`` never fails if the drill database is already
@@ -419,9 +527,19 @@ def create_fresh_postgres_database(
     """
 
     conn = _parse_postgres_url(database_url)
+    if database_name == conn["dbname"] and not allow_dropping_the_connection_url_database:
+        raise RuntimeError(
+            f"refusing to DROP DATABASE {database_name!r}: it is the database this connection "
+            "URL addresses, so this call would destroy the very data it is meant to protect. "
+            "Pass allow_dropping_the_connection_url_database=True only from a caller that "
+            "deliberately means to replace the live database (the D3 rollback restore)."
+        )
     env = dict(os.environ)
     if conn["password"]:
         env["PGPASSWORD"] = conn["password"]
+    locale = read_database_locale(
+        database_url=database_url, source_database_name=conn["dbname"], psql_command=psql_command
+    )
     argv = [
         *(psql_command or ["psql"]),
         "--host",
@@ -438,7 +556,20 @@ def create_fresh_postgres_database(
         "-c",
         f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)',
         "-c",
-        f'CREATE DATABASE "{database_name}"',
+        # <installer-path-audit MN-08> A bare `CREATE DATABASE` inherits
+        # template1's encoding and collation. On a Windows-installed cluster
+        # template1 is commonly SQL_ASCII/C while the product's own database is
+        # UTF-8, and `snapshot_tables`' primary-key ORDER BY then differs
+        # between source and copy -- surfacing as an unexplained checksum
+        # mismatch on an otherwise perfect backup, which (because the drill
+        # gates the pre-upgrade backup) fails the whole upgrade. Clone the
+        # SOURCE database's own settings from template0 instead, so the copy is
+        # comparable by construction. This matters even more for BL-01's
+        # live-database recreate, where a collation change would be a real,
+        # silent change to production.
+        f'CREATE DATABASE "{database_name}" TEMPLATE template0 '
+        f"ENCODING '{locale.encoding}' LC_COLLATE '{locale.lc_collate}' "
+        f"LC_CTYPE '{locale.lc_ctype}'",
     ]
     result = _spawn_pg_tool(argv, tool="psql (drill database DROP/CREATE)", env=env, timeout=120)
     if result.returncode != 0:
@@ -506,6 +637,65 @@ def write_integrity_manifest(dest_dir: Path) -> list[IntegrityManifestEntry]:
             )
         )
     return entries
+
+
+def read_backup_manifest(dest_dir: Path) -> BackupManifest:
+    """Parse ``manifest.json`` out of a backup directory.
+
+    Extracted so a consumer that must TRUST a backup before acting on it (the
+    D3 rollback restore) reads the manifest through one validated path rather
+    than re-implementing the parse.
+    """
+
+    manifest_path = dest_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError(f"backup manifest not found at {manifest_path}")
+    return BackupManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+
+
+def verify_backup_integrity(dest_dir: Path, manifest: BackupManifest) -> list[str]:
+    """Re-hash every member the manifest names; return a list of discrepancies.
+
+    <installer-path-audit MA-09> ``BackupRef.verified`` was
+    ``bool(manifest.integrity)`` -- a NON-EMPTINESS check, not a verification --
+    while the orchestrator gated on it and wrote the journal detail
+    "hash + restore-drill spot check". ``_manifest_blob_hash`` folds the
+    manifest's OWN recorded hashes, so both sides of any later tamper check
+    came from the same manifest, and no file's bytes were ever re-hashed
+    anywhere in the product (a grep for ``write_integrity_manifest`` /
+    ``.integrity`` / ``IntegrityManifestEntry`` across ``civiccast/`` found
+    only the write sites, the ``bool(...)``, and a recovery-document print).
+    A dump truncated AFTER the manifest was written therefore passed
+    ``verified=True``, and the only thing that would have caught it -- the
+    drill -- restores the same bytes.
+
+    Returns an empty list when every member is present and matches. Never
+    raises for a mismatch; the caller decides what a mismatch means (the D3
+    rollback refuses to drop a live database over it, the backup path fails
+    the backup).
+    """
+
+    errors: list[str] = []
+    for entry in manifest.integrity:
+        member = dest_dir / entry.member
+        if not member.is_file():
+            errors.append(f"{entry.member}: missing from the backup directory")
+            continue
+        hasher = hashlib.sha256()
+        with member.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                hasher.update(chunk)
+        actual = hasher.hexdigest()
+        if actual != entry.sha256:
+            errors.append(
+                f"{entry.member}: sha256 {actual} does not match the manifest's {entry.sha256}"
+            )
+    if not manifest.integrity:
+        errors.append(
+            "the backup manifest carries no integrity entries at all, so nothing about these "
+            "bytes has been verified"
+        )
+    return errors
 
 
 def _assert_backup_quiescent(before: list[TableSnapshot], after: list[TableSnapshot]) -> None:
@@ -598,7 +788,21 @@ def run_full_backup(
     if database_url.startswith("sqlite"):
         db_path = Path(database_url.split("///", 1)[1])
         artifact = run_sqlite_backup(db_path=db_path, dest_dir=dest_dir)
-        snapshot_engine = engine_for_snapshot or build_sqlite_engine(artifact)
+        # <installer-path-audit MA-10> Snapshot the SOURCE, not the artifact.
+        #
+        # This used to read the manifest's table snapshot out of the COPY
+        # (`build_sqlite_engine(artifact)`), and the restore drill then
+        # `shutil.copy2`s that same artifact and re-snapshots it -- so the
+        # whole `_table_results` comparison was artifact-vs-copy-of-artifact.
+        # A `run_sqlite_backup` that silently produced a copy diverging from
+        # the live database (a partial page copy, a source opened at the wrong
+        # path, a schema_translate_map regression yielding zero or blank rows)
+        # recorded whatever the artifact contained and the drill compared it to
+        # itself and reported PASSED. SQLite is this module's own documented
+        # "default managed-storage deployment". The Postgres branch below
+        # already does the right thing, reading through an exported
+        # `pg_export_snapshot()` transaction.
+        snapshot_engine = engine_for_snapshot or build_sqlite_engine(db_path)
         tables = snapshot_tables(snapshot_engine)
         if engine_for_snapshot is None:
             snapshot_engine.dispose()
