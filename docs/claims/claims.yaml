@@ -427,8 +427,9 @@ entries:
       # file. Blob IDs re-hashed with `git hash-object --path <file> <file>`
       # per D2; worker.py/control.py/audio_tap.py are byte-identical and keep
       # their recorded blobs.
-      # Re-provisioned (fix/gst-engine-emits-ts, 2026-09-03): worker.py's sibling
-      # imports were switched from by-path to the civiccast package form, and
+      # Re-provisioned (fix/gst-engine-emits-ts, 2026-09-03): worker.py now
+      # publishes its by-path sibling modules under their package names so the
+      # engine's package-form imports resolve to the SAME objects, and
       # engine.py's stale "Windows can't reach the package branch" comment was
       # corrected. Both files' recorded evidence predates this change; the
       # current-source proof for THESE bytes is the on-the-wire capture in that
@@ -439,7 +440,7 @@ entries:
       # audio_tap.py are byte-identical and keep their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: d17b5d16753a333a4d58d4debdbaa182fdbd111b
+          blob: 824d3a162e36cc85431da0779208554aa4413bf2
         - path: civiccast/egress/gst/engine.py
           blob: 3eaee8b6112afc4d5e500b6e556eb22c6979fdc2
         - path: civiccast/egress/gst/graph.py
@@ -573,8 +574,9 @@ entries:
       # file. Blob IDs re-hashed with `git hash-object --path <file> <file>`
       # per D2; worker.py/control.py/audio_tap.py are byte-identical and keep
       # their recorded blobs.
-      # Re-provisioned (fix/gst-engine-emits-ts, 2026-09-03): worker.py's sibling
-      # imports were switched from by-path to the civiccast package form, and
+      # Re-provisioned (fix/gst-engine-emits-ts, 2026-09-03): worker.py now
+      # publishes its by-path sibling modules under their package names so the
+      # engine's package-form imports resolve to the SAME objects, and
       # engine.py's stale "Windows can't reach the package branch" comment was
       # corrected. Both files' recorded evidence predates this change; the
       # current-source proof for THESE bytes is the on-the-wire capture in that
@@ -585,7 +587,7 @@ entries:
       # audio_tap.py are byte-identical and keep their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: d17b5d16753a333a4d58d4debdbaa182fdbd111b
+          blob: 824d3a162e36cc85431da0779208554aa4413bf2
         - path: civiccast/egress/gst/engine.py
           blob: 3eaee8b6112afc4d5e500b6e556eb22c6979fdc2
         - path: civiccast/egress/gst/graph.py

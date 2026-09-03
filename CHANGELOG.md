@@ -33,10 +33,13 @@ below.
   PLAYING, so the configured `udp-ts` sink never emitted a packet. Gate A's T4
   probe saw exactly that: `engine_state=FALLBACK_SLATE` and a TSDuck capture
   that timed out with zero packets, while the ffmpeg fallback on the same box
-  passed. The worker now imports through the package whenever it is importable
-  and keeps the by-path import only for the standalone (no-`civiccast`)
-  context. Verified against the shipped runtime closure: 1771 TS packets,
-  0 invalid syncs, 0 transport errors, 1 service.
+  passed. The worker now publishes each by-path sibling module under its
+  `civiccast.egress.gst.<name>` key in `sys.modules`, so the engine's
+  package-form imports resolve to the same objects — without importing the
+  `civiccast` package (which would drag `civiccast/egress/__init__.py`, 771
+  modules with sqlalchemy and pydantic, into the worker). Verified against the
+  shipped runtime closure: 2651 TS packets, 0 invalid syncs, 0 transport
+  errors, 1 service.
 
 ### Changed
 
