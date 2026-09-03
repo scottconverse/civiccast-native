@@ -30,7 +30,7 @@ Directives branch (read only, never push): `soak8-e1acfe6-directives`
 
 **AUTORUN-1 — get the kit and install it.**
 Kit (LAN, from HALO, port 8766 open):
-`http://192.168.0.135:8766/e1acfe6b14327ba52b70dd16c735a82c06066f95/`
+`http://192.168.0.135:8766/b78b9c7dfa4d66b442172759439553381ec8be44/`
 It downloads `SHA256SUMS.txt` at that root, then fetches every file it names
 with `curl.exe` (URL-encoded URL, decoded local name — a listing-walk fetch is
 what produced a zero-byte installer on the last mission), re-fetching only what

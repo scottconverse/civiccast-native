@@ -8,7 +8,7 @@ $root   = 'C:\CivicCastSoak'
 $dst    = "$root\kit"
 $repo   = "$root\repo"
 $br     = "tester/soak8-e1acfe6-$env:COMPUTERNAME"
-$base   = 'http://192.168.0.135:8766/e1acfe6b14327ba52b70dd16c735a82c06066f95/'
+$base   = 'http://192.168.0.135:8766/b78b9c7dfa4d66b442172759439553381ec8be44/'
 $stamp  = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $log    = @("# AUTORUN-1 kit fetch + install", "- mission: soak8-e1acfe6", "- host: $env:COMPUTERNAME", "- utc: $stamp", "- kit: $base", "")
 
