@@ -1095,7 +1095,16 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # 2026-09-03 GStreamer worker PATH fix (Gate A T4 "must be an interface"):
     # +5 pure, +6 total (tests/native/test_gstreamer_runtime.py +
     # test_supervisor_wiring_batch.py): (1781, 1981) -> (1786, 1987).
-    assert (collect("not windows_only"), collect()) == (1786, 1987)
+    # fix/tsduck-pack-config (2026-09-03): the TSDuck pack builder now stages
+    # 17 pinned TSDUCK_DATA_PINS config data files beside the existing
+    # TSDUCK_BIN_PINS binaries and locates the shipped tsp.exe. One new
+    # platform-independent case, test_tsduck_data_files_are_staged_beside_
+    # the_pinned_binaries in tests/native/test_build_native_server_pack.py
+    # (no windows_only marker, no OS dependency -- plain sources-dict
+    # assertions), so both lanes advance by one. Re-derived by an actual
+    # `--collect-only` run on this tree, not by arithmetic:
+    # (1786, 1987) -> (1787, 1988).
+    assert (collect("not windows_only"), collect()) == (1787, 1988)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
