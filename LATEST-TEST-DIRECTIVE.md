@@ -1,7 +1,7 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-2.md
+Current: soak/DIRECTIVE-3.md
 Branch: soak8-e1acfe6-directives
-Updated: 2026-09-03T20:35Z (rev 3 - AUTORUN-1/2/3 parked; next autorun installs the fixed kit)
+Updated: 2026-09-03T21:25Z (rev 4 - mission on hold; soak runs on the coordinator box)
 Platform prompt: PROMPT-WINDOWS-CODEX.md (the one paste for a Codex-desktop tester on a Windows box)
 Autoruns queued: soak/autorun/AUTORUN-1.ps1 (kit fetch + silent install), soak/autorun/AUTORUN-2.ps1 (first-admin + three channels + start), soak/autorun/AUTORUN-3.ps1 (TSDuck egress proof, engine-per-channel, 4h rollups, T+8h verdict)
 
