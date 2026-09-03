@@ -1910,17 +1910,117 @@ def test_t6_staging_stays_under_the_200mb_upload_ceiling() -> None:
 
 
 def test_t6_schedule_window_anchored_at_start_command_and_no_silent_cap() -> None:
-    """B5: the schedule window must be anchored at start-command time (not
-    staging time, which can itself run long), begin 60s before that anchor
-    so the first item is already CURRENT when build_source_plan_from_
-    schedule resolves it, run through soak_end+15min, use 0s back-to-back
-    gaps, and FAIL_EARLY rather than silently truncate when a channel would
-    need more than 2000 items to reach the deadline."""
+    """B5: the schedule window must be anchored at the start of the
+    scheduling+commit phase (not staging time, which can itself run long),
+    begin 60s before that anchor so the first item is already CURRENT when
+    build_source_plan_from_schedule resolves it, run through soak_end+15min,
+    use 0s back-to-back gaps, and FAIL_EARLY rather than silently truncate
+    when a channel would need more than 2000 items to reach the deadline.
+
+    Delta-review fix B-B moved config+start to AFTER scheduling+commit (so a
+    commit's dispatch never fires a "reload" storm against a live channel),
+    so the anchor is now $schedulingPhaseStart (captured immediately before
+    the scheduling loop) rather than a Get-Date taken right after start."""
     code = _code_only(_driver_executable_text())
-    assert "$scheduleStart = Get-Date" in code
+    assert "$schedulingPhaseStart = Get-Date" in code
+    assert "$scheduleStart = $schedulingPhaseStart" in code
     assert "$scheduleStart.AddSeconds(-60)" in code
     assert "$scheduleEnd = $scheduleStart.AddMinutes($soakMin + 15)" in code
     assert "$scheduleCapPerChannel = 2000" in code
     assert "reason=schedule-too-long" in code
     assert "$cursor.AddSeconds([int]$asset.duration_seconds)" in code
     assert "+ 2)" not in code, "no back-to-back gap padding should remain in the T6 schedule loop"
+
+
+def test_t6_auto_start_true_so_plan_end_restarts_the_channel() -> None:
+    """B-A: each T6 channel's schedule source plan is capped at
+    max_segments=8 (civiccast/egress/source_plan.py:94,124, ~29min with our
+    clips); at plan end the worker EOSes and daemon.py writes STOPPED.
+    ChannelAutomation only re-issues a start for a dark channel when
+    config.auto_start is true (civiccast/egress/automation.py:410-419) -- so
+    the three T6 channel configs must set auto_start=true. T4's own
+    single-channel proof config must stay untouched (auto_start=false)."""
+    code = _code_only(_driver_executable_text())
+    assert re.search(
+        r"channel_id\s*=\s*\$ch\.id[\s\S]{0,200}auto_start\s*=\s*\$true",
+        code,
+    ), "the T6 per-channel config body must set auto_start=$true"
+    t4_idx = code.index("$engineChannel = 'government'")
+    t4_cfg_end = code.index("Invoke-CivicCastApi -Method 'Put' -Url $configUrl", t4_idx)
+    t4_cfg_block = code[t4_idx:t4_cfg_end]
+    assert "auto_start              = $false" in t4_cfg_block, (
+        "T4's own single-channel proof config must remain auto_start=$false"
+    )
+
+
+def test_t6_configures_and_starts_channels_only_after_scheduling_completes() -> None:
+    """B-B: schedule + Commit-to-Air ALL items for all three channels while
+    every channel is still STOPPED, and only THEN PUT config + POST start --
+    so a commit's PlayoutDispatcher nudge (civiccast/egress/dispatcher.py)
+    never has to fire a reload storm against a channel that is already
+    live. The scheduling loop's closing brace must appear before the
+    config PUT / start POST calls in the driver source."""
+    code = _code_only(_driver_executable_text())
+    schedule_populated_at = code.index("Save-Summary -Step 't6-schedule-populated'")
+    config_put_at = code.index(
+        "$chCfgR = Invoke-CivicCastApi -Method 'Put' -Url $t6ChanState[$ch.id].config_url"
+    )
+    start_post_at = code.index(
+        "$chStartR = Invoke-CivicCastApi -Method 'Post' -Url $t6ChanState[$ch.id].commands_url"
+    )
+    assert schedule_populated_at < config_put_at < start_post_at, (
+        "config PUT and start POST for the T6 channels must come after scheduling completes"
+    )
+
+
+def test_t6_fails_early_when_scheduling_commit_phase_is_too_slow() -> None:
+    """B-B: commits for ~330 items per channel must finish inside the first
+    scheduled item's own window (anchored 60s before the phase start, using
+    the longest staged clip as the first item). If the whole scheduling+
+    commit phase takes longer than the 500s guard, T6 must FAIL_EARLY with
+    the measured number rather than start a channel whose first item has
+    already ended."""
+    code = _code_only(_driver_executable_text())
+    assert "$schedulingPhaseSeconds = [Math]::Round((New-TimeSpan -Start $schedulingPhaseStart -End (Get-Date)).TotalSeconds, 1)" in code
+    assert "$schedulingTooSlowSeconds = 500" in code
+    assert "$schedulingTooSlow = ($schedulingPhaseSeconds -gt $schedulingTooSlowSeconds)" in code
+    assert "reason=scheduling-too-slow scheduling_commit_phase_seconds=$schedulingPhaseSeconds" in code
+
+
+def test_t6_first_scheduled_item_per_channel_is_the_longest_clip() -> None:
+    """B-B: the first item scheduled+committed for every channel must be the
+    longest staged clip (most run room before the channel is actually
+    started, minutes later, once all scheduling completes)."""
+    code = _code_only(_driver_executable_text())
+    assert "if ($t6Assets.Count -gt 1) {" in code
+    assert "$longestIdx = 0" in code
+    assert "first_item_asset_id=$($t6Assets[0].id)" in code
+
+
+def test_t6_beat_retries_an_unconfirmed_first_sample_once() -> None:
+    """B-A residual: with auto_start=true, each channel restarts (STOPPED ->
+    STARTING -> ON_AIR) roughly every ~29 minutes when its 8-segment plan
+    ends. A beat sampled inside that transient must not count as a hard
+    failure -- if the first sample is not ON_AIR, or has zero tsp packets, or
+    the tsp verdict itself failed, the driver must wait 20s and take a
+    second sample, and the verdict/JSON must be computed from the second
+    (final) sample while recording both first_state and final_state."""
+    code = _code_only(_driver_executable_text())
+    assert "function Get-T6ChannelSample" in code
+    assert "$needsRetry = ($sample1.engine_state -ne 'ON_AIR') -or (-not $sample1HasPackets) -or ($sample1.tsp_verdict -ne 'pass')" in code
+    assert "Start-Sleep -Seconds 20" in code
+    assert "$chBeat.first_state = $sample1.engine_state" in code
+    assert "$chBeat.retried = $true" in code
+    assert "$chBeat.final_state = $finalSample.engine_state" in code
+
+
+def test_t6_beat_records_public_now_current_source_label() -> None:
+    """Residual: alongside the staff-side current_source_label, each beat
+    must also record what the PUBLIC now-airing endpoint
+    (/api/public/egress/channels/{id}/now, civiccast/egress/router.py:159
+    PublicEgressNowResponse.current_source_label) reports as the current
+    asset, so the evidence shows which asset was airing from the viewer's
+    own vantage point too."""
+    code = _code_only(_driver_executable_text())
+    assert "/api/public/egress/channels/$($ch.id)/now" in code
+    assert "$chBeat.public_now_current_source_label = $pubNowR.body_json.current_source_label" in code

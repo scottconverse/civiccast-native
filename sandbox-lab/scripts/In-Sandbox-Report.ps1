@@ -3836,6 +3836,55 @@ try {
                 return $DefaultSeconds
             }
 
+            # Delta-review fix B-A: one channel state+health+tsp observation,
+            # factored out so a beat can take a first sample and, only when
+            # that sample is unconfirmed, a second sample 20s later without
+            # duplicating the capture logic (and risking the two copies
+            # drifting).
+            function Get-T6ChannelSample {
+                param(
+                    [Parameter(Mandatory)] $Channel,
+                    [Parameter(Mandatory)] $ChanState,
+                    [Parameter(Mandatory)] [string]$TspExe,
+                    [Parameter(Mandatory)] [string]$OutDir,
+                    [string]$Token,
+                    [Parameter(Mandatory)] [string]$NoteLog,
+                    [Parameter(Mandatory)] [string]$SampleLabel
+                )
+                $sample = [ordered]@{
+                    engine_state = $null; last_error = $null; pid = $null; sink_connected = $null
+                    rss_mb = $null; packets_total = $null; invalid_syncs = $null; transport_errors = $null
+                    discontinuities = $null; tsp_verdict = $null; current_source_label = $null
+                }
+                $stR = Invoke-CivicCastApi -Method 'Get' -Url $ChanState.state_url -LogFile $NoteLog -BearerToken $Token
+                if ($stR.body_json) {
+                    $sample.engine_state = $stR.body_json.state
+                    $sample.last_error = $stR.body_json.last_error
+                    $sample.pid = $stR.body_json.pid
+                    # current_source_label distinguishes real content from
+                    # slate (civiccast/egress/daemon.py _write_state; the
+                    # slate generator's segment label is the literal string
+                    # "CivicCast slate" -- civiccast/egress/source_plan.py
+                    # SlateSourceGenerator).
+                    $sample.current_source_label = $stR.body_json.current_source_label
+                }
+                if ($sample.pid) {
+                    try { $sample.rss_mb = [Math]::Round((Get-Process -Id ([int]$sample.pid) -ErrorAction Stop).WorkingSet64 / 1MB, 1) } catch {}
+                }
+                $hR = Invoke-CivicCastApi -Method 'Get' -Url "$($ChanState.health_url)?limit=1" -LogFile $NoteLog -BearerToken $Token
+                if ($hR.body_json -and @($hR.body_json).Count -gt 0) {
+                    $sinkMap = (@($hR.body_json)[0]).sink_connected
+                    if ($sinkMap) { $sample.sink_connected = ($sinkMap | ConvertTo-Json -Compress -Depth 4) }
+                }
+                $tsp = Test-TsProof -TspExe $TspExe -Port $Channel.port -Seconds 8 -OutDir $OutDir -Label $SampleLabel
+                $sample.tsp_verdict = $tsp.verdict
+                $sample.packets_total = $tsp.packets_total
+                $sample.invalid_syncs = $tsp.invalid_syncs
+                $sample.transport_errors = $tsp.transport_errors
+                $sample.discontinuities = $tsp.discontinuities
+                return $sample
+            }
+
             $t6NoteLog = Join-Path $OutDir 'T6-ENGINE-NOTES.txt'
             "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $t6NoteLog -Encoding UTF8
 
@@ -3963,12 +4012,49 @@ try {
                     if (-not $configPath6 -or -not $commandsPath6 -or -not $statePath6 -or -not $healthPath6) {
                         $t6Result = 'FAIL_EARLY reason=no-egress-routes-discovered'
                     } else {
-                        # (c) Configure + start all three channels first, so the
-                        # engines have the whole beat-1 window to come up before
-                        # the first observation.
+                        # (c) Build per-channel URL/bookkeeping ONLY -- no
+                        # config PUT, no start, yet. Delta-review fix B-B
+                        # reorders this: schedule + Commit-to-Air ALL items
+                        # for all three channels FIRST while every channel is
+                        # still STOPPED, and only THEN configure + start them
+                        # (below, after the scheduling block). Rationale: the
+                        # old order started every channel live and then
+                        # posted ~330 schedule+commit items per channel --
+                        # each commit dispatches a PlayoutDispatcher nudge
+                        # (civiccast/egress/dispatcher.py:88-116), and because
+                        # the channel was already ON_AIR/STARTING (a
+                        # _RUNNING_STATES member, dispatcher.py:41-47) that
+                        # nudge was a "reload" (dispatcher.py:96-99) --
+                        # ~100+ reloads in seconds against a live channel.
+                        # Seamless only on the GStreamer path; on the FFmpeg
+                        # fallback the daemon parks in TRANSITIONING until
+                        # EOS (daemon.py:1446-1468).
+                        #
+                        # What a commit's dispatch does to a channel that is
+                        # NOT running (verified by reading the code, not
+                        # assumed): PlayoutDispatcher.dispatch reads egress
+                        # state (dispatcher.py:96); a channel with no state
+                        # row at all (never configured/started) is outside
+                        # _RUNNING_STATES, so dispatch() enqueues "start", not
+                        # "reload" (dispatcher.py:97-99). That queued "start"
+                        # is only drained the next time ChannelAutomation.
+                        # _run_channel_pass calls daemon.process_once() for
+                        # the channel (automation.py:426); EgressDaemon._start
+                        # (daemon.py:445-457) requires
+                        # self._store.get_config(channel_id) to be non-None,
+                        # and while we are still in the scheduling phase below
+                        # no config PUT has happened yet, so _start raises
+                        # ConfigInvalidError. EgressDaemon.process_once
+                        # catches that per-command (daemon.py:352-372): it is
+                        # logged, marked consumed, NOT retried, and every
+                        # other queued command for the channel that pass
+                        # still runs. So a commit's dispatch against a
+                        # not-yet-configured, not-running channel is a no-op
+                        # with respect to the channel's actual state -- it
+                        # never crashes process_once/the automation loop and
+                        # leaves no live process behind. Confirmed harmless.
                         $t6ChanState = @{}
                         foreach ($ch in $t6Channels) {
-                            $chUri = "udp://127.0.0.1:$($ch.port)"
                             $chConfigUrl = "$BASE" + ($configPath6 -replace '\{channel_id\}', $ch.id)
                             $chCommandsUrl = "$BASE" + ($commandsPath6 -replace '\{channel_id\}', $ch.id)
                             $chStateUrl = "$BASE" + ($statePath6 -replace '\{channel_id\}', $ch.id)
@@ -3979,33 +4065,33 @@ try {
                                 last_pid = $null; relaunches = 0; first_rss_mb = $null; last_rss_mb = $null
                                 failed_beats = 0; config_ok = $false; start_ok = $false
                             }
-                            $chCfgBody = [ordered]@{
-                                channel_id              = $ch.id
-                                enabled                 = $true
-                                auto_start              = $false
-                                allow_software_fallback = $true
-                                fill_policy             = 'slate'
-                                slate_message           = 'Gate A T6 soak -- product-engine soak test.'
-                                sinks                   = @(
-                                    [ordered]@{
-                                        kind = 'udp-ts'; label = "sandbox-soak-$($ch.id)"; uri = $chUri
-                                        latency_ms = 2000; loudness_regime = 'inherit'; eas_tone_strip_enabled = $true
-                                    }
-                                )
-                            }
-                            $chCfgR = Invoke-CivicCastApi -Method 'Put' -Url $chConfigUrl -LogFile $t6NoteLog -BodyObj $chCfgBody -BearerToken $t6Token
-                            $t6ChanState[$ch.id].config_ok = ($chCfgR.status -eq 200)
-                            if ($t6ChanState[$ch.id].config_ok) {
-                                $chStartR = Invoke-CivicCastApi -Method 'Post' -Url $chCommandsUrl -LogFile $t6NoteLog -BodyObj (@{ action = 'start' }) -BearerToken $t6Token
-                                $t6ChanState[$ch.id].start_ok = ($chStartR.status -eq 202)
-                            }
-                            "channel=$($ch.id) port=$($ch.port) config_ok=$($t6ChanState[$ch.id].config_ok) start_ok=$($t6ChanState[$ch.id].start_ok)" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         }
-                        # Anchor the schedule window at start-command time, not
-                        # at staging time (asset upload/package/approve above
-                        # can itself take minutes) -- B5.
-                        $scheduleStart = Get-Date
-                        Save-Summary -Step 't6-channels-configured'
+
+                        # Move the LONGEST staged clip to index 0 so the
+                        # FIRST item scheduled+committed for every channel is
+                        # it -- it has the most run room to still be current
+                        # by the time the channel is actually started below.
+                        if ($t6Assets.Count -gt 1) {
+                            $longestIdx = 0
+                            for ($li = 1; $li -lt $t6Assets.Count; $li++) {
+                                if ([double]$t6Assets[$li].duration_seconds -gt [double]$t6Assets[$longestIdx].duration_seconds) { $longestIdx = $li }
+                            }
+                            if ($longestIdx -ne 0) {
+                                $longestAsset = $t6Assets[$longestIdx]
+                                $t6Assets = @($longestAsset) + @($t6Assets | Where-Object { $_ -ne $longestAsset })
+                            }
+                        }
+                        "first_item_asset_id=$($t6Assets[0].id) first_item_duration_seconds=$($t6Assets[0].duration_seconds)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+
+                        # Anchor the schedule window at the START of this
+                        # scheduling+commit phase (not at staging time --
+                        # asset upload/package/approve above can itself take
+                        # minutes -- B5), so the first item's
+                        # scheduled_at = phase-start minus 60s is already
+                        # current the moment the channel is actually started
+                        # right after this phase completes.
+                        $schedulingPhaseStart = Get-Date
+                        $scheduleStart = $schedulingPhaseStart
 
                         # (d) Schedule back-to-back premieres per channel,
                         # published immediately (Commit-to-Air gate: egress/
@@ -4085,21 +4171,79 @@ try {
                             }
                             "channel=$($ch.id) schedule_items_created=$scheduled schedule_items_committed=$committed schedule_items_commit_failed=$commitFailed schedule_items_failed=$scheduleFailed capped=$($scheduled -ge $scheduleCapPerChannel)" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         }
+                        # Measured wall time of the WHOLE scheduling+commit
+                        # phase (all three channels, ~330 items each) -- B-B:
+                        # this must finish inside the first item's own
+                        # window (scheduled_at = phase-start - 60s, duration =
+                        # the longest clip, ~667s here) or the channel we are
+                        # about to start would already be past its first
+                        # item's end. 500s is a conservative guard under that
+                        # ~607s real budget.
+                        $schedulingPhaseSeconds = [Math]::Round((New-TimeSpan -Start $schedulingPhaseStart -End (Get-Date)).TotalSeconds, 1)
+                        "scheduling_commit_phase_seconds=$schedulingPhaseSeconds" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         Save-Summary -Step 't6-schedule-populated'
+                        $schedulingTooSlowSeconds = 500
+                        $schedulingTooSlow = ($schedulingPhaseSeconds -gt $schedulingTooSlowSeconds)
                         if ($scheduleTooLong) {
                             $t6Result = 'FAIL_EARLY reason=schedule-too-long'
+                        } elseif ($schedulingTooSlow) {
+                            $t6Result = "FAIL_EARLY reason=scheduling-too-slow scheduling_commit_phase_seconds=$schedulingPhaseSeconds threshold_seconds=$schedulingTooSlowSeconds"
+                            "scheduling_too_slow=true scheduling_commit_phase_seconds=$schedulingPhaseSeconds threshold_seconds=$schedulingTooSlowSeconds -- refusing to start channels whose first scheduled item may already have ended its window" | Add-Content -Path $t6NoteLog -Encoding UTF8
                         }
 
-                        # (e) Beat loop: every 300s until the deadline (well
+                        # (e) NOW configure + start each channel -- only once
+                        # every channel's full schedule is already committed
+                        # and (per the guard above) still inside its first
+                        # item's window. auto_start=true (B-A): each T6
+                        # channel's source plan is capped at max_segments=8
+                        # (civiccast/egress/source_plan.py:94,124, ~29min with
+                        # our clips); at plan end the worker EOSes and the
+                        # daemon writes STOPPED (daemon.py:1059/1062-1066).
+                        # ChannelAutomation only re-issues a start for a dark
+                        # channel when config.auto_start is true
+                        # (automation.py:410-419) -- with the old auto_start=
+                        # false a channel that ran out of plan simply stayed
+                        # dark for the rest of the soak. T4's own channel
+                        # (line ~3632, above) is untouched.
+                        if (-not $scheduleTooLong -and -not $schedulingTooSlow) {
+                            foreach ($ch in $t6Channels) {
+                                $chUri = "udp://127.0.0.1:$($ch.port)"
+                                $chCfgBody = [ordered]@{
+                                    channel_id              = $ch.id
+                                    enabled                 = $true
+                                    auto_start              = $true
+                                    allow_software_fallback = $true
+                                    fill_policy             = 'slate'
+                                    slate_message           = 'Gate A T6 soak -- product-engine soak test.'
+                                    sinks                   = @(
+                                        [ordered]@{
+                                            kind = 'udp-ts'; label = "sandbox-soak-$($ch.id)"; uri = $chUri
+                                            latency_ms = 2000; loudness_regime = 'inherit'; eas_tone_strip_enabled = $true
+                                        }
+                                    )
+                                }
+                                $chCfgR = Invoke-CivicCastApi -Method 'Put' -Url $t6ChanState[$ch.id].config_url -LogFile $t6NoteLog -BodyObj $chCfgBody -BearerToken $t6Token
+                                $t6ChanState[$ch.id].config_ok = ($chCfgR.status -eq 200)
+                                if ($t6ChanState[$ch.id].config_ok) {
+                                    $chStartR = Invoke-CivicCastApi -Method 'Post' -Url $t6ChanState[$ch.id].commands_url -LogFile $t6NoteLog -BodyObj (@{ action = 'start' }) -BearerToken $t6Token
+                                    $t6ChanState[$ch.id].start_ok = ($chStartR.status -eq 202)
+                                }
+                                "channel=$($ch.id) port=$($ch.port) config_ok=$($t6ChanState[$ch.id].config_ok) start_ok=$($t6ChanState[$ch.id].start_ok)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                            }
+                            Save-Summary -Step 't6-channels-configured'
+                        }
+
+                        # (f) Beat loop: every 300s until the deadline (well
                         # inside the watchdog's 8-minute stall threshold, and
                         # every beat also calls Save-Summary so the watchdog
                         # keeps seeing forward progress). Skipped entirely when
-                        # the schedule could not cover the whole soak window
-                        # ($t6Result is already FAIL_EARLY reason=schedule-too-
-                        # long) -- burning the full window on a soak that will
-                        # run dry mid-way is not worth it, and channels started
-                        # above are still stopped below regardless.
-                        if (-not $scheduleTooLong) {
+                        # the schedule could not cover the whole soak window,
+                        # or scheduling itself ran too slow ($t6Result is
+                        # already FAIL_EARLY) -- burning the full window on a
+                        # soak that will run dry or start a channel past its
+                        # first item's window is not worth it, and no channel
+                        # was ever started in that case.
+                        if (-not $scheduleTooLong -and -not $schedulingTooSlow) {
                         $soakStart = Get-Date
                         $soakEnd = $soakStart.AddMinutes($soakMin)
                         $beat = 0
@@ -4138,47 +4282,76 @@ try {
                                     rss_mb = $null; relaunched_this_beat = $false
                                     packets_total = $null; invalid_syncs = $null; transport_errors = $null; discontinuities = $null
                                     tsp_verdict = $null; current_source_label = $null; source_is_asset = $false; channel_failed = $false
+                                    first_state = $null; retried = $false; final_state = $null
+                                    public_now_current_source_label = $null
                                 }
-                                $stR6 = Invoke-CivicCastApi -Method 'Get' -Url $cs.state_url -LogFile $t6NoteLog -BearerToken $t6Token
-                                if ($stR6.body_json) {
-                                    $chBeat.engine_state = $stR6.body_json.state
-                                    $chBeat.last_error = $stR6.body_json.last_error
-                                    $chBeat.pid = $stR6.body_json.pid
-                                    # current_source_label distinguishes real content from
-                                    # slate (civiccast/egress/daemon.py _write_state; the
-                                    # slate generator's segment label is the literal string
-                                    # "CivicCast slate" -- civiccast/egress/source_plan.py
-                                    # SlateSourceGenerator -- while a real airing item's label
-                                    # is the asset's title, e.g. this beat's own "Gate A T6
-                                    # Soak Asset ..." title). A beat only counts as proving
-                                    # real content airing when the label is present and is NOT
-                                    # the slate literal.
-                                    $chBeat.current_source_label = $stR6.body_json.current_source_label
+
+                                # B-A: with auto_start=true a channel's plan
+                                # (max_segments=8, ~29min, source_plan.py:94,
+                                # 124) restarts STOPPED -> STARTING -> ON_AIR
+                                # every cycle -- a beat sampled inside that few-
+                                # second transient must not count as failed.
+                                # Take a first sample; if it is not confirmed
+                                # (not ON_AIR, or zero tsp packets, or the tsp
+                                # verdict itself failed), wait 20s for the
+                                # transient to clear and take a second sample,
+                                # which is what the verdict below is actually
+                                # computed from. Both samples are recorded.
+                                $sample1 = Get-T6ChannelSample -Channel $ch -ChanState $cs -TspExe $tspExeT6 -OutDir $OutDir -Token $t6Token -NoteLog $t6NoteLog -SampleLabel "t6-$($ch.id)-beat$beat"
+                                $chBeat.first_state = $sample1.engine_state
+                                $sample1HasPackets = ($null -ne $sample1.packets_total) -and ([int]$sample1.packets_total -gt 0)
+                                $needsRetry = ($sample1.engine_state -ne 'ON_AIR') -or (-not $sample1HasPackets) -or ($sample1.tsp_verdict -ne 'pass')
+                                $finalSample = $sample1
+                                if ($needsRetry) {
+                                    $chBeat.retried = $true
+                                    "channel=$($ch.id) beat=$beat first_sample_unconfirmed state=$($sample1.engine_state) packets=$($sample1.packets_total) tsp=$($sample1.tsp_verdict) -- waiting 20s for the plan-restart transient and resampling once" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                                    Start-Sleep -Seconds 20
+                                    $finalSample = Get-T6ChannelSample -Channel $ch -ChanState $cs -TspExe $tspExeT6 -OutDir $OutDir -Token $t6Token -NoteLog $t6NoteLog -SampleLabel "t6-$($ch.id)-beat$beat-retry"
                                 }
+                                $chBeat.final_state = $finalSample.engine_state
+                                $chBeat.engine_state = $finalSample.engine_state
+                                $chBeat.last_error = $finalSample.last_error
+                                $chBeat.pid = $finalSample.pid
+                                $chBeat.rss_mb = $finalSample.rss_mb
+                                $chBeat.sink_connected = $finalSample.sink_connected
+                                # current_source_label distinguishes real content from
+                                # slate (civiccast/egress/daemon.py _write_state; the
+                                # slate generator's segment label is the literal string
+                                # "CivicCast slate" -- civiccast/egress/source_plan.py
+                                # SlateSourceGenerator -- while a real airing item's label
+                                # is the asset's title, e.g. this beat's own "Gate A T6
+                                # Soak Asset ..." title). A beat only counts as proving
+                                # real content airing when the label is present and is NOT
+                                # the slate literal.
+                                $chBeat.current_source_label = $finalSample.current_source_label
+                                $chBeat.tsp_verdict = $finalSample.tsp_verdict
+                                $chBeat.packets_total = $finalSample.packets_total
+                                $chBeat.invalid_syncs = $finalSample.invalid_syncs
+                                $chBeat.transport_errors = $finalSample.transport_errors
+                                $chBeat.discontinuities = $finalSample.discontinuities
+
                                 if ($chBeat.pid) {
                                     if ($cs.last_pid -and ($cs.last_pid -ne $chBeat.pid)) {
                                         $cs.relaunches++
                                         $chBeat.relaunched_this_beat = $true
                                     }
                                     $cs.last_pid = $chBeat.pid
-                                    try {
-                                        $chBeat.rss_mb = [Math]::Round((Get-Process -Id ([int]$chBeat.pid) -ErrorAction Stop).WorkingSet64 / 1MB, 1)
+                                    if ($chBeat.rss_mb) {
                                         if ($null -eq $cs.first_rss_mb -and $beat -ge 3) { $cs.first_rss_mb = $chBeat.rss_mb }
                                         $cs.last_rss_mb = $chBeat.rss_mb
-                                    } catch {}
-                                }
-                                $hR6 = Invoke-CivicCastApi -Method 'Get' -Url "$($cs.health_url)?limit=1" -LogFile $t6NoteLog -BearerToken $t6Token
-                                if ($hR6.body_json -and @($hR6.body_json).Count -gt 0) {
-                                    $sinkMap6 = (@($hR6.body_json)[0]).sink_connected
-                                    if ($sinkMap6) { $chBeat.sink_connected = ($sinkMap6 | ConvertTo-Json -Compress -Depth 4) }
+                                    }
                                 }
 
-                                $tsp6 = Test-TsProof -TspExe $tspExeT6 -Port $ch.port -Seconds 8 -OutDir $OutDir -Label "t6-$($ch.id)-beat$beat"
-                                $chBeat.tsp_verdict = $tsp6.verdict
-                                $chBeat.packets_total = $tsp6.packets_total
-                                $chBeat.invalid_syncs = $tsp6.invalid_syncs
-                                $chBeat.transport_errors = $tsp6.transport_errors
-                                $chBeat.discontinuities = $tsp6.discontinuities
+                                # Residual: what the PUBLIC now-airing endpoint
+                                # reports, alongside the staff-side
+                                # current_source_label above -- so the evidence
+                                # shows which asset was airing from the
+                                # viewer's own vantage point too. Same field
+                                # name (current_source_label) on both response
+                                # models (civiccast/egress/router.py:159 --
+                                # PublicEgressNowResponse).
+                                $pubNowR = Invoke-CivicCastApi -Method 'Get' -Url "$BASE/api/public/egress/channels/$($ch.id)/now" -LogFile $t6NoteLog
+                                if ($pubNowR.body_json) { $chBeat.public_now_current_source_label = $pubNowR.body_json.current_source_label }
 
                                 # B1: a beat only PASSES when the engine is genuinely
                                 # airing real content, not merely "on air on slate with
@@ -4189,7 +4362,8 @@ try {
                                 # same judgement T4 already uses -- Test-TsProof, reused
                                 # unchanged), AND the current source is an asset segment,
                                 # not the slate (civiccast/egress/source_plan.py's slate
-                                # segment label is the literal "CivicCast slate").
+                                # segment label is the literal "CivicCast slate"). Computed
+                                # from the FINAL (post-retry, if retried) sample.
                                 $isLive = ($chBeat.engine_state -eq 'ON_AIR')
                                 $hasPackets = ($null -ne $chBeat.packets_total) -and ([int]$chBeat.packets_total -gt 0)
                                 $tspPass = ($chBeat.tsp_verdict -eq 'pass')
@@ -4200,7 +4374,7 @@ try {
                                     $beatFailed = $true
                                 }
                                 $beatObj.channels[$ch.id] = $chBeat
-                                "T6 beat=$beat channel=$($ch.id) engine_state=$($chBeat.engine_state) pid=$($chBeat.pid) rss_mb=$($chBeat.rss_mb) relaunched=$($chBeat.relaunched_this_beat) tsp=$($chBeat.tsp_verdict) packets=$($chBeat.packets_total) source_label=$($chBeat.current_source_label) source_is_asset=$($chBeat.source_is_asset) failed=$($chBeat.channel_failed)" | Add-Content -Path $t6 -Encoding UTF8
+                                "T6 beat=$beat channel=$($ch.id) engine_state=$($chBeat.engine_state) first_state=$($chBeat.first_state) retried=$($chBeat.retried) final_state=$($chBeat.final_state) pid=$($chBeat.pid) rss_mb=$($chBeat.rss_mb) relaunched=$($chBeat.relaunched_this_beat) tsp=$($chBeat.tsp_verdict) packets=$($chBeat.packets_total) source_label=$($chBeat.current_source_label) public_now_source_label=$($chBeat.public_now_current_source_label) source_is_asset=$($chBeat.source_is_asset) failed=$($chBeat.channel_failed)" | Add-Content -Path $t6 -Encoding UTF8
                             }
 
                             ($beatObj | ConvertTo-Json -Depth 8) | Set-Content -Path (Join-Path $OutDir "T6-beat-$beat.json") -Encoding UTF8
