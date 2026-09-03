@@ -1,0 +1,18 @@
+﻿{
+    "schema":  "civiccast-native-fleet-heartbeat-v1",
+    "mission":  "soak72-9573d4a",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260903T105343Z",
+    "health":  {
+                   "error":  "Unable to connect to the remote server",
+                   "status":  "unreachable"
+               },
+    "service":  "not-registered",
+    "cpu_pct":  5.6,
+    "mem_free_mb":  12061,
+    "disk_free_gb":  353.3,
+    "processes":  [
+
+                  ],
+    "uptime_min":  9226
+}
