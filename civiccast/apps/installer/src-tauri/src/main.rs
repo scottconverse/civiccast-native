@@ -4606,6 +4606,17 @@ fn run_native_repair_cli(args: &[String]) -> Option<i32> {
             return Some(65);
         }
     }
+    // <installer-path-audit MA-31, honesty half> Say what this verdict does
+    // NOT cover, on stderr where an operator reads it, not only as a field in
+    // the JSON. `AllVerified` / exit 0 is derived from pack hashes, pack
+    // versions, the selector and service/firewall registration -- it says
+    // nothing about the database schema or the station's activation
+    // artifacts, so on a new-code-over-old-schema station (the exact machine
+    // the installer-path audit is about) it reports "healthy" over a station
+    // that cannot serve.
+    for line in &report.not_checked {
+        eprintln!("NOT CHECKED BY THIS REPAIR -- {line}");
+    }
     // Repair rebuilds a tree only after stopping the supervisor service, and
     // nothing here starts it again -- re-registration is not a start. Say so,
     // or an operator reads exit 76 as "repaired and running" over a station

@@ -461,7 +461,27 @@ def default_expected_schema_head() -> Callable[[], str | None]:
 
         try:
             return expected_migration_head()
-        except Exception:
+        except (ImportError, OSError):
+            # NARROW ON PURPOSE (review of PR #145). A bare ``except
+            # Exception: return None`` here was FAIL-OPEN twice over: it
+            # turned BL-03's post-migration assertion into a journal string,
+            # and it un-wired BL-04's identity gate (``build_health_gate_seam``
+            # treats a ``None`` expected head as "no identity gate requested"
+            # and returns True on the bare maintenance attestation).
+            #
+            # These two are the failures where "unavailable" is the honest
+            # answer and the caller's own refusal carries the better message:
+            # alembic missing from the payload (ImportError) and an unreadable
+            # ini / script directory (OSError). Everything else -- notably the
+            # ``RuntimeError`` ``expected_migration_head`` raises for a
+            # BRANCHED migration graph -- PROPAGATES, so the orchestrator's
+            # funnel records that specific reason ("Expected exactly one
+            # migration head, found [...]") instead of laundering it into a
+            # generic one.
+            #
+            # Either way the upgrade now HALTS: the orchestrator refuses on a
+            # ``None`` head rather than committing, and ``__main__`` refuses to
+            # assemble seams at all when the head cannot be resolved.
             return None
 
     return _head

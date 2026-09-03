@@ -199,6 +199,64 @@ def _restore_context(tmp_path) -> UpgradeContext:
     )
 
 
+def test_the_expected_head_seam_only_swallows_import_and_io_failures(monkeypatch) -> None:
+    """Review of PR #145: the `except Exception` here was fail-open.
+
+    Only the two failures where "unavailable" is the honest answer are
+    caught -- alembic missing from the payload, and an unreadable ini/script
+    directory. A branched migration graph (`RuntimeError`) must PROPAGATE, so
+    the orchestrator records the message that names the heads.
+    """
+    import civiccast.schema_check as schema_check
+
+    head = seams_module.default_expected_schema_head()
+
+    def _raise(exc: BaseException):  # type: ignore[no-untyped-def]
+        def _boom() -> str:
+            raise exc
+
+        return _boom
+
+    monkeypatch.setattr(schema_check, "expected_migration_head", _raise(ImportError("no alembic")))
+    assert head() is None
+    monkeypatch.setattr(schema_check, "expected_migration_head", _raise(OSError("no alembic.ini")))
+    assert head() is None
+
+    monkeypatch.setattr(
+        schema_check,
+        "expected_migration_head",
+        _raise(RuntimeError("Expected exactly one migration head, found ['a', 'b'].")),
+    )
+    with pytest.raises(RuntimeError, match="exactly one migration head"):
+        head()
+
+
+def test_the_production_bundle_always_wires_the_expected_head_seam(tmp_path) -> None:
+    """The orchestrator's `seams.expected_schema_head is None` branch is the
+    fake-seam case ONLY. If a refactor ever dropped this wiring, production
+    would take the UNAVAILABLE path silently."""
+    runtime = tmp_path / "install" / "runtime"
+    runtime.mkdir(parents=True)
+    context = UpgradeContext(
+        install_root=str(tmp_path / "install"),
+        state_root=str(tmp_path / "state"),
+        database_url="postgresql://u@localhost/db",
+        owner_run_id="run-1",
+    )
+    bundle = seams_module.build_default_seams(
+        context,
+        payload_source=str(runtime),
+        drain_and_verify_quiescence=lambda: True,
+        health_gate=lambda: True,
+        stop_service=lambda: None,
+    )
+    assert bundle.expected_schema_head is not None
+    # And it answers with this build's real head, not a placeholder.
+    from civiccast.schema_check import expected_migration_head
+
+    assert bundle.expected_schema_head() == expected_migration_head()
+
+
 def test_bl01_the_rollback_recreates_the_target_before_replaying_the_dump(
     tmp_path, monkeypatch
 ) -> None:

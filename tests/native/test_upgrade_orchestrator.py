@@ -369,14 +369,62 @@ def test_bl03_a_landed_migration_records_the_head_it_was_verified_against(
 def test_bl03_an_unwired_expected_head_seam_says_so_rather_than_passing_silently(
     tmp_path,
 ) -> None:
-    """A bundle with no expected-head seam must RECORD that the assertion was
-    unavailable, not quietly behave as though it passed."""
+    """A bundle with NO expected-head seam at all must RECORD that the
+    assertion was unavailable, not quietly behave as though it passed.
+
+    This is the fake-seam case only: `build_default_seams` always supplies the
+    seam, so production never takes this branch. A bundle that HAS the seam
+    and gets no answer is the next test, and it refuses.
+    """
     h = _make(tmp_path)
-    h.expected_head = None
-    outcome = run_upgrade(_plan(), _context(h), h.seams())
+    seams = dataclasses.replace(h.seams(), expected_schema_head=None)
+    outcome = run_upgrade(_plan(), _context(h), seams)
     assert outcome.phase is UpgradePhase.COMPLETE
     migrated = [entry for entry in outcome.journal.history if entry[0] == "migrated"]
     assert migrated and "UNAVAILABLE" in migrated[0][2]
+
+
+def test_bl03_a_wired_seam_that_cannot_answer_refuses_instead_of_committing(
+    tmp_path,
+) -> None:
+    """Review of PR #145: an unresolvable head was FAIL-OPEN.
+
+    `default_expected_schema_head` swallowed every exception and returned
+    None, and the orchestrator turned that None into a journal string -- so
+    the run committed COMPLETE with the migration unverified. (And because
+    `__main__` hands the same value to the health gate, BL-04's identity gate
+    had already been silently un-wired for that run too.) A wired seam that
+    cannot answer must halt.
+    """
+    h = _make(tmp_path)
+    h.expected_head = None  # the seam IS wired; it just cannot answer
+    outcome = run_upgrade(_plan(), _context(h), h.seams())
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK, (
+        "an unverifiable migration must never reach COMPLETE"
+    )
+    assert "expected schema head unavailable" in (outcome.journal.error or "")
+    assert "health_gate" not in h.calls, "the health gate must not be reached either"
+
+
+def test_bl03_a_branched_migration_graph_propagates_its_own_reason(tmp_path) -> None:
+    """The narrowed `except` is load-bearing.
+
+    `expected_migration_head` raises `RuntimeError` for a branched graph. That
+    must NOT be laundered into the generic "unavailable" refusal: the specific
+    message names the heads, which is the whole diagnosis.
+    """
+    h = _make(tmp_path)
+
+    def _branched() -> str | None:
+        raise RuntimeError("Expected exactly one migration head, found ['0087_a', '0088_b'].")
+
+    seams = dataclasses.replace(h.seams(), expected_schema_head=_branched)
+    outcome = run_upgrade(_plan(), _context(h), seams)
+
+    assert outcome.phase is UpgradePhase.ROLLED_BACK
+    assert "Expected exactly one migration head" in (outcome.journal.error or "")
+    assert "0088_b" in outcome.journal.error
 
 
 def test_bl05_a_second_engine_instance_never_releases_the_first_ones_interlock(

@@ -645,7 +645,48 @@ pub struct RepairReport {
     pub service_detail: String,
     pub firewall_reregistered: bool,
     pub firewall_detail: String,
+    /// <installer-path-audit MA-31, honesty half> What this repair did NOT
+    /// look at.
+    ///
+    /// A grep for `station-set`, `activation-self-test`, `schema` and
+    /// `DATABASE_URL` across this module's non-test body found none:
+    /// `run_repair` covers component packs (raw + extracted tree), each
+    /// pack's signed `product_version`, the ActiveRuntime selector, and
+    /// service/firewall re-registration. It does not look at
+    /// `station-set.json`, `activation-self-test.json`, the database schema,
+    /// or `DatabaseUrl`. So on EXACTLY the machine the installer-path audit
+    /// is about -- new code over an old schema, or a rolled-back flat layout
+    /// -- repair returns `AllVerified` / exit 0: a "healthy" verdict derived
+    /// from pack hashes alone.
+    ///
+    /// Closing that for real needs a schema-currency row, and repair
+    /// deliberately never starts the service (`main.rs`), so reading the
+    /// schema would mean starting PostgreSQL from a GUI diagnostic -- a
+    /// behaviour change that should be decided, not slipped in. Until it is,
+    /// the report says what it did not check, so `AllVerified` cannot be read
+    /// as "this station can serve".
+    pub not_checked: Vec<String>,
     pub outcome: OverallOutcome,
+}
+
+/// The checks a D5 repair run does NOT perform, in operator-readable form.
+///
+/// <installer-path-audit MA-31> Stated as data on the report rather than as a
+/// comment in this file, because the report is what an operator and a support
+/// case actually read.
+pub fn repair_checks_not_performed() -> Vec<String> {
+    vec![
+        "database schema currency: NOT CHECKED (needs the database, and repair deliberately \
+         does not start the station's service)"
+            .to_string(),
+        "station activation artifacts (station-set.json, activation-self-test.json): NOT \
+         CHECKED"
+            .to_string(),
+        "whether the station can actually serve: NOT CHECKED -- this report covers component \
+         pack integrity, pack versions, the ActiveRuntime selector, and service/firewall \
+         registration only"
+            .to_string(),
+    ]
 }
 
 /// Pure combination of every sub-result into the ONE exit-code-mapped
@@ -769,6 +810,7 @@ where
         service_detail,
         firewall_reregistered: firewall_ok,
         firewall_detail,
+        not_checked: repair_checks_not_performed(),
         outcome,
     }
 }
@@ -1513,6 +1555,59 @@ mod tests {
         assert!(
             universe.contains(&"captions-floor".to_string()),
             "a real staged component beside it must still be discovered: {universe:?}"
+        );
+    }
+
+    #[test]
+    fn ma31_the_report_says_what_this_repair_did_not_check() {
+        // <installer-path-audit MA-31, honesty half> A grep for
+        // `station-set`, `activation-self-test`, `schema` and `DATABASE_URL`
+        // across this module's non-test body found none, so `AllVerified` /
+        // exit 0 is a verdict derived from pack hashes alone -- on a
+        // new-code-over-old-schema station, or a rolled-back flat layout, it
+        // reports "healthy" over a station that cannot serve.
+        let not_checked = repair_checks_not_performed();
+        assert!(!not_checked.is_empty());
+        let combined = not_checked.join(" ").to_lowercase();
+        assert!(combined.contains("schema"), "{combined}");
+        assert!(combined.contains("not checked"), "{combined}");
+        assert!(
+            combined.contains("station-set.json"),
+            "the activation artifacts must be named too: {combined}"
+        );
+        assert!(
+            combined.contains("needs the database"),
+            "the report must say WHY the schema is unchecked, or it reads as an oversight \
+             rather than a boundary: {combined}"
+        );
+    }
+
+    #[test]
+    fn ma31_every_repair_report_carries_the_not_checked_rows() {
+        // Not just the constructor -- the report a real run produces, on the
+        // AllVerified path specifically, which is the one that misleads.
+        let root = scratch_dir("repair-not-checked");
+        let signing_key = SigningKey::from_bytes(&[5_u8; 32]);
+        let trust = trust_for(&signing_key);
+        let installer_dir = root.join("installer");
+        let instdir = root.join("instdir");
+        fs::create_dir_all(installer_dir.join("packs")).expect("mkdir installer packs");
+        fs::create_dir_all(instdir.join("packs")).expect("mkdir instdir packs");
+        let report = run_repair_with(
+            &instdir,
+            &installer_dir,
+            &trust,
+            &[],
+            VERSION,
+            VERSION,
+            || fake_selector(SelectorRepairAction::NoActionNeeded),
+            |_instdir| (true, "ok".to_string(), true, "ok".to_string()),
+            &AllowAllAuthority,
+        );
+        assert_eq!(report.outcome, OverallOutcome::AllVerified);
+        assert!(
+            !report.not_checked.is_empty(),
+            "an AllVerified verdict is exactly where the boundary has to be stated"
         );
     }
 

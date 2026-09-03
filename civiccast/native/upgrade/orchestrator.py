@@ -265,11 +265,28 @@ def _drive_forward(journal: UpgradeJournal, seams: UpgradeSeams) -> UpgradeOutco
             # station running new code on the old schema. The next gate does not
             # close it either: the maintenance attestation names no version,
             # build identity, or schema revision (BL-04).
-            expected_head = seams.expected_schema_head() if seams.expected_schema_head else None
-            if expected_head is None:
+            if seams.expected_schema_head is None:
+                # No seam at all: a fake-seam bundle that does not model this
+                # contract. Recorded as UNAVAILABLE rather than silently
+                # treated as a pass. `build_default_seams` always supplies it,
+                # so production never takes this branch.
+                expected_head = None
                 detail = (
                     "alembic upgrade head applied; expected-head assertion UNAVAILABLE "
                     "(no expected_schema_head seam wired in this bundle)"
+                )
+            elif (expected_head := seams.expected_schema_head()) is None:
+                # The seam IS wired and could not answer. Review of PR #145:
+                # this used to fall into the UNAVAILABLE journal-string branch
+                # above, which is fail-open -- the run committed COMPLETE with
+                # the migration unverified, and (because `__main__` passes the
+                # same value to the health gate) BL-04's identity gate had
+                # already been silently un-wired for that run too. Refuse.
+                raise RuntimeError(
+                    "expected schema head unavailable: this payload's own migration head "
+                    "could not be resolved, so 'the migration landed' cannot be checked and "
+                    "the maintenance health gate cannot be bound to this build's identity. "
+                    "Refusing to commit an unverified upgrade."
                 )
             elif post_revision != expected_head:
                 raise RuntimeError(

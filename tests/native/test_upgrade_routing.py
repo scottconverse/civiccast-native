@@ -502,6 +502,82 @@ def test_the_cli_returns_the_downgrade_refusal_code_without_touching_the_engine(
     assert upgrade_main.main(argv) == 13
 
 
+def test_the_cli_refuses_rather_than_running_with_an_unresolvable_schema_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Review of PR #145: BL-04's identity gate was silently un-wired here.
+
+    `main` computed the expected head, and a `None` flowed straight into
+    `build_health_gate_seam`, which reads a `None` expected head as "no
+    identity gate requested" and returns True on the bare maintenance
+    attestation. So on any machine where the head could not be resolved, the
+    upgrade ran with BOTH BL-03's migration check and BL-04's identity gate
+    gone -- and reported success. Refuse before a seam is assembled.
+    """
+    monkeypatch.setattr(upgrade_main, "installed_product_probe", lambda: True)
+    monkeypatch.setattr(upgrade_main, "default_expected_schema_head", lambda: lambda: None)
+
+    def _must_not_run(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the D3 engine must not run without an expected schema head")
+
+    monkeypatch.setattr(upgrade_main, "run_upgrade", _must_not_run)
+    monkeypatch.setattr(
+        upgrade_main,
+        "_resolve_service_control_seams",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("seams must not be assembled without an expected schema head")
+        ),
+    )
+
+    argv = _r7_argv(tmp_path)
+    argv[argv.index("--new-version") + 1] = "1.0.0-rc16"
+    assert upgrade_main.main(argv) == 40
+
+    err = capsys.readouterr().err
+    assert "expected schema head unavailable" in err
+    log = upgrade_main.engine_log_path(tmp_path / "state").read_text(encoding="utf-8")
+    assert "expected schema head unavailable" in log
+
+
+def test_the_cli_binds_the_health_gate_to_this_payloads_own_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The positive control for the test above: when the head DOES resolve,
+    both expectations must reach `resolve_service_control_seams`, or BL-04's
+    gate is wired in name only."""
+    from civiccast.schema_check import expected_migration_head
+
+    monkeypatch.setattr(upgrade_main, "installed_product_probe", lambda: True)
+    seen: dict[str, object] = {}
+
+    def _capture(context, **kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
+        return (lambda: True, lambda: True, lambda: None)
+
+    monkeypatch.setattr(upgrade_main, "_resolve_service_control_seams", _capture)
+    monkeypatch.setattr(
+        upgrade_main,
+        "_resolve_pg_client_commands",
+        lambda context: dict.fromkeys(upgrade_main._PG_CLIENT_EXECUTABLES, "pg.exe"),
+    )
+
+    class _Journal:
+        error = None
+
+    class _Outcome:
+        phase = upgrade_main.UpgradePhase.COMPLETE
+        journal = _Journal()
+
+    monkeypatch.setattr(upgrade_main, "run_upgrade", lambda *a, **k: _Outcome())
+
+    argv = _r7_argv(tmp_path)
+    argv[argv.index("--new-version") + 1] = "1.0.0-rc16"
+    assert upgrade_main.main(argv) == 0
+
+    assert seen["expected_version"] == "1.0.0-rc16"
+    assert seen["expected_schema_head"] == expected_migration_head()
+
+
 def test_the_cli_writes_the_journal_error_as_a_reason_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

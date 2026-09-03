@@ -927,16 +927,86 @@ def test_bl02_a_failed_postinstall_disarms_the_service_before_aborting() -> None
     assert armed_at < first_fail_at
 
 
-def test_bl02_the_exit_124_message_is_true_across_a_reboot() -> None:
-    """The operator text that motivated the finding must now describe the
-    state the machine is actually left in."""
+def test_bl02_the_exit_124_message_is_conditional_on_what_containment_achieved() -> None:
+    """The operator text must describe the state the machine is ACTUALLY left
+    in -- and containment is best-effort, so it cannot be stated as fact.
+
+    Review of PR #145: the first pass asserted "the service has been stopped
+    AND set to manual start" unconditionally, while `CIVICCAST_FAIL` runs
+    those two steps best-effort by design (a containment step that could
+    itself abort would replace an honest, specific failure message with a
+    different one). That is the same defect BL-02 is about, one level up: a
+    sentence true only when nothing went wrong, and silent when something did.
+    """
     source = _hooks_source()
-    branch = _slice(source, "CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT}", "${EndIf}")
-    assert "manual start" in branch, (
-        "the message must say the service will not come up at the next restart"
+    assert "Var CIVICCAST_CONTAINED" in source
+
+    fail_macro = _slice(source, "!macro CIVICCAST_FAIL CODE TEXT", "!macroend")
+    assert 'StrCpy $CIVICCAST_CONTAINED "0"' in fail_macro, (
+        "containment must be assumed FAILED until both steps report success"
+    )
+    assert 'StrCpy $CIVICCAST_CONTAINED "1"' in fail_macro
+    # ...and it is set from BOTH results, not just the last one.
+    assert "${If} $R8 ==" in fail_macro and "${AndIf} $R9 ==" in fail_macro
+
+    branch = _slice(source, '${If} $CIVICCAST_CONTAINED == "1"', "civiccast_bootstrap_d3_done")
+    confirmed, unconfirmed = branch.split("${Else}", 1)
+    assert "stopped AND set to manual start" in confirmed
+    assert "could NOT confirm" in unconfirmed, (
+        "the unconfirmed branch must say so plainly, not repeat the optimistic claim"
+    )
+    assert "sc config CivicCastSupervisor start= demand" in unconfirmed, (
+        "and it must give the operator the exact commands to contain it themselves"
     )
     assert "The service has NOT been started on the new files." not in branch, (
-        "the old sentence was true only at that instant and is what BL-02 is about"
+        "the ORIGINAL sentence was true only at that instant and is what BL-02 is about"
+    )
+
+
+def test_ma17_the_uninstall_warns_that_it_destroys_the_pack_cache() -> None:
+    r"""<installer-path-audit MA-17> KNOWN LIMITATION, stated not hidden.
+
+    `RMDir /r "$INSTDIR\packs"` removes `$INSTDIR\packs\.station-cache` with
+    everything else, so a download-only reinstall (setup.exe alone, no
+    `station\` folder) cannot activate afterwards -- the signed index is
+    embedded in setup.exe, the ~21 GB of model packs are not, and the cache
+    they would have been served from is gone. That collides with the standing
+    "download install is the floor" rule.
+
+    NOT fixed in this batch: preserving the cache means either leaving a
+    multi-gigabyte `$INSTDIR` behind (which contradicts this file's own
+    "everything gone" uninstall contract and changes what a silent uninstall
+    reports to winget/Intune) or relocating it and teaching `--cache-root` a
+    second search location (audit MA-16) -- both owner decisions about what an
+    uninstall means. What IS fixed: the operator is told, on every path,
+    instead of discovering it at the next install.
+    """
+    source = _hooks_source()
+    notice_at = source.index("CivicCast (Native) is being removed, including the downloaded AI")
+    # Anchored on the EXECUTABLE removal, not the first textual match -- the
+    # design comment above it necessarily quotes the statement it explains.
+    removal_at = source.index('\n    RMDir /r "$INSTDIR\\packs"')
+    assert notice_at < removal_at, "the warning must come BEFORE the removal"
+
+    # Silent-safe by construction: CIVICCAST_NOTICE always breadcrumbs and
+    # DetailPrints, and only shows a dialog when NOT /S -- so an unattended
+    # uninstall records it in install-progress.log rather than hanging on a
+    # dialog nobody can dismiss.
+    assert "CIVICCAST_NOTICE" in source[notice_at - 200 : notice_at]
+
+    notice_end = source.index('"\n', notice_at)
+    notice = source[notice_at:notice_end]
+    assert "are NOT affected" in notice, (
+        "the operator must be told what is KEPT, or the warning reads as data loss"
+    )
+    assert "full CivicCast kit folder" in notice, (
+        "and given the remedy that actually works for a later reinstall"
+    )
+    assert ".station-cache" in notice, "naming the directory is what makes it actionable"
+
+    breadcrumb = source[removal_at - 400 : removal_at]
+    assert "see audit MA-17" in breadcrumb, (
+        "the breadcrumb must name the finding, so an install log says why the cache went"
     )
 
 

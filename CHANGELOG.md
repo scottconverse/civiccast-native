@@ -360,6 +360,39 @@ kit (see the "Changed" entry below).
   every install test — the elevated in-sandbox harness now authors the
   firewall allow rules itself before the first bind.
 
+### Known limitations
+
+- **Uninstall destroys the downloaded model-pack cache, so a later
+  download-only reinstall cannot activate (installer-path audit MA-17).**
+  `RMDir /r "$INSTDIR\packs"` removes `$INSTDIR\packs\.station-cache` along
+  with everything else. That is correct for an uninstall in isolation, but it
+  means a machine that uninstalls and then reinstalls from `setup.exe` ALONE
+  (no `station\` folder beside it) cannot activate: the signed station index
+  is embedded in `setup.exe`, the ~21 GB of model packs are not, and the
+  per-SHA cache they would have been served from is gone — so activation
+  exits 66 and the installer aborts with 123. This collides with the standing
+  "download install is the floor" rule for that one sequence.
+
+  **Not fixed in this release, deliberately.** Preserving the cache means
+  either leaving a multi-gigabyte `$INSTDIR` behind — which contradicts the
+  bootstrap's own "everything gone" uninstall contract and changes what a
+  silent uninstall reports to winget/Intune — or relocating the cache to
+  `%ProgramData%\CivicCast` and teaching the activation step's `--cache-root`
+  a second search location (audit MA-16). Both are decisions about what an
+  uninstall *means*, and belong to the owner rather than to a batch fix.
+
+  **What changed instead:** the uninstaller now says so, before it removes
+  anything, on every path. Interactive uninstalls get a dialog; silent ones
+  get the same text in `install-progress.log` (the notice is silent-safe by
+  construction). It names what is being deleted, states plainly that
+  recordings, the database and settings in `%ProgramData%\CivicCast` are
+  **kept**, and gives the two remedies that actually work: reinstall from the
+  full CivicCast kit folder, or copy `$INSTDIR\packs\.station-cache` aside
+  first.
+
+  **Workaround, unchanged:** installing from the full kit folder
+  (`setup.exe` together with its `station\` folder) is unaffected.
+
 - **Release-blocking: D3 pre-upgrade backup verification compared the
   restored copy against the wrong revision, and the flat-installer-layout
   rollback containment let setup continue anyway.** Gate A run 33681670855

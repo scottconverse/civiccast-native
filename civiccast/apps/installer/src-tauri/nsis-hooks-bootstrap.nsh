@@ -343,6 +343,17 @@
 ; its auto-start service is exactly what the operator should keep.
 Var CIVICCAST_PAYLOAD_REPLACED
 
+; <review of PR #145> "1" only when failure containment actually SUCCEEDED --
+; both the service stop and the `sc config start= demand` reported 0.
+;
+; Containment is best-effort by design (see CIVICCAST_FAIL), so any
+; operator-facing sentence that states it as fact -- "the service has been
+; stopped AND set to manual start" -- is a claim the code does not check.
+; That is the same shape as the exit-124 text this batch was fixing in the
+; first place: true at the instant it is printed only if nothing went wrong,
+; and silent about the case where something did.
+Var CIVICCAST_CONTAINED
+
 !macro CIVICCAST_FAIL CODE TEXT
   SetErrors
   ; <installer-path-audit BL-02> CONTAIN THE SERVICE BEFORE ANNOUNCING THE
@@ -370,14 +381,34 @@ Var CIVICCAST_PAYLOAD_REPLACED
   ; whether containment actually took. A successful re-run of setup
   ; re-registers `auto` on its own (register_native_service always sets
   ; SERVICE_STARTUP_MODE), so this is not a state an operator has to undo.
+  StrCpy $CIVICCAST_CONTAINED "0"
   ${If} $CIVICCAST_PAYLOAD_REPLACED == "1"
     !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT begin (new payload is on disk; the service must not auto-start onto it)"
     nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-stop-native-service'
     Pop $R9
     !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT service stop returned $R9"
+    StrCpy $R8 $R9
     nsExec::ExecToLog '"$SYSDIR\sc.exe" config CivicCastSupervisor start= demand'
     Pop $R9
     !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT sc config start=demand returned $R9"
+    ; Review of PR #145: containment is BEST-EFFORT by design (a step that
+    ; could itself abort would replace an honest, specific failure message
+    ; with a different one) -- so no operator-facing text may state it as
+    ; fact. "1" here means BOTH the stop and the start-type change actually
+    ; reported success; the exit-124 branch reads this Var and says one thing
+    ; or the other, never the optimistic one unconditionally.
+    ;
+    ; `sc config` on an absent service (1060) is a legitimate 0-payload case
+    ; -- a FRESH_INSTALL failure has no registered service to disarm -- but it
+    ; is reported honestly rather than counted as containment, because the
+    ; distinction only matters when a service DOES exist.
+    ${If} $R8 == "0"
+    ${AndIf} $R9 == "0"
+      StrCpy $CIVICCAST_CONTAINED "1"
+      !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT confirmed (service stopped and set to manual start)"
+    ${Else}
+      !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT NOT confirmed (stop=$R8 config=$R9) -- the service may still auto-start onto the new payload"
+    ${EndIf}
   ${EndIf}
   !insertmacro CIVICCAST_ALERT "${TEXT}"
   !insertmacro CIVICCAST_STEP "postinstall: FAILED, aborting with exit code ${CODE}"
@@ -1156,7 +1187,19 @@ Var CIVICCAST_POSTCLEAR_ARMED
     ; _rollback). What is NOT intact is which CODE is on disk under the flat
     ; layout, which is exactly what this abort communicates and prevents
     ; from going live.
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT} "CivicCast (Native) setup could not complete: the upgrade engine rolled back its own work before finishing the upgrade to ${VERSION}. Your previous version's database is intact and was not left mid-migration.$\r$\n$\r$\nThe station's service has been stopped AND set to manual start, so it will not come up on the new files at the next restart either. A successful re-run of setup puts it back to automatic start.$\r$\n$\r$\nSee the engine's own reason in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log (the full record is in upgrade-journal.json beside it) and $COMMONPROGRAMDATA\CivicCast\install-progress.log, then re-run setup after resolving the cause."
+    ; Review of PR #145: the containment sentence is CONDITIONAL on what
+    ; actually succeeded. Containment is best-effort (CIVICCAST_FAIL), so
+    ; asserting "stopped AND set to manual start" unconditionally would be a
+    ; second instance of the exact defect BL-02 is about -- a message true
+    ; only when nothing went wrong, silent when something did.
+    ;
+    ; CIVICCAST_FAIL runs containment BEFORE it shows this text, so
+    ; $CIVICCAST_CONTAINED is already set when either branch is inserted.
+    ${If} $CIVICCAST_CONTAINED == "1"
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT} "CivicCast (Native) setup could not complete: the upgrade engine rolled back its own work before finishing the upgrade to ${VERSION}. Your previous version's database is intact and was not left mid-migration.$\r$\n$\r$\nThe station's service has been stopped AND set to manual start, so it will not come up on the new files at the next restart either. A successful re-run of setup puts it back to automatic start.$\r$\n$\r$\nSee the engine's own reason in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log (the full record is in upgrade-journal.json beside it) and $COMMONPROGRAMDATA\CivicCast\install-progress.log, then re-run setup after resolving the cause."
+    ${Else}
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT} "CivicCast (Native) setup could not complete: the upgrade engine rolled back its own work before finishing the upgrade to ${VERSION}. Your previous version's database is intact and was not left mid-migration.$\r$\n$\r$\nIMPORTANT: setup could NOT confirm that it stopped the station's service and set it to manual start, so the service may still start automatically the next time this computer restarts -- on the NEW program files, against your previous version's database. Before restarting, stop it and set it to manual: run 'sc stop CivicCastSupervisor' and 'sc config CivicCastSupervisor start= demand' from an administrator command prompt, or use services.msc.$\r$\n$\r$\nSee the engine's own reason in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log (the full record is in upgrade-journal.json beside it) and $COMMONPROGRAMDATA\CivicCast\install-progress.log, then re-run setup after resolving the cause."
+    ${EndIf}
   ${ElseIf} $0 == 20
     ; F-03: name WHOSE rollback, for the same reason as the exit-10 branch
     ; above -- "rollback", unqualified, is what an operator reads as the
@@ -2021,8 +2064,30 @@ Var CIVICCAST_POSTCLEAR_ARMED
     DetailPrint "CivicCast (Native): skipping removal of the runtime and component-pack trees -- the supervisor service could not be confirmed stopped (see the alert above)."
     !insertmacro CIVICCAST_STEP "postuninstall: recursive removal of runtime/packs/INSTDIR: SKIPPED (service stop unconfirmed, teardown exit 82)"
   ${Else}
+    ; Installer-path audit MA-17 -- KNOWN LIMITATION, stated rather than
+    ; silently shipped. See the CHANGELOG's "Known limitations" entry.
+    ;
+    ; `RMDir /r "$INSTDIR\packs"` removes `$INSTDIR\packs\.station-cache`
+    ; along with everything else. That is correct for an uninstall in
+    ; isolation, but it means a DOWNLOAD-ONLY reinstall on this machine
+    ; (setup.exe alone, no `station\` folder) cannot activate afterwards: the
+    ; signed station index is embedded in setup.exe, the ~21 GB of model packs
+    ; are not, and the per-SHA cache they would have been served from is now
+    ; gone -- so activation exits 66 and the installer aborts with 123. That
+    ; collides with the owner's standing "download install is the floor" rule.
+    ;
+    ; NOT FIXED HERE, deliberately. Preserving the cache means either leaving
+    ; a multi-gigabyte `$INSTDIR` behind (which contradicts this file's own
+    ; "everything gone" uninstall contract and changes what a silent uninstall
+    ; reports to winget/Intune) or relocating the cache to
+    ; $COMMONPROGRAMDATA -- which additionally requires the activation step's
+    ; `--cache-root` to search a second location (audit MA-16). Both are owner
+    ; decisions about what an uninstall means, not batch-fix decisions. What
+    ; is fixed here is that the operator is TOLD, on every path, instead of
+    ; discovering it at the next install.
+    !insertmacro CIVICCAST_NOTICE "CivicCast (Native) is being removed, including the downloaded AI model packs (about 21 GB) kept in this folder.$\r$\n$\r$\nYour recordings, database and settings in $COMMONPROGRAMDATA\CivicCast are NOT affected and are being kept.$\r$\n$\r$\nIf you reinstall later by running setup.exe on its own, it will need those model packs again and cannot download them -- reinstall from the full CivicCast kit folder (setup.exe together with its station folder), or copy $INSTDIR\packs\.station-cache somewhere safe now if you want to reuse it."
     DetailPrint "Removing the CivicCast (Native) runtime and component-pack trees..."
-    !insertmacro CIVICCAST_STEP "postuninstall: recursive removal of runtime/packs/INSTDIR: begin"
+    !insertmacro CIVICCAST_STEP "postuninstall: recursive removal of runtime/packs/INSTDIR: begin (INCLUDING the per-SHA model pack cache -- see audit MA-17)"
     RMDir /r "$INSTDIR\runtime"
     RMDir /r "$INSTDIR\packs"
     RMDir /r "$INSTDIR"

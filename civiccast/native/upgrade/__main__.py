@@ -426,6 +426,24 @@ def main(argv: list[str] | None = None) -> int:
         # and the migration head this code's own alembic script directory
         # declares.
         expected_schema_head = default_expected_schema_head()()
+        if expected_schema_head is None:
+            # Review of PR #145: passing None through here SILENTLY UN-WIRED
+            # the gate. `build_health_gate_seam` treats a None expected head
+            # as "no identity gate requested" and returns True on the bare
+            # maintenance attestation -- which is exactly BL-04, restored, on
+            # any machine where the head could not be resolved. Refuse before
+            # a single seam is assembled, so the failure is one clear line
+            # rather than an upgrade that quietly loses two of its gates.
+            reason = (
+                "expected schema head unavailable: this payload's own migration head could "
+                "not be resolved (alembic missing from the runtime, an unreadable script "
+                "directory, or a branched migration graph). The upgrade engine refuses to "
+                "run without it, because neither 'the migration landed' nor 'the new code is "
+                "the process attesting health' can be checked."
+            )
+            _log_engine_event(log_path, args.database_url, f"upgrade outcome: refused -- {reason}")
+            sys.stderr.write(f"upgrade outcome: refused\n{reason}\n")
+            return 40
         drain, health, stop = _resolve_service_control_seams(
             context,
             expected_version=plan.new_version,

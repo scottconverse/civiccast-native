@@ -1080,8 +1080,8 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # non-vacuous verdicts, MA-38/MA-39's CI floors, and the batch list's own
     # test blind spots (11-16). Re-derived by an actual `--collect-only` run
     # on this tree, NOT by adding a delta to the previous pin:
-    # (1704, 1897) -> (1765, 1965).
-    assert (collect("not windows_only"), collect()) == (1765, 1965)
+    # (1704, 1897) -> (1771, 1971).
+    assert (collect("not windows_only"), collect()) == (1771, 1971)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
