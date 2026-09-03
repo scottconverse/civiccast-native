@@ -6,7 +6,9 @@
 > [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3).
 > `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now superseded.
 > `v1.0.0-beta.2` was never published -- it exists only as an internal
-> Gate A upgrade-baseline kit. Community support does not turn this beta
+> Gate A upgrade-baseline kit. `v1.0.0-beta.4` is the next candidate and
+> the current owner-held unpublished candidate; it does not change the
+> beta.3 install story above. Community support does not turn this beta
 > into a supported, SLA'd field release.
 
 > **This repository ships one product line: native Windows.** Earlier
@@ -75,7 +77,9 @@ is a **public beta**, not a finished production release. Its current
 release, `v1.0.0-beta.3`, is downloadable (setup.exe and the runtime packs
 on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3)),
 but there is still no dedicated, SLA'd support intake for it -- the same
-community-driven, no-SLA posture above applies.
+community-driven, no-SLA posture above applies. `v1.0.0-beta.4` is the next
+candidate and the current owner-held unpublished candidate; it has no
+installer asset and does not change the beta.3 install story above.
 
 If you are working on, evaluating, or running the native line:
 

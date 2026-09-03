@@ -13,6 +13,36 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+`v1.0.0-beta.4` is the next candidate and the current owner-held unpublished
+candidate; it does not change the `v1.0.0-beta.3` install story documented
+below.
+
+### Changed
+
+- **Release prep: bump product version to `v1.0.0-beta.4`.** Every surface
+  `scripts/policy/check_release_identity.py` binds together
+  (`civiccast/_version.py`, `civiccast/_native_version.py`, the installer's
+  Cargo/Tauri/package.json identities, `main.rs`'s `CIVICCAST_VERSION`, the
+  OpenAPI-derived docs, the operator-console on-screen-version e2e
+  expectation) plus the extra surfaces the beta.3 release-prep touched
+  (`ARCHITECTURE.md`, `SUPPORT.md`, `docs/USER-MANUAL.md`,
+  `scripts/download_windows_release_artifacts.ps1`,
+  `docs/technical-ops-reference.md`, both lockfiles that mirror the bumped
+  `package.json` versions) now read `1.0.0-beta.4`. `v1.0.0-beta.3` remains
+  the current published release; this bump only advances the next
+  development candidate's identity.
+- **`sandbox-lab/upgrade-baseline.json` repinned to the beta.3 kit.** Now
+  pins source SHA `9573d4a82e1e1d9993589f633bad6dacba792afb`, build run
+  33711079441, Gate A run 33713004718, and `product_version:
+  1.0.0-beta.3` -- the published beta.3 kit at
+  `C:\CivicCastTester\kit-staging\9573d4a82e1e1d9993589f633bad6dacba792afb\`
+  -- with recomputed installer and station-index hashes, so Gate A's
+  cross-version and download-only lanes have a real, current prior build to
+  upgrade `v1.0.0-beta.4` from.
+- `docs/releases/release-truth.yaml`: new `v1.0.0-beta.4` entry, `status:
+  staging`, mirroring how beta.3 was originally recorded before it
+  published. `v1.0.0-beta.3` remains `current`.
+
 ## [1.0.0-beta.3] - 2026-09-03
 
 Published as [`v1.0.0-beta.3`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3),
