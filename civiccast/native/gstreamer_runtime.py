@@ -114,6 +114,25 @@ def bootstrap_installed_gstreamer_runtime() -> bool:
     # its `__init__` requires PYGI_DLL_DIRS in this layout, see
     # installed_gstreamer_environment.
     os.environ["PYGI_DLL_DIRS"] = env["PYGI_DLL_DIRS"]
+    # PATH is LOAD-BEARING and `os.add_dll_directory` does NOT substitute for it
+    # (Gate A T4 root cause, 2026-09). girepository resolves a namespace's GTypes
+    # by asking GModule to open the typelib's shared library BY BARE NAME
+    # (`gstreamer-1.0-0.dll`), which is a plain Win32 `LoadLibrary` and therefore
+    # searches PATH -- not the per-process directory list `os.add_dll_directory`
+    # feeds, which only CPython's own extension loader consults. With the bundled
+    # `bin` missing from PATH the symbol lookup silently fails,
+    # `Gst.URIHandler.__info__.get_g_type()` comes back G_TYPE_NONE, and the
+    # `gi.overrides.Gst` import dies with the deeply unhelpful
+    # `TypeError: must be an interface` -- which is exactly how the shipped
+    # playout worker died on a clean box. Publish the whole computed environment
+    # so any process holding CIVICCAST_GSTREAMER_RUNTIME_ROOT can import the
+    # staged `gi` on its own, whatever its parent did or did not pass down.
+    bin_dir = env["PATH"].split(os.pathsep, 1)[0]
+    inherited = os.environ.get("PATH", "")
+    if bin_dir not in inherited.split(os.pathsep):
+        os.environ["PATH"] = bin_dir + (os.pathsep + inherited if inherited else "")
+    os.environ.setdefault("GI_TYPELIB_PATH", env["GI_TYPELIB_PATH"])
+    os.environ.setdefault("GST_PLUGIN_PATH", env["GST_PLUGIN_PATH"])
     if os.name == "nt" and hasattr(os, "add_dll_directory"):
-        _DLL_HANDLES.append(os.add_dll_directory(env["PATH"].split(os.pathsep, 1)[0]))
+        _DLL_HANDLES.append(os.add_dll_directory(bin_dir))
     return True

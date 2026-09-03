@@ -1366,6 +1366,39 @@ function Invoke-StationDiagCapture {
         "logs dir not present at $logsSrc (station never got far enough to log, or ProgramData path differs)" | Add-Content -Path $note -Encoding UTF8
     }
 
+    # Per-channel egress worker logs (Gate A T4, 2026-09). The GStreamer playout
+    # worker's own stdout/stderr -- its traceback, its "CTRL stall" line, the
+    # encoder's stderr -- go to <egress work_dir>\<channel>\logs\gst-worker.*.log
+    # (civiccast/egress/gst/strategy.py start(): channel_dir/'logs'). The
+    # supervisor pins CIVICCAST_EGRESS_WORK_DIR into ProgramData\CivicCast\data\egress
+    # (civiccast/native/supervisor/children.py default_egress_work_dir), which is
+    # OUTSIDE the ProgramData\CivicCast\logs tree copied above -- so a run whose
+    # worker died at startup previously captured the daemon saying a child exited
+    # and nothing at all about why. Copy ONLY the per-channel logs dirs (/S with a
+    # *.log filter under each channel's 'logs'), never the sibling media/segment
+    # artifacts in the same work dir.
+    $egressSrc = Join-Path $pdCivicCast 'data\egress'
+    if (Test-Path $egressSrc) {
+        try {
+            $egressDst = Join-Path $diagDir 'egress-worker-logs'
+            New-Item -ItemType Directory -Force -Path $egressDst | Out-Null
+            $logDirs = @(Get-ChildItem -LiteralPath $egressSrc -Directory -ErrorAction SilentlyContinue |
+                ForEach-Object { Join-Path $_.FullName 'logs' } |
+                Where-Object { Test-Path $_ })
+            if ($logDirs.Count -eq 0) {
+                "no per-channel egress logs dir under $egressSrc (no channel ever started an encoder)" |
+                    Add-Content -Path $note -Encoding UTF8
+            }
+            foreach ($ld in $logDirs) {
+                $channelName = Split-Path (Split-Path $ld -Parent) -Leaf
+                & robocopy.exe $ld (Join-Path $egressDst $channelName) '*.log' /S /R:1 /W:1 /NFL /NDL /NJH /NJS 2>&1 |
+                    Out-File -FilePath (Join-Path $diagDir 'robocopy-egress-worker-logs.log') -Append -Encoding UTF8
+            }
+        } catch { "robocopy egress worker logs failed: $_" | Add-Content -Path $note -Encoding UTF8 }
+    } else {
+        "egress work dir not present at $egressSrc" | Add-Content -Path $note -Encoding UTF8
+    }
+
     # Config only -- /XD excludes 'data' and 'pgdata' so a misplaced
     # co-located data directory can never turn this into an unbounded copy
     # of the postgres cluster or NATS JetStream store.

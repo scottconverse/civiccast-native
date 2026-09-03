@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from pathlib import PureWindowsPath
 from typing import Annotated, Any, Literal
@@ -817,6 +818,57 @@ def redact_source_uri(uri: str) -> str:
         for key, value in parse_qsl(parsed.query, keep_blank_values=True)
     ]
     return urlunsplit((parsed.scheme, netloc, parsed.path, urlencode(query), parsed.fragment))
+
+
+#: Schemes whose URIs can carry a credential in userinfo or a query value. ``file``
+#: and bare paths are deliberately absent -- they have no authority to redact.
+_REDACTABLE_URI_SCHEMES = ("srt", "rtmps", "rtmp", "rtsps", "rtsp", "https", "http", "udp")
+#: A ``scheme://...`` token embedded ANYWHERE in a line of text. Terminated by
+#: whitespace, quotes, or the punctuation that typically closes a URI in prose/log
+#: output. Trailing sentence punctuation is trimmed inside the substitution.
+_EMBEDDED_URI_RE = re.compile(
+    r"\b(?:" + "|".join(_REDACTABLE_URI_SCHEMES) + r")://[^\s\"'<>|\\]+",
+    re.IGNORECASE,
+)
+#: Punctuation a log line commonly puts immediately AFTER a URI, which is not part of it.
+_URI_TRAILING_PUNCTUATION = ".,;:!?)]}'\""
+
+
+def redact_uris_in_text(text: str) -> str:
+    """Redact credentials from every ``scheme://...`` URI embedded in free text.
+
+    ``redact_source_uri`` handles a URI that IS the string (``urlsplit`` finds the
+    authority fine, even at position 0). It does nothing for a URI that merely appears
+    inside a longer line -- ``ERROR failed to open srt://host?passphrase=x`` came back
+    unchanged, cleartext. That is exactly the shape a child process writes to stderr,
+    and child stderr now reaches the operator-facing ``last_error`` (egress daemon), so
+    a mid-line scanner is required rather than optional.
+
+    Each matched URI is rewritten through ``redact_source_uri``, so the two share one
+    definition of what a credential is (userinfo, ``_SECRET_QUERY_KEYS`` query values).
+    Non-URI text is untouched. ``redact_source_uri`` remains the right call for a
+    whole-URI value; use this one for anything that merely CONTAINS URIs.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        candidate = match.group(0)
+        trailing = ""
+        while candidate and candidate[-1] in _URI_TRAILING_PUNCTUATION:
+            trailing = candidate[-1] + trailing
+            candidate = candidate[:-1]
+        if not candidate:
+            return match.group(0)
+        cleaned = redact_source_uri(candidate)
+        parsed = urlsplit(candidate)
+        if parsed.username or parsed.password:
+            # ``redact_source_uri`` DROPS userinfo silently (``rtsp://user:pass@h`` ->
+            # ``rtsp://h``), which is right for the durable proof chain but reads as
+            # "there was never a credential here" in an operator-facing error string.
+            # In free text, leave a marker so the reader knows something was removed.
+            cleaned = cleaned.replace("://", "://<redacted>@", 1)
+        return cleaned + trailing
+
+    return _EMBEDDED_URI_RE.sub(_replace, text)
 
 
 def _is_windows_path(value: str) -> bool:
