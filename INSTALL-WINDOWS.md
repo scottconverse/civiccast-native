@@ -28,6 +28,11 @@ but the fresh install below is how it gets to the current release.
 upgrade-baseline kit used to prove the download-only install/upgrade lanes,
 never a release a station receives.
 
+`v1.0.0-beta.4` is the next candidate and the current owner-held unpublished
+candidate (unpublished; no installer asset) -- it does not change anything
+above, which still targets `v1.0.0-beta.3` as the current release to
+install.
+
 **First install vs. upgrade:**
 
 - **First-time install on a station with no prior CivicCast install** still

@@ -1,6 +1,6 @@
 ---
 title: CivicCast User Manual
-subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.3 (native Windows line)
+subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.4 (native Windows line)
 author: The CivicCast Authors
 date: 2026-08-30
 # Layout, fonts, and colours live in docs/assets/manual.pandoc.yaml so the
@@ -45,9 +45,12 @@ Section C). These source capabilities and their lab evidence are not stock
 acceptance claims and do not establish station-device, provider, app-store, or
 production proof. `v1.0.0-beta.2` was never published -- it exists only as an
 internal Gate A upgrade-baseline kit. `v1.0.0-beta.3` is the current
-native-Windows development candidate (an owner-held unpublished candidate)
-described in
-this manual. It is a fresh, from-scratch native Windows product line — its
+published release (CivicCast's first downloadable one -- see
+[`docs/releases/release-truth.yaml`](releases/release-truth.yaml)).
+`v1.0.0-beta.4` is the next candidate and the current native-Windows
+development candidate (an owner-held unpublished candidate) described in
+this manual; it does not change the beta.3 install story. It is a fresh,
+from-scratch native Windows product line — its
 version numbers do not continue from, and are not comparable to, the older
 `v1.0.0-rcNN` line documented for a retired WSL2-based product in a separate,
 private repository.

@@ -2,18 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
-# Derived from the single source of truth (civiccast/_version.py) so this
-# policy check can't drift against a version bump.
-CURRENT_BETA_RELEASE_TAG = (
-    "v"
-    + (
-        (REPO_ROOT / "civiccast" / "_version.py")
-        .read_text(encoding="utf-8")
-        .split('__version__ = "', 1)[1]
-        .split('"', 1)[0]
-    )
-)
+# Derived from docs/releases/release-truth.yaml's authored `current` field --
+# the sole authored source for which tag is the published, validated
+# release -- NOT from civiccast/_version.py. The two diverge on purpose
+# during a release-prep bump: civiccast/_version.py moves to the next
+# owner-held candidate (a `staging` entry with no verification record yet)
+# while `current` stays on the published tag whose verification record the
+# public front doors must keep linking. check_v17_adoption_gate.py keeps
+# the same distinction.
+CURRENT_BETA_RELEASE_TAG = yaml.safe_load(
+    (REPO_ROOT / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
+)["current"]
 
 
 def test_mandatory_audit_protocol_is_repo_local() -> None:

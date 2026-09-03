@@ -34,6 +34,10 @@ checks), and
 [`docs/releases/2026-09-03-beta3-first-downloadable-release.md`](docs/releases/2026-09-03-beta3-first-downloadable-release.md)
 for the publish record.
 
+`v1.0.0-beta.4` is the next candidate and the current owner-held unpublished candidate
+(unpublished; no installer asset) -- it does not change the install story
+above, which still targets `v1.0.0-beta.3`.
+
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
 ## What's proven in this candidate
