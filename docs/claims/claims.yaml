@@ -199,7 +199,7 @@ entries:
         blob: ac8ac5c40e05c3591c5d250f8381797903907b2a
       code:
         - path: civiccast/dr/restore_drill.py
-          blob: 04a8e44547b0fc637011822dfd700b9d3d558025
+          blob: f55356070bbc579db7fb7787794ba7c2f3475b71
         - path: civiccast/dr/report.py
           blob: 37c2bd2bc951eb0bfe8d5b4b2fdef1eda6027e1c
       test:
@@ -256,7 +256,7 @@ entries:
         blob: 8252517551419e6c8dab9ae6d2a12b6aa49955a7
       code:
         path: civiccast/dr/restore_drill.py
-        blob: 04a8e44547b0fc637011822dfd700b9d3d558025
+        blob: f55356070bbc579db7fb7787794ba7c2f3475b71
       test:
         path: tests/dr/test_restore_drill.py
         blob: a0d8f82317ea29d755d3f808773536a0e4cb6bc5
