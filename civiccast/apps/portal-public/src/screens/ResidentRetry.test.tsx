@@ -7,11 +7,17 @@ import { ChannelGuideScreen } from './ChannelGuideScreen'
 import { RecordingsScreen } from './RecordingsScreen'
 import { WatchScreen } from './WatchScreen'
 
-vi.mock('../api', () => ({
-  fetchJson: vi.fn(),
-  formatDateTime: (value: string) => value,
-  formatDuration: (value: number) => String(value),
-}))
+vi.mock('../api', async (importOriginal) => {
+  // Keep the real FetchError class (RecordingsScreen's search-503 fallback
+  // does `err instanceof FetchError`) alongside the mocked fetchJson.
+  const actual = await importOriginal<typeof import('../api')>()
+  return {
+    ...actual,
+    fetchJson: vi.fn(),
+    formatDateTime: (value: string) => value,
+    formatDuration: (value: number) => String(value),
+  }
+})
 
 vi.mock('../HlsPlayer', () => ({
   HlsPlayer: () => <div data-testid="player" />,

@@ -360,38 +360,69 @@ kit (see the "Changed" entry below).
   every install test — the elevated in-sandbox harness now authors the
   firewall allow rules itself before the first bind.
 
-### Known limitations
-
-- **Uninstall destroys the downloaded model-pack cache, so a later
-  download-only reinstall cannot activate (installer-path audit MA-17).**
-  `RMDir /r "$INSTDIR\packs"` removes `$INSTDIR\packs\.station-cache` along
-  with everything else. That is correct for an uninstall in isolation, but it
-  means a machine that uninstalls and then reinstalls from `setup.exe` ALONE
-  (no `station\` folder beside it) cannot activate: the signed station index
-  is embedded in `setup.exe`, the ~21 GB of model packs are not, and the
-  per-SHA cache they would have been served from is gone — so activation
-  exits 66 and the installer aborts with 123. This collides with the standing
-  "download install is the floor" rule for that one sequence.
-
-  **Not fixed in this release, deliberately.** Preserving the cache means
-  either leaving a multi-gigabyte `$INSTDIR` behind — which contradicts the
-  bootstrap's own "everything gone" uninstall contract and changes what a
-  silent uninstall reports to winget/Intune — or relocating the cache to
-  `%ProgramData%\CivicCast` and teaching the activation step's `--cache-root`
-  a second search location (audit MA-16). Both are decisions about what an
-  uninstall *means*, and belong to the owner rather than to a batch fix.
-
-  **What changed instead:** the uninstaller now says so, before it removes
-  anything, on every path. Interactive uninstalls get a dialog; silent ones
-  get the same text in `install-progress.log` (the notice is silent-safe by
-  construction). It names what is being deleted, states plainly that
-  recordings, the database and settings in `%ProgramData%\CivicCast` are
-  **kept**, and gives the two remedies that actually work: reinstall from the
-  full CivicCast kit folder, or copy `$INSTDIR\packs\.station-cache` aside
-  first.
-
-  **Workaround, unchanged:** installing from the full kit folder
-  (`setup.exe` together with its `station\` folder) is unaffected.
+- **UI walkthrough batch (2026-09-03), items 6-10.** Five findings from the
+  2026-09-03 full UI walkthrough
+  (`CIVICCAST-UI-WALKTHROUGH-2026-09-03.md`), triaged and fixed together:
+  - **Item 6 (MAJOR-1, `_EphemeralAssetStore.mark_packaged`) — already
+    fixed at this SHA, no change needed.** Investigated first since the
+    walkthrough reproduced it "on two separate fresh backend boots" at the
+    same commit this batch branched from. `civiccast/app.py`'s
+    `_EphemeralAssetStore.mark_packaged` (added in #96, 2026-08-30) exists
+    and works — confirmed by direct instantiation
+    (`_EphemeralAssetStore().mark_packaged` is present, not an
+    `AttributeError`). The walkthrough's reproduction predates that fix
+    reaching its environment; no product change was needed or made.
+  - **Item 7 (MAJOR-2, "Approve and Publish selected" did not visibly
+    complete) — confirmed NOT a product bug; the walkthrough's own
+    browser-automation-targeting caveat was correct.** Ran the repo's
+    existing full-stack Playwright coverage
+    (`apps/portal-operator/e2e/full-stack-publish.spec.ts`, tag
+    `@fullstack`) against a real backend fixture. It failed on an
+    unrelated, pre-existing locator ambiguity — `PublishDashboardScreen`'s
+    newer "Publish readiness" preflight panel (added since this test was
+    last touched) names every surface a second time, so
+    `getByText('Local NAS rsync', { exact: true })` etc. now match two
+    elements. Scoped those four presence assertions to `.first()` (the
+    later structural assertions — `toHaveCount(3)` for the
+    archive-simulated warning, `toHaveCount(0)` for a real `archive.org`
+    URL — are untouched and stay exact). With that test-staleness fix
+    applied, the full approve-and-publish cycle passes end to end: Portal
+    moves to public, IA/NAS report verified, and the TW-1
+    simulated-vs-real archive labeling is correct. No publish-flow product
+    code was changed.
+  - **Item 8 (MAJOR-3, public "Browse recordings" 503s under
+    ephemeral/dev storage) — added a graceful fallback.**
+    `RecordingsScreen` (`apps/portal-public/src/screens/RecordingsScreen.tsx`)
+    now falls back from `/api/public/search` to the simpler
+    `/api/public/assets` list (already used by `HomeScreen`) specifically
+    on a 503, rather than hard-failing the whole screen. A new `degraded`
+    load state shows a visible amber note that search is temporarily
+    reduced; search/year/body/custom-field facets keep working
+    client-side over the fallback set (custom-field values just won't be
+    present until search recovers — that projection is search-only, see
+    `types.ts`). Any other failure (network error, 500, …) still shows the
+    existing plain error state and does not attempt the fallback. New
+    `RecordingsScreen.test.tsx` covers all three paths (503-then-fallback,
+    503-then-fallback-also-fails, non-503-skips-fallback).
+  - **Item 9 (MINOR-1, First Setup fires unauthenticated staff-API calls
+    before sign-in) — stopped the guaranteed-401 case.** SetupScreen's own
+    `staff-identity` query (`GET /api/staff/auth/me`) fired unconditionally
+    on every mount, even with no staff token stored anywhere — a request
+    that cannot succeed. It's now gated on a new
+    `hasStoredStaffToken()` export (`apps/portal-operator/src/api/client.ts`)
+    via `useQuery({ enabled })`, mirroring the same key's shell-level
+    gating in `App.tsx`. Login/setup mutations still reset this query key
+    on success, so identity refetches immediately once a token exists.
+    Pinned by a new test in `SetupScreen.test.tsx` asserting
+    `/api/staff/auth/me` is never requested for a signed-out visitor with
+    an empty token store.
+  - **Item 10 (MINOR-2, `portal-public/vite.config.ts` had no `/api` dev
+    proxy) — added one, matching `portal-operator`'s.** Proxies `/api/*` to
+    `http://127.0.0.1:8000` by default, overridable with
+    `VITE_CIVICCAST_API_PROXY_TARGET` when that port is already taken
+    (e.g. another station already running). Documented in
+    `apps/portal-public/README.md`'s "Run locally" section, including the
+    override example.
 
 - **Release-blocking: D3 pre-upgrade backup verification compared the
   restored copy against the wrong revision, and the flat-installer-layout
@@ -1082,6 +1113,40 @@ kit (see the "Changed" entry below).
   reachable from any code path in this repo. Documented in
   `security/pip-audit-allowlist.json` with a review-by date of 2026-10-01;
   re-check when nltk ships a fix.
+
+
+### Known limitations
+
+- **Uninstall destroys the downloaded model-pack cache, so a later
+  download-only reinstall cannot activate (installer-path audit MA-17).**
+  `RMDir /r "$INSTDIR\packs"` removes `$INSTDIR\packs\.station-cache` along
+  with everything else. That is correct for an uninstall in isolation, but it
+  means a machine that uninstalls and then reinstalls from `setup.exe` ALONE
+  (no `station\` folder beside it) cannot activate: the signed station index
+  is embedded in `setup.exe`, the ~21 GB of model packs are not, and the
+  per-SHA cache they would have been served from is gone — so activation
+  exits 66 and the installer aborts with 123. This collides with the standing
+  "download install is the floor" rule for that one sequence.
+
+  **Not fixed in this release, deliberately.** Preserving the cache means
+  either leaving a multi-gigabyte `$INSTDIR` behind — which contradicts the
+  bootstrap's own "everything gone" uninstall contract and changes what a
+  silent uninstall reports to winget/Intune — or relocating the cache to
+  `%ProgramData%\CivicCast` and teaching the activation step's `--cache-root`
+  a second search location (audit MA-16). Both are decisions about what an
+  uninstall *means*, and belong to the owner rather than to a batch fix.
+
+  **What changed instead:** the uninstaller now says so, before it removes
+  anything, on every path. Interactive uninstalls get a dialog; silent ones
+  get the same text in `install-progress.log` (the notice is silent-safe by
+  construction). It names what is being deleted, states plainly that
+  recordings, the database and settings in `%ProgramData%\CivicCast` are
+  **kept**, and gives the two remedies that actually work: reinstall from the
+  full CivicCast kit folder, or copy `$INSTDIR\packs\.station-cache` aside
+  first.
+
+  **Workaround, unchanged:** installing from the full kit folder
+  (`setup.exe` together with its `station\` folder) is unaffected.
 
 ## [1.0.0-beta.1] - 2026-08-31
 
