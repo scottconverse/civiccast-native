@@ -28,24 +28,42 @@ production seam bundle and layout the shipping NSIS installer uses -- see
 :func:`civiccast.schema_check.expected_migration_head`.
 
 Boundary: gated exactly like ``tests/dr/test_postgres_restore.py`` (Docker
-reachable) PLUS the Postgres client tools (``pg_dump``/``pg_dumpall``/
-``pg_restore``/``psql``) on THIS machine's PATH -- unlike the DR suite, this
-test does not shell those tools through ``docker exec`` (the production seam
-bundle uses one ``database_url`` for both the CLI tools' ``--host``/
-``--port`` parsing AND direct SQLAlchemy connections, which only lines up
-with a single reachable Postgres -- exactly production's shape, and exactly
-what a host-mapped testcontainers port plus host-installed client tools
-reproduces without needing to touch the seam contract itself).
+reachable) -- the CI Postgres lane (``.github/workflows/ci-test.yml``'s
+``Unit tests`` job) never installs Postgres client tools on the runner, so
+this test must not assume ``pg_dump``/``pg_dumpall``/``pg_restore``/``psql``
+are on the host PATH. It follows the exact same ``docker exec`` pattern
+``tests/dr/test_postgres_restore.py`` already proves (see that file's
+``_exec_prefix``): every command shells into the SAME testcontainers
+container that owns the server, and :func:`civiccast.native.upgrade.seams.
+default_backup`'s new ``command_database_url`` parameter (added alongside
+this test) lets that in-container URL drive the CLI tools' ``--host``/
+``--port`` parsing while ``UpgradeContext.database_url`` stays the
+HOST-mapped URL every direct SQLAlchemy touch in this module (the backup
+snapshot, the restore drill's own verification reads, ``migrate()``,
+``schema_revision()``) needs -- the exact split ``run_full_backup`` and
+``run_postgres_restore_drill`` already support and the DR suite already
+relies on, now reachable through the real production seam instead of only
+through backup.py's lower-level functions directly.
 ``CIVICCAST_RUN_POSTGRES_TESTS=1`` marks this required in CI's Postgres lane;
 see ``civiccast/native/upgrade`` module docs for what is and is not covered
 elsewhere.
+
+Marked ``integration`` (registered in ``pyproject.toml``) so
+``.github/workflows/ci-test.yml``'s WS4 Windows job (``pytest tests/native -m
+"not integration"``) excludes it -- that job's own next step asserts
+"nothing may skip" across all of ``tests/native``, and ``windows-latest``
+runners do not reliably run Linux containers the way testcontainers needs
+this module's Postgres container to. The ubuntu "Unit tests" job runs this
+test WITHOUT that exclusion, with ``CIVICCAST_RUN_POSTGRES_TESTS=1`` making
+an unreachable Docker daemon there a hard failure rather than a skip (see
+that job's own docker-availability guard step) -- the same proven-on-Linux
+boundary ``tests/dr/test_postgres_restore.py`` already runs under.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import os
-import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -55,7 +73,7 @@ from civiccast.native.upgrade.models import UpgradeContext, UpgradePhase, Upgrad
 from civiccast.native.upgrade.orchestrator import run_upgrade
 from civiccast.native.upgrade.seams import adapt_flat_installer_layout, build_default_seams
 from civiccast.schema_check import _alembic_runtime_paths, expected_migration_head, read_db_revision
-from tests.support.docker_engine import docker_engine_available
+from tests.support.docker_engine import container_cli, docker_engine_available
 
 try:
     from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
@@ -65,37 +83,52 @@ except ImportError:
     _TESTCONTAINERS_OK = False
     PostgresContainer = None  # type: ignore[misc,assignment]
 
-_PG_CLIENT_TOOLS = ("pg_dump", "pg_dumpall", "pg_restore", "psql")
+pytestmark = pytest.mark.integration
 
 
-def _skip_if_env_not_ready() -> None:
-    missing_tools = [tool for tool in _PG_CLIENT_TOOLS if shutil.which(tool) is None]
-    if not _TESTCONTAINERS_OK or not docker_engine_available() or missing_tools:
-        reason = []
-        if not _TESTCONTAINERS_OK or not docker_engine_available():
-            reason.append("Docker unavailable")
-        if missing_tools:
-            reason.append(f"Postgres client tools not on PATH: {missing_tools}")
-        detail = "; ".join(reason)
+def _skip_if_no_postgres() -> None:
+    if not _TESTCONTAINERS_OK or not docker_engine_available():
         if os.environ.get("CIVICCAST_RUN_POSTGRES_TESTS"):
-            pytest.fail(f"D3 upgrade engine Postgres test required by env but {detail}")
-        pytest.skip(f"{detail}; the real D3 upgrade engine path is not exercised in this sandbox")
+            pytest.fail("D3 upgrade engine Postgres test required by env but Docker unavailable")
+        pytest.skip(
+            "Docker unavailable; the real D3 upgrade engine path is not exercised in this sandbox"
+        )
 
 
 @pytest.fixture
-def postgres_container() -> Iterator[str]:
-    """Yields the HOST-reachable connection URL (matches production's single
-    "one reachable Postgres, no container indirection" shape -- see the
-    module docstring for why this test does not use a docker-exec prefix)."""
+def postgres_container() -> Iterator[tuple[str, str]]:
+    """Yields (HOST-reachable connection url, container id) -- same shape as
+    ``tests/dr/test_postgres_restore.py``'s own fixture."""
 
-    _skip_if_env_not_ready()
+    _skip_if_no_postgres()
     assert PostgresContainer is not None
     container = PostgresContainer("postgres:17", driver="psycopg")
     container.start()
     try:
-        yield container.get_connection_url()
+        yield container.get_connection_url(), container.get_wrapped_container().id
     finally:
         container.stop()
+
+
+def _exec_prefix(container_id: str, binary: str) -> list[str]:
+    """``<docker|podman> exec -i -e PGPASSWORD=test <container> <binary>``.
+
+    Identical to ``tests/dr/test_postgres_restore.py``'s own helper of the
+    same name -- kept as a local copy rather than a shared import so this
+    test file has no cross-directory test-module dependency, matching how
+    every other ``tests/dr``/``tests/native`` Postgres-container test in this
+    repo defines its own copy.
+    """
+
+    return [
+        container_cli() or "docker",
+        "exec",
+        "-i",
+        "-e",
+        "PGPASSWORD=test",
+        container_id,
+        binary,
+    ]
 
 
 def _migrate_to_head(database_url: str) -> None:
@@ -129,9 +162,14 @@ def _downgrade_one_revision(database_url: str) -> None:
 
 
 def test_upgrade_engine_migrates_a_real_database_from_n_minus_1_to_head(
-    postgres_container: str, tmp_path: Path
+    postgres_container: tuple[str, str], tmp_path: Path
 ) -> None:
-    postgres_url = postgres_container
+    postgres_url, container_id = postgres_container
+    # The in-container view every exec-prefixed CLI tool parses -- the same
+    # fixed bootstrap-user URL tests/dr/test_postgres_restore.py uses for its
+    # own in-container calls (the testcontainers Postgres image's default
+    # user/db is "test"/"test").
+    in_container_url = "postgresql://test:test@localhost:5432/test"
 
     _migrate_to_head(postgres_url)
     head_revision = expected_migration_head()
@@ -161,6 +199,11 @@ def test_upgrade_engine_migrates_a_real_database_from_n_minus_1_to_head(
         drain_and_verify_quiescence=lambda: True,
         health_gate=lambda: True,
         stop_service=lambda: None,
+        pg_dump_command=_exec_prefix(container_id, "pg_dump"),
+        pg_dumpall_command=_exec_prefix(container_id, "pg_dumpall"),
+        pg_restore_command=_exec_prefix(container_id, "pg_restore"),
+        psql_command=_exec_prefix(container_id, "psql"),
+        command_database_url=in_container_url,
     )
     # The interlock seams cross into a REAL machine-wide HKLM registry key
     # (civiccast.native.win_probes) -- orthogonal to the D3 database-revision

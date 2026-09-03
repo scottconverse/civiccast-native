@@ -934,34 +934,55 @@ Var CIVICCAST_TEARDOWN_EXIT
     ; recording a clean rollback as a SUCCESSFUL upgrade (it used to
     ; DetailPrint only and fall through to the InstalledVersion write at the
     ; end of this macro). It then continued the install with a non-fatal
-    ; CIVICCAST_NOTICE, correct ONLY for the app\<version> + junction layout
+    ; CIVICCAST_NOTICE, correct ONLY for the app\<version> + junction layout,
     ; where flip_junction really does restore the old binary tree.
     ;
     ; Gate A run 33681670855 CRITICAL fix (2026-09-02) supersedes that
-    ; continue-with-notice behavior below: the app\<version> + junction layout
-    ; the old binary tree. This invocation (see the nsExec::ExecToLog call
-    ; above) always passes --flat-installer-layout, under which
-    ; adapt_flat_installer_layout (civiccast/native/upgrade/seams.py) makes
-    ; read_junction/lay_tree/flip_junction no-ops over the single
-    ; "$INSTDIR\runtime" tree this bootstrap already extracted the NEW payload
-    ; into BEFORE the engine ran. A ROLLED_BACK report under that layout means
-    ; the engine correctly declined to migrate a database it could not verify
-    ; -- but the NEW code is still sitting in $INSTDIR\runtime, unchanged. On
-    ; real hardware (Gate A run 33681670855, kit 7971815, beta.2 -> beta.3)
-    ; the old DetailPrint-only branch let setup fall through to D4, which
-    ; provisioned, activated, and registered/started the service on that
-    ; mismatched new-code/old-schema pair, so the box ended the run serving
-    ; 500s under a NOTICE-only log with exit code 0.
+    ; continue-with-notice behavior. This invocation (see the nsExec::
+    ; ExecToLog call above) always passes --flat-installer-layout, under
+    ; which adapt_flat_installer_layout (civiccast/native/upgrade/seams.py)
+    ; makes read_junction/lay_tree/flip_junction no-ops over the single
+    ; "$INSTDIR\runtime" tree this bootstrap already extracted the NEW
+    ; payload into BEFORE the engine ran, so under that layout a ROLLED_BACK
+    ; report leaves the NEW code sitting in $INSTDIR\runtime regardless of
+    ; what caused the rollback. On real hardware (Gate A run 33681670855, kit
+    ; 7971815, beta.2 -> beta.3) the old DetailPrint-only branch let setup
+    ; fall through to D4, which provisioned, activated, and registered/
+    ; started the service on that mismatched new-code/old-schema pair, so the
+    ; box ended the run serving 500s under a NOTICE-only log with exit code 0.
+    ;
+    ; WHAT CAUSED IT is deliberately NOT named in the operator text below.
+    ; Exit 10 (ROLLED_BACK) is reached from orchestrator._drive_forward's
+    ; single funnel (`except Exception as exc: return _rollback(journal,
+    ; seams, reason=str(exc), attempting=attempting)`) -- ANY operational step
+    ; can raise into it: drain/quiesce, the pre-upgrade backup/restore-drill
+    ; (the Gate A run 33681670855 root cause, but only ONE of several
+    ; possible causes), migrate, or the post-migration health gate. An
+    ; earlier draft of this message named the backup check specifically;
+    ; that was wrong for every other funneled cause. The real, specific
+    ; reason lives in two places an operator or support engineer can read:
+    ; upgrade-engine.log (which __main__.py now appends `outcome.journal.
+    ; error` to, not just the bare phase name -- see that file's outcome-
+    ; logging fix in the same PR) and the full journal at
+    ; upgrade-journal.json beside it. The runtime-generated
+    ; UPGRADE-RECOVERY.md doc (cited by exit 20/CIVICCAST_EXIT_D3_HALTED
+    ; below) is NOT cited here: orchestrator.py only ever writes it from
+    ; _halt, i.e. on HALTED_RESTORE_FAILED (exit 20) -- it does not exist for
+    ; a plain ROLLED_BACK, and citing a file that is not there would be
+    ; exactly the kind of unverified claim this codebase's own audit
+    ; protocol forbids.
     ;
     ; So: fail closed here. CIVICCAST_FAIL aborts before any D4 step runs --
     ; the service is never registered or started on the new payload. The
-    ; previous version's data (database, recordings, settings) is intact:
-    ; the engine's own rollback restored the pre-upgrade backup precisely
-    ; because it is at/after the mutation frontier that this path is reached
-    ; at all (see civiccast.native.upgrade.orchestrator._rollback). What is
-    ; NOT intact is which CODE is on disk, which is exactly what this abort
-    ; communicates and prevents from going live.
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT} "CivicCast (Native) setup could not verify the pre-upgrade database backup, so the upgrade to ${VERSION} was rolled back before any database change was made. Your previous version's data (database, recordings, settings) is intact and was not touched. The service has NOT been started on the new files. Re-run setup after resolving the cause -- see $COMMONPROGRAMDATA\CivicCast\install-progress.log and $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log for the exact reason the backup could not be verified."
+    ; previous version's DATABASE is intact regardless of which step
+    ; funneled into this rollback: a pre-mutation failure never touched it,
+    ; and a post-mutation failure only reaches ROLLED_BACK (rather than
+    ; HALTED_RESTORE_FAILED) once _rollback's own restore of the pre-upgrade
+    ; backup has already succeeded (civiccast.native.upgrade.orchestrator.
+    ; _rollback). What is NOT intact is which CODE is on disk under the flat
+    ; layout, which is exactly what this abort communicates and prevents
+    ; from going live.
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_ROLLED_BACK_FLAT} "CivicCast (Native) setup could not complete: the upgrade engine rolled back its own work before finishing the upgrade to ${VERSION}. Your previous version's database is intact and was not left mid-migration. The service has NOT been started on the new files. See the engine's own reason in $COMMONPROGRAMDATA\CivicCast\upgrade\upgrade-engine.log (the full record is in upgrade-journal.json beside it) and $COMMONPROGRAMDATA\CivicCast\install-progress.log, then re-run setup after resolving the cause."
   ${ElseIf} $0 == 20
     ; F-03: name WHOSE rollback, for the same reason as the exit-10 branch
     ; above -- "rollback", unqualified, is what an operator reads as the

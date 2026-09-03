@@ -484,7 +484,18 @@ jobs:
         run: uv sync --group dev
 
       - name: Run tests/native (junit)
-        run: uv run pytest tests/native -q --junitxml=junit-native-win.xml
+        # PR #143 review fix: -m "not integration" excludes
+        # test_upgrade_engine_postgres.py's real-Postgres D3 engine proof.
+        # That test is Docker+testcontainers-gated, proven on the ubuntu
+        # "Unit tests" job (CIVICCAST_RUN_POSTGRES_TESTS=1 there makes an
+        # unreachable Docker daemon a hard failure, never a silent skip --
+        # see that job's own docker-availability guard step). windows-latest
+        # runners do not reliably run Linux containers the way testcontainers
+        # needs, so this job -- whose very next step asserts "nothing may
+        # skip" -- must not depend on that working; excluding it here is the
+        # same pattern the pure (ubuntu, non-Windows-real-hardware) lane
+        # already uses for windows_only in the opposite direction.
+        run: uv run pytest tests/native -m "not integration" -q --junitxml=junit-native-win.xml
 
       - name: Assert the full tests/native suite ran on Windows -- nothing may skip
         # windows-latest has no CivicCast WSL distro (wsl.exe itself may even

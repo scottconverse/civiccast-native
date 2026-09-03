@@ -342,8 +342,16 @@ def test_cli_still_runs_the_engine_for_a_real_upgrade(
 
     ran: list[str] = []
 
+    class _Journal:
+        # Matches the real UpgradeJournal.error contract this fake stands in
+        # for (main() reads outcome.journal.error to append the failure
+        # reason to the durable engine log, PR #143 review fix) -- None
+        # here since a COMPLETE outcome never sets it.
+        error = None
+
     class _Outcome:
         phase = upgrade_main.UpgradePhase.COMPLETE
+        journal = _Journal()
 
     def _record(*args: object, **kwargs: object) -> _Outcome:
         ran.append("run_upgrade")
