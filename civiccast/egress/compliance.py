@@ -82,6 +82,37 @@ def _managed_tsp_candidate() -> str | None:
     return str(matches[0]) if matches else None
 
 
+def _shipped_pack_tsp_candidate() -> str | None:
+    """The ``tsp.exe`` shipped in the ``native-server-binaries`` pack, if this
+    process is running from a real install (audit A1's single source of
+    truth for the installed layout -- ``civiccast.native.supervisor.
+    install_layout.resolve_install_layout``, the SAME helper the control
+    plane already uses to find ``pg_ctl.exe``/``ffmpeg.exe`` beside their own
+    packs/dependencies trees).
+
+    Root cause fixed here: ``scripts/build_native_server_pack.py`` has always
+    packed ``tsp.exe`` at ``payload/tsduck/bin/tsp.exe``, but nothing ever
+    looked there -- ``locate_tsduck`` only checked ``CIVICCAST_TSDUCK_PATH``,
+    the pull-on-demand managed directory, and PATH, so a fresh install logged
+    "TSDuck (tsp) not found" even though tsp.exe was sitting on disk the
+    whole time. On a dev interpreter (not the installed ``runtime\\
+    pythonservice.exe``) ``resolve_install_layout`` still resolves structurally
+    correct paths that simply do not exist -- ``is_file()`` below is the
+    existence gate, same posture every other ``InstallLayout`` field uses."""
+
+    try:
+        from civiccast.native.supervisor.install_layout import resolve_install_layout
+
+        candidate = resolve_install_layout().tsp_exe_path
+    except Exception:
+        # Pure path arithmetic today (never raises in practice), but a
+        # lookup helper must never turn a broken environment into a crash --
+        # "not found" is the honest, safe answer here, same as every other
+        # candidate step in locate_tsduck.
+        return None
+    return str(candidate) if candidate.is_file() else None
+
+
 _NOT_CLAIMED = [
     "Analyze-plugin subset aligned with TR 101 290 priority-1 concerns; "
     "not the full TR 101 290 monitoring suite.",
@@ -197,7 +228,9 @@ def _default_version_runner(tsp_path: str) -> str:
 
 
 def locate_tsduck(*, version_runner: VersionRunner | None = None) -> TsduckStatus:
-    """Find ``tsp`` via CIVICCAST_TSDUCK_PATH (a bin dir or full path) or PATH."""
+    """Find ``tsp`` via CIVICCAST_TSDUCK_PATH (a bin dir or full path), a
+    CivicCast-managed pull-on-demand install, the ``native-server-binaries``
+    pack this product ships tsp.exe in, or PATH -- in that precedence order."""
 
     candidates: list[str] = []
     env_path = os.environ.get("CIVICCAST_TSDUCK_PATH")
@@ -212,6 +245,13 @@ def locate_tsduck(*, version_runner: VersionRunner | None = None) -> TsduckStatu
         managed = _managed_tsp_candidate()
         if managed:
             candidates.append(managed)
+    if not candidates:
+        # The tsp.exe this product ITSELF ships in the native-server-binaries
+        # pack (payload/tsduck/bin/tsp.exe) -- a real install always has this
+        # even when no separate pull-on-demand/BYO install was ever set up.
+        shipped = _shipped_pack_tsp_candidate()
+        if shipped:
+            candidates.append(shipped)
     if not candidates:
         on_path = shutil.which("tsp")
         if on_path:
