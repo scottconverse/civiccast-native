@@ -54,6 +54,7 @@ from civiccast.egress.models import (
     EgressState,
     EgressStateRow,
     redact_source_uri,
+    redact_uris_in_text,
 )
 from civiccast.egress.pacing import UniformPacingLatch
 from civiccast.egress.preparer import SourcePreparationReport
@@ -857,8 +858,10 @@ class EgressDaemon:
         channel is bouncing, and it lives in a per-channel log file nothing outside
         the work dir reads. Fold a bounded, redacted tail into ``last_error`` so the
         operator's state row and the control-plane log carry the reason.
-        Redacted with ``redact_source_uri`` per line -- an ingest URI in a GStreamer
-        error message can carry an SRT passphrase / RTMP key (ENG-003).
+        Redacted with ``redact_uris_in_text`` per line -- an ingest URI in a GStreamer
+        error message can carry an SRT passphrase / RTMP key (ENG-003). NOT
+        ``redact_source_uri``: that leaves a URI EMBEDDED in a longer line untouched, and
+        ``ERROR failed to open srt://host?passphrase=...`` is exactly what a child writes.
         """
         log_path = self._stderr_logs.get(channel_id)
         if log_path is None:
@@ -870,7 +873,7 @@ class EgressDaemon:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not lines:
             return None
-        tail = " | ".join(redact_source_uri(line) for line in lines[-max_lines:])
+        tail = " | ".join(redact_uris_in_text(line) for line in lines[-max_lines:])
         return tail[:_STDERR_TAIL_MAX_CHARS]
 
     def _child_exit_error(self, channel_id: str, *, suffix: str) -> str:

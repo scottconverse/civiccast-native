@@ -22,6 +22,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from civiccast.egress.daemon import EgressDaemon
 from civiccast.egress.encoder_strategy import EncoderStartRequest, EncoderStartResult
 from civiccast.egress.gst.decode_policy import (
@@ -34,6 +36,8 @@ from civiccast.egress.models import (
     EgressSinkSpec,
     EgressSourcePlan,
     EgressSourceSegment,
+    redact_source_uri,
+    redact_uris_in_text,
 )
 from civiccast.egress.store import InMemoryEgressStore
 
@@ -165,9 +169,14 @@ def test_crash_relaunch_names_the_gstreamer_engine_and_carries_the_worker_stderr
 
 
 def test_child_stderr_tail_is_bounded_and_redacts_ingest_credentials(tmp_path: Path) -> None:
-    """A GStreamer error message can quote the ingest URI, which can carry an SRT
-    passphrase (ENG-003). The tail is redacted and length-bounded before it lands in
-    the durable, operator-readable state row."""
+    """A GStreamer error message QUOTES the ingest URI mid-line, and that URI can carry
+    an SRT passphrase (ENG-003).
+
+    Review catch on this PR's first revision: the secret line must be INSIDE the
+    returned tail, or the test proves nothing. The original version buried it behind
+    200 filler lines, so the 8-line tail never contained it and the assertion passed
+    against `redact_source_uri`, which does not redact a URI embedded in text at all.
+    """
     store = InMemoryEgressStore()
     daemon = EgressDaemon(
         store,
@@ -176,17 +185,49 @@ def test_child_stderr_tail_is_bounded_and_redacts_ingest_credentials(tmp_path: P
     )
     log_path = tmp_path / "err.log"
     log_path.write_text(
-        "ERROR failed to open srt://headend.example:9000?passphrase=hunter2seekrit\n"
-        + "".join(f"filler line {index}\n" for index in range(200)),
+        "".join(f"filler line {index}\n" for index in range(200))
+        # LAST line -- inside the 8-line tail, which is the whole point.
+        + "ERROR failed to open srt://headend.example:9000?passphrase=hunter2seekrit\n",
         encoding="utf-8",
     )
     daemon._stderr_logs["gov"] = log_path
 
     tail = daemon._child_stderr_tail("gov")
     assert tail is not None
+    assert "ERROR failed to open" in tail, "the secret line must be INSIDE the tail"
     assert "hunter2seekrit" not in tail
+    # `redact_source_uri` percent-encodes the marker through urlencode, so the stored
+    # form is `passphrase=%3Credacted%3E` -- the repo-wide shape (test_contracts.py,
+    # test_gst_bridge.py). Match case-insensitively on the word itself.
+    assert "redacted" in tail.lower(), "something must visibly mark the removal"
+    assert "headend.example" in tail, "the host is diagnostic and must survive"
     assert len(tail) <= 600
     assert "filler line 199" in tail, "the TAIL is what matters, not the head"
+
+
+def test_child_stderr_tail_redacts_userinfo_credentials_mid_line(tmp_path: Path) -> None:
+    """The other credential shape: ``rtmps://user:pass@host`` quoted inside an error
+    line. ``redact_source_uri`` drops userinfo silently, which reads as "there was no
+    credential here"; in free text the scanner leaves a visible marker instead."""
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    log_path = tmp_path / "err.log"
+    log_path.write_text(
+        "gstreamer rtmp2sink: connect to rtmps://civiccast:sup3rsecret@live.example/app "
+        "refused after 3 tries\n",
+        encoding="utf-8",
+    )
+    daemon._stderr_logs["gov"] = log_path
+
+    tail = daemon._child_stderr_tail("gov")
+    assert tail is not None
+    assert "sup3rsecret" not in tail
+    assert "civiccast:sup3rsecret" not in tail
+    assert "<redacted>@live.example" in tail
+    assert "refused after 3 tries" in tail, "the diagnostic text must survive"
 
 
 def test_child_exit_error_still_says_ffmpeg_for_the_ffmpeg_strategy(tmp_path: Path) -> None:
@@ -267,3 +308,73 @@ def test_feature_rank_env_list_names_every_bundled_hardware_decoder_family() -> 
     names = {entry.split(":")[0] for entry in CPU_DECODE_FEATURE_RANK.split(",")}
     assert {"d3d12h264dec", "d3d12h265dec", "d3d11h264dec", "d3d11h265dec"} <= names
     assert all(entry.endswith(":0") for entry in CPU_DECODE_FEATURE_RANK.split(","))
+
+
+# -- the mid-line URI scanner itself -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("line", "must_not_contain", "must_contain"),
+    [
+        (
+            "ERROR failed to open srt://h.example:9000?passphrase=hunter2seekrit",
+            "hunter2seekrit",
+            "redacted",
+        ),
+        (
+            "rtmp2sink: connect to rtmps://civiccast:sup3rsecret@live.example/app refused",
+            "sup3rsecret",
+            "<redacted>@live.example",
+        ),
+        (
+            "ERROR source rtsp://admin:letmein@cam.local/stream1 timed out",
+            "letmein",
+            "<redacted>@cam.local",
+        ),
+        (
+            "publish to rtmp://ingest.example/app?streamkey=abc123 failed",
+            "abc123",
+            "redacted",
+        ),
+        (
+            "GET https://docs.example/help?token=leakme. retry",
+            "leakme",
+            "redacted",
+        ),
+    ],
+)
+def test_redact_uris_in_text_scrubs_credentials_embedded_mid_line(
+    line: str, must_not_contain: str, must_contain: str
+) -> None:
+    """The hole this scanner closes: every one of these lines passes through
+    ``redact_source_uri`` COMPLETELY UNCHANGED.
+
+    Precision that matters, and that a first draft of this test got wrong: a URI at
+    position 0 IS handled by ``redact_source_uri`` -- ``urlsplit`` finds the authority
+    fine. The hole is a URI that is not the whole string, which is what a child process
+    actually writes ("ERROR failed to open <uri>"). Every fixture below is therefore
+    genuinely mid-line, and the guard assertion proves each one is really unhandled
+    today rather than assuming it.
+    """
+    assert must_not_contain in redact_source_uri(line), (
+        "guard: if redact_source_uri ever handles mid-line URIs, this scanner's "
+        "reason for existing has changed and this test should be revisited"
+    )
+    scrubbed = redact_uris_in_text(line)
+    assert must_not_contain not in scrubbed
+    assert must_contain in scrubbed
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "plain log line with no uri at all",
+        r"C:\ProgramData\CivicCast\data\egress\government\slate.ts is missing",
+        "filesrc location=/var/lib/civiccast/slate.ts",
+        "udp://127.0.0.1:19003 opened",  # no credential to remove
+    ],
+)
+def test_redact_uris_in_text_leaves_credential_free_text_alone(line: str) -> None:
+    """A redactor that mangles ordinary diagnostic text costs more than it saves --
+    the whole point of the tail is that an operator can read it."""
+    assert redact_uris_in_text(line) == line
