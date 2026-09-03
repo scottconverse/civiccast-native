@@ -25,6 +25,18 @@ npm install
 npm run dev
 npm run build
 npm run test:a11y
+# Vite proxies /api/* to http://127.0.0.1:8000.
+```
+
+By default the dev server proxies `/api/*` requests to a backend on
+`http://127.0.0.1:8000` (matching `portal-operator`'s dev proxy). If that
+port is already taken on your machine — e.g. by another CivicCast station
+already running — start the backend on a different port and point the proxy
+at it instead of editing `vite.config.ts`:
+
+```bash
+uv run uvicorn civiccast.app:app --port 8010
+VITE_CIVICCAST_API_PROXY_TARGET=http://127.0.0.1:8010 npm run dev
 ```
 
 ## Public API Contracts

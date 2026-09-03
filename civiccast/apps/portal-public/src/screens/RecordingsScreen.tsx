@@ -9,12 +9,17 @@
 // untagged recordings simply never match a body filter.
 
 import { useEffect, useMemo, useState } from 'react'
-import { fetchJson } from '../api'
+import { fetchJson, FetchError } from '../api'
 import { buildRecordingsHash } from '../router'
 import { RecordingCard } from './HomeScreen'
 import type { AssetMetadata } from '../types'
 
-type LoadState = 'loading' | 'ready' | 'error'
+// 'degraded': /api/public/search 503'd (durable search index not ready, e.g.
+// ephemeral/dev storage per Finding MAJOR-3) but the simpler
+// /api/public/assets list endpoint had the data, so we show it — with the
+// search/year/body/custom-field facets still working client-side over the
+// fallback set, minus the server-only custom_fields projection.
+type LoadState = 'loading' | 'ready' | 'degraded' | 'error'
 
 // Module-local on purpose (react-refresh/only-export-components): nothing
 // else imports these, and exporting non-components from a screen file breaks
@@ -121,8 +126,30 @@ export function RecordingsScreen({
         setRecordings(result)
         setState('ready')
       })
-      .catch(() => {
-        if (!cancelled) setState('error')
+      .catch((err: unknown) => {
+        if (cancelled) return
+        // Finding MAJOR-3: /api/public/search requires the durable search
+        // index and 503s whenever it isn't ready (ephemeral/dev storage, or
+        // a station whose metadata database is briefly unavailable) — by
+        // design, per civiccast/metadata/router.py's "never a silent 200
+        // against storage that is not there." /api/public/assets is the
+        // simpler packaged-asset list and doesn't need that index, so it
+        // still has the data. Fall back to it rather than hard-failing the
+        // whole screen; custom-field facets just won't be available (that
+        // response omits custom_fields — see types.ts) until search recovers.
+        if (err instanceof FetchError && err.status === 503) {
+          fetchJson<AssetMetadata[]>('/api/public/assets')
+            .then((result) => {
+              if (cancelled) return
+              setRecordings(result)
+              setState('degraded')
+            })
+            .catch(() => {
+              if (!cancelled) setState('error')
+            })
+          return
+        }
+        setState('error')
       })
     return () => {
       cancelled = true
@@ -327,6 +354,18 @@ export function RecordingsScreen({
         </p>
       )}
 
+      {state === 'degraded' && (
+        <p
+          role="status"
+          aria-live="polite"
+          className="rounded-lg border border-amber-400/50 bg-amber-950/30 p-4 text-sm text-amber-100"
+        >
+          Showing recordings in a reduced-search mode — full search is
+          temporarily unavailable, so some filters below may show fewer
+          results than normal. Try again shortly for full search.
+        </p>
+      )}
+
       {state === 'error' && (
         <div
           role="alert"
@@ -343,7 +382,7 @@ export function RecordingsScreen({
         </div>
       )}
 
-      {state === 'ready' && filtered.length === 0 && (
+      {(state === 'ready' || state === 'degraded') && filtered.length === 0 && (
         <p className="rounded-lg border border-dashed border-stone-500 bg-[#172018] p-4 text-sm text-stone-300">
           {recordings.length === 0 ? (
             <>
@@ -359,7 +398,7 @@ export function RecordingsScreen({
         </p>
       )}
 
-      {state === 'ready' && pageItems.length > 0 && (
+      {(state === 'ready' || state === 'degraded') && pageItems.length > 0 && (
         <>
           <p className="text-sm text-stone-400" role="status" aria-live="polite">
             {filtered.length} recording{filtered.length === 1 ? '' : 's'}

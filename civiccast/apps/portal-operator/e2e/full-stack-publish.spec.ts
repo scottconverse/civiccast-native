@@ -141,10 +141,19 @@ test('@fullstack approves a public-record publish cycle against the live API', a
   await expect(page.getByRole('heading', { name: 'Publish dashboard' })).toBeVisible()
 
   const councilPanel = page.locator('article').filter({ hasText: 'Council - May 8, 2026' })
-  await expect(councilPanel.getByText('Internet Archive', { exact: true })).toBeVisible()
-  await expect(councilPanel.getByText('Local NAS rsync', { exact: true })).toBeVisible()
-  await expect(councilPanel.getByText('Local NAS ZFS', { exact: true })).toBeVisible()
-  await expect(councilPanel.getByText('YouTube Live', { exact: true })).toBeVisible()
+  // PublishDashboardScreen now also renders a "Publish readiness"
+  // (PreflightPanel) section per asset, alongside the surface-selection
+  // checklist -- both legitimately name every surface (WP-03 plan item 8:
+  // preflight and approval read the same registry, so they always agree),
+  // so each surface name can appear twice in this panel once readiness has
+  // loaded. .first() below just proves "the surface name is present" the
+  // way it did before that panel existed; it doesn't weaken the later
+  // structural assertions (toHaveCount(3) for the archive-simulated note,
+  // toHaveCount(0) for a real archive.org URL), which stay exact.
+  await expect(councilPanel.getByText('Internet Archive', { exact: true }).first()).toBeVisible()
+  await expect(councilPanel.getByText('Local NAS rsync', { exact: true }).first()).toBeVisible()
+  await expect(councilPanel.getByText('Local NAS ZFS', { exact: true }).first()).toBeVisible()
+  await expect(councilPanel.getByText('YouTube Live', { exact: true }).first()).toBeVisible()
 
   await councilPanel.getByRole('button', { name: 'Approve and Publish selected' }).click()
   await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and Publish' }).click()

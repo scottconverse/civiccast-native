@@ -719,3 +719,50 @@ describe('SetupScreen returning-operator sign-in', () => {
     expect(screen.getByText(/Every other browser or device already signed in stays signed in/)).toBeTruthy()
   })
 })
+
+describe('SetupScreen staff-identity gating (Finding MINOR-1)', () => {
+  it('never calls /api/staff/auth/me for a signed-out visitor with no stored token', async () => {
+    const requestedUrls: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      requestedUrls.push(url)
+      if (url === '/api/setup/station-state') {
+        return jsonResponse({
+          status: 'not_started',
+          setup_complete: false,
+          profile: null,
+          recovery_kit_created: false,
+          recovery_kit_id: null,
+          recovery_kit_acknowledged: false,
+          operator_console_url: null,
+          next_step: 'Create the first admin.',
+        })
+      }
+      if (url === '/api/setup/storage') {
+        return jsonResponse({
+          status: 'ready',
+          database_url: 'sqlite:///tmp/civiccast.db',
+          database_path: '/tmp/civiccast.db',
+          upload_dir: '/tmp/uploads',
+          storage_dir: '/tmp',
+          migrations_applied: true,
+          configured_at: '2026-06-28T00:00:00Z',
+          operator_message: 'Storage ready',
+          next_step: 'Create the first admin.',
+        })
+      }
+      return jsonResponse({ detail: `Unhandled GET ${url}` }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderSetupScreen()
+    await screen.findByText('Station name')
+
+    // A fresh browser with no stored staff token has nothing to send
+    // /api/staff/auth/me and the request is guaranteed to 401 -- it must
+    // simply not be sent, not sent-and-tolerated. Prior to this fix, this
+    // fired on every fresh boot regardless of token presence (console 401s
+    // on the very first First Setup paint, per the 2026-09-03 walkthrough).
+    expect(requestedUrls).not.toContain('/api/staff/auth/me')
+  })
+})

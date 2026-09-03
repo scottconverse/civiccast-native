@@ -12,6 +12,7 @@ import {
   getProviderReadiness,
   getStaffIdentity,
   getStationSetupState,
+  hasStoredStaffToken,
   loginStationAdmin,
   preparePublicStorage,
   provisionR2Concierge,
@@ -1330,6 +1331,12 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
     queryKey: ['staff-identity'],
     queryFn: getStaffIdentity,
     retry: false,
+    // Finding MINOR-1: a signed-out visitor with no stored staff token has
+    // nothing to send /api/staff/auth/me — the request always 401s. Only
+    // fire once a token exists (persisted from a prior sign-in, or just
+    // issued by the login/setup mutations below, both of which reset this
+    // query key on success so it refetches immediately once enabled).
+    enabled: hasStoredStaffToken(),
   })
   const canManageProviders =
     !staffIdentityQuery.isSuccess ||
