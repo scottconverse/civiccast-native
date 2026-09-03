@@ -272,6 +272,16 @@ def _preinstall_block(hooks_text: str) -> str:
     return hooks_text.split("!macro NSIS_HOOK_PREINSTALL", 1)[1].split("!macroend", 1)[0]
 
 
+def _slice_macro(hooks_text: str, macro_name: str) -> str:
+    """The body of one `!macro <name> ... !macroend` block.
+
+    <installer-path-audit MA-34/MA-35> The uninstall macros needed the same
+    treatment as the install ones once uninstall refusals gained their own
+    exit codes.
+    """
+    return hooks_text.split(f"!macro {macro_name}", 1)[1].split("!macroend", 1)[0]
+
+
 def test_bootstrap_postinstall_chain_is_ordered_stage_packs_before_verify_before_provision_before_service_registration() -> (
     None
 ):
@@ -672,10 +682,23 @@ def test_bootstrap_postinstall_failure_exit_codes_are_distinct_and_reserved() ->
 
     postinstall = _postinstall_block(hooks_text)
     preinstall = _preinstall_block(hooks_text)
+    # <installer-path-audit MA-34/MA-35> The band is no longer install-only
+    # either. Five uninstall codes were added for refusals and incompletions
+    # that previously returned NSIS's own generic script-abort code 2 (the
+    # three PREUNINSTALL refusals) or 0 (the two POSTUNINSTALL paths that
+    # alert and continue) -- an uninstall that deliberately left
+    # multi-gigabyte trees and a running service behind reported SUCCESS to
+    # winget/Intune. Those live in the uninstall macros by necessity, so the
+    # orphan check accepts any of the four hook chains. Distinctness and
+    # reservation above are unchanged and still cover every definition.
+    postuninstall = _slice_macro(hooks_text, "NSIS_HOOK_POSTUNINSTALL")
+    preuninstall = _slice_macro(hooks_text, "NSIS_HOOK_PREUNINSTALL")
     for name in codes:
-        assert f"${{{name}}}" in postinstall or f"${{{name}}}" in preinstall, (
-            f"{name} is defined but never used in either NSIS_HOOK_PREINSTALL or NSIS_HOOK_POSTINSTALL"
+        used = any(
+            f"${{{name}}}" in block
+            for block in (postinstall, preinstall, postuninstall, preuninstall)
         )
+        assert used, f"{name} is defined but never used in any NSIS_HOOK_* macro"
 
 
 # ---------------------------------------------------------------------------

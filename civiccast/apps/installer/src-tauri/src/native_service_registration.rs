@@ -1926,6 +1926,19 @@ pub enum ProvisionOutcome {
 /// unreadable) shares nothing with a provisioning failure's.
 pub const SELECTOR_UNPROVABLE_EXIT_CODE: i32 = 85;
 
+/// The exit code the binary reports for a `--civiccast-*` flag it does not
+/// implement.
+///
+/// <installer-path-audit MA-22> `main()` used to fall through to the Tauri
+/// GUI event loop for anything unmatched, and that loop never exits. Since
+/// `NSIS_HOOK_PREINSTALL` invokes the OLD, already-installed binary's CLI
+/// (`--civiccast-stop-native-service`) without checking its version first, a
+/// future release that renames or removes a flag would make upgrading FROM
+/// that version launch its GUI under `nsExec` with no timeout: an installer
+/// alive with no children and no visible position in the chain -- the exact
+/// run-3/run-4 hang shape. 86 continues the 83-85 band this batch opened.
+pub const UNKNOWN_CIVICCAST_FLAG_EXIT_CODE: i32 = 86;
+
 /// A provisioning failure that carries the exit code its caller must report.
 ///
 /// Introduced for BL-13: before it, every failure inside

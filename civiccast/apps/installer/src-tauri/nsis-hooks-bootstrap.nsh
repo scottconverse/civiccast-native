@@ -507,6 +507,31 @@ Var CIVICCAST_PAYLOAD_REPLACED
 ; it means "nothing at all happened", which is what its operator text says.
 !define CIVICCAST_EXIT_D3_REFUSED_DOWNGRADE   129
 
+; UNINSTALL refusal / incompletion codes (installer-path audit MA-34, MA-35).
+;
+; Three uninstall refusals -- the operator declined the ownership-transfer
+; prompt, an acknowledged transfer failed, and any other nonzero preflight --
+; all did SetErrors + Abort with NO SetErrorLevel, so all three returned
+; NSIS's own generic script-abort code 2, indistinguishable from each other
+; AND from an unrelated script abort. This file's own comment beside the
+; teardown refusal explains that exact ambiguity as the reason 82 was given a
+; distinct code, and then left these three at 2.
+;
+; And two POSTUNINSTALL paths did SetErrors + alert and then returned 0,
+; because -- per this file's own measured evidence table -- `SetErrors` alone
+; does not change the process exit code. An uninstall that deliberately left
+; multi-gigabyte trees and a running service behind reported success to
+; winget/Intune.
+;
+; 130-134 continues this file's own band rather than reusing the CLI's, so a
+; support log can tell an uninstall refusal from an install failure by the
+; number alone.
+!define CIVICCAST_EXIT_UNINSTALL_DECLINED        130
+!define CIVICCAST_EXIT_UNINSTALL_TRANSFER_FAILED 131
+!define CIVICCAST_EXIT_UNINSTALL_BLOCKED         132
+!define CIVICCAST_EXIT_UNINSTALL_TREES_RETAINED  133
+!define CIVICCAST_EXIT_UNINSTALL_INCOMPLETE      134
+
 ; Carries the --civiccast-teardown-native-state CLI's exit code from
 ; NSIS_HOOK_PREUNINSTALL (where the teardown call must run -- see that
 ; macro's header comment for why) to NSIS_HOOK_POSTUNINSTALL (where the
@@ -522,6 +547,25 @@ Var CIVICCAST_PAYLOAD_REPLACED
 ; delete a tree a still-running service may depend on, rather than assuming
 ; it is safe.
 Var CIVICCAST_TEARDOWN_EXIT
+
+; <installer-path-audit MA-36> "1" once this uninstaller's own preflight
+; reported that it ARMED the post-uninstall selector-clear plan (exit 73).
+;
+; `native_uninstall_preflight` begins with an unconditional
+; `clear_postclear_marker()`, and the marker value is a fixed constant with no
+; owner in it. So: uninstaller A's preflight arms the marker and returns 73; A
+; proceeds into teardown and Tauri's file deletion; the operator opens Apps &
+; Features again and B's preflight CLEARS A's marker. A's POSTUNINSTALL then
+; reads no marker and takes the "no plan was armed" path, leaving
+; HKLM\Software\CivicCast\ActiveRuntime set to "native" on a machine with no
+; native product -- silently, with the uninstall still exiting 0.
+;
+; PREUNINSTALL and POSTUNINSTALL run in the SAME uninstaller process, so this
+; Var is the one thing that can tell "no plan was ever armed" (legitimate,
+; silent) apart from "this run armed a plan and something removed it"
+; (MA-36's state, which must be loud). Left at its NSIS default (empty) so an
+; unset value behaves exactly as before.
+Var CIVICCAST_POSTCLEAR_ARMED
 
 !macro NSIS_HOOK_PREINSTALL
   ; F-10 fix: declare the space the POSTINSTALL pack-staging chain below adds
@@ -1643,6 +1687,13 @@ Var CIVICCAST_TEARDOWN_EXIT
     DetailPrint "CivicCast Native uninstall was declined at the ownership transfer prompt; nothing was removed and ActiveRuntime was left unchanged."
     !insertmacro CIVICCAST_ALERT "CivicCast (Native) uninstall was cancelled. ActiveRuntime ownership was NOT transferred and nothing was removed."
     SetErrors
+    ; Installer-path audit MA-34: this used to Abort with NO SetErrorLevel,
+    ; so it returned NSIS's own generic script-abort code 2 -- the SAME code
+    ; the other two refusal branches returned, and the same code NSIS emits
+    ; for an unrelated script abort. This file's own comment beside the
+    ; teardown refusal explains that exact ambiguity as the reason 82 was
+    ; given its own code, and then left these three at 2.
+    SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_DECLINED}
     Abort
     civiccast_native_transfer_acknowledged:
     DetailPrint "Operator acknowledged the ActiveRuntime ownership transfer; transferring to the WSL product before removal proceeds..."
@@ -1653,6 +1704,8 @@ Var CIVICCAST_TEARDOWN_EXIT
       DetailPrint "CivicCast Native ownership transfer failed after acknowledgment: $1"
       !insertmacro CIVICCAST_ALERT "CivicCast (Native) could not complete the ActiveRuntime ownership transfer. Nothing was removed.$\r$\n$\r$\nDetails: $1"
       SetErrors
+      ; Installer-path audit MA-34: its own code, not NSIS's generic 2.
+      SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_TRANSFER_FAILED}
       Abort
     ${EndIf}
     DetailPrint "CivicCast Native ActiveRuntime ownership transferred to the WSL product; proceeding with uninstall."
@@ -1661,7 +1714,17 @@ Var CIVICCAST_TEARDOWN_EXIT
     DetailPrint "CivicCast Native uninstall was blocked before process termination: $1"
     !insertmacro CIVICCAST_ALERT "CivicCast (Native) cannot be uninstalled while it is the active runtime and the WSL product remains, or when lifecycle state cannot be safely read.$\r$\n$\r$\nDetails: $1"
     SetErrors
+    ; Installer-path audit MA-34: its own code, not NSIS's generic 2.
+    SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_BLOCKED}
     Abort
+  ${EndIf}
+  ; <installer-path-audit MA-36> Exit 73 is the preflight's "I armed the
+  ; post-uninstall selector-clear plan" answer. Record it so POSTUNINSTALL can
+  ; tell a plan that was never armed from one that was armed and then removed
+  ; by a second uninstaller instance.
+  ${If} $0 == 73
+    StrCpy $CIVICCAST_POSTCLEAR_ARMED "1"
+    !insertmacro CIVICCAST_STEP "preuninstall: post-uninstall selector-clear plan armed"
   ${EndIf}
   ;
   ; ===================================================================
@@ -1839,8 +1902,22 @@ Var CIVICCAST_TEARDOWN_EXIT
     StrCpy $R2 "1"
     !insertmacro CIVICCAST_ALERT "CivicCast (Native) uninstall could not confirm that the CivicCastSupervisor service was fully stopped, so the program files were NOT removed -- deleting them now could corrupt data out from under a still-running service and its database/messaging processes.$\r$\n$\r$\nTo finish removing CivicCast (Native): stop the service manually (services.msc, or 'sc stop CivicCastSupervisor'), or reboot this machine, then run Uninstall again.$\r$\n$\r$\nSee the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact error."
     SetErrors
+    ; Installer-path audit MA-35: SetErrors ALONE DOES NOT CHANGE THE
+    ; PROCESS EXIT CODE -- this file's own measured evidence table says so.
+    ; An uninstall that deliberately left multi-gigabyte trees AND a running
+    ; service behind therefore returned 0 to winget/Intune, which read it as
+    ; a clean removal. Reachable today mainly through the fail-closed
+    ; unset-Var default above -- which exists precisely because PREUNINSTALL
+    ; might not have run at all.
+    SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_TREES_RETAINED}
   ${ElseIf} $CIVICCAST_TEARDOWN_EXIT != 0
     !insertmacro CIVICCAST_ALERT "CivicCast (Native) uninstall could not fully remove the supervisor service, firewall rule, and/or registry state (exit $CIVICCAST_TEARDOWN_EXIT). See the installer log for exactly which step failed; you may need to remove it manually (services.msc / Windows Defender Firewall / HKLM\Software\CivicCast\Native)."
+    ; Installer-path audit MA-35: the same shape as the branch above -- alert,
+    ; continue, delete the trees, exit 0. An uninstall that could not remove
+    ; the service, the firewall rule or the registry state has NOT completed,
+    ; and unattended tooling has to be able to see that.
+    SetErrors
+    SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_INCOMPLETE}
   ${Else}
     DetailPrint "CivicCast (Native): supervisor service, firewall rule, and registry state removed."
   ${EndIf}
@@ -1852,7 +1929,26 @@ Var CIVICCAST_TEARDOWN_EXIT
   ClearErrors
   ReadRegStr $R0 HKLM "Software\CivicCast" "NativeUninstallPostclearPending"
   ${If} ${Errors}
-    ; No sole-active plan was armed; leave ActiveRuntime untouched.
+    ; <installer-path-audit MA-36> "No marker" is TWO different states, and
+    ; this branch used to treat them as one.
+    ;
+    ; If this run's own preflight never armed a plan, leaving ActiveRuntime
+    ; untouched is exactly right and silent -- unchanged.
+    ;
+    ; If it DID arm one (exit 73, recorded in $CIVICCAST_POSTCLEAR_ARMED) and
+    ; the marker is gone now, something removed it mid-uninstall. The only
+    ; thing that does is a SECOND uninstaller instance, whose preflight begins
+    ; with an unconditional clear_postclear_marker(). The consequence is not
+    ; cosmetic: ActiveRuntime stays "native" on a machine with no native
+    ; product, which is the state the dual-runtime guard reads to decide
+    ; whether anything may start. Say so, and do not report a clean uninstall.
+    ${If} $CIVICCAST_POSTCLEAR_ARMED == "1"
+      !insertmacro CIVICCAST_STEP "postuninstall: ARMED post-uninstall plan is MISSING (a second uninstaller instance cleared it); ActiveRuntime left unchanged"
+      DetailPrint "CivicCast (Native): the post-uninstall ActiveRuntime plan armed by this uninstall is gone; ActiveRuntime was left unchanged."
+      !insertmacro CIVICCAST_ALERT "CivicCast (Native) was removed, but it could not finish handing back this computer's CivicCast runtime ownership -- another CivicCast uninstall was started while this one was running and cleared the plan.$\r$\n$\r$\nThis machine's HKLM\Software\CivicCast\ActiveRuntime still reads $\"native$\" even though the native product is gone. Nothing was left running and no data was lost.$\r$\n$\r$\nAn administrator should clear or correct that value before installing CivicCast again. Do not run two CivicCast uninstalls at the same time."
+      SetErrors
+      SetErrorLevel ${CIVICCAST_EXIT_UNINSTALL_INCOMPLETE}
+    ${EndIf}
     Goto civiccast_native_postuninstall_done
   ${EndIf}
   ${If} $R0 != "civiccast-native-sole-active-v1"

@@ -1056,8 +1056,7 @@ def main(argv: list[str] | None = None) -> int:
             write_recovery_document(
                 paths.state_root,
                 reason=(
-                    "the reused database's schema could not be brought to alembic head: "
-                    f"{detail}"
+                    f"the reused database's schema could not be brought to alembic head: {detail}"
                 ),
                 attempting="'alembic upgrade head' against the reused database (reuse path)",
             )

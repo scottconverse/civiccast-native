@@ -6268,6 +6268,42 @@ fn main() {
         std::process::exit(run_civiccast_runtime_host());
     }
 
+    // <installer-path-audit MA-22> AN UNRECOGNISED `--civiccast-*` FLAG USED
+    // TO LAUNCH THE GUI AND BLOCK THE INSTALLER FOREVER.
+    //
+    // `main()` dispatches through a chain of `if let Some(exit_code)` guards
+    // and anything unmatched fell straight through to the Tauri event loop
+    // below, which never exits. That matters because PREINSTALL invokes the
+    // OLD, ALREADY-INSTALLED binary:
+    //
+    //     nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" \
+    //         --civiccast-stop-native-service'
+    //
+    // and nothing checks the old binary's version before assuming its CLI
+    // contract. If a future release renames or removes that flag, upgrading
+    // FROM that version launches its GUI under nsExec with NO TIMEOUT -- the
+    // installer sits alive with no children and no visible position in the
+    // chain, which is precisely the run-3/run-4 hang
+    // `nsis-hooks-bootstrap.nsh`'s own header was written to make
+    // diagnosable.
+    //
+    // A no-argument launch is still the GUI, deliberately: that is what a
+    // user double-clicking setup.exe gets. Only a `--civiccast-*` argument
+    // this binary does not implement is fatal, and it names the flag.
+    if let Some(unknown) = args
+        .iter()
+        .find(|argument| argument.starts_with("--civiccast-"))
+    {
+        eprintln!(
+            "CivicCast Installer {CIVICCAST_VERSION} does not implement {unknown}. This is \
+             almost always a version mismatch: an installer is invoking a command-line step on \
+             a DIFFERENT CivicCast build than the one that shipped it. Refusing to open the \
+             setup window instead, so an unattended install fails visibly rather than hanging \
+             forever."
+        );
+        std::process::exit(native_service_registration::UNKNOWN_CIVICCAST_FLAG_EXIT_CODE);
+    }
+
     tauri::Builder::default()
         .setup(|app| {
             remove_stale_shutdown_markers();

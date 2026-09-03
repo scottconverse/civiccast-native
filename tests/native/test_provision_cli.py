@@ -705,9 +705,7 @@ def test_main_noop_path_exits_success_without_generating_a_password_or_journal(
     assert migrated, "the reuse path must still bring the schema to head"
 
 
-def test_bl12_the_reuse_path_migrates_the_preserved_database(
-    tmp_path, capsys, monkeypatch
-) -> None:
+def test_bl12_the_reuse_path_migrates_the_preserved_database(tmp_path, capsys, monkeypatch) -> None:
     """<installer-path-audit BL-12> The reuse path was the ONE route through
     this CLI that never migrated.
 
