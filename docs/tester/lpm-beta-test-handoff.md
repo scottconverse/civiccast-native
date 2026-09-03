@@ -32,19 +32,20 @@ bundle. An upgrade of an already-installed `v1.0.0-beta.3`-or-later station
 can be download-only and keeps the station's existing recordings, database,
 and AI models.
 
-**Upgrading from `v1.0.0-beta.1`:** this one step is a fresh install, not an
-upgrade. `beta.1` to `beta.3` means wiping the existing `beta.1` install and
-installing `beta.3` fresh from the beta.3 kit (USB or a LAN copy); your
-recordings, settings, and AI models are **not** kept across this specific
-step -- back up anything you need first. The `beta.2` internal baseline kit
-changed the signed identity of every AI model pack so that later upgrades can
-reuse them, and a `beta.1` station's already-downloaded models don't match
-that new identity. From `beta.3` on, every later step (`beta.3` to `beta.4`
-and beyond) is a normal download-only upgrade in place: your recordings,
-settings, and AI models are kept. Details:
+**Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit -- `setup.exe`
+plus the `station\` folder beside it (USB or a LAN copy) -- to the station
+and run `setup.exe` over the existing `beta.1` install. Your recordings,
+settings, database, and AI models are kept and the schema migrates. Do not
+run `setup.exe` alone from a `beta.1` install: the `beta.2` internal
+baseline kit changed the signed identity of every AI model pack so later
+upgrades can reuse them, and a `beta.1` station's already-downloaded models
+won't match that new identity unless the full kit is present. From `beta.3`
+on, every later step (`beta.3` to `beta.4` and beyond) is a normal
+download-only upgrade in place: your recordings, settings, and AI models are
+kept. Details:
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
 
-Last updated: 2026-09-02.
+Last updated: 2026-09-03.
 
 Audience: Longmont Public Media beta testers, station operators, technical
 staff, and anyone observing the first real station-side CivicCast runs.

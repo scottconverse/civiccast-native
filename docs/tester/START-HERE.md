@@ -29,15 +29,18 @@ which belongs to that other repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
-A first-time install on a station with no prior CivicCast install, and the
-one-time `v1.0.0-beta.1` -> `v1.0.0-beta.3` upgrade (a fresh install from the
-`beta.3` kit, not an in-place upgrade -- see
-[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)),
-both need the USB model bundle even once `v1.0.0-beta.3` publishes -- the
-GitHub download alone is the setup executable and runtime packs, not the
-~21 GB model bundle. From `v1.0.0-beta.3` on, an upgrade of an
-already-installed station can be download-only and keeps the station's
-existing recordings, database, and AI models.
+A first-time install on a station with no prior CivicCast install needs the
+USB model bundle even once `v1.0.0-beta.3` publishes -- the GitHub download
+alone is the setup executable and runtime packs, not the ~21 GB model
+bundle. **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit
+(`setup.exe` plus the `station\` folder beside it) to the station and run
+`setup.exe` over the existing install -- recordings, settings, database, and
+AI models are kept and the schema migrates. Do not run `setup.exe` alone
+from a `beta.1` install; see
+[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)
+for why. From `v1.0.0-beta.3` on, an upgrade of an already-installed station
+can be download-only and keeps the station's existing recordings, database,
+and AI models.
 
 ## Clean-Machine Test Rule
 

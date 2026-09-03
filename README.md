@@ -168,14 +168,18 @@ things outside this repository's control:
   `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now superseded.
   `v1.0.0-beta.2` was never published -- it exists only as an internal
   Gate A upgrade-baseline kit, not a release a tester can obtain.
-  A **first-time install**, and the one-time `v1.0.0-beta.1` -> `v1.0.0-beta.3`
-  upgrade (a fresh install from the `beta.3` kit, not an in-place upgrade --
-  see
-  [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)),
-  still need the USB/LAN-delivered model bundle (~21 GB) -- the GitHub
-  download alone does not include it. From `v1.0.0-beta.3` on, a
-  download-only **upgrade** of an already-installed station keeps the
-  station's recordings, database, and AI models. See
+  A **first-time install** needs the USB/LAN-delivered model bundle
+  (~21 GB) -- the GitHub download alone does not include it.
+  **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit
+  (`setup.exe` + packs + `station\` folder) to the station and run
+  `setup.exe` over the existing install; recordings, settings, database,
+  and AI models are kept and the schema migrates. The one unsupported path
+  is running `setup.exe` alone, without the `station\` folder, from a
+  beta.1 install -- see
+  [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
+  From `v1.0.0-beta.3` on, a download-only **upgrade** of an
+  already-installed station keeps the station's recordings, database, and
+  AI models. See
   [BRANCHES.md](BRANCHES.md) for release identity and status.
   Slow setup must remain visibly active: the installer reports its current
   phase and updates a progress heartbeat instead of appearing frozen.
