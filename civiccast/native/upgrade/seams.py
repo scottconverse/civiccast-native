@@ -220,6 +220,7 @@ def default_restore_backup(
     *,
     pg_restore_command: list[str] | None = None,
     psql_command: list[str] | None = None,
+    command_database_url: str | None = None,
 ) -> Callable[[BackupRef], None]:
     """Restore the pre-upgrade backup INTO THE LIVE DATABASE.
 
@@ -282,9 +283,31 @@ def default_restore_backup(
                 "its own integrity manifest (" + "; ".join(errors) + ")"
             )
 
-        target_name = _database_name(context.database_url)
+        # THE CLI TOOLS' OWN VIEW OF THE SERVER, not this process's.
+        #
+        # `create_fresh_postgres_database` shells to `psql` and
+        # `run_postgres_restore` shells to `pg_restore`; both parse this URL
+        # for their `--host`/`--port`/`--username` argv. When those commands
+        # carry a prefix that relocates them (the `docker exec` pattern the DR
+        # suite and the D3 engine's own Postgres proof already use), the URL
+        # they must parse is the server's view from INSIDE that container --
+        # which is exactly what `command_database_url` is, and exactly what
+        # `default_backup` above already threads through for `pg_dump` /
+        # `pg_dumpall` / the drill.
+        #
+        # This seam did not accept it. `context.database_url` is the
+        # HOST-reachable URL every direct SQLAlchemy read needs, so the
+        # rollback handed `pg_restore` a host port while running it inside the
+        # container: `connection to server at "localhost", port 32803 failed:
+        # Connection refused`. `run_postgres_restore` raised, `_rollback` went
+        # to `_halt`, and the run reported HALTED_RESTORE_FAILED -- i.e. BL-01's
+        # own symptom, reproduced by BL-01's own fix. `None` in production
+        # (one reachable Postgres, no container indirection) keeps behaviour
+        # exactly as it was.
+        command_url = command_database_url or context.database_url
+        target_name = _database_name(command_url)
         recreated_url = create_fresh_postgres_database(
-            database_url=context.database_url,
+            database_url=command_url,
             database_name=target_name,
             psql_command=psql_command,
             allow_dropping_the_connection_url_database=True,
@@ -539,7 +562,22 @@ def build_default_seams(
             psql_command=psql_command,
             command_database_url=command_database_url,
         ),
-        restore_backup=default_restore_backup(context, pg_restore_command=pg_restore_command),
+        # BOTH of the restore seam's own tool arguments, and the URL those
+        # tools parse. `psql_command` was missing here as well: the BL-01
+        # rollback newly calls `create_fresh_postgres_database`, which shells
+        # to `psql`, and without this it fell back to `dr/backup.py`'s BARE
+        # NAME default and resolved `psql` through PATH. The installer writes
+        # no PATH entry and these ship only inside the staged
+        # native-server-binaries pack, so on a real station that is a
+        # filename-less WinError 2 -- the exact Sandbox run 22 defect
+        # `_resolve_pg_client_commands` exists to prevent, reintroduced on the
+        # one path that runs when an upgrade is already going wrong.
+        restore_backup=default_restore_backup(
+            context,
+            pg_restore_command=pg_restore_command,
+            psql_command=psql_command,
+            command_database_url=command_database_url,
+        ),
         lay_tree=default_lay_tree(context, payload_source=payload_source),
         flip_junction=default_flip_junction(context),
         read_junction=default_read_junction(context),

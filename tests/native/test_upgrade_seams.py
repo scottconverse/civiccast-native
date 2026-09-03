@@ -297,6 +297,139 @@ def test_bl01_the_rollback_recreates_the_target_before_replaying_the_dump(
     )
 
 
+def test_bl01_the_restore_gives_the_cli_tools_their_own_view_of_the_server(
+    tmp_path, monkeypatch
+) -> None:
+    """The rollback's `psql` and `pg_restore` must parse the URL from THEIR
+    side of the connection, not this process's.
+
+    CI regression (Unit tests job 100584596368, and main's own run on
+    cbe0014): the restore seam did not accept `command_database_url` at all,
+    so it handed `pg_restore` the HOST-reachable URL while running it inside
+    the container:
+
+        pg_restore: error: connection to server at "localhost", port 32803
+        failed: Connection refused
+
+    `run_postgres_restore` raised, `_rollback` went to `_halt`, and the run
+    reported HALTED_RESTORE_FAILED -- BL-01's own symptom, reproduced by
+    BL-01's own fix, and the reason its proof test could not execute.
+
+    `default_backup` has always honoured this split; the restore path never
+    did, even though `__main__`'s own `_PG_CLIENT_EXECUTABLES` doc names
+    "``pg_restore`` again on the rollback path" as one of the four commands
+    that has to be resolved.
+    """
+    recreate_kwargs: dict[str, object] = {}
+    restore_kwargs: dict[str, object] = {}
+
+    def _fake_create_fresh(**kwargs):  # type: ignore[no-untyped-def]
+        recreate_kwargs.update(kwargs)
+        return "postgresql://civiccast:pw@localhost:5432/civiccast"
+
+    def _fake_restore(artifact, url, **kwargs):  # type: ignore[no-untyped-def]
+        restore_kwargs.update(kwargs)
+        restore_kwargs["url"] = url
+
+    monkeypatch.setattr("civiccast.dr.backup.create_fresh_postgres_database", _fake_create_fresh)
+    monkeypatch.setattr(seams_module, "run_postgres_restore", _fake_restore)
+
+    ref, _manifest = _write_backup(tmp_path)
+    in_container = "postgresql://civiccast:pw@localhost:5432/civiccast"
+    seams_module.default_restore_backup(
+        _restore_context(tmp_path),
+        pg_restore_command=["docker", "exec", "-i", "c1", "pg_restore"],
+        psql_command=["docker", "exec", "-i", "c1", "psql"],
+        command_database_url=in_container,
+    )(ref)
+
+    assert recreate_kwargs["database_url"] == in_container, (
+        "psql runs inside the container, so it must parse the container's own view of "
+        "the server -- not this process's host-mapped port"
+    )
+    assert restore_kwargs["url"] == in_container
+    assert recreate_kwargs["psql_command"] == ["docker", "exec", "-i", "c1", "psql"], (
+        "and it must use the RESOLVED psql, never dr/backup.py's bare-name PATH fallback"
+    )
+    # The database NAME is derived from the same URL the tools address, so the
+    # same-name guard in create_fresh_postgres_database fires on the value it
+    # is actually about.
+    assert recreate_kwargs["database_name"] == "civiccast"
+
+
+def test_bl01_without_a_command_url_the_restore_uses_the_context_url_unchanged(
+    tmp_path, monkeypatch
+) -> None:
+    """The production shape: one reachable Postgres, no container
+    indirection, `command_database_url=None`. Behaviour must be exactly what
+    it was before the split was threaded through."""
+    recreate_kwargs: dict[str, object] = {}
+    monkeypatch.setattr(
+        "civiccast.dr.backup.create_fresh_postgres_database",
+        lambda **kwargs: (
+            recreate_kwargs.update(kwargs) or "postgresql://civiccast:pw@127.0.0.1:5432/civiccast"
+        ),
+    )
+    monkeypatch.setattr(seams_module, "run_postgres_restore", lambda *a, **k: None)
+
+    ref, _manifest = _write_backup(tmp_path)
+    context = _restore_context(tmp_path)
+    seams_module.default_restore_backup(context)(ref)
+
+    assert recreate_kwargs["database_url"] == context.database_url
+
+
+def test_bl01_the_production_bundle_threads_both_tool_arguments_to_the_restore(
+    tmp_path, monkeypatch
+) -> None:
+    """`build_default_seams` is where both defects actually lived.
+
+    It threaded `command_database_url` and `psql_command` into
+    `default_backup` and neither into `default_restore_backup` -- so the
+    rollback got a host URL for an in-container tool (the CI failure) AND
+    fell back to a bare `psql` resolved through PATH. The installer writes no
+    PATH entry and these ship only inside the staged native-server-binaries
+    pack, so on a real Windows station that second one is a filename-less
+    WinError 2 on the path that runs when an upgrade is already going wrong.
+    """
+    recreate_kwargs: dict[str, object] = {}
+    restore_kwargs: dict[str, object] = {}
+
+    def _fake_create_fresh(**kwargs):  # type: ignore[no-untyped-def]
+        recreate_kwargs.update(kwargs)
+        return "postgresql://civiccast:pw@localhost:5432/civiccast"
+
+    def _fake_restore(artifact, url, **kwargs):  # type: ignore[no-untyped-def]
+        restore_kwargs.update(kwargs)
+        restore_kwargs["url"] = url
+
+    monkeypatch.setattr("civiccast.dr.backup.create_fresh_postgres_database", _fake_create_fresh)
+    monkeypatch.setattr(seams_module, "run_postgres_restore", _fake_restore)
+
+    runtime = tmp_path / "install" / "runtime"
+    runtime.mkdir(parents=True)
+    context = _restore_context(tmp_path)
+    in_container = "postgresql://civiccast:pw@localhost:5432/civiccast"
+    bundle = seams_module.build_default_seams(
+        context,
+        payload_source=str(runtime),
+        drain_and_verify_quiescence=lambda: True,
+        health_gate=lambda: True,
+        stop_service=lambda: None,
+        pg_restore_command=[r"C:\packs\bin\pg_restore.exe"],
+        psql_command=[r"C:\packs\bin\psql.exe"],
+        command_database_url=in_container,
+    )
+
+    ref, _manifest = _write_backup(tmp_path)
+    bundle.restore_backup(ref)
+
+    assert recreate_kwargs["psql_command"] == [r"C:\packs\bin\psql.exe"]
+    assert restore_kwargs["pg_restore_command"] == [r"C:\packs\bin\pg_restore.exe"]
+    assert recreate_kwargs["database_url"] == in_container
+    assert restore_kwargs["url"] == in_container
+
+
 def test_bl01_a_tampered_backup_is_refused_before_the_live_database_is_dropped(
     tmp_path, monkeypatch
 ) -> None:

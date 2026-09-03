@@ -1081,7 +1081,11 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # test blind spots (11-16). Re-derived by an actual `--collect-only` run
     # on this tree, NOT by adding a delta to the previous pin:
     # (1704, 1897) -> (1771, 1971).
-    assert (collect("not windows_only"), collect()) == (1771, 1971)
+    # fix/bl01-restore-seam-ci: three tests pinning the restore seam's own
+    # tool wiring (the URL psql/pg_restore parse, and the resolved psql path)
+    # -- the two defects that made BL-01's Postgres proof unrunnable in CI.
+    # Re-derived by an actual `--collect-only` run: (1771, 1971) -> (1774, 1974).
+    assert (collect("not windows_only"), collect()) == (1774, 1974)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
