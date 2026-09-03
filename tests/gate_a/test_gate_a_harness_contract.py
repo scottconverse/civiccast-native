@@ -1745,3 +1745,86 @@ def test_hoststore_reset_states_its_post_condition() -> None:
     assert "$hoststoreRemnants" in code
     assert "hoststore reset did NOT complete" in code
     assert "-- verified empty" in code
+
+
+# --------------------------------------------------------------------------
+# <gate-a-engine-soak> T6: markers/verdict keys, and the time-bound arithmetic.
+# --------------------------------------------------------------------------
+
+
+def test_t6_markers_and_verdict_keys_exist() -> None:
+    """The evidence contract check_t6_engine_soak (scripts/gate_a_verdict.py)
+    reads must actually be written by the driver, and the judge must wire the
+    check into CHECKS."""
+    driver = _read(_DRIVER)
+    assert "$script:EngineSoakActive" in driver
+    assert "_ENGINE-SOAK-MODE.marker" in driver
+    assert re.search(r"'T6_RESULT=\$t6Result'|\"T6_RESULT=\$t6Result\"", driver), (
+        "the driver must write a T6_RESULT= line to T3T5-RESULT.txt"
+    )
+    assert "T6-SOAK.txt" in driver
+    assert "T6-ENGINE-NOTES.txt" in driver
+    assert re.search(r"Save-Summary -Step ['\"]t6-beat-\$beat['\"]", driver), (
+        "every T6 beat must call Save-Summary so the watchdog's stall detector keeps seeing "
+        "forward progress every 300s (well inside its 8-minute threshold)"
+    )
+    assert re.search(r"Save-Summary -Step ['\"]t6-soak-complete['\"]", driver)
+
+    judge = _read(_JUDGE)
+    assert "def check_t6_engine_soak" in judge
+    assert '"t6_engine_soak": check_t6_engine_soak' in judge
+
+
+def test_t6_only_runs_the_real_engine_and_touches_the_documented_egress_ports() -> None:
+    """T6 must configure/start the three PEG channels on the documented
+    engine ports (19001/19002/19003 -- distinct from the T4 fallback's fixed
+    9001-9003 and from T4's own single-channel 19003 proof), not the
+    ffmpeg-synthetic fallback path."""
+    code = _code_only(_driver_executable_text())
+    assert "id = 'public';     port = 19001" in code or "id = 'public'; port = 19001" in code
+    assert "id = 'education';  port = 19002" in code or "id = 'education'; port = 19002" in code
+    assert "id = 'government'; port = 19003" in code
+    assert "Test-TsProof" in code
+
+
+def test_soak_minutes_raises_max_script_minutes_only_above_20() -> None:
+    """<gate-a-engine-soak> The in-sandbox bound must grow with the soak
+    window (SOAK_MINUTES + 150) whenever T6 is active, and must be an
+    explicit no-op (Gate A's own CI lanes, 10/20) otherwise -- mirroring the
+    dirty-lane's own ``if ($MaxScriptMinutes -lt 210)`` floor pattern."""
+    code = _code_only(_driver_executable_text())
+    assert "$script:EngineSoakActive = ($null -ne $script:SoakMinutesRaw) -and ($script:SoakMinutesRaw -gt 20)" in code
+    assert "$desiredMaxScriptMinutes = $script:SoakMinutesRaw + 150" in code
+    assert "if ($MaxScriptMinutes -lt $desiredMaxScriptMinutes) { $MaxScriptMinutes = $desiredMaxScriptMinutes }" in code
+    # The soak-lane raise must be resolved BEFORE the watchdog and shipper are
+    # spawned (both capture $MaxScriptMinutes by value at spawn time).
+    soak_block_at = code.index("$script:EngineSoakActive = ")
+    watchdog_spawn_at = code.index("'-OutDir', \"`\"$OutDir`\"\", '-Minutes', $MaxScriptMinutes, '-DriverPid', $PID")
+    shipper_spawn_at = code.index("'-IntervalSeconds', $ShipIntervalSeconds, '-MaxMinutes', $MaxScriptMinutes,")
+    assert soak_block_at < watchdog_spawn_at, "MaxScriptMinutes must be finalized before the watchdog captures it"
+    assert soak_block_at < shipper_spawn_at, "MaxScriptMinutes must be finalized before the shipper captures it"
+
+
+def test_run_gate_a_timeout_minutes_scales_with_soak_minutes_when_not_explicit() -> None:
+    """host bound = in-sandbox bound (SoakMinutes + 150) + 20 = SoakMinutes + 170,
+    computed only when the caller did not pass -TimeoutMinutes explicitly, and
+    only when -SoakMinutes > 20 -- Gate A's own CI lanes (10/20) must see
+    -TimeoutMinutes exactly as passed (unchanged 170 default)."""
+    code = _code_only(_read(_RUN_GATE_A))
+    assert "$PSBoundParameters.ContainsKey('TimeoutMinutes')" in code
+    assert "$SoakMinutes -gt 20" in code
+    assert "$desiredInSandboxMinutes = $SoakMinutes + 150" in code
+    assert "$desiredTimeoutMinutes = $desiredInSandboxMinutes + 20" in code
+    assert "if ($TimeoutMinutes -lt $desiredTimeoutMinutes) {" in code
+
+
+def test_soak_480_scales_both_bounds_in_the_documented_order() -> None:
+    """Arithmetic sanity for the operator's actual command
+    (``-SoakMinutes 480``): in-sandbox 630 < host 650, the same ordering
+    relationship the clean lane's untouched 150 < 170 default keeps."""
+    soak_minutes = 480
+    in_sandbox_bound = soak_minutes + 150
+    host_bound = in_sandbox_bound + 20
+    assert in_sandbox_bound == 630
+    assert host_bound == 650
+    assert in_sandbox_bound < host_bound

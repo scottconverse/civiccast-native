@@ -233,6 +233,41 @@ if ($script:DownloadOnlyMode) {
     Write-Marker -Name '_DOWNLOAD-ONLY-MODE.marker' -Content "download_only_mode=1 detected_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
 }
 
+# ENGINE-SOAK LANE <gate-a-engine-soak>. SOAK_MINUTES.txt is host-provided
+# (Host-Launch-Sandbox-Test.ps1 -SoakMinutes) and already seeded into $OutDir
+# by the entry robocopy above -- the same channel DIRTY_MODE.txt rides. Must
+# be resolved HERE, before the watchdog is spawned below (it captures
+# $MaxScriptMinutes by value), exactly like the dirty-lane block above.
+#
+# T5's health-only soak (further down) proves nothing about the station's own
+# GStreamer egress engine -- it only polls /api/health. T6, added below,
+# drives real assets through the schedule API onto all three PEG channels'
+# real egress engines for the whole soak window, verified with TSDuck every
+# beat. That takes real wall-clock time proportional to SOAK_MINUTES, so the
+# script-level bound must grow with it: SOAK_MINUTES + 150 in-sandbox,
+# matching Run-GateA.ps1's host -TimeoutMinutes = (SOAK_MINUTES + 150) + 20
+# (kept 20 minutes above this one, the same 150 < 170 ordering the clean
+# lane's untouched default already keeps -- see
+# tests/gate_a/test_gate_a_harness_contract.py).
+#
+# Gate A's own CI runs (SOAK_MINUTES 10/20) must be byte-identical to today:
+# this block only raises $MaxScriptMinutes -- never lowers it -- and only
+# when SOAK_MINUTES.txt's value is > 20, so it is a no-op for every existing
+# lane.
+$script:SoakMinutesRaw = $null
+try {
+    $soakMinutesPath = Join-Path $OutDir 'SOAK_MINUTES.txt'
+    if (Test-Path $soakMinutesPath) {
+        $script:SoakMinutesRaw = [int]((Get-Content $soakMinutesPath | Select-Object -First 1).Trim())
+    }
+} catch { $script:SoakMinutesRaw = $null }
+$script:EngineSoakActive = ($null -ne $script:SoakMinutesRaw) -and ($script:SoakMinutesRaw -gt 20)
+if ($script:EngineSoakActive) {
+    $desiredMaxScriptMinutes = $script:SoakMinutesRaw + 150
+    if ($MaxScriptMinutes -lt $desiredMaxScriptMinutes) { $MaxScriptMinutes = $desiredMaxScriptMinutes }
+    Write-Marker -Name '_ENGINE-SOAK-MODE.marker' -Content "engine_soak_active=1 soak_minutes=$($script:SoakMinutesRaw) max_script_minutes=$MaxScriptMinutes detected_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+}
+
 # Quiesce control <gate-a-run7-findings>. Raised around the installer so the
 # shipper stops competing with it for the shared VSMB transport; see the
 # QUIESCE note above the shipper for the measured cost of not doing this.
@@ -3761,31 +3796,406 @@ try {
             Save-Summary -Step 't4-egress-ffmpeg-fallback'
         }
 
-        # --- T5: bounded soak (default 20 min; SOAK_MINUTES.txt overrides for full 4h) ---
+        # --- T5/T6: bounded soak (default 20 min; SOAK_MINUTES.txt overrides) ---
+        # T6 <gate-a-engine-soak> REPLACES T5's health-only loop when
+        # SOAK_MINUTES.txt > 20: it drives the station's own GStreamer egress
+        # engine, playing real assets on all three PEG channels, for the
+        # whole soak window, verified with TSDuck every beat -- not just a
+        # /api/health poll. $script:EngineSoakActive was resolved at script
+        # entry (before the watchdog spawned) alongside the MaxScriptMinutes
+        # raise. Below 20 minutes (Gate A's own CI lanes, 10/20) this block
+        # is byte-identical to the pre-T6 harness -- the `else` arm.
         $soakMin = 20
         try { if (Test-Path (Join-Path $OutDir 'SOAK_MINUTES.txt')) { $soakMin = [int]((Get-Content (Join-Path $OutDir 'SOAK_MINUTES.txt') | Select-Object -First 1).Trim()) } } catch {}
         "T5_soak_minutes=$soakMin" | Add-Content -Path $t35 -Encoding UTF8
-        $soakStart = Get-Date
-        $soakEnd = $soakStart.AddMinutes($soakMin)
-        $beat = 0; $soakFail = 0
-        # <gate-a-audit-MA-26> Every beat is graded on the /health BODY, and
-        # each beat's body_status/body_schema are recorded, so a soak over a
-        # degraded/schema-behind station can never record unhealthy=0 again.
-        # The first beat runs BEFORE the deadline test so a zero-minute soak
-        # still produces one real observation rather than beats=0 (MN-20).
-        do {
-            $beat++
-            $hp = Invoke-CivicCastHealthProbe -Url "$BASE/api/health"
-            if (-not $hp.ok) { $soakFail++ }
-            "T5 beat=$beat health=$($hp.status) body_status=$($hp.body_status) body_schema=$($hp.body_schema) ok=$($hp.ok) $((Get-Date).ToString('o'))" | Add-Content -Path $t35 -Encoding UTF8
-            Save-Summary -Step "t5-beat-$beat"
-            if ((Get-Date) -ge $soakEnd) { break }
-            Start-Sleep -Seconds 300
-        } while ((Get-Date) -lt $soakEnd)
-        $soakElapsed = [Math]::Round((New-TimeSpan -Start $soakStart -End (Get-Date)).TotalSeconds, 1)
-        "T5_elapsed_seconds=$soakElapsed" | Add-Content -Path $t35 -Encoding UTF8
-        "T5_RESULT=$(if($soakFail -eq 0){'PASS'}else{'FAIL'}) beats=$beat unhealthy=$soakFail" | Add-Content -Path $t35 -Encoding UTF8
-        Save-Summary -Step 't5-soak-complete'
+        if ($script:EngineSoakActive) {
+            "T6_soak_minutes=$soakMin" | Add-Content -Path $t35 -Encoding UTF8
+            $t6 = Join-Path $OutDir 'T6-SOAK.txt'
+            "checked_utc=$((Get-Date).ToUniversalTime().ToString('o')) soak_minutes=$soakMin" | Set-Content -Path $t6 -Encoding UTF8
+
+            $t6Token = $token
+            if (-not $t6Token) { $t6Token = $engineToken }
+            $t6Channels = @(
+                [ordered]@{ id = 'public';     port = 19001 },
+                [ordered]@{ id = 'education';  port = 19002 },
+                [ordered]@{ id = 'government'; port = 19003 }
+            )
+            $tspExeT6 = Join-Path $tsdukBin 'tsp.exe'
+            $ffprobeExe = Join-Path $installDir 'dependencies\ffmpeg\bin\ffprobe.exe'
+            $engineWorkDirRoot = if ($env:ProgramData) { Join-Path $env:ProgramData 'CivicCast\data\egress' } else { 'C:\ProgramData\CivicCast\data\egress' }
+
+            function Get-Mp4DurationSeconds {
+                param([string]$FfprobeExe, [string]$FilePath, [int]$DefaultSeconds = 30)
+                if (-not $FfprobeExe -or -not (Test-Path $FfprobeExe) -or -not (Test-Path $FilePath)) { return $DefaultSeconds }
+                try {
+                    $out = & $FfprobeExe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $FilePath 2>$null
+                    $first = ($out | Select-Object -First 1)
+                    $val = [double]0
+                    if ([double]::TryParse($first, [ref]$val) -and $val -gt 0) { return [int][Math]::Ceiling($val) }
+                } catch {}
+                return $DefaultSeconds
+            }
+
+            $t6NoteLog = Join-Path $OutDir 'T6-ENGINE-NOTES.txt'
+            "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $t6NoteLog -Encoding UTF8
+
+            $t6Result = $null   # set once, at the very end
+            $t6Assets = @()
+            # Guards the fallback T5_RESULT write below -- check_t5_soak
+            # (scripts/gate_a_verdict.py) is an UNCONDITIONALLY required
+            # check in every lane, so a T6 path that aborts before ever
+            # reaching the beat loop (no token / no assets / no routes) must
+            # still leave a real T5_RESULT=... line, not a silent gap.
+            $t5ResultWritten = $false
+
+            if (-not $t6Token) {
+                $t6Result = 'FAIL_EARLY reason=no-bearer-token'
+            } else {
+                # (a) Stage assets: prefer the real LPM sample clips shipped in
+                # the kit's mapped samples\ folder (real speech -> a proof that
+                # actually exercises encode+mux, not just a slate). Fall back to
+                # ONE synthetic clip, generated once and reused, when absent.
+                $samplesDir = Join-Path $PayloadDir 'samples'
+                $realClips = @()
+                if (Test-Path $samplesDir) {
+                    $realClips = @(Get-ChildItem -Path $samplesDir -Filter '*.mp4' -File -ErrorAction SilentlyContinue | Select-Object -First 4)
+                }
+                "asset_source=$(if($realClips.Count -gt 0){'real-lpm-clips'}else{'synthetic-fallback'}) real_clip_count=$($realClips.Count)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+
+                $stagedClips = @()
+                if ($realClips.Count -gt 0) {
+                    foreach ($rc in $realClips) { $stagedClips += $rc.FullName }
+                } else {
+                    $synthPath = Join-Path $runRoot 't6-synthetic-asset.mp4'
+                    $genArgs = @(
+                        '-y','-hide_banner','-loglevel','warning',
+                        '-f','lavfi','-i','testsrc=size=1280x720:rate=30','-t','30',
+                        '-f','lavfi','-i','sine=frequency=1000:sample_rate=48000','-t','30',
+                        '-map','0:v:0','-map','1:a:0',
+                        '-c:v','libopenh264','-b:v','1500k','-g','60',
+                        '-c:a','aac','-b:a','96k',
+                        '-movflags','+faststart',
+                        $synthPath
+                    )
+                    $sp = Start-Process -FilePath $ffmpeg -ArgumentList $genArgs -PassThru -NoNewWindow -Wait -RedirectStandardError (Join-Path $OutDir 't6-generate-mp4.stderr.log')
+                    "synthetic_asset_generate_exit=$($sp.ExitCode) path=$synthPath" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                    if ((Test-Path $synthPath) -and ((Get-Item $synthPath -ErrorAction SilentlyContinue).Length -gt 0)) { $stagedClips += $synthPath }
+                }
+
+                foreach ($clipPath in $stagedClips) {
+                    $aSuffix = -join ((97..122) | Get-Random -Count 4 | ForEach-Object { [char]$_ })
+                    $aId = 't6-soak-' + (Get-Date -Format 'yyMMddHHmmss') + '-' + $aSuffix
+                    $aTitle = 'Gate A T6 Soak Asset ' + [System.IO.Path]::GetFileNameWithoutExtension($clipPath) + ' ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+                    $aUp = Invoke-AssetUpload -BaseUrl $BASE -Token $t6Token -AssetId $aId -Title $aTitle -FilePath $clipPath -LogFile $t6NoteLog
+                    if ($aUp.status -ne 201) {
+                        "asset_upload_failed clip=$clipPath status=$($aUp.status)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                        continue
+                    }
+                    $aPkg = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/assets/$aId/package" -LogFile $t6NoteLog -BearerToken $t6Token
+                    if ($aPkg.status -ne 200) {
+                        "asset_package_failed asset_id=$aId status=$($aPkg.status)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                        continue
+                    }
+                    $aAppr = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/publish/assets/$aId/approve" -LogFile $t6NoteLog -BodyObj (@{ operator_id = 'sandboxproof'; operator_display_name = 'Sandbox Proof Admin' }) -BearerToken $t6Token
+                    if ($aAppr.status -ne 200) {
+                        "asset_approve_failed asset_id=$aId status=$($aAppr.status)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                        continue
+                    }
+                    $aDur = Get-Mp4DurationSeconds -FfprobeExe $ffprobeExe -FilePath $clipPath -DefaultSeconds 30
+                    $t6Assets += [ordered]@{ id = $aId; duration_seconds = $aDur }
+                    "asset_ready id=$aId duration_seconds=$aDur source=$clipPath" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                }
+
+                if ($t6Assets.Count -eq 0) {
+                    $t6Result = 'FAIL_EARLY reason=no-assets-staged'
+                } else {
+                    # (b) Discover the egress routes once (same shape as T4).
+                    $specR6 = Invoke-CivicCastApi -Method 'Get' -Url "$BASE/openapi.json" -LogFile $t6NoteLog
+                    $egressPaths6 = @()
+                    if ($specR6.status -eq 200 -and $specR6.body_json -and $specR6.body_json.paths) {
+                        $egressPaths6 = @($specR6.body_json.paths.PSObject.Properties.Name | Where-Object { $_ -like '*egress*' } | Sort-Object)
+                    }
+                    $configPath6 = $egressPaths6 | Where-Object { $_ -like '*channels/{channel_id}/config' } | Select-Object -First 1
+                    $commandsPath6 = $egressPaths6 | Where-Object { $_ -like '*channels/{channel_id}/commands' } | Select-Object -First 1
+                    $statePath6 = $egressPaths6 | Where-Object { $_ -like '*channels/{channel_id}/state' } | Select-Object -First 1
+                    $healthPath6 = $egressPaths6 | Where-Object { $_ -like '*channels/{channel_id}/health' } | Select-Object -First 1
+
+                    if (-not $configPath6 -or -not $commandsPath6 -or -not $statePath6 -or -not $healthPath6) {
+                        $t6Result = 'FAIL_EARLY reason=no-egress-routes-discovered'
+                    } else {
+                        # (c) Configure + start all three channels first, so the
+                        # engines have the whole beat-1 window to come up before
+                        # the first observation.
+                        $t6ChanState = @{}
+                        foreach ($ch in $t6Channels) {
+                            $chUri = "udp://127.0.0.1:$($ch.port)"
+                            $chConfigUrl = "$BASE" + ($configPath6 -replace '\{channel_id\}', $ch.id)
+                            $chCommandsUrl = "$BASE" + ($commandsPath6 -replace '\{channel_id\}', $ch.id)
+                            $chStateUrl = "$BASE" + ($statePath6 -replace '\{channel_id\}', $ch.id)
+                            $chHealthUrl = "$BASE" + ($healthPath6 -replace '\{channel_id\}', $ch.id)
+                            $t6ChanState[$ch.id] = [ordered]@{
+                                port = $ch.port; config_url = $chConfigUrl; commands_url = $chCommandsUrl
+                                state_url = $chStateUrl; health_url = $chHealthUrl
+                                last_pid = $null; relaunches = 0; first_rss_mb = $null; last_rss_mb = $null
+                                failed_beats = 0; config_ok = $false; start_ok = $false
+                            }
+                            $chCfgBody = [ordered]@{
+                                channel_id              = $ch.id
+                                enabled                 = $true
+                                auto_start              = $false
+                                allow_software_fallback = $true
+                                fill_policy             = 'slate'
+                                slate_message           = 'Gate A T6 soak -- product-engine soak test.'
+                                sinks                   = @(
+                                    [ordered]@{
+                                        kind = 'udp-ts'; label = "sandbox-soak-$($ch.id)"; uri = $chUri
+                                        latency_ms = 2000; loudness_regime = 'inherit'; eas_tone_strip_enabled = $true
+                                    }
+                                )
+                            }
+                            $chCfgR = Invoke-CivicCastApi -Method 'Put' -Url $chConfigUrl -LogFile $t6NoteLog -BodyObj $chCfgBody -BearerToken $t6Token
+                            $t6ChanState[$ch.id].config_ok = ($chCfgR.status -eq 200)
+                            if ($t6ChanState[$ch.id].config_ok) {
+                                $chStartR = Invoke-CivicCastApi -Method 'Post' -Url $chCommandsUrl -LogFile $t6NoteLog -BodyObj (@{ action = 'start' }) -BearerToken $t6Token
+                                $t6ChanState[$ch.id].start_ok = ($chStartR.status -eq 202)
+                            }
+                            "channel=$($ch.id) port=$($ch.port) config_ok=$($t6ChanState[$ch.id].config_ok) start_ok=$($t6ChanState[$ch.id].start_ok)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                        }
+                        Save-Summary -Step 't6-channels-configured'
+
+                        # (d) Schedule back-to-back premieres per channel, from
+                        # now to now+SOAK_MINUTES+10min, cycling the staged
+                        # assets. A 2s gap between items avoids racing the
+                        # EXCLUDE constraint's boundary. Capped per channel so a
+                        # very short clip set can't runaway into thousands of
+                        # HTTP calls; a channel that hits the cap before the
+                        # deadline is a real, logged finding, not silently
+                        # dropped.
+                        $scheduleEnd = (Get-Date).AddMinutes($soakMin + 10)
+                        $scheduleCapPerChannel = 400
+                        foreach ($ch in $t6Channels) {
+                            $cursor = (Get-Date).AddSeconds(15)
+                            $assetIdx = 0
+                            $scheduled = 0
+                            $scheduleFailed = 0
+                            while (($cursor -lt $scheduleEnd) -and ($scheduled -lt $scheduleCapPerChannel)) {
+                                $asset = $t6Assets[$assetIdx % $t6Assets.Count]
+                                $itemBody = [ordered]@{
+                                    asset_id          = $asset.id
+                                    channel_id        = $ch.id
+                                    mode              = 'premiere'
+                                    scheduled_at      = $cursor.ToUniversalTime().ToString('o')
+                                    duration_seconds  = [int]$asset.duration_seconds
+                                    notes             = 'Gate A T6 engine soak'
+                                }
+                                $itemR = Invoke-CivicCastApi -Method 'Post' -Url "$BASE/api/staff/schedule" -LogFile $t6NoteLog -BodyObj $itemBody -BearerToken $t6Token
+                                if ($itemR.status -eq 201) {
+                                    $scheduled++
+                                    $cursor = $cursor.AddSeconds([int]$asset.duration_seconds + 2)
+                                } else {
+                                    $scheduleFailed++
+                                    "schedule_item_failed channel=$($ch.id) asset=$($asset.id) status=$($itemR.status)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                                    # advance the cursor anyway so one bad asset
+                                    # cannot spin the loop forever
+                                    $cursor = $cursor.AddSeconds([int]$asset.duration_seconds + 2)
+                                }
+                                $assetIdx++
+                            }
+                            "channel=$($ch.id) schedule_items_created=$scheduled schedule_items_failed=$scheduleFailed capped=$($scheduled -ge $scheduleCapPerChannel)" | Add-Content -Path $t6NoteLog -Encoding UTF8
+                        }
+                        Save-Summary -Step 't6-schedule-populated'
+
+                        # (e) Beat loop: every 300s until the deadline (well
+                        # inside the watchdog's 8-minute stall threshold, and
+                        # every beat also calls Save-Summary so the watchdog
+                        # keeps seeing forward progress).
+                        $soakStart = Get-Date
+                        $soakEnd = $soakStart.AddMinutes($soakMin)
+                        $beat = 0
+                        $t5Fail = 0   # station-level /health, kept for T5_RESULT compatibility
+                        $t6FailEarly = $null
+                        do {
+                            $beat++
+                            $beatTs = (Get-Date).ToUniversalTime().ToString('o')
+
+                            # Station-level health, same predicate T5 always used.
+                            $hp6 = Invoke-CivicCastHealthProbe -Url "$BASE/api/health"
+                            if (-not $hp6.ok) { $t5Fail++ }
+                            "T5 beat=$beat health=$($hp6.status) body_status=$($hp6.body_status) body_schema=$($hp6.body_schema) ok=$($hp6.ok) $beatTs" | Add-Content -Path $t35 -Encoding UTF8
+
+                            # Control-plane RSS (matched by its uvicorn factory
+                            # target, not by name -- python.exe alone is ambiguous
+                            # with the gst worker children).
+                            $cpRssMb = $null
+                            try {
+                                $cpProc = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+                                    Where-Object { $_.CommandLine -and ($_.CommandLine -like '*civiccast.app:create_app*') } |
+                                    Select-Object -First 1
+                                if ($cpProc) {
+                                    $cpRssMb = [Math]::Round((Get-Process -Id $cpProc.ProcessId -ErrorAction Stop).WorkingSet64 / 1MB, 1)
+                                }
+                            } catch {}
+
+                            $beatObj = [ordered]@{
+                                beat = $beat; beat_utc = $beatTs; control_plane_rss_mb = $cpRssMb; channels = [ordered]@{}
+                            }
+                            $beatFailed = $false
+                            foreach ($ch in $t6Channels) {
+                                $cs = $t6ChanState[$ch.id]
+                                $chBeat = [ordered]@{
+                                    engine_state = $null; last_error = $null; pid = $null; sink_connected = $null
+                                    rss_mb = $null; relaunched_this_beat = $false
+                                    packets_total = $null; invalid_syncs = $null; transport_errors = $null; discontinuities = $null
+                                    tsp_verdict = $null; channel_failed = $false
+                                }
+                                $stR6 = Invoke-CivicCastApi -Method 'Get' -Url $cs.state_url -LogFile $t6NoteLog -BearerToken $t6Token
+                                if ($stR6.body_json) {
+                                    $chBeat.engine_state = $stR6.body_json.state
+                                    $chBeat.last_error = $stR6.body_json.last_error
+                                    $chBeat.pid = $stR6.body_json.pid
+                                }
+                                if ($chBeat.pid) {
+                                    if ($cs.last_pid -and ($cs.last_pid -ne $chBeat.pid)) {
+                                        $cs.relaunches++
+                                        $chBeat.relaunched_this_beat = $true
+                                    }
+                                    $cs.last_pid = $chBeat.pid
+                                    try {
+                                        $chBeat.rss_mb = [Math]::Round((Get-Process -Id ([int]$chBeat.pid) -ErrorAction Stop).WorkingSet64 / 1MB, 1)
+                                        if ($null -eq $cs.first_rss_mb -and $beat -ge 3) { $cs.first_rss_mb = $chBeat.rss_mb }
+                                        $cs.last_rss_mb = $chBeat.rss_mb
+                                    } catch {}
+                                }
+                                $hR6 = Invoke-CivicCastApi -Method 'Get' -Url "$($cs.health_url)?limit=1" -LogFile $t6NoteLog -BearerToken $t6Token
+                                if ($hR6.body_json -and @($hR6.body_json).Count -gt 0) {
+                                    $sinkMap6 = (@($hR6.body_json)[0]).sink_connected
+                                    if ($sinkMap6) { $chBeat.sink_connected = ($sinkMap6 | ConvertTo-Json -Compress -Depth 4) }
+                                }
+
+                                $tsp6 = Test-TsProof -TspExe $tspExeT6 -Port $ch.port -Seconds 8 -OutDir $OutDir -Label "t6-$($ch.id)-beat$beat"
+                                $chBeat.tsp_verdict = $tsp6.verdict
+                                $chBeat.packets_total = $tsp6.packets_total
+                                $chBeat.invalid_syncs = $tsp6.invalid_syncs
+                                $chBeat.transport_errors = $tsp6.transport_errors
+                                $chBeat.discontinuities = $tsp6.discontinuities
+
+                                $isLive = ($chBeat.engine_state -eq 'ON_AIR')
+                                $hasPackets = ($null -ne $chBeat.packets_total) -and ([int]$chBeat.packets_total -gt 0)
+                                if (-not $isLive -or -not $hasPackets) {
+                                    $chBeat.channel_failed = $true
+                                    $cs.failed_beats++
+                                    $beatFailed = $true
+                                }
+                                $beatObj.channels[$ch.id] = $chBeat
+                                "T6 beat=$beat channel=$($ch.id) engine_state=$($chBeat.engine_state) pid=$($chBeat.pid) rss_mb=$($chBeat.rss_mb) relaunched=$($chBeat.relaunched_this_beat) tsp=$($chBeat.tsp_verdict) packets=$($chBeat.packets_total) failed=$($chBeat.channel_failed)" | Add-Content -Path $t6 -Encoding UTF8
+                            }
+
+                            ($beatObj | ConvertTo-Json -Depth 8) | Set-Content -Path (Join-Path $OutDir "T6-beat-$beat.json") -Encoding UTF8
+                            Save-Summary -Step "t6-beat-$beat"
+
+                            # Abort rule: beats 1-2 require every channel LIVE
+                            # with real packets, or this soak is not worth
+                            # burning the full window on.
+                            if (($beat -le 2) -and $beatFailed) {
+                                $badChans = @($t6Channels | Where-Object { $beatObj.channels[$_.id].channel_failed } | ForEach-Object { $_.id })
+                                $t6FailEarly = "channel(s) not live/no-packets at beat $beat -- " + ($badChans -join ',')
+                                break
+                            }
+
+                            if ((Get-Date) -ge $soakEnd) { break }
+                            Start-Sleep -Seconds 300
+                        } while ((Get-Date) -lt $soakEnd)
+
+                        $soakElapsed = [Math]::Round((New-TimeSpan -Start $soakStart -End (Get-Date)).TotalSeconds, 1)
+                        "T5_elapsed_seconds=$soakElapsed" | Add-Content -Path $t35 -Encoding UTF8
+                        "T5_RESULT=$(if($t5Fail -eq 0){'PASS'}else{'FAIL'}) beats=$beat unhealthy=$t5Fail" | Add-Content -Path $t35 -Encoding UTF8
+                        $t5ResultWritten = $true
+
+                        if ($t6FailEarly) {
+                            $t6Result = "FAIL_EARLY reason=$t6FailEarly beats=$beat"
+                        } else {
+                            $totalFailedBeats = 0
+                            $relaunchDetail = @()
+                            $rssDetail = @()
+                            $overReport = @()
+                            foreach ($ch in $t6Channels) {
+                                $cs = $t6ChanState[$ch.id]
+                                $totalFailedBeats += $cs.failed_beats
+                                $relaunchDetail += "$($ch.id):$($cs.relaunches)"
+                                if ($cs.relaunches -gt 3) { $overReport += "$($ch.id) relaunches=$($cs.relaunches) (>3)" }
+                                if ($cs.first_rss_mb -and $cs.last_rss_mb) {
+                                    $growth = [Math]::Round((($cs.last_rss_mb - $cs.first_rss_mb) / $cs.first_rss_mb) * 100.0, 1)
+                                    $rssDetail += "$($ch.id):first=$($cs.first_rss_mb)MB,last=$($cs.last_rss_mb)MB,growth=${growth}%"
+                                    if ($growth -gt 50) { $overReport += "$($ch.id) rss_growth=${growth}% (>50%)" }
+                                } else {
+                                    $rssDetail += "$($ch.id):insufficient-rss-samples"
+                                }
+                            }
+                            "T6 relaunches=$($relaunchDetail -join ' ')" | Add-Content -Path $t6 -Encoding UTF8
+                            "T6 rss=$($rssDetail -join ' ')" | Add-Content -Path $t6 -Encoding UTF8
+                            if ($overReport.Count -gt 0) {
+                                $t6Result = "FAIL reason=$($overReport -join '; ') beats=$beat failed_beats=$totalFailedBeats"
+                            } elseif ($totalFailedBeats -gt 0) {
+                                $t6Result = "FAIL reason=$totalFailedBeats-failed-beat(s)-across-channels beats=$beat failed_beats=$totalFailedBeats"
+                            } else {
+                                $t6Result = "PASS beats=$beat failed_beats=$totalFailedBeats"
+                            }
+                        }
+
+                        # (f) Collect the gst worker logs, then stop every channel.
+                        foreach ($ch in $t6Channels) {
+                            $cs = $t6ChanState[$ch.id]
+                            $chLogSrc = Join-Path $engineWorkDirRoot ($ch.id + '\logs')
+                            $chLogDst = Join-Path $OutDir ("T6-gst-worker-logs-" + $ch.id)
+                            try {
+                                if (Test-Path $chLogSrc) {
+                                    New-Item -ItemType Directory -Force -Path $chLogDst | Out-Null
+                                    Copy-Item -Path (Join-Path $chLogSrc '*') -Destination $chLogDst -Force -Recurse -ErrorAction SilentlyContinue
+                                }
+                            } catch { "gst worker log copy failed for $($ch.id): $_" | Add-Content -Path $t6NoteLog -Encoding UTF8 }
+                            try { Invoke-CivicCastApi -Method 'Post' -Url $cs.commands_url -LogFile $t6NoteLog -BodyObj (@{ action = 'stop' }) -BearerToken $t6Token | Out-Null } catch {}
+                        }
+                        Save-Summary -Step 't6-channels-stopped'
+                    }
+                }
+            }
+
+            if (-not $t5ResultWritten) {
+                # T6 aborted before ever reaching the beat loop -- leave an
+                # honest, non-vacuous T5_RESULT line (beats=0 is graded
+                # SKIPPED, never PASS, by scripts/gate_a_verdict.py's
+                # T5_MINIMUM_BEATS floor).
+                "T5_elapsed_seconds=0" | Add-Content -Path $t35 -Encoding UTF8
+                "T5_RESULT=SKIPPED beats=0 unhealthy=0" | Add-Content -Path $t35 -Encoding UTF8
+            }
+            if (-not $t6Result) { $t6Result = 'FAIL reason=unreachable-t6-path' }
+            "T6_RESULT=$t6Result" | Add-Content -Path $t35 -Encoding UTF8
+            Save-Summary -Step 't6-soak-complete'
+        } else {
+            # Unchanged pre-T6 T5 behaviour -- byte-identical to the previous
+            # harness whenever SOAK_MINUTES.txt is absent or <= 20.
+            $soakStart = Get-Date
+            $soakEnd = $soakStart.AddMinutes($soakMin)
+            $beat = 0; $soakFail = 0
+            # <gate-a-audit-MA-26> Every beat is graded on the /health BODY, and
+            # each beat's body_status/body_schema are recorded, so a soak over a
+            # degraded/schema-behind station can never record unhealthy=0 again.
+            # The first beat runs BEFORE the deadline test so a zero-minute soak
+            # still produces one real observation rather than beats=0 (MN-20).
+            do {
+                $beat++
+                $hp = Invoke-CivicCastHealthProbe -Url "$BASE/api/health"
+                if (-not $hp.ok) { $soakFail++ }
+                "T5 beat=$beat health=$($hp.status) body_status=$($hp.body_status) body_schema=$($hp.body_schema) ok=$($hp.ok) $((Get-Date).ToString('o'))" | Add-Content -Path $t35 -Encoding UTF8
+                Save-Summary -Step "t5-beat-$beat"
+                if ((Get-Date) -ge $soakEnd) { break }
+                Start-Sleep -Seconds 300
+            } while ((Get-Date) -lt $soakEnd)
+            $soakElapsed = [Math]::Round((New-TimeSpan -Start $soakStart -End (Get-Date)).TotalSeconds, 1)
+            "T5_elapsed_seconds=$soakElapsed" | Add-Content -Path $t35 -Encoding UTF8
+            "T5_RESULT=$(if($soakFail -eq 0){'PASS'}else{'FAIL'}) beats=$beat unhealthy=$soakFail" | Add-Content -Path $t35 -Encoding UTF8
+            Save-Summary -Step 't5-soak-complete'
+        }
     } else {
         # HARDENED <gate-a-station-up-wait-and-log-capture>: EXPLICITLY skip
         # T3/T4/T5 -- write each of their own result files with a real
@@ -3803,6 +4213,10 @@ try {
         "T4_RESULT=SKIPPED(station-down)" | Add-Content -Path $t35 -Encoding UTF8
         "T5_soak_minutes=0 (skipped)" | Add-Content -Path $t35 -Encoding UTF8
         "T5_RESULT=SKIPPED beats=0 unhealthy=0" | Add-Content -Path $t35 -Encoding UTF8
+        if ($script:EngineSoakActive) {
+            "T6_soak_minutes=0 (skipped)" | Add-Content -Path $t35 -Encoding UTF8
+            "T6_RESULT=SKIPPED(station-down)" | Add-Content -Path $t35 -Encoding UTF8
+        }
 
         $t3loopSkip = Join-Path $OutDir 'T3-LOOP.txt'
         "checked_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $t3loopSkip -Encoding UTF8
