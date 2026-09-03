@@ -213,13 +213,30 @@ def verify_signature(setup: Path) -> None:
 # (c) Gate A verdict verification
 # ---------------------------------------------------------------------------
 def download_gate_a_verdicts(
-    *, repository: str, gate_a_run_id: str, dest_dir: Path
+    *, repository: str, gate_a_run_id: str, build_run_id: str, dest_dir: Path
 ) -> dict[str, dict[str, Any]]:
-    """Download and parse gate-a-verdict.json for all three required lanes."""
+    """Download and parse gate-a-verdict.json for all three required lanes.
+
+    ``gate_a_run_id`` selects WHICH workflow run's artifacts to fetch from
+    (the positional argument to ``gh run download``); ``build_run_id`` names
+    WHICH artifact to fetch, because gate-a-station-acceptance.yml's own
+    ``run_id`` step output is the build run being validated
+    (``github.event.inputs.run_id``), not the Gate A workflow's own run id --
+    so every ``gate-a*-verdict-<id>`` artifact it uploads is suffixed with
+    the build run id, even though those artifacts live on the Gate A run.
+    Confirmed live: Gate A run 33713004718 (validating build 33711079441)
+    uploads artifacts named ``gate-a-verdict-33711079441``,
+    ``gate-a-dirty-verdict-33711079441``,
+    ``gate-a-download-only-verdict-33711079441`` -- never
+    ``*-33713004718``. Formatting the artifact name with ``gate_a_run_id``
+    (the original code) looks for an artifact that can never exist whenever
+    the two run ids differ, which the existing test suite never caught
+    because its fakes never modeled a real Gate A run's artifact names.
+    """
 
     verdicts: dict[str, dict[str, Any]] = {}
     for lane in GATE_A_LANES:
-        artifact_name = GATE_A_ARTIFACT_NAMES[lane].format(run_id=gate_a_run_id)
+        artifact_name = GATE_A_ARTIFACT_NAMES[lane].format(run_id=build_run_id)
         lane_dir = dest_dir / lane
         lane_dir.mkdir(parents=True, exist_ok=True)
         proc = run_gh(
@@ -653,7 +670,10 @@ def _run(args: argparse.Namespace) -> None:
     print(f"publish_beta_candidate: downloading Gate A verdicts for run {args.gate_a_run_id}")
     gate_a_dir = repo_root / "artifacts" / "release" / tag / "gate-a-verdicts"
     verdicts = download_gate_a_verdicts(
-        repository=repository, gate_a_run_id=args.gate_a_run_id, dest_dir=gate_a_dir
+        repository=repository,
+        gate_a_run_id=args.gate_a_run_id,
+        build_run_id=args.build_run_id,
+        dest_dir=gate_a_dir,
     )
     verify_gate_a_verdicts(verdicts, source_sha=source_sha)
     print("publish_beta_candidate: Gate A PASS on all three lanes, source_sha agrees")
