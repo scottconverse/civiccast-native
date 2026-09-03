@@ -160,6 +160,12 @@ class BackupRef(BaseModel):
     verified: bool
     #: True once the restore-drill spot check passed against a throwaway DB.
     restore_drill_ok: bool
+    #: Detail behind a False restore_drill_ok (RestoreDrillReport.errors plus
+    #: a schema_ok mismatch summary, if any) -- empty when the drill passed
+    #: or was never wired to report detail. Surfaced in the orchestrator's
+    #: raise and the journal's error field so a failed pre-upgrade backup is
+    #: diagnosable from the journal alone, not just "verification failed".
+    restore_drill_errors: list[str] = Field(default_factory=list)
 
 
 class UpgradeJournal(BaseModel):

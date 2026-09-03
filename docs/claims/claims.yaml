@@ -199,12 +199,12 @@ entries:
         blob: ac8ac5c40e05c3591c5d250f8381797903907b2a
       code:
         - path: civiccast/dr/restore_drill.py
-          blob: e0ecaa308287b1ae1d3c856b268023250ff98945
+          blob: 04a8e44547b0fc637011822dfd700b9d3d558025
         - path: civiccast/dr/report.py
           blob: 37c2bd2bc951eb0bfe8d5b4b2fdef1eda6027e1c
       test:
         path: tests/dr/test_postgres_restore.py
-        blob: 2cd1d8ae9fe1c087157b6801c4c36a998631370e
+        blob: cb10c5b884176d4c9764c6f41b3b78053d564b60
         node_id: "tests/dr/test_postgres_restore.py::test_run_full_drill_postgres_end_to_end"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -256,7 +256,7 @@ entries:
         blob: 8252517551419e6c8dab9ae6d2a12b6aa49955a7
       code:
         path: civiccast/dr/restore_drill.py
-        blob: e0ecaa308287b1ae1d3c856b268023250ff98945
+        blob: 04a8e44547b0fc637011822dfd700b9d3d558025
       test:
         path: tests/dr/test_restore_drill.py
         blob: a0d8f82317ea29d755d3f808773536a0e4cb6bc5

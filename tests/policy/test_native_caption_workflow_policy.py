@@ -1040,7 +1040,14 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # onto PR #127's own floor (1697, 1890) after that PR landed first, and
     # re-derived by an actual `--collect-only` run on this POST-REBASE tree,
     # NOT by adding six to it: (1697, 1890) -> (1703, 1896).
-    assert (collect("not windows_only"), collect()) == (1703, 1896)
+    # fix/d3-preupgrade-drill-and-rollback-containment (Gate A run 33681670855):
+    # one new platform-independent end-to-end proof
+    # (tests/native/test_upgrade_engine_postgres.py, Postgres-gated but not
+    # windows_only) that the real D3 upgrade engine migrates a database from
+    # N-1 to head through the actual production seam bundle. Both lanes
+    # advance by one. Re-derived by an actual `--collect-only` run on this
+    # tree: (1703, 1896) -> (1704, 1897).
+    assert (collect("not windows_only"), collect()) == (1704, 1897)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

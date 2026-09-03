@@ -119,21 +119,42 @@ def default_backup(
         blob_hash = _manifest_blob_hash(manifest)
 
         restore_ok = False
+        drill_errors: list[str] = []
         if manifest.engine == "postgres":
+            # The pre-upgrade drill's "schema_ok" question is "does the
+            # restored copy match what we actually dumped", NOT "does it
+            # match the NEW code's migration head" -- migrate() has not run
+            # yet, so on any release that ships a migration the latter is
+            # always false (Gate A run 33681670855 root cause). Pass the
+            # SOURCE database's own current revision -- read from the same
+            # database this backup was just taken from, so it reflects the
+            # exact pre-upgrade state the dump captured.
+            from civiccast.schema_check import read_db_revision
+
+            source_revision = read_db_revision(context.database_url)
             report = run_postgres_restore_drill(
                 backup_dir=dest,
                 manifest=manifest,
                 source_database_url=context.database_url,
                 pg_restore_command=pg_restore_command,
                 psql_command=psql_command,
+                expected_revision=source_revision,
             )
             restore_ok = report.ok
+            if not restore_ok:
+                drill_errors = list(report.errors)
+                if not report.schema_ok:
+                    drill_errors.append(
+                        "schema_ok=False: restored revision "
+                        f"{report.db_revision!r} != expected {report.expected_head!r}"
+                    )
         else:
             # SQLite deployments verify via the same drill entry point in WS2;
             # the native product targets Postgres, so a non-postgres engine
             # here is unexpected — fail closed rather than claim a spot check
             # we did not run.
             restore_ok = False
+            drill_errors = ["backup manifest engine is not 'postgres'; no restore-drill was run"]
 
         return BackupRef(
             backup_id=manifest.backup_id,
@@ -142,6 +163,7 @@ def default_backup(
             db_artifact=manifest.db_artifact,
             verified=bool(manifest.integrity),
             restore_drill_ok=restore_ok,
+            restore_drill_errors=drill_errors,
         )
 
     return _backup

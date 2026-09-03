@@ -1022,6 +1022,7 @@ def run_postgres_restore_drill(
     restore_database_name: str = "civiccast_drill_restore",
     pg_restore_command: list[str] | None = None,
     psql_command: list[str] | None = None,
+    expected_revision: str | None = None,
 ) -> RestoreDrillReport:
     """Restore ``manifest``'s Postgres dump into a brand-new database and verify it.
 
@@ -1076,6 +1077,21 @@ def run_postgres_restore_drill(
     single network-reachable Postgres, no container indirection). Pass it
     explicitly whenever the two views differ, e.g. a host-mapped
     testcontainers URL alongside an in-container exec prefix.
+
+    ``expected_revision`` overrides what ``schema_ok`` is compared against.
+    It defaults to :func:`civiccast.schema_check.expected_migration_head`
+    (the running CODE's migration head) -- the correct question for a
+    disaster-recovery drill, where the restored copy is meant to prove the
+    backup can stand back up as a live replacement for today's code.
+
+    A PRE-UPGRADE backup drill is a different question: it restores a dump
+    taken from the OLD version's database, before the new version's
+    migrations have run, so comparing against the NEW code's head is always
+    false the moment a release ships any migration at all (D3 root cause,
+    Gate A run 33681670855). Callers verifying a pre-upgrade backup should
+    pass ``expected_revision=<the source database's own revision at backup
+    time>`` -- ``schema_ok`` then asks the honest question for that context:
+    does the restored copy match what was actually dumped.
     """
 
     started_at = datetime.now(UTC)
@@ -1108,7 +1124,11 @@ def run_postgres_restore_drill(
     restored_verify_url = _with_database_name(verify_source_url, restore_database_name)
 
     db_revision = schema_check.read_db_revision(restored_verify_url)
-    expected_head = schema_check.expected_migration_head()
+    expected_head = (
+        expected_revision
+        if expected_revision is not None
+        else schema_check.expected_migration_head()
+    )
     schema_ok = db_revision == expected_head
 
     if source_revision != db_revision:
