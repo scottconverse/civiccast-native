@@ -15,3 +15,14 @@ What happens next, automatically:
    8-hour clock.
 
 Keep polling and heartbeating.
+
+## Addendum 20:35Z — AUTORUN-1 parked too
+
+AUTORUN-1 ran the wrong installer: it downloaded the b78b9c7 kit into the shared
+`C:\CivicCastSoak\kit` folder and then picked the FIRST `*setup.exe` there, which
+was the beta.3 installer left over from the previous mission. Result: beta.3 over
+beta.3 with beta.4 packs and station index -> activation 66 -> installer exit 123,
+station not healthy. That is a script bug, not a product finding. Because the
+script re-arms itself on failure, it is parked so it cannot loop. The next
+autorun downloads into a fresh per-kit folder and picks the installer named in
+the manifest.
