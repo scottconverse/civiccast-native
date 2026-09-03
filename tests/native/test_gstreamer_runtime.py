@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -137,6 +138,11 @@ def test_station_activation_uses_the_embedded_app_payload_tree_not_a_third_compo
 def test_bootstrap_puts_the_gstreamer_bin_on_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The bootstrap inserts the runtime's python dir into sys.path (real behaviour);
+    # restore sys.path on teardown so this fixture tree's stub ``gi`` package can
+    # never shadow the real one for later tests (mutation job 2026-09-03: NameError
+    # from the stub in test_worker_pipe_seam).
+    monkeypatch.setattr(sys, "path", list(sys.path))
     from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime
 
     root = _root(tmp_path)
@@ -159,6 +165,11 @@ def test_bootstrap_puts_the_gstreamer_bin_on_path(
 def test_bootstrap_does_not_duplicate_the_bin_dir_on_repeat_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The bootstrap inserts the runtime's python dir into sys.path (real behaviour);
+    # restore sys.path on teardown so this fixture tree's stub ``gi`` package can
+    # never shadow the real one for later tests (mutation job 2026-09-03: NameError
+    # from the stub in test_worker_pipe_seam).
+    monkeypatch.setattr(sys, "path", list(sys.path))
     from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime
 
     root = _root(tmp_path)
@@ -175,6 +186,11 @@ def test_bootstrap_does_not_duplicate_the_bin_dir_on_repeat_calls(
 def test_bootstrap_leaves_an_operator_supplied_typelib_path_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The bootstrap inserts the runtime's python dir into sys.path (real behaviour);
+    # restore sys.path on teardown so this fixture tree's stub ``gi`` package can
+    # never shadow the real one for later tests (mutation job 2026-09-03: NameError
+    # from the stub in test_worker_pipe_seam).
+    monkeypatch.setattr(sys, "path", list(sys.path))
     from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime
 
     root = _root(tmp_path)
