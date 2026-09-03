@@ -336,6 +336,18 @@ function runtimeStaffToken(): string | null {
   )
 }
 
+/**
+ * Whether this browser currently has a staff token to send. Callers use this
+ * to gate `useQuery({ enabled: ... })` on staff-only endpoints so a signed-out
+ * visitor's first paint doesn't fire a request that is guaranteed to 401
+ * (Finding MINOR-1, 2026-09-03 UI walkthrough: First Setup fired
+ * `/api/staff/auth/me` etc. before sign-in, logging console 401s on every
+ * fresh boot with no stored token).
+ */
+export function hasStoredStaffToken(): boolean {
+  return runtimeStaffToken() != null
+}
+
 function userFacingApiDetail(detail?: string): string | undefined {
   if (!detail) return detail
   const normalized = detail.toLowerCase()
