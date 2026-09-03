@@ -414,7 +414,7 @@ jobs:
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1771 \
+            --floor 1774 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -550,7 +550,7 @@ jobs:
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 1968 \
+            --floor 1971 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit

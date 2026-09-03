@@ -215,6 +215,41 @@ kit (see the "Changed" entry below).
 
 ### Fixed
 
+- **The D3 rollback restore handed its CLI tools the wrong server address and
+  an unresolved `psql` (installer-path audit BL-01, follow-up).** Two wiring
+  defects on one line of `build_default_seams`, both surfaced by BL-01's own
+  Postgres proof failing in CI's real-Postgres lane:
+  - `default_restore_backup` never accepted `command_database_url`, so it
+    passed `context.database_url` — the HOST-reachable URL every direct
+    SQLAlchemy read needs — to `psql` and `pg_restore`, which parse it for
+    their own `--host`/`--port`. Where those commands carry a prefix that
+    relocates them (the `docker exec` pattern the DR suite and the engine's
+    own Postgres proof both use), the restore aimed at a host port from
+    inside the container: `connection to server at "localhost", port 32803
+    failed: Connection refused`. `run_postgres_restore` raised, `_rollback`
+    went to `_halt`, and the run reported `HALTED_RESTORE_FAILED` — BL-01's
+    own symptom, reproduced by BL-01's own fix, and the reason its proof
+    could not execute. `default_backup` has always honoured this split; the
+    restore path never did, even though the engine's own
+    `_PG_CLIENT_EXECUTABLES` doc already named "`pg_restore` again on the
+    rollback path" as one of the four commands that has to be resolved.
+  - `psql_command` was not threaded to the restore seam either. The BL-01
+    rollback newly calls `create_fresh_postgres_database`, which shells to
+    `psql`; without the resolved path it fell back to
+    `civiccast/dr/backup.py`'s bare-name default and resolved `psql` through
+    `PATH`. The installer writes no `PATH` entry and these binaries ship only
+    inside the staged `native-server-binaries` pack, so on a real Windows
+    station that is a filename-less `WinError 2` — the Sandbox run 22 defect
+    class `_resolve_pg_client_commands` exists to prevent, reintroduced on
+    the one path that runs when an upgrade is already going wrong. This one
+    never showed in CI, whose container has `psql` on `PATH`; it would have
+    shown on stations.
+
+  Production behaviour is unchanged wherever `command_database_url` is `None`
+  (one reachable Postgres, no container indirection) — which is every real
+  install. Three new tests pin the wiring at the seam boundary and are RED
+  without the fix.
+
 - **`/health` readiness ignored its own TTL cache and could report a stale
   schema verdict as live-refreshed.** `civiccast/app.py`'s lifespan startup
   set `app.state.schema_status` but never set the paired
