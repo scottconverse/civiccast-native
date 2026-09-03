@@ -98,6 +98,13 @@ def test_no_database_is_degraded_not_healthy(
         "A station with no database cannot serve a recording. Reporting "
         "'healthy' tells an uptime monitor the opposite of the truth."
     )
+    # Gate A run 33681670855: schema_db_revision/schema_expected_head are now
+    # unconditional fields, not "behind"-only -- but check_schema_currency
+    # never even calls expected_migration_head() on this path (no
+    # database_url at all means an early return before either read), so both
+    # render their "could not be determined" placeholders here.
+    assert body["schema_db_revision"] == "none"
+    assert body["schema_expected_head"] == "unknown"
 
 
 def test_schema_at_head_is_healthy(
@@ -111,6 +118,11 @@ def test_schema_at_head_is_healthy(
 
     assert body["schema"] == "current"
     assert body["status"] == "healthy"
+    # Gate A run 33681670855: these two fields are unconditional now, so a
+    # caller proving a post-upgrade migration actually landed can compare
+    # them directly rather than trusting the "current" label alone.
+    assert body["schema_db_revision"] == expected_migration_head()
+    assert body["schema_expected_head"] == expected_migration_head()
 
 
 def test_schema_behind_the_code_is_degraded(
