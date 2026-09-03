@@ -185,6 +185,10 @@ def test_worker_imports_no_civiccast_package_module(worker_probe: dict[str, Any]
     assert sorted(worker_probe["aliases"]) == [
         "civiccast.egress.gst.audio_tap",
         "civiccast.egress.gst.control",
+        # engine.py imports the gi-free CPU-decode policy from this sibling at module
+        # scope, so the worker must publish it under the package name too or the
+        # engine's package-form import would drag in the real civiccast.egress package.
+        "civiccast.egress.gst.decode_policy",
         "civiccast.egress.gst.engine",
         "civiccast.egress.gst.graph",
     ]

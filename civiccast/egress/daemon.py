@@ -163,6 +163,9 @@ _RESTART_ESCALATION_STREAK = 5
 # and a source that stays dead keeps the station on slate instead of crash-looping
 # silently forever.
 _LIVE_SOURCE_FAILURE_FALLBACK_STREAK = _RESTART_ESCALATION_STREAK
+# Bound on the child-stderr tail folded into ``last_error`` -- the state row is an
+# operator-facing string, not a log sink.
+_STDERR_TAIL_MAX_CHARS = 600
 
 
 # RAT-004: poll cadence for stop_all_channels' observed-exit wait loop.
@@ -836,6 +839,47 @@ class EgressDaemon:
             return EgressEncoderMetrics()
         return read_latest_ffmpeg_encoder_metrics(log_path)
 
+    def _engine_label(self) -> str:
+        """Which encoder engine actually runs this channel's child process.
+
+        Gate A T4 (2026-09): every non-zero child exit was reported as "FFmpeg child
+        exited non-zero" even when the child was the GStreamer playout worker, which
+        sent operators (and a Gate A triage) hunting an ffmpeg problem that did not
+        exist. Name the engine from the strategy that launched it.
+        """
+        name = getattr(self._encoder_strategy, "name", "") or ""
+        return "GStreamer playout worker" if "gstreamer" in name.lower() else "FFmpeg encoder"
+
+    def _child_stderr_tail(self, channel_id: str, *, max_lines: int = 8) -> str | None:
+        """Last few non-blank stderr lines of the channel's just-exited child.
+
+        The worker's traceback / stall message is the only thing that says WHY a
+        channel is bouncing, and it lives in a per-channel log file nothing outside
+        the work dir reads. Fold a bounded, redacted tail into ``last_error`` so the
+        operator's state row and the control-plane log carry the reason.
+        Redacted with ``redact_source_uri`` per line -- an ingest URI in a GStreamer
+        error message can carry an SRT passphrase / RTMP key (ENG-003).
+        """
+        log_path = self._stderr_logs.get(channel_id)
+        if log_path is None:
+            return None
+        try:
+            text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return None
+        tail = " | ".join(redact_source_uri(line) for line in lines[-max_lines:])
+        return tail[:_STDERR_TAIL_MAX_CHARS]
+
+    def _child_exit_error(self, channel_id: str, *, suffix: str) -> str:
+        tail = self._child_stderr_tail(channel_id)
+        message = f"{self._engine_label()} child exited non-zero; {suffix}"
+        if tail:
+            message = f"{message} Last child stderr: {tail}"
+        return message
+
     def _build_proof_event(
         self,
         *,
@@ -1070,7 +1114,9 @@ class EgressDaemon:
         self._write_state(
             channel_id,
             "ERROR",
-            last_error="FFmpeg exited non-zero; inspect daemon logs before retrying.",
+            last_error=self._child_exit_error(
+                channel_id, suffix="inspect the channel's worker logs before retrying."
+            ),
         )
         self._append_health(channel_id, "ERROR", sink_connected={}, dropped_frames=0)
 
@@ -1179,7 +1225,8 @@ class EgressDaemon:
             current_source_label=previous_source_label,
             current_proof_event_id=proof_event_id,
             last_error=(
-                force_fallback_reason or "FFmpeg child exited non-zero; relaunching encoder."
+                force_fallback_reason
+                or self._child_exit_error(channel_id, suffix="relaunching encoder.")
             ),
         )
         self._append_health(channel_id, "STARTING", sink_connected={}, dropped_frames=0)

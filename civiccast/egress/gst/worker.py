@@ -101,6 +101,10 @@ def _sibling_module(name: str) -> Any:
 controlmod = _sibling_module("control")
 graphmod = _sibling_module("graph")
 _sibling_module("audio_tap")  # engine imports RollingWavSegmentWriter from it
+# engine imports the gi-free CPU-decode policy from this sibling at module scope,
+# BEFORE it imports gi -- publish it here or the engine's package-form import of it
+# would drag in the real civiccast.egress package (771 modules, pydantic+sqlalchemy).
+_sibling_module("decode_policy")
 enginemod = _sibling_module("engine")
 
 # -- D2 Windows worker-pipe seam (spec-supervisor D2, design.md sec4) --------------
