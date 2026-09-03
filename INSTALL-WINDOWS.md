@@ -22,7 +22,8 @@ which tag is current.
 
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now superseded.
 If you already have a USB-delivered `v1.0.0-beta.1` station, it still runs,
-but the fresh install below is how it gets to the current release.
+and the upgrade instructions below get it to the current release without
+wiping it.
 
 `v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
 upgrade-baseline kit used to prove the download-only install/upgrade lanes,
@@ -45,18 +46,20 @@ install.
   upgrade keeps the station's existing recordings, database, and AI models --
   nothing already on the station is discarded by an upgrade install.
 
-**Upgrading from `v1.0.0-beta.1`:** `beta.1` to `beta.3` is a **fresh
-install from the beta.3 kit, not an in-place upgrade** -- wipe the existing
-`beta.1` install and install `beta.3` fresh (USB kit or a LAN copy of it).
-The `beta.2` internal baseline kit changed the signed identity of every AI
-model pack so that later download-only upgrades can reuse them; a `beta.1`
-station's already-downloaded models were signed under the old identity and
-cannot satisfy a `beta.3` station's signed index. Recordings, settings, and
-downloaded AI models are not carried over by this one step -- export or back
-up anything you need before wiping. **From `beta.3` onward, upgrades are
-download-only**: `beta.3` to `beta.4` and every later step downloads
-`setup.exe` and the runtime packs and upgrades in place, keeping recordings,
-settings, and AI models. See
+**Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit --
+`setup.exe`, the runtime packs, and the `station\` folder beside them (USB
+kit or a LAN copy of it) -- to the station, then run `setup.exe` **over**
+the existing `beta.1` install. Your recordings, settings, database, and AI
+models are kept and the schema migrates. The one unsupported path is
+running `setup.exe` **alone**, without the `station\` folder, from a
+`beta.1` install: the `beta.2` internal baseline kit changed the signed
+identity of every AI model pack so later download-only upgrades can reuse
+them, and a `beta.1` station's already-downloaded models were signed under
+the old identity, so `setup.exe` alone can't resolve `beta.3`'s signed
+index against that stale pack cache. Always bring the full kit for this one
+upgrade. **From `beta.3` onward, upgrades are download-only**: `beta.3` to
+`beta.4` and every later step downloads `setup.exe` and the runtime packs
+and upgrades in place, keeping recordings, settings, and AI models. See
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)
 for why.
 
@@ -90,9 +93,10 @@ checksum, or expected next step, stop and report the mismatch before installing.
   install on that station also needs the USB model bundle. An upgrade of an
   already-installed `beta.3`-or-later station does not need the USB bundle --
   but a `beta.1` station upgrading to `beta.3` is the one exception: see
-  "Upgrading from `v1.0.0-beta.1`" above, it needs a fresh install from the
-  beta.3 kit, not a download-only upgrade. `v1.0.0-beta.2` is never
-  distributed to a tester; skip it entirely.
+  "Upgrading from `v1.0.0-beta.1`" above, it needs the full `beta.3` kit
+  (`setup.exe` plus the `station\` folder) run over the existing install,
+  not a download-only upgrade. `v1.0.0-beta.2` is never distributed to a
+  tester; skip it entirely.
 
 Do not install from the repository source ZIP unless you are intentionally
 working as a developer.

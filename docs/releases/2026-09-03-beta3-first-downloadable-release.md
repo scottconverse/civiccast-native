@@ -127,5 +127,6 @@ fixes), and reported here rather than silently patched.
   `tests/release/test_publish_beta_candidate.py`: the `build_run_id` fix
   and its regression test, described above.
 - `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`: the
-  decision this publish carries out (beta.1 -> beta.3 fresh install;
-  beta.3 -> beta.4 onward is download-only upgrade).
+  decision this publish carries out (beta.1 -> beta.3 upgrades in place from
+  the full kit, `setup.exe` alone unsupported; beta.3 -> beta.4 onward is
+  download-only upgrade).

@@ -91,6 +91,19 @@ below.
   (`T4_RESULT=PASS_FFMPEG_FALLBACK`) is proven and remains what CivicCast
   falls back to. README's "Honestly scoped" section carries the same
   Known-limitation entry.
+- **Docs honesty: "beta.1 to beta.3 is a fresh install" read as "wipe the
+  station," which is not what Gate A's cross-version lane proved.** Run
+  33713004718 confirmed running `setup.exe` from the **full** beta.3 kit
+  (`setup.exe` plus the `station\` folder beside it) **over** an existing
+  beta.1 install keeps recordings, settings, the database, and AI models,
+  and migrates the schema -- the one unsupported path is running
+  `setup.exe` **alone**, without the `station\` folder, from a beta.1
+  install (its pack cache predates the pack-identity change and can't
+  satisfy beta.3's signed index). `README.md`, `INSTALL-WINDOWS.md`,
+  `docs/tester/lpm-beta-test-handoff.md`, `docs/tester/START-HERE.md`,
+  `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`, and the
+  `[1.0.0-beta.3]` entry above now say this plainly instead of "fresh
+  install."
 
 ## [1.0.0-beta.3] - 2026-09-03
 
@@ -960,9 +973,13 @@ below).
   2026-09-02 (option B, recorded in
   `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`): **beta.2
   is never published** — it stays an internal Gate A upgrade-baseline kit —
-  and **beta.1 to beta.3 is a one-time fresh install from the beta.3 kit**
-  (never an in-place upgrade), making beta.3 the first downloadable release
-  and beta.3-to-beta.4 the first download-only-upgradeable pair. The
+  and **beta.1 to beta.3 is a one-time upgrade from the full beta.3 kit**
+  (`setup.exe` run over the existing install, not download-only; `setup.exe`
+  alone without the kit's `station\` folder is the one unsupported path —
+  corrected 2026-09-03 per Gate A run 33713004718, see
+  `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`), making
+  beta.3 the first downloadable release and beta.3-to-beta.4 the first
+  download-only-upgradeable pair. The
   required download-only Gate A lane (#125) stays required for every
   release from beta.3 onward — this is the failure mode it exists to catch,
   and it caught it. The #23 kit and its `D:\kit-23-FINAL-beta1` copy are

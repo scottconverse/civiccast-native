@@ -1,4 +1,4 @@
-# beta.2 is an internal baseline only; beta.1 → beta.3 is the fresh install (owner decision, 2026-09-02)
+# beta.2 is an internal baseline only; beta.1 → beta.3 upgrades in place (owner decision, 2026-09-02; upgrade path corrected 2026-09-03)
 
 **Status:** decided. **Decider:** Scott Converse (owner). **Affects:** every
 beta.1 station's path to the first downloadable release; the Gate A
@@ -24,6 +24,25 @@ download-only Gate A lane's required status; `docs/releases/release-truth.yaml`.
 > "beta.2" as an install/upgrade *target* below is superseded by "beta.3";
 > mentions of beta.2 as the *pinned baseline kit* (the SHA, the hashes, the
 > Gate A evidence) are unchanged and still accurate.
+
+> **Upgrade-path correction, 2026-09-03.** The "Consequence for beta.1
+> stations" section below said a beta.1 station reaches beta.3 only by
+> wiping the existing install and installing fresh. That was overcautious:
+> the Gate A cross-version lane in this same run already showed "installing
+> beta.2 over the pinned *previous* candidate — PASS" (see "Evidence"
+> below), and a dedicated Gate A cross-version run on the beta.3 kit
+> (run [33713004718](https://github.com/scottconverse/civiccast-native/actions/runs/33713004718))
+> confirmed it directly: running `setup.exe` from the **full** beta.3 kit
+> (`setup.exe` plus the `station\` folder beside it) **over** an existing
+> beta.1 install keeps recordings, settings, the database, and downloaded AI
+> models, and migrates the schema in place. The one path this decision's
+> own "Download-only lane" evidence (below) actually rules out is running
+> `setup.exe` **alone**, without the `station\` folder, from a beta.1
+> install — its per-SHA pack cache predates the pack-identity change PR #127
+> made, so the new signed station index can never match it. "Fresh install"
+> in the sections below should be read as "copy over the full kit and run
+> `setup.exe`," not "wipe the station first." README.md and
+> INSTALL-WINDOWS.md carry the corrected wording.
 
 ## What changed
 
@@ -100,21 +119,28 @@ Tracking checklist and the RELEASE BLOCKED banner recording the decision:
   digest pin would no longer be the sole authority for what a station is
   allowed to run) and needs its own review; not taken for this release.
 - **(B) — chosen.** Declare beta.2 an internal-only baseline that never
-  publishes, make beta.3 the one-time fresh-install target and the first
+  publishes, make beta.3 the one-time full-kit upgrade target and the first
   downloadable release, and make beta.3 → beta.4 the first
   download-only-upgradeable pair. This accepts a one-time break in the
-  download floor for a station crossing the beta.1 boundary, in exchange for
-  shipping the download-only capability now with the trust model unchanged.
+  *download-only* floor for a station crossing the beta.1 boundary (it still
+  needs the full kit, not a download-only upgrade) in exchange for shipping
+  the download-only capability now with the trust model unchanged. *(As
+  confirmed 2026-09-03, this break is download-only, not in-place-over-
+  existing-install — see the correction callout above.)*
 
 ## Consequence for beta.1 stations
 
-- **beta.1 → beta.3 is a fresh install.** A station running `v1.0.0-beta.1`
-  gets `v1.0.0-beta.3` by wiping the existing install and installing fresh
-  from the beta.3 kit (USB or LAN copy) — the in-place installer-over-existing
-  upgrade path is not supported across this boundary, and `v1.0.0-beta.2` is
-  never distributed to a station at all. Recordings, settings, and
-  already-downloaded AI models are not preserved by this step; operators
-  should export/back up anything they need before wiping.
+- **beta.1 → beta.3 upgrades in place from the full kit.** *(Corrected
+  2026-09-03 — see the callout above.)* A station running `v1.0.0-beta.1`
+  gets to `v1.0.0-beta.3` by copying the whole beta.3 kit (`setup.exe` plus
+  the `station\` folder beside it — USB or LAN copy) to the station and
+  running `setup.exe` over the existing install. Recordings, settings, the
+  database, and already-downloaded AI models are kept and the schema
+  migrates. `v1.0.0-beta.2` is never distributed to a station at all. The
+  one unsupported path is running `setup.exe` **alone**, without the
+  `station\` folder, from a beta.1 install — its pack cache predates the
+  pack-identity change and cannot satisfy beta.3's signed index (see
+  "Download-only lane — FAIL" under Evidence above).
 - **From beta.3 onward, upgrades are download-only.** Starting with the
   beta.3 → beta.4 step, a station upgrades by downloading `setup.exe` and the
   runtime packs and running the installer in place — no USB kit required, and
@@ -146,6 +172,8 @@ Tracking checklist and the RELEASE BLOCKED banner recording the decision:
 - `README.md`, `INSTALL-WINDOWS.md`, `docs/index.html`,
   `docs/tester/lpm-beta-test-handoff.md`, `docs/tester/START-HERE.md`,
   `docs/install/windows-release-trust.md`, and the tester walkthrough docs:
-  updated to name beta.3, not beta.2, as the target of the one-time fresh
-  install and as the first downloadable candidate; each now also states
-  plainly that beta.2 was never published.
+  updated to name beta.3, not beta.2, as the target of the one-time
+  full-kit upgrade and as the first downloadable candidate; each now also
+  states plainly that beta.2 was never published, and (as of 2026-09-03)
+  that the beta.1 upgrade runs `setup.exe` over the existing install from
+  the full kit rather than wiping it.
