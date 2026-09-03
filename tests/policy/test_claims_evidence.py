@@ -1299,19 +1299,32 @@ def test_ws3r3_005_blob_drift_flags_each_code_module_independently(repo: Path) -
     assert not any("code[0]" in v for v in violations), violations
 
 
+#: Every module the GStreamer playout worker process actually loads, and therefore
+#: every module whose bytes an engine-behavior claim is bound to. Adding an import to
+#: ``engine.py``/``worker.py`` MUST land here and in both claims' ``code`` roles --
+#: that coupling is the point of these two tests.
+#:
+#: ``decode_policy.py`` joined the set 2026-09-03 (fix/gst-worker-runtime-death): the
+#: CPU-decode policy moved out of ``engine.py`` into a gi-free sibling that
+#: ``engine.py`` imports at module scope and ``worker.py`` publishes under its package
+#: name (see ``tests/egress/test_gst_worker_module_identity.py``).
+_CURRENT_ENGINE_DEPENDENCY_MODULES = {
+    "civiccast/egress/gst/worker.py",
+    "civiccast/egress/gst/engine.py",
+    "civiccast/egress/gst/decode_policy.py",
+    "civiccast/egress/gst/graph.py",
+    "civiccast/egress/gst/control.py",
+    "civiccast/egress/gst/audio_tap.py",
+}
+
+
 def test_ws3r3_005_native_decision_gate_binds_current_engine_dependencies() -> None:
     registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
     entry = next(e for e in registry.entries if e.id == "native-decision-gate")
     code_role = entry.inputs["code"]
     assert isinstance(code_role, list)
     paths = {rf.path for rf in code_role}
-    assert paths == {
-        "civiccast/egress/gst/worker.py",
-        "civiccast/egress/gst/engine.py",
-        "civiccast/egress/gst/graph.py",
-        "civiccast/egress/gst/control.py",
-        "civiccast/egress/gst/audio_tap.py",
-    }
+    assert paths == _CURRENT_ENGINE_DEPENDENCY_MODULES
     for rf in code_role:
         assert cce.git_hash_object(REPO_ROOT, rf.path) == rf.blob
 
@@ -1322,13 +1335,7 @@ def test_ws3r3_005_session0_binds_current_engine_dependencies() -> None:
     code_role = entry.inputs["code"]
     assert isinstance(code_role, list)
     paths = {rf.path for rf in code_role}
-    assert paths == {
-        "civiccast/egress/gst/worker.py",
-        "civiccast/egress/gst/engine.py",
-        "civiccast/egress/gst/graph.py",
-        "civiccast/egress/gst/control.py",
-        "civiccast/egress/gst/audio_tap.py",
-    }
+    assert paths == _CURRENT_ENGINE_DEPENDENCY_MODULES
     for rf in code_role:
         assert cce.git_hash_object(REPO_ROOT, rf.path) == rf.blob
 
