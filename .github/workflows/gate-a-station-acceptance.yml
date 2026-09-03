@@ -312,6 +312,31 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}
 
+      - name: Record the candidate's migration head (build time)
+        id: expected_head
+        shell: pwsh
+        run: |
+          # <gate-a-audit-BL-10> The judge's post-upgrade schema proof needs
+          # an expected-head string whose origin is NOT the station under
+          # test. PR #143's guard compared /health's schema_db_revision to
+          # /health's schema_expected_head -- both from one SchemaStatus in
+          # one process, and schema=="current" is DEFINED as those two being
+          # equal -- so it was 1 whenever the station-up check passed and
+          # could never fail. This step derives the head here, on the runner,
+          # from the candidate's own migration files with a standard-library
+          # parser (scripts/gate_a_expected_head.py -- no alembic, no
+          # civiccast import, no database), and hands it to the gate as an
+          # input. The other side of the comparison is the database's own
+          # alembic_version row, read in the sandbox with psql.
+          $head = & python scripts/gate_a_expected_head.py
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($head)) {
+            Write-Error "Could not derive the candidate's migration head (exit $LASTEXITCODE). Gate A's post-upgrade schema proof requires it; refusing to run the lane with no independent expected head."
+            exit 1
+          }
+          $head = $head.Trim()
+          Write-Host "Candidate migration head (build time): $head"
+          "head=$head" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Run Gate A
         id: gate_a
         shell: pwsh
@@ -323,7 +348,7 @@ jobs:
           # fourth copy of that one setting -- tests/gate_a/
           # test_gate_a_harness_contract.py asserts this literal against the
           # script defaults and fails the build if they drift apart.
-          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -SoakMinutes 20 -TimeoutMinutes 170
+          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -SoakMinutes 20 -TimeoutMinutes 170 -ExpectedMigrationHead "${{ steps.expected_head.outputs.head }}"
           $exitCode = $LASTEXITCODE
           "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           # Locate the evidence dir this run just wrote so the upload step
@@ -642,6 +667,31 @@ jobs:
           New-Item -ItemType Junction -Path $target -Target $local | Out-Null
           Write-Host "Pinned byte-verified previous full kit: $target -> $local (installer_sha256=$installerHash station_index_sha256=$stationIndexHash product_version=$expectedVersion)"
 
+      - name: Record the candidate's migration head (build time)
+        id: expected_head
+        shell: pwsh
+        run: |
+          # <gate-a-audit-BL-10> The judge's post-upgrade schema proof needs
+          # an expected-head string whose origin is NOT the station under
+          # test. PR #143's guard compared /health's schema_db_revision to
+          # /health's schema_expected_head -- both from one SchemaStatus in
+          # one process, and schema=="current" is DEFINED as those two being
+          # equal -- so it was 1 whenever the station-up check passed and
+          # could never fail. This step derives the head here, on the runner,
+          # from the candidate's own migration files with a standard-library
+          # parser (scripts/gate_a_expected_head.py -- no alembic, no
+          # civiccast import, no database), and hands it to the gate as an
+          # input. The other side of the comparison is the database's own
+          # alembic_version row, read in the sandbox with psql.
+          $head = & python scripts/gate_a_expected_head.py
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($head)) {
+            Write-Error "Could not derive the candidate's migration head (exit $LASTEXITCODE). Gate A's post-upgrade schema proof requires it; refusing to run the lane with no independent expected head."
+            exit 1
+          }
+          $head = $head.Trim()
+          Write-Host "Candidate migration head (build time): $head"
+          "head=$head" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Run Gate A (dirty lane)
         id: gate_a_dirty
         shell: pwsh
@@ -653,7 +703,7 @@ jobs:
           # test_gate_a_harness_contract.py). -SoakMinutes 10 keeps the total
           # two-install-cycle run inside that bound; the clean lane already
           # soaked this same candidate for 20.
-          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DirtyLane -PreviousKitDir "sandbox-lab/previous-kit-staging/${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -PreviousSourceSha "${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -SoakMinutes 10 -TimeoutMinutes 230
+          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DirtyLane -PreviousKitDir "sandbox-lab/previous-kit-staging/${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -PreviousSourceSha "${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -SoakMinutes 10 -TimeoutMinutes 230 -ExpectedMigrationHead "${{ steps.expected_head.outputs.head }}"
           $exitCode = $LASTEXITCODE
           "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           $latest = Get-ChildItem -Path "sandbox-lab/evidence" -Directory -Recurse -ErrorAction SilentlyContinue |
@@ -1020,6 +1070,31 @@ jobs:
           New-Item -ItemType Junction -Path $target -Target $local | Out-Null
           Write-Host "Pinned byte-verified previous full kit: $target -> $local (installer_sha256=$installerHash station_index_sha256=$stationIndexHash product_version=$expectedVersion)"
 
+      - name: Record the candidate's migration head (build time)
+        id: expected_head
+        shell: pwsh
+        run: |
+          # <gate-a-audit-BL-10> The judge's post-upgrade schema proof needs
+          # an expected-head string whose origin is NOT the station under
+          # test. PR #143's guard compared /health's schema_db_revision to
+          # /health's schema_expected_head -- both from one SchemaStatus in
+          # one process, and schema=="current" is DEFINED as those two being
+          # equal -- so it was 1 whenever the station-up check passed and
+          # could never fail. This step derives the head here, on the runner,
+          # from the candidate's own migration files with a standard-library
+          # parser (scripts/gate_a_expected_head.py -- no alembic, no
+          # civiccast import, no database), and hands it to the gate as an
+          # input. The other side of the comparison is the database's own
+          # alembic_version row, read in the sandbox with psql.
+          $head = & python scripts/gate_a_expected_head.py
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($head)) {
+            Write-Error "Could not derive the candidate's migration head (exit $LASTEXITCODE). Gate A's post-upgrade schema proof requires it; refusing to run the lane with no independent expected head."
+            exit 1
+          }
+          $head = $head.Trim()
+          Write-Host "Candidate migration head (build time): $head"
+          "head=$head" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Run Gate A (download-only lane)
         id: gate_a_download_only
         shell: pwsh
@@ -1031,7 +1106,7 @@ jobs:
           # test_gate_a_harness_contract.py. Run-GateA.ps1 builds the
           # filtered current-candidate payload (setup.exe + packs\, no
           # station\) itself before launching Sandbox.
-          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DownloadOnlyLane -PreviousKitDir "sandbox-lab/previous-kit-staging/${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -PreviousSourceSha "${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -SoakMinutes 10 -TimeoutMinutes 230
+          pwsh -File sandbox-lab/Run-GateA.ps1 -KitDir "sandbox-lab/kit-staging/${{ steps.run_id.outputs.source_sha }}" -SourceSha "${{ steps.run_id.outputs.source_sha }}" -RunId ${{ steps.run_id.outputs.run_id }} -DownloadOnlyLane -PreviousKitDir "sandbox-lab/previous-kit-staging/${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -PreviousSourceSha "${{ steps.upgrade_baseline.outputs.previous_source_sha }}" -SoakMinutes 10 -TimeoutMinutes 230 -ExpectedMigrationHead "${{ steps.expected_head.outputs.head }}"
           $exitCode = $LASTEXITCODE
           "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           $latest = Get-ChildItem -Path "sandbox-lab/evidence" -Directory -Recurse -ErrorAction SilentlyContinue |
