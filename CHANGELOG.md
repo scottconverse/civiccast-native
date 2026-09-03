@@ -215,6 +215,31 @@ kit (see the "Changed" entry below).
 
 ### Fixed
 
+- **`/health` readiness ignored its own TTL cache and could report a stale
+  schema verdict as live-refreshed.** `civiccast/app.py`'s lifespan startup
+  set `app.state.schema_status` but never set the paired
+  `app.state.schema_status_checked_monotonic` checkpoint that
+  `_maybe_refresh_schema_status` uses to honor `SCHEMA_STATUS_TTL_SECONDS`.
+  With that checkpoint left `None`, every single `/health` request treated
+  the cache as unconditionally expired and recomputed
+  `check_schema_currency` from scratch — opening a database connection on
+  every poll instead of the intended 5-second TTL window, and silently
+  discarding any schema status a caller had set directly in between (e.g. a
+  test simulating the `unknown` schema state). The checkpoint is now set
+  alongside the status at lifespan startup, matching what
+  `_refresh_schema_status` already does for the mid-flight "Prepare storage"
+  path. Caught by `tests/test_health_readiness.py::
+  test_unknown_schema_state_is_degraded_not_healthy`, which failed
+  deterministically (not just under randomized ordering) before this fix.
+  Also updated `test_schema_behind_the_code_is_degraded`'s fixture: it used
+  a synthetic revision id (`0001_ancient_revision`) that was never a real
+  entry in this repo's migration graph, so under the ahead/behind
+  distinction added by installer-path-audit finding MA-06
+  (`evaluate_schema_currency` — a revision the graph doesn't recognize is
+  `ahead`, not `behind`) it always classified as `ahead`. Swapped in a real,
+  superseded revision id (`0001_create_assets_table`) so the test still
+  exercises the `behind` path it names.
+
 - **Installer-path audit (2026-09-03) — the whole install / upgrade /
   activation / health path, in one batch.** A read-only audit of the NSIS
   bootstrap, the installer Rust CLIs, the D3 upgrade engine, the DR

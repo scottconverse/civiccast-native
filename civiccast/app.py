@@ -619,6 +619,17 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     from civiccast.schema_check import check_schema_currency
 
     app.state.schema_status = check_schema_currency(os.environ.get("DATABASE_URL"))
+    # <fix/health-readiness-order-independence> This checkpoint used to be
+    # left unset here -- only `_refresh_schema_status` (mid-flight storage
+    # activation) set it. `_maybe_refresh_schema_status` treats an unset
+    # checkpoint as "definitely stale" (`last is None` skips the TTL
+    # comparison entirely), so EVERY `/health` call recomputed
+    # `check_schema_currency` from scratch instead of respecting
+    # SCHEMA_STATUS_TTL_SECONDS -- defeating the TTL's whole purpose (a hot
+    # liveness path opening a DB connection per request) and silently
+    # discarding any schema_status a caller set directly (e.g. a test fixture
+    # simulating the "unknown" state) on the very next `/health` request.
+    app.state.schema_status_checked_monotonic = time.monotonic()
     _maybe_start_finalization_worker(app)
     _maybe_start_background_supervisors(app)
     try:
