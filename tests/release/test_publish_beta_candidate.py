@@ -20,15 +20,20 @@ import pytest
 import scripts.release.publish_beta_candidate as m
 
 SOURCE_SHA = "a" * 40
-# publish_beta_candidate.verify_version_identity fail-closed-compares this
+# publish_beta_candidate.verify_version_identity fail-closed-compares the
 # tag against the REAL, live civiccast._native_version.__version__ (see
 # get_native_source_version()) -- not a fixture/mock -- so these constants
-# must track the repo's actual current version or every publish-path test
-# refuses with a version-identity mismatch that has nothing to do with what
-# each test is actually exercising. Bump alongside civiccast/_version.py and
-# civiccast/_native_version.py.
-TAG = "v1.0.0-beta.3"
-VERSION = "1.0.0-beta.3"
+# must track the repo's actual current source version or every publish-path
+# test refuses with a version-identity mismatch that has nothing to do with
+# what each test is actually exercising. Derived through the script's own
+# seam rather than hardcoded: a release-prep bump (source version moves to
+# the next candidate while release-truth.yaml's `current` stays on the
+# published tag) must not break these tests, and the publisher publishes
+# whatever tag it is handed -- it never assumes a `staging` entry is the tag
+# being published. The release-truth.yaml these tests exercise is the
+# self-contained fixture in _base_repo_root(), not the repo's real file.
+VERSION = m.get_native_source_version()
+TAG = f"v{VERSION}"
 
 
 def _write_kit(kit_dir: Path, *, with_packs: bool = True, with_station: bool = True) -> Path:
