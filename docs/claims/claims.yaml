@@ -446,22 +446,41 @@ entries:
       # evidence docs do not themselves cover. Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2; graph.py/control.py/
       # audio_tap.py are byte-identical and keep their recorded blobs.
+      # Re-provisioned again (fix/egress-seamless-plan-rollover, 2026-09-04):
+      # worker.py, engine.py, and graph.py drifted again -- the seamless
+      # rollover fix moved the "when to trigger" / "defer the switch to EOS"
+      # decision logic into a new gi-free sibling,
+      # civiccast/egress/gst/reload_policy.py (same reason decode_policy.py
+      # was split out: engine.py cannot import without gi + a real GStreamer
+      # install). reload_policy.py is NOT added to this claim's bound module
+      # set -- the current-source proof this entry's spike/observation
+      # evidence covers is scoped to the fixed module list the WS3-005 tests
+      # pin (worker/engine/decode_policy/graph/control/audio_tap.py); a new
+      # sibling module's own current-source proof is separate follow-up, not
+      # smuggled into a blob re-hash. Current-source proof for the three
+      # re-hashed files' new bytes is this PR's own CI coverage
+      # (tests/egress/test_gst_engine_wsl.py, extended with rollover-boundary
+      # coverage) plus the shipped end-to-end on-the-wire captures the prior
+      # re-provisioning notes above already established for this module set.
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>` per
+      # D2; decode_policy.py/control.py/audio_tap.py are byte-identical and
+      # keep their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 180a8bf219c86718777ae2c0b57fdbb814d7312c
+          blob: fb4e2902f0a6e14f61508c48f93a9465889c2943
         - path: civiccast/egress/gst/engine.py
-          blob: c3451a7df47edaf632f235c644dd6700fb9357ea
+          blob: 23ab4f2ae77d695ab42af9df06e41facd181618d
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
+          blob: 79bf55b6c4d25237ecad8b96a849d00165a773a2
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 1b01f64c65e3bce702f7dba0bcad794edb236c6a
+        blob: a25383172e0de25fbcac4e14e249baf01ed34e54
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -492,7 +511,7 @@ entries:
       # exact-config artifact that was never committed for this spike.
       fixtures:
         - path: civiccast/egress/gst/graph.py
-          blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
+          blob: 79bf55b6c4d25237ecad8b96a849d00165a773a2
     controls:
       - id: native-decision-gate-authority-record
         command: >-
@@ -603,22 +622,41 @@ entries:
       # evidence docs do not themselves cover. Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2; graph.py/control.py/
       # audio_tap.py are byte-identical and keep their recorded blobs.
+      # Re-provisioned again (fix/egress-seamless-plan-rollover, 2026-09-04):
+      # worker.py, engine.py, and graph.py drifted again -- the seamless
+      # rollover fix moved the "when to trigger" / "defer the switch to EOS"
+      # decision logic into a new gi-free sibling,
+      # civiccast/egress/gst/reload_policy.py (same reason decode_policy.py
+      # was split out: engine.py cannot import without gi + a real GStreamer
+      # install). reload_policy.py is NOT added to this claim's bound module
+      # set -- the current-source proof this entry's spike/observation
+      # evidence covers is scoped to the fixed module list the WS3-005 tests
+      # pin (worker/engine/decode_policy/graph/control/audio_tap.py); a new
+      # sibling module's own current-source proof is separate follow-up, not
+      # smuggled into a blob re-hash. Current-source proof for the three
+      # re-hashed files' new bytes is this PR's own CI coverage
+      # (tests/egress/test_gst_engine_wsl.py, extended with rollover-boundary
+      # coverage) plus the shipped end-to-end on-the-wire captures the prior
+      # re-provisioning notes above already established for this module set.
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>` per
+      # D2; decode_policy.py/control.py/audio_tap.py are byte-identical and
+      # keep their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 180a8bf219c86718777ae2c0b57fdbb814d7312c
+          blob: fb4e2902f0a6e14f61508c48f93a9465889c2943
         - path: civiccast/egress/gst/engine.py
-          blob: c3451a7df47edaf632f235c644dd6700fb9357ea
+          blob: 23ab4f2ae77d695ab42af9df06e41facd181618d
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
+          blob: 79bf55b6c4d25237ecad8b96a849d00165a773a2
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 1b01f64c65e3bce702f7dba0bcad794edb236c6a
+        blob: a25383172e0de25fbcac4e14e249baf01ed34e54
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
