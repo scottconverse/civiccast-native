@@ -465,6 +465,26 @@ entries:
       # Blob IDs re-hashed with `git hash-object --path <file> <file>` per
       # D2; decode_policy.py/control.py/audio_tap.py are byte-identical and
       # keep their recorded blobs.
+      # Re-provisioned again (chore/release-beta5-identity, 2026-09-04):
+      # graph.py drifted again -- source_leg_is_clock_timed's docstring
+      # claimed an unknown source factory's fail-safe answer is True; the
+      # code has always returned False, so the docstring was fixed to match.
+      # Also added Windows/Linux live-capture device factories (ksvideosrc,
+      # mfvideosrc, dshowvideosrc, wasapi2src, wasapisrc, v4l2src) to
+      # CLOCK_TIMED_SOURCE_FACTORIES, and deliberately did NOT add
+      # interpipesrc/interpipesink (demoted from the shipped GStreamer
+      # closure by owner-confirmed spec decision, not wired into any graph
+      # this repository builds). Neither change touches worker.py, engine.py,
+      # decode_policy.py, control.py, or audio_tap.py, which keep their
+      # recorded blobs. Current-source proof for graph.py's new bytes is
+      # this PR's own gi-free unit coverage in tests/egress/test_gst_graph.py
+      # (TestSourceLegIsClockTimed::test_windows_live_capture_devices_are_
+      # clock_timed and ::test_an_unknown_factory_is_the_fail_safe_segment_
+      # timed_default), pinning the new factory table and the corrected
+      # unknown-factory behavior directly, plus the shipped end-to-end
+      # on-the-wire captures the prior re-provisioning notes above already
+      # established for the rest of this module set (unchanged by this PR).
+      # Blob re-hashed with `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: fb4e2902f0a6e14f61508c48f93a9465889c2943
@@ -473,7 +493,7 @@ entries:
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 79bf55b6c4d25237ecad8b96a849d00165a773a2
+          blob: 02dad4550596e96cd5fcd57986604b47d8380bbc
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
@@ -511,7 +531,7 @@ entries:
       # exact-config artifact that was never committed for this spike.
       fixtures:
         - path: civiccast/egress/gst/graph.py
-          blob: 79bf55b6c4d25237ecad8b96a849d00165a773a2
+          blob: 02dad4550596e96cd5fcd57986604b47d8380bbc
     controls:
       - id: native-decision-gate-authority-record
         command: >-
@@ -641,6 +661,26 @@ entries:
       # Blob IDs re-hashed with `git hash-object --path <file> <file>` per
       # D2; decode_policy.py/control.py/audio_tap.py are byte-identical and
       # keep their recorded blobs.
+      # Re-provisioned again (chore/release-beta5-identity, 2026-09-04):
+      # graph.py drifted again -- source_leg_is_clock_timed's docstring
+      # claimed an unknown source factory's fail-safe answer is True; the
+      # code has always returned False, so the docstring was fixed to match.
+      # Also added Windows/Linux live-capture device factories (ksvideosrc,
+      # mfvideosrc, dshowvideosrc, wasapi2src, wasapisrc, v4l2src) to
+      # CLOCK_TIMED_SOURCE_FACTORIES, and deliberately did NOT add
+      # interpipesrc/interpipesink (demoted from the shipped GStreamer
+      # closure by owner-confirmed spec decision, not wired into any graph
+      # this repository builds). Neither change touches worker.py, engine.py,
+      # decode_policy.py, control.py, or audio_tap.py, which keep their
+      # recorded blobs. Current-source proof for graph.py's new bytes is
+      # this PR's own gi-free unit coverage in tests/egress/test_gst_graph.py
+      # (TestSourceLegIsClockTimed::test_windows_live_capture_devices_are_
+      # clock_timed and ::test_an_unknown_factory_is_the_fail_safe_segment_
+      # timed_default), pinning the new factory table and the corrected
+      # unknown-factory behavior directly, plus the shipped end-to-end
+      # on-the-wire captures the prior re-provisioning notes above already
+      # established for the rest of this module set (unchanged by this PR).
+      # Blob re-hashed with `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: fb4e2902f0a6e14f61508c48f93a9465889c2943
@@ -649,7 +689,7 @@ entries:
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 79bf55b6c4d25237ecad8b96a849d00165a773a2
+          blob: 02dad4550596e96cd5fcd57986604b47d8380bbc
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py

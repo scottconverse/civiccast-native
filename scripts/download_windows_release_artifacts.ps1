@@ -26,8 +26,8 @@ Two asset-set families are supported:
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-beta.4",
-  [string]$Version = "1.0.0-beta.4",
+  [string]$Tag = "v1.0.0-beta.5",
+  [string]$Version = "1.0.0-beta.5",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,

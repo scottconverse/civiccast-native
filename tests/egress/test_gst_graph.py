@@ -311,6 +311,47 @@ class TestSourceLegIsClockTimed:
         )
         assert source_leg_is_clock_timed(leg) is False
 
+    def test_windows_live_capture_devices_are_clock_timed(self) -> None:
+        """Physical/OS capture devices (webcam/framegrabber, system audio) are
+        always-live, same as decklink*src -- even though no ingest graph builder
+        in this repository instantiates one of these yet."""
+        for factory in (
+            "ksvideosrc",
+            "mfvideosrc",
+            "dshowvideosrc",
+            "wasapi2src",
+            "wasapisrc",
+            "v4l2src",
+        ):
+            leg = SourceLeg(
+                label="program",
+                elements=(ElementSpec(factory),),
+            )
+            assert source_leg_is_clock_timed(leg) is True, factory
+
+    def test_an_unknown_factory_is_the_fail_safe_segment_timed_default(self) -> None:
+        """Documents the chosen behaviour: a factory this module has never heard of
+        (not in ``CLOCK_TIMED_SOURCE_FACTORIES`` and carrying no ``is-live`` prop) is
+        NOT assumed clock-timed. The fail-safe side is segment-timed (``False``) --
+        a boundary-aligned rollover neither holds nor rebases such a leg, which is
+        the pre-existing default behaviour, not a live-content hazard. This is the
+        opposite of an earlier draft of this module's own docstring, which claimed
+        an unknown leg answers ``True``; the code has always returned ``False`` here
+        (an empty/no-match ``any()``), and the docstring was the thing that was wrong.
+
+        Also demonstrates that ``interpipesrc`` -- the RidgeRun interpipe plugin --
+        is deliberately excluded from ``CLOCK_TIMED_SOURCE_FACTORIES``: it was
+        demoted from the shipped GStreamer closure by an owner-confirmed spec
+        decision and is not wired into any graph this repository builds, so it is
+        treated the same as any other unrecognized factory here.
+        """
+        for factory in ("some-future-vendor-src", "interpipesrc"):
+            leg = SourceLeg(
+                label="program",
+                elements=(ElementSpec(factory),),
+            )
+            assert source_leg_is_clock_timed(leg) is False, factory
+
     def test_the_predicate_survives_a_json_round_trip(self) -> None:
         """The engine answers this question about a leg it just deserialized from a
         reload sidecar, not about one it built in-process -- so the round trip is the
