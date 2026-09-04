@@ -19,7 +19,39 @@ below.
 
 ### Fixed
 
-- **The GStreamer egress engine now actually puts MPEG-TS on the wire.**
+- **Root cause of the GStreamer playout worker dying on every machine
+  without a system-wide GStreamer install: the control-plane child process
+  never actually got the bundled GStreamer `bin` directory on its `PATH`.**
+  `station_environment_for_python` builds a `PATH` that prepends
+  `<runtime>\dependencies\gstreamer\bin`, but `build_control_plane_media_env`
+  composed its own `PATH` value over `os.environ` (the supervisor's stock
+  LocalSystem `PATH`) instead of over the caller's already-built one, and
+  that dict is merged last into the control-plane child's environment — so
+  the GStreamer prepend was discarded outright on every station. Without it,
+  girepository resolves `gstreamer-1.0-0.dll` with a bare-name Win32
+  `LoadLibrary` call, which searches `PATH` and not the per-process
+  directory list `os.add_dll_directory` feeds; the lookup failed silently,
+  `Gst.URIHandler`'s GType came back `G_TYPE_NONE`, and the `gi.overrides.Gst`
+  import raised `TypeError: must be an interface` — the worker died at
+  import, before it could do anything else. This has been true since the
+  initial commit, on every machine without a system-wide GStreamer already
+  on `PATH` (every customer box, every sandbox run); a dev box with
+  GStreamer installed system-wide masked it completely. Fixed by having
+  `build_production_service` pass the control-plane env builder the PATH the
+  caller already assembled (so the ffmpeg prepend extends the
+  GStreamer-aware PATH instead of replacing it) and by having
+  `bootstrap_installed_gstreamer_runtime` publish its whole computed
+  environment (PATH prepend, plus `GI_TYPELIB_PATH`/`GST_PLUGIN_PATH` via
+  `setdefault`) into `os.environ`, so any process holding
+  `CIVICCAST_GSTREAMER_RUNTIME_ROOT` can import the staged `gi` on its own.
+  Gate A evidence `20260903-225553Z` on kit `9479c56` shows the worker
+  start and stay alive after the fix, against the import-time crash
+  recorded in evidence `20260903-195625Z` on the same kit line before it.
+  The two fixes below are real, but secondary: neither one can matter until
+  the worker can import `gi` at all.
+- **Secondary fix (only reachable once the worker can import `gi` at all,
+  see the control-plane `PATH` root cause above): the GStreamer egress
+  engine now actually puts MPEG-TS on the wire.**
   `civiccast/egress/gst/worker.py` imported its sibling modules by path
   (`import graph`) while `engine.py` prefers the package form
   (`from civiccast.egress.gst.graph import ...`). On the native Windows line the
@@ -128,9 +160,11 @@ below.
   `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`, and the
   `[1.0.0-beta.3]` entry above now say this plainly instead of "fresh
   install."
-- **A hardware video decoder that cannot actually decode on this machine
-  stalled the GStreamer playout worker ~10s after it started, with no error
-  on the bus.** `engine.py`'s `_CPU_DECODE_FEATURE_RANK` policy is a
+- **Secondary fix (only reachable once the worker can import `gi` at all,
+  see the control-plane `PATH` root cause above): a hardware video decoder
+  that cannot actually decode on this machine stalled the GStreamer playout
+  worker ~10s after it started, with no error on the bus.** `engine.py`'s
+  `_CPU_DECODE_FEATURE_RANK` policy is a
   hand-maintained name list meant to keep `decodebin` output in system
   memory unless an operator opts into GPU decode; it covered the
   `nv*`/`cuda*`/`vaapi*`/`va*`/`d3d11*` families but not `d3d12*`, and the
@@ -230,7 +264,7 @@ below.
 
 ### In flight, not yet in this candidate
 
-The two shipped-product bugs above (`engine_state=FALLBACK_SLATE` on a
+The three shipped-product bugs above (`engine_state=FALLBACK_SLATE` on a
 worker that could not even reach PLAYING) are what made Gate A's T4
 product-engine check unmeasurable for beta.3. Two more PRs, open as of this
 writing, complete the picture and are expected to land before tonight's

@@ -154,12 +154,24 @@ things outside this repository's control:
   [`docs/ops/gate-a.md`](docs/ops/gate-a.md#known-limitation-test-tsproof-null-pipeline-bug-let-a-false-t4-pass-through-fixed-in-145)
   for the full account. The ffmpeg fallback path Gate A also exercises is
   proven; the GStreamer default-engine path is not yet proven by Gate A.
+  The real cause was plain: on every machine without a system-wide
+  GStreamer install already on `PATH` -- every customer box, every
+  sandbox run -- the control-plane child process never actually got the
+  bundled GStreamer `bin` directory on its own `PATH`, so `gi` could not
+  load `gstreamer-1.0-0.dll` and the worker died at import, before it
+  could reach `PLAYING` or decode anything (#154). A dev box with
+  GStreamer already on the system `PATH` hid this completely. Two smaller,
+  secondary bugs were also found and fixed, but neither could matter until
+  the import-time crash above was fixed: a module-identity mismatch that
+  made engine dispatch miss on every program leg once the worker did start
+  (#153), and a hardware-decoder rank policy that let a non-functional GPU
+  decoder stall the pipeline ~10s after `PLAYING` (also #154).
   **Pending tonight's Gate A run for `v1.0.0-beta.4` (REMOVE THIS SENTENCE
-  IF THAT RUN DOES NOT PASS):** two fixes since beta.3 (#153, #154) address
-  the two measured causes of `FALLBACK_SLATE` above, and `v1.0.0-beta.4` is
-  expected to be the first candidate whose Gate A T4 check measures real
-  MPEG-TS packets from the GStreamer engine instead of falling back to
-  slate -- see
+  IF THAT RUN DOES NOT PASS):** these fixes since beta.3 (#153, #154)
+  address every measured cause of `FALLBACK_SLATE` above, and
+  `v1.0.0-beta.4` is expected to be the first candidate whose Gate A T4
+  check measures real MPEG-TS packets from the GStreamer engine instead of
+  falling back to slate -- see
   [`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
   for the actual verdict once that run completes.
 

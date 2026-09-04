@@ -42,7 +42,7 @@ as of PR #150's version bump); Authenticode signature status is `Valid`;
 Gate A run `<GATE_A_RUN_ID>` (source SHA `<KIT_SHA>`) shows `PASS` on the
 required lanes.
 
-## Headline: two shipped-product bugs, found and fixed since beta.3
+## Headline: the GStreamer worker's real crash cause, found and fixed since beta.3
 
 Gate A's T4 product-engine check (`t4_engine`) starts the real GStreamer
 playout engine and verifies its output with TSDuck. It has never actually
@@ -54,17 +54,48 @@ here for context). Re-graded correctly, every earlier beta that shipped the
 default GStreamer engine was actually streaming on the ffmpeg fallback, or
 slate, without saying so.
 
-Two real bugs, both found by Gate A runs against real kits this candidate,
-are fixed here:
+The load-bearing bug, found and fixed this candidate:
 
-1. **The GStreamer playout worker could not reach `PLAYING`.**
-   `worker.py` imported its sibling modules by path while `engine.py`
-   preferred the package form; on native Windows both import paths
-   succeed, so the two halves bound two distinct `PlaylistLeg` classes
-   compiled from the same file, and engine dispatch's `isinstance` check
-   missed on every program leg, raising `AttributeError` before the
-   pipeline reached `PLAYING`. Fixed in #153.
-2. **When the worker did reach `PLAYING`, on a machine with no working GPU
+1. **The control-plane child process never actually put the bundled
+   GStreamer `bin` directory on its own `PATH`, so the worker died at
+   import on every machine without a system-wide GStreamer install.**
+   `build_control_plane_media_env` composes its `PATH` value over
+   `os.environ` (the supervisor's stock LocalSystem `PATH`) instead of
+   over the `PATH` the caller had already built with
+   `station_environment_for_python` -- and because that dict is merged
+   LAST into the control-plane child's environment, the
+   `<runtime>\dependencies\gstreamer\bin` prepend was discarded outright
+   on every station. Without it, `gi`'s girepository layer resolves
+   `gstreamer-1.0-0.dll` with a bare-name Win32 `LoadLibrary` call, which
+   searches `PATH` and not the per-process directory list
+   `os.add_dll_directory` feeds; the lookup failed silently,
+   `Gst.URIHandler`'s GType came back `G_TYPE_NONE`, and the
+   `gi.overrides.Gst` import raised `TypeError: must be an interface` --
+   the worker exited at import, before it could reach `PLAYING` or decode
+   a single frame. This has been true since the initial commit, on every
+   machine without a system-wide GStreamer install already on `PATH`
+   (every customer box, every sandbox run); a dev box with GStreamer
+   installed system-wide masked it completely. Fixed in #154: the
+   control-plane env builder now composes on top of the caller's
+   GStreamer-aware `PATH`, and the runtime bootstrap publishes its whole
+   computed environment into `os.environ` so any process holding
+   `CIVICCAST_GSTREAMER_RUNTIME_ROOT` can import the staged `gi` on its
+   own. Proof: Gate A evidence `20260903-225553Z` on kit `9479c56` shows
+   the worker start and stay alive after the fix, against the import-time
+   crash recorded in evidence `20260903-195625Z` on the same kit line
+   before it.
+
+Two secondary bugs were also found and fixed this candidate -- real, but
+neither could matter until the worker could import `gi` at all:
+
+2. **A module-identity mismatch made engine dispatch miss on every program
+   leg once the worker did start.** `worker.py` imported its sibling
+   modules by path while `engine.py` preferred the package form; on
+   native Windows both import paths succeed, so the two halves bound two
+   distinct `PlaylistLeg` classes compiled from the same file, and engine
+   dispatch's `isinstance` check missed on every program leg, raising
+   `AttributeError` before the pipeline reached `PLAYING`. Fixed in #153.
+3. **Once the worker reached `PLAYING`, on a machine with no working GPU
    video-decode path it stalled ~10s later with no bus error.** A
    hand-maintained hardware-decoder rank list missed the `d3d12` factory
    family the shipped runtime bundles, so `decodebin` autoplugged a GPU
