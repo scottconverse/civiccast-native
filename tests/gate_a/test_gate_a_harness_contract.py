@@ -1784,3 +1784,19 @@ def test_psql_proof_reads_the_registry_key_the_installer_writes() -> None:
     )
     nsh = nsh_path.read_text(encoding="utf-8", errors="replace")
     assert 'HKLM "Software\\CivicCast\\Native" "DatabaseUrl"' in nsh
+
+
+def test_psql_proof_quotes_the_sql_argument_for_start_process() -> None:
+    """<gate-a-psql-quote> Start-Process -ArgumentList joins elements with spaces
+    and never quotes them; an unquoted -c SQL reaches psql as many arguments and
+    psql runs a bare SELECT (exit 0, no rows). The proof must pass the SQL as one
+    double-quoted argument and must refuse an exit-0 result whose stderr shows
+    psql ignoring 'extra command-line argument's."""
+    text = _read(_DRIVER)
+    code = _code_only(text)
+    start = code.index("function Get-CivicCastDbRevisionViaPsql")
+    block = code[start : code.index("POST_UPGRADE_DB_REVISION_SOURCE=psql exit=", start)]
+    assert "'-c', ('\"' + $sql + '\"')" in block
+    assert "'-c', $sql\n" not in block and "'-c', $sql)" not in block
+    assert "extra command-line argument" in block
+    assert "<psql-args-split>" in block

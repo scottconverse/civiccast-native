@@ -1874,12 +1874,23 @@ function Get-CivicCastDbRevisionViaPsql {
             '--username', [uri]::UnescapeDataString($userInfo[0]),
             '--dbname', $conn.AbsolutePath.TrimStart('/'),
             '--no-password', '--tuples-only', '--no-align',
-            '--set', 'ON_ERROR_STOP=1', '-c', $sql
+            # <gate-a-psql-quote> Start-Process joins -ArgumentList with spaces and
+            # does NOT quote elements, so the SQL arrived as nine separate arguments:
+            # psql ran a bare `SELECT`, warned 'extra command-line argument ... ignored'
+            # for the rest, exited 0 with no rows, and the proof judged
+            # '<no-alembic-version-row>' (Gate A 33870994702, kit c27c6e7). Quote it.
+            '--set', 'ON_ERROR_STOP=1', '-c', ('"' + $sql + '"')
         )
         $p = Start-Process -FilePath $psql -ArgumentList $argv -PassThru -NoNewWindow -Wait `
             -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         $probe.exit_code = $p.ExitCode
-        if ($p.ExitCode -eq 0) {
+        $errText = (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue)
+        if ($p.ExitCode -eq 0 -and $errText -match 'extra command-line argument') {
+            # The SQL did not reach the server intact; never read an exit-0 result as a proof.
+            $probe.exit_code = $p.ExitCode
+            $probe.revision = '<psql-args-split>'
+            $probe.error = 'psql ignored extra command-line arguments -- the SQL was split'
+        } elseif ($p.ExitCode -eq 0) {
             $out = (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue)
             if ($null -ne $out) { $out = $out.Trim() }
             if (-not [string]::IsNullOrWhiteSpace($out)) {
