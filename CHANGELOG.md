@@ -128,6 +128,135 @@ below.
   `docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`, and the
   `[1.0.0-beta.3]` entry above now say this plainly instead of "fresh
   install."
+- **A hardware video decoder that cannot actually decode on this machine
+  stalled the GStreamer playout worker ~10s after it started, with no error
+  on the bus.** `engine.py`'s `_CPU_DECODE_FEATURE_RANK` policy is a
+  hand-maintained name list meant to keep `decodebin` output in system
+  memory unless an operator opts into GPU decode; it covered the
+  `nv*`/`cuda*`/`vaapi*`/`va*`/`d3d11*` families but not `d3d12*`, and the
+  shipped runtime's `gstd3d12.dll` registers `d3d12h264dec`/`d3d12h265dec`
+  above both `d3d11` and every software decoder. On a machine with no
+  working GPU video-decode path (a VM, Windows Sandbox, a WARP/Basic
+  Render Driver adapter), `decodebin` autoplugged the GPU decoder anyway,
+  which prerolled and then delivered no buffers: the pipeline reached
+  PLAYING, nothing left the mux, no bus `ERROR` was posted, and the
+  worker's own stall watchdog (`_check_stall`, 10s timeout) quit and
+  exited non-zero, so the daemon relaunched it in a loop -- Gate A's T4
+  probe saw `FALLBACK_SLATE` with the watchdog's own explanation printed
+  to stdout, into a file `station-diag` does not collect. New
+  `civiccast/egress/gst/decode_policy.py` names the `d3d11`/`d3d12`
+  families the runtime actually bundles and adds
+  `demote_hardware_decoders()`, a post-`Gst.init` sweep that sets rank 0 on
+  every registered `Codec/Decoder/*/Hardware` factory found on the running
+  machine's own registry, so it cannot go stale the next time the bundled
+  runtime gains a plugin (`CIVICCAST_GST_ALLOW_HARDWARE_DECODE=1` disables
+  the sweep for an operator who wants GPU decode). The worker's `last_error`
+  now names the actual dead engine (never says `FFmpeg` for a GStreamer
+  worker) and its stderr tail is redacted and length-bounded. **Honest
+  boundary carried over from the PR:** the rank defect itself is measured
+  on the shipped runtime's registry; that it is *the* cause of the sandbox
+  stall specifically is a well-supported inference (not reproduced inside
+  Windows Sandbox in that session) -- tonight's Gate A run is what turns
+  that inference into a measurement either way.
+- **`In-Sandbox-Report.ps1`'s T4 probe raced a cold engine start with a
+  fixed 20s sleep and recorded only a bare `engine_state` string.**
+  Replaced with a bounded poll (5s interval, 60s budget) of both `/state`
+  (`engine_state` + `last_error`) and `/health` (the `sink_connected` map):
+  the TSDuck capture window now opens as soon as the engine reports a
+  connected sink, and every poll tick plus the full final state/health
+  bodies are written to `T4-ENGINE-NOTES.txt`,
+  `T4-ENGINE-STATE-BODY.json`, and `T4-ENGINE-HEALTH-BODY.json` so a
+  FALLBACK_SLATE result carries its own diagnostic trail instead of a bare
+  string. `Test-TsProof`'s own verdict logic is unchanged.
+- **Gate A verdict artifact names must use the build run id, not the Gate A
+  run id.** `gate-a-station-acceptance.yml` uploads its `gate-a*-verdict-*`
+  artifacts suffixed with the *build* run id (its own `run_id` step output
+  is `github.event.inputs.run_id`, the build being validated), never the
+  Gate A workflow's own run id -- but `download_gate_a_verdicts` formatted
+  `GATE_A_ARTIFACT_NAMES[lane]` with `gate_a_run_id` (correct elsewhere, as
+  the `gh run download` argument selecting which run to fetch from), so it
+  looked for an artifact name that can never exist whenever the two run
+  ids differ. This is the same class of bug the beta.3 publish record
+  already reported for `publish_beta_candidate.py`'s own
+  `download_gate_a_verdicts` call and fixed there; this PR applies the
+  identical fix to the Gate A verdict-aggregation path itself and adds a
+  regression test asserting both ids are used for their correct, distinct
+  purposes.
+- **The schema-status health check had no TTL checkpoint until the first
+  request asked for one.** `/health`'s schema-status caching set its TTL
+  checkpoint lazily, on first read, so a probe landing in the window right
+  after a cold start (uvicorn worker boot, before any request had primed
+  the cache) could read a stale or absent schema-status value. The
+  checkpoint is now set once at `lifespan` startup, so every `/health`
+  call after boot sees a consistently-aged cache instead of one whose age
+  depends on request ordering.
+- **The D3 pre-upgrade drill could report a false negative, and a rollback
+  restore was not actually reachable in the flat installer layout.** Fixed
+  the pre-upgrade drill's false-negative path and made the rollback
+  restore's containment work against the installer's real flat directory
+  layout (not an assumed nested one), so an upgrade drill failure and an
+  actual rollback both do what their own status text claims.
+- **The D3 rollback restore's own CLI tools were pointed at the wrong
+  server and an unresolved `psql`.** The restore path invoked `psql`
+  without resolving it against the installer's bundled Postgres tooling
+  and without the CLI tools' own view of which server to talk to, so a
+  rollback restore could fail (or silently target the wrong instance)
+  exactly when it is needed most, during a failed upgrade's unwind. Fixed
+  to reuse the same resolved-server, resolved-`psql` path the rest of the
+  upgrade/rollback machinery already uses.
+- **Installer-path audit batch: every BLOCKER and release-path MAJOR found
+  in a dedicated audit of the upgrade/install/uninstall paths.** Closed a
+  fail-open in the upgrade drill's BL-03/BL-04 checks (they could report
+  success without actually verifying what they claimed to), corrected
+  three status messages that claimed more coverage than the code checked,
+  stopped an unrecognized installer flag from hanging `setup.exe` forever,
+  gave uninstall refusals exit codes that mean something instead of a bare
+  nonzero, gave the mandatory caption-floor model pack a content contract
+  so a corrupt/partial pack is caught before it is trusted, and stopped
+  the installer verifying components it never actually stages. This is
+  the batch `Test-TsProof`'s null-pipeline bug (the one retracting the
+  beta.3 `PASS_PRODUCT_ENGINE` grade above) was fixed inside.
+- **UI walkthrough batch 6-10: publish retest, search fallback, setup
+  gating, dev proxy.** A round of UI-only fixes found during a full
+  operator-console click-through: publish retest after a fixed
+  configuration issue now actually retests instead of leaving the last
+  (stale) failure showing, search gained a fallback path for a state that
+  previously rendered a blank result with no explanation, first-setup
+  gating closed a path where an unconfigured station could look further
+  along than it was, and the dev proxy configuration issue that made some
+  of the above invisible outside a production-style build was fixed.
+  Playwright was not run for this batch's UI changes in the session that
+  produced it -- said so rather than claiming a run that didn't happen.
+
+### In flight, not yet in this candidate
+
+The two shipped-product bugs above (`engine_state=FALLBACK_SLATE` on a
+worker that could not even reach PLAYING) are what made Gate A's T4
+product-engine check unmeasurable for beta.3. Two more PRs, open as of this
+writing, complete the picture and are expected to land before tonight's
+beta.4 Gate A run:
+
+- **#155 -- Gate A: real product-engine soak (T6, `SOAK_MINUTES>20`).** Adds
+  a soak phase that schedules real sample clips onto all three PEG
+  channels on the station's own GStreamer engine and polls TSDuck/state
+  every 300s for the soak window, failing the verdict on any channel that
+  is not `ON_AIR` or shows zero packets. Below `SOAK_MINUTES=20` (Gate A's
+  normal CI lanes) the harness is unchanged.
+- **#156 -- ship TSDuck config data files and find the shipped `tsp.exe`.**
+  The packaged `tsp.exe` had its plugin DLLs but none of the `.names`/
+  `.xml` data files TSDuck resolves relative to its own directory on
+  Windows, so a fresh install's `tsp` failed with errors like `file not
+  found: tsduck.hfbands.xml` -- this is *why* the T4 TSDuck capture itself
+  could not measure the product engine even after the worker fixes above
+  landed. Adds the ~1 MB of missing data files to the server pack and a
+  lookup fix so the product's own `TS relay auto mode` no longer logs
+  "TSDuck (tsp) not found" on an install that genuinely shipped it.
+
+If either PR is not merged, or tonight's Gate A T4/T6 lanes do not PASS,
+the "first release whose Gate A measured real engine packets" framing in
+this candidate's release notes must be removed before publishing -- see
+the note marked **REMOVE IF GATE A FAILS** in
+`docs/releases/2026-09-03-beta4-release-notes.md`.
 
 ## [1.0.0-beta.3] - 2026-09-03
 

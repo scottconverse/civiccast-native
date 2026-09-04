@@ -154,6 +154,14 @@ things outside this repository's control:
   [`docs/ops/gate-a.md`](docs/ops/gate-a.md#known-limitation-test-tsproof-null-pipeline-bug-let-a-false-t4-pass-through-fixed-in-145)
   for the full account. The ffmpeg fallback path Gate A also exercises is
   proven; the GStreamer default-engine path is not yet proven by Gate A.
+  **Pending tonight's Gate A run for `v1.0.0-beta.4` (REMOVE THIS SENTENCE
+  IF THAT RUN DOES NOT PASS):** two fixes since beta.3 (#153, #154) address
+  the two measured causes of `FALLBACK_SLATE` above, and `v1.0.0-beta.4` is
+  expected to be the first candidate whose Gate A T4 check measures real
+  MPEG-TS packets from the GStreamer engine instead of falling back to
+  slate -- see
+  [`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
+  for the actual verdict once that run completes.
 
 ## Install and run
 
