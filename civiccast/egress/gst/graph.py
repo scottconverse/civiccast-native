@@ -121,6 +121,12 @@ class PlaylistLeg:
 #: segment-timed. ``appsrc`` is deliberately listed: whether it timestamps from
 #: the clock depends on its ``do-timestamp`` property, and the fail-safe answer
 #: for an unknown leg is the pre-existing behaviour (no hold, no rebase).
+#: NOT listed: ``interpipesrc``/``interpipesink`` (the RidgeRun interpipe
+#: plugin, along with ``compositor``/``hlssink3``/``pango``, was demoted from
+#: the shipped GStreamer closure by an owner-confirmed spec decision and is
+#: not wired into any ingest/playout graph this repository builds -- see
+#: ``civiccast/native/runtime_closure.py`` around its "deliberately NOT here"
+#: comment).
 CLOCK_TIMED_SOURCE_FACTORIES = frozenset(
     {
         "appsrc",
@@ -136,6 +142,20 @@ CLOCK_TIMED_SOURCE_FACTORIES = frozenset(
         "tcpclientsrc",
         "tcpserversrc",
         "udpsrc",
+        # Windows live capture devices (webcam/framegrabber + system audio):
+        # a physical/OS capture device is always-live, same as decklink*src
+        # above, even though no ingest graph builder in this repository
+        # instantiates one of these yet.
+        "ksvideosrc",
+        "mfvideosrc",
+        "dshowvideosrc",
+        "wasapi2src",
+        "wasapisrc",
+        # Linux V4L2 capture device (WSL/Linux ingest lane; kept for parity
+        # with the Windows entries above even though the native-Windows
+        # product line this repository ships is the only one currently
+        # wired up).
+        "v4l2src",
     }
 )
 
@@ -153,7 +173,9 @@ def source_leg_is_clock_timed(leg: SourceLeg | PlaylistLeg) -> bool:
     Gi-free on purpose (like ``reload_policy``): the engine cannot be imported
     without a real GStreamer, and this decision is worth unit-testing on a bare
     checkout. See ``CLOCK_TIMED_SOURCE_FACTORIES`` for what the answer is used
-    for and why an unknown leg answers True (the fail-safe side)."""
+    for and why an unknown leg answers False (the fail-safe side: treated as
+    segment-timed, so a boundary-aligned rollover neither holds nor rebases
+    it -- the pre-existing behaviour)."""
 
     if isinstance(leg, PlaylistLeg):
         chains: tuple[tuple[ElementSpec, ...], ...] = (*leg.subchains, leg.audio_tail)

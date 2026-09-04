@@ -43,6 +43,21 @@ entries:
   # going forward via scripts/release/publish_beta_candidate.py; every green
   # build gets tagged and published as a GitHub pre-release because the beta
   # tester (Sergio, "LPM") checks GitHub daily.
+  - tag: v1.0.0-beta.5
+    status: staging
+    notes: >-
+      Owner-held candidate as of this entry; NOT YET PUBLISHED by this
+      change. Release-prep bump: product version moves from v1.0.0-beta.4 to
+      v1.0.0-beta.5 across every check_release_identity.py-bound surface, and
+      sandbox-lab/upgrade-baseline.json is repinned from the beta.3 kit to the
+      published beta.4 kit (source SHA
+      c27c6e70200406b51558ee1ef6b3a95ee4dc4426, build run 33854799455, Gate A
+      run 33857982657) so Gate A's cross-version and download-only lanes have
+      the actual current published release as their prior build. Flips to
+      current, with the v1.0.0-beta.4 entry's status flipped to
+      superseded_by v1.0.0-beta.5, only once an actual publish lands and a
+      human/agent updates this file to match -- this manifest is the SOLE
+      AUTHORED SOURCE and is never inferred from what "should" be live.
   - tag: v1.0.0-beta.4
     status: current
     notes: >-

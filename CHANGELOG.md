@@ -13,6 +13,67 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+`v1.0.0-beta.5` is the next candidate and the current owner-held unpublished
+candidate; it does not change the `v1.0.0-beta.4` install story documented
+below.
+
+### Fixed
+
+- **`civiccast/egress/gst/graph.py`'s `source_leg_is_clock_timed` docstring
+  claimed the fail-safe answer for an unknown source factory is `True`; the
+  code has always returned `False`** (`_chain_is_clock_timed` only matches a
+  listed factory or an explicit `is-live=True`). Fixed the docstring, added
+  the Windows live-capture device factories (`ksvideosrc`, `mfvideosrc`,
+  `dshowvideosrc`, `wasapi2src`, `wasapisrc`) plus Linux's `v4l2src` to
+  `CLOCK_TIMED_SOURCE_FACTORIES`, and deliberately did not add
+  `interpipesrc`/`interpipesink` -- the RidgeRun interpipe plugin was
+  demoted from the shipped GStreamer closure by an owner-confirmed spec
+  decision and is not wired into any ingest/playout graph this repository
+  builds. New tests in `tests/egress/test_gst_graph.py` pin both the new
+  factories (clock-timed) and the corrected unknown-factory default
+  (segment-timed), including `interpipesrc` as a documented example of an
+  unrecognized factory. Since `graph.py` is a D2 blob-drift-bound
+  code/fixtures input across two `external_evidence` claims in
+  `docs/claims/claims.yaml` (`native-decision-gate`,
+  `session0-service-broadcast`), re-hashed its three bound blob entries and
+  added re-provisioning comments following this registry's established
+  pattern, with current-source proof pointed at the new gi-free unit tests
+  above.
+
+### Changed
+
+- **Release prep: bump product version to `v1.0.0-beta.5`.** Every surface
+  `scripts/policy/check_release_identity.py` binds together
+  (`civiccast/_version.py`, `civiccast/_native_version.py`, the installer's
+  Cargo/Tauri/package.json identities, `main.rs`'s `CIVICCAST_VERSION`, the
+  OpenAPI-derived docs, the operator-console on-screen-version e2e
+  expectation) plus the extra surfaces the beta.3/beta.4 release-preps
+  touched (`ARCHITECTURE.md`, `SUPPORT.md`, `docs/USER-MANUAL.md`,
+  `scripts/download_windows_release_artifacts.ps1`,
+  `docs/technical-ops-reference.md`, `INSTALL-WINDOWS.md`, both lockfiles)
+  now read `1.0.0-beta.5`. `v1.0.0-beta.4` remains the current published
+  release; this bump only advances the next development candidate's
+  identity.
+- **`sandbox-lab/upgrade-baseline.json` repinned to the beta.4 kit.** Now
+  pins source SHA `c27c6e70200406b51558ee1ef6b3a95ee4dc4426`, build run
+  33854799455 (`native-beta-candidate-artifacts`, conclusion success),
+  Gate A run 33901203343 (the successful three-lane Gate A run for this
+  candidate -- clean station-acceptance PASS including
+  `PASS_PRODUCT_ENGINE`, cross-version-upgrade PASS, download-only-upgrade
+  PASS), and `product_version: 1.0.0-beta.4` -- so Gate A's cross-version
+  and download-only lanes have a real, current prior build to upgrade
+  `v1.0.0-beta.5` from. `installer_sha256` verified against the GitHub
+  Release `v1.0.0-beta.4` asset digest for `setup.exe` (also matching that
+  release's `SHA256SUMS.txt`); `station_index_sha256` computed against
+  `station-index.json` from the `native-station-embed-c27c6e70...` build
+  artifact of run 33854799455 (`manifest.product_version` confirms
+  `1.0.0-beta.4`).
+- `docs/releases/release-truth.yaml`: new `v1.0.0-beta.5` entry, `status:
+  staging`, mirroring how beta.4 was originally recorded (PR #150).
+  `v1.0.0-beta.4`'s own entry is untouched and stays `status: current`
+  (flipped by PR #157); this bump only stages the next candidate behind
+  it.
+
 ## [1.0.0-beta.4] - 2026-09-04
 
 Published as [`v1.0.0-beta.4`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
@@ -360,6 +421,77 @@ passed all three lanes -- clean install, cross-version upgrade (over the
 pinned beta.3 baseline, including the independent `psql` schema proof), and
 download-only -- see
 `docs/releases/v1.0.0-beta.4-verification.md` for the per-lane evidence.
+
+### Changed
+
+- **Release prep: bump product version to `v1.0.0-beta.5`.** Every surface
+  `scripts/policy/check_release_identity.py` binds together
+  (`civiccast/_version.py`, `civiccast/_native_version.py`, the installer's
+  Cargo/Tauri/package.json identities, `main.rs`'s `CIVICCAST_VERSION`, the
+  OpenAPI-derived docs, the operator-console on-screen-version e2e
+  expectation) plus the extra surfaces the beta.3/beta.4 release-preps
+  touched (`ARCHITECTURE.md`, `SUPPORT.md`, `docs/USER-MANUAL.md`,
+  `scripts/download_windows_release_artifacts.ps1`,
+  `docs/technical-ops-reference.md`, both lockfiles that mirror the bumped
+  `package.json` versions) now read `1.0.0-beta.5`. `v1.0.0-beta.3` remains
+  the current published release; this bump only advances the next
+  development candidate's identity.
+- **`sandbox-lab/upgrade-baseline.json` repinned to the published beta.4
+  kit.** Now pins source SHA `c27c6e70200406b51558ee1ef6b3a95ee4dc4426`,
+  build run `33854799455` (`native-beta-candidate-artifacts`, conclusion
+  `success`), Gate A run `33857982657`, and `product_version:
+  1.0.0-beta.4` -- installer hash verified against the GitHub Release
+  `v1.0.0-beta.4` asset digest for `setup.exe`
+  (`9fae1211c8cb1f7d51c59d3088e0dd1d311be32493652b61917efebc0274628f`, also
+  matching `SHA256SUMS.txt` on that release) and station-index hash computed
+  against `station-index.json` from the `native-station-embed-c27c6e70...`
+  build artifact of run `33854799455` (its `manifest.product_version` reads
+  `1.0.0-beta.4`, confirming it is the right file). `gate_a_run_id`
+  (`33901203343`) is the successful three-lane Gate A run for this candidate
+  -- clean station-acceptance PASS (including `PASS_PRODUCT_ENGINE`),
+  cross-version-upgrade PASS, and download-only-upgrade PASS. That run was
+  dispatched via `workflow_dispatch` against `main` with `run_id` /
+  `source_sha` supplied as parameters (`Run-GateA.ps1 -SourceSha
+  c27c6e70200406b51558ee1ef6b3a95ee4dc4426 -RunId 33854799455`), so its own
+  GitHub Actions `head_sha` shows the dispatching commit on `main`, not the
+  candidate's -- its logs and `gate-a-verdict.json` confirm it built and
+  judged the `c27c6e70...` kit, not `main`.
+- `docs/releases/release-truth.yaml`: new `v1.0.0-beta.5` entry, `status:
+  staging`, mirroring how beta.4 was originally recorded. `v1.0.0-beta.4`'s
+  entry is untouched and stays `status: staging` (it has not yet been
+  flipped to `current` on `main`; that flip is tracked separately in PR
+  #157 and is out of scope for this identity bump).
+
+### Fixed
+
+- **`civiccast/egress/gst/graph.py`'s `source_leg_is_clock_timed` docstring
+  claimed the fail-safe answer for an unknown source factory is `True`; the
+  code has always returned `False`.** `_chain_is_clock_timed` only returns
+  `True` when a chain's factory is listed in `CLOCK_TIMED_SOURCE_FACTORIES`
+  or an element carries `is-live=True`; an unrecognized factory with no
+  `is-live` property matches neither, so `any(...)` over the chains returns
+  `False` -- segment-timed, the same "no hold, no rebase" default the
+  module's own property-level comment already (correctly) documented two
+  paragraphs above the docstring that contradicted it. Fixed the docstring
+  to say `False` and explain why that is the safe default (a
+  boundary-aligned rollover neither holds nor rebases an unrecognized leg,
+  rather than risking staling a leg that turns out to be live). Also added
+  the Windows live-capture device factories -- `ksvideosrc`, `mfvideosrc`,
+  `dshowvideosrc`, `wasapi2src`, `wasapisrc` -- plus Linux's `v4l2src`, to
+  `CLOCK_TIMED_SOURCE_FACTORIES`: a physical/OS capture device is
+  always-live, the same class of source as the `decklink*src` entries
+  already listed, even though no ingest graph builder in this repository
+  instantiates one of these yet. **Deliberately did NOT add
+  `interpipesrc`/`interpipesink`**: the RidgeRun interpipe plugin was
+  demoted from the shipped GStreamer closure by an owner-confirmed spec
+  decision (alongside `compositor`/`hlssink3`/`pango`) and is not wired
+  into any ingest or playout graph this repository builds --
+  `civiccast/native/runtime_closure.py` already documents it as
+  "deliberately NOT here." New `TestSourceLegIsClockTimed` cases in
+  `tests/egress/test_gst_graph.py` pin both: the new Windows/Linux capture
+  factories answer `True`, and an unrecognized factory (including
+  `interpipesrc`, to document it is treated as any other unknown factory)
+  answers `False`.
 
 ## [1.0.0-beta.3] - 2026-09-03
 
