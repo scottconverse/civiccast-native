@@ -2859,3 +2859,39 @@ def test_hls_relay_health_override_is_not_applied_when_relay_is_still_alive(
     daemon.process_once("gov")  # a second, routine tick — relay never died
 
     assert store.recent_health("gov", 1)[0].sink_connected == {"Web": True}
+
+
+def test_daemon_records_the_source_plan_it_actually_dispatched(tmp_path: Path) -> None:
+    """Hostile-review (d): channel automation's rollover pass needs to know when the
+    AIRING plan runs out, and the only honest source for that is the plan the daemon
+    actually sent. Before this, automation re-called the source plan provider and
+    summed whatever came back -- a different, re-windowed segment list that can put
+    the projected end (and therefore the rollover trigger) past the real one.
+
+    The record is keyed by the proof event written alongside it, so a consumer can
+    tell "this is what is on air" from "this is stale"."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+
+    assert daemon.dispatched_plan_horizon("gov") is None
+    assert daemon.process_once("gov") == 1
+
+    state = store.read_state("gov")
+    assert state is not None
+    recorded = daemon.dispatched_plan_horizon("gov")
+    assert recorded is not None
+    proof_event_id, durations, switch_deferred = recorded
+    assert proof_event_id == state.current_proof_event_id
+    assert durations == tuple(
+        float(segment.duration_seconds) for segment in _source_plan(tmp_path).segments
+    )
+    # A START puts its plan on air immediately -- only a content-reload can defer.
+    assert switch_deferred is False

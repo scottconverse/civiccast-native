@@ -1224,3 +1224,167 @@ class TestStartLatchRecovery:
         daemon.live_channels.clear()
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == ["start"]
+
+
+class _HorizonAwareDaemon(_FakeDaemon):
+    """A daemon double that, like the real ``EgressDaemon``, can say which source
+    plan it actually DISPATCHED (``dispatched_plan_horizon``)."""
+
+    def __init__(self, *, live_channels: set[str] | None = None) -> None:
+        super().__init__(live_channels=live_channels)
+        self.dispatched: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
+
+    def dispatched_plan_horizon(
+        self, channel_id: str
+    ) -> tuple[str | None, tuple[float, ...], bool] | None:
+        return self.dispatched.get(channel_id)
+
+
+def _plan_with_segments(channel_id: str, durations: tuple[float, ...]) -> EgressSourcePlan:
+    return EgressSourcePlan(
+        channel_id=channel_id,
+        segments=[
+            EgressSourceSegment(
+                label=f"Program {n}",
+                path=f"C:/media/program-{n}.ts",
+                duration_seconds=duration,
+                kind="program",
+                source_ref=f"seg-{n}",
+            )
+            for n, duration in enumerate(durations)
+        ],
+    )
+
+
+class TestRolloverHorizonComesFromTheDispatchedPlan:
+    """Hostile-review (d): the rollover horizon must be derived from the plan the
+    daemon ACTUALLY dispatched, not from a fresh call to the source plan provider.
+
+    The provider re-windows from whatever schedule item is live at the moment of the
+    call and caps the result at ``max_segments``, so calling it again returns a
+    DIFFERENT segment list than the one on air. Summing that list and calling it "when
+    the airing plan ends" can overshoot the real end -- and since
+    ``rollover_trigger_at`` is computed from that number, the trigger then lands at or
+    after the boundary it exists to get ahead of, which is the original EOS-restart
+    defect wearing a different hat.
+
+    Every case below uses MULTI-SEGMENT plans on purpose: with a single segment the
+    plan's last-segment-start IS its start, so ``rollover_trigger_at`` returns the
+    plan's own start time and every horizon -- right or wrong -- triggers on the next
+    tick. A single-segment scenario cannot tell the two apart.
+    """
+
+    def _on_air(self, store: InMemoryEgressStore, channel_id: str, proof_event_id: str) -> None:
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id=proof_event_id,
+                updated_at=_NOW,
+            )
+        )
+
+    #: The plan actually on air: 600s of first segment, then a 40s tail. Its real end
+    #: is _NOW+640 and its boundary-aligned trigger is _NOW+520 (120s lead floor).
+    _AIRING = (600.0, 40.0)
+    #: What a re-query answers instead: the provider has re-windowed forward and is
+    #: describing 1800s of schedule that is NOT the plan on air. Believing it puts the
+    #: horizon at _NOW+1800 and the trigger at _NOW+900 -- 260s PAST the real end.
+    _REQUERY = (900.0, 900.0)
+
+    def test_an_over_reporting_re_query_no_longer_hides_an_imminent_boundary(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", self._AIRING, False)
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, self._REQUERY),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)  # establishes the horizon from the DISPATCHED plan
+        assert _pending_actions(store, "public") == []
+        # _NOW+560 is past the airing plan's own trigger (_NOW+520) and still 80s
+        # short of its end -- the whole point of a boundary-aligned rollover.
+        service.run_once(now=_NOW + timedelta(seconds=560))
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_the_legacy_re_query_would_have_slept_through_that_boundary(self) -> None:
+        """The control for the test above: the SAME store, provider and clock, with a
+        daemon that cannot report its dispatch. Nothing rolls over before the real end
+        -- which is exactly the behaviour the fix replaces."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        service = ChannelAutomationService(
+            store,
+            _FakeDaemon(live_channels={"public"}),
+            lambda cid: _plan_with_segments(cid, self._REQUERY),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=560))
+        assert _pending_actions(store, "public") == []
+
+    def test_a_dispatch_record_for_a_different_proof_event_is_ignored(self) -> None:
+        """A record the current proof event does not match is not evidence about what
+        is on air now -- fall back to the legacy re-query rather than dating the
+        horizon off a stale dispatch."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-2")
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", self._AIRING, False)  # stale
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, self._REQUERY),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=560))
+        assert _pending_actions(store, "public") == []
+
+    def test_a_deferred_rollover_plan_is_dated_from_the_OUTGOING_plan_s_end(self) -> None:
+        """A boundary-aligned rollover plan does not start when it is dispatched: the
+        engine holds it, prerolled, until the outgoing leg's own end
+        (``switch_at_end_of_current``). Dating its horizon from the dispatch instant
+        instead would put the projected end a whole rollover lead time early, and make
+        the NEXT rollover fire before there was anything to roll onto."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", (500.0, 100.0), False)  # ends _NOW+600
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, (900.0, 900.0)),
+            settings=ChannelAutomationSettings(),
+        )
+        service.run_once(now=_NOW)
+        store.pop_pending_commands("public")
+
+        # 500s in, a DEFERRED rollover lands: 300s of new content that will not begin
+        # until the outgoing plan ends at _NOW+600, so it ends at _NOW+900 -- not at
+        # (_NOW+500)+300 = _NOW+800.
+        self._on_air(store, "public", "ev-2")
+        daemon.dispatched["public"] = ("ev-2", (200.0, 100.0), True)
+        service.run_once(now=_NOW + timedelta(seconds=500))
+        assert _pending_actions(store, "public") == []
+
+        # _NOW+700 is past the trigger a dispatch-instant horizon would have computed
+        # (min(_NOW+700, _NOW+680) = _NOW+680) and short of the correct one
+        # (min(_NOW+800, _NOW+780) = _NOW+780). Nothing may be dispatched here.
+        service.run_once(now=_NOW + timedelta(seconds=700))
+        assert _pending_actions(store, "public") == []
+
+        # Past the correct trigger it rolls over as normal.
+        service.run_once(now=_NOW + timedelta(seconds=800))
+        assert _pending_actions(store, "public") == ["reload"]

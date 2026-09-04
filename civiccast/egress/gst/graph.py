@@ -104,6 +104,64 @@ class PlaylistLeg:
                 raise ValueError(f"PlaylistLeg {self.label!r} has an empty sub-chain")
 
 
+#: Source element factories whose buffers are stamped from the PIPELINE CLOCK --
+#: i.e. a leg built from one of these already runs on the pipeline's running-time
+#: base the moment it starts, however long the channel has been up.
+#:
+#: The distinction matters for exactly one decision, and it is not cosmetic: a
+#: boundary-aligned rollover (``GstPlayoutEngine.reload_program`` with
+#: ``switch_at_end_of_current=True``) HOLDS the new leg at its first buffer and
+#: then REBASES its running time onto the outgoing leg's end. Both are right for a
+#: segment-timed leg (``filesrc``/``decodebin``: it starts at running time ~0 no
+#: matter what the wall clock says) and both are WRONG for a clock-timed one --
+#: you cannot pause live content without it going stale, and its timeline is
+#: already the pipeline's, so rebasing would shove it forward by the whole wait.
+#:
+#: Anything not listed here that does not declare ``is-live`` is treated as
+#: segment-timed. ``appsrc`` is deliberately listed: whether it timestamps from
+#: the clock depends on its ``do-timestamp`` property, and the fail-safe answer
+#: for an unknown leg is the pre-existing behaviour (no hold, no rebase).
+CLOCK_TIMED_SOURCE_FACTORIES = frozenset(
+    {
+        "appsrc",
+        "decklinkaudiosrc",
+        "decklinkvideosrc",
+        "ndisrc",
+        "rtmp2src",
+        "rtmpsrc",
+        "rtspsrc",
+        "srtclientsrc",
+        "srtserversrc",
+        "srtsrc",
+        "tcpclientsrc",
+        "tcpserversrc",
+        "udpsrc",
+    }
+)
+
+
+def _chain_is_clock_timed(chain: tuple[ElementSpec, ...]) -> bool:
+    return any(
+        spec.factory in CLOCK_TIMED_SOURCE_FACTORIES or spec.props.get("is-live") is True
+        for spec in chain
+    )
+
+
+def source_leg_is_clock_timed(leg: SourceLeg | PlaylistLeg) -> bool:
+    """True when ``leg``'s buffers already carry pipeline running time.
+
+    Gi-free on purpose (like ``reload_policy``): the engine cannot be imported
+    without a real GStreamer, and this decision is worth unit-testing on a bare
+    checkout. See ``CLOCK_TIMED_SOURCE_FACTORIES`` for what the answer is used
+    for and why an unknown leg answers True (the fail-safe side)."""
+
+    if isinstance(leg, PlaylistLeg):
+        chains: tuple[tuple[ElementSpec, ...], ...] = (*leg.subchains, leg.audio_tail)
+    else:
+        chains = (leg.elements, leg.audio)
+    return any(_chain_is_clock_timed(chain) for chain in chains if chain)
+
+
 @dataclass(frozen=True)
 class CaptionEmbedLeg:
     """CEA-608/708 caption EMBED leg (S11a, GStreamer-native).

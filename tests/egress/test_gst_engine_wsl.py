@@ -213,6 +213,7 @@ def _hard_hang_timeout():
 # worker does, so this harness runs under a bare python without the full package.
 sys.path.insert(0, str(_GST_DIR))
 import graph as graphmod  # noqa: E402
+import reload_policy as reloadpolicy  # noqa: E402
 
 _E = graphmod.ElementSpec
 _CAPS = "video/x-raw,width=640,height=360,framerate=30/1"
@@ -1805,3 +1806,272 @@ def test_graphics_overlay_disabled_matches_existing_no_overlay_behavior(tmp_path
     rc, out_ts, log = _run_worker(tmp_path, graph, commands=["swap 1"], produce_window=1.0)
     assert rc == 0, f"unclean teardown with graphics overlay off (rc={rc}); log:\n{log}"
     _assert_continuous(out_ts, log)
+
+
+# --- boundary-aligned plan rollover (deferred switch) --------------------------------
+
+
+def _finite_program_av_graph(*, seconds: float = 5.0):
+    """Production-shape A/V graph whose PROGRAM leg (source 0) is FINITE and
+    SEGMENT-TIMED -- the two properties a real schedule-derived program leg has and
+    the ``_av_demo_graph`` legs do not.
+
+    * finite (``num-buffers``) so the leg reaches its own natural EOS: that EOS is
+      the boundary the deferred rollover switches at, and the event that used to run
+      straight through the still-active input-selector into the mux and take the
+      whole worker down.
+    * ``is-live=false`` so its buffers are stamped from ITS OWN segment starting at
+      running time 0 (exactly like ``filesrc ! decodebin``), not from the pipeline
+      clock -- which is what makes the running-time rebase necessary and testable. A
+      live source would already be on the pipeline's timebase and, per
+      ``graph.source_leg_is_clock_timed``, is deliberately neither held nor rebased.
+
+    Pacing comes from the SINK (see ``_paced_filesink_graph``), the way ``udpsink
+    sync=true`` paces a real channel -- not from the legs.
+    """
+    video_buffers = int(seconds * 30)
+    audio_buffers = int(seconds * 48000 / 1024) + 1
+    program = graphmod.SourceLeg(
+        label="program",
+        elements=(
+            _E(
+                "videotestsrc",
+                props={"is-live": False, "pattern": 0, "num-buffers": video_buffers},
+            ),
+            _E("capsfilter", props={"caps": _CAPS}),
+        ),
+        audio=(
+            _E("audiotestsrc", props={"is-live": False, "wave": 0, "num-buffers": audio_buffers}),
+            _E("audioconvert"),
+            _E("audioresample"),
+            _E("capsfilter", props={"caps": _ACAPS}),
+        ),
+    )
+    base = _av_demo_graph(nsrc=2)
+    return graphmod.PlayoutGraph(
+        sources=(program, base.sources[1]),
+        encoder=base.encoder,
+        audio_encoder=base.audio_encoder,
+        mux=base.mux,
+        sinks=base.sinks,
+    )
+
+
+def _segment_timed_reload_graph(pattern: int = 18):
+    """A reload payload that is SEGMENT-TIMED and endless -- the rollover successor.
+    Endless so it is still producing when the test stops the worker; segment-timed so
+    ``reload_program`` takes the hold-and-rebase path under test."""
+    program = graphmod.SourceLeg(
+        label="program",
+        elements=(
+            _E("videotestsrc", props={"is-live": False, "pattern": pattern}),
+            _E("capsfilter", props={"caps": _CAPS}),
+        ),
+        audio=(
+            _E("audiotestsrc", props={"is-live": False, "wave": 8}),
+            _E("audioconvert"),
+            _E("audioresample"),
+            _E("capsfilter", props={"caps": _ACAPS}),
+        ),
+    )
+    base = _av_demo_graph(nsrc=2)
+    return graphmod.PlayoutGraph(
+        sources=(program, base.sources[1]),
+        encoder=base.encoder,
+        audio_encoder=base.audio_encoder,
+        mux=base.mux,
+        sinks=base.sinks,
+    )
+
+
+def _paced_filesink_graph(graph, out_ts: Path):
+    """``_filesink_graph`` plus a clock sync point in front of the filesink.
+
+    A ``filesink`` never syncs, so a graph of SEGMENT-TIMED (non-live) legs behind one
+    free-runs: the program would blast through its whole duration in a fraction of the
+    wall time and there would be no boundary left to aim a reload at. Real channels are
+    paced at the sink (``udpsink sync=true``); ``identity sync=true`` is that same
+    pacing with a file on the end, so the leg timing under test is production timing."""
+    sinks = (
+        (
+            _E("queue"),
+            _E("identity", props={"sync": True}),
+            _E("filesink", props={"location": str(out_ts)}),
+        ),
+    )
+    return graphmod.PlayoutGraph(
+        sources=graph.sources,
+        encoder=graph.encoder,
+        audio_encoder=graph.audio_encoder,
+        mux=graph.mux,
+        sinks=sinks,
+        captions=graph.captions,
+        secondary_audio=graph.secondary_audio,
+    )
+
+
+def _ts_tail(path: Path, offset: int, dest: Path) -> Path:
+    """Write the 188-byte-aligned TS packets of ``path`` from ``offset`` on to
+    ``dest``, so the analyzer can be pointed at only what was emitted AFTER the
+    boundary."""
+    data = path.read_bytes()
+    start = min(len(data), ((offset + 187) // 188) * 188)
+    while start < len(data) and data[start] != 0x47:
+        start += 1
+    dest.write_bytes(data[start:])
+    return dest
+
+
+def _pes_pts_backward_steps(path: Path, *, tolerance_seconds: float = 0.5) -> dict[int, int]:
+    """Per elementary PID, how many times the PES PTS steps BACKWARD by more than
+    ``tolerance_seconds``.
+
+    ``_analyze_ts`` above reads the PCR out of the adaptation field, which is the
+    right check for the transport clock but is not the whole timestamp story: at a
+    source handover the mux re-derives the video PCR, so a leg that restarted at
+    running time 0 can leave the PCR looking clean while the AUDIO PID's PTS steps
+    straight back to the beginning. TSDuck's own ``analyze`` plugin reports exactly
+    that as ``pts-leap`` on the audio PID (verified on this branch: 1 leap without the
+    running-time rebase, 0 with it); this is the same check, in-tree, so the rollover
+    test does not depend on TSDuck being installed.
+
+    Small backward steps are normal and NOT counted: B-frame reordering means
+    presentation timestamps legitimately go out of order by a frame or two."""
+    data = path.read_bytes()
+    tolerance = int(tolerance_seconds * 90_000)  # PTS ticks are 90 kHz
+    wrap = 1 << 33
+    last: dict[int, int] = {}
+    backward: dict[int, int] = {}
+    for i in range(0, len(data) - 187, 188):
+        if data[i] != 0x47:
+            continue
+        pid = ((data[i + 1] & 0x1F) << 8) | data[i + 2]
+        if pid < 0x40 or pid == 0x1FFF:
+            continue
+        if not data[i + 1] & 0x40:  # payload_unit_start_indicator: a PES header starts here
+            continue
+        afc = (data[i + 3] >> 4) & 0x3
+        offset = i + 4
+        if afc in (2, 3):
+            offset += 1 + data[i + 4]
+        if afc == 2 or offset + 14 > i + 188:
+            continue
+        if data[offset : offset + 3] != b"\x00\x00\x01":  # PES start code prefix
+            continue
+        if not data[offset + 7] & 0x80:  # PTS_DTS_flags: no PTS present
+            continue
+        b = data[offset + 9 : offset + 14]
+        pts = (
+            ((b[0] >> 1) & 0x07) << 30
+            | b[1] << 22
+            | ((b[2] >> 1) & 0x7F) << 15
+            | b[3] << 7
+            | ((b[4] >> 1) & 0x7F)
+        )
+        previous = last.get(pid)
+        if previous is not None:
+            delta = pts - previous
+            if delta < -(wrap // 2):  # 33-bit wrap, not a leap
+                delta += wrap
+            if delta < -tolerance:
+                backward[pid] = backward.get(pid, 0) + 1
+        last[pid] = pts
+    return backward
+
+
+def test_deferred_rollover_switches_at_the_boundary_without_eos(tmp_path: Path) -> None:
+    """B3 / hostile-review (a)(b)(c): a ``switch_at_end_of_current`` reload must hand
+    over AT the outgoing leg's own end without ever producing a pipeline EOS, without a
+    timestamp jump, and with BOTH selectors switched.
+
+    Before the boundary-aligned switch this scenario was a deterministic channel kill.
+    The engine watched the outgoing leg's video pad and returned ``PAD_PROBE_REMOVE``
+    for its EOS, which does not drop the event: ``input-selector`` forwards an ACTIVE
+    pad's EOS downstream, so it reached the encoder, then ``mpegtsmux``, then the bus,
+    and ``_on_bus`` quit the run loop -- strictly BEFORE the ``GLib.idle_add`` commit
+    could run. The worker exited and the daemon wrote STOPPED, at every plan boundary.
+    The audio selector's pad was never watched at all.
+
+    Asserted here, against a real GStreamer:
+      * the worker is STILL RUNNING a full second past the boundary (the regression
+        assertion -- it used to be gone by then);
+      * the reload committed AND logged the running-time rebase;
+      * TS kept being written after the boundary, and the packets emitted after it
+        carry BOTH elementary PIDs -- i.e. the audio selector switched too, not just
+        video (an unswitched audio selector goes silent behind an EOS-latched mux pad);
+      * continuity across the WHOLE capture: zero CC errors and zero backward PCR
+        steps, which is the timestamp-jump check -- a leg that started again at running
+        time 0 would step the PCR back by the whole uptime;
+      * a clean ``stop`` teardown afterwards (rc 0).
+    """
+    program_seconds = 5.0
+    out_ts = tmp_path / "out.ts"
+    graph = _paced_filesink_graph(_finite_program_av_graph(seconds=program_seconds), out_ts)
+    reload_path = tmp_path / f"rollover{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+    reload_path.write_text(
+        graphmod.graph_to_json(_segment_timed_reload_graph(18)), encoding="utf-8"
+    )
+    assert reloadpolicy.reload_switch_is_deferred(str(reload_path)), (
+        "the harness must request the DEFERRED switch mode, else this test proves nothing"
+    )
+
+    proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        # Arm the rollover early -- well before the boundary, exactly as automation's
+        # boundary-aligned trigger does. The new leg must WAIT, not cut in.
+        time.sleep(1.0)
+        _send(control, f"reload {reload_path}")
+        _wait_for_log(log, "CTRL reload committed", timeout=program_seconds + 15.0)
+        committed_at_size = out_ts.stat().st_size
+        # A full second past the boundary the worker must still be alive: this is the
+        # exact interval in which the pre-fix engine had already exited on the
+        # forwarded EOS.
+        time.sleep(1.0)
+        assert proc.poll() is None, (
+            "worker exited at the rollover boundary (a pipeline EOS escaped the switch); "
+            f"log:\n{log.read_text(encoding='utf-8', errors='replace')}"
+        )
+        time.sleep(1.0)
+        _send(control, "stop")
+        returncode = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+    text = log.read_text(encoding="utf-8", errors="replace")
+
+    assert returncode == 0, f"unclean teardown after a boundary rollover (rc={returncode});\n{text}"
+    _assert_reload_committed(text)
+    assert "boundary switch rebased to running time" in text, (
+        f"the deferred switch did not rebase the new leg's running time;\n{text}"
+    )
+    after = out_ts.stat().st_size
+    assert after > committed_at_size, (
+        "no TS was written after the boundary -- output stopped at the handover;\n" + text
+    )
+
+    # Everything emitted AFTER the boundary must still carry video AND audio: a
+    # video-only switch leaves the audio selector on the EOS'd old pad.
+    tail = _ts_tail(out_ts, committed_at_size, tmp_path / "tail.ts")
+    tail_stats = _analyze_ts(tail)
+    tail_elementary = [pid for pid in tail_stats["pids"] if pid >= 0x40]
+    assert len(tail_elementary) >= 2, (
+        f"only {tail_elementary} carried packets after the boundary -- the audio "
+        f"selector did not switch with the video one;\n{text}"
+    )
+
+    stats = _assert_continuous(out_ts, text, require_audio_pid=True)
+    assert stats["pcr_samples"] > 0, f"no PCR samples to check for a jump;\n{text}"
+    assert {"video", "audio"} <= _ffprobe_codec_types(out_ts), (
+        f"ffprobe did not report both a video and an audio stream after the rollover;\n{text}"
+    )
+
+    # The timestamp-jump check with teeth. The PCR check above passes even WITHOUT the
+    # running-time rebase -- the mux re-derives the video PCR across the handover -- but
+    # the audio PID's PTS steps straight back to the start. Measured on this branch
+    # against the bundled GStreamer 1.28.5 and confirmed independently by the kit's own
+    # TSDuck: 1 backward step (tsp analyze reports "pts-leap": 1 on the audio PID) with
+    # the rebase disabled, 0 with it.
+    backward = _pes_pts_backward_steps(out_ts)
+    assert backward == {}, (
+        f"PES PTS stepped backward on PID(s) {[hex(pid) for pid in backward]} -- the new "
+        f"leg was not rebased onto the outgoing leg's end;\n{text}"
+    )

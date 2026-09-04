@@ -707,6 +707,14 @@ class ChannelAutomationService:
             # roll over yet. Also means any in-flight rollover landed.
             self._rollover_issued.discard(channel_id)
             self._rollover_issued_at.pop(channel_id, None)
+            previous_end_at = tracked[1] if tracked is not None else None
+            if self._establish_horizon_from_dispatch(
+                channel_id,
+                now=now,
+                proof_event_id=proof_event_id,
+                previous_end_at=previous_end_at,
+            ):
+                return
             retry_at = self._rollover_retry_at.get(channel_id)
             if retry_at is not None and self._monotonic() < retry_at:
                 self._plan_horizon.pop(channel_id, None)
@@ -803,6 +811,57 @@ class ChannelAutomationService:
             (plan_end_at - now).total_seconds(),
             (fresh_end - plan_end_at).total_seconds(),
         )
+
+    def _establish_horizon_from_dispatch(
+        self,
+        channel_id: str,
+        *,
+        now: datetime,
+        proof_event_id: str | None,
+        previous_end_at: datetime | None,
+    ) -> bool:
+        """Set this channel's tracked plan horizon from the plan the daemon
+        ACTUALLY dispatched. Returns False when the daemon cannot say (a bare test
+        double, or no dispatch recorded for this proof event yet), leaving the
+        caller on its legacy re-query path.
+
+        Hostile-review (d) fix. The re-query path this replaces asked the source
+        plan provider for a plan again and summed THAT. The provider re-windows
+        from whatever schedule item is live at the moment of the call, capped at
+        ``max_segments`` (``source_plan.build_source_plan_from_schedule``), so the
+        answer is a different segment list than the one on air -- and the derived
+        ``plan_end_at`` can overshoot far enough that
+        ``rollover_trigger_at`` lands ON the real EOS, which is precisely the
+        boundary this whole pass exists to get ahead of. The dispatched plan is
+        the only list whose durations are the ones the engine is playing.
+
+        The deferred-switch case is the second half of the fix: a boundary-aligned
+        rollover plan (``switch_at_end_of_current``) does not start when it is
+        dispatched -- the engine holds it, prerolled, until the OUTGOING leg's own
+        end. Its projected end therefore runs from the previous plan's projected
+        end, not from ``now`` (measuring from ``now`` would put the horizon a whole
+        rollover lead time -- up to ``_ROLLOVER_MIN_LEAD_SECONDS`` -- early, and
+        make every subsequent rollover fire before there was anything to roll)."""
+
+        reader = getattr(self._daemon, "dispatched_plan_horizon", None)
+        if not callable(reader):
+            return False
+        dispatched = reader(channel_id)
+        if not dispatched:
+            return False
+        dispatched_proof_id, durations, switch_deferred = dispatched
+        if dispatched_proof_id != proof_event_id or not durations:
+            # A dispatch we have no matching proof event for is not evidence about
+            # what is on air right now.
+            return False
+        starts_at = now
+        if switch_deferred and previous_end_at is not None and previous_end_at > now:
+            starts_at = previous_end_at
+        plan_end_at = starts_at + timedelta(seconds=sum(durations))
+        last_segment_start_at = plan_end_at - timedelta(seconds=durations[-1])
+        self._plan_horizon[channel_id] = (proof_event_id, plan_end_at, last_segment_start_at)
+        self._rollover_retry_at.pop(channel_id, None)
+        return True
 
     def _daemon_has_manual_override(self, channel_id: str) -> bool:
         """B1 fix: consult ``EgressDaemon.has_manual_override`` /
