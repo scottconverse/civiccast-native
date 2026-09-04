@@ -262,13 +262,13 @@ below.
   Playwright was not run for this batch's UI changes in the session that
   produced it -- said so rather than claiming a run that didn't happen.
 
-### In flight, not yet in this candidate
+### Landed since the draft above: Gate A T4 measured a real passing engine
 
 The three shipped-product bugs above (`engine_state=FALLBACK_SLATE` on a
 worker that could not even reach PLAYING) are what made Gate A's T4
-product-engine check unmeasurable for beta.3. Two more PRs, open as of this
-writing, complete the picture and are expected to land before tonight's
-beta.4 Gate A run:
+product-engine check unmeasurable for beta.3. Both PRs the draft above
+tracked as open have merged, and Gate A's T4 lane now measures a real
+passing engine for the first time:
 
 - **#155 -- Gate A: real product-engine soak (T6, `SOAK_MINUTES>20`).** Adds
   a soak phase that schedules real sample clips onto all three PEG
@@ -286,11 +286,71 @@ beta.4 Gate A run:
   lookup fix so the product's own `TS relay auto mode` no longer logs
   "TSDuck (tsp) not found" on an install that genuinely shipped it.
 
-If either PR is not merged, or tonight's Gate A T4/T6 lanes do not PASS,
-the "first release whose Gate A measured real engine packets" framing in
-this candidate's release notes must be removed before publishing -- see
-the note marked **REMOVE IF GATE A FAILS** in
-`docs/releases/2026-09-03-beta4-release-notes.md`.
+**Gate A T4 proof, as the gate wrote it.** Run
+[`33837269907`](https://github.com/scottconverse/civiccast-native/actions/runs/33837269907)
+against kit `4b30c99`, clean lane:
+
+```
+T4_RESULT=PASS_PRODUCT_ENGINE; tsp exited 0 over 1233 analysed packets
+with 0 invalid syncs / transport errors / discontinuities
+```
+
+`v1.0.0-beta.4` is therefore the first CivicCast release whose Gate A run
+measured real MPEG-TS packets from the GStreamer default engine, not the
+ffmpeg fallback -- superseding beta.3's `PASS_PRODUCT_ENGINE` grade, which
+was a grader false pass (see #145 above). The "first release whose Gate A
+measured real engine packets" framing in the release notes and README's
+engine bullet is accurate as of this run and stands.
+
+**The 120-minute engine soak (2026-09-04, sandbox, lane PR #155 T6, kit
+`4b30c99`) did NOT pass, and no wording anywhere may say it did.** Three
+channels (`public`, `education`, `government`) played three real LPM
+sample clips each, scheduled as premieres, for 120 continuous minutes: 22
+scheduling beats x 3 channels = 66 samples, every one measured `ON_AIR`
+with a passing TSDuck capture (minimum 1357 packets per 8s capture window),
+worker RSS flat around 445-566 MB for the whole run. Lane verdict as the
+harness wrote it:
+
+```
+T6_RESULT=FAIL reason=soak-public relaunches=8 (>3); soak-education
+relaunches=6 (>3); soak-government relaunches=7 (>3) beats=22
+failed_beats=0
+```
+
+The correct framing, used consistently across this file, the release
+notes, the verification doc, and README: **the engine stayed live and
+on-air for the full 2 hours (`failed_beats=0`); the T6 lane failed on a
+relaunch-count rule, not on liveness or packet quality.** The playout
+worker exits cleanly at the end of every source plan
+(`civiccast/egress/source_plan.py`'s `max_segments=8`), roughly every
+10-15 minutes under continuous premieres, and channel automation restarts
+it -- a short on-air blip each time, not an outage. That cadence produced
+6-8 relaunches per channel over 120 minutes, past T6's `>3` budget. Seamless
+plan rollover (the worker continuing across a plan boundary instead of
+exiting) is the beta.5 fix. Evidence:
+`C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`.
+
+**Known issues in beta.4:**
+
+1. The relaunch blip above (every ~10-15 minutes of continuous premiere
+   scheduling); beta.5 fix is seamless plan rollover.
+2. TSDuck data files now shipped beside `tsp.exe` (#156, above).
+3. **Upgrade over a running beta.3 station fixed (#159).** Before the fix,
+   the upgrade's provision step unconditionally start/stopped a PostgreSQL
+   cluster the freshly started station service already owned and had
+   running -- that collision with the live service's own instance of the
+   same cluster failed the install and forced a crash recovery of the
+   database on the next successful start. The fix has the provision step
+   recognize a cluster the running station already owns and migrate it in
+   place instead of restarting it out from under the live service.
+
+The final beta.4 kit, `c27c6e7`, adds only the #159 fix above on top of
+`4b30c99` -- it does not touch the GStreamer engine, TSDuck packaging, or
+the Gate A T4/T6 harness, so the T4/T6 results above stand for it
+unchanged. Its own three-lane Gate A run (clean install, cross-version
+upgrade, download-only) is tracked in
+`docs/releases/v1.0.0-beta.4-verification.md` under `<GATE_A_RUN_ID>`,
+pending as of this entry.
 
 ## [1.0.0-beta.3] - 2026-09-03
 

@@ -105,24 +105,94 @@ neither could matter until the worker could import `gi` at all:
    redacts the worker's stderr tail and names the actual dead engine in
    `last_error` (it no longer always says `FFmpeg`).
 
-A third, still-open PR (#156) fixes a separate problem discovered while
+A third PR, #156, landed since and fixed a separate problem discovered while
 verifying the two fixes above: **the packaged `tsp.exe` shipped without the
 TSDuck data files it resolves relative to its own directory on Windows**,
 so even a healthy engine's TS capture would fail with errors like `file not
-found: tsduck.hfbands.xml`. Without #156, T4's capture step cannot measure
-anything regardless of engine health.
+found: tsduck.hfbands.xml`. Without #156, T4's capture step could not
+measure anything regardless of engine health.
 
-**REMOVE THIS PARAGRAPH IF TONIGHT'S GATE A RUN DOES NOT PASS T4 WITH A
-REAL MEASURED PACKET COUNT.** If it does: `v1.0.0-beta.4` is the first
-CivicCast release whose Gate A run measured real MPEG-TS packets from the
-GStreamer default engine -- not the ffmpeg fallback, not slate. That
-changes the "GStreamer engine egress: not yet proven in Gate A" line in
-README.md's "Honestly scoped" section and the equivalent note in
+**Resolved: Gate A's T4 check passed with a real measured packet count.**
+`v1.0.0-beta.4` is the first CivicCast release whose Gate A run measured
+real MPEG-TS packets from the GStreamer default engine -- not the ffmpeg
+fallback, not slate. Run
+[`33837269907`](https://github.com/scottconverse/civiccast-native/actions/runs/33837269907)
+against kit `4b30c99`, clean lane:
+
+```
+T4_RESULT=PASS_PRODUCT_ENGINE; tsp exited 0 over 1233 analysed packets
+with 0 invalid syncs / transport errors / discontinuities
+```
+
+That changes the "GStreamer engine egress: not yet proven in Gate A" line
+in README.md's "Honestly scoped" section and the equivalent note in
 `docs/releases/v1.0.0-beta.4-verification.md`; see
-`docs/releases/beta4-truth.patch` for the exact wording change. **If it
-does not pass:** delete this paragraph, leave the "not yet proven" wording
-exactly as beta.3 shipped it, and do not present beta.4 as having proven
-anything new about the GStreamer engine.
+`docs/releases/beta4-truth.patch` for the exact wording change. This does
+**not** extend to the separate 120-minute engine soak (#155, T6, also on
+kit `4b30c99`): the engine itself stayed live and on-air the full two
+hours, but the T6 lane verdict is `FAIL`, on a relaunch-count rule, not on
+liveness -- see "The 120-minute engine soak" below. No sentence in this
+document says the soak "passed"; it did not.
+
+The final beta.4 kit, `c27c6e7`, adds only the upgrade-provision fix in
+#159 on top of `4b30c99` (see "Also in this candidate" below) -- it does
+not touch the GStreamer engine, the TSDuck packaging, or the Gate A T4/T6
+harness, so the T4/T6 results above stand for it unchanged. Its own
+three-lane Gate A run (clean install, cross-version upgrade,
+download-only) is tracked separately; see
+`docs/releases/v1.0.0-beta.4-verification.md` for that run id once it
+completes.
+
+## The 120-minute engine soak
+
+**2026-09-04, sandbox, lane PR #155 T6, kit `4b30c99`.** Three channels
+(`public`, `education`, `government`) ran on the GStreamer default engine,
+each playing three real LPM sample clips scheduled as premieres, for 120
+continuous minutes -- 22 scheduling beats x 3 channels = 66 samples, every
+one measured `ON_AIR` with a passing TSDuck capture (minimum 1357 packets
+per 8-second capture window), worker RSS flat around 445-566 MB for the
+whole run. Lane verdict as the harness wrote it:
+
+```
+T6_RESULT=FAIL reason=soak-public relaunches=8 (>3); soak-education
+relaunches=6 (>3); soak-government relaunches=7 (>3) beats=22
+failed_beats=0
+```
+
+**Say this plainly: the soak did not pass. The engine stayed live and
+on-air for the full 2 hours; the lane failed on the relaunch-count rule,
+not on liveness.** `failed_beats=0` -- nothing ever went off-air or failed
+a capture. What tripped the FAIL is that the playout worker exits cleanly
+at the end of every source plan (`civiccast/egress/source_plan.py`'s
+`max_segments=8`), roughly every 10-15 minutes under continuous premieres,
+and channel automation restarts it -- a short on-air blip each time. Under
+120 minutes of continuous premieres that produced 6-8 relaunches per
+channel, over T6's `>3` budget. Seamless plan rollover -- the worker
+continuing across a plan boundary instead of exiting -- is the beta.5 fix;
+see "Known issues in beta.4" below. Evidence:
+`C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`.
+
+## Known issues in beta.4
+
+1. **Every 10-15 minutes of continuous premiere scheduling, each channel's
+   playout worker restarts, causing a short on-air blip.** Measured above
+   as the T6 soak's relaunch-count `FAIL` (engine liveness itself was
+   unaffected: `failed_beats=0`). Root cause: `source_plan.py`'s
+   `max_segments=8` bounds each worker to a fixed number of planned
+   segments before it exits by design. Fix targeted for beta.5: seamless
+   plan rollover, so the worker continues across a plan boundary in place.
+2. **TSDuck data files now shipped beside `tsp.exe`** (#156) -- the
+   packaged binary previously had its plugin DLLs but not the data files
+   TSDuck resolves relative to its own directory on Windows, so TS capture
+   failed even against a healthy engine. This is what makes the T4
+   `PASS_PRODUCT_ENGINE` result above possible.
+3. **Upgrade over a running beta.3 station fixed** (#159). Before the fix,
+   the upgrade's provision step unconditionally start/stopped a PostgreSQL
+   cluster the freshly started station service already owned and had
+   running -- that collision with the live service's own instance of the
+   same cluster failed the install and forced a crash recovery of the
+   database on the next successful start. The fix migrates the cluster in
+   place instead of restarting it out from under the live service.
 
 ## Also in this candidate
 

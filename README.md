@@ -145,35 +145,50 @@ things outside this repository's control:
   reconnecting that one leg in place without a full pipeline rebuild; a
   full pipeline rebuild is the current recovery path. This is tracked, not
   silently accepted.
-- **GStreamer engine egress: not yet proven in Gate A.** Gate A's
-  station-acceptance run includes a product-engine check (`t4_engine`) that
-  starts the real GStreamer playout engine and verifies its output with
-  TSDuck; the beta.3 grader read a false PASS from a bug in the capture
-  tool (fixed in #145) -- re-run correctly, the engine's own state was
-  `FALLBACK_SLATE`, not on-air, for both the beta.3 and beta.4 kits. See
+- **GStreamer engine egress: proven in Gate A for the first time in
+  `v1.0.0-beta.4`, with an honest boundary around continuous-premiere
+  scheduling.** Gate A's station-acceptance run includes a product-engine
+  check (`t4_engine`) that starts the real GStreamer playout engine and
+  verifies its output with TSDuck; the beta.3 grader read a false PASS
+  from a bug in the capture tool (fixed in #145) -- re-run correctly, the
+  engine's own state was `FALLBACK_SLATE`, not on-air, for beta.3. See
   [`docs/ops/gate-a.md`](docs/ops/gate-a.md#known-limitation-test-tsproof-null-pipeline-bug-let-a-false-t4-pass-through-fixed-in-145)
-  for the full account. The ffmpeg fallback path Gate A also exercises is
-  proven; the GStreamer default-engine path is not yet proven by Gate A.
-  The real cause was plain: on every machine without a system-wide
-  GStreamer install already on `PATH` -- every customer box, every
-  sandbox run -- the control-plane child process never actually got the
-  bundled GStreamer `bin` directory on its own `PATH`, so `gi` could not
-  load `gstreamer-1.0-0.dll` and the worker died at import, before it
+  for the full account. The real cause was plain: on every machine without
+  a system-wide GStreamer install already on `PATH` -- every customer box,
+  every sandbox run -- the control-plane child process never actually got
+  the bundled GStreamer `bin` directory on its own `PATH`, so `gi` could
+  not load `gstreamer-1.0-0.dll` and the worker died at import, before it
   could reach `PLAYING` or decode anything (#154). A dev box with
   GStreamer already on the system `PATH` hid this completely. Two smaller,
   secondary bugs were also found and fixed, but neither could matter until
   the import-time crash above was fixed: a module-identity mismatch that
   made engine dispatch miss on every program leg once the worker did start
   (#153), and a hardware-decoder rank policy that let a non-functional GPU
-  decoder stall the pipeline ~10s after `PLAYING` (also #154).
-  **Pending tonight's Gate A run for `v1.0.0-beta.4` (REMOVE THIS SENTENCE
-  IF THAT RUN DOES NOT PASS):** these fixes since beta.3 (#153, #154)
-  address every measured cause of `FALLBACK_SLATE` above, and
-  `v1.0.0-beta.4` is expected to be the first candidate whose Gate A T4
-  check measures real MPEG-TS packets from the GStreamer engine instead of
-  falling back to slate -- see
+  decoder stall the pipeline ~10s after `PLAYING` (also #154). Once those
+  fixes and the TSDuck data-file fix (#156) landed, Gate A run
+  [`33837269907`](https://github.com/scottconverse/civiccast-native/actions/runs/33837269907)
+  against kit `4b30c99`, clean lane, measured a real passing engine:
+  `T4_RESULT=PASS_PRODUCT_ENGINE; tsp exited 0 over 1233 analysed packets
+  with 0 invalid syncs / transport errors / discontinuities`. This makes
+  `v1.0.0-beta.4` the first CivicCast release whose Gate A run measured
+  real MPEG-TS packets from the GStreamer default engine, not the ffmpeg
+  fallback.
+  **This does not extend to a separate 120-minute engine soak (2026-09-04,
+  sandbox, kit `4b30c99`, T6) -- the soak did NOT pass, and that is stated
+  plainly here rather than folded into the PASS above.** Three channels
+  each played real LPM sample clips as premieres for two continuous hours;
+  every one of 66 samples (22 beats x 3 channels) stayed `ON_AIR` with a
+  passing TSDuck capture and worker memory stayed flat -- but the lane
+  verdict is `T6_RESULT=FAIL`, on a relaunch-count rule
+  (`relaunches>3` per channel), not on liveness (`failed_beats=0`). The
+  playout worker exits by design at the end of every source plan
+  (`civiccast/egress/source_plan.py`'s `max_segments=8`, roughly every
+  10-15 minutes under continuous premieres), and channel automation
+  restarts it -- a short on-air blip each time, which is what tripped the
+  relaunch budget under sustained premiere scheduling. Seamless plan
+  rollover, removing that blip, is targeted for beta.5. See
   [`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
-  for the actual verdict once that run completes.
+  for the full soak numbers and evidence path.
 
 ## Install and run
 
