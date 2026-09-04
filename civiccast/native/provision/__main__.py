@@ -127,6 +127,7 @@ from civiccast.native.provision.seams import (
     pg_ctl_path_for,
     psql_path_for,
     reset_cluster_credential,
+    run_schema_migration_to_head,
 )
 
 # ---------------------------------------------------------------------------
@@ -1030,13 +1031,61 @@ def main(argv: list[str] | None = None) -> int:
             # creating on a path whose whole contract is "touch nothing".
             database_password=_MIGRATION_ONLY_UNUSED_PASSWORD,
         )
+        # <cross-version Gate A, run 33837269907, 2026-09-04> DO NOT
+        # start/stop a cluster THIS PROCESS DOES NOT OWN.
+        #
+        # `migrate_provisioned_schema` is a start/migrate/stop sandwich: it
+        # calls `normalize_pgdata_acl` and `pg_ctl start` on
+        # `postgres_data_dir`, and `pg_ctl stop` in a `finally`. That is
+        # correct on every path where D4 provisioning is the only thing
+        # touching the cluster -- which is what BL-12 assumed when it added
+        # this migration call to a branch that had previously touched nothing
+        # (and is still what `pgdata_acl`'s own module docstring describes:
+        # "NOT called on ... NOOP_REUSE_EXISTING").
+        #
+        # It is WRONG when the supervisor service is already running with its
+        # own postmaster on that data directory, which is exactly the state
+        # the UPGRADE route now leaves behind: D3 step 6's health gate
+        # SCM-STARTS the service to read /health and, on a committed upgrade,
+        # deliberately leaves it running (`stop_service` is wired only to the
+        # D3 halt path). D4 then runs seconds later, and its `pg_ctl start`
+        # collides with the live postmaster's `postmaster.pid` lock -- a
+        # nonzero CLI exit, which the NSIS d4-provision step collapses to
+        # installer exit 75 -> exit 116, with the `finally`'s `pg_ctl stop`
+        # additionally yanking the running server's lock file out from under
+        # it (Gate A evidence 4b30c99/20260904-062048Z: postgres logged
+        # "performing immediate shutdown because data directory lock file is
+        # invalid" and needed crash recovery on the next start).
+        #
+        # This never fired before 2026-09-04 only because every prior
+        # cross-version run's D3 ROLLED BACK (evidence
+        # gate-a-cross-version-33681670855: `route=UPGRADE engine_exit=10`)
+        # and so never reached the health gate that starts the service.
+        #
+        # `reused_usable is True` is the precise, already-computed answer to
+        # "is a server listening at the recorded URL right now AND does the
+        # recorded credential work against it" (see
+        # `probe_reused_database_url`). When it is, the schema migration is
+        # run IN PLACE over that live connection -- no ACL write, no pg_ctl
+        # at all -- which is both the safe thing and the honest one: this
+        # branch's whole contract is "touch nothing". Every other case (the
+        # server is not listening, or the probe could not answer) keeps the
+        # start/migrate/stop sandwich, because then nothing else owns it.
         try:
-            migrate_provisioned_schema(
-                noop_context,
-                pg_ctl_path=pg_ctl_path_for(paths.initdb_path),
-                database_url=args.existing_database_url,
-                install_root=args.install_root,
-            )
+            if reused_usable is True:
+                run_schema_migration_to_head(
+                    database_url=args.existing_database_url,
+                    install_root=args.install_root,
+                    state_root=noop_context.state_root,
+                    owner_run_id=noop_context.owner_run_id,
+                )
+            else:
+                migrate_provisioned_schema(
+                    noop_context,
+                    pg_ctl_path=pg_ctl_path_for(paths.initdb_path),
+                    database_url=args.existing_database_url,
+                    install_root=args.install_root,
+                )
         except PgDataAclError as exc:
             write_recovery_document(
                 paths.state_root,
@@ -1071,10 +1120,13 @@ def main(argv: list[str] | None = None) -> int:
             "an existing DatabaseUrl registry value were both found; the credential and the "
             "cluster's data were not touched, and the schema was brought to alembic head"
             + (
-                "; the recorded DatabaseUrl was verified against the live server"
+                "; the recorded DatabaseUrl was verified against the live server, and the "
+                "migration ran IN PLACE over that already-running server -- this step did "
+                "not start, stop or re-ACL a cluster it does not own"
                 if reused_usable is True
                 else "; the server was not listening yet, so the recorded DatabaseUrl could "
-                "not be verified before use"
+                "not be verified before use, and this step started the cluster itself for "
+                "the migration and stopped it again"
             )
             + ")\n"
         )

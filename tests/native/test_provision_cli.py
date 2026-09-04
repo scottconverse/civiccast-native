@@ -774,6 +774,140 @@ def test_bl12_the_reuse_path_migrates_the_preserved_database(tmp_path, capsys, m
     assert not pathlib.Path(paths.state_root, "provision-journal.json").exists()
 
 
+def test_upgrade_over_a_running_station_migrates_in_place_and_never_touches_pg_ctl(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """Gate A cross-version regression (run 33837269907, kit 4b30c99).
+
+    The upgrade lane installs the previous kit, starts the station, then runs
+    the new setup.exe over it. D3 step 6's health gate SCM-STARTS the
+    supervisor service to read ``/health`` and, on a COMMITTED upgrade,
+    deliberately leaves it running (``stop_service`` is wired only to the D3
+    halt path). D4 provisioning then runs seconds later against a cluster
+    whose postmaster belongs to that live service.
+
+    BL-12's ``migrate_provisioned_schema`` is a start/migrate/stop sandwich
+    (``normalize_pgdata_acl`` + ``pg_ctl start`` ... ``pg_ctl stop``). Run
+    there, it collided with the running server's ``postmaster.pid`` lock: the
+    CLI exited nonzero, the NSIS ``d4-provision`` step collapsed that to
+    installer exit 75 and aborted with exit 116, and the ``finally``'s
+    ``pg_ctl stop`` left the live postgres logging "performing immediate
+    shutdown because data directory lock file is invalid".
+
+    ``reused_database_url_usable is True`` means a server IS listening at the
+    recorded URL and the recorded credential works against it -- i.e. someone
+    else owns it. On that state the schema migration must run IN PLACE over
+    the existing connection: no ACL write, no ``pg_ctl`` at all.
+    """
+    monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: True)
+
+    sandwich: list[object] = []
+    monkeypatch.setattr(
+        provision_main,
+        "migrate_provisioned_schema",
+        lambda context, **kwargs: sandwich.append((context, kwargs)),
+    )
+    in_place: list[dict[str, object]] = []
+    # raising=False so that a build WITHOUT the fix fails on the behavioural
+    # assertion below (D4 ran the pg_ctl sandwich) rather than on a missing
+    # attribute -- the failure message has to name the defect.
+    monkeypatch.setattr(
+        provision_main,
+        "run_schema_migration_to_head",
+        lambda **kwargs: in_place.append(kwargs),
+        raising=False,
+    )
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    import pathlib
+
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+    existing_url = "postgresql://u:p@127.0.0.1:5544/civiccast"
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--owner-run-id": "nsis-0",
+                "--existing-database-url": existing_url,
+            },
+        )
+    )
+
+    assert code == EXIT_SUCCESS
+    assert sandwich == [], (
+        "D4 must NOT start/stop/re-ACL a cluster whose postmaster belongs to the "
+        "running supervisor service -- that is the exit-75 collision this guards"
+    )
+    assert len(in_place) == 1, "the schema must still be brought to head, in place"
+    assert in_place[0]["database_url"] == existing_url
+    assert in_place[0]["install_root"] == str(install_root)
+    assert in_place[0]["state_root"] == paths.state_root
+    assert in_place[0]["owner_run_id"] == "nsis-0"
+
+    err = capsys.readouterr().err
+    assert "the schema was brought to alembic head" in err
+    assert "did not start, stop or re-ACL a cluster it does not own" in err
+
+
+def test_reuse_path_still_starts_the_cluster_itself_when_nothing_is_listening(
+    tmp_path, monkeypatch
+) -> None:
+    """The other half of the same contract: when the probe found nothing
+    listening (the ordinary reinstall case -- D4 runs BEFORE the supervisor
+    service starts), nothing else owns the cluster, so D4 must still start it
+    itself (ACL normalization included) to migrate, and stop it again."""
+    monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: None)
+
+    sandwich: list[object] = []
+    monkeypatch.setattr(
+        provision_main,
+        "migrate_provisioned_schema",
+        lambda context, **kwargs: sandwich.append((context, kwargs)),
+    )
+    in_place: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        provision_main,
+        "run_schema_migration_to_head",
+        lambda **kwargs: in_place.append(kwargs),
+        raising=False,
+    )
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    import pathlib
+
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17\n", encoding="utf-8")
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "postgresql://u:p@127.0.0.1:5544/civiccast",
+            },
+        )
+    )
+
+    assert code == EXIT_SUCCESS
+    assert len(sandwich) == 1
+    assert in_place == []
+
+
 def test_bl12_a_failed_reuse_migration_is_loud_and_has_its_own_exit_code(
     tmp_path, monkeypatch
 ) -> None:
