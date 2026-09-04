@@ -11,7 +11,7 @@ state rows.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -71,6 +71,23 @@ def _plan(channel_id: str) -> EgressSourcePlan:
 
 def _pending_actions(store: InMemoryEgressStore, channel_id: str) -> list[str]:
     return [command.action for command in store.pop_pending_commands(channel_id)]
+
+
+def _plan_with_duration(
+    channel_id: str, duration_seconds: float, *, source_ref: str = "seg"
+) -> EgressSourcePlan:
+    return EgressSourcePlan(
+        channel_id=channel_id,
+        segments=[
+            EgressSourceSegment(
+                label="Program",
+                path="C:/media/program.ts",
+                duration_seconds=duration_seconds,
+                kind="program",
+                source_ref=source_ref,
+            )
+        ],
+    )
 
 
 class TestRelayIdentifierValidation:
@@ -248,6 +265,153 @@ class TestSlateReplan:
         )
         raising_service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == []
+
+
+class TestPlanRollover:
+    """Soak evidence 2026-09-04 (kit 4b30c99, Desktop/CIVICCAST-EVIDENCE/
+    soak-120-4b30c99-20260904): back-to-back scheduled premieres EOS'd the
+    GStreamer worker at every source-plan boundary (6-8 restarts/channel in
+    2h) because nothing ever extended a LIVE (ON_AIR) plan before it ran
+    out -- only a FALLBACK_SLATE gap re-planned (TestSlateReplan above).
+    ``_check_plan_rollover`` fixes this by reusing the SAME seamless
+    ``reload`` dispatch _check_slate_replan already uses, before EOS."""
+
+    def _on_air_state(
+        self, store: InMemoryEgressStore, channel_id: str, *, proof_event_id: str
+    ) -> None:
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id=proof_event_id,
+                updated_at=_NOW,
+            )
+        )
+
+    def test_no_rollover_while_plan_has_plenty_of_runway(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 1800.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        # First tick establishes the horizon (30 min out) -- nothing due.
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+        # A later tick, still nowhere near the end, still issues nothing.
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_dispatches_exactly_one_reload_before_eos(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        # The live plan has 40s left; the schedule underneath it extends
+        # much further once the clock moves inside the lookahead window.
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        # Establish the horizon: plan ends 40s from now.
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+
+        # 15s later the plan is inside the 30s lookahead -> roll it over.
+        later = _NOW + timedelta(seconds=15)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # Same plan boundary (proof event unchanged): no second reload while
+        # the daemon has not yet applied the first one (no command storm).
+        service.run_once(now=later + timedelta(seconds=1))
+        assert _pending_actions(store, "public") == []
+
+    def test_no_rollover_when_schedule_has_nothing_further(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        # The schedule genuinely has nothing published beyond the item
+        # already airing: every call reflects the SAME fixed end time, just
+        # re-anchored (join-in-progress) at whatever "now" it is asked from
+        # -- exactly what build_source_plan_from_schedule does when no new
+        # item follows the one currently on air.
+        deadline = _NOW + timedelta(seconds=40)
+        clock = {"now": _NOW}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            remaining = max(0.0, (deadline - clock["now"]).total_seconds())
+            return _plan_with_duration("public", remaining)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=clock["now"])
+        clock["now"] = _NOW + timedelta(seconds=15)
+        service.run_once(now=clock["now"])
+
+        # No reload -- there is nothing to roll onto; the plan is left to
+        # reach its own natural end (the existing, unchanged EOS path).
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_re_establishes_horizon_once_the_reload_lands(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+        service.run_once(now=_NOW)
+        later = _NOW + timedelta(seconds=15)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # The daemon applies the seamless reload and writes a fresh
+        # current_proof_event_id -- the tracked horizon must follow it, not
+        # keep firing against the stale one.
+        self._on_air_state(store, "public", proof_event_id="ev-2")
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_never_fires_off_of_the_slate_replan_state(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(channel_id="public", state="FALLBACK_SLATE", updated_at=_NOW)
+        )
+        daemon = _FakeDaemon(live_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 40.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)
+        # _check_slate_replan issues its own reload for the gap; the
+        # rollover check must not ALSO fire while the channel is off ON_AIR.
+        assert _pending_actions(store, "public") == ["reload"]
 
 
 class TestPerChannelLatchIndependence:

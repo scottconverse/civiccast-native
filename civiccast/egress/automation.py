@@ -36,7 +36,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -311,6 +311,18 @@ class ChannelAutomationService:
         self._reload_issued: set[str] = set()
         # Audit ENG-002: reload re-issue pacing (see _check_slate_replan).
         self._replan_retry_at: dict[str, float] = {}
+        # Soak evidence 2026-09-04 (kit 4b30c99): back-to-back scheduled
+        # premieres EOS'd the engine at every source-plan boundary because
+        # nothing ever extended a LIVE (ON_AIR) plan before it ran out --
+        # only a FALLBACK_SLATE gap re-planned (_check_slate_replan above).
+        # Each channel restarted 6-8x in a 2h soak, a worker-restart blip at
+        # every 10-15 min boundary. _plan_horizon tracks, per channel, the
+        # (current_proof_event_id, projected wall-clock end) of the plan the
+        # daemon is actually airing; _check_plan_rollover below extends it
+        # via the SAME seamless content-reload path _check_slate_replan
+        # already uses, before the engine ever reaches EOS.
+        self._plan_horizon: dict[str, tuple[str | None, datetime]] = {}
+        self._rollover_issued: set[str] = set()
         # Issue #116: one supervised BYO-NDI relay per named channel.
         self._ndi_supervisor_factory = ndi_supervisor_factory or _default_ndi_factory
         self._ndi_relays: dict[str, Any] = {}
@@ -320,6 +332,11 @@ class ChannelAutomationService:
 
     _START_RETRY_COOLDOWN_SECONDS = 30.0
     _RELOAD_RETRY_COOLDOWN_SECONDS = 30.0
+    # How far ahead of a live plan's projected end to dispatch the rollover
+    # reload. Must comfortably clear one poll interval (the tick that first
+    # observes the horizon and the tick that dispatches the reload) plus
+    # normal scheduling jitter -- 30s at the default 2s poll is generous.
+    _ROLLOVER_LOOKAHEAD_SECONDS = 30.0
 
     @property
     def daemon(self) -> EgressDaemon:
@@ -425,6 +442,7 @@ class ChannelAutomationService:
                 )
         self._daemon.process_once(channel_id)
         self._check_slate_replan(channel_id, now=resolved_now)
+        self._check_plan_rollover(channel_id, now=resolved_now)
         self._sync_ndi_relay(config)
         self._sync_sdi_relay(config)
 
@@ -552,6 +570,99 @@ class ChannelAutomationService:
         _LOG.info(
             "Channel automation issued reload for %s: a scheduled program is due.",
             channel_id,
+        )
+
+    def _check_plan_rollover(self, channel_id: str, *, now: datetime) -> None:
+        """Extend a LIVE plan before it EOSes (the fix for the soak defect).
+
+        ``_check_slate_replan`` above only reacts to a GAP (FALLBACK_SLATE):
+        it has never looked at a plan that is actively airing (ON_AIR). A
+        schedule of back-to-back published premieres builds a source plan
+        capped at ``max_segments`` (``source_plan.py``); once the last
+        segment finishes the GStreamer worker EOSes, the daemon writes
+        STOPPED, and only THEN does auto_start bring the channel back --
+        6-8 worker restarts (and on-air blips) in the 2h soak
+        (evidence: Desktop/CIVICCAST-EVIDENCE/soak-120-4b30c99-20260904,
+        T6-beat-*.json pid churn).
+
+        This tracks the projected wall-clock end of the plan the daemon is
+        currently airing (keyed off ``current_proof_event_id``, which
+        changes at every fresh start/reload -- see ``daemon._write_state``
+        call sites) and, once that end is within
+        ``_ROLLOVER_LOOKAHEAD_SECONDS``, re-fetches the schedule. Building
+        the plan again at (a later) ``now`` is itself the rollover: the
+        provider always resumes at the currently-airing item with a
+        join-in-progress offset and windows forward from there
+        (``source_plan.build_source_plan_from_schedule``), so a later call
+        naturally reaches further into the schedule than the original call
+        did. If that fresh plan reaches further than the one already
+        airing, the SAME ``reload`` command ``_check_slate_replan`` uses is
+        enqueued -- the daemon's ``_request_reload`` dispatches it through
+        ``_try_content_reload`` (the GStreamer seamless content-swap;
+        ``gst/strategy.py``'s ``reload_content``), so the channel stays
+        ON_AIR with no worker restart and no EOS.
+
+        If the schedule has nothing beyond what is already loaded (the
+        freshly-built plan does not reach any further), this deliberately
+        does nothing: there is no more program content to roll onto, so the
+        plan is left to reach its own natural end. That crash-restart-free
+        path is unchanged by this fix (see the module docstring and #157);
+        closing that residual gap (a seamless swap onto filler/slate BEFORE
+        the true end of schedule) is a separate follow-on, not needed by
+        the continuous-premiere soak scenario this fixes.
+        """
+
+        state_row = self._store.read_state(channel_id)
+        if state_row is None or state_row.state != "ON_AIR":
+            # Not airing a schedule-derived program right now (dark, slate,
+            # starting, transitioning, draining) -- nothing to extend.
+            self._plan_horizon.pop(channel_id, None)
+            self._rollover_issued.discard(channel_id)
+            return
+        proof_event_id = state_row.current_proof_event_id
+        tracked = self._plan_horizon.get(channel_id)
+        if tracked is None or tracked[0] != proof_event_id:
+            # A fresh plan just took air (initial start, a slate replan, or
+            # this method's own rollover reload completing) -- (re)establish
+            # its projected end and wait; nothing to roll over yet.
+            try:
+                plan = self._source_plan_provider(channel_id)
+            except SourcePrepareError:
+                return
+            if plan is None or not plan.segments:
+                self._plan_horizon.pop(channel_id, None)
+                return
+            remaining = sum(segment.duration_seconds for segment in plan.segments)
+            self._plan_horizon[channel_id] = (proof_event_id, now + timedelta(seconds=remaining))
+            self._rollover_issued.discard(channel_id)
+            return
+        _, plan_end_at = tracked
+        if now < plan_end_at - timedelta(seconds=self._ROLLOVER_LOOKAHEAD_SECONDS):
+            return  # not yet close enough to the plan's projected end
+        if channel_id in self._rollover_issued:
+            return  # already dispatched for this plan boundary; wait for it to land
+        try:
+            fresh_plan = self._source_plan_provider(channel_id)
+        except SourcePrepareError:
+            return  # try again next poll -- the current plan still plays out fine meanwhile
+        if fresh_plan is None or not fresh_plan.segments:
+            return  # schedule exhausted for now -- let the current plan reach its own end
+        fresh_end = now + timedelta(
+            seconds=sum(segment.duration_seconds for segment in fresh_plan.segments)
+        )
+        if fresh_end <= plan_end_at:
+            # No more published schedule content beyond what is already
+            # loaded (the window did not advance) -- nothing to roll onto.
+            return
+        self._enqueue(channel_id, "reload", now=now)
+        self._rollover_issued.add(channel_id)
+        _LOG.info(
+            "Channel automation issued a seamless plan rollover for %s: the live plan "
+            "ends in %.0fs and the schedule continues %.0fs further; extending in place "
+            "before the engine reaches EOS.",
+            channel_id,
+            (plan_end_at - now).total_seconds(),
+            (fresh_end - plan_end_at).total_seconds(),
         )
 
     def _enqueue(self, channel_id: str, action: str, *, now: datetime) -> None:
