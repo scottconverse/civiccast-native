@@ -2,35 +2,45 @@
 
 ## Current Release
 
-`v1.0.0-beta.1` is the current release. It was delivered by USB, not by a
-GitHub Release download -- the GitHub Release page carries no installer
-asset for it (the ~21 GB AI-model bundle exceeds GitHub's 2 GB/file asset
-cap, and no publish tooling existed yet to split runtime packs from the
-model bundle when it shipped). A USB-delivered `v1.0.0-beta.1` station is a
-real, current, testable native install -- if that is what Sergio/LPM already
-has, there is nothing further to download.
-
-`v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
-upgrade-baseline kit and is never sent to Sergio/LPM.
-
-`v1.0.0-beta.3` is the current owner-held unpublished candidate (unpublished;
-no installer asset). It is intended to be the first **downloadable** beta
-candidate: `setup.exe`, per-pack runtime `.ccpack` assets, and a
-`SHA256SUMS.txt` checksum file, published as a **prerelease** at
-<https://github.com/scottconverse/civiccast-native/releases> -- watch that
-page for Sergio's next check, not `scottconverse/civiccast` (the retired,
-separate WSL2-line repository) and not any `v1.0.0-rcNN` tag, which belongs
-to that other repository. See
+`v1.0.0-beta.4` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.3`:
+`setup.exe`, the five per-pack runtime `.ccpack` assets, a
+`SHA256SUMS.txt` checksum file, and a signed `setup.exe.sidecar.json` are
+attached to the
+[`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4)
+as a **prerelease** -- watch
+<https://github.com/scottconverse/civiccast-native/releases> for Sergio's
+next check, not `scottconverse/civiccast` (the retired, separate WSL2-line
+repository) and not any `v1.0.0-rcNN` tag, which belongs to that other
+repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record -- it is the single source of truth for which
 tag is current.
 
+`v1.0.0-beta.3` (the first downloadable release) is now superseded but
+still runs; see "Upgrading from `v1.0.0-beta.1`" below and "Release Build
+To Use" for the download-only path from `beta.3` to `beta.4`.
+
+If Sergio/LPM is still on a USB-delivered `v1.0.0-beta.1` station, that
+install is also superseded but still runs; see "Upgrading from
+`v1.0.0-beta.1`" below.
+
+`v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
+upgrade-baseline kit and is never sent to Sergio/LPM.
+
+**Check
+[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) before
+relying on this page -- it is the single source of truth for which tag is
+current, and this handoff may lag it.**
+
 A first-time install on a station with no prior CivicCast install needs the
-USB model bundle even once `v1.0.0-beta.3` publishes -- the GitHub download
+USB model bundle even with `v1.0.0-beta.4` published -- the GitHub download
 alone is the setup executable and runtime packs, not the ~21 GB model
 bundle. An upgrade of an already-installed `v1.0.0-beta.3`-or-later station
-can be download-only and keeps the station's existing recordings, database,
-and AI models.
+is download-only (`setup.exe` plus the runtime packs, no `station\` folder
+needed) and keeps the station's existing recordings, database, and AI
+models -- this is how a `beta.3` station upgrades to `beta.4`; there is no
+need to re-fetch the ~21 GB model bundle for that step.
 
 **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit -- `setup.exe`
 plus the `station\` folder beside it (USB or a LAN copy) -- to the station
@@ -45,7 +55,7 @@ download-only upgrade in place: your recordings, settings, and AI models are
 kept. Details:
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
 
-Last updated: 2026-09-03.
+Last updated: 2026-09-04.
 
 Audience: Longmont Public Media beta testers, station operators, technical
 staff, and anyone observing the first real station-side CivicCast runs.

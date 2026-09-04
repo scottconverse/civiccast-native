@@ -8,29 +8,31 @@
 
 ## Current Release
 
-`v1.0.0-beta.1` is the current release. It was delivered by USB, not by a
-GitHub Release download -- the GitHub Release page carries no installer
-asset for it (the ~21 GB AI-model bundle exceeds GitHub's 2 GB/file asset
-cap, and no publish tooling existed yet to split runtime packs from the
-model bundle when it shipped). A USB-delivered `v1.0.0-beta.1` station is a
-real, current, testable native install.
-
-`v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
-upgrade-baseline kit, never a release a tester receives.
-
-`v1.0.0-beta.3` is the current owner-held unpublished candidate (unpublished;
-no installer asset). It is intended to be the first **downloadable** beta
-candidate: `setup.exe`, per-pack runtime `.ccpack` assets, and a
-`SHA256SUMS.txt` checksum file, published as a **prerelease** at
-<https://github.com/scottconverse/civiccast-native/releases> under the
-`v1.0.0-beta.N` tag family -- watch that page, not `scottconverse/civiccast`
-(the retired, separate WSL2-line repository) and not any `v1.0.0-rcNN` tag,
-which belongs to that other repository. See
+`v1.0.0-beta.4` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.3`: `setup.exe`, the five runtime
+`.ccpack` packs, a `SHA256SUMS.txt` checksum file, and a signed
+`setup.exe.sidecar.json` are attached to the
+[`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4)
+as a **prerelease** -- watch
+<https://github.com/scottconverse/civiccast-native/releases>, not
+`scottconverse/civiccast` (the retired, separate WSL2-line repository) and
+not any `v1.0.0-rcNN` tag, which belongs to that other repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
+`v1.0.0-beta.3` (the first downloadable release) is now superseded.
+`v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
+`v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
+upgrade-baseline kit, never a release a tester receives.
+
+**If you are reading this after Scott has told you a new beta is
+available, check
+[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) first
+-- it is the single source of truth for which tag is current, and this page
+may not have been updated yet.**
+
 A first-time install on a station with no prior CivicCast install needs the
-USB model bundle even once `v1.0.0-beta.3` publishes -- the GitHub download
+USB model bundle even with `v1.0.0-beta.4` published -- the GitHub download
 alone is the setup executable and runtime packs, not the ~21 GB model
 bundle. **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit
 (`setup.exe` plus the `station\` folder beside it) to the station and run
@@ -39,8 +41,10 @@ AI models are kept and the schema migrates. Do not run `setup.exe` alone
 from a `beta.1` install; see
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)
 for why. From `v1.0.0-beta.3` on, an upgrade of an already-installed station
-can be download-only and keeps the station's existing recordings, database,
-and AI models.
+is download-only (`setup.exe` plus the runtime packs, no `station\` folder
+needed) and keeps the station's existing recordings, database, and AI
+models -- this is how a `beta.3` station upgraded to `beta.4`, and how any
+`beta.4` station upgrades to the next candidate.
 
 ## Clean-Machine Test Rule
 

@@ -2,14 +2,15 @@
 
 ## Release State
 
-`v1.0.0-beta.1` is the current release. It was delivered by USB, not by a
-GitHub Release download. `v1.0.0-beta.2` was never published -- it exists
-only as an internal Gate A upgrade-baseline kit. `v1.0.0-beta.3` is the
-current owner-held unpublished candidate and is intended to be the first
-downloadable beta candidate: `setup.exe`, `.ccpack` runtime packs, and
+`v1.0.0-beta.4` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.3` (the first downloadable release, now
+superseded): `setup.exe`, `.ccpack` runtime packs, and
 `SHA256SUMS.txt`,
 published as a **prerelease** at
-<https://github.com/scottconverse/civiccast-native/releases>. See
+<https://github.com/scottconverse/civiccast-native/releases>.
+`v1.0.0-beta.1` (USB-delivered, no GitHub download) is also superseded.
+`v1.0.0-beta.2` was never published -- it exists
+only as an internal Gate A upgrade-baseline kit. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 

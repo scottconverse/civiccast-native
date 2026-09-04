@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.3
+current: v1.0.0-beta.4
 
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
@@ -44,22 +44,31 @@ entries:
   # build gets tagged and published as a GitHub pre-release because the beta
   # tester (Sergio, "LPM") checks GitHub daily.
   - tag: v1.0.0-beta.4
-    status: staging
-    notes: >-
-      Owner-held candidate as of this entry; NOT YET PUBLISHED by this
-      change. Release-prep bump: product version moves from v1.0.0-beta.3 to
-      v1.0.0-beta.4 across every check_release_identity.py-bound surface, and
-      sandbox-lab/upgrade-baseline.json is repinned from the beta.2 internal
-      kit to the published beta.3 kit (source SHA
-      9573d4a82e1e1d9993589f633bad6dacba792afb, build run 33711079441, Gate A
-      run 33713004718) so Gate A's cross-version and download-only lanes have
-      the actual current published release as their prior build. Flips to
-      current, with the v1.0.0-beta.3 entry's status flipped to
-      superseded_by v1.0.0-beta.4, only once an actual publish lands and a
-      human/agent updates this file to match -- this manifest is the SOLE
-      AUTHORED SOURCE and is never inferred from what "should" be live.
-  - tag: v1.0.0-beta.3
     status: current
+    notes: >-
+      Published by publish_beta_candidate.py at 2026-09-04 ~20:05Z, target
+      source SHA c27c6e70200406b51558ee1ef6b3a95ee4dc4426, build run
+      33854799455, Gate A run 33901203343 (all three lanes -- clean install,
+      cross-version upgrade over the beta.3 baseline including the
+      independent psql schema proof, and download-only -- PASS). GitHub
+      Release assets: setup.exe (sha256
+      9fae1211c8cb1f7d51c59d3088e0dd1d311be32493652b61917efebc0274628f,
+      Authenticode Valid, verified publisher Scott Converse) plus the five
+      runtime .ccpack packs (native-app-payload, native-cuda-runtime,
+      native-ffmpeg-runtime, native-ollama-runtime, native-server-binaries),
+      SHA256SUMS.txt, and setup.exe.sidecar.json -- 8 assets total, every
+      one under GitHub's 2 GB/file cap. Download-only upgrade for stations
+      already on v1.0.0-beta.3: no station\ folder, no re-downloading the
+      ~21 GB AI-model bundle. Gate A evidence copied to
+      C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-beta4-final-33901203343\
+      (gate-a-33854799455 = clean, gate-a-dirty-33854799455 =
+      cross-version, gate-a-download-only-33854799455 = download-only; each
+      has its own gate-a-verdict.json). See
+      docs/releases/2026-09-03-beta4-release-notes.md and
+      docs/releases/v1.0.0-beta.4-verification.md.
+  - tag: v1.0.0-beta.3
+    status: superseded
+    superseded_by: v1.0.0-beta.4
     notes: >-
       The first downloadable CivicCast release. Published by
       publish_beta_candidate.py from source SHA

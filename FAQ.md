@@ -1,9 +1,10 @@
 # CivicCast FAQ
 
-> **Release state:** `v1.0.0-beta.1` is the current release (USB-delivered);
-> `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
-> upgrade-baseline kit. `v1.0.0-beta.3` is the current owner-held unpublished
-> candidate and is intended to be the first downloadable one. See
+> **Release state:** `v1.0.0-beta.4` is the current release, a download-only
+> upgrade for stations already on `v1.0.0-beta.3` (the first downloadable
+> release, now superseded). `v1.0.0-beta.1` (USB-delivered) is also
+> superseded. `v1.0.0-beta.2` was never published -- it exists only as an
+> internal Gate A upgrade-baseline kit. See
 > [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
 > the authored release-state record.
 
@@ -32,10 +33,11 @@ public video without per-minute vendor fees or appliance lock-in.
 
 ## How do I install it?
 
-`v1.0.0-beta.1` is the current release and was delivered by USB.
+`v1.0.0-beta.4` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.3` (the first downloadable release, now
+superseded). `v1.0.0-beta.1` (USB-delivered) is also superseded.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
-upgrade-baseline kit. `v1.0.0-beta.3` is the current owner-held unpublished
-candidate and is intended to be the first downloadable one. Use
+upgrade-baseline kit. Use
 `INSTALL-WINDOWS.md` and the active tester
 handoff to verify the exact release, filename, SHA-256, and signature status.
 Do not use a generic "latest" link for a controlled beta unless the handoff

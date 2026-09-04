@@ -1,9 +1,10 @@
 # CivicCast - Capability Matrix
 
-> **Release state:** `v1.0.0-beta.1` is the current release (USB-delivered);
-> `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
-> upgrade-baseline kit. `v1.0.0-beta.3` is the current owner-held unpublished
-> candidate and is intended to be the first downloadable one. See
+> **Release state:** `v1.0.0-beta.4` is the current release, a download-only
+> upgrade for stations already on `v1.0.0-beta.3` (the first downloadable
+> release, now superseded). `v1.0.0-beta.1` (USB-delivered) is also
+> superseded. `v1.0.0-beta.2` was never published -- it exists only as an
+> internal Gate A upgrade-baseline kit. See
 > [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
 > the authored release-state record.
 
