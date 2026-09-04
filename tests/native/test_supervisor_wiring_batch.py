@@ -245,7 +245,11 @@ class _WiringOutbox:
         pass
 
 
-def _build_service(layout=None, program_data_root: str | None = None):
+def _build_service(
+    layout=None,
+    program_data_root: str | None = None,
+    control_plane_env: dict[str, str] | None = None,
+):
     from civiccast.native.supervisor.service import build_production_service
 
     kwargs: dict[str, object] = {}
@@ -253,6 +257,8 @@ def _build_service(layout=None, program_data_root: str | None = None):
         kwargs["layout"] = layout
     if program_data_root is not None:
         kwargs["program_data_root"] = program_data_root
+    if control_plane_env is not None:
+        kwargs["control_plane_env"] = control_plane_env
     return build_production_service(
         logging.getLogger("test.wiring.batch"),
         guard=_WiringGuard(),  # type: ignore[arg-type]
@@ -285,6 +291,14 @@ def test_resolve_install_layout_matches_installer_ground_truth(tmp_path: Path) -
     bin_dir = install_root / "packs" / "native-server-binaries" / "payload" / "bin"
     assert layout.server_bin_dir == bin_dir
     assert layout.pg_ctl_path == bin_dir / "pg_ctl.exe"
+    # TSDuck ships in the SAME native-server-binaries pack, at tsduck/bin/
+    # beside (not inside) bin/ -- scripts/build_native_server_pack.py's
+    # _tsduck_sources() packs tsp.exe there.
+    tsduck_bin_dir = (
+        install_root / "packs" / "native-server-binaries" / "payload" / "tsduck" / "bin"
+    )
+    assert layout.tsduck_bin_dir == tsduck_bin_dir
+    assert layout.tsp_exe_path == tsduck_bin_dir / "tsp.exe"
     assert layout.postgres_data_dir == pd_root / "CivicCast" / "data" / "pgdata"
     assert layout.log_root == pd_root / "CivicCast" / "logs"
     # ffmpeg/ffprobe: native_activation.rs's validate_staged_runtime_layout
@@ -450,6 +464,40 @@ def test_build_control_plane_media_env_prepends_ffmpeg_dir_and_preserves_inherit
     assert r"C:\Windows" in media_env["PATH"]
 
 
+def test_build_control_plane_media_env_composes_on_the_callers_path_not_os_environ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r"""Gate A T4 regression (2026-09). This dict is merged LAST into the
+    control-plane child's env, so its PATH wins outright. Composing over
+    ``os.environ`` instead of over the PATH the caller already built silently
+    DELETED ``<runtime>\dependencies\gstreamer\bin`` -- which
+    ``station_environment_for_python`` had just put there. Without that
+    directory on PATH, girepository cannot open ``gstreamer-1.0-0.dll`` by bare
+    name, ``Gst.URIHandler``'s GType comes back G_TYPE_NONE and the playout
+    worker dies at import with ``TypeError: must be an interface``. Reproduced
+    against the shipped runtime from the b78b9c7 kit."""
+
+    from civiccast.native.supervisor.install_layout import resolve_install_layout
+    from civiccast.native.supervisor.service import build_control_plane_media_env
+
+    install_root, pd_root = _make_install_tree(tmp_path)
+    ffmpeg_bin_dir = _stage_ffmpeg(install_root)
+    gst_bin_dir = install_root / "runtime" / "dependencies" / "gstreamer" / "bin"
+    monkeypatch.setenv("PATH", r"C:\Windows\System32")
+    layout = resolve_install_layout(
+        executable=install_root / "runtime" / "pythonservice.exe",
+        program_data_root=pd_root,
+    )
+
+    media_env = build_control_plane_media_env(
+        layout, inherited_path=f"{gst_bin_dir}{os.pathsep}" + r"C:\Windows\System32"
+    )
+
+    assert media_env["PATH"].startswith(str(ffmpeg_bin_dir))
+    assert str(gst_bin_dir) in media_env["PATH"], "the caller's GStreamer bin must survive"
+    assert r"C:\Windows\System32" in media_env["PATH"]
+
+
 def test_build_control_plane_media_env_skips_and_logs_once_without_both_binaries(
     tmp_path: Path,
 ) -> None:
@@ -552,6 +600,41 @@ def test_build_production_service_merges_ffmpeg_path_into_control_plane_env(
     assert cp_maintenance.env["CIVICCAST_UPLOAD_DIR"] == str(
         pd_root / "CivicCast" / "data" / "uploads"
     )
+
+
+@pytest.mark.windows_only
+@_WINDOWS_PATH_TEST
+def test_build_production_service_keeps_the_gstreamer_bin_on_the_control_plane_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end for the Gate A T4 root cause: the caller's control_plane_env
+    (in production, ``station_environment_for_python``, which prepends the
+    bundled ``dependencies/gstreamer/bin``) must still be on the control-plane
+    child's PATH after the ffmpeg composition is merged over it -- otherwise
+    the GStreamer playout worker the control plane spawns inherits a PATH with
+    no GStreamer bin and dies at ``import gi.repository.Gst``."""
+
+    from civiccast.native.supervisor.install_layout import resolve_install_layout
+
+    install_root, pd_root = _make_install_tree(tmp_path)
+    ffmpeg_bin_dir = _stage_ffmpeg(install_root)
+    gst_bin_dir = install_root / "runtime" / "dependencies" / "gstreamer" / "bin"
+    monkeypatch.setenv("PATH", r"C:\Windows\System32")
+    monkeypatch.setenv("PROGRAMDATA", str(pd_root))
+    layout = resolve_install_layout(
+        executable=install_root / "runtime" / "pythonservice.exe",
+        program_data_root=pd_root,
+    )
+    service = _build_service(
+        layout=layout,
+        program_data_root=str(pd_root),
+        control_plane_env={"PATH": f"{gst_bin_dir}{os.pathsep}" + r"C:\Windows\System32"},
+    )
+    sup = service._supervisor
+
+    cp = sup._spec_for("control_plane")
+    assert cp.env["PATH"].startswith(str(ffmpeg_bin_dir))
+    assert str(gst_bin_dir) in cp.env["PATH"]
 
 
 @pytest.mark.windows_only

@@ -105,12 +105,19 @@ def _make_fixture_roots(tmp_path: Path) -> tuple[Path, Path, dict[str, tuple[int
         "tsplugin_until.dll",
     ):
         tsduck_pins[name] = _write(tsduck_root / "bin" / name, f"tsduck:{name}".encode())
+    # The .names/.xml data files TSDuck resolves relative to tsp.exe's own
+    # directory at runtime (TSDUCK_DATA_PINS) -- a real fixture file per
+    # pinned name, same fabrication style as the DLL/exe fixtures above, so
+    # the source-selection path that stages them is genuinely exercised.
+    tsduck_data_pins = {}
+    for name in builder.TSDUCK_DATA_PINS:
+        tsduck_data_pins[name] = _write(tsduck_root / "bin" / name, f"tsduck-data:{name}".encode())
     for name in builder.TSDUCK_LICENSE_FILES:
         _write(tsduck_root / name, f"license:{name}".encode())
 
     pins.update({f"bin/{k}": v for k, v in {**bin_pins, **dll_pins}.items()})
     pins.update({f"lib/{k}": v for k, v in lib_pins.items()})
-    pins.update({f"tsduck/{k}": v for k, v in tsduck_pins.items()})
+    pins.update({f"tsduck/{k}": v for k, v in {**tsduck_pins, **tsduck_data_pins}.items()})
 
     return (
         postgres_root,
@@ -120,6 +127,7 @@ def _make_fixture_roots(tmp_path: Path) -> tuple[Path, Path, dict[str, tuple[int
             "bin_dll": dll_pins,
             "lib": lib_pins,
             "tsduck": tsduck_pins,
+            "tsduck_data": tsduck_data_pins,
         },
     )
 
@@ -129,6 +137,7 @@ def _patch_minimal_pins(monkeypatch: pytest.MonkeyPatch, pins: dict) -> None:
     monkeypatch.setattr(builder, "POSTGRES_BIN_DLL_PINS", pins["bin_dll"])
     monkeypatch.setattr(builder, "POSTGRES_LIB_PINS", pins["lib"])
     monkeypatch.setattr(builder, "TSDUCK_BIN_PINS", pins["tsduck"])
+    monkeypatch.setattr(builder, "TSDUCK_DATA_PINS", pins["tsduck_data"])
 
 
 def _dev_key() -> Ed25519PrivateKey:
@@ -180,6 +189,66 @@ def test_end_to_end_build_verifies_through_the_real_provisioning_trust_wire(
     assert verified.metadata["postgres_version"] == builder.POSTGRES_VERSION
     assert verified.metadata["tsduck_version"] == builder.TSDUCK_VERSION
     assert verified.metadata["source_sha"] == "a" * 40
+
+
+def test_tsduck_data_files_are_staged_beside_the_pinned_binaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Root cause of the Gate A TS-capture failure (2026-09-03 22:55Z,
+    "configuration file 'dtv' not found" / "file not found:
+    tsduck.hfbands.xml"): the pack shipped tsp.exe and its 4 plugin DLLs but
+    none of the .names/.xml data files those plugins need at runtime.
+    ``_tsduck_sources`` must stage every ``TSDUCK_DATA_PINS`` entry at
+    ``tsduck/bin/<name>`` -- the SAME directory as tsp.exe itself, since
+    TSDuck resolves these files relative to its own executable path on
+    Windows, not a separate ``share``/``etc`` tree."""
+
+    assert builder.TSDUCK_DATA_PINS, "TSDUCK_DATA_PINS must not be empty"
+    # These are TSDuck's OWN bundled data, not extra plugin binaries: no new
+    # plugin DLL should ever land in this table (guards against future
+    # accidental scope creep past what the Gate A fix required).
+    for name in builder.TSDUCK_DATA_PINS:
+        assert not name.lower().endswith((".dll", ".exe")), (
+            f"TSDUCK_DATA_PINS carries a binary ({name!r}) -- binaries belong in "
+            "TSDUCK_BIN_PINS, not the data-file table"
+        )
+
+    _postgres_root, tsduck_root, pins = _make_fixture_roots(tmp_path)
+    _patch_minimal_pins(monkeypatch, pins)
+
+    sources = builder._tsduck_sources(tsduck_root)
+
+    for name in pins["tsduck_data"]:
+        key = f"tsduck/bin/{name}"
+        assert key in sources, f"{key} missing from _tsduck_sources() output"
+        expected_bytes, expected_sha256 = pins["tsduck_data"][name]
+        observed = sources[key].read_bytes()
+        assert len(observed) == expected_bytes
+        assert hashlib.sha256(observed).hexdigest() == expected_sha256
+
+    # Every real (non-fixture) TSDUCK_DATA_PINS name this task's audit found
+    # in the actual upstream archive is present -- pins the exact file list,
+    # not just "some data files exist".
+    expected_real_names = {
+        "tscore.ip.names",
+        "tscore.keytable.model.xml",
+        "tscore.monitor.model.xml",
+        "tscore.monitor.xml",
+        "tscore.time.model.xml",
+        "tscore.time.xml",
+        "tsduck.channels.model.xml",
+        "tsduck.dektec.names",
+        "tsduck.dtv.names",
+        "tsduck.etuner.model.xml",
+        "tsduck.hfbands.model.xml",
+        "tsduck.hfbands.xml",
+        "tsduck.hides.names",
+        "tsduck.lnbs.model.xml",
+        "tsduck.lnbs.xml",
+        "tsduck.oui.names",
+        "tsduck.tables.model.xml",
+    }
+    assert set(builder.TSDUCK_DATA_PINS) == expected_real_names
 
 
 def test_provisioning_layout_contract_initdb_path_exists_once_extracted(
@@ -539,6 +608,7 @@ def test_every_real_pinned_path_has_a_confirmed_non_gpl_license() -> None:
     paths += [f"share/extension/{name}" for name in builder.POSTGRES_SHARE_EXTENSION_FILES]
     paths += [f"licenses/postgresql/{name}" for name in builder.POSTGRES_LICENSE_FILES]
     paths += [f"tsduck/bin/{name}" for name in builder.TSDUCK_BIN_PINS]
+    paths += [f"tsduck/bin/{name}" for name in builder.TSDUCK_DATA_PINS]
     paths += [f"licenses/tsduck/{name}" for name in builder.TSDUCK_LICENSE_FILES]
     for subdir in builder.POSTGRES_SHARE_DATA_DIRS:
         paths.append(f"share/{subdir}/UTC")  # representative path under the data tree

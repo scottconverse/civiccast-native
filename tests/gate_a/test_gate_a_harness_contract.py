@@ -2156,3 +2156,17 @@ def test_t6_beat_records_public_now_current_source_label() -> None:
     code = _code_only(_driver_executable_text())
     assert "/api/public/egress/channels/$($ch.id)/now" in code
     assert "$chBeat.public_now_current_source_label = $pubNowR.body_json.current_source_label" in code
+def test_tsproof_caches_the_process_handle_before_waiting() -> None:
+    """<gate-a-tsp-exit-code> Windows PowerShell 5.1 returns $null for
+    $proc.ExitCode unless the handle was cached before the process exited.
+    Gate A run 33826665417 captured a full 1229-packet engine report and still
+    judged 'fail-exit-' because of that. The fix touches $proc.Handle right after
+    Start-Process and waits on the object, never via Wait-Process -Id."""
+    text = _read(_DRIVER)
+    code = _code_only(text)
+    start = code.index("function Test-TsProof")
+    end = code.index("$result.ran = $true", start)
+    block = code[start:end]
+    assert "$null = $proc.Handle" in block
+    assert block.index("$null = $proc.Handle") < block.index("WaitForExit(")
+    assert "Wait-Process -Id $proc.Id" not in block

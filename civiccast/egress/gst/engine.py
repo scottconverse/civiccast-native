@@ -18,6 +18,7 @@ import contextlib
 import os
 import re
 import signal
+import sys
 import time
 from itertools import pairwise
 from pathlib import Path
@@ -31,36 +32,20 @@ from typing import Any
 # module itself renders per-start()/per-reload matches.
 _STALE_BANNER_PNG_RE = re.compile(r"^graphics-overlay-lower-third\.[0-9a-f]{32}\.png$")
 
-_CPU_DECODE_FEATURE_RANK = ",".join(
-    (
-        "nvh264dec:0",
-        "nvh265dec:0",
-        "nvav1dec:0",
-        "cudah264dec:0",
-        "cudah265dec:0",
-        "vaapih264dec:0",
-        "vaapih265dec:0",
-        "vah264dec:0",
-        "vah265dec:0",
-        "d3d11h264dec:0",
-        "d3d11h265dec:0",
+try:  # package context (see the sibling-import note further down for why both forms)
+    from civiccast.egress.gst.decode_policy import (
+        demote_hardware_decoders,
+        prefer_cpu_decoders_by_default,
     )
-)
+except ImportError:  # standalone context: the gst dir is on sys.path
+    from decode_policy import (  # type: ignore[import-not-found,no-redef]
+        demote_hardware_decoders,
+        prefer_cpu_decoders_by_default,
+    )
 
-
-def _prefer_cpu_decoders_by_default() -> None:
-    """Keep decodebin output in system memory unless an operator opts into GPU decode."""
-    if os.environ.get("CIVICCAST_GST_ALLOW_HARDWARE_DECODE", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        return
-    os.environ.setdefault("GST_PLUGIN_FEATURE_RANK", _CPU_DECODE_FEATURE_RANK)
-
-
-_prefer_cpu_decoders_by_default()
+# MUST run before ``gi``/GStreamer is imported below: GST_PLUGIN_FEATURE_RANK is read
+# during registry scan, which happens inside Gst.init().
+prefer_cpu_decoders_by_default()
 
 from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime  # noqa: E402
 
@@ -180,8 +165,18 @@ class GstPlayoutEngine:
         reload_timeout_s: float = 10.0,
         stall_timeout_s: float = 10.0,
     ) -> None:
-        _prefer_cpu_decoders_by_default()
+        prefer_cpu_decoders_by_default()
         Gst.init([])
+        # Belt-and-suspenders with the env-var rank list above: demote by klass, from
+        # the registry that really exists here, so a bundled hardware decoder nobody
+        # added to the name list cannot win autoplug (Gate A T4 root cause).
+        demoted = demote_hardware_decoders(Gst.Registry.get().get_feature_list(Gst.ElementFactory))
+        if demoted:
+            print(
+                f"CTRL decode: demoted hardware decoders to CPU decode: {','.join(demoted)}",
+                file=sys.stderr,
+                flush=True,
+            )
         self.graph = graph
         self.swap = swap or InputSelectorSwap()
         self.teardown_timeout_s = teardown_timeout_s
@@ -923,8 +918,13 @@ class GstPlayoutEngine:
             self._stall_last_advance_t = now
             return True  # output advancing — keep watching
         if now - self._stall_last_advance_t >= self.stall_timeout_s:
+            # STDERR, not stdout (Gate A T4 visibility fix): the daemon reads the
+            # worker's stderr tail into ``last_error`` when the child exits non-zero,
+            # so the reason a channel bounced is on the operator's state row instead
+            # of only in an uncollected stdout log.
             print(
                 f"CTRL stall: no output for {int(self.stall_timeout_s)}s — quitting for daemon restart",
+                file=sys.stderr,
                 flush=True,
             )
             self._error = ("stall", "output stalled")  # → worker exits non-zero → restart

@@ -427,6 +427,14 @@ entries:
       # file. Blob IDs re-hashed with `git hash-object --path <file> <file>`
       # per D2; worker.py/control.py/audio_tap.py are byte-identical and keep
       # their recorded blobs.
+      # Re-provisioned again (fix/gst-worker-runtime-death, 2026-09-03): the CPU-
+      # decode policy moved out of engine.py into the gi-free sibling
+      # civiccast/egress/gst/decode_policy.py, which worker.py now publishes under
+      # its package name; engine.py also sweeps the live registry for hardware
+      # decoders after Gst.init. Current-source proof for THESE bytes is that PR's
+      # own on-the-wire capture (shipped GStreamer closure -> udpsink -> TSDuck tsp
+      # analyze, two captures 60s apart, packets > 0 in both, 0 invalid syncs, 0
+      # transport errors). Blob IDs re-hashed with `git hash-object --path <f> <f>`.
       # Re-provisioned (fix/gst-engine-emits-ts, 2026-09-03): worker.py now
       # publishes its by-path sibling modules under their package names so the
       # engine's package-form imports resolve to the SAME objects, and
@@ -440,9 +448,11 @@ entries:
       # audio_tap.py are byte-identical and keep their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 824d3a162e36cc85431da0779208554aa4413bf2
+          blob: 180a8bf219c86718777ae2c0b57fdbb814d7312c
         - path: civiccast/egress/gst/engine.py
-          blob: 3eaee8b6112afc4d5e500b6e556eb22c6979fdc2
+          blob: c3451a7df47edaf632f235c644dd6700fb9357ea
+        - path: civiccast/egress/gst/decode_policy.py
+          blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
           blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
         - path: civiccast/egress/gst/control.py
@@ -574,6 +584,14 @@ entries:
       # file. Blob IDs re-hashed with `git hash-object --path <file> <file>`
       # per D2; worker.py/control.py/audio_tap.py are byte-identical and keep
       # their recorded blobs.
+      # Re-provisioned again (fix/gst-worker-runtime-death, 2026-09-03): the CPU-
+      # decode policy moved out of engine.py into the gi-free sibling
+      # civiccast/egress/gst/decode_policy.py, which worker.py now publishes under
+      # its package name; engine.py also sweeps the live registry for hardware
+      # decoders after Gst.init. Current-source proof for THESE bytes is that PR's
+      # own on-the-wire capture (shipped GStreamer closure -> udpsink -> TSDuck tsp
+      # analyze, two captures 60s apart, packets > 0 in both, 0 invalid syncs, 0
+      # transport errors). Blob IDs re-hashed with `git hash-object --path <f> <f>`.
       # Re-provisioned (fix/gst-engine-emits-ts, 2026-09-03): worker.py now
       # publishes its by-path sibling modules under their package names so the
       # engine's package-form imports resolve to the SAME objects, and
@@ -587,9 +605,11 @@ entries:
       # audio_tap.py are byte-identical and keep their recorded blobs.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 824d3a162e36cc85431da0779208554aa4413bf2
+          blob: 180a8bf219c86718777ae2c0b57fdbb814d7312c
         - path: civiccast/egress/gst/engine.py
-          blob: 3eaee8b6112afc4d5e500b6e556eb22c6979fdc2
+          blob: c3451a7df47edaf632f235c644dd6700fb9357ea
+        - path: civiccast/egress/gst/decode_policy.py
+          blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
           blob: 3534d2c141cd8a5485dedb4430c68cc9a6cbba78
         - path: civiccast/egress/gst/control.py
