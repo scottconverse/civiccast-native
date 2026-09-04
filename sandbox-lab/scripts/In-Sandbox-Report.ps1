@@ -1863,12 +1863,22 @@ function Get-CivicCastDbRevisionViaPsql {
     }
 
     # Same two-namespace search order civiccast/schema_check.py:173 uses.
-    $sql = "SELECT version_num FROM civiccast.alembic_version UNION ALL SELECT version_num FROM public.alembic_version LIMIT 1"
+    # <gate-a-psql-schema> A UNION over both namespaces is one statement: when
+    # public.alembic_version does not exist (the product keeps it in the civiccast
+    # schema, civiccast/alembic/env.py version_table_schema) PostgreSQL rejects
+    # the WHOLE statement ('relation "public.alembic_version" does not exist',
+    # Gate A 33885550628). Try each namespace as its own statement, same order
+    # civiccast/schema_check.py:173 uses.
+    $sqlCandidates = @(
+        'SELECT version_num FROM civiccast.alembic_version LIMIT 1',
+        'SELECT version_num FROM public.alembic_version LIMIT 1'
+    )
     $userInfo = $conn.UserInfo -split ':', 2
     $env:PGPASSWORD = if ($userInfo.Count -gt 1) { [uri]::UnescapeDataString($userInfo[1]) } else { '' }
     $stdout = Join-Path $OutDir 'post-upgrade-db-revision.psql.stdout.log'
     $stderr = Join-Path $OutDir 'post-upgrade-db-revision.psql.stderr.log'
     try {
+      foreach ($sql in $sqlCandidates) {
         $argv = @(
             '--host', $conn.Host, '--port', "$($conn.Port)",
             '--username', [uri]::UnescapeDataString($userInfo[0]),
@@ -1895,13 +1905,16 @@ function Get-CivicCastDbRevisionViaPsql {
             if ($null -ne $out) { $out = $out.Trim() }
             if (-not [string]::IsNullOrWhiteSpace($out)) {
                 $probe.revision = ($out -split "`n" | Select-Object -First 1).Trim()
+                break
             } else {
                 $probe.revision = '<no-alembic-version-row>'
             }
         } else {
             $probe.revision = '<psql-failed>'
             $probe.error = "psql exited $($p.ExitCode)"
+            if ($errText -match 'does not exist') { continue }  # try the next namespace
         }
+      }
     } catch {
         $probe.revision = '<psql-threw>'
         $probe.error = "$_"
