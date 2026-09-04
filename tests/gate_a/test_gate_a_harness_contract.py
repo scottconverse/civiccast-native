@@ -1753,7 +1753,8 @@ def test_tsproof_caches_the_process_handle_before_waiting() -> None:
     Gate A run 33826665417 captured a full 1229-packet engine report and still
     judged 'fail-exit-' because of that. The fix touches $proc.Handle right after
     Start-Process and waits on the object, never via Wait-Process -Id."""
-    code = _report_script()
+    text = _read(_DRIVER)
+    code = _code_only(text)
     start = code.index("function Test-TsProof")
     end = code.index("$result.ran = $true", start)
     block = code[start:end]
