@@ -1800,3 +1800,19 @@ def test_psql_proof_quotes_the_sql_argument_for_start_process() -> None:
     assert "'-c', $sql\n" not in block and "'-c', $sql)" not in block
     assert "extra command-line argument" in block
     assert "<psql-args-split>" in block
+
+
+def test_psql_proof_tries_each_alembic_namespace_as_its_own_statement() -> None:
+    """<gate-a-psql-schema> One UNION statement over civiccast.alembic_version and
+    public.alembic_version fails outright when the public table is absent (the
+    product keeps the table in the civiccast schema). The proof must run one
+    statement per namespace and fall through on 'does not exist'."""
+    text = _read(_DRIVER)
+    code = _code_only(text)
+    start = code.index("function Get-CivicCastDbRevisionViaPsql")
+    block = code[start : code.index("POST_UPGRADE_DB_REVISION_SOURCE=psql exit=", start)]
+    assert "UNION ALL" not in block
+    assert "'SELECT version_num FROM civiccast.alembic_version LIMIT 1'" in block
+    assert "'SELECT version_num FROM public.alembic_version LIMIT 1'" in block
+    assert "foreach ($sql in $sqlCandidates)" in block
+    assert "does not exist" in block
