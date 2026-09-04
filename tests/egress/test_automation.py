@@ -11,7 +11,7 @@ state rows.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -31,12 +31,24 @@ _NOW = datetime(2026, 6, 12, 6, 0, tzinfo=UTC)
 
 
 class _FakeDaemon:
-    def __init__(self, *, live_channels: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        live_channels: set[str] | None = None,
+        manual_override_channels: set[str] | None = None,
+    ) -> None:
         self.live_channels = live_channels or set()
         self.processed: list[str] = []
+        # B1 fix: mirrors PlayoutSupervisor.has_manual_override -- a channel in
+        # this set stands in for an active operator live takeover or forced
+        # fallback slate.
+        self.manual_override_channels = manual_override_channels or set()
 
     def has_live_process(self, channel_id: str) -> bool:
         return channel_id in self.live_channels
+
+    def has_manual_override(self, channel_id: str) -> bool:
+        return channel_id in self.manual_override_channels
 
     def process_once(self, channel_id: str) -> int:
         self.processed.append(channel_id)
@@ -71,6 +83,23 @@ def _plan(channel_id: str) -> EgressSourcePlan:
 
 def _pending_actions(store: InMemoryEgressStore, channel_id: str) -> list[str]:
     return [command.action for command in store.pop_pending_commands(channel_id)]
+
+
+def _plan_with_duration(
+    channel_id: str, duration_seconds: float, *, source_ref: str = "seg"
+) -> EgressSourcePlan:
+    return EgressSourcePlan(
+        channel_id=channel_id,
+        segments=[
+            EgressSourceSegment(
+                label="Program",
+                path="C:/media/program.ts",
+                duration_seconds=duration_seconds,
+                kind="program",
+                source_ref=source_ref,
+            )
+        ],
+    )
 
 
 class TestRelayIdentifierValidation:
@@ -248,6 +277,380 @@ class TestSlateReplan:
         )
         raising_service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == []
+
+
+class TestPlanRollover:
+    """Soak evidence 2026-09-04 (kit 4b30c99, Desktop/CIVICCAST-EVIDENCE/
+    soak-120-4b30c99-20260904): back-to-back scheduled premieres EOS'd the
+    GStreamer worker at every source-plan boundary (6-8 restarts/channel in
+    2h) because nothing ever extended a LIVE (ON_AIR) plan before it ran
+    out -- only a FALLBACK_SLATE gap re-planned (TestSlateReplan above).
+    ``_check_plan_rollover`` fixes this by reusing the SAME seamless
+    ``reload`` dispatch _check_slate_replan already uses, before EOS."""
+
+    def _on_air_state(
+        self, store: InMemoryEgressStore, channel_id: str, *, proof_event_id: str
+    ) -> None:
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id=proof_event_id,
+                updated_at=_NOW,
+            )
+        )
+
+    def test_no_rollover_while_plan_has_plenty_of_runway(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 1800.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        # First tick establishes the horizon (30 min out) -- nothing due.
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+        # A later tick, still nowhere near the end, still issues nothing.
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_dispatches_exactly_one_reload_before_eos(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        # The live plan has 40s left; the schedule underneath it extends
+        # much further once the clock moves inside the lookahead window.
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        # Establish the horizon: plan ends 40s from now.
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+
+        # 15s later the plan is inside the 30s lookahead -> roll it over.
+        later = _NOW + timedelta(seconds=15)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # Same plan boundary (proof event unchanged): no second reload while
+        # the daemon has not yet applied the first one (no command storm).
+        service.run_once(now=later + timedelta(seconds=1))
+        assert _pending_actions(store, "public") == []
+
+    def test_no_rollover_when_schedule_has_nothing_further(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        # The schedule genuinely has nothing published beyond the item
+        # already airing: every call reflects the SAME fixed end time, just
+        # re-anchored (join-in-progress) at whatever "now" it is asked from
+        # -- exactly what build_source_plan_from_schedule does when no new
+        # item follows the one currently on air.
+        deadline = _NOW + timedelta(seconds=40)
+        clock = {"now": _NOW}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            remaining = max(0.0, (deadline - clock["now"]).total_seconds())
+            return _plan_with_duration("public", remaining)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=clock["now"])
+        clock["now"] = _NOW + timedelta(seconds=15)
+        service.run_once(now=clock["now"])
+
+        # No reload -- there is nothing to roll onto; the plan is left to
+        # reach its own natural end (the existing, unchanged EOS path).
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_re_establishes_horizon_once_the_reload_lands(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+        service.run_once(now=_NOW)
+        later = _NOW + timedelta(seconds=15)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # The daemon applies the seamless reload and writes a fresh
+        # current_proof_event_id -- the tracked horizon must follow it, not
+        # keep firing against the stale one.
+        self._on_air_state(store, "public", proof_event_id="ev-2")
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_never_fires_off_of_the_slate_replan_state(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(channel_id="public", state="FALLBACK_SLATE", updated_at=_NOW)
+        )
+        daemon = _FakeDaemon(live_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 40.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)
+        # _check_slate_replan issues its own reload for the gap; the
+        # rollover check must not ALSO fire while the channel is off ON_AIR.
+        assert _pending_actions(store, "public") == ["reload"]
+
+    # -- Hostile-review B1: skip entirely under an operator override ----------
+
+    def test_rollover_skipped_during_live_takeover(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"}, manual_override_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 40.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        # Establish, then push well past the (now much earlier) trigger point --
+        # under any override the check must still never enqueue a reload.
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=35))
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_skipped_during_forced_slate(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        # The state row stays ON_AIR: a forced-slate pad toggle (swap_role)
+        # writes NO state-row transition at all (B1's real defect).
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"}, manual_override_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 40.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=35))
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_resumes_once_the_override_clears(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"}, manual_override_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)
+        later = _NOW + timedelta(seconds=35)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == []  # override still active
+
+        # The override clears: the very next pass establishes a fresh horizon
+        # (nothing was ever tracked while the override was active) --
+        # nothing to dispatch on THIS tick yet.
+        daemon.manual_override_channels.discard("public")
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == []
+
+        # A subsequent pass past the boundary rolls over normally.
+        service.run_once(now=later + timedelta(seconds=1))
+        assert _pending_actions(store, "public") == ["reload"]
+
+    # -- Hostile-review B2: retry pacing + a dropped reload's failure latch ----
+
+    def test_rollover_backs_off_after_source_prepare_error(self) -> None:
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _plan_with_duration("public", 40.0)
+            raise SourcePrepareError("media temporarily unreadable")
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)  # establish horizon: 40s plan
+        later = _NOW + timedelta(seconds=35)  # well past the boundary trigger
+        service.run_once(now=later)
+        assert calls["n"] == 2  # one retry attempt, which raised
+
+        # Within the cooldown: no re-query (no command storm against a
+        # persistently failing source).
+        clock["now"] += 5.0
+        service.run_once(now=later)
+        assert calls["n"] == 2
+        assert _pending_actions(store, "public") == []
+
+        # Past the cooldown: retries.
+        clock["now"] += 30.0
+        service.run_once(now=later)
+        assert calls["n"] == 3
+
+    def test_rollover_retries_once_if_the_dispatched_reload_never_lands(self) -> None:
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)
+        later = _NOW + timedelta(seconds=35)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # The daemon never applies it (current_proof_event_id stays ev-1 --
+        # e.g. the command was dropped, or the worker control channel wasn't
+        # ready). Short of the timeout: still waiting, no second reload.
+        clock["now"] += 10.0
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == []
+
+        # Past _ROLLOVER_ISSUED_TIMEOUT_SECONDS: the latch clears and one
+        # retry is dispatched.
+        clock["now"] += 40.0
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+    # -- Hostile-review B3: earlier, boundary-aligned trigger ------------------
+
+    def test_rollover_waits_for_the_last_segment_on_a_multi_segment_plan(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        # Three 10-minute segments (30 min total) already loaded -- the last
+        # segment does not begin until 20 minutes in, comfortably past the
+        # 120s-before-end floor (28 min in). The trigger must wait for that
+        # last-segment boundary, not fire the moment the plan is established.
+        plan = EgressSourcePlan(
+            channel_id="public",
+            segments=[
+                EgressSourceSegment(
+                    label=f"Program {i}",
+                    path="C:/media/program.ts",
+                    duration_seconds=600.0,
+                    kind="program",
+                    source_ref=f"seg-{i}",
+                )
+                for i in range(3)
+            ],
+        )
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return plan
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)  # establish: end in 1800s, last segment at +1200s
+        assert calls["n"] == 1
+
+        # 10 minutes in -- nowhere near the last segment or the 120s floor.
+        service.run_once(now=_NOW + timedelta(seconds=600))
+        assert calls["n"] == 1
+        assert _pending_actions(store, "public") == []
+
+        # 19 minutes in -- still one minute short of the last-segment boundary.
+        service.run_once(now=_NOW + timedelta(seconds=1140))
+        assert calls["n"] == 1
+
+        # 20 minutes in -- the last segment begins now; the trigger fires and
+        # re-queries the schedule. The fake provider always returns the same
+        # fixed-duration plan regardless of when it is asked (unlike the real
+        # join-in-progress-aware ScheduleSourcePlanProvider), so a later query
+        # necessarily projects further into the future than the original --
+        # exactly the same "schedule continues further" shape the other
+        # rollover tests use to trigger a dispatch. What this test actually
+        # pins is the TIMING: no re-query at all before the boundary.
+        service.run_once(now=_NOW + timedelta(seconds=1200))
+        assert calls["n"] == 2
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_service_wires_the_120s_lead_floor_into_rollover_trigger_at(self) -> None:
+        """``_check_plan_rollover`` computes its trigger via
+        ``reload_policy.rollover_trigger_at``, passing the service's
+        ``_ROLLOVER_MIN_LEAD_SECONDS`` as the floor. Pinned directly against
+        the (gi-free, independently unit-tested) pure function rather than
+        end-to-end, since a plan with a long single segment has no earlier
+        last-segment-start candidate to exercise the floor against -- the
+        floor's own behavior is ``reload_policy``'s responsibility; this pins
+        that the two stay wired together."""
+        from civiccast.egress.gst.reload_policy import rollover_trigger_at
+
+        plan_end_at = _NOW + timedelta(seconds=1800)  # a 30-minute single segment
+        last_segment_start_at = _NOW  # the only segment starts at plan start
+        trigger_at = rollover_trigger_at(
+            plan_end_at=plan_end_at,
+            last_segment_start_at=last_segment_start_at,
+            min_lead_seconds=ChannelAutomationService._ROLLOVER_MIN_LEAD_SECONDS,
+        )
+        assert trigger_at == last_segment_start_at  # the earlier candidate wins
+        assert ChannelAutomationService._ROLLOVER_MIN_LEAD_SECONDS == 120.0
 
 
 class TestPerChannelLatchIndependence:
@@ -821,3 +1224,167 @@ class TestStartLatchRecovery:
         daemon.live_channels.clear()
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == ["start"]
+
+
+class _HorizonAwareDaemon(_FakeDaemon):
+    """A daemon double that, like the real ``EgressDaemon``, can say which source
+    plan it actually DISPATCHED (``dispatched_plan_horizon``)."""
+
+    def __init__(self, *, live_channels: set[str] | None = None) -> None:
+        super().__init__(live_channels=live_channels)
+        self.dispatched: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
+
+    def dispatched_plan_horizon(
+        self, channel_id: str
+    ) -> tuple[str | None, tuple[float, ...], bool] | None:
+        return self.dispatched.get(channel_id)
+
+
+def _plan_with_segments(channel_id: str, durations: tuple[float, ...]) -> EgressSourcePlan:
+    return EgressSourcePlan(
+        channel_id=channel_id,
+        segments=[
+            EgressSourceSegment(
+                label=f"Program {n}",
+                path=f"C:/media/program-{n}.ts",
+                duration_seconds=duration,
+                kind="program",
+                source_ref=f"seg-{n}",
+            )
+            for n, duration in enumerate(durations)
+        ],
+    )
+
+
+class TestRolloverHorizonComesFromTheDispatchedPlan:
+    """Hostile-review (d): the rollover horizon must be derived from the plan the
+    daemon ACTUALLY dispatched, not from a fresh call to the source plan provider.
+
+    The provider re-windows from whatever schedule item is live at the moment of the
+    call and caps the result at ``max_segments``, so calling it again returns a
+    DIFFERENT segment list than the one on air. Summing that list and calling it "when
+    the airing plan ends" can overshoot the real end -- and since
+    ``rollover_trigger_at`` is computed from that number, the trigger then lands at or
+    after the boundary it exists to get ahead of, which is the original EOS-restart
+    defect wearing a different hat.
+
+    Every case below uses MULTI-SEGMENT plans on purpose: with a single segment the
+    plan's last-segment-start IS its start, so ``rollover_trigger_at`` returns the
+    plan's own start time and every horizon -- right or wrong -- triggers on the next
+    tick. A single-segment scenario cannot tell the two apart.
+    """
+
+    def _on_air(self, store: InMemoryEgressStore, channel_id: str, proof_event_id: str) -> None:
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id=proof_event_id,
+                updated_at=_NOW,
+            )
+        )
+
+    #: The plan actually on air: 600s of first segment, then a 40s tail. Its real end
+    #: is _NOW+640 and its boundary-aligned trigger is _NOW+520 (120s lead floor).
+    _AIRING = (600.0, 40.0)
+    #: What a re-query answers instead: the provider has re-windowed forward and is
+    #: describing 1800s of schedule that is NOT the plan on air. Believing it puts the
+    #: horizon at _NOW+1800 and the trigger at _NOW+900 -- 260s PAST the real end.
+    _REQUERY = (900.0, 900.0)
+
+    def test_an_over_reporting_re_query_no_longer_hides_an_imminent_boundary(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", self._AIRING, False)
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, self._REQUERY),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)  # establishes the horizon from the DISPATCHED plan
+        assert _pending_actions(store, "public") == []
+        # _NOW+560 is past the airing plan's own trigger (_NOW+520) and still 80s
+        # short of its end -- the whole point of a boundary-aligned rollover.
+        service.run_once(now=_NOW + timedelta(seconds=560))
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_the_legacy_re_query_would_have_slept_through_that_boundary(self) -> None:
+        """The control for the test above: the SAME store, provider and clock, with a
+        daemon that cannot report its dispatch. Nothing rolls over before the real end
+        -- which is exactly the behaviour the fix replaces."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        service = ChannelAutomationService(
+            store,
+            _FakeDaemon(live_channels={"public"}),
+            lambda cid: _plan_with_segments(cid, self._REQUERY),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=560))
+        assert _pending_actions(store, "public") == []
+
+    def test_a_dispatch_record_for_a_different_proof_event_is_ignored(self) -> None:
+        """A record the current proof event does not match is not evidence about what
+        is on air now -- fall back to the legacy re-query rather than dating the
+        horizon off a stale dispatch."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-2")
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", self._AIRING, False)  # stale
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, self._REQUERY),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=560))
+        assert _pending_actions(store, "public") == []
+
+    def test_a_deferred_rollover_plan_is_dated_from_the_OUTGOING_plan_s_end(self) -> None:
+        """A boundary-aligned rollover plan does not start when it is dispatched: the
+        engine holds it, prerolled, until the outgoing leg's own end
+        (``switch_at_end_of_current``). Dating its horizon from the dispatch instant
+        instead would put the projected end a whole rollover lead time early, and make
+        the NEXT rollover fire before there was anything to roll onto."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", (500.0, 100.0), False)  # ends _NOW+600
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, (900.0, 900.0)),
+            settings=ChannelAutomationSettings(),
+        )
+        service.run_once(now=_NOW)
+        store.pop_pending_commands("public")
+
+        # 500s in, a DEFERRED rollover lands: 300s of new content that will not begin
+        # until the outgoing plan ends at _NOW+600, so it ends at _NOW+900 -- not at
+        # (_NOW+500)+300 = _NOW+800.
+        self._on_air(store, "public", "ev-2")
+        daemon.dispatched["public"] = ("ev-2", (200.0, 100.0), True)
+        service.run_once(now=_NOW + timedelta(seconds=500))
+        assert _pending_actions(store, "public") == []
+
+        # _NOW+700 is past the trigger a dispatch-instant horizon would have computed
+        # (min(_NOW+700, _NOW+680) = _NOW+680) and short of the correct one
+        # (min(_NOW+800, _NOW+780) = _NOW+780). Nothing may be dispatched here.
+        service.run_once(now=_NOW + timedelta(seconds=700))
+        assert _pending_actions(store, "public") == []
+
+        # Past the correct trigger it rolls over as normal.
+        service.run_once(now=_NOW + timedelta(seconds=800))
+        assert _pending_actions(store, "public") == ["reload"]

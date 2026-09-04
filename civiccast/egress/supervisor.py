@@ -191,6 +191,27 @@ class PlayoutSupervisor(EgressDaemon):
         self._supervisor_cg_overlay_proofs.pop(channel_id, None)
         self._sync_cg_overlay_now(channel_id)
 
+    def has_manual_override(self, channel_id: str) -> bool:
+        """B1 fix: True while an operator live takeover or forced fallback slate is
+        active for this channel.
+
+        Neither writes a state-row transition the automation's plan-rollover pass
+        (``ChannelAutomationService._check_plan_rollover``) could otherwise key off:
+        a live takeover's content-reload keeps the state row ON_AIR under the new
+        (live) content (``request_live_takeover`` -> ``_request_reload`` ->
+        ``_try_content_reload`` writes ON_AIR, same as any other reload), and a
+        forced slate detour on the GStreamer path is a bare ``swap_role`` pad
+        toggle that writes NO state row at all (``_reload_or_swap`` above). Without
+        this signal, the rollover pass reads a stale/misleading ON_AIR row and
+        fights the operator: reloading the SCHEDULED plan over a live takeover
+        forces a mid-event SRT/NDI reconnect, and reloading over a forced slate
+        (whose ``_next_source_plan`` raises ``SourcePrepareError`` below) latches a
+        ``daemon._pending_reloads`` entry that silently drops the operator's slate
+        once it resolves. Overrides ``EgressDaemon.has_manual_override`` (always
+        False there -- the base daemon has no notion of either)."""
+
+        return channel_id in self._live_takeover_plans or channel_id in self._forced_slate_reasons
+
     def _next_source_plan(self, channel_id: str) -> EgressSourcePlan | None:
         forced_slate_reason = self._forced_slate_reasons.get(channel_id)
         if forced_slate_reason is not None:

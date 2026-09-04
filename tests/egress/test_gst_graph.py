@@ -12,6 +12,7 @@ from civiccast.egress.gst.graph import (
     LIVE_CAPTION_APPSRC_NAME,
     CaptionEmbedLeg,
     ElementSpec,
+    PlaylistLeg,
     PlayoutGraph,
     SecondaryAudioLeg,
     SourceLeg,
@@ -22,6 +23,7 @@ from civiccast.egress.gst.graph import (
     encode_chain_specs,
     graph_from_json,
     graph_to_json,
+    source_leg_is_clock_timed,
 )
 
 
@@ -227,3 +229,101 @@ def test_graph_json_round_trip_with_secondary_audio() -> None:
     assert leg.kind == "sap"
     assert leg.source[0].factory == "filesrc"
     assert leg.encoder[-1].factory == "aacparse"
+
+
+class TestSourceLegIsClockTimed:
+    """``source_leg_is_clock_timed`` decides whether a boundary-aligned rollover may
+    HOLD the new leg at its first buffer and REBASE its running time onto the outgoing
+    leg's end (``GstPlayoutEngine.reload_program``). Both are right for a segment-timed
+    leg and wrong for a clock-timed one, so the answer is load-bearing, and it is
+    gi-free precisely so it can be pinned here on a bare checkout."""
+
+    def _file_program(self) -> SourceLeg:
+        return SourceLeg(
+            label="program",
+            elements=(
+                ElementSpec("filesrc", props={"location": "C:/media/council.ts"}),
+                ElementSpec("decodebin"),
+                ElementSpec("videoconvert"),
+            ),
+            audio=(ElementSpec("audioconvert"), ElementSpec("audioresample")),
+        )
+
+    def test_a_file_backed_program_leg_is_segment_timed(self) -> None:
+        assert source_leg_is_clock_timed(self._file_program()) is False
+
+    def test_a_file_backed_playlist_leg_is_segment_timed(self) -> None:
+        leg = PlaylistLeg(
+            label="program",
+            subchains=(
+                (ElementSpec("filesrc", props={"location": "a.ts"}), ElementSpec("decodebin")),
+                (ElementSpec("filesrc", props={"location": "b.ts"}), ElementSpec("decodebin")),
+            ),
+            audio_tail=(ElementSpec("audioconvert"),),
+        )
+        assert source_leg_is_clock_timed(leg) is False
+
+    def test_a_live_ingest_source_is_clock_timed(self) -> None:
+        for factory in ("udpsrc", "srtsrc", "rtspsrc", "decklinkvideosrc"):
+            leg = SourceLeg(
+                label="program",
+                elements=(
+                    ElementSpec(factory, props={"uri": "udp://127.0.0.1:5000"}),
+                    ElementSpec("decodebin"),
+                ),
+            )
+            assert source_leg_is_clock_timed(leg) is True, factory
+
+    def test_an_is_live_property_is_enough_on_its_own(self) -> None:
+        """The slate leg -- ``videotestsrc is-live=true`` -- names no factory from the
+        list but is every bit as clock-timed."""
+        leg = SourceLeg(
+            label="slate",
+            elements=(ElementSpec("videotestsrc", props={"is-live": True, "pattern": 2}),),
+            audio=(ElementSpec("audiotestsrc", props={"is-live": True, "wave": 4}),),
+        )
+        assert source_leg_is_clock_timed(leg) is True
+
+    def test_a_clock_timed_AUDIO_chain_alone_makes_the_leg_clock_timed(self) -> None:
+        """A leg is only holdable if EVERY one of its streams is: holding the video
+        while the audio runs on the clock desyncs them at the switch."""
+        leg = SourceLeg(
+            label="program",
+            elements=(ElementSpec("filesrc", props={"location": "a.ts"}),),
+            audio=(ElementSpec("udpsrc", props={"uri": "udp://127.0.0.1:5001"}),),
+        )
+        assert source_leg_is_clock_timed(leg) is True
+
+    def test_a_playlist_whose_audio_tail_is_clock_timed_counts(self) -> None:
+        leg = PlaylistLeg(
+            label="program",
+            subchains=((ElementSpec("filesrc", props={"location": "a.ts"}),),),
+            audio_tail=(ElementSpec("appsrc"),),
+        )
+        assert source_leg_is_clock_timed(leg) is True
+
+    def test_is_live_false_is_not_treated_as_live(self) -> None:
+        """``is-live`` is a real tri-state in a serialized graph: absent, true, or an
+        explicit false. Only true counts."""
+        leg = SourceLeg(
+            label="program",
+            elements=(ElementSpec("videotestsrc", props={"is-live": False, "pattern": 0}),),
+        )
+        assert source_leg_is_clock_timed(leg) is False
+
+    def test_the_predicate_survives_a_json_round_trip(self) -> None:
+        """The engine answers this question about a leg it just deserialized from a
+        reload sidecar, not about one it built in-process -- so the round trip is the
+        path that actually matters."""
+        leg = SourceLeg(
+            label="program",
+            elements=(ElementSpec("udpsrc", props={"uri": "udp://127.0.0.1:5000"}),),
+        )
+        graph = PlayoutGraph(
+            sources=(leg,),
+            encoder=(ElementSpec("videoconvert"),),
+            mux=ElementSpec("mpegtsmux"),
+            sinks=((ElementSpec("fakesink"),),),
+        )
+        restored = graph_from_json(graph_to_json(graph))
+        assert source_leg_is_clock_timed(restored.sources[0]) is True

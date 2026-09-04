@@ -105,6 +105,9 @@ _sibling_module("audio_tap")  # engine imports RollingWavSegmentWriter from it
 # BEFORE it imports gi -- publish it here or the engine's package-form import of it
 # would drag in the real civiccast.egress package (771 modules, pydantic+sqlalchemy).
 _sibling_module("decode_policy")
+# B3 fix: engine.py also imports the gi-free reload-switch-mode decoder from this
+# sibling at module scope -- same reasoning as decode_policy above.
+reload_policy_mod = _sibling_module("reload_policy")
 enginemod = _sibling_module("engine")
 
 # -- D2 Windows worker-pipe seam (spec-supervisor D2, design.md sec4) --------------
@@ -166,9 +169,12 @@ def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, st
             reload_path = Path(command[1])
             with reload_path.open(encoding="utf-8") as handle:
                 new_graph = graphmod.graph_from_json(handle.read())
+            switch_at_end_of_current = reload_policy_mod.reload_switch_is_deferred(command[1])
             with contextlib.suppress(OSError):
                 reload_path.unlink()  # one-shot graph file: consumed after read
-            engine_instance.reload_program(new_graph.sources[0])
+            engine_instance.reload_program(
+                new_graph.sources[0], switch_at_end_of_current=switch_at_end_of_current
+            )
             # BLOCKER fix: re-apply the graphics-overlay leg too (mirrors the FIFO
             # dispatch path, engine._dispatch_control) -- otherwise a content-reload
             # delivered over the D2 Windows pipe seam would silently drop a lower-third

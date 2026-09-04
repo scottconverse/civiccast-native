@@ -39,6 +39,7 @@ from civiccast.egress.errors import (
     SecretUnresolvedError,
     SourcePrepareError,
 )
+from civiccast.egress.gst.reload_policy import should_defer_switch
 from civiccast.egress.health import (
     EgressEncoderMetrics,
     build_default_sink_health,
@@ -277,6 +278,9 @@ class EgressDaemon:
         self._ffmpeg_starter = ffmpeg_starter
         self._processes: dict[str, object] = {}
         self._started_at: dict[str, float] = {}
+        # Per channel: the horizon of the source plan actually DISPATCHED to the
+        # encoder (see dispatched_plan_horizon / _record_dispatched_plan).
+        self._dispatched_plan_horizon: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
         # reset on healthy uptime), and _backoff_relaunch holds a deferred relaunch
@@ -386,6 +390,65 @@ class EgressDaemon:
 
         process = self._processes.get(channel_id)
         return process is not None and _process_poll(process) is None
+
+    def has_manual_override(self, channel_id: str) -> bool:
+        """True while an operator override (live takeover / forced fallback slate)
+        is active for this channel. The base daemon has no notion of either — only
+        ``PlayoutSupervisor`` (civiccast/egress/supervisor.py) does — so this
+        default is always False, and ``PlayoutSupervisor`` overrides it. Consulted
+        by channel-automation's plan-rollover pass (B1 fix: neither an operator
+        force-slate nor a live takeover writes a state-row transition the rollover
+        check could otherwise key off) and by ``_try_content_reload`` below (B3
+        fix: whether a reload may defer its selector switch to the outgoing leg's
+        EOS — never while an override is active, see ``reload_policy.
+        should_defer_switch``)."""
+
+        return False
+
+    def dispatched_plan_horizon(
+        self, channel_id: str
+    ) -> tuple[str | None, tuple[float, ...], bool] | None:
+        """``(proof_event_id, segment durations, switch_was_deferred)`` for the
+        source plan this daemon most recently DISPATCHED to the encoder for
+        ``channel_id`` -- or None if it has dispatched none.
+
+        Exists because channel-automation's rollover pass has to know when the
+        airing plan runs out, and the only honest source for that is the plan that
+        was actually sent. It used to re-derive the horizon by calling the source
+        plan provider AGAIN and summing whatever came back
+        (``_check_plan_rollover``); that is a DIFFERENT plan -- the provider
+        re-windows from the schedule item live at the moment of the call, capped at
+        ``max_segments``, so the re-query's segment list is neither the one on air
+        nor aligned to it, and the derived horizon can land the rollover trigger on
+        (or past) the real end. Recorded at the two sites that actually dispatch:
+        ``_start`` and ``_try_content_reload``.
+
+        ``switch_was_deferred`` is what makes the horizon correct for a
+        boundary-aligned rollover: that plan does NOT begin when it is dispatched:
+        the engine holds it until the outgoing leg's own end
+        (``reload_policy.should_defer_switch`` /
+        ``GstPlayoutEngine.reload_program``), so its projected end runs from the
+        OUTGOING plan's end, not from the dispatch instant."""
+
+        return self._dispatched_plan_horizon.get(channel_id)
+
+    def _record_dispatched_plan(
+        self,
+        channel_id: str,
+        *,
+        proof_event_id: str | None,
+        source_plan: EgressSourcePlan,
+        switch_deferred: bool,
+    ) -> None:
+        """Remember the plan just dispatched, keyed by the proof event written with
+        it (so a consumer can tell "this is the plan now on air" from "this is a
+        stale record"). See ``dispatched_plan_horizon``."""
+
+        self._dispatched_plan_horizon[channel_id] = (
+            proof_event_id,
+            tuple(float(segment.duration_seconds) for segment in source_plan.segments),
+            switch_deferred,
+        )
 
     def send_caption_cue(
         self,
@@ -712,6 +775,13 @@ class EgressDaemon:
                 current_proof_event_id=proof_event.event_id,
                 pid=_process_pid(process),
                 last_error=fallback_reason if using_fallback_slate else None,
+            )
+            # A start puts its plan on air immediately (no deferred switch).
+            self._record_dispatched_plan(
+                channel_id,
+                proof_event_id=proof_event.event_id,
+                source_plan=source_plan,
+                switch_deferred=False,
             )
             self._append_health(
                 channel_id,
@@ -1424,6 +1494,14 @@ class EgressDaemon:
             ),
             audio_tap_plan=build_audio_tap_plan(channel_id),
             ffmpeg_starter=self._ffmpeg_starter,
+            # B3 fix: only an automation-driven extension of an already-ON_AIR plan
+            # (never a FALLBACK_SLATE gap-replan, never while an operator override
+            # is active) may defer the selector switch to the outgoing leg's own
+            # EOS -- see reload_policy.should_defer_switch's docstring.
+            switch_at_end_of_current=should_defer_switch(
+                previous_state=state.state if state else None,
+                manual_override_active=self.has_manual_override(channel_id),
+            ),
         )
         try:
             applied = self._encoder_strategy.reload_content(channel_id, self._work_dir, request)
@@ -1468,6 +1546,12 @@ class EgressDaemon:
             current_source_label=source_plan.segments[0].label,
             current_proof_event_id=proof_event.event_id,
             pid=_process_pid(process),
+        )
+        self._record_dispatched_plan(
+            channel_id,
+            proof_event_id=proof_event.event_id,
+            source_plan=source_plan,
+            switch_deferred=bool(request.switch_at_end_of_current),
         )
         self._append_health(
             channel_id,

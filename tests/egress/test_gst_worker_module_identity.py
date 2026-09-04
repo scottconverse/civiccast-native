@@ -191,6 +191,9 @@ def test_worker_imports_no_civiccast_package_module(worker_probe: dict[str, Any]
         "civiccast.egress.gst.decode_policy",
         "civiccast.egress.gst.engine",
         "civiccast.egress.gst.graph",
+        # B3 fix: engine.py also imports the gi-free reload-switch-mode decoder
+        # from this sibling at module scope, same reasoning as decode_policy.
+        "civiccast.egress.gst.reload_policy",
     ]
 
 

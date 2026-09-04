@@ -36,13 +36,14 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from civiccast.egress.daemon import AlertEvaluatorHook, EgressDaemon
 from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_engine_selected
 from civiccast.egress.errors import SourcePrepareError
+from civiccast.egress.gst.reload_policy import rollover_trigger_at
 from civiccast.egress.models import ChannelAutomationRollup, EgressCommand, EgressProofEvent
 from civiccast.egress.store import EgressStore
 from civiccast.native.station_runtime import EGRESS_DEGRADED_REASON_ENV
@@ -311,6 +312,33 @@ class ChannelAutomationService:
         self._reload_issued: set[str] = set()
         # Audit ENG-002: reload re-issue pacing (see _check_slate_replan).
         self._replan_retry_at: dict[str, float] = {}
+        # Soak evidence 2026-09-04 (kit 4b30c99): back-to-back scheduled
+        # premieres EOS'd the engine at every source-plan boundary because
+        # nothing ever extended a LIVE (ON_AIR) plan before it ran out --
+        # only a FALLBACK_SLATE gap re-planned (_check_slate_replan above).
+        # Each channel restarted 6-8x in a 2h soak, a worker-restart blip at
+        # every 10-15 min boundary. _plan_horizon tracks, per channel, the
+        # (current_proof_event_id, projected wall-clock end, projected start
+        # of the plan's LAST segment) of the plan the daemon is actually
+        # airing; _check_plan_rollover below extends it via the SAME
+        # seamless content-reload path _check_slate_replan already uses,
+        # before the engine ever reaches EOS.
+        self._plan_horizon: dict[str, tuple[str | None, datetime, datetime]] = {}
+        self._rollover_issued: set[str] = set()
+        # Hostile-review B2 fix: when the reload lands (a fresh
+        # current_proof_event_id shows up), _rollover_issued is discarded by the
+        # "tracked is None or tracked[0] != proof_event_id" branch below. This
+        # timestamp is how a reload that DIDN'T land within
+        # _ROLLOVER_ISSUED_TIMEOUT_SECONDS is detected and retried once more
+        # before the plan's projected end, instead of silently waiting forever
+        # for a proof-event change that a dropped/failed reload will never
+        # produce.
+        self._rollover_issued_at: dict[str, float] = {}
+        # Hostile-review B2 fix: mirrors _replan_retry_at (see
+        # _check_slate_replan) -- backs off re-querying the schedule after a
+        # SourcePrepareError or an empty/None plan, instead of hammering the
+        # provider every ~2s poll tick until the next successful dispatch.
+        self._rollover_retry_at: dict[str, float] = {}
         # Issue #116: one supervised BYO-NDI relay per named channel.
         self._ndi_supervisor_factory = ndi_supervisor_factory or _default_ndi_factory
         self._ndi_relays: dict[str, Any] = {}
@@ -320,6 +348,30 @@ class ChannelAutomationService:
 
     _START_RETRY_COOLDOWN_SECONDS = 30.0
     _RELOAD_RETRY_COOLDOWN_SECONDS = 30.0
+    # Hostile-review B3 fix: the floor of how far ahead of a live plan's
+    # projected end the rollover trigger fires -- the actual trigger is
+    # boundary-aligned (reload_policy.rollover_trigger_at: the moment the
+    # plan's LAST segment begins, or this many seconds before the projected
+    # end, whichever is EARLIER). 120s gives SourcePreparer's cold-conform
+    # path (which can take minutes -- daemon.py's _try_content_reload calls it
+    # synchronously) real runway before the engine reaches EOS; the previous
+    # fixed 30s lookahead left conform racing EOS (soak evidence, kit
+    # 4b30c99). Deliberately generous: even when conform finishes well before
+    # the boundary, the new leg simply waits, prerolled, for the outgoing
+    # leg's own EOS (the engine's switch_at_end_of_current -- see
+    # reload_policy.should_defer_switch) rather than cutting in early and
+    # truncating the still-airing item.
+    _ROLLOVER_MIN_LEAD_SECONDS = 120.0
+    # Hostile-review B2 fix: if a dispatched rollover reload has not landed
+    # (no fresh current_proof_event_id) within this long, treat it as dropped
+    # and retry once more before the plan's projected end, rather than waiting
+    # on a proof-event change a failed/lost reload will never produce. Shorter
+    # than _ROLLOVER_MIN_LEAD_SECONDS so a retry still has lead time to land.
+    _ROLLOVER_ISSUED_TIMEOUT_SECONDS = 45.0
+    # Hostile-review B2 fix: mirrors _RELOAD_RETRY_COOLDOWN_SECONDS -- how long
+    # to back off re-querying the schedule after the provider raises
+    # SourcePrepareError or returns no/empty plan for a rollover check.
+    _ROLLOVER_RETRY_COOLDOWN_SECONDS = 30.0
 
     @property
     def daemon(self) -> EgressDaemon:
@@ -425,6 +477,7 @@ class ChannelAutomationService:
                 )
         self._daemon.process_once(channel_id)
         self._check_slate_replan(channel_id, now=resolved_now)
+        self._check_plan_rollover(channel_id, now=resolved_now)
         self._sync_ndi_relay(config)
         self._sync_sdi_relay(config)
 
@@ -553,6 +606,274 @@ class ChannelAutomationService:
             "Channel automation issued reload for %s: a scheduled program is due.",
             channel_id,
         )
+
+    def _check_plan_rollover(self, channel_id: str, *, now: datetime) -> None:
+        """Extend a LIVE plan before it EOSes (the fix for the soak defect).
+
+        ``_check_slate_replan`` above only reacts to a GAP (FALLBACK_SLATE):
+        it has never looked at a plan that is actively airing (ON_AIR). A
+        schedule of back-to-back published premieres builds a source plan
+        capped at ``max_segments`` (``source_plan.py``); once the last
+        segment finishes the GStreamer worker EOSes, the daemon writes
+        STOPPED, and only THEN does auto_start bring the channel back --
+        6-8 worker restarts (and on-air blips) in the 2h soak
+        (evidence: Desktop/CIVICCAST-EVIDENCE/soak-120-4b30c99-20260904,
+        T6-beat-*.json pid churn).
+
+        This tracks the projected wall-clock end of the plan the daemon is
+        currently airing, AND the projected start of its last segment (keyed
+        off ``current_proof_event_id``, which changes at every fresh
+        start/reload -- see ``daemon._write_state`` call sites) and, once the
+        boundary-aligned trigger computed by
+        ``reload_policy.rollover_trigger_at`` is reached, re-fetches the
+        schedule. Building the plan again at (a later) ``now`` is itself the
+        rollover: the provider always resumes at the currently-airing item
+        with a join-in-progress offset and windows forward from there
+        (``source_plan.build_source_plan_from_schedule``), so a later call
+        naturally reaches further into the schedule than the original call
+        did. If that fresh plan reaches further than the one already
+        airing, the SAME ``reload`` command ``_check_slate_replan`` uses is
+        enqueued -- the daemon's ``_request_reload`` dispatches it through
+        ``_try_content_reload`` (the GStreamer seamless content-swap;
+        ``gst/strategy.py``'s ``reload_content``), so the channel stays
+        ON_AIR with no worker restart and no EOS.
+
+        Hostile-review B1 fix: skipped entirely while an operator override
+        (live takeover / forced fallback slate) is active for the channel --
+        see ``EgressDaemon.has_manual_override`` / ``PlayoutSupervisor.
+        has_manual_override``. Neither writes a state-row transition this
+        method could otherwise key off, so without this check a live takeover
+        gets fought with a mid-event reload back to the SCHEDULED plan (a
+        forced SRT/NDI reconnect), and a forced slate's reload attempt lands
+        in the daemon's ``_pending_reloads`` latch and silently drops the
+        operator's slate once it resolves.
+
+        Hostile-review B3 fix: the trigger point moved EARLIER and became
+        boundary-aligned (``_ROLLOVER_MIN_LEAD_SECONDS`` / last-segment-start,
+        see ``reload_policy.rollover_trigger_at``'s docstring) -- the previous
+        fixed 30s lookahead left ``SourcePreparer``'s synchronous cold-conform
+        (daemon.py's ``_try_content_reload``, which can take minutes) racing
+        the pipeline's own EOS. Triggering early enough that the new leg is
+        typically ready well before the boundary means an IMMEDIATE switch
+        (the old default) would truncate the tail of the still-airing item --
+        so the daemon requests ``switch_at_end_of_current=True`` for this
+        reload whenever the channel is ON_AIR with no override active
+        (``reload_policy.should_defer_switch``), and the engine defers the
+        actual selector switch to the outgoing leg's own EOS
+        (``GstPlayoutEngine.reload_program``). The airing item is never
+        re-decoded or cut short.
+
+        Hostile-review B2 fix: ``_rollover_retry_at`` backs off re-querying
+        the schedule (mirrors ``_replan_retry_at``) after a
+        ``SourcePrepareError`` or an empty/None plan, instead of hammering the
+        provider every ~2s poll tick. ``_rollover_issued_at`` bounds how long
+        a dispatched reload is trusted to be in flight: if
+        ``current_proof_event_id`` hasn't changed within
+        ``_ROLLOVER_ISSUED_TIMEOUT_SECONDS`` (the reload was dropped, failed,
+        or the command was never consumed), the latch clears and one retry is
+        issued before the plan's projected end, rather than silently waiting
+        forever on a proof-event change that will never arrive.
+
+        If the schedule has nothing beyond what is already loaded (the
+        freshly-built plan does not reach any further), this deliberately
+        does nothing: there is no more program content to roll onto, so the
+        plan is left to reach its own natural end. That crash-restart-free
+        path is unchanged by this fix (see the module docstring and #157);
+        closing that residual gap (a seamless swap onto filler/slate BEFORE
+        the true end of schedule) is a separate follow-on, not needed by
+        the continuous-premiere soak scenario this fixes.
+        """
+
+        state_row = self._store.read_state(channel_id)
+        if state_row is None or state_row.state != "ON_AIR":
+            # Not airing a schedule-derived program right now (dark, slate,
+            # starting, transitioning, draining) -- nothing to extend.
+            self._plan_horizon.pop(channel_id, None)
+            self._rollover_issued.discard(channel_id)
+            self._rollover_issued_at.pop(channel_id, None)
+            return
+        if self._daemon_has_manual_override(channel_id):
+            # B1 fix: an operator override is live -- never fight it. Leave any
+            # tracked horizon as-is; it will be re-established (or correctly
+            # found stale and discarded) once the override clears and this
+            # channel's state/proof-event settle back to a normal rollover.
+            return
+        proof_event_id = state_row.current_proof_event_id
+        tracked = self._plan_horizon.get(channel_id)
+        if tracked is None or tracked[0] != proof_event_id:
+            # A fresh plan just took air (initial start, a slate replan, or
+            # this method's own rollover reload completing) -- (re)establish
+            # its projected end + last-segment-start and wait; nothing to
+            # roll over yet. Also means any in-flight rollover landed.
+            self._rollover_issued.discard(channel_id)
+            self._rollover_issued_at.pop(channel_id, None)
+            previous_end_at = tracked[1] if tracked is not None else None
+            if self._establish_horizon_from_dispatch(
+                channel_id,
+                now=now,
+                proof_event_id=proof_event_id,
+                previous_end_at=previous_end_at,
+            ):
+                return
+            retry_at = self._rollover_retry_at.get(channel_id)
+            if retry_at is not None and self._monotonic() < retry_at:
+                self._plan_horizon.pop(channel_id, None)
+                return
+            try:
+                plan = self._source_plan_provider(channel_id)
+            except SourcePrepareError:
+                self._rollover_retry_at[channel_id] = (
+                    self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
+                )
+                return
+            if plan is None or not plan.segments:
+                self._plan_horizon.pop(channel_id, None)
+                self._rollover_retry_at[channel_id] = (
+                    self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
+                )
+                return
+            self._rollover_retry_at.pop(channel_id, None)
+            plan_end_at = now + timedelta(
+                seconds=sum(segment.duration_seconds for segment in plan.segments)
+            )
+            last_segment_start_at = plan_end_at - timedelta(
+                seconds=plan.segments[-1].duration_seconds
+            )
+            self._plan_horizon[channel_id] = (proof_event_id, plan_end_at, last_segment_start_at)
+            return
+        _, plan_end_at, last_segment_start_at = tracked
+
+        if channel_id in self._rollover_issued:
+            issued_at = self._rollover_issued_at.get(channel_id)
+            if issued_at is not None and (
+                self._monotonic() - issued_at >= self._ROLLOVER_ISSUED_TIMEOUT_SECONDS
+            ):
+                # B2 fix: the proof event never changed -- the dispatched
+                # reload did not land. Clear the latch and fall through to
+                # retry once more before the plan's projected end.
+                _LOG.warning(
+                    "Channel automation rollover reload for %s did not land within "
+                    "%.0fs (current_proof_event_id unchanged); retrying.",
+                    channel_id,
+                    self._ROLLOVER_ISSUED_TIMEOUT_SECONDS,
+                )
+                self._rollover_issued.discard(channel_id)
+                self._rollover_issued_at.pop(channel_id, None)
+            else:
+                return  # already dispatched for this plan boundary; wait for it to land
+
+        trigger_at = rollover_trigger_at(
+            plan_end_at=plan_end_at,
+            last_segment_start_at=last_segment_start_at,
+            min_lead_seconds=self._ROLLOVER_MIN_LEAD_SECONDS,
+        )
+        if now < trigger_at:
+            return  # not yet at the boundary-aligned trigger point
+
+        retry_at = self._rollover_retry_at.get(channel_id)
+        if retry_at is not None and self._monotonic() < retry_at:
+            return
+        try:
+            fresh_plan = self._source_plan_provider(channel_id)
+        except SourcePrepareError:
+            # Try again next poll (after the cooldown) -- the current plan
+            # still plays out fine meanwhile.
+            self._rollover_retry_at[channel_id] = (
+                self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
+            )
+            return
+        if fresh_plan is None or not fresh_plan.segments:
+            # Schedule exhausted for now -- let the current plan reach its
+            # own end.
+            self._rollover_retry_at[channel_id] = (
+                self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
+            )
+            return
+        fresh_end = now + timedelta(
+            seconds=sum(segment.duration_seconds for segment in fresh_plan.segments)
+        )
+        if fresh_end <= plan_end_at:
+            # No more published schedule content beyond what is already
+            # loaded (the window did not advance) -- nothing to roll onto.
+            self._rollover_retry_at[channel_id] = (
+                self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
+            )
+            return
+        self._rollover_retry_at.pop(channel_id, None)
+        self._enqueue(channel_id, "reload", now=now)
+        self._rollover_issued.add(channel_id)
+        self._rollover_issued_at[channel_id] = self._monotonic()
+        _LOG.info(
+            "Channel automation issued a seamless plan rollover for %s: the live plan "
+            "ends in %.0fs and the schedule continues %.0fs further; extending in place "
+            "before the engine reaches EOS.",
+            channel_id,
+            (plan_end_at - now).total_seconds(),
+            (fresh_end - plan_end_at).total_seconds(),
+        )
+
+    def _establish_horizon_from_dispatch(
+        self,
+        channel_id: str,
+        *,
+        now: datetime,
+        proof_event_id: str | None,
+        previous_end_at: datetime | None,
+    ) -> bool:
+        """Set this channel's tracked plan horizon from the plan the daemon
+        ACTUALLY dispatched. Returns False when the daemon cannot say (a bare test
+        double, or no dispatch recorded for this proof event yet), leaving the
+        caller on its legacy re-query path.
+
+        Hostile-review (d) fix. The re-query path this replaces asked the source
+        plan provider for a plan again and summed THAT. The provider re-windows
+        from whatever schedule item is live at the moment of the call, capped at
+        ``max_segments`` (``source_plan.build_source_plan_from_schedule``), so the
+        answer is a different segment list than the one on air -- and the derived
+        ``plan_end_at`` can overshoot far enough that
+        ``rollover_trigger_at`` lands ON the real EOS, which is precisely the
+        boundary this whole pass exists to get ahead of. The dispatched plan is
+        the only list whose durations are the ones the engine is playing.
+
+        The deferred-switch case is the second half of the fix: a boundary-aligned
+        rollover plan (``switch_at_end_of_current``) does not start when it is
+        dispatched -- the engine holds it, prerolled, until the OUTGOING leg's own
+        end. Its projected end therefore runs from the previous plan's projected
+        end, not from ``now`` (measuring from ``now`` would put the horizon a whole
+        rollover lead time -- up to ``_ROLLOVER_MIN_LEAD_SECONDS`` -- early, and
+        make every subsequent rollover fire before there was anything to roll)."""
+
+        reader = getattr(self._daemon, "dispatched_plan_horizon", None)
+        if not callable(reader):
+            return False
+        dispatched = reader(channel_id)
+        if not dispatched:
+            return False
+        dispatched_proof_id, durations, switch_deferred = dispatched
+        if dispatched_proof_id != proof_event_id or not durations:
+            # A dispatch we have no matching proof event for is not evidence about
+            # what is on air right now.
+            return False
+        starts_at = now
+        if switch_deferred and previous_end_at is not None and previous_end_at > now:
+            starts_at = previous_end_at
+        plan_end_at = starts_at + timedelta(seconds=sum(durations))
+        last_segment_start_at = plan_end_at - timedelta(seconds=durations[-1])
+        self._plan_horizon[channel_id] = (proof_event_id, plan_end_at, last_segment_start_at)
+        self._rollover_retry_at.pop(channel_id, None)
+        return True
+
+    def _daemon_has_manual_override(self, channel_id: str) -> bool:
+        """B1 fix: consult ``EgressDaemon.has_manual_override`` /
+        ``PlayoutSupervisor.has_manual_override`` if the wired daemon defines
+        it (every real daemon does -- see daemon.py/supervisor.py); ``getattr``
+        keeps a bare test double that predates this method working exactly as
+        before (no override signal available -> treated as none active)."""
+
+        has_override = getattr(self._daemon, "has_manual_override", None)
+        if not callable(has_override):
+            return False
+        return bool(has_override(channel_id))
 
     def _enqueue(self, channel_id: str, action: str, *, now: datetime) -> None:
         self._store.enqueue_command(

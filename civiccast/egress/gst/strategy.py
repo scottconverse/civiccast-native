@@ -47,6 +47,7 @@ from civiccast.egress.gst.encoder_probe import (
     probe_hardware_encoder,
 )
 from civiccast.egress.gst.graph import AudioTapLeg, PlayoutGraph, graph_to_json
+from civiccast.egress.gst.reload_policy import reload_sidecar_suffix
 from civiccast.native.supervisor.replay import (
     ChannelReplay,
     LostAckOutcome,
@@ -843,9 +844,11 @@ class GstPlayoutStrategy:
         Serializes a fresh ``PlayoutGraph`` for the new plan to a sidecar file and
         tells the running worker to swap its program content to it (the worker
         rebuilds the program leg on the live pipeline and switches on the new leg's
-        first buffer — seamless, no encoder restart). Returns the FIFO-write result:
-        False when the worker control channel is not ready, so the daemon can fall
-        back to terminate+restart."""
+        first buffer, or defers the switch to the outgoing leg's own EOS when
+        ``request.switch_at_end_of_current`` is set — B3 fix, seamless either way,
+        no encoder restart). Returns the FIFO-write result: False when the worker
+        control channel is not ready, so the daemon can fall back to
+        terminate+restart."""
         # Apply the SAME native-Windows encoder decision as start() -- a reload that
         # skipped this would rebuild the live pipeline on the absent hardware encoder
         # after a software fallback (adversarial-review BLOCKER). warn=False: the
@@ -866,8 +869,11 @@ class GstPlayoutStrategy:
         )
         graph = self._with_audio_tap(graph, channel_id)
         # ENG-005: a unique per-reload filename — the worker consumes (deletes) it after
-        # reading, so concurrent reloads can't clobber a fixed path mid-read.
-        reload_path = channel_dir / f"playout-graph.reload.{uuid.uuid4().hex}.json"
+        # reading, so concurrent reloads can't clobber a fixed path mid-read. B3 fix:
+        # the filename also carries the switch-mode flag (see reload_policy.py's
+        # docstring for why the control-line grammar itself can't carry it).
+        suffix = reload_sidecar_suffix(switch_at_end_of_current=request.switch_at_end_of_current)
+        reload_path = channel_dir / f"playout-graph.reload.{uuid.uuid4().hex}{suffix}"
         _write_graph_file(reload_path, graph_to_json(graph))
         return self.send_command(work_dir, channel_id, f"reload {reload_path}")
 

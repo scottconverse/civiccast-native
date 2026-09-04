@@ -788,6 +788,10 @@ class _FakeContentReloadStrategy:
         self._reload_ok = reload_ok
         self._reload_exc = reload_exc
         self.reload_calls: list[str] = []
+        # B3 fix: records what each reload_content call was asked for, so tests
+        # can pin daemon.py's should_defer_switch wiring (_try_content_reload
+        # sets EncoderStartRequest.switch_at_end_of_current).
+        self.switch_at_end_of_current_calls: list[bool] = []
 
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:
         process = self._processes.pop(0)
@@ -805,6 +809,7 @@ class _FakeContentReloadStrategy:
 
     def reload_content(self, channel_id: str, work_dir: Path, request: EncoderStartRequest) -> bool:
         self.reload_calls.append(request.source_plan.segments[0].label)
+        self.switch_at_end_of_current_calls.append(request.switch_at_end_of_current)
         if self._reload_exc is not None:
             raise self._reload_exc
         return self._reload_ok
@@ -853,6 +858,114 @@ def test_content_reload_swaps_program_in_place_without_restart(tmp_path: Path) -
     assert [event.state for event in proof_events] == ["ON_AIR", "TRANSITIONING", "ON_AIR"]
     assert proof_events[0].source_label == "Mayor interview"
     assert "from 'Council meeting' to 'Mayor interview'" in proof_events[1].machine_summary
+
+
+def test_content_reload_defers_switch_for_an_on_air_reload_with_no_override(
+    tmp_path: Path,
+) -> None:
+    """B3 fix: an ON_AIR reload with no operator override active (the shape
+    channel-automation's plan-rollover reload takes) asks the strategy to
+    defer the selector switch to the outgoing leg's own EOS -- see
+    ``reload_policy.should_defer_switch``."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.switch_at_end_of_current_calls == [True]
+
+
+def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path) -> None:
+    """Issue #157: filler must be interrupted the moment a due program is
+    ready -- a reload issued from FALLBACK_SLATE must never defer (wait out
+    the rest of a slate/filler leg's own "duration")."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    processes = [_FakeProcess(pid=111)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Due program"),
+        encoder_strategy=strategy,
+    )
+    # Simulate a live encoder already on FALLBACK_SLATE (no process_once start
+    # needed -- _try_content_reload only reads state + the tracked process).
+    started.append(processes[0])
+    daemon._processes["gov"] = processes[0]  # type: ignore[attr-defined]
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="CivicCast slate",
+            updated_at=datetime(2026, 6, 12, 6, 0, tzinfo=UTC),
+        )
+    )
+
+    state = store.read_state("gov")
+    assert state is not None
+    applied = daemon._try_content_reload("gov", state, processes[0])  # type: ignore[attr-defined]
+
+    assert applied is True
+    assert strategy.switch_at_end_of_current_calls == [False]
+
+
+def test_content_reload_never_defers_switch_during_a_manual_override(tmp_path: Path) -> None:
+    """B1/B3: a reload issued while has_manual_override() is True (a live
+    takeover or a forced slate is active) must always cut in immediately --
+    the whole point of an operator override is "now", not "wait for the
+    outgoing leg to end naturally"."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    processes = [_FakeProcess(pid=111)]
+    started: list[_FakeProcess] = [processes[0]]
+    strategy = _FakeContentReloadStrategy(processes, started)
+
+    class _OverriddenDaemon(EgressDaemon):
+        def has_manual_override(self, channel_id: str) -> bool:
+            return True
+
+    daemon = _OverriddenDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Live feed"),
+        encoder_strategy=strategy,
+    )
+    daemon._processes["gov"] = processes[0]  # type: ignore[attr-defined]
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="ON_AIR",
+            current_source_label="Council meeting",
+            updated_at=datetime(2026, 6, 12, 6, 0, tzinfo=UTC),
+        )
+    )
+
+    state = store.read_state("gov")
+    assert state is not None
+    applied = daemon._try_content_reload("gov", state, processes[0])  # type: ignore[attr-defined]
+
+    assert applied is True
+    assert strategy.switch_at_end_of_current_calls == [False]
 
 
 def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Path) -> None:
@@ -2746,3 +2859,39 @@ def test_hls_relay_health_override_is_not_applied_when_relay_is_still_alive(
     daemon.process_once("gov")  # a second, routine tick — relay never died
 
     assert store.recent_health("gov", 1)[0].sink_connected == {"Web": True}
+
+
+def test_daemon_records_the_source_plan_it_actually_dispatched(tmp_path: Path) -> None:
+    """Hostile-review (d): channel automation's rollover pass needs to know when the
+    AIRING plan runs out, and the only honest source for that is the plan the daemon
+    actually sent. Before this, automation re-called the source plan provider and
+    summed whatever came back -- a different, re-windowed segment list that can put
+    the projected end (and therefore the rollover trigger) past the real one.
+
+    The record is keyed by the proof event written alongside it, so a consumer can
+    tell "this is what is on air" from "this is stale"."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+
+    assert daemon.dispatched_plan_horizon("gov") is None
+    assert daemon.process_once("gov") == 1
+
+    state = store.read_state("gov")
+    assert state is not None
+    recorded = daemon.dispatched_plan_horizon("gov")
+    assert recorded is not None
+    proof_event_id, durations, switch_deferred = recorded
+    assert proof_event_id == state.current_proof_event_id
+    assert durations == tuple(
+        float(segment.duration_seconds) for segment in _source_plan(tmp_path).segments
+    )
+    # A START puts its plan on air immediately -- only a content-reload can defer.
+    assert switch_deferred is False
