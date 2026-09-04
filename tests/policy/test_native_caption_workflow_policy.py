@@ -1104,7 +1104,9 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # assertions), so both lanes advance by one. Re-derived by an actual
     # `--collect-only` run on this tree, not by arithmetic:
     # (1786, 1987) -> (1787, 1988).
-    assert (collect("not windows_only"), collect()) == (1787, 1988)
+    # 2026-09-04 upgrade-over-running-station provision fix (#159): +2 pure, +2 total
+    # (tests/native/test_provision_cli.py): (1787, 1988) -> (1789, 1990).
+    assert (collect("not windows_only"), collect()) == (1789, 1990)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
