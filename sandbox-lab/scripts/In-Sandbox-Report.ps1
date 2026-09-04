@@ -1834,11 +1834,16 @@ function Get-CivicCastDbRevisionViaPsql {
 
     $dbUrl = $null
     try {
-        $dbUrl = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast' -Name 'DatabaseUrl' -ErrorAction Stop).DatabaseUrl
+        # <gate-a-dburl-registry-key> The product records the URL under the
+        # \Native subkey (nsis-hooks-bootstrap.nsh: ReadRegStr ... "Software\CivicCast\Native" "DatabaseUrl";
+        # civiccast/native/provision write_database_url). Reading the parent key made
+        # this proof '<no-database-url>' on every upgrade run that got this far
+        # (Gate A 33857982657, kit c27c6e7, 2026-09-04).
+        $dbUrl = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast\Native' -Name 'DatabaseUrl' -ErrorAction Stop).DatabaseUrl
     } catch {}
     if ([string]::IsNullOrWhiteSpace($dbUrl)) {
         $probe.revision = '<no-database-url>'
-        $probe.error = 'HKLM\SOFTWARE\CivicCast\DatabaseUrl is absent or empty'
+        $probe.error = 'HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl is absent or empty'
         if ($LogFile) { "POST_UPGRADE_DB_REVISION_SOURCE=psql result=NO-DATABASE-URL" | Add-Content -Path $LogFile -Encoding UTF8 }
         return $probe
     }
@@ -1858,34 +1863,58 @@ function Get-CivicCastDbRevisionViaPsql {
     }
 
     # Same two-namespace search order civiccast/schema_check.py:173 uses.
-    $sql = "SELECT version_num FROM civiccast.alembic_version UNION ALL SELECT version_num FROM public.alembic_version LIMIT 1"
+    # <gate-a-psql-schema> A UNION over both namespaces is one statement: when
+    # public.alembic_version does not exist (the product keeps it in the civiccast
+    # schema, civiccast/alembic/env.py version_table_schema) PostgreSQL rejects
+    # the WHOLE statement ('relation "public.alembic_version" does not exist',
+    # Gate A 33885550628). Try each namespace as its own statement, same order
+    # civiccast/schema_check.py:173 uses.
+    $sqlCandidates = @(
+        'SELECT version_num FROM civiccast.alembic_version LIMIT 1',
+        'SELECT version_num FROM public.alembic_version LIMIT 1'
+    )
     $userInfo = $conn.UserInfo -split ':', 2
     $env:PGPASSWORD = if ($userInfo.Count -gt 1) { [uri]::UnescapeDataString($userInfo[1]) } else { '' }
     $stdout = Join-Path $OutDir 'post-upgrade-db-revision.psql.stdout.log'
     $stderr = Join-Path $OutDir 'post-upgrade-db-revision.psql.stderr.log'
     try {
+      foreach ($sql in $sqlCandidates) {
         $argv = @(
             '--host', $conn.Host, '--port', "$($conn.Port)",
             '--username', [uri]::UnescapeDataString($userInfo[0]),
             '--dbname', $conn.AbsolutePath.TrimStart('/'),
             '--no-password', '--tuples-only', '--no-align',
-            '--set', 'ON_ERROR_STOP=1', '-c', $sql
+            # <gate-a-psql-quote> Start-Process joins -ArgumentList with spaces and
+            # does NOT quote elements, so the SQL arrived as nine separate arguments:
+            # psql ran a bare `SELECT`, warned 'extra command-line argument ... ignored'
+            # for the rest, exited 0 with no rows, and the proof judged
+            # '<no-alembic-version-row>' (Gate A 33870994702, kit c27c6e7). Quote it.
+            '--set', 'ON_ERROR_STOP=1', '-c', ('"' + $sql + '"')
         )
         $p = Start-Process -FilePath $psql -ArgumentList $argv -PassThru -NoNewWindow -Wait `
             -RedirectStandardOutput $stdout -RedirectStandardError $stderr
         $probe.exit_code = $p.ExitCode
-        if ($p.ExitCode -eq 0) {
+        $errText = (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue)
+        if ($p.ExitCode -eq 0 -and $errText -match 'extra command-line argument') {
+            # The SQL did not reach the server intact; never read an exit-0 result as a proof.
+            $probe.exit_code = $p.ExitCode
+            $probe.revision = '<psql-args-split>'
+            $probe.error = 'psql ignored extra command-line arguments -- the SQL was split'
+        } elseif ($p.ExitCode -eq 0) {
             $out = (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue)
             if ($null -ne $out) { $out = $out.Trim() }
             if (-not [string]::IsNullOrWhiteSpace($out)) {
                 $probe.revision = ($out -split "`n" | Select-Object -First 1).Trim()
+                break
             } else {
                 $probe.revision = '<no-alembic-version-row>'
             }
         } else {
             $probe.revision = '<psql-failed>'
             $probe.error = "psql exited $($p.ExitCode)"
+            if ($errText -match 'does not exist') { continue }  # try the next namespace
         }
+      }
     } catch {
         $probe.revision = '<psql-threw>'
         $probe.error = "$_"

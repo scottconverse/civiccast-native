@@ -1761,3 +1761,58 @@ def test_tsproof_caches_the_process_handle_before_waiting() -> None:
     assert "$null = $proc.Handle" in block
     assert block.index("$null = $proc.Handle") < block.index("WaitForExit(")
     assert "Wait-Process -Id $proc.Id" not in block
+
+
+def test_psql_proof_reads_the_registry_key_the_installer_writes() -> None:
+    """<gate-a-dburl-registry-key> The NSIS hook reads/writes DatabaseUrl under
+    HKLM\\Software\\CivicCast\\Native; the independent psql proof must read that
+    same subkey, never the parent key (which made every upgrade run that reached
+    the proof judge '<no-database-url>')."""
+    text = _read(_DRIVER)
+    code = _code_only(text)
+    start = code.index("function Get-CivicCastDbRevisionViaPsql")
+    block = code[start : code.index("$probe.database_url_found = $true", start)]
+    assert "HKLM:\\SOFTWARE\\CivicCast\\Native" in block
+    assert "-Path 'HKLM:\\SOFTWARE\\CivicCast' " not in block
+    nsh_path = (
+        _SANDBOX_LAB.parent
+        / "civiccast"
+        / "apps"
+        / "installer"
+        / "src-tauri"
+        / "nsis-hooks-bootstrap.nsh"
+    )
+    nsh = nsh_path.read_text(encoding="utf-8", errors="replace")
+    assert 'HKLM "Software\\CivicCast\\Native" "DatabaseUrl"' in nsh
+
+
+def test_psql_proof_quotes_the_sql_argument_for_start_process() -> None:
+    """<gate-a-psql-quote> Start-Process -ArgumentList joins elements with spaces
+    and never quotes them; an unquoted -c SQL reaches psql as many arguments and
+    psql runs a bare SELECT (exit 0, no rows). The proof must pass the SQL as one
+    double-quoted argument and must refuse an exit-0 result whose stderr shows
+    psql ignoring 'extra command-line argument's."""
+    text = _read(_DRIVER)
+    code = _code_only(text)
+    start = code.index("function Get-CivicCastDbRevisionViaPsql")
+    block = code[start : code.index("POST_UPGRADE_DB_REVISION_SOURCE=psql exit=", start)]
+    assert "'-c', ('\"' + $sql + '\"')" in block
+    assert "'-c', $sql\n" not in block and "'-c', $sql)" not in block
+    assert "extra command-line argument" in block
+    assert "<psql-args-split>" in block
+
+
+def test_psql_proof_tries_each_alembic_namespace_as_its_own_statement() -> None:
+    """<gate-a-psql-schema> One UNION statement over civiccast.alembic_version and
+    public.alembic_version fails outright when the public table is absent (the
+    product keeps the table in the civiccast schema). The proof must run one
+    statement per namespace and fall through on 'does not exist'."""
+    text = _read(_DRIVER)
+    code = _code_only(text)
+    start = code.index("function Get-CivicCastDbRevisionViaPsql")
+    block = code[start : code.index("POST_UPGRADE_DB_REVISION_SOURCE=psql exit=", start)]
+    assert "UNION ALL" not in block
+    assert "'SELECT version_num FROM civiccast.alembic_version LIMIT 1'" in block
+    assert "'SELECT version_num FROM public.alembic_version LIMIT 1'" in block
+    assert "foreach ($sql in $sqlCandidates)" in block
+    assert "does not exist" in block
