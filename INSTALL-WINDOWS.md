@@ -9,10 +9,11 @@
 
 ## Current Release
 
-`v1.0.0-beta.3` is the current release and the first **downloadable** one:
+`v1.0.0-beta.4` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.3`:
 `setup.exe`, per-pack runtime `.ccpack` assets, and a `SHA256SUMS.txt`
 checksum file (each asset under GitHub's 2 GB/file cap) are published as a
-prerelease at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3>.
+prerelease at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4>.
 Watch that page, not `scottconverse/civiccast` (the retired, separate
 WSL2-line repository) and not any `v1.0.0-rcNN` tag, which belongs to that
 other repository. See
@@ -20,19 +21,15 @@ other repository. See
 the authored release-state record -- it is the single source of truth for
 which tag is current.
 
-`v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now superseded.
-If you already have a USB-delivered `v1.0.0-beta.1` station, it still runs,
-and the upgrade instructions below get it to the current release without
-wiping it.
+`v1.0.0-beta.3` (the first downloadable release) is now superseded.
+`v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
+If you already have a USB-delivered `v1.0.0-beta.1` station, or a
+`v1.0.0-beta.3` station, it still runs, and the upgrade instructions below
+get it to the current release without wiping it.
 
 `v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
 upgrade-baseline kit used to prove the download-only install/upgrade lanes,
 never a release a station receives.
-
-`v1.0.0-beta.4` is the next candidate and the current owner-held unpublished
-candidate (unpublished; no installer asset) -- it does not change anything
-above, which still targets `v1.0.0-beta.3` as the current release to
-install.
 
 **First install vs. upgrade:**
 
@@ -44,7 +41,9 @@ install.
 - **Upgrade of an already-installed station** can be download-only starting
   with `v1.0.0-beta.3`: it reuses the AI models already on the machine. An
   upgrade keeps the station's existing recordings, database, and AI models --
-  nothing already on the station is discarded by an upgrade install.
+  nothing already on the station is discarded by an upgrade install. This is
+  the path for `v1.0.0-beta.3` -> `v1.0.0-beta.4`: run `setup.exe` (with the
+  runtime packs) over the existing install, no `station\` folder needed.
 
 **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit --
 `setup.exe`, the runtime packs, and the `station\` folder beside them (USB
@@ -84,10 +83,9 @@ checksum, or expected next step, stop and report the mismatch before installing.
 
 - **If you are receiving `v1.0.0-beta.1`:** it is USB-delivered. There is no
   GitHub Release download for it -- do not go looking for one.
-- **If you are receiving `v1.0.0-beta.3` or later** (once it is published as
-  a downloadable prerelease): download `setup.exe`, the matching
-  `.ccpack` runtime pack(s), and `SHA256SUMS.txt` from the exact tagged
-  GitHub Release at
+- **If you are receiving `v1.0.0-beta.3` or later**: download `setup.exe`,
+  the matching `.ccpack` runtime pack(s), and `SHA256SUMS.txt` from the
+  exact tagged GitHub Release at
   <https://github.com/scottconverse/civiccast-native/releases> -- never a
   draft, an older prerelease, or a generic "latest" link. A first-time
   install on that station also needs the USB model bundle. An upgrade of an

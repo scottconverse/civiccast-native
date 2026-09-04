@@ -46,15 +46,18 @@ not scratch.
 
 ## Release identity
 
-`v1.0.0-beta.3` is the current release and the first downloadable one:
-`setup.exe` and the runtime `.ccpack` packs are attached to its
-[GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3),
+`v1.0.0-beta.4` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.3` (the first downloadable release, now
+superseded): `setup.exe` and the runtime `.ccpack` packs are attached to
+its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
 verified by `SHA256SUMS.txt` and a signed sidecar. `v1.0.0-beta.2` was
 **never published** -- it exists only as an internal Gate A upgrade-baseline
-kit, never a release. The previous `v1.0.0-beta.1` owner-published
+kit, never a release. The `v1.0.0-beta.1` owner-published
 prerelease tag has no installer asset (USB-delivered only) and is now
-superseded; `v1.0.0-beta.1` to `v1.0.0-beta.3` is a one-time fresh install,
-not an in-place upgrade (see
+superseded; `v1.0.0-beta.1` to `v1.0.0-beta.3` requires the full kit
+(`setup.exe` plus the `station\` folder) run over the existing install --
+recordings, settings, database, and AI models are kept and the schema
+migrates (see
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
 Tags, releases and publication are owner-only decisions; the coordinating
 agent cuts beta-candidate releases going forward per the owner's 2026-09-02

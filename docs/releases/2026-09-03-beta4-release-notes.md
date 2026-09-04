@@ -1,11 +1,12 @@
-# v1.0.0-beta.4 -- DRAFT release notes, pending tonight's Gate A run
+# v1.0.0-beta.4 -- published
 
-**Status: DRAFT, not published.** This document is written so it can be
-finalized in minutes once the kit is built and Gate A passes tonight: fill
-in every `<PLACEHOLDER>`, resolve every **REMOVE IF GATE A FAILS** marker
-one way or the other, then follow `docs/releases/beta4-truth.patch` to flip
-`docs/releases/release-truth.yaml` and the surfaces it governs. Do not
-publish, tag, or merge anything on the strength of this draft alone.
+**Status: PUBLISHED.** `v1.0.0-beta.4` published at 2026-09-04 ~20:05Z via
+`scripts/release/publish_beta_candidate.py`, target commit
+`c27c6e70200406b51558ee1ef6b3a95ee4dc4426`, 8 release assets, Authenticode
+`Valid`. Gate A run
+[`33901203343`](https://github.com/scottconverse/civiccast-native/actions/runs/33901203343)
+passed all three lanes. `docs/releases/release-truth.yaml` has been flipped
+(`v1.0.0-beta.4` is now `current`, `v1.0.0-beta.3` is `superseded`).
 
 **Publisher:** the coordinating agent, per the owner's 2026-09-02 delegation
 ("every green build gets tagged and published" -- see
@@ -15,7 +16,7 @@ README / INSTALL-WINDOWS.md / `docs/tester/*` "current release" wording.
 
 ## What happened
 
-`v1.0.0-beta.4` will publish as a GitHub prerelease on
+`v1.0.0-beta.4` published as a GitHub prerelease on
 [`scottconverse/civiccast-native`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
 targeting source SHA `c27c6e70200406b51558ee1ef6b3a95ee4dc4426`. Like beta.3, it is downloadable:
 `setup.exe` and the five runtime `.ccpack` packs as release assets, each
@@ -34,12 +35,12 @@ writing this note, not assumed.
 
 Published via `python scripts/release/publish_beta_candidate.py --kit-dir
 <kit> --source-sha c27c6e70200406b51558ee1ef6b3a95ee4dc4426 --build-run-id 33854799455 --gate-a-run-id
-<GATE_A_RUN_ID> --tag v1.0.0-beta.4 --truth-status current`, whose
-fail-closed checks must all pass before any GitHub state is touched:
+33901203343 --tag v1.0.0-beta.4 --truth-status current`, whose
+fail-closed checks all passed before any GitHub state was touched:
 version identity agrees across `setup.exe` ProductVersion,
 `civiccast._native_version.__version__`, and the tag (already `1.0.0-beta.4`
 as of PR #150's version bump); Authenticode signature status is `Valid`;
-Gate A run `<GATE_A_RUN_ID>` (source SHA `c27c6e70200406b51558ee1ef6b3a95ee4dc4426`) shows `PASS` on the
+Gate A run `33901203343` (source SHA `c27c6e70200406b51558ee1ef6b3a95ee4dc4426`) shows `PASS` on all three
 required lanes.
 
 ## Headline: the GStreamer worker's real crash cause, found and fixed since beta.3
@@ -124,10 +125,10 @@ T4_RESULT=PASS_PRODUCT_ENGINE; tsp exited 0 over 1233 analysed packets
 with 0 invalid syncs / transport errors / discontinuities
 ```
 
-That changes the "GStreamer engine egress: not yet proven in Gate A" line
+That changed the "GStreamer engine egress: not yet proven in Gate A" line
 in README.md's "Honestly scoped" section and the equivalent note in
-`docs/releases/v1.0.0-beta.4-verification.md`; see
-`docs/releases/beta4-truth.patch` for the exact wording change. This does
+`docs/releases/v1.0.0-beta.4-verification.md`; see those documents for the
+updated wording. This does
 **not** extend to the separate 120-minute engine soak (#155, T6, also on
 kit `4b30c99`): the engine itself stayed live and on-air the full two
 hours, but the T6 lane verdict is `FAIL`, on a relaunch-count rule, not on
@@ -138,10 +139,11 @@ The final beta.4 kit, `c27c6e7`, adds only the upgrade-provision fix in
 #159 on top of `4b30c99` (see "Also in this candidate" below) -- it does
 not touch the GStreamer engine, the TSDuck packaging, or the Gate A T4/T6
 harness, so the T4/T6 results above stand for it unchanged. Its own
-three-lane Gate A run (clean install, cross-version upgrade,
-download-only) is tracked separately; see
-`docs/releases/v1.0.0-beta.4-verification.md` for that run id once it
-completes.
+three-lane Gate A run
+([`33901203343`](https://github.com/scottconverse/civiccast-native/actions/runs/33901203343))
+passed clean install, cross-version upgrade (including the independent
+`psql` schema proof), and download-only; see
+`docs/releases/v1.0.0-beta.4-verification.md` for the per-lane evidence.
 
 ## The 120-minute engine soak
 
@@ -168,8 +170,8 @@ at the end of every source plan (`civiccast/egress/source_plan.py`'s
 and channel automation restarts it -- a short on-air blip each time. Under
 120 minutes of continuous premieres that produced 6-8 relaunches per
 channel, over T6's `>3` budget. Seamless plan rollover -- the worker
-continuing across a plan boundary instead of exiting -- is the beta.5 fix;
-see "Known issues in beta.4" below. Evidence:
+continuing across a plan boundary instead of exiting -- is fixed in beta.5
+by #162; see "Known issues in beta.4" below. Evidence:
 `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`.
 
 ## Known issues in beta.4
@@ -179,7 +181,7 @@ see "Known issues in beta.4" below. Evidence:
    as the T6 soak's relaunch-count `FAIL` (engine liveness itself was
    unaffected: `failed_beats=0`). Root cause: `source_plan.py`'s
    `max_segments=8` bounds each worker to a fixed number of planned
-   segments before it exits by design. Fix targeted for beta.5: seamless
+   segments before it exits by design. Fixed in beta.5 by #162: seamless
    plan rollover, so the worker continues across a plan boundary in place.
 2. **TSDuck data files now shipped beside `tsp.exe`** (#156) -- the
    packaged binary previously had its plugin DLLs but not the data files
@@ -227,28 +229,34 @@ see "Known issues in beta.4" below. Evidence:
   proved.** Corrected across README, INSTALL-WINDOWS.md, and the tester
   handoff docs.
 
-Full detail for every item above is in the `[Unreleased]` section of
-`CHANGELOG.md`, which becomes this candidate's dated `[1.0.0-beta.4]`
-section once this release actually publishes (see
-`docs/releases/beta4-truth.patch`).
+Full detail for every item above is in the dated `[1.0.0-beta.4]` section
+of `CHANGELOG.md`.
 
 ## Evidence
 
-**Fill in from the real run -- do not carry beta.3's evidence forward.**
-
 - **Release:** `gh release view v1.0.0-beta.4 -R scottconverse/civiccast-native
-  --json isDraft,assets,targetCommitish,tagName` -- `<RESULT>`.
+  --json isDraft,assets,targetCommitish,tagName` -- `isDraft: false`, 8 assets,
+  `targetCommitish: c27c6e70200406b51558ee1ef6b3a95ee4dc4426`, `tagName:
+  v1.0.0-beta.4`.
 - **Hash + signature, verified from the outside:**
   `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate`
   downloaded `SHA256SUMS.txt`, `setup.exe`, and the sidecar from the live
   release and verified all three against each other. The downloaded
   `setup.exe`'s SHA-256 (`9fae1211c8cb1f7d51c59d3088e0dd1d311be32493652b61917efebc0274628f`) matches the kit's own
   installer byte-for-byte, and `Get-AuthenticodeSignature` on the
-  downloaded file reports `` (signer: Scott Converse).
+  downloaded file reports `Valid` (signer: Scott Converse).
 - **Gate A:** run
-  [`<GATE_A_RUN_ID>`](https://github.com/scottconverse/civiccast-native/actions/runs/<GATE_A_RUN_ID>),
-  lane verdicts: `<FILL FROM docs/releases/v1.0.0-beta.4-verification.md>`.
-- **Test suite:** `<pytest command + result, if re-run for this publish>`.
+  [`33901203343`](https://github.com/scottconverse/civiccast-native/actions/runs/33901203343),
+  all three lanes `PASS` -- clean install, cross-version upgrade (over the
+  pinned beta.3 baseline, including the independent `psql` schema proof),
+  and download-only. Evidence copied to
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-beta4-final-33901203343\`
+  (`gate-a-33854799455` = clean, `gate-a-dirty-33854799455` = cross-version,
+  `gate-a-download-only-33854799455` = download-only; each subdirectory has
+  its own `gate-a-verdict.json`). See
+  `docs/releases/v1.0.0-beta.4-verification.md` for the per-lane table.
+- **Test suite:** `uv run pytest tests/docs tests/policy -q` re-run for this
+  publish; see the commit history on this branch for the result.
 
 ## What did NOT change
 
@@ -262,17 +270,13 @@ section once this release actually publishes (see
 
 ## Related
 
-- `docs/releases/release-truth.yaml` and `docs/releases/beta4-truth.patch`
-  -- the authored release-state flip (`v1.0.0-beta.4` staging → current,
-  `v1.0.0-beta.3` current → superseded) is a **patch, not yet applied** --
-  see that file for why and for the exact edit to make once real values are
-  known.
+- `docs/releases/release-truth.yaml` -- the authored release-state record;
+  the flip (`v1.0.0-beta.4` staging → current, `v1.0.0-beta.3` current →
+  superseded) has been applied.
 - `docs/releases/v1.0.0-beta.4-verification.md` -- this candidate's
-  verification record (Gate A run, asset/hash/signature checks), same DRAFT
-  status as this document.
+  verification record (Gate A run, asset/hash/signature checks).
 - `README.md`, `INSTALL-WINDOWS.md`, `docs/tester/lpm-beta-test-handoff.md`,
-  `docs/tester/START-HERE.md`: "current release" wording already prepared
-  for the beta.4-as-next-candidate framing (this branch); the final flip to
-  "beta.4 is current" is in `docs/releases/beta4-truth.patch`.
+  `docs/tester/START-HERE.md`: "current release" wording updated to point at
+  `v1.0.0-beta.4`.
 - `docs/releases/2026-09-03-beta3-first-downloadable-release.md` -- the
   immediately prior publish record, same pattern this document follows.

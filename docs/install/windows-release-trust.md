@@ -9,17 +9,10 @@
 
 ## Current Release State
 
-`v1.0.0-beta.1` is the current release. It was delivered by USB, not by a
-GitHub Release download -- there is no GitHub-hosted installer asset to
-verify for it.
-
-`v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
-upgrade-baseline kit.
-
-`v1.0.0-beta.3` is the current owner-held unpublished candidate (unpublished;
-no installer asset). It is intended to be the first downloadable beta
-candidate: `setup.exe`, per-pack runtime `.ccpack` assets, and a
-`SHA256SUMS.txt` checksum file, published as a **prerelease** at
+`v1.0.0-beta.4` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.3`: `setup.exe`, per-pack runtime
+`.ccpack` assets, and a `SHA256SUMS.txt` checksum file, published as a
+**prerelease** at
 <https://github.com/scottconverse/civiccast-native/releases> -- watch that
 page, not `scottconverse/civiccast` (the retired, separate WSL2-line
 repository) and not any `v1.0.0-rcNN` tag, which belongs to that other
@@ -27,8 +20,13 @@ repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
+`v1.0.0-beta.3`, the first downloadable release, is now superseded.
+`v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
+`v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
+upgrade-baseline kit.
+
 This page explains how an operator should verify a CivicCast Windows setup
-download before running it, once one is published.
+download before running it.
 
 ## Read The Release Docs First
 

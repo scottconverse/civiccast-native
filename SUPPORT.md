@@ -1,15 +1,15 @@
 # Support
 
-> **Current native release posture:** `v1.0.0-beta.3` is the current
-> release and the first downloadable one -- `setup.exe` and the runtime
+> **Current native release posture:** `v1.0.0-beta.4` is the current
+> release, a download-only upgrade for stations already on
+> `v1.0.0-beta.3` -- `setup.exe` and the runtime
 > `.ccpack` packs are attached to its
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3).
-> `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now superseded.
-> `v1.0.0-beta.2` was never published -- it exists only as an internal
-> Gate A upgrade-baseline kit. `v1.0.0-beta.4` is the next candidate and
-> the current owner-held unpublished candidate; it does not change the
-> beta.3 install story above. Community support does not turn this beta
-> into a supported, SLA'd field release.
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4).
+> `v1.0.0-beta.3` (the first downloadable release) is now superseded.
+> `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also
+> superseded. `v1.0.0-beta.2` was never published -- it exists only as an
+> internal Gate A upgrade-baseline kit. Community support does not turn
+> this beta into a supported, SLA'd field release.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -74,12 +74,11 @@ development.
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
 is a **public beta**, not a finished production release. Its current
-release, `v1.0.0-beta.3`, is downloadable (setup.exe and the runtime packs
-on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3)),
-but there is still no dedicated, SLA'd support intake for it -- the same
-community-driven, no-SLA posture above applies. `v1.0.0-beta.4` is the next
-candidate and the current owner-held unpublished candidate; it has no
-installer asset and does not change the beta.3 install story above.
+release, `v1.0.0-beta.4`, is downloadable (setup.exe and the runtime packs
+on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4)),
+a download-only upgrade for stations already on `v1.0.0-beta.3` (now
+superseded), but there is still no dedicated, SLA'd support intake for it --
+the same community-driven, no-SLA posture above applies.
 
 If you are working on, evaluating, or running the native line:
 

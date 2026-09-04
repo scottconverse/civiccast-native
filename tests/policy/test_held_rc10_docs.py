@@ -31,14 +31,14 @@ def test_current_candidate_surfaces_match_the_release_posture() -> None:
         text = (ROOT / relative).read_text(encoding="utf-8")
         normalized = " ".join(text.lower().split())
         assert CURRENT_RELEASE_TAG in text, relative
-        assert "releases/tag/v1.0.0-beta.3" in normalized, relative
+        assert "releases/tag/v1.0.0-beta.4" in normalized, relative
 
 
 def test_front_doors_name_the_current_candidate_state() -> None:
     for relative in FRONT_DOORS:
         text = " ".join((ROOT / relative).read_text(encoding="utf-8").lower().split())
         assert CURRENT_RELEASE_TAG.lower() in text, relative
-        assert "releases/tag/v1.0.0-beta.3" in text, relative
+        assert "releases/tag/v1.0.0-beta.4" in text, relative
 
 
 def test_front_doors_do_not_offer_an_unproven_candidate_download() -> None:
@@ -49,8 +49,8 @@ def test_front_doors_do_not_offer_an_unproven_candidate_download() -> None:
     install_html = (ROOT / "docs/install-windows.html").read_text(encoding="utf-8")
     assert "releases/latest" not in readme
     assert "releases/latest" not in install_html
-    assert "releases/tag/v1.0.0-beta.3" in readme.lower()
-    assert "releases/tag/v1.0.0-beta.3" in install_html.lower()
+    assert "releases/tag/v1.0.0-beta.4" in readme.lower()
+    assert "releases/tag/v1.0.0-beta.4" in install_html.lower()
 
 
 def test_retired_tester_docs_do_not_masquerade_as_native_proof() -> None:

@@ -13,9 +13,16 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
-`v1.0.0-beta.4` is the next candidate and the current owner-held unpublished
-candidate; it does not change the `v1.0.0-beta.3` install story documented
-below.
+## [1.0.0-beta.4] - 2026-09-04
+
+Published as [`v1.0.0-beta.4`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
+a download-only upgrade for stations already on `v1.0.0-beta.3`: `setup.exe`
+and the runtime `.ccpack` packs are attached to the GitHub Release, verified
+by `SHA256SUMS.txt` and a signed sidecar. See
+[`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
+for the publish record and
+[`docs/releases/v1.0.0-beta.4-verification.md`](docs/releases/v1.0.0-beta.4-verification.md)
+for the verification record. `v1.0.0-beta.3` is now superseded.
 
 ### Fixed
 
@@ -327,13 +334,13 @@ worker exits cleanly at the end of every source plan
 it -- a short on-air blip each time, not an outage. That cadence produced
 6-8 relaunches per channel over 120 minutes, past T6's `>3` budget. Seamless
 plan rollover (the worker continuing across a plan boundary instead of
-exiting) is the beta.5 fix. Evidence:
+exiting) is fixed in beta.5 by #162. Evidence:
 `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`.
 
 **Known issues in beta.4:**
 
 1. The relaunch blip above (every ~10-15 minutes of continuous premiere
-   scheduling); beta.5 fix is seamless plan rollover.
+   scheduling); fixed in beta.5 by #162 (seamless plan rollover).
 2. TSDuck data files now shipped beside `tsp.exe` (#156, above).
 3. **Upgrade over a running beta.3 station fixed (#159).** Before the fix,
    the upgrade's provision step unconditionally start/stopped a PostgreSQL
@@ -347,10 +354,12 @@ exiting) is the beta.5 fix. Evidence:
 The final beta.4 kit, `c27c6e7`, adds only the #159 fix above on top of
 `4b30c99` -- it does not touch the GStreamer engine, TSDuck packaging, or
 the Gate A T4/T6 harness, so the T4/T6 results above stand for it
-unchanged. Its own three-lane Gate A run (clean install, cross-version
-upgrade, download-only) is tracked in
-`docs/releases/v1.0.0-beta.4-verification.md` under `<GATE_A_RUN_ID>`,
-pending as of this entry.
+unchanged. Its own three-lane Gate A run
+([`33901203343`](https://github.com/scottconverse/civiccast-native/actions/runs/33901203343))
+passed all three lanes -- clean install, cross-version upgrade (over the
+pinned beta.3 baseline, including the independent `psql` schema proof), and
+download-only -- see
+`docs/releases/v1.0.0-beta.4-verification.md` for the per-lane evidence.
 
 ## [1.0.0-beta.3] - 2026-09-03
 

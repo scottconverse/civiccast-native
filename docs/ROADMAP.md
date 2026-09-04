@@ -1,9 +1,10 @@
 # CivicCast Roadmap
 
-> **Current release:** `v1.0.0-beta.1` (USB-delivered); `v1.0.0-beta.2` was
-> never published -- it exists only as an internal Gate A upgrade-baseline
-> kit. `v1.0.0-beta.3` is the current owner-held unpublished candidate and is
-> intended to be the first downloadable one. See
+> **Current release:** `v1.0.0-beta.4`, a download-only upgrade for
+> stations already on `v1.0.0-beta.3` (the first downloadable release, now
+> superseded). `v1.0.0-beta.1` (USB-delivered) is also superseded.
+> `v1.0.0-beta.2` was never published -- it exists only as an internal
+> Gate A upgrade-baseline kit. See
 > [`docs/releases/release-truth.yaml`](releases/release-truth.yaml) for the
 > authored release-state record. (The `v1.0.0-rc18` release named on this
 > page below was the retired, separate WSL2 line's -- repository

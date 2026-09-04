@@ -16,27 +16,24 @@ See [BRANCHES.md](BRANCHES.md) for the full explanation, including where an
 earlier, retired WSL2/Ubuntu lane's history now lives (a separate, private
 repository, not this one).
 
-**Current version: `v1.0.0-beta.3`** -- CivicCast's first downloadable
-public release. `setup.exe` and the five runtime `.ccpack` packs are
-attached to the
-[`v1.0.0-beta.3` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.3),
+**Current version: `v1.0.0-beta.4`** -- a download-only upgrade for stations
+already on `v1.0.0-beta.3`. `setup.exe` and the five runtime `.ccpack` packs
+are attached to the
+[`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
 each verified by `SHA256SUMS.txt` and a signed sidecar; the ~21 GB AI-model
 `station\` bundle is deliberately not a release asset (see "Install and run"
-below). `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now
+below). `v1.0.0-beta.3` (the first downloadable public release) is now
+superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable assets) remains
 superseded; `v1.0.0-beta.2` was never published -- it exists only as an
 internal Gate A upgrade-baseline kit (see
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
 See [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml)
 for the authored release-state record,
-[`docs/releases/v1.0.0-beta.3-verification.md`](docs/releases/v1.0.0-beta.3-verification.md)
+[`docs/releases/v1.0.0-beta.4-verification.md`](docs/releases/v1.0.0-beta.4-verification.md)
 for the release's verification record (Gate A run, asset/hash/signature
 checks), and
-[`docs/releases/2026-09-03-beta3-first-downloadable-release.md`](docs/releases/2026-09-03-beta3-first-downloadable-release.md)
+[`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
 for the publish record.
-
-`v1.0.0-beta.4` is the next candidate and the current owner-held unpublished candidate
-(unpublished; no installer asset) -- it does not change the install story
-above, which still targets `v1.0.0-beta.3`.
 
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
@@ -186,7 +183,7 @@ things outside this repository's control:
   10-15 minutes under continuous premieres), and channel automation
   restarts it -- a short on-air blip each time, which is what tripped the
   relaunch budget under sustained premiere scheduling. Seamless plan
-  rollover, removing that blip, is targeted for beta.5. See
+  rollover, removing that blip, is fixed in beta.5 by #162. See
   [`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
   for the full soak numbers and evidence path.
 
@@ -196,11 +193,12 @@ things outside this repository's control:
   see [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
   [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
   for the setup path, Authenticode signature verification, and the pack-trust
-  model. `v1.0.0-beta.3` is the current release and the first
-  **downloadable** one: `setup.exe`, the five runtime `.ccpack` packs,
+  model. `v1.0.0-beta.4` is the current release, a download-only upgrade
+  for stations already on `v1.0.0-beta.3` (the first
+  **downloadable** release): `setup.exe`, the five runtime `.ccpack` packs,
   `SHA256SUMS.txt`, and a signed sidecar are attached to the
   [GitHub Releases page](https://github.com/scottconverse/civiccast-native/releases).
-  `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is now superseded.
+  `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is superseded.
   `v1.0.0-beta.2` was never published -- it exists only as an internal
   Gate A upgrade-baseline kit, not a release a tester can obtain.
   A **first-time install** needs the USB/LAN-delivered model bundle
@@ -214,7 +212,9 @@ things outside this repository's control:
   [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
   From `v1.0.0-beta.3` on, a download-only **upgrade** of an
   already-installed station keeps the station's recordings, database, and
-  AI models. See
+  AI models -- this is the path for `v1.0.0-beta.3` -> `v1.0.0-beta.4`: run
+  `setup.exe` (with the runtime packs) over the existing install, no
+  `station\` folder and no re-downloading the AI-model bundle. See
   [BRANCHES.md](BRANCHES.md) for release identity and status.
   Slow setup must remain visibly active: the installer reports its current
   phase and updates a progress heartbeat instead of appearing frozen.
@@ -300,7 +300,7 @@ status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
 candidate — the "What's proven in this candidate" and "Honestly scoped"
 sections above are the accurate summary for a reader deciding whether to
-run beta.3 today.
+run beta.4 today.
 
 Proprietary-appliance capabilities are **out of scope** for V1 by explicit
 decision, documented in
