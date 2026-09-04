@@ -294,6 +294,15 @@ jobs:
               # against pristine source (passes) and reproduced verbatim in a
               # faithful local mutants/ sandbox.
               #
+              # Fourth member of the same family (2026-09-04, PR #156): 
+              # test_native_activation_selftest_layout_policy.py::
+              # test_self_test_server_binary_paths_are_all_builder_declared parses
+              # scripts/build_native_server_pack.py as text and asserts each *_PINS
+              # table is iterated by exactly ONE for-loop. Inside mutants/ the builder
+              # is the mutant-duplicated copy, so it sees N loops and fails
+              # ("POSTGRES_BIN_PINS is iterated by more than one for-loop") whenever
+              # the builder is in the diff scope. Normal CI runs it against pristine
+              # source; mutmut deselects only that one test.
               # NOTE for future maintainers: a broader sweep of tests/policy and
               # tests/docs for every test that reads repo/git state was done
               # alongside this fix (2026-08-12) using a faithful local mutants/
@@ -349,7 +358,7 @@ jobs:
               # engine-builder scan is: the numbered-channel-id literals the
               # vocabulary test forbids do not appear anywhere in the
               # diff-scoped civiccast/*.py files, mutated or not.
-              echo 'pytest_add_cli_args_test_selection = ["--ignore=tests/policy/test_claims_evidence.py", "--ignore=tests/policy/test_shipped_payload_db_driver.py", "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory", "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_caption_tier_recommendation_vram_thresholds_match_hardware_py_bidirectionally", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_hardware_py_tier_id_ladder_shape_is_the_one_the_rust_mirror_assumes", "--deselect=tests/policy/test_native_pack_source_sha_contract.py::test_checked_in_pack_builder_invocations_bind_a_valid_source_sha", "--deselect=tests/test_engine_connect_timeout.py::test_no_unbounded_postgres_engine_builder"]'
+              echo 'pytest_add_cli_args_test_selection = ["--ignore=tests/policy/test_claims_evidence.py", "--ignore=tests/policy/test_shipped_payload_db_driver.py", "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory", "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_caption_tier_recommendation_vram_thresholds_match_hardware_py_bidirectionally", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_hardware_py_tier_id_ladder_shape_is_the_one_the_rust_mirror_assumes", "--deselect=tests/policy/test_native_pack_source_sha_contract.py::test_checked_in_pack_builder_invocations_bind_a_valid_source_sha", "--deselect=tests/test_engine_connect_timeout.py::test_no_unbounded_postgres_engine_builder", "--deselect=tests/policy/test_native_activation_selftest_layout_policy.py::test_self_test_server_binary_paths_are_all_builder_declared"]'
               echo -n "only_mutate = ["
               sed 's/.*/"&",/' changed_files.txt | tr -d '\n'
               echo "]"

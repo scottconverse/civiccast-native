@@ -1,4 +1,4 @@
-# In-Sandbox-Report.ps1
+﻿# In-Sandbox-Report.ps1
 # Runs INSIDE Windows Sandbox via the .wsb LogonCommand.
 # Drives a silent install of the published CivicCast Native beta.1 installer,
 # then collects a clean-box baseline: exit code, install tree, station-set.json,
@@ -1993,15 +1993,22 @@ function Test-TsProof {
     $tspArgs = @('-I','ip',"$Port",'--buffer-size','16777216','-P','until','--seconds',"$Seconds",'-P','analyze','--json','--output-file',$report,'-O','drop')
     try {
         $proc = Start-Process -FilePath $TspExe -ArgumentList $tspArgs -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        # <gate-a-tsp-exit-code> Windows PowerShell 5.1 returns $null for
+        # $proc.ExitCode unless the process HANDLE was cached before the
+        # process exited (Start-Process -PassThru returns a lazy object;
+        # Wait-Process -Id does not cache it). Gate A run 33826665417
+        # (kit 4b30c99, 2026-09-04) captured a full 1229-packet report from
+        # the engine and still recorded exit_code=null -> verdict
+        # 'fail-exit-' -> the report was never read. Touch the handle and
+        # wait on the object itself so the exit code is always real.
+        $null = $proc.Handle
         $timeoutSec = $Seconds + 20
-        try {
-            Wait-Process -Id $proc.Id -Timeout $timeoutSec -ErrorAction Stop
-        } catch {
+        $exited = $proc.WaitForExit($timeoutSec * 1000)
+        if (-not $exited) {
             $result.timed_out = $true
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            Wait-Process -Id $proc.Id -Timeout 5 -ErrorAction SilentlyContinue
+            $null = $proc.WaitForExit(5000)
         }
-        $proc.Refresh()
         $result.ran = $true
         if (-not $result.timed_out) { $result.exit_code = $proc.ExitCode }
     } catch {

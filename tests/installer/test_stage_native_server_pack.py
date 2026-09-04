@@ -86,6 +86,13 @@ def _build_tiny_pack(
     monkeypatch.setattr(pack_builder, "POSTGRES_BIN_DLL_PINS", {})
     monkeypatch.setattr(pack_builder, "POSTGRES_LIB_PINS", {})
     monkeypatch.setattr(pack_builder, "TSDUCK_BIN_PINS", tsduck_pins)
+    # This fixture tree only ever wrote the tsduck/bin executables above --
+    # never the real TSDUCK_DATA_PINS (.names/.xml config files); patch that
+    # table to empty so this staging-contract test (which cares about the
+    # STAGED LAYOUT, not TSDuck's data-file closure -- that is
+    # tests/native/test_build_native_server_pack.py's job) does not need to
+    # fabricate ~1 MB of fixture config bytes just to build a tiny pack.
+    monkeypatch.setattr(pack_builder, "TSDUCK_DATA_PINS", {})
 
     output = tmp_path / "built" / "native-server-binaries.ccpack"
     pack_builder.build_server_pack(

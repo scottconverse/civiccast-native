@@ -77,6 +77,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _SERVER_PACK_SUBDIR = ("packs", "native-server-binaries", "payload", "bin")
+_SERVER_PACK_TSDUCK_SUBDIR = ("packs", "native-server-binaries", "payload", "tsduck", "bin")
 _CIVICCAST_SUBDIR = "CivicCast"
 
 #: Where the compiled operator console / resident portal actually land on an
@@ -201,6 +202,15 @@ class InstallLayout:
     python_path: Path  # <install_root>\runtime\python.exe (child interpreter)
     server_bin_dir: Path  # <install_root>\packs\native-server-binaries\payload\bin
     pg_ctl_path: Path  # <server_bin_dir>\pg_ctl.exe
+    # The TSDuck subset shipped in the SAME native-server-binaries pack, next
+    # to (not inside) server_bin_dir -- scripts/build_native_server_pack.py's
+    # _tsduck_sources() packs it at tsduck/bin/ under the same payload/ root
+    # (see TSDUCK_BIN_PINS). civiccast.egress.compliance.locate_tsduck adds
+    # this as a fallback candidate so the shipped tsp.exe is found even when
+    # neither CIVICCAST_TSDUCK_PATH nor a pull-on-demand managed install nor
+    # PATH names one.
+    tsduck_bin_dir: Path  # <install_root>\packs\native-server-binaries\payload\tsduck\bin
+    tsp_exe_path: Path  # <tsduck_bin_dir>\tsp.exe
     program_data_root: Path  # e.g. C:\ProgramData
     civiccast_data_root: Path  # <program_data_root>\CivicCast
     postgres_data_dir: Path  # <civiccast_data_root>\data\pgdata
@@ -268,11 +278,14 @@ def resolve_install_layout(
     )
     civiccast_root = pd_root / _CIVICCAST_SUBDIR
     server_bin_dir = install_root.joinpath(*_SERVER_PACK_SUBDIR)
+    tsduck_bin_dir = install_root.joinpath(*_SERVER_PACK_TSDUCK_SUBDIR)
     return InstallLayout(
         install_root=install_root,
         python_path=install_root / "runtime" / "python.exe",
         server_bin_dir=server_bin_dir,
         pg_ctl_path=server_bin_dir / "pg_ctl.exe",
+        tsduck_bin_dir=tsduck_bin_dir,
+        tsp_exe_path=tsduck_bin_dir / "tsp.exe",
         program_data_root=pd_root,
         civiccast_data_root=civiccast_root,
         postgres_data_dir=civiccast_root / "data" / "pgdata",

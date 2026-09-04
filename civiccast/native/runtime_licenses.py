@@ -811,6 +811,30 @@ SERVER_PACK_BASENAME_LICENSE: Final[dict[str, str]] = {
     "tsplugin_continuity.dll": "BSD-2-Clause",
     "tsplugin_pcradjust.dll": "BSD-2-Clause",
     "tsplugin_until.dll": "BSD-2-Clause",
+    # --- TSDuck's own bundled .names/.xml configuration/data files, shipped
+    # alongside tsp.exe in the SAME upstream bin/ directory (TSDuck resolves
+    # them relative to tsp.exe's own path on Windows) -- TSDuck first-party
+    # data under the identical BSD-2-Clause LICENSE.txt as tsp.exe itself,
+    # not third-party notices from OTHERS.txt (see scripts/
+    # build_native_server_pack.py's TSDUCK_DATA_PINS comment for the exact
+    # enumeration/derivation).
+    "tscore.ip.names": "BSD-2-Clause",
+    "tscore.keytable.model.xml": "BSD-2-Clause",
+    "tscore.monitor.model.xml": "BSD-2-Clause",
+    "tscore.monitor.xml": "BSD-2-Clause",
+    "tscore.time.model.xml": "BSD-2-Clause",
+    "tscore.time.xml": "BSD-2-Clause",
+    "tsduck.channels.model.xml": "BSD-2-Clause",
+    "tsduck.dektec.names": "BSD-2-Clause",
+    "tsduck.dtv.names": "BSD-2-Clause",
+    "tsduck.etuner.model.xml": "BSD-2-Clause",
+    "tsduck.hfbands.model.xml": "BSD-2-Clause",
+    "tsduck.hfbands.xml": "BSD-2-Clause",
+    "tsduck.hides.names": "BSD-2-Clause",
+    "tsduck.lnbs.model.xml": "BSD-2-Clause",
+    "tsduck.lnbs.xml": "BSD-2-Clause",
+    "tsduck.oui.names": "BSD-2-Clause",
+    "tsduck.tables.model.xml": "BSD-2-Clause",
 }
 
 #: Whole-directory / generated-file prefixes for the server pack, mirroring
