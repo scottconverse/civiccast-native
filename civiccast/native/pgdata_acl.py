@@ -251,8 +251,14 @@ def normalize_pgdata_acl(
     instead of needing a remediation tool an operator has to know about.
     NOT called on two paths, by design, because neither one starts postgres
     from a state this fix needs to reach: :mod:`civiccast.native.provision`'s
-    ``NOOP_REUSE_EXISTING`` early return (an existing cluster AND an existing
-    registry ``DatabaseUrl`` were both found; neither is touched), and
+    ``NOOP_REUSE_EXISTING`` branch WHEN the recorded ``DatabaseUrl`` already
+    authenticates against a LIVE server (BL-12 gave that branch a schema
+    migration; when the supervisor service is already running its own
+    postmaster on the cluster -- the state D3's health gate leaves behind on
+    a committed upgrade -- the migration runs in place over that connection,
+    so nothing here starts, stops or re-ACLs a cluster this process does not
+    own; when nothing is listening, D4 does start the cluster itself and this
+    normalization DOES run), and
     :func:`civiccast.native.upgrade.pg_lifecycle.wrap_schema_revision`'s
     no-op branch when the database is already reachable (the running
     supervisor service owns that postgres; this call never starts one).
