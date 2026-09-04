@@ -13,9 +13,21 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
-`v1.0.0-beta.5` is the next candidate and the current owner-held unpublished
-candidate; it does not change the `v1.0.0-beta.4` install story documented
-below.
+No changes yet beyond `v1.0.0-beta.5`, drafted immediately below.
+
+## [1.0.0-beta.5] - <RELEASE_DATE>
+
+**DRAFT -- not yet published.** `v1.0.0-beta.5` is still the next candidate
+and the current owner-held unpublished candidate; it does not change the
+`v1.0.0-beta.4` install story documented below `v1.0.0-beta.4`'s own entry.
+`docs/releases/release-truth.yaml` still carries `v1.0.0-beta.4` as
+`current` and `v1.0.0-beta.5` as `staging` -- this entry does not flip
+either; it will be updated in place, and this header's `<RELEASE_DATE>`
+filled in, once an actual publish lands. See
+[`docs/releases/2026-09-04-beta5-release-notes.md`](docs/releases/2026-09-04-beta5-release-notes.md)
+for the draft publish record and
+[`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md)
+for the draft verification record.
 
 ### Added
 
@@ -145,6 +157,92 @@ below.
   still satisfied. It now accepts either refusal state, and the test consumes
   the REAL producer's output instead of a hand-typed report dict, which is why
   nothing caught the mismatch.
+- **Headline: seamless source-plan rollover (#162).** beta.4's own
+  120-minute engine soak proved the GStreamer engine itself healthy for two
+  continuous hours (`failed_beats=0`) but failed Gate A's T6 lane on a
+  relaunch-count rule: the playout worker exits cleanly at the end of every
+  source plan (`civiccast/egress/source_plan.py`'s `max_segments=8`), which
+  happens every 10-15 minutes under continuous back-to-back premieres, and
+  each exit-and-restart was a short on-air blip. New
+  `ChannelAutomationService._check_plan_rollover`
+  (`civiccast/egress/automation.py`) runs every automation tick, tracks the
+  projected wall-clock end of the plan a channel is actively airing, and
+  within 30 seconds of that end re-fetches the schedule through the same
+  `source_plan_provider` already in use -- because
+  `build_source_plan_from_schedule` always resumes the currently-airing item
+  and windows forward from "now," a later fetch naturally reaches further
+  once more content has been published, and that recompute *is* the
+  rollover. If the fresh plan extends further, the channel enqueues the
+  same `"reload"` command the existing slate-to-program transition already
+  uses: the engine switches both video and audio to the new leg at the
+  outgoing clip's end, EOS is dropped on the outgoing selector pads,
+  running-time is rebased, and the new leg is held prerolled so there is
+  nothing left to wait on at the switch point. The channel's `state` stays
+  `ON_AIR` throughout; only a `TRANSITIONING` proof event is recorded. If
+  nothing further is published yet, this is a deliberate no-op and the plan
+  is left to reach its natural end -- closing that smaller residual gap is
+  a separate follow-on. The FFmpeg-concat engine
+  (`supports_content_reload = False`) still benefits: the same `"reload"`
+  command now defers to the existing graceful pending-reload handoff
+  instead of a force-kill. Proven on HALO with the bundled GStreamer: the
+  rollover engine test suite passed 5/5, TSDuck measured 0 discontinuities
+  and 0 PCR/PTS leaps across the monitored rollovers. New
+  `tests/egress/test_automation.py::TestPlanRollover` (6 cases) pins the
+  no-rollover-while-runway-remains case, the single-dispatch-once-inside-
+  lookahead case, no-double-dispatch before the daemon applies a reload, no
+  reload when nothing is published beyond what's airing, horizon
+  re-establishment after a reload lands, and that the rollover check never
+  fires while `FALLBACK_SLATE` is active. **Known residual, carried forward
+  as a known issue:** if the next leg is not ready before the outgoing clip
+  ends, the output freezes until it is ready or the existing 10-second
+  stall watchdog restarts the channel; the immediate-switch path is
+  unchanged. **What only the sandbox soak can confirm:** this is proven at
+  the automation-decision level (unit tests against a fake daemon/store)
+  and via the already-proven seamless-reload path it reuses -- it does not
+  itself replay the 120-minute soak; see the T6 rollover retest in
+  `docs/releases/v1.0.0-beta.5-verification.md` for that.
+- **Gate A: the independent post-upgrade schema proof now actually
+  executes (#158, #160, #161, #163).** Four sequential harness-only bugs on
+  the cross-version-upgrade lane's `psql` schema proof, each exposed only
+  after the one before it was fixed:
+  - **#158** -- `tsp.exe`'s exit code came back `null` on Windows
+    PowerShell 5.1 (`Start-Process -PassThru` + `Wait-Process -Id` needs
+    the process handle cached first), which judged a fail-exit- against an
+    otherwise fully healthy TSDuck capture (Gate A run `33826665417`, kit
+    `4b30c99`: 1229 packets, 0 invalid syncs, 0 transport errors). Fixed by
+    caching `$proc.Handle` and waiting on the object; contract test added.
+  - **#160** -- the proof read the installer's `DatabaseUrl` from
+    `HKLM\SOFTWARE\CivicCast` instead of its real location,
+    `HKLM\Software\CivicCast\Native`, judging every reaching upgrade run
+    `<no-database-url>` (first: Gate A run `33857982657`, kit `c27c6e7`,
+    install/activation/health all independently passing). Fixed; contract
+    test pins the key against the NSIS source.
+  - **#161** -- the proof's SQL argument to `psql` was not quoted
+    (`Start-Process -ArgumentList` does not quote its elements), so `psql`
+    warned about an ignored extra argument, ran a bare `SELECT`, and
+    exited 0 with no rows -- judged `<no-alembic-version-row>` (Gate A run
+    `33870994702`, kit `c27c6e7`). Fixed by quoting the SQL and treating an
+    exit-0-with-warnings result as a failed proof, not a pass; contract
+    test added.
+  - **#163** -- the proof's single `UNION ALL` statement over
+    `civiccast.alembic_version` and `public.alembic_version` failed as a
+    whole when `public.alembic_version` does not exist at all (the product
+    keeps its version table in the `civiccast` schema only) -- Gate A run
+    `33885550628` (kit `c27c6e7`) recorded `<psql-failed>` with `relation
+    "public.alembic_version" does not exist` while
+    install/activation/health/DB-at-head all independently passed. Fixed
+    by running one statement per namespace and falling through cleanly on
+    "does not exist"; contract test added.
+
+  Tonight's Gate A run is the first whose cross-version-upgrade lane can
+  reach a real, independent `psql`-read verdict on the post-upgrade schema
+  instead of failing inside the harness itself before producing one. This
+  is a harness-only class of fix -- it does not touch the product's own
+  upgrade/migration code path, only the independent proof that checks it
+  from the outside. **Gate A harness self-test lane still to add** (batch
+  27): a self-test lane for the harness's own proof logic, so a fifth
+  latent bug in the same path is caught before a live run rather than
+  after -- queued, not part of this candidate.
 - **`civiccast/egress/gst/graph.py`'s `source_leg_is_clock_timed` docstring
   claimed the fail-safe answer for an unknown source factory is `True`; the
   code has always returned `False`** (`_chain_is_clock_timed` only matches a
@@ -277,6 +375,20 @@ below.
   `v1.0.0-beta.4`'s own entry is untouched and stays `status: current`
   (flipped by PR #157); this bump only stages the next candidate behind
   it.
+
+### Known issues in beta.5
+
+1. **Seamless rollover has a residual freeze case (#162).** If the next leg
+   is not ready before the outgoing clip ends, the output freezes until it
+   becomes ready or the existing 10-second stall watchdog restarts the
+   channel. The immediate-switch (non-rollover) path is unchanged. Not yet
+   scheduled; tracked as a follow-on to #162.
+2. **Gate A harness self-test lane still to add (batch 27).** The four
+   independent-proof bugs fixed above (#158, #160, #161, #163) were each
+   found by a real Gate A run failing in a new way, one at a time, rather
+   than by a test exercising the harness's own proof logic in isolation. A
+   self-test lane for the harness is queued as batch 27 and is not part of
+   this candidate.
 
 ## [1.0.0-beta.4] - 2026-09-04
 
