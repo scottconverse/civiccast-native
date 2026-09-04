@@ -1834,11 +1834,16 @@ function Get-CivicCastDbRevisionViaPsql {
 
     $dbUrl = $null
     try {
-        $dbUrl = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast' -Name 'DatabaseUrl' -ErrorAction Stop).DatabaseUrl
+        # <gate-a-dburl-registry-key> The product records the URL under the
+        # \Native subkey (nsis-hooks-bootstrap.nsh: ReadRegStr ... "Software\CivicCast\Native" "DatabaseUrl";
+        # civiccast/native/provision write_database_url). Reading the parent key made
+        # this proof '<no-database-url>' on every upgrade run that got this far
+        # (Gate A 33857982657, kit c27c6e7, 2026-09-04).
+        $dbUrl = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast\Native' -Name 'DatabaseUrl' -ErrorAction Stop).DatabaseUrl
     } catch {}
     if ([string]::IsNullOrWhiteSpace($dbUrl)) {
         $probe.revision = '<no-database-url>'
-        $probe.error = 'HKLM\SOFTWARE\CivicCast\DatabaseUrl is absent or empty'
+        $probe.error = 'HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl is absent or empty'
         if ($LogFile) { "POST_UPGRADE_DB_REVISION_SOURCE=psql result=NO-DATABASE-URL" | Add-Content -Path $LogFile -Encoding UTF8 }
         return $probe
     }
