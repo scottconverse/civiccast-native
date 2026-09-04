@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -141,6 +142,88 @@ def test_locate_tsduck_non_runnable_is_not_installed(tmp_path: Path, monkeypatch
     assert locate_tsduck(version_runner=explode).installed is False
     # Empty version output is likewise treated as not-runnable.
     assert locate_tsduck(version_runner=lambda _p: "   ").installed is False
+
+
+def test_locate_tsduck_finds_the_shipped_native_server_pack_tsp(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Root cause of the Gate A "TSDuck (tsp) not found" log line even
+    though tsp.exe genuinely shipped: locate_tsduck never looked at the
+    native-server-binaries pack's own payload/tsduck/bin/tsp.exe. Simulates
+    a real install by pointing sys.executable at
+    <install_root>/runtime/pythonservice.exe (the same shape
+    resolve_install_layout's own ground-truth tests use) with no
+    CIVICCAST_TSDUCK_PATH, no managed pull-on-demand install, and nothing on
+    PATH -- the shipped pack must still be found."""
+
+    monkeypatch.delenv("CIVICCAST_TSDUCK_PATH", raising=False)
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("CIVICCAST_TSDUCK_HOME", str(tmp_path / "home"))  # empty; no managed pull
+
+    install_root = tmp_path / "install"
+    exe = install_root / "runtime" / "pythonservice.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(exe))
+
+    shipped_bin = install_root / "packs" / "native-server-binaries" / "payload" / "tsduck" / "bin"
+    shipped_bin.mkdir(parents=True)
+    shipped_tsp = shipped_bin / "tsp.exe"
+    shipped_tsp.write_bytes(b"")
+
+    status = locate_tsduck(version_runner=lambda _path: "tsp: TSDuck ... version 3.44-4676")
+
+    assert status.installed is True
+    assert status.path == str(shipped_tsp)
+    assert "3.44" in (status.version or "")
+
+
+def test_locate_tsduck_managed_beats_shipped_pack(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The shipped pack is only a FALLBACK: an existing managed pull-on-demand
+    install must still win, same precedence as it already has over PATH."""
+
+    monkeypatch.delenv("CIVICCAST_TSDUCK_PATH", raising=False)
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("CIVICCAST_TSDUCK_HOME", str(tmp_path / "home"))
+    managed_bin = tmp_path / "home" / "TSDuck" / "bin"
+    managed_bin.mkdir(parents=True)
+    managed_tsp = managed_bin / "tsp.exe"
+    managed_tsp.write_bytes(b"")
+
+    install_root = tmp_path / "install"
+    exe = install_root / "runtime" / "pythonservice.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(exe))
+    shipped_bin = install_root / "packs" / "native-server-binaries" / "payload" / "tsduck" / "bin"
+    shipped_bin.mkdir(parents=True)
+    (shipped_bin / "tsp.exe").write_bytes(b"")
+
+    status = locate_tsduck(version_runner=lambda _p: "tsp version 3.44-4676")
+
+    assert status.installed is True
+    assert status.path == str(managed_tsp)
+
+
+def test_locate_tsduck_shipped_pack_absent_falls_through_to_path(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """No CIVICCAST_TSDUCK_PATH, no managed install, no shipped pack on disk
+    (e.g. a dev interpreter, not a real install) -- PATH is still checked,
+    unchanged precedence/behavior for a BYO tsp on PATH."""
+
+    monkeypatch.delenv("CIVICCAST_TSDUCK_PATH", raising=False)
+    monkeypatch.setenv("CIVICCAST_TSDUCK_HOME", str(tmp_path / "home"))  # empty
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "dev-venv" / "python.exe"))
+    on_path = tmp_path / "path" / "tsp.exe"
+    on_path.parent.mkdir(parents=True)
+    on_path.write_bytes(b"")
+    monkeypatch.setattr(compliance_mod.shutil, "which", lambda _name: str(on_path))
+
+    status = locate_tsduck(version_runner=lambda _p: "tsp version 3.44-4676")
+
+    assert status.installed is True
+    assert status.path == str(on_path)
 
 
 def test_managed_tsduck_dir_env_override(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

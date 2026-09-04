@@ -291,6 +291,14 @@ def test_resolve_install_layout_matches_installer_ground_truth(tmp_path: Path) -
     bin_dir = install_root / "packs" / "native-server-binaries" / "payload" / "bin"
     assert layout.server_bin_dir == bin_dir
     assert layout.pg_ctl_path == bin_dir / "pg_ctl.exe"
+    # TSDuck ships in the SAME native-server-binaries pack, at tsduck/bin/
+    # beside (not inside) bin/ -- scripts/build_native_server_pack.py's
+    # _tsduck_sources() packs tsp.exe there.
+    tsduck_bin_dir = (
+        install_root / "packs" / "native-server-binaries" / "payload" / "tsduck" / "bin"
+    )
+    assert layout.tsduck_bin_dir == tsduck_bin_dir
+    assert layout.tsp_exe_path == tsduck_bin_dir / "tsp.exe"
     assert layout.postgres_data_dir == pd_root / "CivicCast" / "data" / "pgdata"
     assert layout.log_root == pd_root / "CivicCast" / "logs"
     # ffmpeg/ffprobe: native_activation.rs's validate_staged_runtime_layout

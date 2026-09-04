@@ -431,6 +431,100 @@ TSDUCK_BIN_PINS: Final[dict[str, tuple[int, str]]] = {
     ),
 }
 
+#: TSDuck resolves its own ``.names``/``.xml`` configuration/data files
+#: RELATIVE TO ``tsp.exe``'s own directory on Windows -- this is every such
+#: file the upstream ``TSDuck-Win64-3.44-4676-Portable.zip`` ships directly
+#: in ``bin/`` (the complete non-exe/non-dll file set at that level; none
+#: live in a separate ``share``/``etc`` tree in this archive). Enumerated by
+#: extracting the SAME hash-pinned archive
+#: ``native-windows-runtime-dependencies.lock.json`` already reviews
+#: (``sha256=b0ca0f96...``) and listing ``bin/`` directly -- never guessed.
+#: Gate A run 2026-09-03 22:55Z failed the TS-capture proof
+#: (``sandbox-lab/scripts/In-Sandbox-Report.ps1``'s ``Test-TsProof``, which
+#: runs ``tsp -I ip ... -P until -P continuity -P analyze``) with
+#: ``Error: configuration file 'dtv' not found`` / ``file not found:
+#: tsduck.hfbands.xml`` -- this pack shipped tsp.exe and the 4 plugin DLLs
+#: but none of the data files tsp/tscore/tsduck.dll load at runtime to
+#: resolve service ids, DVB tables, HF frequency bands, IP/OUI vendor
+#: lookups, and the monitor/time XML schemas the ``analyze``/``continuity``/
+#: ``until`` plugins and the core ``ip``/``file``/``drop`` I/O (compiled into
+#: tsduck.dll/tscore.dll, see TSDUCK_BIN_PINS' comment) depend on. Shipping
+#: the complete small (~1 MB total) config-file set from ``bin/`` -- rather
+#: than guessing which subset the 4 pinned plugins individually touch -- is
+#: the same minimization posture as POSTGRES_SHARE_DATA_DIRS' path-SET
+#: validation: these are TSDuck's own bundled data, not extra plugin
+#: binaries (no plugin DLL beyond the 7 already pinned above is added).
+TSDUCK_DATA_PINS: Final[dict[str, tuple[int, str]]] = {
+    "tscore.ip.names": (
+        8_252,
+        "a973cee5ca0ad4e359215ad7d40d916b14e178b61d26b37bbbd1be27dfc8cbff",
+    ),
+    "tscore.keytable.model.xml": (
+        446,
+        "808654a5b66c1845812b9f9c4b4c754643b6c4195f854bc93bdb4d947f6c7e65",
+    ),
+    "tscore.monitor.model.xml": (
+        934,
+        "613e706ab1a7901472a494e8741e7c2f1dac8fdedd3bc85c4f1cb3d266741d4f",
+    ),
+    "tscore.monitor.xml": (
+        1_316,
+        "a43bf7a65352b57889c6f71e0bda17d248a41bfc64878ebe7bcae3109b68bdab",
+    ),
+    "tscore.time.model.xml": (
+        535,
+        "a73e32768dfd91ed1104854684f99ef1000bb03b8da3580e42db78ded55b9595",
+    ),
+    "tscore.time.xml": (
+        2_190,
+        "57a1263802f3f2ce9a43e98a6299e6bc140f3ba66ea43db6ff2c2a79b96fd57a",
+    ),
+    "tsduck.channels.model.xml": (
+        3_890,
+        "85f7eda1da636e1240b1806a5ee68ae90eae181f6778b39aa3e7a3b3228a0b94",
+    ),
+    "tsduck.dektec.names": (
+        6_370,
+        "8395a8c06229f98f3137fcbd4ce69b3def76bd6384b5b96f133793e473a67406",
+    ),
+    "tsduck.dtv.names": (
+        181_385,
+        "95572389459a3993155aac1f57929a535c670cd8181b79e3db9ae77d74d32262",
+    ),
+    "tsduck.etuner.model.xml": (
+        1_388,
+        "d146bac07c06fb1dd0abd40c4b115f590ef8868b38b9a3e4862fd0435beb79fd",
+    ),
+    "tsduck.hfbands.model.xml": (
+        1_089,
+        "4341fc46f7617ed5e8a22a5f9a7b919497cd5346a9f593f73307ae6c25315365",
+    ),
+    "tsduck.hfbands.xml": (
+        5_104,
+        "4d507ecbf7a2b1ced56ce99ba19f7ee90d0093f3501dbef4ecdff7ffd7a69d4f",
+    ),
+    "tsduck.hides.names": (
+        8_084,
+        "6a91e636fb6e1b1e0d5484c7199d996c104494281fc9e73cf38fe0dd9b9af308",
+    ),
+    "tsduck.lnbs.model.xml": (
+        882,
+        "ce3787479ee8648131c3df406fa1efbdd4616791f61dde60e99c25f145a9f6c0",
+    ),
+    "tsduck.lnbs.xml": (
+        5_634,
+        "c0533c0a5e848f60c596e4bc253494f29863d995125ef75796137f5f8fc00833",
+    ),
+    "tsduck.oui.names": (
+        666_221,
+        "686be47ed82ace7dc2e55c528d887d82a8aa1bf0a1944a687541cadf3bdb3c97",
+    ),
+    "tsduck.tables.model.xml": (
+        137_620,
+        "698b93000b79387f23a45dd2d457a812df9fc7a871f069b68f4003dab1c6bc42",
+    ),
+}
+
 #: Required upstream license text, one per component, verified present at
 #: the exact archive-relative path named. Not hash-pinned individually
 #: (license TEXT changing is not a supply-chain risk the way binary bytes
@@ -688,6 +782,15 @@ def _tsduck_sources(tsduck_root: Path) -> dict[str, Path]:
             expected_bytes=expected_bytes,
             expected_sha256=expected_sha256,
             label=f"pinned TSDuck {filename}",
+        )
+        sources[f"tsduck/bin/{filename}"] = path
+    for filename, (expected_bytes, expected_sha256) in sorted(TSDUCK_DATA_PINS.items()):
+        path = tsduck_root / "bin" / filename
+        _validate_pinned_file(
+            path,
+            expected_bytes=expected_bytes,
+            expected_sha256=expected_sha256,
+            label=f"pinned TSDuck data file {filename}",
         )
         sources[f"tsduck/bin/{filename}"] = path
     for filename in TSDUCK_LICENSE_FILES:
@@ -1003,7 +1106,9 @@ def build_server_pack(
         "the runtime DLLs they import, the btree_gist extension, and required "
         "share/ bootstrap + timezone data)\n"
         f"TSDuck {TSDUCK_VERSION} subset (tsduck/bin/tsp.exe, tscore.dll, "
-        "tsduck.dll, and the analyze/continuity/pcradjust/until plugins)\n"
+        "tsduck.dll, the analyze/continuity/pcradjust/until plugins, and the "
+        "tsduck/tscore .names/.xml configuration data files tsp resolves "
+        "relative to its own directory)\n"
         "See licenses/ for upstream license texts and "
         "civiccast.native.runtime_licenses.SERVER_PACK_BASENAME_LICENSE for "
         "the per-file provenance table.\n"
