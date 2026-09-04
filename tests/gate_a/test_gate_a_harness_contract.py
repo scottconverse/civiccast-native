@@ -1745,3 +1745,18 @@ def test_hoststore_reset_states_its_post_condition() -> None:
     assert "$hoststoreRemnants" in code
     assert "hoststore reset did NOT complete" in code
     assert "-- verified empty" in code
+
+
+def test_tsproof_caches_the_process_handle_before_waiting() -> None:
+    """<gate-a-tsp-exit-code> Windows PowerShell 5.1 returns $null for
+    $proc.ExitCode unless the handle was cached before the process exited.
+    Gate A run 33826665417 captured a full 1229-packet engine report and still
+    judged 'fail-exit-' because of that. The fix touches $proc.Handle right after
+    Start-Process and waits on the object, never via Wait-Process -Id."""
+    code = _report_script()
+    start = code.index("function Test-TsProof")
+    end = code.index("$result.ran = $true", start)
+    block = code[start:end]
+    assert "$null = $proc.Handle" in block
+    assert block.index("$null = $proc.Handle") < block.index("WaitForExit(")
+    assert "Wait-Process -Id $proc.Id" not in block
