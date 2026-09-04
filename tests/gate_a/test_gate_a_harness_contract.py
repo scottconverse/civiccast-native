@@ -1761,3 +1761,26 @@ def test_tsproof_caches_the_process_handle_before_waiting() -> None:
     assert "$null = $proc.Handle" in block
     assert block.index("$null = $proc.Handle") < block.index("WaitForExit(")
     assert "Wait-Process -Id $proc.Id" not in block
+
+
+def test_psql_proof_reads_the_registry_key_the_installer_writes() -> None:
+    """<gate-a-dburl-registry-key> The NSIS hook reads/writes DatabaseUrl under
+    HKLM\\Software\\CivicCast\\Native; the independent psql proof must read that
+    same subkey, never the parent key (which made every upgrade run that reached
+    the proof judge '<no-database-url>')."""
+    text = _read(_DRIVER)
+    code = _code_only(text)
+    start = code.index("function Get-CivicCastDbRevisionViaPsql")
+    block = code[start : code.index("$probe.database_url_found = $true", start)]
+    assert "HKLM:\\SOFTWARE\\CivicCast\\Native" in block
+    assert "-Path 'HKLM:\\SOFTWARE\\CivicCast' " not in block
+    nsh_path = (
+        _SANDBOX_LAB.parent
+        / "civiccast"
+        / "apps"
+        / "installer"
+        / "src-tauri"
+        / "nsis-hooks-bootstrap.nsh"
+    )
+    nsh = nsh_path.read_text(encoding="utf-8", errors="replace")
+    assert 'HKLM "Software\\CivicCast\\Native" "DatabaseUrl"' in nsh
