@@ -110,6 +110,13 @@ except ImportError:
         parse_control_line,
     )
 
+try:
+    from civiccast.egress.gst.reload_policy import reload_switch_is_deferred
+except ImportError:
+    from reload_policy import (  # type: ignore[import-not-found,no-redef]
+        reload_switch_is_deferred,
+    )
+
 
 class SwapController:
     """Pluggable hot-swap mechanism. Lets GstInterpipe drop in later (S15 §9)."""
@@ -164,6 +171,7 @@ class GstPlayoutEngine:
         teardown_timeout_s: float = 5.0,
         reload_timeout_s: float = 10.0,
         stall_timeout_s: float = 10.0,
+        defer_switch_timeout_s: float = 900.0,
     ) -> None:
         prefer_cpu_decoders_by_default()
         Gst.init([])
@@ -181,6 +189,14 @@ class GstPlayoutEngine:
         self.swap = swap or InputSelectorSwap()
         self.teardown_timeout_s = teardown_timeout_s
         self.reload_timeout_s = reload_timeout_s
+        # B3 fix: bounds how long a switch_at_end_of_current=True reload waits for
+        # the OUTGOING leg's own EOS once the new leg is already ready, before
+        # forcing the switch anyway (never leak two legs held open forever if a
+        # schedule item's actual duration runs long or its EOS never arrives).
+        # Deliberately much longer than reload_timeout_s -- that timer bounds "is
+        # the new leg ready at all", this one bounds "how long is it acceptable to
+        # sit on a ready leg waiting for a natural handoff point".
+        self.defer_switch_timeout_s = defer_switch_timeout_s
         # S9-5: if output (TS buffers past the mux) does not advance for this long while
         # on-air, the pipeline has silently stalled — quit so the daemon restarts the
         # worker to a known state (a live source that freezes without posting an error).
@@ -1057,7 +1073,10 @@ class GstPlayoutEngine:
                     new_graph = graph_from_json(handle.read())
                 with contextlib.suppress(OSError):
                     Path(command[1]).unlink()  # one-shot graph file: consume it after read
-                self.reload_program(new_graph.sources[0])
+                self.reload_program(
+                    new_graph.sources[0],
+                    switch_at_end_of_current=reload_switch_is_deferred(command[1]),
+                )
                 # BLOCKER fix: a content-reload must also re-apply the graphics-overlay
                 # leg (station bug / lower-third) from the SAME reloaded graph — reload
                 # used to rebuild only the program leg and silently drop
@@ -1086,23 +1105,46 @@ class GstPlayoutEngine:
 
     # -- content-reload (D-S1-6): rebuild the program leg while output stays PLAYING --
 
-    def reload_program(self, new_leg: SourceLeg | PlaylistLeg) -> None:
+    def reload_program(
+        self, new_leg: SourceLeg | PlaylistLeg, *, switch_at_end_of_current: bool = False
+    ) -> None:
         """Replace the program leg (source index 0) with ``new_leg`` seamlessly.
 
-        Builds the new leg on the live PLAYING pipeline, prerolls it, and switches the
-        selector(s) to it on the new leg's FIRST BUFFER (via a pad probe → main-loop
-        idle, so the run loop is never blocked waiting on preroll). The old leg is
-        disposed only after the switch commits.
+        Builds the new leg on the live PLAYING pipeline and prerolls it. The switch
+        point depends on ``switch_at_end_of_current`` (B3 fix, kit 4b30c99 soak
+        evidence):
+
+        * ``False`` (default, unchanged behavior) — switches the selector(s) to the
+          new leg on its FIRST BUFFER (via a pad probe → main-loop idle, so the run
+          loop is never blocked waiting on preroll). This is correct for a
+          FALLBACK_SLATE gap-replan (issue #157: filler must be interrupted the
+          moment a due program is ready) and for an operator-initiated live
+          takeover / forced slate (a deliberate "now").
+        * ``True`` — the new leg still prerolls the same way, but the switch is
+          deferred until the OUTGOING leg's own EOS arrives at its (still active)
+          selector sink pad, so the currently-airing item plays out to its natural
+          end with no re-decode and no jump: both legs share the pipeline clock, so
+          a new leg built from the same wall-clock join-in-progress offset as the
+          outgoing one stays in sync with it while both are PLAYING, and reaches
+          the same boundary at the same moment. Used for automation's seamless
+          plan-rollover reload (``ChannelAutomationService._check_plan_rollover``),
+          which is now triggered well before the live plan's projected end
+          specifically so the new leg has time to be ready and WAIT rather than
+          cut in early and truncate the still-airing item.
 
         The reload can never wedge the channel (the engine's "playout can never wedge"
-        invariant). Three escape hatches cover every way a switch might not happen:
-        (a) a bounded watchdog aborts the reload if the new leg never delivers a first
+        invariant). Escape hatches cover every way a switch might not happen: (a) a
+        bounded watchdog aborts the reload if the new leg never delivers a first
         buffer (a live source that connects but never rolls); (b) a synchronous
         build/preroll failure aborts cleanly and re-raises (the current program keeps
         playing); (c) an async bus error on the uncommitted new leg aborts via
-        ``_on_bus`` rather than taking output down. A newer reload arriving while one is
-        still settling SUPERSEDES it (the old in-flight leg is aborted) — a due program
-        is never silently dropped."""
+        ``_on_bus`` rather than taking output down; (d) for a deferred switch, a
+        second, much longer watchdog (``defer_switch_timeout_s``) forces the switch
+        anyway if the outgoing leg's EOS never arrives (a schedule item that runs
+        long, or a leg that never naturally EOSes) — the reload always eventually
+        commits, it never holds two legs open forever. A newer reload arriving while
+        one is still settling SUPERSEDES it (the old in-flight leg is aborted) — a
+        due program is never silently dropped."""
         if self.selector is None or not self.selector_sink_pads:
             raise RuntimeError("engine not built; cannot reload")
         if self._pending_reload is not None:
@@ -1130,6 +1172,16 @@ class GstPlayoutEngine:
             "new_elements": new_elements,
             "probe_id": None,
             "timeout_id": None,
+            # B3 fix: deferred-switch bookkeeping. "ready"/"eos" both default to
+            # True for an immediate switch (switch_at_end_of_current=False), so
+            # _maybe_commit_reload's `ready and eos` gate reduces to "ready" alone
+            # -- committing the instant the new leg's first buffer lands, exactly
+            # the pre-existing behavior.
+            "switch_at_end_of_current": switch_at_end_of_current,
+            "new_leg_ready": False,
+            "old_leg_eos": not switch_at_end_of_current,
+            "eos_probe_id": None,
+            "defer_timeout_id": None,
         }
         self._pending_reload = pending
         try:
@@ -1138,6 +1190,12 @@ class GstPlayoutEngine:
             pending["probe_id"] = new_video_pad.add_probe(
                 Gst.PadProbeType.BUFFER, self._on_reload_first_buffer
             )
+            if switch_at_end_of_current:
+                # Watch the OUTGOING leg's own pad for its EOS event -- it keeps
+                # airing normally; this only observes when it naturally ends.
+                pending["eos_probe_id"] = old_video_pad.add_probe(
+                    Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_old_leg_pad_event
+                )
             for element in new_elements:
                 element.sync_state_with_parent()  # preroll the new leg
         except Exception:  # ENG-008: a preroll/arm failure must not wedge
@@ -1150,20 +1208,94 @@ class GstPlayoutEngine:
         )
 
     def _on_reload_first_buffer(self, _pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
-        # Streaming thread: hand the commit to the main loop (no state changes here).
-        GLib.idle_add(self._commit_reload)
+        # Streaming thread: hand the readiness update to the main loop (no state
+        # changes here).
+        GLib.idle_add(self._on_new_leg_ready)
         return Gst.PadProbeReturn.REMOVE
 
-    def _commit_reload(self) -> bool:
-        """Main-loop commit of a reload: switch the selector(s) to the prerolled new
-        leg, repoint role index 0 at it, then dispose the old leg. A no-op if the
-        reload was aborted/superseded before this fired. ``return False`` so the GLib
-        idle source runs once."""
+    def _on_new_leg_ready(self) -> bool:
+        """Main-loop: the new leg's first buffer landed. Cancels the
+        new-leg-readiness watchdog (it has done its job); for a deferred switch,
+        arms the longer ``defer_switch_timeout_s`` safety watchdog instead of
+        committing immediately, and waits for the outgoing leg's EOS."""
         pending = self._pending_reload
         if pending is None:
             return False  # aborted or superseded before the first buffer landed
         if pending["timeout_id"] is not None:
-            GLib.source_remove(pending["timeout_id"])  # committing — cancel the watchdog
+            with contextlib.suppress(Exception):
+                GLib.source_remove(pending["timeout_id"])
+            pending["timeout_id"] = None
+        pending["new_leg_ready"] = True
+        if pending["switch_at_end_of_current"] and not pending["old_leg_eos"]:
+            pending["defer_timeout_id"] = GLib.timeout_add_seconds(
+                max(1, int(self.defer_switch_timeout_s)), self._on_defer_switch_timeout
+            )
+            return False
+        self._commit_reload()
+        return False
+
+    def _on_old_leg_pad_event(self, _pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+        # Streaming thread: only look for EOS; let every event continue downstream
+        # unmodified (PASS) -- the selector may or may not forward it since this is
+        # not necessarily the active pad, but this probe must never alter behavior
+        # for any event it isn't specifically watching for.
+        event = info.get_event()
+        if event is not None and event.type == Gst.EventType.EOS:
+            GLib.idle_add(self._on_old_leg_eos)
+            return Gst.PadProbeReturn.REMOVE
+        return Gst.PadProbeReturn.PASS
+
+    def _on_old_leg_eos(self) -> bool:
+        """Main-loop: the outgoing leg reached its own natural end. Commits now if
+        the new leg is already ready; otherwise just records it -- the reload was
+        triggered well before this point specifically so the new leg should already
+        be ready, but if the schedule/preparer ran unexpectedly long the commit
+        still waits for genuine readiness rather than switching to a leg with
+        nothing buffered yet."""
+        pending = self._pending_reload
+        if pending is None:
+            return False  # aborted or superseded before this fired
+        pending["old_leg_eos"] = True
+        if pending["new_leg_ready"]:
+            self._commit_reload()
+        return False
+
+    def _on_defer_switch_timeout(self) -> bool:
+        """Safety watchdog (B3 fix): the outgoing leg's EOS never arrived within
+        ``defer_switch_timeout_s`` of the new leg becoming ready. Force the switch
+        rather than hold two legs open indefinitely -- the reload always eventually
+        commits."""
+        pending = self._pending_reload
+        if pending is None or not pending["switch_at_end_of_current"]:
+            return False  # already committed/aborted, or not a deferred reload
+        pending["defer_timeout_id"] = None
+        if pending["old_leg_eos"]:
+            return False  # EOS + commit already landed via the normal path
+        print(
+            f"CTRL reload: outgoing leg produced no EOS within "
+            f"{max(1, int(self.defer_switch_timeout_s))}s of the new leg being ready; "
+            "forcing the switch",
+            flush=True,
+        )
+        pending["old_leg_eos"] = True
+        self._commit_reload()
+        return False  # one-shot
+
+    def _commit_reload(self) -> bool:
+        """Main-loop commit of a reload: switch the selector(s) to the prerolled new
+        leg, repoint role index 0 at it, then dispose the old leg. A no-op if the
+        reload was aborted/superseded before this fired. ``return False`` so a GLib
+        timeout/idle source that calls this directly runs once."""
+        pending = self._pending_reload
+        if pending is None:
+            return False  # aborted or superseded before the first buffer landed
+        for timeout_key in ("timeout_id", "defer_timeout_id"):
+            if pending[timeout_key] is not None:
+                with contextlib.suppress(Exception):
+                    GLib.source_remove(pending[timeout_key])
+        if pending["eos_probe_id"] is not None:
+            with contextlib.suppress(Exception):  # probe may already have auto-removed
+                pending["old_video_pad"].remove_probe(pending["eos_probe_id"])
         new_video_pad = pending["new_video_pad"]
         new_audio_pad = pending["new_audio_pad"]
         selector = self.selector
@@ -1214,10 +1346,16 @@ class GstPlayoutEngine:
         if pending["probe_id"] is not None:
             with contextlib.suppress(Exception):  # probe may already have auto-removed
                 pending["new_video_pad"].remove_probe(pending["probe_id"])
+        if pending["eos_probe_id"] is not None:
+            with contextlib.suppress(Exception):
+                pending["old_video_pad"].remove_probe(pending["eos_probe_id"])
         if pending["timeout_id"] is not None and reason != "timeout":
             # 'timeout' means the watchdog source is firing now (auto-removed on return).
             with contextlib.suppress(Exception):
                 GLib.source_remove(pending["timeout_id"])
+        if pending["defer_timeout_id"] is not None:
+            with contextlib.suppress(Exception):
+                GLib.source_remove(pending["defer_timeout_id"])
         self._dispose_source_leg(
             pending["new_video_pad"], pending["new_audio_pad"], pending["new_elements"]
         )

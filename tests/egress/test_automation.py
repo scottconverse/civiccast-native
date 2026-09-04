@@ -31,12 +31,24 @@ _NOW = datetime(2026, 6, 12, 6, 0, tzinfo=UTC)
 
 
 class _FakeDaemon:
-    def __init__(self, *, live_channels: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        live_channels: set[str] | None = None,
+        manual_override_channels: set[str] | None = None,
+    ) -> None:
         self.live_channels = live_channels or set()
         self.processed: list[str] = []
+        # B1 fix: mirrors PlayoutSupervisor.has_manual_override -- a channel in
+        # this set stands in for an active operator live takeover or forced
+        # fallback slate.
+        self.manual_override_channels = manual_override_channels or set()
 
     def has_live_process(self, channel_id: str) -> bool:
         return channel_id in self.live_channels
+
+    def has_manual_override(self, channel_id: str) -> bool:
+        return channel_id in self.manual_override_channels
 
     def process_once(self, channel_id: str) -> int:
         self.processed.append(channel_id)
@@ -412,6 +424,233 @@ class TestPlanRollover:
         # _check_slate_replan issues its own reload for the gap; the
         # rollover check must not ALSO fire while the channel is off ON_AIR.
         assert _pending_actions(store, "public") == ["reload"]
+
+    # -- Hostile-review B1: skip entirely under an operator override ----------
+
+    def test_rollover_skipped_during_live_takeover(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"}, manual_override_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 40.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        # Establish, then push well past the (now much earlier) trigger point --
+        # under any override the check must still never enqueue a reload.
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=35))
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_skipped_during_forced_slate(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        # The state row stays ON_AIR: a forced-slate pad toggle (swap_role)
+        # writes NO state-row transition at all (B1's real defect).
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"}, manual_override_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 40.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=35))
+        assert _pending_actions(store, "public") == []
+
+    def test_rollover_resumes_once_the_override_clears(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"}, manual_override_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)
+        later = _NOW + timedelta(seconds=35)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == []  # override still active
+
+        # The override clears: the very next pass establishes a fresh horizon
+        # (nothing was ever tracked while the override was active) --
+        # nothing to dispatch on THIS tick yet.
+        daemon.manual_override_channels.discard("public")
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == []
+
+        # A subsequent pass past the boundary rolls over normally.
+        service.run_once(now=later + timedelta(seconds=1))
+        assert _pending_actions(store, "public") == ["reload"]
+
+    # -- Hostile-review B2: retry pacing + a dropped reload's failure latch ----
+
+    def test_rollover_backs_off_after_source_prepare_error(self) -> None:
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _plan_with_duration("public", 40.0)
+            raise SourcePrepareError("media temporarily unreadable")
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)  # establish horizon: 40s plan
+        later = _NOW + timedelta(seconds=35)  # well past the boundary trigger
+        service.run_once(now=later)
+        assert calls["n"] == 2  # one retry attempt, which raised
+
+        # Within the cooldown: no re-query (no command storm against a
+        # persistently failing source).
+        clock["now"] += 5.0
+        service.run_once(now=later)
+        assert calls["n"] == 2
+        assert _pending_actions(store, "public") == []
+
+        # Past the cooldown: retries.
+        clock["now"] += 30.0
+        service.run_once(now=later)
+        assert calls["n"] == 3
+
+    def test_rollover_retries_once_if_the_dispatched_reload_never_lands(self) -> None:
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)
+        later = _NOW + timedelta(seconds=35)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # The daemon never applies it (current_proof_event_id stays ev-1 --
+        # e.g. the command was dropped, or the worker control channel wasn't
+        # ready). Short of the timeout: still waiting, no second reload.
+        clock["now"] += 10.0
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == []
+
+        # Past _ROLLOVER_ISSUED_TIMEOUT_SECONDS: the latch clears and one
+        # retry is dispatched.
+        clock["now"] += 40.0
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+    # -- Hostile-review B3: earlier, boundary-aligned trigger ------------------
+
+    def test_rollover_waits_for_the_last_segment_on_a_multi_segment_plan(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        # Three 10-minute segments (30 min total) already loaded -- the last
+        # segment does not begin until 20 minutes in, comfortably past the
+        # 120s-before-end floor (28 min in). The trigger must wait for that
+        # last-segment boundary, not fire the moment the plan is established.
+        plan = EgressSourcePlan(
+            channel_id="public",
+            segments=[
+                EgressSourceSegment(
+                    label=f"Program {i}",
+                    path="C:/media/program.ts",
+                    duration_seconds=600.0,
+                    kind="program",
+                    source_ref=f"seg-{i}",
+                )
+                for i in range(3)
+            ],
+        )
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return plan
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)  # establish: end in 1800s, last segment at +1200s
+        assert calls["n"] == 1
+
+        # 10 minutes in -- nowhere near the last segment or the 120s floor.
+        service.run_once(now=_NOW + timedelta(seconds=600))
+        assert calls["n"] == 1
+        assert _pending_actions(store, "public") == []
+
+        # 19 minutes in -- still one minute short of the last-segment boundary.
+        service.run_once(now=_NOW + timedelta(seconds=1140))
+        assert calls["n"] == 1
+
+        # 20 minutes in -- the last segment begins now; the trigger fires and
+        # re-queries the schedule. The fake provider always returns the same
+        # fixed-duration plan regardless of when it is asked (unlike the real
+        # join-in-progress-aware ScheduleSourcePlanProvider), so a later query
+        # necessarily projects further into the future than the original --
+        # exactly the same "schedule continues further" shape the other
+        # rollover tests use to trigger a dispatch. What this test actually
+        # pins is the TIMING: no re-query at all before the boundary.
+        service.run_once(now=_NOW + timedelta(seconds=1200))
+        assert calls["n"] == 2
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_service_wires_the_120s_lead_floor_into_rollover_trigger_at(self) -> None:
+        """``_check_plan_rollover`` computes its trigger via
+        ``reload_policy.rollover_trigger_at``, passing the service's
+        ``_ROLLOVER_MIN_LEAD_SECONDS`` as the floor. Pinned directly against
+        the (gi-free, independently unit-tested) pure function rather than
+        end-to-end, since a plan with a long single segment has no earlier
+        last-segment-start candidate to exercise the floor against -- the
+        floor's own behavior is ``reload_policy``'s responsibility; this pins
+        that the two stay wired together."""
+        from civiccast.egress.gst.reload_policy import rollover_trigger_at
+
+        plan_end_at = _NOW + timedelta(seconds=1800)  # a 30-minute single segment
+        last_segment_start_at = _NOW  # the only segment starts at plan start
+        trigger_at = rollover_trigger_at(
+            plan_end_at=plan_end_at,
+            last_segment_start_at=last_segment_start_at,
+            min_lead_seconds=ChannelAutomationService._ROLLOVER_MIN_LEAD_SECONDS,
+        )
+        assert trigger_at == last_segment_start_at  # the earlier candidate wins
+        assert ChannelAutomationService._ROLLOVER_MIN_LEAD_SECONDS == 120.0
 
 
 class TestPerChannelLatchIndependence:

@@ -37,6 +37,16 @@ class EncoderStartRequest:
     # S15 §5 CG-lite: pre-rendered board raster composited over the output half
     # by the GStreamer engine (gdkpixbufoverlay). None = no board overlay.
     cg_overlay_image: Path | None = None
+    # B3 fix: forwarded to ``GstPlayoutEngine.reload_program`` (via the encoder
+    # strategy's ``reload_content``) for a content-reload only.
+    # ``EgressDaemon._try_content_reload`` sets this True for an automation-driven
+    # extension of an already-ON_AIR plan (no operator override active — see
+    # ``civiccast.egress.gst.reload_policy.should_defer_switch``), so the running
+    # worker defers the selector switch to the OUTGOING leg's own EOS instead of
+    # cutting the instant the new leg is ready — the still-airing item is never
+    # truncated. Ignored by ``start()`` (nothing is "outgoing" at a fresh start)
+    # and by ``ConcatEncoderStrategy`` (ffmpeg reload is always terminate+restart).
+    switch_at_end_of_current: bool = False
 
 
 @dataclass(frozen=True)

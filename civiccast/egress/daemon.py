@@ -39,6 +39,7 @@ from civiccast.egress.errors import (
     SecretUnresolvedError,
     SourcePrepareError,
 )
+from civiccast.egress.gst.reload_policy import should_defer_switch
 from civiccast.egress.health import (
     EgressEncoderMetrics,
     build_default_sink_health,
@@ -386,6 +387,20 @@ class EgressDaemon:
 
         process = self._processes.get(channel_id)
         return process is not None and _process_poll(process) is None
+
+    def has_manual_override(self, channel_id: str) -> bool:
+        """True while an operator override (live takeover / forced fallback slate)
+        is active for this channel. The base daemon has no notion of either — only
+        ``PlayoutSupervisor`` (civiccast/egress/supervisor.py) does — so this
+        default is always False, and ``PlayoutSupervisor`` overrides it. Consulted
+        by channel-automation's plan-rollover pass (B1 fix: neither an operator
+        force-slate nor a live takeover writes a state-row transition the rollover
+        check could otherwise key off) and by ``_try_content_reload`` below (B3
+        fix: whether a reload may defer its selector switch to the outgoing leg's
+        EOS — never while an override is active, see ``reload_policy.
+        should_defer_switch``)."""
+
+        return False
 
     def send_caption_cue(
         self,
@@ -1424,6 +1439,14 @@ class EgressDaemon:
             ),
             audio_tap_plan=build_audio_tap_plan(channel_id),
             ffmpeg_starter=self._ffmpeg_starter,
+            # B3 fix: only an automation-driven extension of an already-ON_AIR plan
+            # (never a FALLBACK_SLATE gap-replan, never while an operator override
+            # is active) may defer the selector switch to the outgoing leg's own
+            # EOS -- see reload_policy.should_defer_switch's docstring.
+            switch_at_end_of_current=should_defer_switch(
+                previous_state=state.state if state else None,
+                manual_override_active=self.has_manual_override(channel_id),
+            ),
         )
         try:
             applied = self._encoder_strategy.reload_content(channel_id, self._work_dir, request)

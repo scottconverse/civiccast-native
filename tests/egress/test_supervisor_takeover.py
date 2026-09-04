@@ -173,3 +173,70 @@ def test_base_daemon_rejects_takeover_action(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigInvalidError):
         daemon._process_command(_command("takeover"))
+
+
+class TestHasManualOverride:
+    """Hostile-review B1 fix: ``has_manual_override`` is the signal channel
+    automation's plan-rollover pass (automation.py's ``_check_plan_rollover``)
+    consults to skip entirely while an operator override is active, because
+    NEITHER a live takeover nor a forced slate writes a state-row transition
+    the rollover check could otherwise key off (a live takeover's
+    content-reload keeps the row ON_AIR under new content; a forced slate on
+    the GStreamer path is a bare ``swap_role`` pad toggle that writes no state
+    row at all)."""
+
+    def test_base_daemon_never_reports_an_override(self, tmp_path: Path) -> None:
+        from civiccast.egress.daemon import EgressDaemon
+
+        daemon = EgressDaemon(
+            InMemoryEgressStore(),
+            work_dir=tmp_path,
+            source_plan_provider=lambda channel_id: None,
+        )
+        assert daemon.has_manual_override("public") is False
+
+    def test_no_override_by_default(self, tmp_path: Path) -> None:
+        sup = _supervisor(_FakeReader(_session()), _SwapStrategy(), tmp_path)
+        assert sup.has_manual_override("public") is False
+
+    def test_live_takeover_reports_an_override(self, tmp_path: Path) -> None:
+        sup = _supervisor(_FakeReader(_session()), _SwapStrategy(), tmp_path)
+        sup._request_reload = lambda channel_id: None  # type: ignore[method-assign]
+        sup.request_live_takeover(channel_id="public", live_source_plan=_live_plan())
+        assert sup.has_manual_override("public") is True
+        # A different, unrelated channel is unaffected.
+        assert sup.has_manual_override("other") is False
+
+    def test_handback_clears_the_takeover_override(self, tmp_path: Path) -> None:
+        sup = _supervisor(_FakeReader(_session()), _SwapStrategy(), tmp_path)
+        sup._request_reload = lambda channel_id: None  # type: ignore[method-assign]
+        sup.request_live_takeover(channel_id="public", live_source_plan=_live_plan())
+        sup.request_live_handback(channel_id="public")
+        assert sup.has_manual_override("public") is False
+
+    def test_forced_slate_reports_an_override(self, tmp_path: Path) -> None:
+        strategy = _SwapStrategy()
+        sup = _supervisor(_FakeReader(_session()), strategy, tmp_path)
+        sup.request_fallback_slate(channel_id="public", reason="operator override")
+        assert sup.has_manual_override("public") is True
+
+    def test_slate_exit_clears_the_forced_slate_override(self, tmp_path: Path) -> None:
+        strategy = _SwapStrategy()
+        sup = _supervisor(_FakeReader(_session()), strategy, tmp_path)
+        sup.request_fallback_slate(channel_id="public", reason="operator override")
+        sup.request_slate_exit(channel_id="public")
+        assert sup.has_manual_override("public") is False
+
+    def test_takeover_and_forced_slate_are_mutually_exclusive_overrides(
+        self, tmp_path: Path
+    ) -> None:
+        # request_live_takeover pops any forced-slate reason (and vice versa
+        # via request_fallback_slate) -- the override signal must reflect
+        # whichever is the CURRENT one, not accumulate both.
+        sup = _supervisor(_FakeReader(_session()), _SwapStrategy(), tmp_path)
+        sup._request_reload = lambda channel_id: None  # type: ignore[method-assign]
+        sup.request_fallback_slate(channel_id="public", reason="operator override")
+        assert sup.has_manual_override("public") is True
+        sup.request_live_takeover(channel_id="public", live_source_plan=_live_plan())
+        assert sup.has_manual_override("public") is True
+        assert "public" not in sup._forced_slate_reasons
