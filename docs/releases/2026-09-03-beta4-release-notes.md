@@ -17,7 +17,7 @@ README / INSTALL-WINDOWS.md / `docs/tester/*` "current release" wording.
 
 `v1.0.0-beta.4` will publish as a GitHub prerelease on
 [`scottconverse/civiccast-native`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
-targeting source SHA `<KIT_SHA>`. Like beta.3, it is downloadable:
+targeting source SHA `c27c6e70200406b51558ee1ef6b3a95ee4dc4426`. Like beta.3, it is downloadable:
 `setup.exe` and the five runtime `.ccpack` packs as release assets, each
 under GitHub's 2 GiB/file cap, verified by a published `SHA256SUMS.txt` and
 a `setup.exe.sidecar.json` sidecar.
@@ -33,13 +33,13 @@ station" section and `docs/tester/lpm-beta-test-handoff.md` already say for
 writing this note, not assumed.
 
 Published via `python scripts/release/publish_beta_candidate.py --kit-dir
-<kit> --source-sha <KIT_SHA> --build-run-id <BUILD_RUN_ID> --gate-a-run-id
+<kit> --source-sha c27c6e70200406b51558ee1ef6b3a95ee4dc4426 --build-run-id 33854799455 --gate-a-run-id
 <GATE_A_RUN_ID> --tag v1.0.0-beta.4 --truth-status current`, whose
 fail-closed checks must all pass before any GitHub state is touched:
 version identity agrees across `setup.exe` ProductVersion,
 `civiccast._native_version.__version__`, and the tag (already `1.0.0-beta.4`
 as of PR #150's version bump); Authenticode signature status is `Valid`;
-Gate A run `<GATE_A_RUN_ID>` (source SHA `<KIT_SHA>`) shows `PASS` on the
+Gate A run `<GATE_A_RUN_ID>` (source SHA `c27c6e70200406b51558ee1ef6b3a95ee4dc4426`) shows `PASS` on the
 required lanes.
 
 ## Headline: the GStreamer worker's real crash cause, found and fixed since beta.3
@@ -242,9 +242,9 @@ section once this release actually publishes (see
   `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate`
   downloaded `SHA256SUMS.txt`, `setup.exe`, and the sidecar from the live
   release and verified all three against each other. The downloaded
-  `setup.exe`'s SHA-256 (`<SHA256_SETUP_EXE>`) matches the kit's own
+  `setup.exe`'s SHA-256 (`9fae1211c8cb1f7d51c59d3088e0dd1d311be32493652b61917efebc0274628f`) matches the kit's own
   installer byte-for-byte, and `Get-AuthenticodeSignature` on the
-  downloaded file reports `<Valid/NotSigned>` (signer: Scott Converse).
+  downloaded file reports `` (signer: Scott Converse).
 - **Gate A:** run
   [`<GATE_A_RUN_ID>`](https://github.com/scottconverse/civiccast-native/actions/runs/<GATE_A_RUN_ID>),
   lane verdicts: `<FILL FROM docs/releases/v1.0.0-beta.4-verification.md>`.

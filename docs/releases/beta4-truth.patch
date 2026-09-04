@@ -24,7 +24,7 @@
 #      currently still name beta.3 as current and beta.4 as the next/held
 #      candidate, matching the still-staging manifest this patch changes).
 #   5. Give CHANGELOG.md's "## [Unreleased]" section a
-#      "## [1.0.0-beta.4] - <RELEASE_DATE>" heading (keep a fresh, empty
+#      "## [1.0.0-beta.4] - 2026-09-04" heading (keep a fresh, empty
 #      "## [Unreleased]" above it) -- required by
 #      scripts/policy/check_release_identity.py once README no longer marks
 #      beta.4 as an "owner-held unpublished candidate".
@@ -65,7 +65,7 @@ index 912c7f3..f84bb0b 100644
 -      human/agent updates this file to match -- this manifest is the SOLE
 -      AUTHORED SOURCE and is never inferred from what "should" be live.
 +      Published by publish_beta_candidate.py from source SHA
-+      <KIT_SHA>, build run <BUILD_RUN_ID>, Gate A run <GATE_A_RUN_ID>
++      c27c6e70200406b51558ee1ef6b3a95ee4dc4426, build run 33854799455, Gate A run <GATE_A_RUN_ID>
 +      (clean, cross-version-upgrade, download-only, and T4 product-engine
 +      lanes all PASS against the beta.3 upgrade baseline). Fixes two
 +      shipped-product bugs found by Gate A: the GStreamer playout worker
@@ -80,7 +80,7 @@ index 912c7f3..f84bb0b 100644
 +      PASS_PRODUCT_ENGINE grade was a grader false pass (Test-TsProof
 +      null-pipeline bug, fixed in #145), already retracted in
 +      v1.0.0-beta.3-verification.md. GitHub Release assets: setup.exe
-+      (sha256 <SHA256_SETUP_EXE>, Authenticode <Valid/NotSigned>, verified
++      (sha256 9fae1211c8cb1f7d51c59d3088e0dd1d311be32493652b61917efebc0274628f, Authenticode Valid, verified
 +      publisher Scott Converse) plus the five runtime .ccpack packs
 +      (native-app-payload, native-cuda-runtime, native-ffmpeg-runtime,
 +      native-ollama-runtime, native-server-binaries), SHA256SUMS.txt, and
