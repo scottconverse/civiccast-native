@@ -3026,6 +3026,41 @@ try {
             $psqlProbe = Get-CivicCastDbRevisionViaPsql -InstallDir $installDir -LogFile $dirtyRes
             "POST_UPGRADE_DB_REVISION_PSQL=$($psqlProbe.revision)" | Add-Content -Path $dirtyRes -Encoding UTF8
             "KIT_EXPECTED_HEAD=$(Get-CivicCastKitExpectedHead)" | Add-Content -Path $dirtyRes -Encoding UTF8
+
+            # <2026-09-05 install-over regression> D3_ENGINE_EXIT=0 and a
+            # healthy /health body proved setup finished -- they never proved
+            # the installed APPLICATION PAYLOAD is actually the one this
+            # kit shipped. The real-tester bug: kit B's `/S` install-over on
+            # a station kit A had already staged left kit A's
+            # native-app-payload.ccpack (and its extracted runtime\ tree) in
+            # place, because native_pack_staging.rs's staged-pack check only
+            # compared --new-version/--compatible-core STRINGS, which both
+            # kits declared identically. Content identity is the only thing
+            # that can catch that: hash the pack CURRENTLY STAGED on the
+            # station against the pack THIS KIT actually shipped in
+            # $PayloadDir\packs, and record both so gate_a_verdict.py's
+            # check_dirty_survival can fail the run when they diverge.
+            $postUpgradeAppPayloadPack = Join-Path $installDir 'packs\native-app-payload.ccpack'
+            $postUpgradeAppPayloadDigest = 'unavailable'
+            if (Test-Path -LiteralPath $postUpgradeAppPayloadPack) {
+                try {
+                    $postUpgradeAppPayloadDigest = (Get-FileHash -LiteralPath $postUpgradeAppPayloadPack -Algorithm SHA256).Hash.ToLower()
+                } catch {
+                    $postUpgradeAppPayloadDigest = "error:$_"
+                }
+            }
+            "POST_UPGRADE_APP_PAYLOAD_DIGEST=$postUpgradeAppPayloadDigest" | Add-Content -Path $dirtyRes -Encoding UTF8
+
+            $kitAppPayloadPack = Join-Path $PayloadDir 'packs\native-app-payload.ccpack'
+            $kitAppPayloadDigest = 'unavailable'
+            if (Test-Path -LiteralPath $kitAppPayloadPack) {
+                try {
+                    $kitAppPayloadDigest = (Get-FileHash -LiteralPath $kitAppPayloadPack -Algorithm SHA256).Hash.ToLower()
+                } catch {
+                    $kitAppPayloadDigest = "error:$_"
+                }
+            }
+            "KIT_APP_PAYLOAD_DIGEST=$kitAppPayloadDigest" | Add-Content -Path $dirtyRes -Encoding UTF8
         }
         $pdRoot = Join-Path $env:ProgramData 'CivicCast'
 

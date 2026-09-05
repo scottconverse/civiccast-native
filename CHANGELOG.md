@@ -37,6 +37,30 @@ below.
 
 ### Fixed
 
+- **Install-over could leave the PREVIOUS kit's application payload silently
+  running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
+  (install-over) on a station kit A had already installed, where both kits
+  declared the same `product_version` (e.g. `1.0.0-beta.5`) but carried
+  different content, left kit A's `native-app-payload.ccpack` -- and its
+  extracted `runtime\` tree -- staged and running: the installer exited `0`,
+  `/health` reported healthy, but the code actually executing was still kit
+  A's. Root cause: `native_pack_staging.rs`'s staged-pack check
+  (`classify_dest_pack_state`) verified the pack already at
+  `$INSTDIR\packs\<component>.ccpack` against only the `--new-version`/
+  `--compatible-core` STRINGS, so an identically-versioned but
+  content-different incoming pack was classified `AlreadySatisfied` and the
+  new pack at `$EXEDIR\packs` was never copied in. The staging decision now
+  also compares each pack's content digest (`VerifiedPack::sha256`, the raw
+  `.ccpack` file's own SHA-256) and replaces the staged pack whenever the
+  incoming one differs, for both required and optional components; a
+  greppable `pack <component>: payload replaced (staged <digest> -> incoming
+  <digest>)` / `payload unchanged (<digest>)` line is now written for every
+  component staging decides on. Gate A's cross-version dirty-lane evidence
+  (`sandbox-lab/scripts/In-Sandbox-Report.ps1`, `scripts/gate_a_verdict.py`'s
+  `check_dirty_survival`) now hashes the installed app-payload pack against
+  the kit's own pack post-upgrade (`POST_UPGRADE_APP_PAYLOAD_DIGEST` /
+  `KIT_APP_PAYLOAD_DIGEST`) and fails the run on any mismatch, so this
+  regression is caught by the gate rather than by a tester again.
 - **The live caption tap could starve playout, and did.** MEASURED on tester
   DESKTOP-VBMA6O5 (1.0.0-beta.5 candidate kit `e502074`, three channels
   ON_AIR on the GStreamer engine): the control plane burned ~247% of a core

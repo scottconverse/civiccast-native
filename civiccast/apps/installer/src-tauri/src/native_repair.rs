@@ -156,9 +156,17 @@ pub fn decide_component_repair_action(
 ) -> RepairAction {
     match staging_action {
         StagingAction::NeedsOnlineOrAbort => RepairAction::NotRepairableLocally,
-        StagingAction::CopyFromOffline | StagingAction::ReplaceCorruptFromOffline => {
-            RepairAction::RepairedFromSideLoad
-        }
+        // `ReplaceFromOffline` (a same-declared-version, different-content
+        // offline pack) is never actually produced on this path today --
+        // `decide_offline_staging_action` (called a few lines below, not its
+        // identity-aware sibling) has no way to return it -- but the arm is
+        // required for exhaustiveness now that the two decision functions
+        // share one `StagingAction` enum, and the same repair-from-side-load
+        // treatment is correct if this module is ever wired to the
+        // identity-aware decision too.
+        StagingAction::CopyFromOffline
+        | StagingAction::ReplaceCorruptFromOffline
+        | StagingAction::ReplaceFromOffline => RepairAction::RepairedFromSideLoad,
         StagingAction::AlreadySatisfied => {
             if tree_was_already_verified {
                 RepairAction::NoActionNeeded
@@ -252,9 +260,10 @@ pub fn repair_pack_component(
         staging_action,
         StagingAction::CopyFromOffline | StagingAction::ReplaceCorruptFromOffline
     ) {
-        let source_path = offline_sources
+        let source_pack = offline_sources
             .get(component)
             .expect("CopyFromOffline/ReplaceCorruptFromOffline implies a verified offline source");
+        let source_path = source_pack.path.as_path();
         if let Err(error) = native_pack_staging::commit_pack_file(
             source_path,
             &local_pack,

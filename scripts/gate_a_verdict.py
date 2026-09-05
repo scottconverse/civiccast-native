@@ -885,6 +885,41 @@ def check_dirty_survival(output_dir: Path) -> CheckResult:
                 f"DIRTY-RESULT.txt POSTINSTALL_OUTCOME={postinstall or '<missing>'} "
                 "(expected SUCCESS)"
             )
+
+        # 2026-09-05 real-tester install-over regression: exit 0 and a
+        # healthy station proved setup finished, never that the installed
+        # APPLICATION PAYLOAD is the one THIS kit shipped. Two kits declaring
+        # the same product_version/compatible_core STRINGS with different
+        # content left the previous kit's payload silently in place
+        # (native_pack_staging.rs's staged-pack check only compared those
+        # strings). Content identity is the only thing that can catch that
+        # -- fail the run when the staged pack's digest and the kit's own
+        # pack digest diverge.
+        post_upgrade_digest = _dirty_line(text, "POST_UPGRADE_APP_PAYLOAD_DIGEST")
+        kit_digest = _dirty_line(text, "KIT_APP_PAYLOAD_DIGEST")
+        if (
+            not post_upgrade_digest
+            or post_upgrade_digest in ("unavailable", "")
+            or (post_upgrade_digest.startswith("error:"))
+        ):
+            return _fail(
+                "DIRTY-RESULT.txt POST_UPGRADE_APP_PAYLOAD_DIGEST="
+                f"{post_upgrade_digest or '<missing>'} -- could not hash the staged "
+                "native-app-payload.ccpack after install-over"
+            )
+        if not kit_digest or kit_digest in ("unavailable", "") or kit_digest.startswith("error:"):
+            return _fail(
+                f"DIRTY-RESULT.txt KIT_APP_PAYLOAD_DIGEST={kit_digest or '<missing>'} -- could "
+                "not hash this kit's own native-app-payload.ccpack"
+            )
+        if post_upgrade_digest != kit_digest:
+            return _fail(
+                "DIRTY-RESULT.txt POST_UPGRADE_APP_PAYLOAD_DIGEST="
+                f"{post_upgrade_digest} != KIT_APP_PAYLOAD_DIGEST={kit_digest} -- the installed "
+                "application payload is NOT this kit's payload (install-over left a previous "
+                "kit's app payload staged; see native_pack_staging.rs's identity-aware staging "
+                "decision)"
+            )
     pg = _dirty_line(text, "DIRTY_PGDATA_PRESERVED")
     if pg != "1":
         return _fail(f"DIRTY-RESULT.txt DIRTY_PGDATA_PRESERVED={pg or '<missing>'} (expected 1)")
