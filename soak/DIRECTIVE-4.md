@@ -170,3 +170,24 @@ Soak #2's first rollup (19:16Z) shows the control plane still near 2.9 cores and
 ## Addendum -- AUTORUN-9q
 
 `AUTORUN-9p.ps1` had a PowerShell quoting error (does not parse; it produces no report). `AUTORUN-9q.ps1` is the same read-only installed-code check, fixed. Result: `soak/DIAG-9q-<stamp>.md`.
+
+
+## Addendum -- soak #2 measured the OLD code; clean reinstall (AUTORUN-9r..9u) -> soak #3
+
+Root cause (repo, main 91caebc): the installer's pack staging keys on the pack's declared
+`product_version` string, not on the pack's content. Both candidate kits (e502074 and 91caebc)
+declare 1.0.0-beta.5, so `native_pack_staging.rs` classified the stale on-disk
+`native-app-payload.ccpack` as AlreadySatisfied and never copied or extracted the new one
+(`classify_dest_pack_state` -> AlreadySatisfied at native_pack_staging.rs:189/:741;
+`ensure_pack_extracted` idempotent return at :645-656). The D3 `SAME_VERSION_NO_OP` line is only the
+migration gate. A real beta.4 -> beta.5 upgrade (different strings) replaces the payload.
+
+So on this box: `AUTORUN-9r` quiet-uninstalls, removes `C:\ProgramData\CivicCast`, installs kit
+91caebc fresh (`/S /D=C:\CivicCastHostStore\install`), waits for /health; `AUTORUN-9s` clears the
+persisted first-admin marker (station-state.json under the service profile) and restarts;
+`AUTORUN-9t` does first-admin and stores the token; `AUTORUN-9u` is AUTORUN-9e for this kit
+(upload the 4 clips, schedule 2h15 per channel + commit, config PUT, start), archives the invalid
+soak #2 probes to `soak/archive-91caebc-soak2-oldcode/`, resets the counters and writes
+`state\soak-started`. AUTORUN-3 then verifies as before (30-min cadence, 3-min warm-up grace,
+verdict at 2 h). Results: REINSTALL-RESULT-9r.md, STATE-RESET-RESULT-9s.md, AUTORUN-9t-RESULT-*.md,
+AUTORUN-9u-RESULT-*.md / CHANNEL-SCHEDULE-9u.md / SOAK-START-9u.md / SETUP-BLOCKED-9u.md.
