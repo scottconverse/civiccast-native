@@ -1,0 +1,93 @@
+﻿{
+    "schema":  "civiccast-native-fleet-heartbeat-v1",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260905T150613Z",
+    "health":  {
+                   "status":  "healthy",
+                   "version":  "1.0.0-beta.5",
+                   "schema":  "current",
+                   "schema_db_revision":  "0087_retention_terms",
+                   "schema_expected_head":  "0087_retention_terms",
+                   "mode":  "normal"
+               },
+    "db_revision":  null,
+    "service":  "Running",
+    "cpu_pct":  66.7,
+    "mem_free_mb":  582,
+    "disk_free_gb":  254.9,
+    "uptime_min":  12358,
+    "processes":  [
+                      {
+                          "ProcessName":  "python",
+                          "Id":  4764,
+                          "rss_mb":  1047,
+                          "cpu_s":  63706.6
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  30416,
+                          "rss_mb":  6798,
+                          "cpu_s":  49.1
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  36576,
+                          "rss_mb":  3904,
+                          "cpu_s":  72.3
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  39644,
+                          "rss_mb":  2457,
+                          "cpu_s":  227.3
+                      },
+                      {
+                          "ProcessName":  "pythonservice",
+                          "Id":  9872,
+                          "rss_mb":  9,
+                          "cpu_s":  62.3
+                      }
+                  ],
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  0,
+                            "inferred":  "none-running"
+                        },
+    "egress_channels":  [
+                            {
+                                "channel_id":  "public",
+                                "state":  "FALLBACK_SLATE",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "soak8-9e-public":  true
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "education",
+                                "state":  "FALLBACK_SLATE",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "soak8-9e-education":  true
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "government",
+                                "state":  "FALLBACK_SLATE",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "soak8-9e-government":  true
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            }
+                        ],
+    "soak_started":  true
+}
