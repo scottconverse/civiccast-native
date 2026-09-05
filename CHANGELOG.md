@@ -158,7 +158,7 @@ for the draft verification record.
   the REAL producer's output instead of a hand-typed report dict, which is why
   nothing caught the mismatch.
 - **Headline: the real cause of the playout-worker restarts, found on real
-  station hardware (#<CAPTION_FIX_PR>).** Two earlier rounds of this entry
+  station hardware (#172, open, under review).** Two earlier rounds of this entry
   attributed the beta.4 soak's relaunch-count `FAIL` first to plan-boundary
   worker exits (retracted, corrected 2026-09-05 in
   `docs/releases/v1.0.0-beta.4-verification.md` and the beta.4 release
@@ -175,22 +175,27 @@ for the draft verification record.
   in-process on CPU, and with three channels running it overloads.**
   `civiccast/captions/tap_worker.py` runs speech-to-text for every on-air
   channel in the same process, on the CPU, with no backoff. The tester's
-  three-channel real-hardware soak recorded `CRITICAL
+  three-channel real-hardware soak (`DESKTOP-VBMA6O5`, kit `e502074`,
+  mission `soak8-e1acfe6`, planned 2 hours, actually run 2.5 hours,
+  2026-09-05T09:06:14Z -- 11:36:14Z) recorded `CRITICAL
   civiccast.captions.tap_worker: Caption tap overload for channel <id>: N
   settled segments exceeds the maximum 2; active captions were cleared and
   stale audio was moved to overload evidence` roughly every 30 seconds, on
-  all three channels, for the full 2-hour run (663 caption lines total). It
-  never backs off, drives the control-plane process to roughly 2.5 CPU
-  cores (19,000+ CPU-seconds, 1.9 GB resident), and starves the GStreamer
-  playout workers of CPU time; each starved worker trips its own stall
-  watchdog (`CTRL stall: no output for 10s`) and exits, and the daemon
-  relaunches it -- on the tester, public restarted once, education once,
-  government twice in 90 minutes; the sandbox soaks saw 5-10 relaunches per
-  channel in 2 hours. The playout engine itself, the TSDuck packet-level
-  checks (0 sync errors, 0 transport errors, roughly 100,000 packets per
-  capture), and the upgrade path all pass independently on real hardware --
-  the restarts are a CPU-contention symptom of the caption tap, not an
-  engine or upgrade defect. **Fixed here by #<CAPTION_FIX_PR>**: overload
+  all three channels, throughout the run. It never backs off, drives the
+  control-plane process to roughly 2.8 CPU cores (1.4-1.9 GB resident)
+  throughout, and starves the GStreamer playout workers of CPU time; each
+  starved worker trips its own stall watchdog (`CTRL stall: no output for
+  10s`) and exits, and the daemon relaunches it -- on the tester, public
+  relaunched twice, education once, government three times (6 total); at
+  the final probe public and government were in `FALLBACK_SLATE` after a
+  relaunch and education was still `ON_AIR`; the sandbox soaks saw 5-10
+  relaunches per channel in 2 hours. TSDuck (`tsp`) packet-level checks
+  passed on every 30-minute probe cycle from 09:36Z onward -- the two
+  earlier probe failures, at 08:28Z and 09:06Z, predate `ON_AIR` (the
+  channels had not yet been created) and are excluded -- and the upgrade
+  path passes independently on real hardware: the restarts are a
+  CPU-contention symptom of the caption tap, not an engine or upgrade
+  defect. **Fixed here by #172 (open, under review)**: overload
   backoff/pause in the caption tap, a bounded ASR workload, and higher
   process priority for the playout workers. **Known limit, carried
   forward:** captions are best-effort -- a three-channel, CPU-only station
@@ -452,7 +457,7 @@ for the draft verification record.
    than by a test exercising the harness's own proof logic in isolation. A
    self-test lane for the harness is queued as batch 27 and is not part of
    this candidate.
-3. **Captions are best-effort and pause under load (#<CAPTION_FIX_PR>).**
+3. **Captions are best-effort and pause under load (#172, open, under review).**
    The caption tap's overload backoff means a box that cannot keep up
    pauses captions rather than risk playout -- a three-channel, CPU-only
    station will see captions pause under sustained load. Playout always

@@ -41,7 +41,7 @@ version identity agreeing across `setup.exe` ProductVersion,
 `Valid`; Gate A run `<GATE_A_RUN_ID>` showing `PASS` on all three required
 lanes.
 
-## Headline: the real cause of the playout-worker restarts, found on real station hardware (#<CAPTION_FIX_PR>)
+## Headline: the real cause of the playout-worker restarts, found on real station hardware (#172, open, under review)
 
 Two earlier rounds of this document attributed the beta.4 soak's
 relaunch-count `FAIL` first to plan-boundary worker exits (retracted, see
@@ -58,27 +58,32 @@ environment: the live caption tap.
 in-process on CPU, and with three channels running it overloads.**
 `civiccast/captions/tap_worker.py` runs speech-to-text for every on-air
 channel in the same process, on the CPU, with no backoff. On the tester's
-three-channel real-hardware soak, the control-plane log recorded this line
-roughly every 30 seconds, on all three channels, for the full 2-hour run
-(663 caption lines total):
+three-channel real-hardware soak (`DESKTOP-VBMA6O5`, kit `e502074`,
+mission `soak8-e1acfe6`, planned 2 hours, actually run 2.5 hours,
+2026-09-05T09:06:14Z -- 11:36:14Z), the control-plane log recorded this
+line roughly every 30 seconds, on all three channels, throughout the run:
 
 ```
 CRITICAL civiccast.captions.tap_worker: Caption tap overload for channel <id>: N settled segments exceeds the maximum 2; active captions were cleared and stale audio was moved to overload evidence
 ```
 
 It never backs off. Sustained, it drives the control-plane process to
-roughly 2.5 CPU cores (19,000+ CPU-seconds, 1.9 GB resident) over the
-2-hour run, which starves the GStreamer playout workers of CPU time. Each
-starved worker trips its own stall watchdog (`CTRL stall: no output for
-10s`) and exits, and the daemon relaunches it -- on the tester, public
-restarted once, education once, government twice in 90 minutes; the
-sandbox soaks saw 5-10 relaunches per channel in 2 hours. The playout
-engine itself, the TSDuck packet-level checks (0 sync errors, 0 transport
-errors, roughly 100,000 packets per capture), and the upgrade path all
-pass independently on real hardware -- the restarts are a CPU-contention
-symptom of the caption tap, not an engine or upgrade defect.
+roughly 2.8 CPU cores (1.4-1.9 GB resident) throughout the run, which
+starves the GStreamer playout workers of CPU time. Each starved worker
+trips its own stall watchdog (`CTRL stall: no output for 10s`) and exits,
+and the daemon relaunches it -- on the tester's real-hardware soak, public
+relaunched twice, education once, government three times (6 relaunches
+total); at the final probe, public and government were in
+`FALLBACK_SLATE` after a relaunch and education was still `ON_AIR`; the
+sandbox soaks saw 5-10 relaunches per channel in 2 hours. TSDuck (`tsp`)
+packet-level checks passed on every 30-minute probe cycle from 09:36Z
+onward (the two earlier probe failures, at 08:28Z and 09:06Z, predate
+`ON_AIR` -- the channels had not yet been created -- and are excluded),
+and the upgrade path passes independently on real hardware -- the
+restarts are a CPU-contention symptom of the caption tap, not an engine
+or upgrade defect.
 
-**Fixed in this candidate by #<CAPTION_FIX_PR>:** overload backoff/pause in
+**Fixed in this candidate by #172 (open, under review):** overload backoff/pause in
 the caption tap so it stops driving unbounded CPU load once it is behind,
 a bounded ASR workload, and higher process priority for the playout
 workers so they are not the first thing starved when the box is under
@@ -118,7 +123,7 @@ the restarts.** Evidence:
 the box cannot keep up, they pause and playout wins -- a three-channel,
 CPU-only station will pause captions under load rather than risk playout.
 
-**What beta.5 is, in full:** the caption-tap overload fix (#<CAPTION_FIX_PR>,
+**What beta.5 is, in full:** the caption-tap overload fix (#172, open, under review,
 above) is the headline; also in this candidate are the state-write encoding
 fix (#169, merged), the four Gate A harness fixes below (#158/#160/#161/#163),
 and the release-prep identity bump (#164). The seamless plan rollover (#162)
@@ -165,18 +170,31 @@ ready before the outgoing clip ends, the output freezes until it is ready
 or the existing 10-second stall watchdog restarts the channel -- see "Known
 issues in beta.5" below.
 
-**T6 rollover soak retest, sandbox-lab `soak-4h` on HALO, proof kit
-`b2b5694`:**
+**T6 relaunch-count retest, real-hardware soak on tester `DESKTOP-VBMA6O5`,
+kit `e502074` (mission `soak8-e1acfe6`, planned 2 hours, actually run 2.5
+hours):**
 
 ```
-T6_RESULT=<SOAK_RESULT> beats=<SOAK_BEATS> failed_beats=<SOAK_FAILED_BEATS>
-relaunches_public=<SOAK_RELAUNCHES_PUBLIC>
-relaunches_education=<SOAK_RELAUNCHES_EDUCATION>
-relaunches_government=<SOAK_RELAUNCHES_GOVERNMENT>
+T6_RESULT=FAIL beats=83 failed_beats=0
+relaunches_public=2
+relaunches_education=1
+relaunches_government=3
 ```
 
-PASS criterion is `relaunches=0` per channel. Evidence:
-`<EVIDENCE_PATH_SOAK>`.
+`beats` counts the harness's 83 recorded heartbeats over the run;
+`failed_beats=0` because TSDuck (`tsp`) passed on every 30-minute probe
+cycle from 09:36Z onward -- the only two probe failures, at 08:28Z and
+09:06Z, predate `ON_AIR` (the channels had not yet been created) and are
+excluded. PASS criterion is `relaunches=0` per channel; this run did not
+meet it. Kit `e502074` was `main` at soak time -- it carries #169's
+state-write encoding fix but not the caption-tap overload fix (#172, open,
+under review), so this retest measures the caption-tap-driven relaunches
+described above, not a regression in the rollover fix itself (0 rollovers
+fired in this run). Evidence: tester branch
+`tester/soak8-e1acfe6-DESKTOP-VBMA6O5` (`soak/final-verdict.json`,
+`soak/SOAK-REPORT-DESKTOP-VBMA6O5-20260905T113614Z.md`,
+`soak/DIAG-9i-20260905T103612Z.md`); local copy
+`C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\tester-soak8-e1acfe6-20260905\`.
 
 ## Also in this candidate: the Gate A schema proof now actually executes
 
@@ -275,7 +293,11 @@ Prepared here so publish is a mechanical sweep, not a rediscovery:
 - **Gate A:** run `<GATE_A_RUN_ID>`, all three lanes, evidence copied to
   `<EVIDENCE_PATH_CLEAN>` / `<EVIDENCE_PATH_CROSSVERSION>` /
   `<EVIDENCE_PATH_DOWNLOADONLY>`.
-- **T6 rollover soak:** `<EVIDENCE_PATH_SOAK>`.
+- **T6 relaunch-count retest:** tester branch
+  `tester/soak8-e1acfe6-DESKTOP-VBMA6O5` and local copy
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\tester-soak8-e1acfe6-20260905\`
+  (see "T6 relaunch-count retest" above -- already run, real-hardware,
+  `FAIL`; not a publish-time placeholder).
 - **Test suite:** `uv run pytest tests/docs tests/policy -q` re-run for this
   publish; see the commit history on this branch for the result.
 
