@@ -196,3 +196,8 @@ AUTORUN-9u-RESULT-*.md / CHANNEL-SCHEDULE-9u.md / SOAK-START-9u.md / SETUP-BLOCK
 ## Addendum -- AUTORUN-9v (read-only)
 
 After the clean reinstall, `AUTORUN-9v.ps1` repeats the installed-code check (same as 9q): hashes of the installed civiccast files, presence of `tap_backoff.py`, `CaptionBackoffPolicy` in tap_worker.py, journals. Result `soak/DIAG-9v-<stamp>.md`. A soak #3 verdict only counts if this shows the #172 code on disk.
+
+
+## Addendum -- AUTORUN-9w
+
+`AUTORUN-9u` uploaded the 4 clips, scheduled 272 items per channel (30 s each: ffprobe is not on this box, default duration), applied config and sent start, but no channel reported ON_AIR within its 3-minute window on the freshly installed station, so it did not write `soak-started`. `AUTORUN-9w.ps1` (runs once) records each channel's raw `/state`, sends `start` again (harmless if already running), polls up to 6 minutes, and when all three are ON_AIR archives the earlier probes to `soak/archive-91caebc-soak2-oldcode/`, resets the counters and writes `state\soak-started` (soak #3). Result `soak/RESTART-RESULT-9w.md`; exit 5 = still <3 ON_AIR.
