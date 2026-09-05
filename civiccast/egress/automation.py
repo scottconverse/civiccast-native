@@ -397,16 +397,27 @@ class ChannelAutomationService:
     # it is only the CEILING _rollover_min_interval_seconds clamps to. A flat
     # 300s floor is longer than the lifetime of a short plan (D45's own
     # trigger: PLAN_MIN_SECONDS reverted to 0.0 in source_plan.py means an
-    # 8-segment, 30-second-item plan is only 240s long), which silently
-    # starves every rollover after the first until the engine reaches EOS and
-    # restarts -- exactly the failure this cadence floor exists to prevent.
-    # See _rollover_min_interval_seconds.
+    # 8-segment, 30-second-item plan is only 240s long). MEASURED: against
+    # that 240s plan a flat 300s floor produces a dispatch every 300s with
+    # the boundary-aligned lead shrinking each cycle (120s, then 60s, then
+    # 0s, then negative), so by the third rollover the trigger arrives at or
+    # after the plan's real end and the engine reaches EOS and restarts --
+    # exactly the failure this cadence floor exists to prevent. See
+    # _rollover_min_interval_seconds.
     _ROLLOVER_MIN_INTERVAL_SECONDS = 300.0
-    #: D45 fix: the FLOOR under the per-channel rollover-dispatch interval,
-    #: independent of plan length -- a plan that is shorter than this many
-    #: seconds still gets at least one guaranteed rollover attempt window
-    #: (see _rollover_min_interval_seconds).
-    _ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS = 30.0
+    #: Hostile-review fix (2026-09-05): a trivial epsilon floor ONLY -- large
+    #: enough to avoid a literal zero/near-zero interval for a degenerate
+    #: plan, small enough to never bind for any plan worth measuring. An
+    #: earlier version of this fix used 30.0 here, which is a real floor for
+    #: a longer plan but is LONGER than half the lifetime of an 8x3s (24s)
+    #: plan -- measured: dispatches still happen every 30s (the floor), but
+    #: the boundary-aligned lead shrinks each cycle (22s, 16s, 10s, 4s, then
+    #: negative by the 5th rollover) exactly like the flat-300s bug this
+    #: whole mechanism exists to fix, just faster. ``_rollover_min_interval_
+    #: seconds`` must never return more than half the plan's own planned
+    #: duration; this constant cannot violate that because it is far smaller
+    #: than any real plan.
+    _ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS = 1.0
 
     @property
     def daemon(self) -> EgressDaemon:
@@ -654,13 +665,23 @@ class ChannelAutomationService:
         rollover after the first dispatch until the engine reaches EOS and
         restarts: exactly the failure this cadence floor exists to prevent.
 
-        Scaling the floor with the plan (half its planned duration, clamped
-        between ``_ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS`` and the historic
-        ``_ROLLOVER_MIN_INTERVAL_SECONDS`` ceiling) guarantees the floor never
-        exceeds the plan's own lifetime, so a rollover always has room to
-        dispatch again well before the plan runs out, however short the
-        schedule's slots are. A long-item schedule (a plan well over 600s)
-        is unaffected -- the 300s ceiling still applies."""
+        Scaling the floor to HALF the plan's own planned duration (clamped
+        at ``_ROLLOVER_MIN_INTERVAL_SECONDS``, 300s, for a long plan)
+        guarantees this can never exceed the plan's own lifetime, so a
+        rollover always has room to dispatch again well before the plan runs
+        out, however short the schedule's slots are. Hostile-review fix: an
+        earlier version additionally floored this at a flat 30s
+        (``max(30.0, 0.5 * planned_seconds)``), which is itself LONGER than
+        an 8x3s (24-second) plan's own lifetime and reproduces the exact
+        starvation bug this method exists to prevent, just at a smaller
+        scale -- measured: with a 24s plan and a 30s floor, every rollover
+        after the first is silently blocked until the engine reaches EOS.
+        The floor is now only ``_ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS`` (a
+        trivial 1.0s epsilon against a literal zero/near-zero interval for a
+        degenerate plan), so this never returns more than half of
+        ``planned_seconds`` -- the ONLY invariant this method guarantees. A
+        long-item schedule (a plan well over 600s) is unaffected -- the 300s
+        ceiling still applies."""
 
         return min(
             self._ROLLOVER_MIN_INTERVAL_SECONDS,
@@ -749,8 +770,15 @@ class ChannelAutomationService:
         ``PLAN_MIN_SECONDS`` to 0.0 (the plan's segment COUNT alone bounds
         pipeline shape now) and instead derives this floor from the plan
         actually on air: short plan, short floor, so a rollover is always
-        allowed to land comfortably inside the plan's own lifetime instead of
-        being silently starved by a flat constant longer than that lifetime.
+        allowed to land comfortably inside the plan's own lifetime, instead
+        of a flat constant that can be longer than that lifetime -- measured
+        with a flat 300s floor against an 8x30s (240s) plan: the
+        boundary-aligned lead shrinks every cycle (120s, then 60s, then 0s,
+        then negative) until a rollover arrives at or after the plan's real
+        end and the engine reaches EOS. See ``_rollover_min_interval_seconds``
+        for the exact numbers and the smaller-scale version of this same bug
+        (a flat 30s sub-floor against a 24-second plan) an earlier version
+        of this fix still had.
 
         If the schedule has nothing beyond what is already loaded (the
         freshly-built plan does not reach any further), this deliberately

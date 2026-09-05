@@ -4,12 +4,18 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from civiccast.egress.errors import SourcePrepareError
-from civiccast.egress.models import EgressConfig, EgressSourcePlan, EgressSourceSegment
+from civiccast.egress.models import (
+    MAX_PLAYLIST_SUBCHAINS,
+    EgressConfig,
+    EgressSourcePlan,
+    EgressSourceSegment,
+)
 from civiccast.egress.runtime import FfmpegRunner
 from civiccast.schedule.models import (
     ASSET_STATE_RECORDED,
@@ -20,6 +26,8 @@ from civiccast.schedule.models import (
     StaffAssetRow,
 )
 from civiccast.stream._ffmpeg import run_ffmpeg
+
+_LOG = logging.getLogger(__name__)
 
 AssetResolver = Callable[[str], StaffAssetRow | None]
 ScheduleItemsProvider = Callable[[str], Sequence[ScheduleItemResponse]]
@@ -49,17 +57,20 @@ _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 #: ON-AIR plan's own duration rather than a fixed 300s, so a short plan still
 #: gets rolled over comfortably inside its own lifetime.
 PLAN_MIN_SECONDS = 0.0
-#: Hard ceiling on segments in one plan, so a pathological schedule of
-#: one-second slots cannot build an unbounded segment list (and cannot make
-#: ``SourcePreparer.prepare`` walk thousands of entries, nor
-#: ``bridge.graph_from_config`` build thousands of decoder sub-chains).
-#: With ``PLAN_MIN_SECONDS`` back to 0.0 this ceiling is defense-in-depth
-#: only -- ``max_segments`` (8 by default) is what actually bounds a normal
-#: plan's segment count now. ``bridge.graph_from_config`` also hard-caps the
-#: sub-chains it will actually BUILD at ``MAX_PLAYLIST_SUBCHAINS`` (12),
-#: independent of this value, so a caller that raises ``max_segments`` /
-#: ``segment_cap`` well beyond what one pipeline can safely decode still
-#: cannot blow up the worker process.
+#: Historical hard ceiling on segments in one plan (pre-D45: 120), kept for
+#: back-compat and for anything that still imports it. Hostile-review fix
+#: (2026-09-05): this is no longer what ``segment_cap`` actually defaults to
+#: below -- ``models.MAX_PLAYLIST_SUBCHAINS`` (12) is the REAL ceiling now,
+#: enforced at this module's only producer (``build_source_plan_from_
+#: schedule`` clamps both ``max_segments`` and ``segment_cap`` down to it,
+#: logging a WARNING when it does) so every consumer of the returned plan --
+#: ``automation.py``, ``daemon.py``, ``continuity.py``, ``preparer.py`` --
+#: reads the exact same segment count ``bridge.graph_from_config`` will
+#: build a decoder sub-chain for. A value of 120 here would silently let a
+#: plan carry more segments than one pipeline can safely decode, which is
+#: exactly the mismatch that let a schedule of 30-second items build ~1200
+#: decoder threads on real hardware (see ``MAX_PLAYLIST_SUBCHAINS``'s
+#: docstring in ``models.py`` for the measured cost).
 PLAN_MAX_SEGMENTS = 120
 
 
@@ -130,7 +141,7 @@ class ScheduleSourcePlanProvider:
         now_provider: Callable[[], datetime] | None = None,
         max_segments: int = 8,
         min_plan_seconds: float = PLAN_MIN_SECONDS,
-        segment_cap: int = PLAN_MAX_SEGMENTS,
+        segment_cap: int = MAX_PLAYLIST_SUBCHAINS,
         gap_tolerance_seconds: float = 1.0,
     ) -> None:
         if max_segments <= 0:
@@ -166,7 +177,7 @@ def build_source_plan_from_schedule(
     now: datetime | None = None,
     max_segments: int = 8,
     min_plan_seconds: float = PLAN_MIN_SECONDS,
-    segment_cap: int = PLAN_MAX_SEGMENTS,
+    segment_cap: int = MAX_PLAYLIST_SUBCHAINS,
     gap_tolerance: timedelta = timedelta(seconds=1),
 ) -> EgressSourcePlan | None:
     """Return the currently playable egress source plan, or None for slate fallback.
@@ -195,12 +206,53 @@ def build_source_plan_from_schedule(
 
     if max_segments <= 0:
         raise ValueError("max_segments must be greater than zero.")
-    if segment_cap < max_segments:
-        raise ValueError("segment_cap must be at least max_segments.")
     if min_plan_seconds < 0:
         raise ValueError("min_plan_seconds must be zero or greater.")
     if gap_tolerance < timedelta(0):
         raise ValueError("gap_tolerance must be zero or greater.")
+    # Hostile-review fix (2026-09-05): the cap that bounds the pipeline SHAPE
+    # has to live here, at the plan's only producer, not in
+    # ``bridge.graph_from_config`` alone. A caller-side ``max_segments`` /
+    # ``segment_cap`` above ``MAX_PLAYLIST_SUBCHAINS`` used to build a plan
+    # every OTHER consumer (``automation.py``'s rollover-horizon tracking,
+    # ``daemon.py``'s dispatched-plan bookkeeping, ``continuity.py``,
+    # ``preparer.py``) trusted at its full, uncapped size, while the bridge
+    # silently played only the first ``MAX_PLAYLIST_SUBCHAINS`` of it -- the
+    # pipeline would reach EOS long before automation's tracked horizon
+    # expected it to, restarting the worker on a cadence the rest of the
+    # system had no idea was coming. Clamping the inputs here instead means
+    # every consumer reads the SAME plan the pipeline will actually play; a
+    # plan returned by this function can never disagree with what
+    # ``graph_from_config`` builds from it. This runs BEFORE the
+    # segment_cap-vs-max_segments cross-check below so an explicit
+    # max_segments above the pipeline cap (with the default segment_cap)
+    # clamps quietly instead of raising a spurious "segment_cap must be at
+    # least max_segments" for two values that were never in conflict before
+    # either was capped.
+    if max_segments > MAX_PLAYLIST_SUBCHAINS:
+        _LOG.warning(
+            "build_source_plan_from_schedule(%s): max_segments=%d exceeds "
+            "MAX_PLAYLIST_SUBCHAINS=%d (the hard per-pipeline decoder-chain cap); "
+            "clamping to %d.",
+            channel_id,
+            max_segments,
+            MAX_PLAYLIST_SUBCHAINS,
+            MAX_PLAYLIST_SUBCHAINS,
+        )
+        max_segments = MAX_PLAYLIST_SUBCHAINS
+    if segment_cap > MAX_PLAYLIST_SUBCHAINS:
+        _LOG.warning(
+            "build_source_plan_from_schedule(%s): segment_cap=%d exceeds "
+            "MAX_PLAYLIST_SUBCHAINS=%d (the hard per-pipeline decoder-chain cap); "
+            "clamping to %d.",
+            channel_id,
+            segment_cap,
+            MAX_PLAYLIST_SUBCHAINS,
+            MAX_PLAYLIST_SUBCHAINS,
+        )
+        segment_cap = MAX_PLAYLIST_SUBCHAINS
+    if segment_cap < max_segments:
+        raise ValueError("segment_cap must be at least max_segments.")
     current_time = _as_utc(now or datetime.now(UTC))
     playable_items = [
         item

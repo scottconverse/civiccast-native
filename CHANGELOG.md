@@ -178,27 +178,54 @@ below.
   PER segment in a single pipeline set to `PLAYING` all at once
   (`engine._build_playlist`), and `avdec_h264`'s default `max-threads=0`
   spins up ~20 threads per sub-chain -- ~1200 threads, no TS output landing
-  inside the engine's 10-second stall watchdog. Three independent fixes,
-  D45:
+  inside the engine's 10-second stall watchdog. D45, four independent fixes
+  (the first pass at this fix missed the second and third below; caught in
+  hostile review before merge):
   - `PLAN_MIN_SECONDS` reverted to `0.0` -- a plan's segment count is bounded
     by `max_segments` (8 by default, pipeline shape) alone again; a caller
     that explicitly wants a longer duration-bounded window can still opt in
     via `min_plan_seconds`.
+  - The pipeline-shape cap (`MAX_PLAYLIST_SUBCHAINS`, 12; moved into
+    `civiccast/egress/models.py` so every producer and consumer import the
+    same value) is now enforced at the plan's only PRODUCER --
+    `source_plan.build_source_plan_from_schedule` clamps `max_segments` and
+    `segment_cap` down to it (logging a WARNING when it does) -- not only in
+    `bridge.graph_from_config`. Hostile review caught that the first pass
+    capped the pipeline but left every OTHER consumer of the same plan
+    (`automation.py`'s rollover-horizon tracking, `daemon.py`'s
+    dispatched-plan bookkeeping, `continuity.py`, `preparer.py`) trusting an
+    uncapped plan, so a plan above the cap would still have made the
+    pipeline reach EOS long before automation's tracked horizon expected it
+    to -- a worker restart roughly every 6 minutes, silently, for any
+    schedule that could build more than 12 segments. `graph_from_config`
+    now treats an oversized "program"-kind plan reaching it as a bypass
+    signal (logged at ERROR); a "slate"/"cg" fill plan
+    (`SlateSourceGenerator`, `bulletin_filler._plan_with_cycle`) is EXPECTED
+    to repeat past this cap by design (CA-8) and stays a WARNING.
   - `ChannelAutomationService._rollover_min_interval_seconds` (`automation.py`)
     now derives the per-channel rollover-dispatch floor from the plan
-    actually on air (half its duration, clamped between 30s and the historic
-    300s ceiling) instead of a flat 300s -- the flat floor was itself
-    longer than an 8-segment/240-second plan's own lifetime, so it would
-    have starved every rollover after the first and let the engine hit EOS
-    and restart even with the segment-count fix above in place.
-  - `bridge.graph_from_config` hard-caps the sub-chains it will actually
-    build at `MAX_PLAYLIST_SUBCHAINS` (12), logging a WARNING naming the
-    real plan size if a source plan ever carries more -- defense-in-depth
-    against any caller, present or future, handing it an oversized plan.
-  New tests in `tests/egress/test_source_plan.py`, `test_automation.py`, and
-  `test_gst_bridge.py`; none of the changed files (`source_plan.py`,
-  `automation.py`, `bridge.py`) are D2 blob-drift-bound in
-  `docs/claims/claims.yaml`.
+    actually on air (half its planned duration, clamped at the historic 300s
+    ceiling) instead of a flat 300s. MEASURED with the flat 300s floor
+    against an 8x30s (240s) plan: 6 dispatches in 30 minutes, the first at
+    120s, each 300s apart, with the boundary lead shrinking every cycle --
+    120s, then 60s, then 0s, then negative -- so by the third rollover the
+    trigger arrives AT OR AFTER the plan's actual end and the engine reaches
+    EOS and restarts before that rollover can land. The scaled floor keeps
+    the lead at a steady ~120s indefinitely instead. Hostile review also
+    caught that an earlier version of the scaled floor itself still floored
+    at a flat 30s (`max(30.0, 0.5 * planned)`), which is longer than an 8x3s
+    (24-second) plan's entire life and reproduces the identical bug at a
+    smaller scale; the floor is now a trivial 1.0s epsilon, so it never
+    returns more than half of the plan's own planned duration.
+  New/rewritten tests in `tests/egress/test_source_plan.py` (an end-to-end
+  test proving the plan `build_source_plan_from_schedule` returns and the
+  graph `bridge.graph_from_config` builds from it agree on the segment
+  count) and `test_automation.py` (production-shape cadence tests against
+  the real `ChannelAutomationService`, an 8x30s and an 8x67s plan, and the
+  8x3s starvation regression), plus `test_gst_bridge.py`. None of the
+  changed files (`source_plan.py`, `automation.py`, `bridge.py`) are D2
+  blob-drift-bound in `docs/claims/claims.yaml`; `models.py` is not bound
+  either.
 
 ### Changed
 

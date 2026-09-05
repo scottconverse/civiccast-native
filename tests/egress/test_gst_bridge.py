@@ -199,14 +199,18 @@ def test_graph_from_config_builds_program_playlist_and_slate() -> None:
     assert graph.sinks[0][1].factory == "udpsink"
 
 
-def test_graph_from_config_caps_playlist_subchains(caplog: pytest.LogCaptureFixture) -> None:
-    """D45 fix: defense-in-depth against a source plan with more segments
-    than one pipeline can safely decode. Each segment becomes its own
-    decoder sub-chain built and set to PLAYING together -- a plan this large
-    (well beyond MAX_PLAYLIST_SUBCHAINS) is exactly the shape that produced
-    ~1200 avdec_h264 threads on real hardware. graph_from_config must build
-    only the first MAX_PLAYLIST_SUBCHAINS and log a warning naming the real
-    plan size, never silently truncate without a trace."""
+def test_graph_from_config_caps_a_bypassed_program_plan_and_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Hostile-review fix (2026-09-05): a "program"-kind plan (the schedule
+    shape) reaching ``graph_from_config`` above ``MAX_PLAYLIST_SUBCHAINS``
+    means ``source_plan.build_source_plan_from_schedule``'s own clamp was
+    bypassed -- a hand-built ``EgressSourcePlan`` like this one, or a future
+    producer that forgot to import the shared constant. That is logged at
+    ERROR (not a routine WARNING) precisely because it should never happen
+    for this plan shape any more; ``graph_from_config`` still degrades
+    gracefully (builds only the first ``MAX_PLAYLIST_SUBCHAINS``) rather than
+    crashing the channel, but the log makes the bypass loud."""
     config = EgressConfig(
         channel_id="ch1",
         enabled=True,
@@ -218,7 +222,11 @@ def test_graph_from_config_caps_playlist_subchains(caplog: pytest.LogCaptureFixt
         channel_id="ch1",
         segments=[
             EgressSourceSegment(
-                label=f"clip{i}", path=f"/m/clip{i}.ts", duration_seconds=30, source_ref=f"c{i}"
+                label=f"clip{i}",
+                path=f"/m/clip{i}.ts",
+                duration_seconds=30,
+                kind="program",
+                source_ref=f"c{i}",
             )
             for i in range(segment_count)
         ],
@@ -229,10 +237,56 @@ def test_graph_from_config_caps_playlist_subchains(caplog: pytest.LogCaptureFixt
     assert isinstance(program, PlaylistLeg)
     assert len(program.subchains) == MAX_PLAYLIST_SUBCHAINS
     assert program.subchains[0][0].props["location"] == "/m/clip0.ts"
-    assert any(
-        "ch1" in record.message and str(segment_count) in record.message
+    matching = [
+        record
         for record in caplog.records
+        if "ch1" in record.message and str(segment_count) in record.message
+    ]
+    assert matching
+    assert all(record.levelname == "ERROR" for record in matching)
+
+
+def test_graph_from_config_caps_an_oversized_slate_plan_and_only_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The counterpart to the test above: ``source_plan.SlateSourceGenerator``
+    intentionally repeats one pre-conformed file well past
+    ``MAX_PLAYLIST_SUBCHAINS`` to span an hour of slate fill (CA-8 -- a short
+    single-segment plan relaunched the encoder, resetting the TS session,
+    every few seconds). That is NOT a bypass, so truncating it here is only
+    a WARNING, not an ERROR."""
+    config = EgressConfig(
+        channel_id="ch1",
+        enabled=True,
+        slate_message="Please stand by",
+        sinks=[EgressSinkSpec(kind="udp-ts", label="head", uri="udp://10.0.0.9:5000")],
     )
+    segment_count = MAX_PLAYLIST_SUBCHAINS + 5
+    plan = EgressSourcePlan(
+        channel_id="ch1",
+        segments=[
+            EgressSourceSegment(
+                label="CivicCast slate",
+                path="/m/slate.ts",
+                duration_seconds=30,
+                kind="slate",
+                source_ref="civiccast-slate",
+            )
+        ]
+        * segment_count,
+    )
+    with caplog.at_level("WARNING"):
+        graph = graph_from_config(config, plan)
+    program, _slate = graph.sources
+    assert isinstance(program, PlaylistLeg)
+    assert len(program.subchains) == MAX_PLAYLIST_SUBCHAINS
+    matching = [
+        record
+        for record in caplog.records
+        if "ch1" in record.message and str(segment_count) in record.message
+    ]
+    assert matching
+    assert all(record.levelname == "WARNING" for record in matching)
 
 
 def test_graph_from_config_under_the_cap_is_unaffected() -> None:

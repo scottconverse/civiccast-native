@@ -41,6 +41,7 @@ from civiccast.egress.gst.graphics_overlay import render_lower_third_png
 from civiccast.egress.gst.pipeline import _is_multicast
 from civiccast.egress.hls_relay import hls_relay_uri_for
 from civiccast.egress.models import (
+    MAX_PLAYLIST_SUBCHAINS,
     CanonicalProfile,
     EgressConfig,
     EgressSinkSpec,
@@ -51,14 +52,15 @@ from civiccast.egress.sinks import SecretResolver
 
 _LOG = logging.getLogger(__name__)
 
-#: D45 fix (2026-09-05) hard cap on decoder sub-chains ``graph_from_config``
-#: will actually BUILD for one channel's playlist leg, independent of
-#: whatever ``max_segments``/``segment_cap`` a source-plan caller used. Each
-#: sub-chain is a real decodebin instance (avdec_h264 defaults to
-#: max-threads=0, ~20 threads each) built and set to PLAYING together at
-#: start -- see ``graph_from_config``'s docstring for the measured cost of
-#: skipping this cap (~1200 threads / ~3.5 GB from a 60-segment plan).
-MAX_PLAYLIST_SUBCHAINS = 12
+#: Hostile-review fix (2026-09-05): ``MAX_PLAYLIST_SUBCHAINS`` used to be
+#: defined here as its own copy. It now lives in ``civiccast.egress.models``
+#: (imported above, re-exported here for anything that still imports it from
+#: this module) so this module and ``source_plan.py`` -- the plan's only
+#: PRODUCER -- can never disagree about the value. ``source_plan.
+#: build_source_plan_from_schedule`` clamps a schedule-derived plan to this
+#: cap already (logging a WARNING if it has to), so the check below should
+#: never actually truncate a schedule-derived plan; see its comment for what
+#: it means if it does.
 
 #: Sink kinds the GStreamer engine can actually deliver (Task B: an unsupported
 #: kind must be refused at config time, not accepted-then-crash at start time —
@@ -556,11 +558,28 @@ def graph_from_config(
     threads (its default max-threads=0 spins up ~20 per sub-chain) and
     ~3.5 GB on one worker, with the worker relaunching roughly every 30s
     (no TS output landed inside the engine's 10s stall watchdog).
-    ``source_plan.build_source_plan_from_schedule`` is fixed at its own
-    layer (segment count bounded by ``max_segments``, 8 by default), but
-    this cap is defense-in-depth against any caller — present or future —
-    that hands this function a plan with more segments than one pipeline can
-    safely decode.
+
+    Hostile-review fix: a schedule-derived plan is now clamped to
+    ``MAX_PLAYLIST_SUBCHAINS`` at its only producer
+    (``source_plan.build_source_plan_from_schedule``), not just here, so
+    ``automation.py``'s rollover-horizon tracking, ``daemon.py``'s
+    dispatched-plan bookkeeping, ``continuity.py``, and ``preparer.py`` all
+    see the SAME segment count this function will actually build a
+    sub-chain for — no consumer can end up trusting a plan longer than the
+    pipeline that plays it. The truncation below firing for a
+    schedule-derived plan therefore means that clamp was bypassed (a
+    hand-built ``EgressSourcePlan``, a future producer that forgot to import
+    the shared constant) and is logged at ERROR as exactly that signal.
+    It is NOT hardening for the schedule path anymore, which should never
+    reach it. It IS still load-bearing for ``EgressSourcePlan`` producers
+    that build large repeat-count plans by design and are not clamped to
+    this constant themselves --
+    ``source_plan.SlateSourceGenerator``/``bulletin_filler._plan_with_cycle``
+    intentionally repeat one pre-conformed file well past 12 segments to
+    span an hour of slate/bulletin fill (CA-8: a short single-segment plan
+    relaunched the encoder, and reset the TS session, every
+    ``duration_seconds``) -- for those, truncating the pipeline (not the
+    channel) is the graceful degradation, not a bug to raise on.
     """
     profile = config.canonical_profile
     common_caps = (
@@ -571,16 +590,35 @@ def graph_from_config(
     )
     program_segments = source_plan.segments
     if len(program_segments) > MAX_PLAYLIST_SUBCHAINS:
-        _LOG.warning(
-            "Source plan for channel %s carries %d segments, above the "
-            "%d-subchain playlist cap; building only the first %d. Each "
+        # Hostile-review fix: a "program"-kind plan reaching here uncapped
+        # means build_source_plan_from_schedule's own clamp was bypassed --
+        # log it as the bug signal it is (ERROR), not routine hardening. A
+        # "slate"/"bulletin" fill plan (SlateSourceGenerator,
+        # bulletin_filler._plan_with_cycle) is EXPECTED to repeat one
+        # pre-conformed file well past this cap by design (CA-8), so that
+        # case stays a WARNING: known, tested, graceful degradation, not a
+        # bypass.
+        segment_kinds = {segment.kind for segment in program_segments}
+        is_expected_repeat_plan = segment_kinds <= {"slate", "cg"}
+        _LOG.log(
+            logging.WARNING if is_expected_repeat_plan else logging.ERROR,
+            "Source plan for channel %s carries %d segments (kinds=%s), above "
+            "the %d-subchain playlist cap; building only the first %d. Each "
             "segment is its own decoder sub-chain built into one pipeline "
             "(see graph_from_config's D45 docstring) -- a plan this large "
-            "would spawn thousands of decoder threads on start.",
+            "would spawn thousands of decoder threads on start.%s",
             config.channel_id,
             len(program_segments),
+            sorted(segment_kinds),
             MAX_PLAYLIST_SUBCHAINS,
             MAX_PLAYLIST_SUBCHAINS,
+            (
+                ""
+                if is_expected_repeat_plan
+                else " This is NOT the expected slate/bulletin repeat shape -- "
+                "the plan builder's own MAX_PLAYLIST_SUBCHAINS clamp appears to "
+                "have been bypassed."
+            ),
         )
         program_segments = program_segments[:MAX_PLAYLIST_SUBCHAINS]
     program = PlaylistLeg(
