@@ -21,6 +21,16 @@ class EgressEncoderMetrics:
     dropped_frames: int | None = None
 
 
+#: D44 (real-hardware tester run, 2026-09-05): how much of the tail of a worker
+#: stderr log is scanned for the newest metrics. The daemon reads this file
+#: on every ~2s health tick (twice per tick, from two call sites), and the log
+#: grows for the whole life of the channel -- reading it whole meant re-reading
+#: and re-regexing an ever-growing file forever, a cost that showed up as
+#: control-plane CPU in a long soak. Only the newest values are wanted and an
+#: ffmpeg progress line is ~100 bytes, so 64 KiB is hundreds of lines of
+#: history: far more than enough to find the last parseable one.
+_TAIL_BYTES = 64 * 1024
+
 _FPS_RE = re.compile(r"\bfps=\s*(?P<value>[0-9]+(?:\.[0-9]+)?)")
 _BITRATE_RE = re.compile(r"\bbitrate=\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*(?P<unit>[kKmM]?bits/s)")
 _DROP_RE = re.compile(r"\bdrop(?:_frames)?=\s*(?P<value>[0-9]+)")
@@ -39,13 +49,32 @@ def parse_ffmpeg_encoder_metrics_line(line: str) -> EgressEncoderMetrics:
     )
 
 
-def read_latest_ffmpeg_encoder_metrics(path: Path) -> EgressEncoderMetrics:
-    """Return the newest parseable FFmpeg metrics from a stderr log."""
+def read_latest_ffmpeg_encoder_metrics(
+    path: Path, *, tail_bytes: int = _TAIL_BYTES
+) -> EgressEncoderMetrics:
+    """Return the newest parseable FFmpeg metrics from a stderr log.
 
-    if not path.exists():
+    Only the last ``tail_bytes`` of the file are read (D44) -- the newest
+    values are all this returns, and the log is polled every couple of seconds
+    for the whole life of a channel. A partial first line from cutting
+    mid-line is harmless: it is parsed like any other line and simply
+    contributes whichever fields survived the cut, and is superseded by every
+    complete line after it.
+    """
+
+    try:
+        with path.open("rb") as handle:
+            size = handle.seek(0, 2)
+            if tail_bytes >= 0 and size > tail_bytes:
+                handle.seek(size - tail_bytes)
+            else:
+                handle.seek(0)
+            raw = handle.read()
+    except OSError:
+        # Missing, locked, or unreadable: no metrics, same as before.
         return EgressEncoderMetrics()
     latest = EgressEncoderMetrics()
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in raw.decode("utf-8", errors="replace").splitlines():
         parsed = parse_ffmpeg_encoder_metrics_line(line)
         latest = EgressEncoderMetrics(
             encoder_fps=parsed.encoder_fps

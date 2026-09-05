@@ -25,6 +25,26 @@ AssetResolver = Callable[[str], StaffAssetRow | None]
 ScheduleItemsProvider = Callable[[str], Sequence[ScheduleItemResponse]]
 _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 
+#: D43 hardening (2026-09-05): the MINIMUM wall-clock length a
+#: schedule-derived plan aims for. A count-only window (``max_segments=8``)
+#: is a 4-minute plan for a schedule of 30-second slots, and automation's
+#: rollover then re-plans -- synchronously preparing sources on the
+#: automation thread (``daemon._try_content_reload``) -- roughly every two
+#: minutes per channel. (Measured caveat: the real-hardware tester's 2-hour
+#: control-plane log shows ZERO rollovers, so that cycle is not a diagnosed
+#: cause of anything observed there; this is hardening against a cadence the
+#: code plainly permits, not a fix for a measured symptom.) Planning by
+#: DURATION decouples the rollover cadence from the schedule's slot
+#: granularity: 30 minutes of plan is ~28 minutes between rollovers no matter
+#: how short the individual items are. A long-item schedule is unaffected --
+#: ``max_segments`` still wins whenever it yields the longer plan.
+PLAN_MIN_SECONDS = 1800.0
+#: Hard ceiling on segments in one plan, so a pathological schedule of
+#: one-second slots cannot build an unbounded segment list (and cannot make
+#: ``SourcePreparer.prepare`` walk thousands of entries) while chasing
+#: ``PLAN_MIN_SECONDS``.
+PLAN_MAX_SEGMENTS = 120
+
 
 class SlateSourceGenerator:
     """Generate a pre-conformed MPEG-TS slate source for an egress channel."""
@@ -92,6 +112,8 @@ class ScheduleSourcePlanProvider:
         asset_resolver: AssetResolver,
         now_provider: Callable[[], datetime] | None = None,
         max_segments: int = 8,
+        min_plan_seconds: float = PLAN_MIN_SECONDS,
+        segment_cap: int = PLAN_MAX_SEGMENTS,
         gap_tolerance_seconds: float = 1.0,
     ) -> None:
         if max_segments <= 0:
@@ -102,6 +124,8 @@ class ScheduleSourcePlanProvider:
         self._asset_resolver = asset_resolver
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
         self._max_segments = max_segments
+        self._min_plan_seconds = min_plan_seconds
+        self._segment_cap = segment_cap
         self._gap_tolerance = timedelta(seconds=gap_tolerance_seconds)
 
     def __call__(self, channel_id: str) -> EgressSourcePlan | None:
@@ -111,6 +135,8 @@ class ScheduleSourcePlanProvider:
             asset_resolver=self._asset_resolver,
             now=self._now_provider(),
             max_segments=self._max_segments,
+            min_plan_seconds=self._min_plan_seconds,
+            segment_cap=self._segment_cap,
             gap_tolerance=self._gap_tolerance,
         )
 
@@ -122,12 +148,36 @@ def build_source_plan_from_schedule(
     asset_resolver: AssetResolver,
     now: datetime | None = None,
     max_segments: int = 8,
+    min_plan_seconds: float = PLAN_MIN_SECONDS,
+    segment_cap: int = PLAN_MAX_SEGMENTS,
     gap_tolerance: timedelta = timedelta(seconds=1),
 ) -> EgressSourcePlan | None:
-    """Return the currently playable egress source plan, or None for slate fallback."""
+    """Return the currently playable egress source plan, or None for slate fallback.
+
+    The window is bounded by DURATION as well as count (D43): segments are
+    appended until there are at least ``max_segments`` of them AND the plan
+    spans at least ``min_plan_seconds``, whichever condition is satisfied
+    later -- so a schedule of short slots yields a long plan instead of a
+    four-minute one, and a schedule of long items is unchanged.
+    ``segment_cap`` is the hard upper bound on the segment count.
+
+    Each segment is clipped to its SCHEDULE SLOT (D42): the slot is the
+    contract, so long media in a 30-second slot plays for 30 seconds, not
+    for its full asset length. When the media is SHORTER than its slot the
+    plan stops at that item: the remainder of the slot belongs to the
+    channel's fill policy (``bulletin_filler.FillerSourceProvider`` --
+    bulletins or slate), reached through the daemon's FALLBACK_SLATE
+    gap-replan path, exactly as an already-aired current item does below.
+    Nothing here loops or stretches media to cover a slot, and no following
+    item is ever started early.
+    """
 
     if max_segments <= 0:
         raise ValueError("max_segments must be greater than zero.")
+    if segment_cap < max_segments:
+        raise ValueError("segment_cap must be at least max_segments.")
+    if min_plan_seconds < 0:
+        raise ValueError("min_plan_seconds must be zero or greater.")
     if gap_tolerance < timedelta(0):
         raise ValueError("gap_tolerance must be zero or greater.")
     current_time = _as_utc(now or datetime.now(UTC))
@@ -154,6 +204,7 @@ def build_source_plan_from_schedule(
     elapsed_seconds = max(0.0, (current_time - _as_utc(current_item.scheduled_at)).total_seconds())
 
     segments: list[EgressSourceSegment] = []
+    planned_seconds = 0.0
     cursor_end = _as_utc(current_item.scheduled_at) + timedelta(
         seconds=current_item.duration_seconds or 0
     )
@@ -162,20 +213,33 @@ def build_source_plan_from_schedule(
         if segments and starts_at > cursor_end + gap_tolerance:
             break
         is_current = item is current_item
-        segment = _segment_from_item(
-            item, asset_resolver, elapsed_seconds=elapsed_seconds if is_current else 0.0
-        )
+        item_elapsed = elapsed_seconds if is_current else 0.0
+        segment = _segment_from_item(item, asset_resolver, elapsed_seconds=item_elapsed)
         if segment is None:
             # The current item's media has fully aired (media shorter than
             # its slot, or a late rejoin past the end). Honest behavior is
             # slate until the next item is due — never an early start.
             return None
         segments.append(segment)
+        planned_seconds += segment.duration_seconds
         cursor_end = max(
             cursor_end,
             starts_at + timedelta(seconds=item.duration_seconds or segment.duration_seconds),
         )
-        if len(segments) >= max_segments:
+        if len(segments) >= segment_cap:
+            break
+        if not _covers_slot(
+            item,
+            segment,
+            elapsed_seconds=item_elapsed,
+            tolerance_seconds=gap_tolerance.total_seconds(),
+        ):
+            # D42: this item's media runs out before its slot does. The rest
+            # of the slot is the fill policy's (bulletins/slate) — stop the
+            # plan here rather than starting the NEXT item early, the same
+            # honest answer the fully-aired branch above already gives.
+            break
+        if len(segments) >= max_segments and planned_seconds >= min_plan_seconds:
             break
 
     if not segments:
@@ -321,6 +385,13 @@ def _segment_from_item(
             return None
         inpoint = (inpoint or 0.0) + elapsed_seconds
         duration = duration - elapsed_seconds
+    if outpoint is not None:
+        # D42: ``duration`` may now be the SLOT rather than the whole trim
+        # window, so the out-point has to follow it — a stale outpoint would
+        # let a trim-aware consumer (preparer._emit_prepared_from_cache with
+        # ``playout_trim_supported``, build_conform_source_args) emit more
+        # media than the slot actually bought.
+        outpoint = min(outpoint, (inpoint or 0.0) + duration)
     return EgressSourceSegment(
         label=asset.title or item.asset_title or item.asset_id,
         path=str(media_path),
@@ -332,6 +403,29 @@ def _segment_from_item(
     )
 
 
+def _covers_slot(
+    item: ScheduleItemResponse,
+    segment: EgressSourceSegment,
+    *,
+    elapsed_seconds: float,
+    tolerance_seconds: float,
+) -> bool:
+    """Whether this item's media fills its whole scheduled slot.
+
+    ``elapsed_seconds`` is the join-in-progress offset already consumed from
+    the slot, so the comparison is against the slot as a whole, not the
+    remaining part of it. ``tolerance_seconds`` (the caller's gap tolerance,
+    1s by default) keeps a 29.97s asset in a 30s slot from being treated as
+    an under-fill on every single plan.
+    """
+
+    if item.duration_seconds is None:
+        return True
+    slot_seconds = float(item.duration_seconds)
+    aired_seconds = elapsed_seconds + segment.duration_seconds
+    return aired_seconds + tolerance_seconds >= slot_seconds
+
+
 def _segment_duration(
     item: ScheduleItemResponse,
     asset: StaffAssetRow,
@@ -339,17 +433,51 @@ def _segment_duration(
     inpoint: float | None,
     outpoint: float | None,
 ) -> float:
+    """The airtime this item contributes: its SLOT, capped by playable media.
+
+    D42 (real-hardware soak, 2026-09-05): this used to return the asset's own
+    playable length and ignore ``item.duration_seconds`` entirely, so a
+    30-second schedule slot holding an hour-long recording aired for the
+    whole hour — the published schedule was not honoured at all — while a
+    schedule of short assets built a plan far shorter than its own slots.
+    The slot is the contract; the media can only ever cut it short.
+    """
+
+    playable = _playable_duration(asset, inpoint=inpoint, outpoint=outpoint)
+    if item.duration_seconds is None:
+        # No slot on record (should not happen: the caller filters these out)
+        # — fall back to whatever the media offers.
+        return playable if playable is not None else 0.0
+    slot = float(item.duration_seconds)
+    if playable is None:
+        # Un-probed asset with no trim window: the slot is the only number
+        # available, exactly as before this change.
+        return slot
+    return min(slot, playable)
+
+
+def _playable_duration(
+    asset: StaffAssetRow,
+    *,
+    inpoint: float | None,
+    outpoint: float | None,
+) -> float | None:
+    """Seconds of media playable from ``inpoint``, or None when unknowable.
+
+    A non-positive result (an inverted trim window) is returned as-is so the
+    caller raises the existing ``invalid trim window`` SourcePrepareError.
+    """
+
     if inpoint is not None and outpoint is not None:
-        if inpoint >= outpoint:
-            return 0
         return outpoint - inpoint
     if asset.duration_seconds is not None:
-        duration = float(asset.duration_seconds)
-        if inpoint is not None:
-            return duration - inpoint
-        return duration
-    assert item.duration_seconds is not None
-    return float(item.duration_seconds)
+        end = float(asset.duration_seconds)
+        if outpoint is not None:
+            end = min(end, outpoint)
+        return end - (inpoint or 0.0)
+    if outpoint is not None:
+        return outpoint - (inpoint or 0.0)
+    return None
 
 
 def _as_utc(value: datetime) -> datetime:

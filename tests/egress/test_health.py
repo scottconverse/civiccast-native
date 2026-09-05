@@ -56,6 +56,57 @@ def test_read_latest_ffmpeg_encoder_metrics_keeps_newest_values(tmp_path: Path) 
     assert metrics.dropped_frames == 1
 
 
+class TestTailOnlyLogRead:
+    """D44 (real-hardware soak, 2026-09-05): the daemon reads a worker stderr
+    log on every ~2s health tick and the log grows for the life of the
+    channel; reading it whole re-scanned an ever-growing file forever. Only
+    the tail is read now."""
+
+    def test_only_the_tail_is_read_and_older_values_are_not_seen(self, tmp_path: Path) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        # An old, distinctive value first, then filler that pushes it beyond
+        # the tail window, then the current value.
+        lines = ["frame= 1 fps=11.0 bitrate=1111.0kbits/s drop=99"]
+        lines += ["frame= 100 fps=28.0 bitrate=5000.0kbits/s drop=0"] * 200
+        lines += ["frame= 900 fps=30.0 bitrate=6100.0kbits/s drop=1"]
+        log_path.write_text("\n".join(lines), encoding="utf-8")
+
+        metrics = read_latest_ffmpeg_encoder_metrics(log_path, tail_bytes=2048)
+
+        assert metrics.encoder_fps == 30.0
+        assert metrics.encoder_bitrate_kbps == 6100.0
+        assert metrics.dropped_frames == 1
+        # The 99-drop line at the very top is outside the tail window; the
+        # newest values are all this function reports, so it is not needed.
+        assert log_path.stat().st_size > 2048
+
+    def test_a_log_smaller_than_the_tail_window_is_read_whole(self, tmp_path: Path) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text("frame= 5 fps=24.0 bitrate=4000.0kbits/s drop=3", encoding="utf-8")
+
+        metrics = read_latest_ffmpeg_encoder_metrics(log_path, tail_bytes=1024 * 1024)
+
+        assert metrics.encoder_fps == 24.0
+        assert metrics.dropped_frames == 3
+
+    def test_a_missing_log_still_returns_empty_metrics(self, tmp_path: Path) -> None:
+        assert read_latest_ffmpeg_encoder_metrics(tmp_path / "nope.log") == EgressEncoderMetrics()
+
+    def test_a_partial_first_line_from_the_cut_is_harmless(self, tmp_path: Path) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text(
+            "frame= 1 fps=11.0 bitrate=1111.0kbits/s drop=99\n"
+            "frame= 2 fps=30.0 bitrate=6100.0kbits/s drop=1\n",
+            encoding="utf-8",
+        )
+
+        # A window that lands mid-way through the first line.
+        metrics = read_latest_ffmpeg_encoder_metrics(log_path, tail_bytes=70)
+
+        assert metrics.encoder_fps == 30.0
+        assert metrics.encoder_bitrate_kbps == 6100.0
+
+
 def test_encoder_has_progress_requires_fps_and_bitrate() -> None:
     assert encoder_has_progress(EgressEncoderMetrics(encoder_fps=30.0, encoder_bitrate_kbps=6100))
     assert not encoder_has_progress(EgressEncoderMetrics(encoder_fps=30.0))
