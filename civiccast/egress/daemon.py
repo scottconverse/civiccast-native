@@ -170,6 +170,32 @@ _LIVE_SOURCE_FAILURE_FALLBACK_STREAK = _RESTART_ESCALATION_STREAK
 _STDERR_TAIL_MAX_CHARS = 600
 
 
+def _ascii_safe(text: str) -> str:
+    """Fold arbitrary child output down to ASCII before it can reach the database.
+
+    T6 soak evidence (Desktop/CIVICCAST-EVIDENCE/soak-120-e502074-20260905, kit
+    e502074): the GStreamer worker's stall message contained one non-ASCII
+    character. ``_child_stderr_tail`` reads the child log with
+    ``errors="replace"``, so it arrived as U+FFFD; ``_child_exit_error`` folded it
+    into ``last_error``; ``_write_state`` wrote that to Postgres, and psycopg
+    raised ``UnicodeEncodeError: 'charmap' codec can't encode character '\\ufffd'``
+    while converting the statement for a non-UTF8 client encoding.
+
+    That exception escaped ``_begin_relaunch`` -> ``_relaunch_after_crash`` ->
+    ``_poll_process`` -> ``process_once``, i.e. out of
+    ``ChannelAutomationService._run_channel_pass`` BEFORE it reaches
+    ``_check_slate_replan`` / ``_check_plan_rollover`` (automation.py) -- so every
+    crash-relaunch tick silently skipped the seamless-rollover machinery #162
+    added. 23 aborted passes in that 2h soak, zero rollovers dispatched.
+
+    Child stderr is untrusted, arbitrarily encoded text; nothing about an
+    operator-facing error string needs to carry it verbatim. Fold it here, at the
+    single boundary where child bytes become a persisted value.
+    """
+
+    return text.encode("ascii", "replace").decode("ascii")
+
+
 # RAT-004: poll cadence for stop_all_channels' observed-exit wait loop.
 _DRAIN_POLL_INTERVAL_SECONDS = 0.05
 
@@ -944,7 +970,7 @@ class EgressDaemon:
         if not lines:
             return None
         tail = " | ".join(redact_uris_in_text(line) for line in lines[-max_lines:])
-        return tail[:_STDERR_TAIL_MAX_CHARS]
+        return _ascii_safe(tail)[:_STDERR_TAIL_MAX_CHARS]
 
     def _child_exit_error(self, channel_id: str, *, suffix: str) -> str:
         tail = self._child_stderr_tail(channel_id)

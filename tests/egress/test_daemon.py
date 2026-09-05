@@ -2895,3 +2895,41 @@ def test_daemon_records_the_source_plan_it_actually_dispatched(tmp_path: Path) -
     )
     # A START puts its plan on air immediately -- only a content-reload can defer.
     assert switch_deferred is False
+
+
+def test_child_stderr_tail_is_ascii_folded_before_it_reaches_last_error(tmp_path: Path) -> None:
+    """T6 soak 2026-09-05 (kit e502074, Desktop/CIVICCAST-EVIDENCE/
+    soak-120-e502074-20260905): the worker's stall line carried one non-ASCII
+    character, came back from the child log as U+FFFD (the tail reader uses
+    ``errors="replace"``), was folded into ``last_error`` and then failed the
+    Postgres state write with ``UnicodeEncodeError: 'charmap' codec can't encode
+    character '\ufffd'``. That exception escaped ``process_once`` and aborted
+    ``ChannelAutomationService._run_channel_pass`` before ``_check_plan_rollover``
+    ever ran -- 23 aborted passes, zero rollovers, in a 2h soak.
+
+    The tail must therefore be ASCII by the time it can be persisted.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+    log_path = tmp_path / "gov-stderr.log"
+    log_path.write_text(
+        "CTRL stall: no output for 10s � quitting for daemon restart\n",
+        encoding="utf-8",
+    )
+    daemon._stderr_logs["gov"] = log_path
+
+    tail = daemon._child_stderr_tail("gov")
+    assert tail is not None
+    assert "�" not in tail
+    tail.encode("cp1252")  # the client encoding that raised in the soak
+
+    message = daemon._child_exit_error("gov", suffix="restarting.")
+    assert "�" not in message
+    message.encode("cp1252")
+    assert "CTRL stall: no output for 10s" in message
