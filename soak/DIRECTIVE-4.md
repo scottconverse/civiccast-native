@@ -160,3 +160,8 @@ The 18:25Z rollup shows all three channels running on GStreamer in FALLBACK_SLAT
 ## Addendum -- AUTORUN-3 warm-up grace (verdict rule change, rev 22)
 
 AUTORUN-9m reset `last-egress-run`, so AUTORUN-3 probed 19 s after soak-started (18:40:55Z): tsp pass on all three channels, but education and government were still TRANSITIONING from the start command. Under the strict rule that one warm-up sample alone would make a clean 2-hour soak FAIL. Rule now: probes taken within 3 minutes of soak-started stay on disk and in the rollups but are excluded from the verdict; the verdict JSON lists them in `warmup_probes_excluded`. Everything else (ON_AIR on GStreamer every cycle, tsp pass every cycle, zero relaunches) is unchanged.
+
+
+## Addendum -- AUTORUN-9o (read-only)
+
+Soak #2's first rollup (19:16Z) shows the control plane still near 2.9 cores and public/education relaunched once. `AUTORUN-9o.ps1` (runs once, changes nothing) reports every `runtime-status.json` under ProgramData\CivicCast, caption-tap / overload / pause / stall / relaunch log lines and counts, the station profile and channel states, and a 10-s per-process CPU sample, to `soak/DIAG-9o-<stamp>.md`.
