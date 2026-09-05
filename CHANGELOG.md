@@ -157,13 +157,46 @@ for the draft verification record.
   still satisfied. It now accepts either refusal state, and the test consumes
   the REAL producer's output instead of a hand-typed report dict, which is why
   nothing caught the mismatch.
-- **Headline: seamless source-plan rollover (#162).** beta.4's own
-  120-minute engine soak proved the GStreamer engine itself healthy for two
-  continuous hours (`failed_beats=0`) but failed Gate A's T6 lane on a
-  relaunch-count rule: the playout worker exits cleanly at the end of every
+- **Headline: beta.4's soak restarts diagnosed correctly, and the real bug
+  fixed (#167).** beta.4's release documentation said its 120-minute engine
+  soak's relaunch-count `FAIL` was caused by the playout worker exiting at
+  the end of every source plan (`max_segments=8`) roughly every 10-15
+  minutes, and credited #162 (below) with fixing it. **That explanation was
+  wrong and has been retracted** (corrected 2026-09-05 in
+  `docs/releases/v1.0.0-beta.4-verification.md` and the beta.4 release
+  notes); it was inferred from worker pid changes, never from the worker's
+  own logs. Reading the actual `gst-worker.stderr.log` from the beta.4 soak
+  (kit `4b30c99`) and a beta.5 retest soak (kit `e502074`) shows only `CTRL
+  stall: no output for 10s — quitting for daemon restart` lines in both
+  runs (beta.4: 7/9/10 occurrences across education/government/public;
+  beta.5: 8/8/7) -- no EOS or plan-end exit in either; plans actually ran
+  28-38 minutes while restarts came 1-25 minutes apart, ruling out a
+  plan-boundary cause. Two real causes, both found 2026-09-05: **(a)**
+  periodic output stalls specific to the software-encoded channels in the
+  GPU-less Windows Sandbox test environment, not established to reproduce
+  on real station hardware (an R7 with an iGPU, where operators have
+  reported no such issue); and **(b)** a real product bug -- every
+  restart's channel-automation pass raised `UnicodeEncodeError: 'charmap'
+  codec can't encode character '\ufffd' in position 118` (the worker's
+  stall message folds a `\ufffd` replacement character into `last_error`,
+  and writing it out under the process's `cp1252` client encoding failed),
+  skipping channel supervision for that channel. **Fixed here**: an
+  ASCII-safe child-log tail so a non-ASCII byte in the worker's stderr can
+  no longer reach `last_error` in a form that breaks the write; a
+  `client_encoding` fix for the underlying database write path is a
+  tracked follow-up. **#162, below, is a real improvement for genuine
+  plan-boundary transitions, but it was never exercised by either soak and
+  is not what fixes the beta.4 restarts.** Evidence:
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`
+  (beta.4) and
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-e502074-20260905`
+  (beta.5 retest).
+- **Also in this candidate: seamless source-plan rollover for genuine
+  plan-boundary transitions (#162).** Independent of the diagnosis above,
+  the playout worker genuinely does exit cleanly at the end of every
   source plan (`civiccast/egress/source_plan.py`'s `max_segments=8`), which
-  happens every 10-15 minutes under continuous back-to-back premieres, and
-  each exit-and-restart was a short on-air blip. New
+  can happen under continuous back-to-back premieres, and each
+  exit-and-restart is a short on-air blip. New
   `ChannelAutomationService._check_plan_rollover`
   (`civiccast/egress/automation.py`) runs every automation tick, tracks the
   projected wall-clock end of the plan a channel is actively airing, and
