@@ -133,12 +133,112 @@ kill the scan.
 | `CIVICCAST_CAPTION_TAP_DIR` | unset | Tap root shared by the egress fork and the worker. Required when the mode is not `off`; setting it also enables the egress fork. |
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
 | `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
+| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | one per 8 CPUs, max 3 | How many channels may be transcribed **at the same time**. |
+| `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before it counts as overloaded. |
+| `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `60` | First pause after an overload; each consecutive overload doubles it. |
+| `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
+| `CIVICCAST_WHISPER_CPU_THREADS` | `1` for the live tap | CTranslate2 threads per transcription. `0` means "every core" and is the batch/VOD default — do not set it to `0` on a station that is also on air. |
+| `CIVICCAST_WHISPER_BEAM_SIZE` | `1` on CPU, `5` on CUDA | Decoder beam width. Wider is slightly more accurate and roughly linearly more expensive. |
+
+### Turning live captions off
+
+`PUT /api/staff/station/profile` with `{"live_captions_enabled": false}`
+(role: `setup_admin`). It is **on by default**, persisted in station-state,
+returned by `GET /api/staff/station/profile`, and read on **every scan** — so
+it takes effect within one poll interval on a station that is on air, with no
+control-plane restart.
+
+While it is off the tap transcribes nothing, blanks every channel's live
+caption file, reports `"state": "disabled"`, and *deletes* the forked audio
+rather than filing it as evidence. Captions on **published recordings** (the
+offline caption job below) are unaffected — that is the legal requirement;
+this switch is the live/accessibility one.
+
+`CIVICCAST_CAPTION_TAP=off` in the environment also forces live captions off,
+and wins over the persisted value. The reverse is deliberately *not* true: no
+environment value can turn live captions back on against an operator who
+switched them off. An activated native station sets
+`CIVICCAST_CAPTION_TAP=inline` unconditionally, so the reverse precedence
+would make the switch unreachable on exactly the deployments that need it.
+
+### Captions are best effort; playout wins
+
+**Read this before tuning any of the numbers above.** Live captioning and the
+GStreamer playout workers share one box. If they compete, the air signal loses
+first and the viewer sees it — a playout worker that stops producing output
+for ten seconds is killed and restarted by its own watchdog, which is a visible
+interruption to the broadcast. A caption that arrives late, or not at all, is
+not.
+
+CivicCast therefore enforces an explicit ordering, and none of it is
+negotiable at runtime by the caption feature itself:
+
+- **ASR is bounded.** By default only one channel per 8 CPUs is transcribed at
+  a time, with one CTranslate2 thread and greedy decoding — roughly a one-core
+  budget for the whole caption feature on an 8-core station. Extra channels are
+  queued, not dropped.
+- **Overload backs off.** When a channel falls further behind than
+  `..._MAX_BACKLOG_SEGMENTS`, its live captions are **paused** for an
+  exponentially growing window (60s, 120s, 240s … capped at 15 minutes), its
+  active caption file is blanked, and its stale audio is **discarded**. During
+  the pause the station spends *nothing* on transcribing that channel, and
+  keeps nothing: audio that was never transcribed cannot be reviewed, so
+  retaining it would only grow an unpruned directory of raw broadcast audio
+  for as long as the station could not keep up. Captions resume automatically once the window
+  expires and the backlog is clear; a channel has to stay healthy for several
+  scans before its escalation is forgiven.
+- **Playout outranks captions in the scheduler.** On Windows the playout
+  workers are spawned at `ABOVE_NORMAL` priority class. The caption side
+  lowers only its own Python ASR threads to `BELOW_NORMAL`, *not* CTranslate2's
+  internal thread pool where the inference CPU is actually spent — so treat
+  this as a nudge, not a guarantee, and rely on the two bullets above. Neither
+  priority change has been measured on a station yet.
+
+**What you will see in the log.** One `WARNING` line per pause, naming the
+channel, the backlog, the pause length and how many times that channel has
+overloaded — *not* a `CRITICAL` line every scan. Repeated escalations on the
+same channel mean the station cannot transcribe that channel in real time.
+
+**What you will see in the status file.** Each channel publishes
+`<egress work dir>/<channel_id>/captions/runtime-status.json`:
+
+```json
+{
+  "channel_id": "education",
+  "state": "paused",
+  "backlog_segments": 3,
+  "max_backlog_segments": 2,
+  "resume_in_seconds": 118.4,
+  "consecutive_overloads": 2,
+  "updated_at": "2026-09-05T18:20:11.482913+00:00"
+}
+```
+
+`state` is `within-capacity`, `paused`, `overloaded`, `storage-refused`, or
+`disabled` (the operator switch above).
+
+**If a station is permanently paused,** the fix is to reduce the caption work,
+not to raise the CPU limits: move to a lower caption tier, caption fewer
+channels at once, or put a supported GPU in the box. Raising
+`CIVICCAST_WHISPER_CPU_THREADS` on a CPU-only station that is on air trades
+broadcast reliability for captions that the backoff is going to discard anyway.
 
 **Why off by default:** live transcription needs the local faster-whisper
 model runtime. Enabling `inline` without the model installed fails fast at
 startup rather than silently captioning nothing. Cues land in the operator
 caption review queue (`caption_review_items`) exactly like the proof path —
 review and publication flow is unchanged.
+
+**`off` is the default of the *variable*, not of an activated native
+station.** `civiccast.native.station_runtime` sets `CIVICCAST_CAPTION_TAP=inline`
+unconditionally for every activated station, so on a real station live
+captioning runs for every ON_AIR channel whether or not the operator asked for
+it. That is why the guarantees in *Captions are best effort; playout wins*
+above are enforced in code rather than left to configuration: on a station
+that never opted in, an unbounded caption feature is a defect in the broadcast,
+not a degraded optional feature. The operator's actual off switch is the
+station-profile setting in *Turning live captions off* above, not this
+variable.
 
 ## Offline caption job (published-file captions)
 

@@ -329,6 +329,35 @@ workflow is. Two things to know before relying on it for a real meeting:
   hand-off. Never assume the recording continued through a drop — confirm
   the recording and finalization status before publishing.
 
+### Live Captions, And When To Turn Them Off {#live-captions-switch}
+
+When live captions are on, CivicCast listens to every channel that is on air
+and writes captions as the meeting happens. It is useful, and it is hard work
+for the computer — hard enough that on a station without a suitable graphics
+card it can compete with the broadcast itself for the processor.
+
+**The switch:** *Setup → Station Profile → **Show live captions on air***.
+It is on when the station is installed. Only a setup admin can change it.
+The change takes effect within a few seconds; you do not need to restart
+anything and you can do it during a live meeting.
+
+**Turn it off if the picture is stuttering, or channels keep restarting
+themselves.** The picture and sound always come first. Nothing else about the
+broadcast changes when captions are off.
+
+**What it does not affect:** captions on the recordings you publish. Those are
+produced separately, after the meeting, and are unchanged by this switch. If
+your station publishes captioned recordings to meet an accessibility
+requirement, that keeps working with this switch off.
+
+**If you leave it on and the station cannot keep up,** CivicCast does not
+simply grind: it stops captioning that channel for a while (one minute, then
+two, then four, up to fifteen), clears the captions that were on screen rather
+than showing stale ones, and tries again later. You will see one warning in
+the log each time that happens. Repeated warnings on the same channel mean
+that station cannot caption that channel live — turn the switch off, or ask
+about a lower-quality caption model or a supported graphics card.
+
 ### Operator Graphics Control (Lower-Third Banner) {#operator-graphics-control}
 
 **Channel Ops** now has a graphics-overlay panel where an operator can set a
@@ -793,10 +822,24 @@ station needs.
 
 #### Captions, EAS, alerting
 
-- **`CIVICCAST_CAPTION_TAP`** — Live caption tap configuration.
+- **`CIVICCAST_CAPTION_TAP`** — Live caption tap configuration. Setting it to
+  `off` forces live captions off regardless of the station-profile switch; it
+  can never force them back on against an operator who turned them off.
 - **`CIVICCAST_CAPTION_TAP_DIR`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_POLL_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`** — Live caption tap configuration.
+- **`CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`** — How many channels may be
+  transcribed at the same time. Default: one per 8 CPUs, never more than 3.
+- **`CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS`** — First pause after a
+  channel falls behind (default 60); each further overload doubles it.
+- **`CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS`** — Ceiling on that
+  doubling (default 900). Both backoff values are clamped to a usable value
+  with a warning if misconfigured, rather than stopping the station.
+- **`CIVICCAST_WHISPER_CPU_THREADS`** — Processor threads per transcription.
+  The live tap uses 1; `0` means "every core" and is the batch default. Do not
+  set it to `0` on a station that is also on air.
+- **`CIVICCAST_WHISPER_BEAM_SIZE`** — Live-tap decoder beam width (default 1 on
+  CPU, 5 on a GPU). Does not affect recorded-file captioning.
 - **`CIVICCAST_CAPTION_FEED_POLL_SECONDS`** — Caption feed and decode-back proof cadence.
 - **`CIVICCAST_CAPTION_PROOF_POLL_SECONDS`** — Caption feed and decode-back proof cadence.
 - **`CIVICCAST_EAS`** — EAS subsystem on/off and surface cadence.

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from civiccast.app import create_app
 from civiccast.installer.models import FirstAdminSetupRequest
 from civiccast.installer.service import complete_first_admin_setup
+from civiccast.installer.station_state import resolve_live_captions_enabled
 
 _OPERATOR_HEADERS = {"Authorization": "Bearer operator-token-a"}
 
@@ -144,3 +145,142 @@ class TestStationIdentityProfileApi:
         client = TestClient(create_app(), headers=_OPERATOR_HEADERS)
         response = client.put("/api/staff/station/profile", json={"not_a_real_field": "nope"})
         assert response.status_code == 422
+
+    def test_live_captions_are_on_by_default_and_can_be_switched_off(self) -> None:
+        """The operator switch the live caption tap never had.
+
+        `civiccast.native.station_runtime` hardcodes
+        `CIVICCAST_CAPTION_TAP="inline"` for every activated station, so before
+        this setting there was no way for an operator to stop live captioning
+        on a box where it could not keep up -- which is how a tester station
+        ended up burning ~247% of a core on ASR while its three playout workers
+        were being restarted by their own stall watchdog.
+        """
+
+        self._complete_setup()
+        client = TestClient(create_app(), headers=_OPERATOR_HEADERS)
+
+        assert client.get("/api/staff/station/profile").json()["live_captions_enabled"] is True
+
+        response = client.put(
+            "/api/staff/station/profile",
+            json={"live_captions_enabled": False},
+        )
+        assert response.status_code == 200
+        assert response.json()["live_captions_enabled"] is False
+
+        # Persisted, not just echoed: a fresh app must still see it off.
+        follow_up = TestClient(create_app(), headers=_OPERATOR_HEADERS).get(
+            "/api/staff/station/profile"
+        )
+        assert follow_up.json()["live_captions_enabled"] is False
+        assert resolve_live_captions_enabled() is False
+
+        # And it can be switched back on.
+        back_on = client.put(
+            "/api/staff/station/profile",
+            json={"live_captions_enabled": True},
+        )
+        assert back_on.json()["live_captions_enabled"] is True
+        assert resolve_live_captions_enabled() is True
+
+    def test_editing_another_field_does_not_disturb_the_caption_switch(self) -> None:
+        self._complete_setup()
+        client = TestClient(create_app(), headers=_OPERATOR_HEADERS)
+        client.put("/api/staff/station/profile", json={"live_captions_enabled": False})
+
+        client.put("/api/staff/station/profile", json={"station_name": "Pinegrove PEG"})
+
+        payload = client.get("/api/staff/station/profile").json()
+        assert payload["station_name"] == "Pinegrove PEG"
+        assert payload["live_captions_enabled"] is False
+
+    def test_caption_tap_off_in_the_environment_wins_over_persisted_on(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Precedence is asymmetric, and only in the safe direction.
+
+        The environment may force live captions OFF; it may never force them
+        back ON against an operator who switched them off -- an activated
+        native station sets `CIVICCAST_CAPTION_TAP=inline` unconditionally, so
+        the reverse precedence would make the switch unreachable on exactly
+        the deployments that need it.
+        """
+
+        self._complete_setup()
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "off")
+        client = TestClient(create_app(), headers=_OPERATOR_HEADERS)
+
+        assert client.get("/api/staff/station/profile").json()["live_captions_enabled"] is False
+        assert resolve_live_captions_enabled() is False
+
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "inline")
+        client.put("/api/staff/station/profile", json={"live_captions_enabled": False})
+        assert resolve_live_captions_enabled() is False
+
+
+class TestLiveCaptionSwitchRehydration:
+    """An upgrade from a station commissioned before this switch existed.
+
+    A beta.4 station-state file has no ``live_captions_enabled`` key at all.
+    Live captions are an accessibility feature, so an absent key MUST read as
+    on -- reading it as off would silently stop captioning on every upgraded
+    station and no operator would have asked for that.
+    """
+
+    def _beta4_shape_state(self) -> None:
+        from civiccast.installer.station_state import _save_raw_state
+
+        _save_raw_state(
+            {
+                "setup_complete": True,
+                "station": {
+                    "station_name": "Pinegrove School Board",
+                    "admin_display_name": "Avery Admin",
+                    "admin_username": "avery",
+                    "default_channel_id": "government",
+                    "public_base_url": None,
+                    "station_timezone": "America/Denver",
+                    "storage_locations": {
+                        "media_library": "C:/CivicCast/media",
+                        "recordings": "C:/CivicCast/recordings",
+                        "backups": "C:/CivicCast/backups",
+                    },
+                    "channel_count": 3,
+                    "recovery_kit_id": "rk_beta4",
+                    "recovery_kit_generated_at": "2026-06-01T00:00:00Z",
+                },
+            }
+        )
+
+    def test_an_absent_key_rehydrates_as_on(self) -> None:
+        from civiccast.installer.station_state import (
+            read_live_captions_enabled,
+            read_station_setup_state,
+        )
+
+        self._beta4_shape_state()
+
+        # The raw reader reports "never set", which is NOT the same as False...
+        assert read_live_captions_enabled() is None
+        # ...the resolver and the rehydrated profile both say ON.
+        assert resolve_live_captions_enabled() is True
+        state = read_station_setup_state(operator_console_url="http://localhost:8080")
+        assert state.profile is not None
+        assert state.profile.live_captions_enabled is True
+
+    def test_the_switch_survives_being_set_on_an_upgraded_state_file(self) -> None:
+        from civiccast.installer.station_state import (
+            StationProfileUpdateRequest,
+            update_station_profile_fields,
+        )
+
+        self._beta4_shape_state()
+
+        profile = update_station_profile_fields(
+            StationProfileUpdateRequest(live_captions_enabled=False)
+        )
+
+        assert profile.live_captions_enabled is False
+        assert resolve_live_captions_enabled() is False

@@ -276,3 +276,94 @@ class TestCaptionsRuntimeSeam:
         # No selection -> the catalog default, which is now the floor tier (medium)
         # per OWNER-DECISION-caption-adaptive-tier.md (2026-07-30, BINDING).
         assert runtime.model_size_or_path == "medium"
+
+    def test_the_live_caption_runtime_is_sized_for_a_box_that_is_on_air(
+        self, tmp_path: Path
+    ) -> None:
+        """`live=True` is the LIVE tap's sizing, and it must be real here.
+
+        This is the seam the running service actually calls: `civiccast.app`
+        builds the caption runtime through `build_caption_runtime` and INJECTS
+        it into `build_tap_worker`, so conservative values applied inside
+        `build_tap_worker`'s own construction branch never execute in the
+        native product. That is exactly how the measured field failure
+        happened -- the live tap ran with `cpu_threads=0` (every core) and
+        beam 5 on a CPU-only station with three channels ON_AIR.
+        """
+
+        from civiccast.ai_models.runtime import build_caption_runtime
+        from civiccast.captions.runtime import (
+            LIVE_TAP_CPU_BEAM_SIZE,
+            LIVE_TAP_CPU_THREADS,
+            FasterWhisperRuntime,
+        )
+
+        service = _service(tmp_path)
+        live = build_caption_runtime(service, live=True)
+
+        assert isinstance(live, FasterWhisperRuntime)
+        assert live.cpu_threads == LIVE_TAP_CPU_THREADS == 1
+        assert live.beam_size == LIVE_TAP_CPU_BEAM_SIZE == 1
+
+        # The batch/VOD default is deliberately untouched: a finalization pass
+        # runs against a published file, not against the air signal, and the
+        # native capacity proof is pinned to this sizing.
+        batch = build_caption_runtime(service)
+        assert isinstance(batch, FasterWhisperRuntime)
+        assert batch.cpu_threads == 0
+        assert batch.beam_size == 5
+
+    def test_the_app_builds_its_live_tap_runtime_through_the_live_seam(self) -> None:
+        """Wiring proof: `civiccast.app` must ask for the LIVE sizing.
+
+        A unit test of `build_caption_runtime(live=True)` alone would still
+        pass if `app.py` never passed the flag -- which is the shape of the
+        original defect. This reads the call the app actually makes.
+
+        DESELECTED FROM THE MUTATION LANE (see the `mutation-report` job in
+        .github/workflows/deterministic-detectors.yml, alongside the
+        build_native_server_pack `*_PINS` test and the other source-tree-
+        binding tests). Under mutmut this test module executes from inside the
+        mutants/ sandbox, so the repo-relative path below resolves to the
+        sandbox's mutant-duplicated `app.py` -- one copy of every mutated
+        function body per candidate mutant -- and the scan counts those
+        duplicates (reported as "found 665") instead of the two real call
+        sites. Normal CI runs it against pristine source, where it is exact.
+        """
+
+        import ast
+        from pathlib import Path as _Path
+
+        # The TRACKED repo file, by repo-root-relative path -- deliberately NOT
+        # `inspect.getfile(civiccast.app)`. Under the mutation lane every
+        # mutant is a rewritten copy of this module, so resolving it through
+        # the imported object made this test read whichever mutant was loaded
+        # and report every one of them as a finding ("found 665"). The claim
+        # here is about what is COMMITTED at this call site, so it reads the
+        # committed bytes.
+        app_source = _Path(__file__).resolve().parents[2] / "civiccast" / "app.py"
+        if not app_source.is_file():  # pragma: no cover - installed-wheel runs
+            pytest.skip("civiccast/app.py is not present as a repo source file")
+        source = app_source.read_text(encoding="utf-8")
+        calls = [
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "build_caption_runtime"
+        ]
+        assert calls, "civiccast.app no longer calls build_caption_runtime"
+        live_flags = [
+            any(
+                keyword.arg == "live" and getattr(keyword.value, "value", None) is True
+                for keyword in call.keywords
+            )
+            for call in calls
+        ]
+        # Exactly one call site is the live tap; the other is the offline
+        # caption job, which must NOT ask for the live sizing.
+        assert live_flags.count(True) == 1, (
+            "expected exactly one build_caption_runtime(live=True) call in civiccast.app "
+            f"(the live caption tap); found {live_flags.count(True)}"
+        )
+        assert live_flags.count(False) >= 1

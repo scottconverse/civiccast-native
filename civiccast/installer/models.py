@@ -277,6 +277,20 @@ class StationProfile(BaseModel):
     channel_profiles: list[StationChannelProfile] = Field(default_factory=list)
     sample_content_enabled: bool = True
     initial_schedule_enabled: bool = True
+    live_captions_enabled: bool = Field(
+        default=True,
+        description=(
+            "Operator switch for the LIVE caption tap (real-time ASR on the "
+            "broadcast audio of every ON_AIR channel). On by default -- live "
+            "captions are an accessibility feature and a station that can run "
+            "them should. Turn it OFF on a station whose caption tap cannot "
+            "keep up: an activated native station enables the tap "
+            "unconditionally in its environment, so before this switch existed "
+            "there was no way for an operator to stop it. Turning it off does "
+            "NOT affect captions on published recordings (the offline caption "
+            "job), which is the legal requirement; this is the live one."
+        ),
+    )
     default_roles: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
         default_factory=lambda: [
             "setup_admin",

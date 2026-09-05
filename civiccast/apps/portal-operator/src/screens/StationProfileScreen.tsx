@@ -151,6 +151,7 @@ interface EditableFields {
   media_library: string
   recordings: string
   backups: string
+  live_captions_enabled: boolean
 }
 
 function fieldsFromProfile(profile: StationProfile): EditableFields {
@@ -162,6 +163,10 @@ function fieldsFromProfile(profile: StationProfile): EditableFields {
     media_library: profile.storage_locations.media_library,
     recordings: profile.storage_locations.recordings,
     backups: profile.storage_locations.backups,
+    // Absent on a station profile saved before this setting shipped; live
+    // captions are an accessibility feature, so a missing value must read as
+    // ON, never as "the operator turned them off".
+    live_captions_enabled: profile.live_captions_enabled ?? true,
   }
 }
 
@@ -203,6 +208,7 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
           recordings: v.recordings,
           backups: v.backups,
         },
+        live_captions_enabled: v.live_captions_enabled,
       }),
     onSuccess: (data) => {
       qc.setQueryData(['station-profile'], data)
@@ -378,10 +384,49 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
         here — this form shows the value currently in effect.
       </p>
 
+      {/* Live captions. A real switch for a feature that, on an activated
+          station, is otherwise ON for every channel with no way to stop it.
+          A checkbox rather than a styled toggle: it is keyboard-operable and
+          announces its own checked state without any ARIA of our own, and the
+          <label> wraps the control so the whole row is a hit target. The
+          explanation sits in its own <p> referenced by aria-describedby, so a
+          screen reader reads the consequence, not just the label. */}
+      <div
+        className="grid gap-2 rounded-md p-3"
+        style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+      >
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={fields.live_captions_enabled}
+            disabled={!canWrite || saveMut.isPending}
+            aria-describedby="live-captions-help"
+            onChange={(e) => update('live_captions_enabled', e.target.checked)}
+          />
+          <span style={{ color: 'var(--cc-ink)' }}>Show live captions on air</span>
+        </label>
+        <p id="live-captions-help" className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          When this is on, CivicCast listens to each channel that is on air and writes captions in
+          real time. It is useful, and it is hard work for this computer. If playout is stuttering
+          or channels are restarting, turn it off: the picture and sound always come first, and
+          nothing else about the broadcast changes. Captions on recordings you publish are
+          produced separately and are <strong>not</strong> affected by this setting.{' '}
+          {/* Deliberately NOT another "Read more in the manual": this screen
+              already has one, and two links with identical text are ambiguous
+              to anyone navigating by link list rather than by eye. */}
+          <Link to={manualLink('live-captions-switch')} style={{ color: 'var(--cc-brand)' }}>
+            More about live captions in the manual
+          </Link>
+          .
+        </p>
+      </div>
+
       {canWrite && (
         <div className="flex justify-end">
           <button
             type="button"
+            aria-label="Save station profile"
             disabled={!canSave}
             onClick={() => fields && saveMut.mutate(fields)}
             className="rounded-md px-3 py-1.5 font-semibold disabled:opacity-50"

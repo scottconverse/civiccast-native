@@ -1114,7 +1114,20 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # so they do not move this floor). Both lanes advance by one. Re-derived
     # by an actual `--collect-only` run on this tree, not by arithmetic:
     # (1789, 1990) -> (1790, 1991).
-    assert (collect("not windows_only"), collect()) == (1790, 1991)
+    # fix/caption-tap-overload-starves-playout: four new platform-independent
+    # cases in tests/native/test_caption_capacity_proof.py, added because the
+    # capacity proof's fail-closed overload control was verified only against a
+    # HAND-TYPED report dict -- so it did not notice that the evaluator pinned
+    # runtime_state == "overloaded" while the tap worker had started publishing
+    # "paused", which would have failed the proof on every station. The new
+    # cases drive the REAL producer (_overload_negative_control) into the
+    # evaluator, cover both accepted refusal states, and pin that a
+    # "within-capacity" state still fails so widening the set did not turn the
+    # control into a no-op. No windows_only marker and no OS dependency (a
+    # scripted CaptionRuntime and a tmp_path WAV), so both lanes advance by
+    # four. Re-derived by an actual `--collect-only` run on this tree, not by
+    # arithmetic: (1790, 1991) -> (1794, 1995).
+    assert (collect("not windows_only"), collect()) == (1794, 1995)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

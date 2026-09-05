@@ -17,8 +17,83 @@ came across and what deliberately did not.
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.
 
+### Added
+
+- **An operator switch for live captions: `Show live captions on air` on
+  Setup > Station Profile** (`StationProfile.live_captions_enabled`, default
+  on, `GET`/`PUT /api/staff/station/profile`, `setup_admin` to change). An
+  activated native station sets `CIVICCAST_CAPTION_TAP=inline`
+  unconditionally, so until now there was no way for an operator to stop live
+  captioning on a box where it could not keep up. The switch is read on every
+  caption scan, so it takes effect within one poll interval **without
+  restarting a control plane that is on air**. While off, the tap transcribes
+  nothing, blanks every channel's live caption file, reports
+  `"state": "disabled"`, and deletes the forked audio instead of filing it as
+  evidence. Captions on published recordings (the offline caption job, the
+  legal requirement) are unaffected. `CIVICCAST_CAPTION_TAP=off` also forces
+  live captions off and wins over the persisted value; the reverse is
+  deliberately not true, so no environment value can re-enable captions
+  against the operator's switch.
+
 ### Fixed
 
+- **The live caption tap could starve playout, and did.** MEASURED on tester
+  DESKTOP-VBMA6O5 (1.0.0-beta.5 candidate kit `e502074`, three channels
+  ON_AIR on the GStreamer engine): the control plane burned ~247% of a core
+  (19,000+ CPU-seconds, 1.9 GB RSS, 61 threads) running live-caption ASR while
+  the three playout workers sat at 26-64% each and repeatedly hit
+  `CTRL stall: no output for 10s - quitting for daemon restart`; two channels
+  restarted within the first hour. `control_plane-app.log` carried 663
+  `caption` lines -- the same CRITICAL overload message every ~30 seconds for
+  all three channels -- and the station had never been asked to caption
+  anything. Four causes, all fixed:
+  - **Overload did not back off.** The worker cleared the channel's captions,
+    dropped the audio, logged CRITICAL, and retried on the very next scan,
+    forever, at full CPU, transcribing audio it then discarded. New
+    `civiccast/captions/tap_backoff.py` pauses an overloaded channel for an
+    exponentially growing window (60s, 120s, 240s ... capped at 900s), logged
+    once at WARNING per pause. A channel is forgiven only after three
+    consecutive within-capacity scans, so a flapping channel keeps escalating.
+    The stale audio is discarded rather than filed under `<channel>/overload/`:
+    nothing ever swept that directory (the retention policy's tap sweep reads
+    `processed/` only) and no review row referenced it, so on a chronically
+    overloaded station it grew without bound across every pause cycle.
+  - **ASR concurrency was unbounded in practice.** `max_channel_workers`
+    defaulted to a flat 3 while each faster-whisper model was built with
+    `cpu_threads=0` -- CTranslate2's "every core". The default is now one
+    transcribing channel per 8 CPUs (never more than 3), and the LIVE runtime
+    is built with `cpu_threads=1` and greedy decoding on CPU: about a one-core
+    steady-state budget for the whole caption feature on the 8-core field
+    station. Channels beyond the bound are queued in the same scan, never
+    dropped. Batch/VOD sizing is deliberately unchanged.
+  - **Playout and captions ran at the same scheduler priority.** The
+    GStreamer playout workers are now spawned with
+    `ABOVE_NORMAL_PRIORITY_CLASS`. (The caption side lowers only its Python
+    ASR threads, not CTranslate2's own thread pool -- see
+    `civiccast/captions/tap_worker.py`; the bound and the backoff are the
+    load-bearing protections, and neither priority change is measured on a
+    station yet.)
+  - **There was no operator switch.** See *Added* above.
+  Also: `<channel>/runtime-status.json` gains the `paused` and `disabled`
+  states plus `resume_in_seconds`/`consecutive_overloads`, and is now written
+  only on a state change or a 30-second heartbeat instead of on every ~2-second
+  scan; and the retention sweep now runs on its own 60-second cadence instead
+  of once per ~2-second scan (it lists review rows and SHA-256s every chunk it
+  considers, to enforce a schedule measured in days). New env vars:
+  `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`,
+  `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS`,
+  `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` (both clamped with a
+  WARNING rather than raising, so a mistyped duration can never hold the
+  control plane down over a best-effort feature), and
+  `CIVICCAST_WHISPER_BEAM_SIZE` (live tap only). Operator guidance:
+  `docs/ops/background-workers.md`.
+- **`scripts/prove_native_caption_capacity.py` pinned the single string
+  `"overloaded"` for its fail-closed negative control**, so the capacity proof
+  would have failed on every station the moment the backoff above started
+  publishing `"paused"` -- while the property the control exists to prove was
+  still satisfied. It now accepts either refusal state, and the test consumes
+  the REAL producer's output instead of a hand-typed report dict, which is why
+  nothing caught the mismatch.
 - **`civiccast/egress/gst/graph.py`'s `source_leg_is_clock_timed` docstring
   claimed the fail-safe answer for an unknown source factory is `True`; the
   code has always returned `False`** (`_chain_is_clock_timed` only matches a

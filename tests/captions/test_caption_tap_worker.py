@@ -13,22 +13,26 @@ runtime, ``run_once``/``run_forever`` survive-and-log loop.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 import uuid
 import wave
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from civiccast.captions.models import AudioChunk, CaptionHypothesis, CustomVocabulary
 from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
+from civiccast.captions.tap_backoff import CaptionBackoffPolicy
 from civiccast.captions.tap_worker import (
     CaptionTapWorker,
     CaptionTapWorkerSettings,
     build_tap_worker,
+    default_max_channel_workers,
 )
 from civiccast.egress.caption_embed import load_caption_cues_from_timed_text
 from civiccast.egress.caption_feed import CaptionFeedWorker
@@ -80,6 +84,22 @@ class _ConcurrencyProbeRuntime(_ScriptedRuntime):
                 self._active -= 1
 
 
+class _FakeClock:
+    """A ``time.monotonic``-shaped clock the test drives explicitly.
+
+    The backoff windows are minutes long; nothing here is allowed to sleep.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+    def __call__(self) -> float:
+        return self.now
+
+
 def _write_wav(path: Path, *, seconds: float = 1.0) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     frame_count = int(TAP_SAMPLE_RATE_HZ * seconds)
@@ -97,6 +117,10 @@ def _worker(  # type: ignore[no-untyped-def]
     *,
     segment_seconds: float = 1.0,
     atomic_segments: bool = False,
+    max_channel_workers: int | None = None,
+    backoff_policy: CaptionBackoffPolicy | None = None,
+    is_enabled: Callable[[], bool] | None = None,
+    monotonic: Callable[[], float] | None = None,
 ):
     return CaptionTapWorker(
         tap_root=tap_root,
@@ -105,6 +129,10 @@ def _worker(  # type: ignore[no-untyped-def]
         review_store=store,
         segment_seconds=segment_seconds,
         atomic_segments=atomic_segments,
+        max_channel_workers=max_channel_workers,
+        backoff_policy=backoff_policy,
+        is_enabled=is_enabled,
+        monotonic=monotonic,
     )
 
 
@@ -274,12 +302,68 @@ class TestCaptionTapWorker:
             _write_wav(tap_root / channel / "chunk-000000.wav")
             _write_wav(tap_root / channel / "chunk-000001.wav")
         runtime = _ConcurrencyProbeRuntime()
-        worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore())
+        # Explicit: the DEFAULT bound is CPU-derived and is 1 on an 8-core box
+        # (see test_asr_concurrency_is_bounded_by_cpu_count). This test is
+        # about the executor actually running channels in parallel when the
+        # bound allows it, so it states the bound it is testing.
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+            max_channel_workers=3,
+        )
 
         result = worker.run_once()
 
         assert result.consumed_segments == 3
         assert runtime.max_active == 3
+
+    def test_asr_concurrency_is_bounded_by_cpu_count(self, tmp_path: Path) -> None:
+        """The whole point of the bound: three ON_AIR channels, one at a time.
+
+        MEASURED field failure this guards (tester DESKTOP-VBMA6O5, three
+        channels ON_AIR, CPU-only): three channels transcribing at once, each
+        faster-whisper model built with ``cpu_threads=0`` (every core), the
+        control plane at ~247% of a core, and the playout workers restarted by
+        their own 10-second stall watchdog.
+        """
+
+        tap_root = tmp_path / "tap"
+        for channel in ("public", "education", "government"):
+            _write_wav(tap_root / channel / "chunk-000000.wav")
+            _write_wav(tap_root / channel / "chunk-000001.wav")
+        runtime = _ConcurrencyProbeRuntime()
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+            max_channel_workers=1,
+        )
+
+        result = worker.run_once()
+
+        # Bounded, not dropped: every channel is still transcribed in this
+        # same scan, just never simultaneously.
+        assert result.consumed_segments == 3
+        assert sorted(result.channels) == ["education", "government", "public"]
+        assert runtime.max_active == 1
+
+    def test_default_concurrency_is_one_channel_per_eight_cpus(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 8)
+        assert default_max_channel_workers() == 1
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 4)
+        assert default_max_channel_workers() == 1
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 16)
+        assert default_max_channel_workers() == 2
+        # Never more than the historical flat maximum, however large the box.
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 128)
+        assert default_max_channel_workers() == 3
+        # `os.cpu_count()` is documented as possibly None.
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: None)
+        assert default_max_channel_workers() == 1
 
     def test_backlog_fails_closed_instead_of_publishing_stale_captions(
         self,
@@ -303,16 +387,217 @@ class TestCaptionTapWorker:
         assert getattr(result, "dropped_overload_segments", 0) == 3
         assert getattr(result, "overloaded_channels", ()) == ("government",)
         assert load_caption_cues_from_timed_text(active, source_id="government") == []
-        overload = tap_root / "government" / "overload"
-        assert sorted(path.name for path in overload.glob("*.wav")) == [
-            "chunk-000000.wav",
-            "chunk-000001.wav",
-            "chunk-000002.wav",
-        ]
+        # DISCARDED, not filed under `overload/`. Nothing ever swept that
+        # directory (the retention policy tap sweep reads `processed/` only)
+        # and no review row referenced it, so it grew without bound on a
+        # chronically overloaded station -- see TestCaptionTapPlayoutProtection
+        # for the two-pause-cycle proof.
+        assert not (tap_root / "government" / "overload").exists()
+        assert not list((tap_root / "government").glob("chunk-00000[012].wav"))
         status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
         status = json.loads(status_path.read_text(encoding="utf-8"))
-        assert status["state"] == "overloaded"
+        # An overload now OPENS A BACKOFF PAUSE rather than merely reporting
+        # itself and retrying on the next scan, so the operator-visible state
+        # is "paused" and it says when captions will be attempted again.
+        assert status["state"] == "paused"
         assert status["backlog_segments"] == 3
+        assert status["consecutive_overloads"] == 1
+        assert status["resume_in_seconds"] > 0
+        assert result.paused_channels == ("government",)
+
+    def test_the_operator_switch_stops_asr_without_a_restart(self, tmp_path: Path) -> None:
+        """``StationProfile.live_captions_enabled`` is read every scan.
+
+        An activated native station forces ``CIVICCAST_CAPTION_TAP=inline``
+        into its environment, so this switch is the operator's only way to
+        stop live captioning -- and it has to take effect on a station that is
+        ON AIR, without restarting the control plane.
+        """
+
+        tap_root = tmp_path / "tap"
+        enabled = [True]
+        runtime = _ScriptedRuntime()
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+            is_enabled=lambda: enabled[0],
+        )
+        active = _active_vtt(tap_root, "government")
+
+        for index in range(3):
+            _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+        assert worker.run_once().consumed_segments == 2
+        assert len(runtime.seen_chunks) == 2
+        assert load_caption_cues_from_timed_text(active, source_id="government") != []
+
+        enabled[0] = False
+        for index in range(3, 4):
+            _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+        disabled = worker.run_once()
+
+        assert disabled.consumed_segments == 0
+        assert len(runtime.seen_chunks) == 2
+        # Nothing on air claims to be captioned any more...
+        assert load_caption_cues_from_timed_text(active, source_id="government") == []
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+        assert json.loads(status_path.read_text(encoding="utf-8"))["state"] == "disabled"
+        # ...and the forked audio is DELETED rather than filed as evidence: a
+        # station that switched live captions off has not asked CivicCast to
+        # keep a rolling recording of its broadcast audio.
+        assert not (tap_root / "government" / "overload").exists()
+        assert sorted(path.name for path in (tap_root / "government").glob("chunk-*.wav")) == [
+            "chunk-000003.wav"
+        ]
+
+        # Switching it back on resumes, still without a restart.
+        enabled[0] = True
+        for index in range(4, 6):
+            _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+        assert worker.run_once().consumed_segments == 2
+
+    def test_an_overloaded_channel_spends_no_asr_while_paused(self, tmp_path: Path) -> None:
+        """The pause must be real: not one sample reaches the runtime.
+
+        The field defect was not that overload went undetected -- it was that
+        the worker detected overload, cleared the captions, dropped the audio,
+        logged CRITICAL, and then immediately tried again, forever, at full
+        CPU. Backing off is what makes "captions are best effort" true.
+        """
+
+        tap_root = tmp_path / "tap"
+        clock = _FakeClock()
+        policy = CaptionBackoffPolicy(base_seconds=60.0, monotonic=clock)
+        runtime = _ScriptedRuntime()
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+            backoff_policy=policy,
+        )
+
+        for index in range(4):
+            _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+        first = worker.run_once()
+        assert first.overloaded_channels == ("government",)
+        assert runtime.seen_chunks == []
+
+        # Second scan, still inside the 60s window: a fresh, WITHIN-capacity
+        # backlog arrives and is still not transcribed.
+        clock.advance(2.0)
+        for index in range(4, 6):
+            _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+        second = worker.run_once()
+
+        assert second.paused_channels == ("government",)
+        assert second.overloaded_channels == ()
+        assert second.consumed_segments == 0
+        assert runtime.seen_chunks == []
+        # Drained, not hoarded: a paused channel must not fill the disk while
+        # the audio tap keeps publishing a segment every few seconds into it.
+        # The per-scan drain DELETES (`overload/` is swept by nothing); only
+        # the one-off move that opened the pause files evidence there.
+        assert second.dropped_overload_segments == 2
+        assert not (tap_root / "government" / "overload").exists()
+        assert not list((tap_root / "government").glob("chunk-00000[034].wav"))
+
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        assert status["state"] == "paused"
+        assert status["resume_in_seconds"] == 58.0
+
+    def test_captions_resume_after_the_backoff_window_when_the_backlog_is_clear(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        clock = _FakeClock()
+        policy = CaptionBackoffPolicy(base_seconds=60.0, monotonic=clock)
+        runtime = _ScriptedRuntime()
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+            backoff_policy=policy,
+        )
+
+        for index in range(4):
+            _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+        worker.run_once()
+
+        clock.advance(61.0)
+        for index in range(4, 6):
+            _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+        resumed = worker.run_once()
+
+        assert resumed.paused_channels == ()
+        assert resumed.consumed_segments == 2
+        assert len(runtime.seen_chunks) == 2
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        assert status["state"] == "within-capacity"
+
+    def test_a_repeated_overload_escalates_the_pause(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        clock = _FakeClock()
+        policy = CaptionBackoffPolicy(base_seconds=60.0, monotonic=clock)
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            backoff_policy=policy,
+        )
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+
+        next_index = 0
+        for expected_pause in (60.0, 120.0, 240.0):
+            for _ in range(4):
+                _write_wav(tap_root / "government" / f"chunk-{next_index:06d}.wav")
+                next_index += 1
+            worker.run_once()
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            assert status["state"] == "paused"
+            assert status["resume_in_seconds"] == expected_pause
+            clock.advance(expected_pause + 1.0)
+
+    def test_the_overload_is_logged_once_per_pause_not_every_scan(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """663 caption lines in one control-plane log is the defect.
+
+        The overload line was CRITICAL and repeated every ~30s for all three
+        channels while the actual casualty -- a playout worker restarting --
+        was buried in it. One WARNING per pause window, and nothing at all
+        while the pause holds.
+        """
+
+        tap_root = tmp_path / "tap"
+        clock = _FakeClock()
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            backoff_policy=CaptionBackoffPolicy(base_seconds=60.0, monotonic=clock),
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="civiccast.captions.tap_worker"):
+            for index in range(4):
+                _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+            worker.run_once()
+            for scan in range(5):
+                clock.advance(2.0)
+                for index in range(4 + scan * 2, 6 + scan * 2):
+                    _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+                worker.run_once()
+
+        overload_records = [
+            record for record in caplog.records if "Caption tap overload" in record.getMessage()
+        ]
+        assert len(overload_records) == 1
+        assert overload_records[0].levelno == logging.WARNING
+        assert not [record for record in caplog.records if record.levelno >= logging.CRITICAL]
 
     def test_a_bad_segment_is_quarantined_not_fatal(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
@@ -390,6 +675,251 @@ class TestCaptionTapWorker:
         assert result.consumed_segments == 0
         assert result.quarantined_segments == 1
         assert (tap_root / "government" / "collision" / "chunk-000007.wav").is_file()
+
+
+class TestCaptionTapPlayoutProtection:
+    """The four behaviours that keep captions from costing the station its air."""
+
+    def test_retention_still_prunes_while_live_captions_are_switched_off(
+        self, tmp_path: Path
+    ) -> None:
+        """Turning captions off is a decision about FUTURE transcription.
+
+        It is not a licence to stop deleting audio the station has already
+        recorded. Gating the retention sweep behind the enabled check froze
+        every retention clock (spec 4.3) for as long as the switch was off.
+        """
+
+        tap_root = tmp_path / "tap"
+        _write_wav(tap_root / "government" / "chunk-000000.wav")
+        _write_wav(tap_root / "government" / "chunk-000001.wav")
+
+        enforced: list[Path] = []
+
+        class _RecordingRetention:
+            def enforce_discovered(self, *, tap_root, review_store, segment_seconds):  # type: ignore[no-untyped-def]
+                enforced.append(tap_root)
+                return SimpleNamespace(ready=True, refusal_reason=None)
+
+            def record_event(self, **_kwargs: object) -> None:  # pragma: no cover
+                return None
+
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=1.0,
+            retention_policy=_RecordingRetention(),  # type: ignore[arg-type]
+            is_enabled=lambda: False,
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0  # captions really are off
+        assert enforced == [tap_root]  # ...and retention really did run
+
+    def test_a_chronically_overloaded_channel_retains_no_audio_across_pause_cycles(
+        self, tmp_path: Path
+    ) -> None:
+        """`<channel>/overload/` was swept by nothing, and it grew forever.
+
+        The retention policy tap sweep reads `processed/` only, so BOTH the
+        move that opened a pause and the per-scan drain that followed it piled
+        raw broadcast audio into `overload/` with no retention clock on it and
+        no review row referencing it. On a station that cannot keep up -- the
+        one case this whole change exists for -- that repeats every pause
+        cycle, forever. This drives TWO full cycles and asserts that nothing
+        accumulates on either path.
+        """
+
+        tap_root = tmp_path / "tap"
+        clock = _FakeClock()
+        channel = tap_root / "government"
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            backoff_policy=CaptionBackoffPolicy(base_seconds=60.0, monotonic=clock),
+            monotonic=clock,
+        )
+
+        next_index = 0
+        for cycle in range(2):
+            # Overload -> opens a pause (60s, then 120s).
+            for _ in range(4):
+                _write_wav(channel / f"chunk-{next_index:06d}.wav")
+                next_index += 1
+            result = worker.run_once()
+            assert result.overloaded_channels == ("government",), f"cycle {cycle}"
+
+            # Several scans inside the pause window -> per-scan drain.
+            for _ in range(5):
+                clock.advance(2.0)
+                for _ in range(2):
+                    _write_wav(channel / f"chunk-{next_index:06d}.wav")
+                    next_index += 1
+                worker.run_once()
+
+            # Nothing retained, on either path, in either cycle.
+            assert not (channel / "overload").exists(), f"cycle {cycle}"
+            clock.advance(60.0 * (2**cycle) + 1.0)
+
+        # The tap directory itself never accumulated either: at most the one
+        # unsettled newest segment is left behind.
+        assert len(list(channel.glob("chunk-*.wav"))) <= 1
+
+    def test_the_retention_sweep_runs_on_its_own_slower_cadence(self, tmp_path: Path) -> None:
+        """Retention enforces a schedule in DAYS; it must not run 30x a minute.
+
+        `enforce_discovered` lists review rows from the database and SHA-256s
+        every chunk it considers. At the 2-second scan cadence that is a query
+        plus a pass over the recorded audio 30 times a minute, forever.
+        """
+
+        tap_root = tmp_path / "tap"
+        tap_root.mkdir(parents=True)
+        clock = _FakeClock()
+        sweeps: list[float] = []
+
+        class _CountingRetention:
+            def enforce_discovered(self, **_kwargs: object):  # type: ignore[no-untyped-def]
+                sweeps.append(clock.now)
+                return SimpleNamespace(ready=True, refusal_reason=None)
+
+            def record_event(self, **_kwargs: object) -> None:  # pragma: no cover
+                return None
+
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=1.0,
+            retention_policy=_CountingRetention(),  # type: ignore[arg-type]
+            monotonic=clock,
+        )
+
+        # The FIRST scan always sweeps -- a station must not wait a minute
+        # after startup to start honouring its retention schedule.
+        worker.run_once()
+        assert sweeps == [0.0]
+
+        for _ in range(29):  # 58 seconds of 2-second scans
+            clock.advance(2.0)
+            worker.run_once()
+        assert sweeps == [0.0]
+
+        clock.advance(4.0)
+        worker.run_once()
+        assert sweeps == [0.0, 62.0]
+
+    def test_a_storage_refusal_is_not_forgotten_between_retention_sweeps(
+        self, tmp_path: Path
+    ) -> None:
+        """Failing closed must survive the cadence.
+
+        A scan that skips the sweep must keep the last verdict, not quietly
+        revert to "ready" and start captioning again on storage the policy
+        already refused.
+        """
+
+        tap_root = tmp_path / "tap"
+        _write_wav(tap_root / "government" / "chunk-000000.wav")
+        _write_wav(tap_root / "government" / "chunk-000001.wav")
+        clock = _FakeClock()
+        runtime = _ScriptedRuntime()
+
+        class _RefusingRetention:
+            def enforce_discovered(self, **_kwargs: object):  # type: ignore[no-untyped-def]
+                return SimpleNamespace(ready=False, refusal_reason="disk full")
+
+            def record_event(self, **_kwargs: object) -> None:  # pragma: no cover
+                return None
+
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=runtime,
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=1.0,
+            retention_policy=_RefusingRetention(),  # type: ignore[arg-type]
+            monotonic=clock,
+        )
+
+        assert worker.run_once().consumed_segments == 0
+        clock.advance(2.0)  # inside the sweep cadence: no fresh verdict
+        assert worker.run_once().consumed_segments == 0
+        assert runtime.seen_chunks == []
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        assert status["state"] == "storage-refused"
+        assert status["refusal_reason"] == "disk full"
+
+    def test_an_unchanged_status_is_not_rewritten_every_scan(self, tmp_path: Path) -> None:
+        """A steady state is not news; a durable write per scan is a cost."""
+
+        tap_root = tmp_path / "tap"
+        clock = _FakeClock()
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            is_enabled=lambda: False,
+            monotonic=clock,
+        )
+        _write_wav(tap_root / "government" / "chunk-000000.wav")
+        _write_wav(tap_root / "government" / "chunk-000001.wav")
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+
+        worker.run_once()
+        first = json.loads(status_path.read_text(encoding="utf-8"))["updated_at"]
+
+        for _ in range(5):
+            clock.advance(2.0)
+            _write_wav(tap_root / "government" / f"chunk-{uuid.uuid4().int % 900000:06d}.wav")
+            worker.run_once()
+
+        assert json.loads(status_path.read_text(encoding="utf-8"))["updated_at"] == first
+
+        # ...but it does not go stale forever: a heartbeat republishes it.
+        clock.advance(31.0)
+        _write_wav(tap_root / "government" / "chunk-000900.wav")
+        _write_wav(tap_root / "government" / "chunk-000901.wav")
+        worker.run_once()
+        assert json.loads(status_path.read_text(encoding="utf-8"))["updated_at"] != first
+
+    def test_switching_captions_off_clears_a_channel_with_no_tap_directory(
+        self, tmp_path: Path
+    ) -> None:
+        """Clear by the CHANNEL SET, not by tap-directory presence.
+
+        A channel whose tap directory was never created (or was already swept)
+        has no directory to iterate -- yet it can still be serving a stale
+        `active.vtt` from before the switch was thrown. Captions on air that
+        nothing is producing any more is the exact failure the fail-closed
+        clear exists to prevent.
+        """
+
+        tap_root = tmp_path / "tap"
+        tap_root.mkdir(parents=True)
+        stale = _active_vtt(tap_root, "education")
+        stale.parent.mkdir(parents=True)
+        stale.write_text(
+            "WEBVTT\n\nold\n00:00:00.000 --> 00:00:01.000\nstale caption\n",
+            encoding="utf-8",
+        )
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            is_enabled=lambda: False,
+        )
+
+        result = worker.run_once()
+
+        assert result.channels == ()  # no tap directory for this channel at all
+        assert load_caption_cues_from_timed_text(stale, source_id="education") == []
 
 
 class TestCaptionTapWorkerSettings:
@@ -474,7 +1004,21 @@ class TestCaptionTapWorkerSettings:
         # own default of 1. Asserting the whole dict (not just the absence of
         # a key) is deliberate -- it also catches a future caller quietly
         # reintroducing the multiplier under a different argument name.
-        assert captured == {}
+        #
+        # What the live tap DOES pass is the CPU budget, and only that: one
+        # CTranslate2 intra-thread and greedy decoding. The batch/VOD defaults
+        # (`cpu_threads=0`, i.e. every core, and beam 5) are what produced the
+        # measured field failure -- ~247% of a core against three playout
+        # workers being killed by their own stall watchdog.
+        #
+        # It asks for that sizing by declaring itself LIVE, not by passing a
+        # kwargs bundle: this construction branch is dead in the native
+        # service (the app pre-builds the runtime through
+        # `civiccast.ai_models.runtime.build_caption_runtime` and injects it),
+        # so kwargs here proved nothing about the product. `live=True` is a
+        # property of the runtime and travels with it through BOTH paths --
+        # see tests/ai_models/test_runtime_wiring.py for the app's own call.
+        assert captured == {"live": True}
 
     def test_native_station_rejects_the_unaccepted_vulkan_runtime(
         self,

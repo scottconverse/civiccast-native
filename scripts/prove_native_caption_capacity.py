@@ -97,6 +97,14 @@ def cpu_model_name() -> str:
     return platform.processor().strip() or "unknown"
 
 
+#: Runtime states the caption tap may publish for a channel it has refused to
+#: keep captioning. Both are the fail-closed outcome this proof's negative
+#: control checks for: ``overloaded`` is the plain report, ``paused`` is the
+#: same refusal plus the exponential backoff window
+#: (:mod:`civiccast.captions.tap_backoff`) the worker now opens with it.
+_FAIL_CLOSED_OVERLOAD_STATES = frozenset({"overloaded", "paused"})
+
+
 def _number(value: object) -> float | None:
     if isinstance(value, int | float):
         return float(value)
@@ -198,7 +206,16 @@ def evaluate_capacity_report(
     if not isinstance(overload, dict) or not (
         overload.get("dropped_overload_segments") == 3
         and overload.get("active_vtt_cleared") is True
-        and overload.get("runtime_state") == "overloaded"
+        # BOTH states are a passing fail-closed outcome. The control asserts
+        # that an over-budget channel drops its stale audio and clears its
+        # active captions rather than airing them late; whether the worker
+        # then merely reports "overloaded" or additionally opens a backoff
+        # pause ("paused", the behavior since the caption-tap starvation fix)
+        # is a policy detail this control does not govern. Pinning the single
+        # older string here made the proof fail on every station the moment
+        # that policy landed -- while the property the control actually exists
+        # to prove was still satisfied.
+        and overload.get("runtime_state") in _FAIL_CLOSED_OVERLOAD_STATES
     ):
         problems.append("fail-closed overload negative control did not pass")
     return problems

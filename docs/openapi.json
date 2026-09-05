@@ -13488,7 +13488,7 @@
           "staff",
           "station"
         ],
-        "summary": "Edit the mutable station identity profile fields",
+        "summary": "Edit the mutable station identity profile fields (including the live-caption switch)",
         "operationId": "put_station_profile_api_staff_station_profile_put",
         "requestBody": {
           "content": {
@@ -58990,6 +58990,12 @@
             "title": "Initial Schedule Enabled",
             "default": true
           },
+          "live_captions_enabled": {
+            "type": "boolean",
+            "title": "Live Captions Enabled",
+            "description": "Operator switch for the LIVE caption tap (real-time ASR on the broadcast audio of every ON_AIR channel). On by default -- live captions are an accessibility feature and a station that can run them should. Turn it OFF on a station whose caption tap cannot keep up: an activated native station enables the tap unconditionally in its environment, so before this switch existed there was no way for an operator to stop it. Turning it off does NOT affect captions on published recordings (the offline caption job), which is the legal requirement; this is the live one.",
+            "default": true
+          },
           "default_roles": {
             "items": {
               "type": "string",
@@ -59105,6 +59111,17 @@
                 "type": "null"
               }
             ]
+          },
+          "live_captions_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Captions Enabled"
           }
         },
         "additionalProperties": false,

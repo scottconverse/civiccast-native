@@ -378,6 +378,11 @@ module = [
   "crawl4ai.*",
   "playwright.*",
   "faster_whisper.*",
+  # Optional captions-runtime dependency, imported lazily. CTranslate2 is what
+  # faster-whisper runs on; `FasterWhisperRuntime.on_cuda` asks it how many
+  # CUDA devices it can see, which is how the live tap resolves device="auto"
+  # without loading a model.
+  "ctranslate2.*",
   "pikepdf.*",
   "reportlab.*",
   "sacrebleu",

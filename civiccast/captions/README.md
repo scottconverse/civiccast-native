@@ -42,8 +42,21 @@ Current surface:
   segments concurrently, retains the exact reviewed audio, and atomically
   publishes committed cues to each egress channel's `captions/active.vtt`.
   Backlog beyond the configured bound fails closed: the live sidecar is
-  cleared, stale segments are retained under `overload/`, and
-  `runtime-status.json` reports the overloaded state.
+  cleared, stale segments are discarded (never transcribed, so never
+  reviewable, and no retention clock would have covered them), and the channel
+  is PAUSED for an exponentially growing window
+  (`civiccast/captions/tap_backoff.py`: 60s, 120s, 240s ... capped at 900s)
+  rather than retried on the next scan. `runtime-status.json` carries the
+  channel's state -- `within-capacity`, `paused` (backing off, with
+  `resume_in_seconds` and `consecutive_overloads`), `overloaded`,
+  `storage-refused`, or `disabled` (the operator switched live captions off in
+  the station profile) -- and is rewritten only when that state changes or on
+  a 30-second heartbeat, never once per scan. The overload is logged once per
+  pause at WARNING; it was previously CRITICAL on every scan, which on a
+  three-channel CPU-only station meant a caption line every ~30 seconds
+  burying the playout failure it was competing with. Captions are best effort
+  and playout wins: see the ASR concurrency bound and CPU sizing in
+  `docs/ops/background-workers.md`.
 - Caption benchmark helpers plus `scripts/benchmark-caption-runtime.py`, which
   load mono signed 16-bit PCM WAV fixtures, run the same runtime adapter used by
   live captions, and emit JSON evidence with transcript text, optional WER,

@@ -358,7 +358,34 @@ jobs:
               # engine-builder scan is: the numbered-channel-id literals the
               # vocabulary test forbids do not appear anywhere in the
               # diff-scoped civiccast/*.py files, mutated or not.
-              echo 'pytest_add_cli_args_test_selection = ["--ignore=tests/policy/test_claims_evidence.py", "--ignore=tests/policy/test_shipped_payload_db_driver.py", "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory", "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_caption_tier_recommendation_vram_thresholds_match_hardware_py_bidirectionally", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_hardware_py_tier_id_ladder_shape_is_the_one_the_rust_mirror_assumes", "--deselect=tests/policy/test_native_pack_source_sha_contract.py::test_checked_in_pack_builder_invocations_bind_a_valid_source_sha", "--deselect=tests/test_engine_connect_timeout.py::test_no_unbounded_postgres_engine_builder", "--deselect=tests/policy/test_native_activation_selftest_layout_policy.py::test_self_test_server_binary_paths_are_all_builder_declared"]'
+              #
+              # Fifth member of the same family (2026-09-05,
+              # fix/caption-tap-overload-starves-playout):
+              # tests/ai_models/test_runtime_wiring.py::
+              # test_the_app_builds_its_live_tap_runtime_through_the_live_seam
+              # ast.parse()s civiccast/app.py and asserts that exactly ONE
+              # build_caption_runtime(...) call site passes live=True (the live
+              # caption tap) while the other -- the offline caption job -- does
+              # not. It exists because the sizing it guards was previously dead
+              # code in the product: app.py pre-builds the runtime and injects
+              # it, so a unit test of the seam alone passed while the live tap
+              # ran with every core at beam 5.
+              #
+              # Reading app.py through `inspect.getfile` was a genuine defect
+              # and is fixed on the branch (it now resolves the repo file by a
+              # repo-root-relative path), but that does NOT rescue it here, and
+              # the distinction matters: the TEST MODULE ITSELF executes from
+              # inside the mutants/ sandbox, so any repo-relative path it
+              # computes lands on the sandbox's own mutant-duplicated app.py --
+              # one copy of every mutated function body per candidate mutant,
+              # the same trampoline inflation as the hardware.py and
+              # engine-builder cases above. The scan then counts the duplicated
+              # call sites (reported as "found 665") instead of the two that
+              # exist in the real file. Normal CI runs it against pristine
+              # source, where it passes; mutmut deselects just this one test.
+              # The other tests in that module construct runtimes and assert
+              # their parameters, so they stay in the mutation surface.
+              echo 'pytest_add_cli_args_test_selection = ["--ignore=tests/policy/test_claims_evidence.py", "--ignore=tests/policy/test_shipped_payload_db_driver.py", "--deselect=tests/test_schema_check.py::test_expected_head_does_not_depend_on_current_working_directory", "--deselect=tests/test_schema_check.py::test_schema_check_reports_current_from_non_repo_working_directory", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_caption_tier_recommendation_vram_thresholds_match_hardware_py_bidirectionally", "--deselect=tests/policy/test_hardware_inventory_policy.py::test_hardware_py_tier_id_ladder_shape_is_the_one_the_rust_mirror_assumes", "--deselect=tests/policy/test_native_pack_source_sha_contract.py::test_checked_in_pack_builder_invocations_bind_a_valid_source_sha", "--deselect=tests/test_engine_connect_timeout.py::test_no_unbounded_postgres_engine_builder", "--deselect=tests/policy/test_native_activation_selftest_layout_policy.py::test_self_test_server_binary_paths_are_all_builder_declared", "--deselect=tests/ai_models/test_runtime_wiring.py::TestCaptionsRuntimeSeam::test_the_app_builds_its_live_tap_runtime_through_the_live_seam"]'
               echo -n "only_mutate = ["
               sed 's/.*/"&",/' changed_files.txt | tr -d '\n'
               echo "]"

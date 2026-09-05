@@ -566,3 +566,78 @@ def test_capacity_runtime_rejects_every_alternate_backend(tmp_path: Path) -> Non
             cpu_threads=0,
             vad_filter=True,
         )
+
+
+class _ProofScriptedRuntime:
+    """Minimal CaptionRuntime: one hypothesis per chunk, no model."""
+
+    def transcribe(self, chunks, vocabulary=None):  # type: ignore[no-untyped-def]
+        from civiccast.captions.models import CaptionHypothesis
+
+        for chunk in chunks:
+            yield CaptionHypothesis(
+                source_id=f"{chunk.chunk_id}-proof",
+                start_seconds=chunk.start_seconds,
+                end_seconds=chunk.end_seconds,
+                text="the council will come to order",
+                confidence=0.9,
+            )
+
+
+def _write_control_audio(path: Path, *, seconds: float = 1.0) -> Path:
+    from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(TAP_SAMPLE_RATE_HZ)
+        handle.writeframes(b"\x01\x00" * int(TAP_SAMPLE_RATE_HZ * seconds))
+    return path
+
+
+def test_the_real_overload_control_producer_satisfies_the_evaluator(tmp_path: Path) -> None:
+    """The producer and the acceptance gate must agree, on REAL output.
+
+    Regression this exists to prevent, and which a hand-written report dict
+    hid: the evaluator pinned `runtime_state == "overloaded"`, the worker
+    started publishing "paused" when the overload backoff landed, and every
+    station's capacity proof would have failed on a control that had actually
+    passed. Because the fixture report was typed by hand, no test noticed.
+    """
+
+    control = proof._overload_negative_control(
+        audio=_write_control_audio(tmp_path / "audio" / "chunk.wav"),
+        work_root=tmp_path / "work",
+        runtime=_ProofScriptedRuntime(),
+        segment_seconds=1.0,
+        overlap_seconds=0.5,
+    )
+
+    assert control["dropped_overload_segments"] == 3
+    assert control["active_vtt_cleared"] is True
+    assert control["runtime_state"] in proof._FAIL_CLOSED_OVERLOAD_STATES
+
+    # The evaluator must accept what the producer actually emits.
+    report = _passing_report()
+    report["overload_negative_control"] = control
+    assert proof.evaluate_capacity_report(report) == []
+
+
+@pytest.mark.parametrize("state", sorted(proof._FAIL_CLOSED_OVERLOAD_STATES))
+def test_both_fail_closed_overload_states_are_accepted(state: str) -> None:
+    report = _passing_report()
+    report["overload_negative_control"]["runtime_state"] = state  # type: ignore[index]
+
+    assert proof.evaluate_capacity_report(report) == []
+
+
+def test_a_within_capacity_state_still_fails_the_overload_control() -> None:
+    """Widening the accepted set must not turn the control into a no-op."""
+
+    report = _passing_report()
+    report["overload_negative_control"]["runtime_state"] = "within-capacity"  # type: ignore[index]
+
+    assert any(
+        "overload negative control" in problem for problem in proof.evaluate_capacity_report(report)
+    )

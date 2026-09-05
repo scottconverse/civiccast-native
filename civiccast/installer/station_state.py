@@ -253,6 +253,52 @@ def resolve_station_timezone() -> str:
     return "local"
 
 
+def read_live_captions_enabled() -> bool | None:
+    """The persisted live-caption switch, or ``None`` before commissioning.
+
+    Deliberately reads just this one field rather than validating the whole
+    profile (same reason as :func:`read_station_timezone`): whether the live
+    caption tap runs must never depend on some unrelated profile field being
+    well-formed.
+    """
+
+    raw = _load_raw_state()
+    station = raw.get("station")
+    if not isinstance(station, dict):
+        return None
+    value = station.get("live_captions_enabled")
+    if value is None:
+        return None
+    return bool(value)
+
+
+def resolve_live_captions_enabled() -> bool:
+    """Whether the LIVE caption tap may run: env override > persisted > on.
+
+    Precedence is deliberately asymmetric, and only in the SAFE direction:
+    ``CIVICCAST_CAPTION_TAP=off`` in the environment turns live captioning off
+    no matter what is persisted, but no environment value can turn it back on
+    against an operator who switched it off. An activated native station sets
+    ``CIVICCAST_CAPTION_TAP=inline`` unconditionally
+    (``civiccast.native.station_runtime``), so the reverse precedence would
+    make the operator's switch unreachable on exactly the deployments that
+    need it.
+
+    Defaults to on: live captions are an accessibility feature, and a station
+    that can run them should. The caption tap's own overload backoff
+    (:mod:`civiccast.captions.tap_backoff`) is what keeps "on" safe on a
+    station that cannot keep up; this switch is the operator's explicit "do
+    not even try".
+    """
+
+    if os.environ.get("CIVICCAST_CAPTION_TAP", "").strip().lower() == "off":
+        return False
+    persisted = read_live_captions_enabled()
+    if persisted is None:
+        return True
+    return persisted
+
+
 def resolve_station_display_name() -> str:
     """Effective station display name: env override > persisted profile > default.
 
@@ -319,6 +365,7 @@ class StationProfileUpdateRequest(BaseModel):
     public_base_url: Annotated[str, Field(min_length=1, max_length=240)] | None = None
     default_channel_id: Annotated[str, Field(min_length=1, max_length=80)] | None = None
     storage_locations: StationStorageLocations | None = None
+    live_captions_enabled: bool | None = None
 
 
 def update_station_profile_fields(update: StationProfileUpdateRequest) -> StationProfile:
@@ -346,6 +393,8 @@ def update_station_profile_fields(update: StationProfileUpdateRequest) -> Statio
         station["default_channel_id"] = update.default_channel_id.strip()
     if update.storage_locations is not None:
         station["storage_locations"] = update.storage_locations.model_dump()
+    if update.live_captions_enabled is not None:
+        station["live_captions_enabled"] = bool(update.live_captions_enabled)
 
     raw["station"] = station
     _save_raw_state(raw)
@@ -973,6 +1022,10 @@ def _profile_from_state(raw: dict[str, Any]) -> StationProfile | None:
             ),
             sample_content_enabled=bool(station.get("sample_content_enabled", True)),
             initial_schedule_enabled=bool(station.get("initial_schedule_enabled", True)),
+            # Default TRUE for a station commissioned before this switch
+            # existed: live captions are an accessibility feature, so an
+            # absent key must not read as "the operator turned them off".
+            live_captions_enabled=bool(station.get("live_captions_enabled", True)),
             default_roles=[
                 str(role)
                 for role in station.get("default_roles", _DEFAULT_ROLES)
