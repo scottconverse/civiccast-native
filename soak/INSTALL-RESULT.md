@@ -1,40 +1,40 @@
-﻿# AUTORUN-1 kit fetch + install
+﻿# AUTORUN-5 kit fetch + install
 - mission: soak8-e1acfe6
 - host: DESKTOP-VBMA6O5
-- utc: 20260903T193516Z
-- kit: http://192.168.0.135:8766/b78b9c7dfa4d66b442172759439553381ec8be44/
+- utc: 20260905T055613Z
+- kit: http://192.168.0.135:8766/e5020746fa40e7a3f1a160d3a8e1add5c3b57786/
 
 manifest lines: 19
-fetching CivicCast (Native)_1.0.0-beta.4_x64-setup.exe
+fetching CivicCast (Native)_1.0.0-beta.5_x64-setup.exe
+fetching QUICKSTART-OPERATOR.md
 fetching packs/native-app-payload.ccpack
 fetching packs/native-cuda-runtime.ccpack
 fetching packs/native-ffmpeg-runtime.ccpack
 fetching packs/native-ollama-runtime.ccpack
 fetching packs/native-server-binaries.ccpack
+fetching samples/YTDown.com_YouTube_Help-Upgrade-the-LPM-Podcast-Studio_Media_oiYNSJEysvs_001_1080p.mp4
+fetching samples/YTDown.com_YouTube_Help-Upgrade-the-LPM-Podcast-Studio_Media_oiYNSJEysvs_003_360p.mp4
+fetching samples/YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4
+fetching samples/YTDown.com_YouTube_Serving-Locally-with-Michelle-SMART-Reco_Media_lVVzrRCX9_w_001_1080p.mp4
+fetching station/captions-floor.ccpack
 fetching station/core-notice.txt
 fetching station/core.ccpack
 fetching station/native-station-bundle-report.json
 fetching station/station-index.json
+fetching station/summary-gemma4-12b.ccpack
+fetching station/summary-gemma4-e4b.ccpack
+fetching station/translation-translategemma-4b.ccpack
 kit verify bad=0
-installer: CivicCast (Native)_1.0.0-beta.3_x64-setup.exe (289180536 bytes)
+installer: CivicCast (Native)_1.0.0-beta.5_x64-setup.exe (289300432 bytes)
 authenticode: Valid
-kit version: 1.0.0-beta.3
-existing install: service=Running version='1.0.0-beta.3' quiet-uninstall='"C:\CivicCastHostStore\install\uninstall.exe" /S _?=C:\CivicCastHostStore\install'
-same version (or no reliable version/uninstall string) -- upgrading in place, no uninstall
-silent install started 2026-09-03T19:49:53.7321405Z
-installer exit=123 at 2026-09-03T19:51:33.7587853Z
+kit version: 1.0.0-beta.5
+existing install: service=Stopped version='1.0.0-beta.3' quiet-uninstall='"C:\CivicCastHostStore\install\uninstall.exe" /S _?=C:\CivicCastHostStore\install'
+existing station stays; installing the full kit OVER it (customer upgrade path)
+silent install started 2026-09-05T06:33:31.1296223Z
+installer exit=0 at 2026-09-05T06:42:45.7800713Z
 
 ## install-progress.log tail
 ```
-      "b[2026-09-03 13:51:22] step d2-verify-ollama-runtime: begin
-[2026-09-03 13:51:28] step d2-verify-ollama-runtime: verification report: {
-  "path": "C:\\CivicCastHostStore\\install\\packs\\native-ollama-runtime.ccpack",
-  "sha256": "a3bcc3b6d48fcdaf8be3ce158118a86fafc09735f63fe1b587f24f8c29b8178a",
-  "component": "native-ollama-runtime",
-  "product_version": "1.0.0-beta.3",
-  "compatible_core": "1.0.0-beta.3",
-  "signing_key_id": "civiccast-production-2026-beta1",
-  "file_count": 69,
   "total_bytes": 1941210728,
   "metadata": {
     "ollama_executables": [
@@ -56,19 +56,36 @@ installer exit=123 at 2026-09-03T19:51:33.7587853Z
     },
     {
       "path": "lib/ollama/cuda_v12/cublasLt64_12.dll",
-      "b[2026-09-03 13:51:28] step d3-engine: begin (old=1.0.0-beta.3)
-[2026-09-03 13:51:30] step d3-engine: evidence route=SAME_VERSION_NO_OP engine_exit=12
-[2026-09-03 13:51:30] step d3-engine: NO-OP (same version 1.0.0-beta.3 already installed; no migration to run)
-[2026-09-03 13:51:30] step d4-provision: begin
-[2026-09-03 13:51:32] step d4-provision: returned 0
-[2026-09-03 13:51:32] step d4-activate-station: begin
-[2026-09-03 13:51:32] step d4-activate-station: source EXEDIR (kit side-load C:\CivicCastSoak\kit\station\station-index.json)
-[2026-09-03 13:51:33] step d4-activate-station: returned 66
-[2026-09-03 13:51:33] ALERT: CivicCast (Native) setup could not activate the station from the signed station index it found. If you installed from a CivicCast kit folder, make sure its station folder was copied across whole; otherwise the station's component packs could not be obtained from this machine's pack cache. See the installer log above for the exact underlying error.
-[2026-09-03 13:51:33] postinstall: FAILED, aborting with exit code 123
+      "b[2026-09-05 00:36:16] step d3-engine: begin (old=1.0.0-beta.3)
+[2026-09-05 00:37:01] step d3-engine: evidence route=UPGRADE engine_exit=0
+[2026-09-05 00:37:01] step d4-provision: begin
+[2026-09-05 00:37:04] step d4-provision: returned 0
+[2026-09-05 00:37:04] step d4-activate-station: begin
+[2026-09-05 00:37:04] step d4-activate-station: source EXEDIR (kit side-load C:\CivicCastSoak\kit-e5020746fa40e7a3f1a160d3a8e1add5c3b57786\station\station-index.json)
+[2026-09-05 00:42:38] step d4-activate-station: returned 0
+[2026-09-05 00:42:38] step d4-service-registration: begin
+[2026-09-05 00:42:41] step d4-service-registration: returned 0
+[2026-09-05 00:42:41] step d4-service-registration: restored site-packages service host member
+[2026-09-05 00:42:41] step d4-firewall-rule: begin
+[2026-09-05 00:42:41] step d4-firewall-rule: returned 0
+[2026-09-05 00:42:45] postinstall: EstimatedSize corrected to 12384046 KB (measured C:\CivicCastHostStore\install: 10741 files, 1276 dirs)
+[2026-09-05 00:42:45] postinstall: SUCCESS (InstalledVersion 1.0.0-beta.5 recorded)
+[2026-09-05 00:42:45] postinstall: QuietUninstallString registered (_?=C:\CivicCastHostStore\install)
+[2026-09-05 00:42:45] postinstall: InstallLocation rewritten unquoted
+[2026-09-05 00:42:45] postinstall: Start Menu operator console shortcut written
+[2026-09-05 00:42:45] postinstall: Start Menu public portal shortcut written
+[2026-09-05 00:42:45] postinstall: Desktop operator console shortcut written
 ```
 
 ## /health
 ```json
+{
+    "status":  "healthy",
+    "version":  "1.0.0-beta.5",
+    "schema":  "current",
+    "schema_db_revision":  "0087_retention_terms",
+    "schema_expected_head":  "0087_retention_terms",
+    "mode":  "normal"
+}
 ```
-RESULT: installer_exit=123 healthy=False
+RESULT: installer_exit=0 healthy=True
