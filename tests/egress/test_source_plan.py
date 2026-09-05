@@ -18,7 +18,6 @@ from civiccast.egress.models import (
     EgressSinkSpec,
 )
 from civiccast.egress.source_plan import (
-    PLAN_MAX_SEGMENTS,
     PLAN_MIN_SECONDS,
     ScheduleSourcePlanProvider,
     SlateSourceGenerator,
@@ -707,9 +706,9 @@ class TestPlanWindow:
         (with a WARNING naming the channel), because a plan larger than one
         pipeline can safely decode is exactly the regression this module
         exists to prevent. 1-second slots: 1800 of them would be needed to
-        reach ``min_plan_seconds``, and the historic ``PLAN_MAX_SEGMENTS``
-        (120) would let the segment count get there if it were still
-        honoured as ``segment_cap``."""
+        reach ``min_plan_seconds``, and an oversized ``segment_cap`` (120,
+        the module's pre-D45 historical ceiling) would let the segment
+        count get there if it were still honoured."""
         media = _media(tmp_path)
         now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
 
@@ -722,7 +721,7 @@ class TestPlanWindow:
                 ),
                 now=now,
                 min_plan_seconds=1800.0,
-                segment_cap=PLAN_MAX_SEGMENTS,
+                segment_cap=120,
             )
 
         assert plan is not None
@@ -792,6 +791,39 @@ class TestPlanWindow:
         # full.
         assert len(program.subchains) == len(plan.segments)
 
+    def test_end_to_end_agreement_holds_exactly_AT_the_cap(self, tmp_path: Path) -> None:
+        """Item 6: the test above proves agreement well UNDER the cap
+        (``max_segments=8``); prove it also holds exactly AT the cap, where
+        a prior version of ``graph_from_config`` would have hit its own
+        (now removed) truncation branch instead of building the full plan.
+        A caller that explicitly asks for ``max_segments=MAX_PLAYLIST_
+        SUBCHAINS`` gets a plan of exactly that many segments, and
+        ``graph_from_config`` builds exactly that many sub-chains from it --
+        not one fewer."""
+        from civiccast.egress.gst.bridge import graph_from_config
+        from civiccast.egress.gst.graph import PlaylistLeg
+
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=_slot_schedule(now, count=200),
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=3600, asset_id=asset_id
+            ),
+            now=now,
+            max_segments=MAX_PLAYLIST_SUBCHAINS,
+        )
+        assert plan is not None
+        assert len(plan.segments) == MAX_PLAYLIST_SUBCHAINS
+
+        graph = graph_from_config(_config(), plan)
+        program, _slate = graph.sources
+        assert isinstance(program, PlaylistLeg)
+        assert len(program.subchains) == MAX_PLAYLIST_SUBCHAINS
+        assert len(program.subchains) == len(plan.segments)
+
     def test_min_plan_seconds_and_segment_cap_are_validated(self, tmp_path: Path) -> None:
         media = _media(tmp_path)
         now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
@@ -816,3 +848,48 @@ class TestPlanWindow:
                 now=now,
                 min_plan_seconds=-1.0,
             )
+
+    def test_an_inconsistent_pair_above_the_cap_raises_rather_than_clamping_silently(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Hostile-review fix (2026-09-05): the raw-pair validation
+        (``segment_cap`` must be at least ``max_segments``) has to run
+        BEFORE the ``MAX_PLAYLIST_SUBCHAINS`` clamp, not after -- otherwise
+        an inconsistent caller-supplied pair that both happen to exceed the
+        pipeline cap (``max_segments=20``, ``segment_cap=15``) would get
+        silently clamped down to an agreeing pair (12/12) instead of
+        surfacing that the caller's own request never made sense on its own
+        terms. A CONSISTENT pair above the cap (20/20) is a different
+        case -- both values agree with each other, so they are clamped down
+        together (with a WARNING), not rejected."""
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+        resolver = lambda asset_id: _asset_of(  # noqa: E731
+            media, duration_seconds=3600, asset_id=asset_id
+        )
+
+        with pytest.raises(ValueError, match="segment_cap"):
+            build_source_plan_from_schedule(
+                channel_id="gov",
+                schedule_items=_slot_schedule(now, count=2),
+                asset_resolver=resolver,
+                now=now,
+                max_segments=20,
+                segment_cap=15,
+            )
+
+        with caplog.at_level("WARNING"):
+            plan = build_source_plan_from_schedule(
+                channel_id="gov",
+                schedule_items=_slot_schedule(now, count=200),
+                asset_resolver=resolver,
+                now=now,
+                max_segments=20,
+                segment_cap=20,
+            )
+        assert plan is not None
+        assert len(plan.segments) == MAX_PLAYLIST_SUBCHAINS
+        assert any(
+            "gov" in record.message and "MAX_PLAYLIST_SUBCHAINS" in record.message
+            for record in caplog.records
+        )

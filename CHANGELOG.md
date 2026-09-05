@@ -197,11 +197,18 @@ below.
     uncapped plan, so a plan above the cap would still have made the
     pipeline reach EOS long before automation's tracked horizon expected it
     to -- a worker restart roughly every 6 minutes, silently, for any
-    schedule that could build more than 12 segments. `graph_from_config`
-    now treats an oversized "program"-kind plan reaching it as a bypass
-    signal (logged at ERROR); a "slate"/"cg" fill plan
+    schedule that could build more than 12 segments. Because the producer
+    now guarantees the cap, `graph_from_config` treats a "program"-kind plan
+    still reaching it above the cap as proof that clamp was BYPASSED and
+    FAILS CLOSED (`errors.PlaylistCapBypassedError`) rather than silently
+    truncating it -- a second delta review caught that truncating-and-
+    logging-ERROR (the first pass's answer) would still have let
+    automation/daemon go on trusting the plan's full, uncapped duration
+    while the pipeline quietly played a shorter one, exactly the desync the
+    producer-side clamp exists to prevent. A "slate"/"cg" fill plan
     (`SlateSourceGenerator`, `bulletin_filler._plan_with_cycle`) is EXPECTED
-    to repeat past this cap by design (CA-8) and stays a WARNING.
+    to repeat past this cap by design (CA-8) and is unaffected -- truncated
+    with a WARNING, not failed.
   - `ChannelAutomationService._rollover_min_interval_seconds` (`automation.py`)
     now derives the per-channel rollover-dispatch floor from the plan
     actually on air (half its planned duration, clamped at the historic 300s
@@ -211,12 +218,22 @@ below.
     120s, then 60s, then 0s, then negative -- so by the third rollover the
     trigger arrives AT OR AFTER the plan's actual end and the engine reaches
     EOS and restarts before that rollover can land. The scaled floor keeps
-    the lead at a steady ~120s indefinitely instead. Hostile review also
-    caught that an earlier version of the scaled floor itself still floored
-    at a flat 30s (`max(30.0, 0.5 * planned)`), which is longer than an 8x3s
-    (24-second) plan's entire life and reproduces the identical bug at a
-    smaller scale; the floor is now a trivial 1.0s epsilon, so it never
-    returns more than half of the plan's own planned duration.
+    the lead at a steady ~120s indefinitely instead. A second delta review
+    caught two more instances of the same shape of bug: an earlier version
+    of the scaled floor itself still floored at a flat 30s
+    (`max(30.0, 0.5 * planned)`, longer than an 8x3s/24-second plan's own
+    life -- MEASURED: still dispatches, ten times in 300s, but with the same
+    shrinking-to-negative lead), and `_ROLLOVER_MIN_LEAD_SECONDS` (the
+    boundary-aligned trigger's lead, previously a flat 120s) had the
+    identical problem on its own -- a lead longer than the plan pushes
+    `rollover_trigger_at`'s `plan_end_at - lead` candidate into the plan's
+    own past, landing dispatches at or after EOS even with the floor fixed.
+    Both are now scaled the same way
+    (`_ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS` = 1.0, a trivial epsilon; a new
+    `_rollover_min_lead_seconds` = `min(120, 0.5 * planned)`), so neither
+    ever returns more than half of the plan's own planned duration --
+    MEASURED for the 24-second plan: a rollover every 24s with a steady 12s
+    (half the plan) of lead, indefinitely.
   New/rewritten tests in `tests/egress/test_source_plan.py` (an end-to-end
   test proving the plan `build_source_plan_from_schedule` returns and the
   graph `bridge.graph_from_config` builds from it agree on the segment

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from civiccast.egress.errors import SecretUnresolvedError
+from civiccast.egress.errors import PlaylistCapBypassedError, SecretUnresolvedError
 from civiccast.egress.gst.bridge import (
     MAX_PLAYLIST_SUBCHAINS,
     encode_chain_from_profile,
@@ -199,18 +199,17 @@ def test_graph_from_config_builds_program_playlist_and_slate() -> None:
     assert graph.sinks[0][1].factory == "udpsink"
 
 
-def test_graph_from_config_caps_a_bypassed_program_plan_and_errors(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_graph_from_config_fails_closed_on_a_bypassed_program_plan() -> None:
     """Hostile-review fix (2026-09-05): a "program"-kind plan (the schedule
     shape) reaching ``graph_from_config`` above ``MAX_PLAYLIST_SUBCHAINS``
-    means ``source_plan.build_source_plan_from_schedule``'s own clamp was
-    bypassed -- a hand-built ``EgressSourcePlan`` like this one, or a future
-    producer that forgot to import the shared constant. That is logged at
-    ERROR (not a routine WARNING) precisely because it should never happen
-    for this plan shape any more; ``graph_from_config`` still degrades
-    gracefully (builds only the first ``MAX_PLAYLIST_SUBCHAINS``) rather than
-    crashing the channel, but the log makes the bypass loud."""
+    can ONLY mean ``source_plan.build_source_plan_from_schedule``'s own
+    clamp was bypassed -- a hand-built ``EgressSourcePlan`` like this one,
+    or a future producer that forgot to import the shared constant. A prior
+    version of this fix truncated and logged an ERROR here instead, which
+    would have left automation/daemon trusting the plan's full, uncapped
+    duration while the pipeline quietly played a shorter one -- exactly the
+    desync the producer-side clamp exists to prevent. This must fail
+    closed instead."""
     config = EgressConfig(
         channel_id="ch1",
         enabled=True,
@@ -231,19 +230,8 @@ def test_graph_from_config_caps_a_bypassed_program_plan_and_errors(
             for i in range(segment_count)
         ],
     )
-    with caplog.at_level("WARNING"):
-        graph = graph_from_config(config, plan)
-    program, _slate = graph.sources
-    assert isinstance(program, PlaylistLeg)
-    assert len(program.subchains) == MAX_PLAYLIST_SUBCHAINS
-    assert program.subchains[0][0].props["location"] == "/m/clip0.ts"
-    matching = [
-        record
-        for record in caplog.records
-        if "ch1" in record.message and str(segment_count) in record.message
-    ]
-    assert matching
-    assert all(record.levelname == "ERROR" for record in matching)
+    with pytest.raises(PlaylistCapBypassedError, match=rf"ch1.*\b{segment_count}\b"):
+        graph_from_config(config, plan)
 
 
 def test_graph_from_config_caps_an_oversized_slate_plan_and_only_warns(

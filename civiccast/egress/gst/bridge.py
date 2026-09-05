@@ -21,7 +21,7 @@ from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from civiccast.egress.audio_tracks import AudioProgramTrack
-from civiccast.egress.errors import SecretUnresolvedError
+from civiccast.egress.errors import PlaylistCapBypassedError, SecretUnresolvedError
 from civiccast.egress.gst.graph import (
     DEFAULT_H264_ENCODER,
     CaptionEmbedLeg,
@@ -559,27 +559,35 @@ def graph_from_config(
     ~3.5 GB on one worker, with the worker relaunching roughly every 30s
     (no TS output landed inside the engine's 10s stall watchdog).
 
-    Hostile-review fix: a schedule-derived plan is now clamped to
-    ``MAX_PLAYLIST_SUBCHAINS`` at its only producer
+    Hostile-review fix: a schedule-derived ("program"-kind) plan is now
+    clamped to ``MAX_PLAYLIST_SUBCHAINS`` at its only producer
     (``source_plan.build_source_plan_from_schedule``), not just here, so
     ``automation.py``'s rollover-horizon tracking, ``daemon.py``'s
     dispatched-plan bookkeeping, ``continuity.py``, and ``preparer.py`` all
     see the SAME segment count this function will actually build a
     sub-chain for — no consumer can end up trusting a plan longer than the
-    pipeline that plays it. The truncation below firing for a
-    schedule-derived plan therefore means that clamp was bypassed (a
-    hand-built ``EgressSourcePlan``, a future producer that forgot to import
-    the shared constant) and is logged at ERROR as exactly that signal.
-    It is NOT hardening for the schedule path anymore, which should never
-    reach it. It IS still load-bearing for ``EgressSourcePlan`` producers
-    that build large repeat-count plans by design and are not clamped to
-    this constant themselves --
-    ``source_plan.SlateSourceGenerator``/``bulletin_filler._plan_with_cycle``
-    intentionally repeat one pre-conformed file well past 12 segments to
+    pipeline that plays it. Because that clamp is now guaranteed, a
+    "program"-kind plan reaching this function above the cap can only mean
+    the clamp was bypassed (a hand-built ``EgressSourcePlan``, or a future
+    producer that forgot to import the shared constant) -- so this function
+    now FAILS CLOSED for that case (``PlaylistCapBypassedError``) instead of
+    silently truncating it. A prior version of this fix truncated
+    unconditionally, which would have let automation/daemon go on trusting
+    an uncapped plan's duration while the pipeline quietly played a shorter
+    one -- exactly the desync bug the producer-side clamp exists to
+    prevent; truncating here would have hidden that desync instead of
+    surfacing it.
+
+    Truncating (with a WARNING, not an error) is still the right answer for
+    an ``EgressSourcePlan`` producer that is NOT clamped to this constant by
+    design: ``source_plan.SlateSourceGenerator`` and
+    ``bulletin_filler._plan_with_cycle`` intentionally repeat one
+    pre-conformed file ("slate"/"cg"-kind segments) well past 12 segments to
     span an hour of slate/bulletin fill (CA-8: a short single-segment plan
     relaunched the encoder, and reset the TS session, every
-    ``duration_seconds``) -- for those, truncating the pipeline (not the
-    channel) is the graceful degradation, not a bug to raise on.
+    ``duration_seconds``). For those, playing only the first
+    ``MAX_PLAYLIST_SUBCHAINS`` repeats of the SAME file is a harmless,
+    graceful degradation, not a bug to fail the channel over.
     """
     profile = config.canonical_profile
     common_caps = (
@@ -590,35 +598,41 @@ def graph_from_config(
     )
     program_segments = source_plan.segments
     if len(program_segments) > MAX_PLAYLIST_SUBCHAINS:
-        # Hostile-review fix: a "program"-kind plan reaching here uncapped
-        # means build_source_plan_from_schedule's own clamp was bypassed --
-        # log it as the bug signal it is (ERROR), not routine hardening. A
-        # "slate"/"bulletin" fill plan (SlateSourceGenerator,
-        # bulletin_filler._plan_with_cycle) is EXPECTED to repeat one
-        # pre-conformed file well past this cap by design (CA-8), so that
-        # case stays a WARNING: known, tested, graceful degradation, not a
-        # bypass.
         segment_kinds = {segment.kind for segment in program_segments}
         is_expected_repeat_plan = segment_kinds <= {"slate", "cg"}
-        _LOG.log(
-            logging.WARNING if is_expected_repeat_plan else logging.ERROR,
+        if not is_expected_repeat_plan:
+            # Hostile-review fix: a "program"-kind plan can only reach here
+            # if build_source_plan_from_schedule's own clamp was bypassed --
+            # that is a producer bug, not routine hardening, so fail closed
+            # instead of silently playing a shorter plan than the rest of
+            # the system believes is on air.
+            raise PlaylistCapBypassedError(
+                f"Source plan for channel {config.channel_id!r} carries "
+                f"{len(program_segments)} 'program'-kind segments (kinds="
+                f"{sorted(segment_kinds)!r}), above the "
+                f"{MAX_PLAYLIST_SUBCHAINS}-subchain playlist cap. "
+                "source_plan.build_source_plan_from_schedule clamps to this "
+                "cap itself, so a plan this large means that clamp was "
+                "bypassed -- fix the plan's producer rather than the "
+                "pipeline."
+            )
+        # A "slate"/"cg" fill plan is EXPECTED to repeat one pre-conformed
+        # file well past this cap by design (CA-8) -- known, tested,
+        # graceful degradation, not a bypass, so this stays a WARNING and a
+        # truncation rather than the raise above.
+        _LOG.warning(
             "Source plan for channel %s carries %d segments (kinds=%s), above "
             "the %d-subchain playlist cap; building only the first %d. Each "
             "segment is its own decoder sub-chain built into one pipeline "
             "(see graph_from_config's D45 docstring) -- a plan this large "
-            "would spawn thousands of decoder threads on start.%s",
+            "would spawn thousands of decoder threads on start. This is the "
+            "expected slate/bulletin repeat shape (CA-8), so it is truncated "
+            "rather than failed.",
             config.channel_id,
             len(program_segments),
             sorted(segment_kinds),
             MAX_PLAYLIST_SUBCHAINS,
             MAX_PLAYLIST_SUBCHAINS,
-            (
-                ""
-                if is_expected_repeat_plan
-                else " This is NOT the expected slate/bulletin repeat shape -- "
-                "the plan builder's own MAX_PLAYLIST_SUBCHAINS clamp appears to "
-                "have been bypassed."
-            ),
         )
         program_segments = program_segments[:MAX_PLAYLIST_SUBCHAINS]
     program = PlaylistLeg(

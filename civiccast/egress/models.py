@@ -651,8 +651,10 @@ class ChannelAutomationRollup(BaseModel):
 #: tracking, ``daemon.py``'s dispatched-plan bookkeeping, ``continuity.py``,
 #: ``preparer.py`` -- reads is already the same plan the pipeline will
 #: actually play. ``gst/bridge.graph_from_config`` treats a "program"-kind
-#: plan exceeding it as a "the clamp above was bypassed" signal (logged at
-#: ERROR).
+#: plan exceeding it as a "the clamp above was bypassed" bug signal and
+#: FAILS CLOSED (``errors.PlaylistCapBypassedError``) rather than silently
+#: playing a truncated slice of a plan the rest of the system still
+#: believes is the full size.
 #:
 #: NOT universal: ``source_plan.SlateSourceGenerator`` and
 #: ``bulletin_filler._plan_with_cycle`` intentionally build "slate"/"cg"

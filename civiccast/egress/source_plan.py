@@ -57,21 +57,6 @@ _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 #: ON-AIR plan's own duration rather than a fixed 300s, so a short plan still
 #: gets rolled over comfortably inside its own lifetime.
 PLAN_MIN_SECONDS = 0.0
-#: Historical hard ceiling on segments in one plan (pre-D45: 120), kept for
-#: back-compat and for anything that still imports it. Hostile-review fix
-#: (2026-09-05): this is no longer what ``segment_cap`` actually defaults to
-#: below -- ``models.MAX_PLAYLIST_SUBCHAINS`` (12) is the REAL ceiling now,
-#: enforced at this module's only producer (``build_source_plan_from_
-#: schedule`` clamps both ``max_segments`` and ``segment_cap`` down to it,
-#: logging a WARNING when it does) so every consumer of the returned plan --
-#: ``automation.py``, ``daemon.py``, ``continuity.py``, ``preparer.py`` --
-#: reads the exact same segment count ``bridge.graph_from_config`` will
-#: build a decoder sub-chain for. A value of 120 here would silently let a
-#: plan carry more segments than one pipeline can safely decode, which is
-#: exactly the mismatch that let a schedule of 30-second items build ~1200
-#: decoder threads on real hardware (see ``MAX_PLAYLIST_SUBCHAINS``'s
-#: docstring in ``models.py`` for the measured cost).
-PLAN_MAX_SEGMENTS = 120
 
 
 class SlateSourceGenerator:
@@ -210,25 +195,33 @@ def build_source_plan_from_schedule(
         raise ValueError("min_plan_seconds must be zero or greater.")
     if gap_tolerance < timedelta(0):
         raise ValueError("gap_tolerance must be zero or greater.")
-    # Hostile-review fix (2026-09-05): the cap that bounds the pipeline SHAPE
-    # has to live here, at the plan's only producer, not in
-    # ``bridge.graph_from_config`` alone. A caller-side ``max_segments`` /
-    # ``segment_cap`` above ``MAX_PLAYLIST_SUBCHAINS`` used to build a plan
-    # every OTHER consumer (``automation.py``'s rollover-horizon tracking,
-    # ``daemon.py``'s dispatched-plan bookkeeping, ``continuity.py``,
-    # ``preparer.py``) trusted at its full, uncapped size, while the bridge
-    # silently played only the first ``MAX_PLAYLIST_SUBCHAINS`` of it -- the
-    # pipeline would reach EOS long before automation's tracked horizon
-    # expected it to, restarting the worker on a cadence the rest of the
-    # system had no idea was coming. Clamping the inputs here instead means
-    # every consumer reads the SAME plan the pipeline will actually play; a
-    # plan returned by this function can never disagree with what
-    # ``graph_from_config`` builds from it. This runs BEFORE the
-    # segment_cap-vs-max_segments cross-check below so an explicit
-    # max_segments above the pipeline cap (with the default segment_cap)
-    # clamps quietly instead of raising a spurious "segment_cap must be at
-    # least max_segments" for two values that were never in conflict before
-    # either was capped.
+    # Hostile-review fix (2026-09-05): validate the CALLER's raw pair first,
+    # before either is touched by the pipeline-shape clamp below. A caller
+    # that explicitly asks for an inconsistent pair (e.g. max_segments=20,
+    # segment_cap=15) is asking for something that was never sensible on its
+    # own terms -- that is a caller bug to surface loudly, not something the
+    # clamp below should silently paper over by coincidentally shrinking
+    # both values into agreement (20/15 clamped to 12/12 would look "fixed"
+    # while hiding that the caller's own request was self-contradictory).
+    if segment_cap < max_segments:
+        raise ValueError("segment_cap must be at least max_segments.")
+    # The cap that bounds the pipeline SHAPE has to live here, at the plan's
+    # only producer, not in ``bridge.graph_from_config`` alone. A
+    # caller-side ``max_segments``/``segment_cap`` above
+    # ``MAX_PLAYLIST_SUBCHAINS`` used to build a plan every OTHER consumer
+    # (``automation.py``'s rollover-horizon tracking, ``daemon.py``'s
+    # dispatched-plan bookkeeping, ``continuity.py``, ``preparer.py``)
+    # trusted at its full, uncapped size, while the bridge silently played
+    # only the first ``MAX_PLAYLIST_SUBCHAINS`` of it -- the pipeline would
+    # reach EOS long before automation's tracked horizon expected it to,
+    # restarting the worker on a cadence the rest of the system had no idea
+    # was coming. Clamping the inputs here instead means every consumer
+    # reads the SAME plan the pipeline will actually play; a plan returned
+    # by this function can never disagree with what ``graph_from_config``
+    # builds from it. This runs AFTER the raw-pair validation above: a
+    # caller whose own numbers already agree with each other (e.g. 20/20)
+    # gets both quietly clamped down together, in step, rather than raising
+    # over a cap the caller had no way to know about at the call site.
     if max_segments > MAX_PLAYLIST_SUBCHAINS:
         _LOG.warning(
             "build_source_plan_from_schedule(%s): max_segments=%d exceeds "
@@ -251,8 +244,6 @@ def build_source_plan_from_schedule(
             MAX_PLAYLIST_SUBCHAINS,
         )
         segment_cap = MAX_PLAYLIST_SUBCHAINS
-    if segment_cap < max_segments:
-        raise ValueError("segment_cap must be at least max_segments.")
     current_time = _as_utc(now or datetime.now(UTC))
     playable_items = [
         item

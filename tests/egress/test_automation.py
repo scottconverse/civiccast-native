@@ -812,14 +812,36 @@ class TestRolloverCadence:
             assert plan_end_at - dispatch_at >= 100.0
 
     def test_a_very_short_plan_still_rolls_over_before_its_own_end(self) -> None:
-        """Item 3's regression case: an 8x3s (24-second) plan. The shipped
-        floor (a trivial 1.0s epsilon -- see the dedicated unit test below
-        for the exact 24s-plan number) keeps rollovers dispatching
-        throughout this window instead of stalling out after the first one
-        or two, however short the plan's slots are."""
+        """Item 3's regression case: an 8x3s (24-second) plan.
+
+        Hostile-review fix (NEW-3, 2026-09-05): the shipped
+        ``_rollover_min_interval_seconds`` floor alone was not enough --
+        with a flat 120s ``_ROLLOVER_MIN_LEAD_SECONDS``,
+        ``rollover_trigger_at`` still landed at or after a plan this short
+        actually ends (``plan_end_at - 120`` is deep in the plan's own
+        past), so dispatches happened but at/after EOS. Scaling the LEAD
+        the same way (``_rollover_min_lead_seconds`` -- half the plan's
+        duration, clamped at the historic 120s ceiling) fixes this too:
+        every rollover now lands with real runway to spare, not just
+        "eventually, somehow, still dispatching."
+
+        MEASURED with both fixes shipped: a rollover every 24s (at 12s,
+        36s, 60s, ...), each with a lead of exactly 12s -- half the plan's
+        24-second life -- over the boundary it is extending."""
         dispatch_times, _calls = self._simulate((3.0,) * 8, total_ticks=300)
 
         assert len(dispatch_times) >= 5, dispatch_times
+
+        def leads(dispatch_times: list[float]) -> list[float]:
+            return [
+                24.0 * (index + 1) - dispatch_at for index, dispatch_at in enumerate(dispatch_times)
+            ]
+
+        plan_leads = leads(dispatch_times)
+        # The real invariant this test exists to pin: every dispatch lands
+        # with meaningful runway before the plan it is extending actually
+        # ends -- never "eventually dispatches, but after EOS."
+        assert all(lead >= 0.25 * 24.0 for lead in plan_leads), plan_leads
 
     def test_the_flat_floor_bug_the_scaled_floor_fixes(self) -> None:
         """The CHANGELOG-cited measurement, reproduced directly: against an
@@ -929,15 +951,23 @@ class TestRolloverCadence:
         """Item 3's exact regression case: an intermediate version of this
         fix floored the interval at a flat 30s (``max(30.0, 0.5 *
         planned_seconds)``), which for a very short plan is LONGER than the
-        plan's entire life. Measured: an 8x3s (24-second) plan with a 30s
-        floor gets exactly one rollover, ever -- every dispatch after the
-        first is blocked until the engine reaches EOS, the same failure mode
-        this whole mechanism exists to prevent, just at a smaller scale. The
-        fixed floor (``_ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS`` = 1.0, a
-        trivial epsilon) must never return more than half of
+        plan's entire life.
+
+        MEASURED (with the shipped, ALSO-scaled lead --
+        ``_rollover_min_lead_seconds``, NEW-3 -- in place; a real dispatch
+        simulation, not a one-off unit check): an 8x3s (24-second) plan with
+        that flat 30s floor still dispatches ten times in this window (at
+        12s, 42s, 72s, ... 282s), NOT "exactly one rollover, ever" -- but the
+        boundary-aligned lead shrinks every cycle (12s, 6s, 0s, then
+        negative from the fourth rollover on), so once it turns negative
+        the trigger is arriving at or after the plan's real end: the same
+        failure mode this whole mechanism exists to prevent, just at a
+        smaller scale and slower to show up than "one dispatch and then
+        nothing." The fixed floor (``_ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS``
+        = 1.0, a trivial epsilon) must never return more than half of
         ``planned_seconds`` -- see
         ``test_a_very_short_plan_still_rolls_over_before_its_own_end`` above
-        for what that actually does to the dispatch cadence."""
+        for the shipped floor's actual (positive-lead, indefinite) cadence."""
         service = ChannelAutomationService(
             InMemoryEgressStore(),
             _FakeDaemon(),

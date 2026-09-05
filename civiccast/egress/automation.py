@@ -373,6 +373,17 @@ class ChannelAutomationService:
     # leg's own EOS (the engine's switch_at_end_of_current -- see
     # reload_policy.should_defer_switch) rather than cutting in early and
     # truncating the still-airing item.
+    #
+    # Hostile-review fix (NEW-3, 2026-09-05): this fixed 120s value is no
+    # longer used directly as the lead -- it is only the CEILING
+    # _rollover_min_lead_seconds clamps to (mirrors
+    # _ROLLOVER_MIN_INTERVAL_SECONDS's relationship to
+    # _rollover_min_interval_seconds, above). A flat 120s lead pushed
+    # ``plan_end_at - lead`` deep into the PAST for a plan shorter than
+    # 120s (an 8x3s/24-second plan), which dominates ``rollover_trigger_at``'s
+    # min() over the real last-segment-start candidate and lands the
+    # dispatch at or after the plan's own end. See
+    # _rollover_min_lead_seconds.
     _ROLLOVER_MIN_LEAD_SECONDS = 120.0
     # Hostile-review B2 fix: if a dispatched rollover reload has not landed
     # (no fresh current_proof_event_id) within this long, treat it as dropped
@@ -410,9 +421,10 @@ class ChannelAutomationService:
     #: plan, small enough to never bind for any plan worth measuring. An
     #: earlier version of this fix used 30.0 here, which is a real floor for
     #: a longer plan but is LONGER than half the lifetime of an 8x3s (24s)
-    #: plan -- measured: dispatches still happen every 30s (the floor), but
-    #: the boundary-aligned lead shrinks each cycle (22s, 16s, 10s, 4s, then
-    #: negative by the 5th rollover) exactly like the flat-300s bug this
+    #: plan -- measured (with ``_rollover_min_lead_seconds``, NEW-3, also
+    #: scaled): dispatches still happen every 30s (the floor), but the
+    #: boundary-aligned lead shrinks each cycle (12s, 6s, 0s, then negative
+    #: from the fourth rollover on) exactly like the flat-300s bug this
     #: whole mechanism exists to fix, just faster. ``_rollover_min_interval_
     #: seconds`` must never return more than half the plan's own planned
     #: duration; this constant cannot violate that because it is far smaller
@@ -653,6 +665,37 @@ class ChannelAutomationService:
             channel_id,
         )
 
+    def _rollover_min_lead_seconds(self, planned_seconds: float) -> float:
+        """Hostile-review fix (NEW-3, 2026-09-05): the boundary-aligned
+        rollover LEAD, sized to the plan actually on air instead of a fixed
+        constant -- the same problem ``_rollover_min_interval_seconds``
+        solves for the dispatch-cadence FLOOR, one layer up.
+
+        ``_ROLLOVER_MIN_LEAD_SECONDS`` (120s) is fine as a floor for
+        ``rollover_trigger_at``'s ``min_lead_seconds`` when the plan is long
+        enough to have 120s to spare. For a very short plan it is not: a
+        flat 120s lead against an 8x3s (24-second) plan pushes
+        ``plan_end_at - 120`` deep into the plan's own past, so the
+        boundary-aligned trigger -- ``min(last_segment_start_at,
+        plan_end_at - lead)`` -- is dominated by that negative candidate
+        rather than the plan's real last-segment start, and the resulting
+        dispatch lands at or after the plan's actual end (a negative lead
+        over its own life) even with ``_rollover_min_interval_seconds``
+        already fixed. Scaling this the same way (half the plan's own
+        duration, clamped at the historic 120s ceiling) keeps the trigger
+        boundary-aligned to a REAL point within a short plan's life instead
+        of one that has already passed -- measured, an 8x3s (24-second)
+        plan's every rollover now lands with a lead of at least a quarter of
+        the plan's own duration (see
+        ``TestRolloverCadence.test_a_very_short_plan_still_rolls_over_before_its_own_end``).
+        This ceiling (120s) is smaller than ``_rollover_min_interval_
+        seconds``'s (300s), so for the schedule-derived plans this whole
+        pass targets (``max_segments=8`` by default, well under a 600s
+        life) the two formulas agree; a plan long enough to separate them
+        (several minutes or more) has ample runway from either number."""
+
+        return min(self._ROLLOVER_MIN_LEAD_SECONDS, 0.5 * planned_seconds)
+
     def _rollover_min_interval_seconds(self, planned_seconds: float) -> float:
         """D45 fix: the per-channel rollover-dispatch floor, sized to the plan
         actually on air instead of a fixed constant.
@@ -661,9 +704,16 @@ class ChannelAutomationService:
         (300s). That is longer than the lifetime of a short plan -- with
         ``source_plan.PLAN_MIN_SECONDS`` back to 0.0 (D45; see its
         docstring), a schedule of 30-second items yields an 8-segment,
-        240-second plan -- so a flat 300s floor would silently block every
-        rollover after the first dispatch until the engine reaches EOS and
-        restarts: exactly the failure this cadence floor exists to prevent.
+        240-second plan. MEASURED against that plan with the flat 300s
+        floor: 6 dispatches in 30 minutes, the first at 120s, each 300s
+        apart, with the boundary-aligned lead shrinking every cycle (120s,
+        then 60s, then 0s, then negative) -- so by the third rollover the
+        trigger arrives at or after the plan's real end and the engine
+        reaches EOS and restarts before that rollover can land: exactly the
+        failure this cadence floor exists to prevent (see
+        ``tests/egress/test_automation.py``'s
+        ``test_the_flat_floor_bug_the_scaled_floor_fixes`` for the exact
+        numbers).
 
         Scaling the floor to HALF the plan's own planned duration (clamped
         at ``_ROLLOVER_MIN_INTERVAL_SECONDS``, 300s, for a long plan)
@@ -672,16 +722,18 @@ class ChannelAutomationService:
         out, however short the schedule's slots are. Hostile-review fix: an
         earlier version additionally floored this at a flat 30s
         (``max(30.0, 0.5 * planned_seconds)``), which is itself LONGER than
-        an 8x3s (24-second) plan's own lifetime and reproduces the exact
-        starvation bug this method exists to prevent, just at a smaller
-        scale -- measured: with a 24s plan and a 30s floor, every rollover
-        after the first is silently blocked until the engine reaches EOS.
-        The floor is now only ``_ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS`` (a
-        trivial 1.0s epsilon against a literal zero/near-zero interval for a
-        degenerate plan), so this never returns more than half of
-        ``planned_seconds`` -- the ONLY invariant this method guarantees. A
-        long-item schedule (a plan well over 600s) is unaffected -- the 300s
-        ceiling still applies."""
+        HALF an 8x3s (24-second) plan's own lifetime and reproduces the same
+        shrinking-lead bug at a smaller scale -- MEASURED (with
+        ``_rollover_min_lead_seconds``, NEW-3, also in place): dispatches
+        still happen, ten of them in a 300s window (12s, 42s, 72s, ...), but
+        the lead shrinks every cycle (12s, 6s, 0s, then negative from the
+        fourth rollover on) exactly like the 300s-floor case above, not
+        "one dispatch and then nothing." The floor is now only
+        ``_ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS`` (a trivial 1.0s epsilon
+        against a literal zero/near-zero interval for a degenerate plan),
+        so this never returns more than half of ``planned_seconds`` -- the
+        ONLY invariant this method guarantees. A long-item schedule (a plan
+        well over 600s) is unaffected -- the 300s ceiling still applies."""
 
         return min(
             self._ROLLOVER_MIN_INTERVAL_SECONDS,
@@ -881,7 +933,7 @@ class ChannelAutomationService:
         trigger_at = rollover_trigger_at(
             plan_end_at=plan_end_at,
             last_segment_start_at=last_segment_start_at,
-            min_lead_seconds=self._ROLLOVER_MIN_LEAD_SECONDS,
+            min_lead_seconds=self._rollover_min_lead_seconds(planned_seconds),
         )
         if now < trigger_at:
             return  # not yet at the boundary-aligned trigger point
