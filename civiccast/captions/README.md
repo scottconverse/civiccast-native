@@ -42,7 +42,8 @@ Current surface:
   segments concurrently, retains the exact reviewed audio, and atomically
   publishes committed cues to each egress channel's `captions/active.vtt`.
   Backlog beyond the configured bound fails closed: the live sidecar is
-  cleared, stale segments are moved aside under `overload/`, and the channel
+  cleared, stale segments are discarded (never transcribed, so never
+  reviewable, and no retention clock would have covered them), and the channel
   is PAUSED for an exponentially growing window
   (`civiccast/captions/tap_backoff.py`: 60s, 120s, 240s ... capped at 900s)
   rather than retried on the next scan. `runtime-status.json` carries the

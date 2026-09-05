@@ -322,12 +322,19 @@ class TestCaptionsRuntimeSeam:
         """
 
         import ast
-        import inspect
         from pathlib import Path as _Path
 
-        import civiccast.app as app_module
-
-        source = _Path(inspect.getfile(app_module)).read_text(encoding="utf-8")
+        # The TRACKED repo file, by repo-root-relative path -- deliberately NOT
+        # `inspect.getfile(civiccast.app)`. Under the mutation lane every
+        # mutant is a rewritten copy of this module, so resolving it through
+        # the imported object made this test read whichever mutant was loaded
+        # and report every one of them as a finding ("found 665"). The claim
+        # here is about what is COMMITTED at this call site, so it reads the
+        # committed bytes.
+        app_source = _Path(__file__).resolve().parents[2] / "civiccast" / "app.py"
+        if not app_source.is_file():  # pragma: no cover - installed-wheel runs
+            pytest.skip("civiccast/app.py is not present as a repo source file")
+        source = app_source.read_text(encoding="utf-8")
         calls = [
             node
             for node in ast.walk(ast.parse(source))

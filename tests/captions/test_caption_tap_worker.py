@@ -387,12 +387,13 @@ class TestCaptionTapWorker:
         assert getattr(result, "dropped_overload_segments", 0) == 3
         assert getattr(result, "overloaded_channels", ()) == ("government",)
         assert load_caption_cues_from_timed_text(active, source_id="government") == []
-        overload = tap_root / "government" / "overload"
-        assert sorted(path.name for path in overload.glob("*.wav")) == [
-            "chunk-000000.wav",
-            "chunk-000001.wav",
-            "chunk-000002.wav",
-        ]
+        # DISCARDED, not filed under `overload/`. Nothing ever swept that
+        # directory (the retention policy tap sweep reads `processed/` only)
+        # and no review row referenced it, so it grew without bound on a
+        # chronically overloaded station -- see TestCaptionTapPlayoutProtection
+        # for the two-pause-cycle proof.
+        assert not (tap_root / "government" / "overload").exists()
+        assert not list((tap_root / "government").glob("chunk-00000[012].wav"))
         status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
         status = json.loads(status_path.read_text(encoding="utf-8"))
         # An overload now OPENS A BACKOFF PAUSE rather than merely reporting
@@ -497,10 +498,8 @@ class TestCaptionTapWorker:
         # The per-scan drain DELETES (`overload/` is swept by nothing); only
         # the one-off move that opened the pause files evidence there.
         assert second.dropped_overload_segments == 2
-        assert sorted(
-            path.name for path in (tap_root / "government" / "overload").glob("*.wav")
-        ) == [f"chunk-{index:06d}.wav" for index in range(3)]
-        assert not list((tap_root / "government").glob("chunk-00000[34].wav"))
+        assert not (tap_root / "government" / "overload").exists()
+        assert not list((tap_root / "government").glob("chunk-00000[034].wav"))
 
         status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
         status = json.loads(status_path.read_text(encoding="utf-8"))
@@ -720,17 +719,23 @@ class TestCaptionTapPlayoutProtection:
         assert result.consumed_segments == 0  # captions really are off
         assert enforced == [tap_root]  # ...and retention really did run
 
-    def test_a_paused_channels_drained_audio_is_deleted_not_hoarded(self, tmp_path: Path) -> None:
-        """`<channel>/overload/` is swept by nothing.
+    def test_a_chronically_overloaded_channel_retains_no_audio_across_pause_cycles(
+        self, tmp_path: Path
+    ) -> None:
+        """`<channel>/overload/` was swept by nothing, and it grew forever.
 
-        The retention policy's tap sweep reads `processed/` only, so a station
-        stuck in a long backoff would pile its own broadcast audio into
-        `overload/` forever -- unpruned, unreferenced by any review row, and
-        growing at one segment every few seconds per channel.
+        The retention policy tap sweep reads `processed/` only, so BOTH the
+        move that opened a pause and the per-scan drain that followed it piled
+        raw broadcast audio into `overload/` with no retention clock on it and
+        no review row referencing it. On a station that cannot keep up -- the
+        one case this whole change exists for -- that repeats every pause
+        cycle, forever. This drives TWO full cycles and asserts that nothing
+        accumulates on either path.
         """
 
         tap_root = tmp_path / "tap"
         clock = _FakeClock()
+        channel = tap_root / "government"
         worker = _worker(
             tap_root,
             _ScriptedRuntime(),
@@ -739,27 +744,117 @@ class TestCaptionTapPlayoutProtection:
             monotonic=clock,
         )
 
-        for index in range(4):
-            _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+        next_index = 0
+        for cycle in range(2):
+            # Overload -> opens a pause (60s, then 120s).
+            for _ in range(4):
+                _write_wav(channel / f"chunk-{next_index:06d}.wav")
+                next_index += 1
+            result = worker.run_once()
+            assert result.overloaded_channels == ("government",), f"cycle {cycle}"
+
+            # Several scans inside the pause window -> per-scan drain.
+            for _ in range(5):
+                clock.advance(2.0)
+                for _ in range(2):
+                    _write_wav(channel / f"chunk-{next_index:06d}.wav")
+                    next_index += 1
+                worker.run_once()
+
+            # Nothing retained, on either path, in either cycle.
+            assert not (channel / "overload").exists(), f"cycle {cycle}"
+            clock.advance(60.0 * (2**cycle) + 1.0)
+
+        # The tap directory itself never accumulated either: at most the one
+        # unsettled newest segment is left behind.
+        assert len(list(channel.glob("chunk-*.wav"))) <= 1
+
+    def test_the_retention_sweep_runs_on_its_own_slower_cadence(self, tmp_path: Path) -> None:
+        """Retention enforces a schedule in DAYS; it must not run 30x a minute.
+
+        `enforce_discovered` lists review rows from the database and SHA-256s
+        every chunk it considers. At the 2-second scan cadence that is a query
+        plus a pass over the recorded audio 30 times a minute, forever.
+        """
+
+        tap_root = tmp_path / "tap"
+        tap_root.mkdir(parents=True)
+        clock = _FakeClock()
+        sweeps: list[float] = []
+
+        class _CountingRetention:
+            def enforce_discovered(self, **_kwargs: object):  # type: ignore[no-untyped-def]
+                sweeps.append(clock.now)
+                return SimpleNamespace(ready=True, refusal_reason=None)
+
+            def record_event(self, **_kwargs: object) -> None:  # pragma: no cover
+                return None
+
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=1.0,
+            retention_policy=_CountingRetention(),  # type: ignore[arg-type]
+            monotonic=clock,
+        )
+
+        # The FIRST scan always sweeps -- a station must not wait a minute
+        # after startup to start honouring its retention schedule.
         worker.run_once()
-        # The one-off move that OPENS the pause still files evidence: the
-        # capacity proof's negative control inspects exactly that directory.
-        opened_with = sorted(
-            path.name for path in (tap_root / "government" / "overload").glob("*.wav")
-        )
-        assert opened_with == ["chunk-000000.wav", "chunk-000001.wav", "chunk-000002.wav"]
+        assert sweeps == [0.0]
 
-        # The unbounded per-scan drain that FOLLOWS it must not.
-        for scan in range(5):
+        for _ in range(29):  # 58 seconds of 2-second scans
             clock.advance(2.0)
-            for index in range(4 + scan * 2, 6 + scan * 2):
-                _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
             worker.run_once()
+        assert sweeps == [0.0]
 
-        assert (
-            sorted(path.name for path in (tap_root / "government" / "overload").glob("*.wav"))
-            == opened_with
+        clock.advance(4.0)
+        worker.run_once()
+        assert sweeps == [0.0, 62.0]
+
+    def test_a_storage_refusal_is_not_forgotten_between_retention_sweeps(
+        self, tmp_path: Path
+    ) -> None:
+        """Failing closed must survive the cadence.
+
+        A scan that skips the sweep must keep the last verdict, not quietly
+        revert to "ready" and start captioning again on storage the policy
+        already refused.
+        """
+
+        tap_root = tmp_path / "tap"
+        _write_wav(tap_root / "government" / "chunk-000000.wav")
+        _write_wav(tap_root / "government" / "chunk-000001.wav")
+        clock = _FakeClock()
+        runtime = _ScriptedRuntime()
+
+        class _RefusingRetention:
+            def enforce_discovered(self, **_kwargs: object):  # type: ignore[no-untyped-def]
+                return SimpleNamespace(ready=False, refusal_reason="disk full")
+
+            def record_event(self, **_kwargs: object) -> None:  # pragma: no cover
+                return None
+
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=runtime,
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=1.0,
+            retention_policy=_RefusingRetention(),  # type: ignore[arg-type]
+            monotonic=clock,
         )
+
+        assert worker.run_once().consumed_segments == 0
+        clock.advance(2.0)  # inside the sweep cadence: no fresh verdict
+        assert worker.run_once().consumed_segments == 0
+        assert runtime.seen_chunks == []
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        assert status["state"] == "storage-refused"
+        assert status["refusal_reason"] == "disk full"
 
     def test_an_unchanged_status_is_not_rewritten_every_scan(self, tmp_path: Path) -> None:
         """A steady state is not news; a durable write per scan is a cost."""

@@ -54,6 +54,10 @@ below.
     exponentially growing window (60s, 120s, 240s ... capped at 900s), logged
     once at WARNING per pause. A channel is forgiven only after three
     consecutive within-capacity scans, so a flapping channel keeps escalating.
+    The stale audio is discarded rather than filed under `<channel>/overload/`:
+    nothing ever swept that directory (the retention policy's tap sweep reads
+    `processed/` only) and no review row referenced it, so on a chronically
+    overloaded station it grew without bound across every pause cycle.
   - **ASR concurrency was unbounded in practice.** `max_channel_workers`
     defaulted to a flat 3 while each faster-whisper model was built with
     `cpu_threads=0` -- CTranslate2's "every core". The default is now one
@@ -73,7 +77,9 @@ below.
   Also: `<channel>/runtime-status.json` gains the `paused` and `disabled`
   states plus `resume_in_seconds`/`consecutive_overloads`, and is now written
   only on a state change or a 30-second heartbeat instead of on every ~2-second
-  scan. New env vars:
+  scan; and the retention sweep now runs on its own 60-second cadence instead
+  of once per ~2-second scan (it lists review rows and SHA-256s every chunk it
+  considers, to enforce a schedule measured in days). New env vars:
   `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`,
   `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS`,
   `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` (both clamped with a

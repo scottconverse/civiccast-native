@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from civiccast.captions.live_sidecar import (
+    CaptionRuntimeState,
     LiveWebVttPublisher,
     active_caption_sidecar,
     publish_caption_runtime_status,
@@ -110,6 +111,16 @@ _THREAD_PRIORITY_BELOW_NORMAL = -1
 #: who is watching, without paying a durable write every ~2-second scan for a
 #: state that has not changed. See ``CaptionTapWorker._publish_status``.
 _STATUS_REFRESH_SECONDS = 30.0
+
+#: How often the retention sweep may run, independent of the scan interval.
+#: ``enforce_discovered`` lists review rows from the database and SHA-256s
+#: every chunk it considers; at the 2-second scan cadence that is a database
+#: query and a pass over the recorded audio 30 times a minute, forever, to
+#: enforce a schedule measured in days. Retention correctness does not depend
+#: on the interval -- only on running often enough that the schedule is
+#: honoured -- so it gets its own, much slower clock. The first scan after
+#: startup always sweeps.
+_RETENTION_SWEEP_SECONDS = 60.0
 
 
 def default_max_channel_workers() -> int:
@@ -406,6 +417,11 @@ class CaptionTapWorker:
         self._monotonic = monotonic or time.monotonic
         #: channel -> (semantic status key, monotonic time it was published)
         self._published_status: dict[str, tuple[tuple[object, ...], float]] = {}
+        #: monotonic time of the last retention sweep, and its last verdict.
+        #: ``None`` means "never swept", so the first scan always sweeps.
+        self._last_retention_sweep: float | None = None
+        self._retention_ready = True
+        self._retention_refusal: str | None = None
         # Consulted on EVERY scan, not once at construction: the operator's
         # switch (``StationProfile.live_captions_enabled``) has to take effect
         # on a station that is on air, and restarting the control plane to
@@ -498,22 +514,18 @@ class CaptionTapWorker:
         # would freeze every retention clock for as long as the switch is off,
         # which is the exact opposite of what an operator turning captions off
         # is asking for.
-        retention = self._retention_policy.enforce_discovered(
-            tap_root=self._tap_root,
-            review_store=self._review_store,
-            segment_seconds=self._segment_seconds,
-        )
+        self._sweep_retention()
         if not self._is_enabled():
             return self._run_disabled()
         self._disabled_announced = False
-        if not retention.ready:
+        if not self._retention_ready:
             channels = sorted(path.name for path in self._tap_root.iterdir() if path.is_dir())
             for channel_id in channels:
                 self._publish_status(
                     channel_id,
                     state="storage-refused",
                     backlog_segments=0,
-                    refusal_reason=retention.refusal_reason,
+                    refusal_reason=self._retention_refusal,
                 )
             return CaptionTapScanResult(channels=tuple(channels))
         pending: list[tuple[str, Path, list[tuple[int, Path]]]] = []
@@ -644,17 +656,52 @@ class CaptionTapWorker:
         _LOG.warning(
             "Caption tap overload for channel %s: %d settled segments exceeds "
             "the maximum %d. Live captions are PAUSED for %.0fs (overload #%d) so "
-            "playout keeps the CPU; active captions were cleared and stale audio "
-            "was moved to overload evidence.",
+            "playout keeps the CPU; active captions were cleared and the stale "
+            "audio was discarded.",
             channel_id,
             len(segments),
             self._max_backlog_segments,
             state.pause_seconds,
             state.consecutive_overloads,
         )
+        # DISCARDED, not filed under `<channel>/overload/`. That directory was
+        # never swept by anything -- the retention policy's tap sweep reads
+        # `processed/` only (civiccast/captions/retention.py) -- and no review
+        # row ever referenced it, so on a chronically overloaded station it
+        # grew without bound across every pause cycle: one directory of raw
+        # broadcast audio per channel, accumulating for as long as the station
+        # could not keep up, with no retention clock on it at all. Audio that
+        # was never transcribed and can never be reviewed is not evidence; it
+        # is a disk leak wearing the word.
         for _index, segment in segments:
-            self._move(segment, channel_dir / "overload")
+            segment.unlink(missing_ok=True)
         return len(segments)
+
+    def _sweep_retention(self) -> None:
+        """Enforce the retention schedule, on its own slower cadence.
+
+        Called before the enabled check, deliberately: this prunes audio the
+        station has ALREADY recorded, and switching live captions off is a
+        decision about future transcription, not a licence to stop deleting
+        what is on disk. Its verdict is cached so a scan that skips the sweep
+        still fails closed on a storage refusal seen earlier, rather than
+        quietly reverting to "ready" between sweeps.
+        """
+
+        now = self._monotonic()
+        if (
+            self._last_retention_sweep is not None
+            and now - self._last_retention_sweep < _RETENTION_SWEEP_SECONDS
+        ):
+            return
+        retention = self._retention_policy.enforce_discovered(
+            tap_root=self._tap_root,
+            review_store=self._review_store,
+            segment_seconds=self._segment_seconds,
+        )
+        self._last_retention_sweep = now
+        self._retention_ready = bool(retention.ready)
+        self._retention_refusal = retention.refusal_reason
 
     def _run_disabled(self) -> CaptionTapScanResult:
         """The operator turned live captions OFF: transcribe nothing, keep nothing.
@@ -748,7 +795,7 @@ class CaptionTapWorker:
         self,
         channel_id: str,
         *,
-        state: str,
+        state: CaptionRuntimeState,
         backlog_segments: int,
         refusal_reason: str | None = None,
         resume_in_seconds: float | None = None,
@@ -782,7 +829,7 @@ class CaptionTapWorker:
         publish_caption_runtime_status(
             self._caption_work_dir,
             channel_id,
-            state=state,  # type: ignore[arg-type]
+            state=state,
             backlog_segments=backlog_segments,
             max_backlog_segments=self._max_backlog_segments,
             refusal_reason=refusal_reason,

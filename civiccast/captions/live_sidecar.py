@@ -15,6 +15,18 @@ from typing import Literal
 from civiccast.captions.models import CaptionCue
 from civiccast.captions.webvtt import render_webvtt
 
+#: The channel caption-runtime states publishable to
+#: ``<channel>/captions/runtime-status.json``. Named (rather than spelled out
+#: inline) so producers -- ``civiccast.captions.tap_worker`` and the retention
+#: policy -- can be typed against the same set instead of casting into it.
+CaptionRuntimeState = Literal[
+    "within-capacity",
+    "overloaded",
+    "storage-refused",
+    "paused",
+    "disabled",
+]
+
 
 class LiveWebVttPublisher:
     """Publish one channel's complete stable cue set without partial readers."""
@@ -49,7 +61,7 @@ def publish_caption_runtime_status(
     work_dir: Path,
     channel_id: str,
     *,
-    state: Literal["within-capacity", "overloaded", "storage-refused", "paused", "disabled"],
+    state: CaptionRuntimeState,
     backlog_segments: int,
     max_backlog_segments: int,
     refusal_reason: str | None = None,
@@ -126,6 +138,7 @@ def _atomic_write_text(destination: Path, content: str) -> None:
 
 
 __all__ = [
+    "CaptionRuntimeState",
     "LiveWebVttPublisher",
     "active_caption_sidecar",
     "caption_runtime_status_path",

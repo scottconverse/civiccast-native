@@ -180,9 +180,11 @@ negotiable at runtime by the caption feature itself:
 - **Overload backs off.** When a channel falls further behind than
   `..._MAX_BACKLOG_SEGMENTS`, its live captions are **paused** for an
   exponentially growing window (60s, 120s, 240s … capped at 15 minutes), its
-  active caption file is blanked, and its stale audio is moved aside to
-  `<channel>/overload/`. During the pause the station spends *nothing* on
-  transcribing that channel. Captions resume automatically once the window
+  active caption file is blanked, and its stale audio is **discarded**. During
+  the pause the station spends *nothing* on transcribing that channel, and
+  keeps nothing: audio that was never transcribed cannot be reviewed, so
+  retaining it would only grow an unpruned directory of raw broadcast audio
+  for as long as the station could not keep up. Captions resume automatically once the window
   expires and the backlog is clear; a channel has to stay healthy for several
   scans before its escalation is forgiven.
 - **Playout outranks captions in the scheduler.** On Windows the playout
