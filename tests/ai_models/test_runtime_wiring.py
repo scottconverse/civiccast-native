@@ -319,6 +319,16 @@ class TestCaptionsRuntimeSeam:
         A unit test of `build_caption_runtime(live=True)` alone would still
         pass if `app.py` never passed the flag -- which is the shape of the
         original defect. This reads the call the app actually makes.
+
+        DESELECTED FROM THE MUTATION LANE (see the `mutation-report` job in
+        .github/workflows/deterministic-detectors.yml, alongside the
+        build_native_server_pack `*_PINS` test and the other source-tree-
+        binding tests). Under mutmut this test module executes from inside the
+        mutants/ sandbox, so the repo-relative path below resolves to the
+        sandbox's mutant-duplicated `app.py` -- one copy of every mutated
+        function body per candidate mutant -- and the scan counts those
+        duplicates (reported as "found 665") instead of the two real call
+        sites. Normal CI runs it against pristine source, where it is exact.
         """
 
         import ast
