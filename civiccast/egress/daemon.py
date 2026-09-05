@@ -1544,12 +1544,39 @@ class EgressDaemon:
         if source_plan is None or source_plan.channel_id != channel_id:
             return False
         if self._source_preparer is not None:
+            # D43 instrumentation (2026-09-05): this call is SYNCHRONOUS on the
+            # automation thread -- ChannelAutomationService's poll loop
+            # dispatches the reload that lands here, so every second spent
+            # conforming is a second the whole automation pass is blocked. The
+            # tester soak could measure the symptom (control plane at ~240% of
+            # a core, worker restarts from the 10s CTRL stall watchdog) but not
+            # this number, and the log recorded 5 reloads over 2 hours with no
+            # timing on any of them. Log it per reload, at INFO with the
+            # segment count, so the NEXT soak can read the actual prepare cost
+            # straight out of the control-plane log instead of inferring it.
+            # (Cache-warm prepares are already cheap: SourcePreparer._prepare_segment
+            # short-circuits a conform-cache HIT to a stream copy or a
+            # zero-ffmpeg trim -- see preparer.py. This measures what is left.)
+            prepare_started = time.monotonic()
             try:
                 preparation_report = self._source_preparer(source_plan, config)
                 source_plan = preparation_report.source_plan
                 self._record_prepared_loudness(channel_id, preparation_report)
             except SourcePrepareError:
+                _LOG.warning(
+                    "Content-reload source preparation FAILED for %s after %.1fs; "
+                    "falling back to restart.",
+                    channel_id,
+                    time.monotonic() - prepare_started,
+                )
                 return False
+            _LOG.info(
+                "Content-reload source preparation for %s took %.1fs for %d segment(s) "
+                "(synchronous on the automation thread).",
+                channel_id,
+                time.monotonic() - prepare_started,
+                len(source_plan.segments),
+            )
         request = EncoderStartRequest(
             channel_id=channel_id,
             source_plan=source_plan,

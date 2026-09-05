@@ -325,6 +325,13 @@ class ChannelAutomationService:
         # before the engine ever reaches EOS.
         self._plan_horizon: dict[str, tuple[str | None, datetime, datetime]] = {}
         self._rollover_issued: set[str] = set()
+        # D43 hardening (2026-09-05): the monotonic timestamp of the last
+        # rollover DISPATCH per channel, enforcing
+        # _ROLLOVER_MIN_INTERVAL_SECONDS between them. Each dispatch runs
+        # SourcePreparer.prepare synchronously on the automation thread
+        # (daemon._try_content_reload), so the cadence has to be bounded
+        # whatever the plan window turns out to be.
+        self._rollover_dispatched_at: dict[str, float] = {}
         # Hostile-review B2 fix: when the reload lands (a fresh
         # current_proof_event_id shows up), _rollover_issued is discarded by the
         # "tracked is None or tracked[0] != proof_event_id" branch below. This
@@ -372,6 +379,15 @@ class ChannelAutomationService:
     # to back off re-querying the schedule after the provider raises
     # SourcePrepareError or returns no/empty plan for a rollover check.
     _ROLLOVER_RETRY_COOLDOWN_SECONDS = 30.0
+    # D43 hardening: a floor under the per-channel rollover CADENCE,
+    # independent of plan length. The boundary-aligned trigger point alone is
+    # not enough -- it is derived from the plan, so a plan that comes back
+    # short for any reason can still drive a fast cycle. Each dispatch costs a
+    # synchronous SourcePreparer.prepare on the automation thread
+    # (daemon._try_content_reload), so no channel may dispatch rollovers
+    # closer together than this. The B2 "the reload never landed" retry is
+    # deliberately exempt -- that is recovery, not cadence.
+    _ROLLOVER_MIN_INTERVAL_SECONDS = 300.0
 
     @property
     def daemon(self) -> EgressDaemon:
@@ -674,6 +690,19 @@ class ChannelAutomationService:
         issued before the plan's projected end, rather than silently waiting
         forever on a proof-event change that will never arrive.
 
+        D43 hardening (2026-09-05): ``_ROLLOVER_MIN_INTERVAL_SECONDS`` is a
+        hard floor under the gap between two rollover dispatches for one
+        channel, independent of the plan window. On paper a schedule of
+        30-second slots built a 240-second plan (``max_segments=8``), which
+        would put this trigger ~2 minutes apart per channel, and each dispatch
+        runs ``SourcePreparer.prepare`` synchronously on this thread via
+        ``daemon._try_content_reload``. NOTE the measured evidence: a 2-hour
+        control-plane log from the real-hardware tester run shows ZERO
+        rollover dispatches and zero horizon establishments, so this fast
+        cycle was NOT what burned CPU there. ``source_plan.PLAN_MIN_SECONDS``
+        now sizes the plan by duration; this interval is a second, independent
+        bound in case a plan comes back short anyway. Both are hardening.
+
         If the schedule has nothing beyond what is already loaded (the
         freshly-built plan does not reach any further), this deliberately
         does nothing: there is no more program content to roll onto, so the
@@ -691,6 +720,10 @@ class ChannelAutomationService:
             self._plan_horizon.pop(channel_id, None)
             self._rollover_issued.discard(channel_id)
             self._rollover_issued_at.pop(channel_id, None)
+            # The cadence floor governs EXTENSIONS of a live plan; a channel
+            # that has left the air starts fresh (a restart or a slate replan
+            # must never be throttled by an earlier rollover).
+            self._rollover_dispatched_at.pop(channel_id, None)
             return
         if self._daemon_has_manual_override(channel_id):
             # B1 fix: an operator override is live -- never fight it. Leave any
@@ -743,6 +776,7 @@ class ChannelAutomationService:
             return
         _, plan_end_at, last_segment_start_at = tracked
 
+        retrying_undelivered = False
         if channel_id in self._rollover_issued:
             issued_at = self._rollover_issued_at.get(channel_id)
             if issued_at is not None and (
@@ -759,6 +793,7 @@ class ChannelAutomationService:
                 )
                 self._rollover_issued.discard(channel_id)
                 self._rollover_issued_at.pop(channel_id, None)
+                retrying_undelivered = True
             else:
                 return  # already dispatched for this plan boundary; wait for it to land
 
@@ -769,6 +804,17 @@ class ChannelAutomationService:
         )
         if now < trigger_at:
             return  # not yet at the boundary-aligned trigger point
+
+        if not retrying_undelivered:
+            # D43 cadence floor: never dispatch rollovers for one channel
+            # faster than _ROLLOVER_MIN_INTERVAL_SECONDS apart. Checked BEFORE
+            # the provider call so a throttled tick costs nothing at all.
+            last_dispatch = self._rollover_dispatched_at.get(channel_id)
+            if (
+                last_dispatch is not None
+                and self._monotonic() - last_dispatch < self._ROLLOVER_MIN_INTERVAL_SECONDS
+            ):
+                return
 
         retry_at = self._rollover_retry_at.get(channel_id)
         if retry_at is not None and self._monotonic() < retry_at:
@@ -803,6 +849,7 @@ class ChannelAutomationService:
         self._enqueue(channel_id, "reload", now=now)
         self._rollover_issued.add(channel_id)
         self._rollover_issued_at[channel_id] = self._monotonic()
+        self._rollover_dispatched_at[channel_id] = self._monotonic()
         _LOG.info(
             "Channel automation issued a seamless plan rollover for %s: the live plan "
             "ends in %.0fs and the schedule continues %.0fs further; extending in place "

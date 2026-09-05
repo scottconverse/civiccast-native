@@ -653,6 +653,184 @@ class TestPlanRollover:
         assert ChannelAutomationService._ROLLOVER_MIN_LEAD_SECONDS == 120.0
 
 
+class TestRolloverCadence:
+    """D43 hardening (2026-09-05).
+
+    With 30-second schedule slots the source plan was 8 segments / 240
+    seconds (``source_plan.max_segments``), so ``rollover_trigger_at`` landed
+    120 seconds in and this check would dispatch a reload roughly every two
+    minutes PER CHANNEL -- and each dispatch runs ``SourcePreparer.prepare``
+    synchronously on the automation thread (``daemon._try_content_reload``).
+
+    Measured evidence, stated plainly: a 2-hour control-plane log from the
+    real-hardware tester shows ZERO rollover dispatches and zero horizon
+    establishments, so this fast cycle is NOT the cause of the CPU burn
+    observed there. These are the two conservative bounds against it anyway:
+    a plan window measured in seconds (``source_plan.PLAN_MIN_SECONDS``) and
+    a hard per-channel minimum interval between dispatches.
+    """
+
+    def _on_air_state(
+        self, store: InMemoryEgressStore, channel_id: str, *, proof_event_id: str
+    ) -> None:
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state="ON_AIR",
+                current_source_label="Program",
+                current_proof_event_id=proof_event_id,
+                updated_at=_NOW,
+            )
+        )
+
+    def _thirty_second_plan(self, channel_id: str) -> EgressSourcePlan:
+        """What ``ScheduleSourcePlanProvider`` now builds from a schedule of
+        30-second slots: 60 segments, 1800 seconds (``PLAN_MIN_SECONDS``)."""
+
+        return EgressSourcePlan(
+            channel_id=channel_id,
+            segments=[
+                EgressSourceSegment(
+                    label=f"Item {index}",
+                    path="C:/media/program.ts",
+                    duration_seconds=30.0,
+                    kind="program",
+                    source_ref=f"item-{index}",
+                )
+                for index in range(60)
+            ],
+        )
+
+    def test_thirty_second_items_no_longer_roll_over_every_two_minutes(self) -> None:
+        """The regression this whole pass exists for: tick a channel through
+        30 simulated minutes of 2-second poll intervals and count dispatches.
+
+        The old behavior (a 240-second plan for this schedule) produced a
+        rollover every ~120 seconds: ~14 in this window. With a 1800-second
+        plan the trigger does not arrive until 1680 seconds in (the 120s lead
+        floor is earlier than the last segment's start at 1770s), so exactly
+        ONE rollover fires, at ~28 minutes.
+        """
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(cid: str) -> EgressSourcePlan:
+            # Like the real join-in-progress provider, a later call reaches
+            # further into the schedule than an earlier one, so a rollover is
+            # always available to dispatch if the trigger fires.
+            calls["n"] += 1
+            return self._thirty_second_plan(cid)
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        dispatch_times: list[float] = []
+        for tick in range(0, 1800, 2):  # 30 minutes at the real 2s poll cadence
+            clock["now"] = 1000.0 + tick
+            service.run_once(now=_NOW + timedelta(seconds=tick))
+            if _pending_actions(store, "public") == ["reload"]:
+                dispatch_times.append(float(tick))
+                # The daemon applies the reload: a fresh proof event, which is
+                # how the service learns the rollover landed.
+                self._on_air_state(store, "public", proof_event_id=f"ev-{len(dispatch_times) + 1}")
+
+        assert len(dispatch_times) == 1, dispatch_times
+        # ~28 minutes in, not 2. The old code's first dispatch was at 120s.
+        assert dispatch_times[0] >= 1600.0
+        # And the schedule provider is not re-queried on every poll tick
+        # either: establish the horizon, re-query at the trigger, re-establish
+        # once the reload lands. Three calls in 900 ticks.
+        assert calls["n"] == 3
+
+    def test_a_short_plan_cannot_dispatch_faster_than_the_minimum_interval(self) -> None:
+        """Belt-and-braces floor under the CADENCE, independent of the plan
+        window: even if a plan comes back short (a nearly-exhausted schedule,
+        a provider quirk), one channel may not dispatch rollovers closer
+        together than ``_ROLLOVER_MIN_INTERVAL_SECONDS``."""
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        plans = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            plans["n"] += 1
+            return _plan_with_duration("public", 150.0, source_ref=f"seg-{plans['n']}")
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        # Establish a 150s horizon, then trigger (a 150s plan is already
+        # inside its own 120s lead floor).
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=1))
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # The reload lands -> a fresh proof event -> a fresh 150s horizon that
+        # is immediately inside its own lead floor again. Without the interval
+        # floor this would dispatch again straight away, once per plan.
+        for round_index in range(2, 6):
+            self._on_air_state(store, "public", proof_event_id=f"ev-{round_index}")
+            clock["now"] += 60.0
+            service.run_once(now=_NOW + timedelta(seconds=60 * round_index))
+            service.run_once(now=_NOW + timedelta(seconds=60 * round_index + 1))
+            assert _pending_actions(store, "public") == []
+
+        # Past the interval floor, the next one is allowed through.
+        self._on_air_state(store, "public", proof_event_id="ev-9")
+        clock["now"] += 120.0  # 360s since the dispatch, > the 300s floor
+        service.run_once(now=_NOW + timedelta(seconds=400))
+        service.run_once(now=_NOW + timedelta(seconds=401))
+        assert _pending_actions(store, "public") == ["reload"]
+        assert ChannelAutomationService._ROLLOVER_MIN_INTERVAL_SECONDS == 300.0
+
+    def test_the_interval_floor_is_cleared_when_the_channel_leaves_the_air(self) -> None:
+        """The floor governs EXTENSIONS of a live plan. A channel that goes
+        dark and comes back must not be throttled by an earlier rollover --
+        the slate replan and auto-start paths are unaffected."""
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 150.0),
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=1))
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # Off air and back on again, well inside the 300s interval.
+        store.write_state(EgressStateRow(channel_id="public", state="STOPPED", updated_at=_NOW))
+        clock["now"] += 10.0
+        service.run_once(now=_NOW + timedelta(seconds=11))
+        self._on_air_state(store, "public", proof_event_id="ev-2")
+        clock["now"] += 10.0
+        service.run_once(now=_NOW + timedelta(seconds=21))
+        service.run_once(now=_NOW + timedelta(seconds=22))
+        assert _pending_actions(store, "public") == ["reload"]
+
+
 class TestPerChannelLatchIndependence:
     """CA-4: N channels in one pass with fully independent state/latches.
 

@@ -13,6 +13,8 @@ from civiccast.egress import resolver
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import CanonicalProfile, EgressConfig, EgressSinkSpec
 from civiccast.egress.source_plan import (
+    PLAN_MAX_SEGMENTS,
+    PLAN_MIN_SECONDS,
     ScheduleSourcePlanProvider,
     SlateSourceGenerator,
     _escape_drawtext,
@@ -192,11 +194,16 @@ def test_build_source_plan_from_schedule_uses_current_local_media_with_trim(
 
     assert plan is not None
     assert plan.channel_id == "gov"
-    assert [segment.label for segment in plan.segments] == ["Council Meeting", "Council Meeting"]
     assert plan.segments[0].path == str(media)
     assert plan.segments[0].duration_seconds == 110
     assert plan.segments[0].inpoint_seconds == 10
     assert plan.segments[0].outpoint_seconds == 120
+    # D42: the trim window is 110s but the slot is 30 minutes, so this item
+    # UNDER-FILLS its slot. The plan stops here -- the rest of the slot belongs
+    # to the channel's fill policy (bulletins/slate), reached through the
+    # daemon's FALLBACK_SLATE gap-replan. Before this fix the next item was
+    # appended anyway and therefore started 110s in instead of 30 minutes in.
+    assert [segment.label for segment in plan.segments] == ["Council Meeting"]
 
 
 def test_scheduled_uncommitted_item_is_excluded_from_the_plan(tmp_path: Path) -> None:
@@ -344,7 +351,11 @@ class TestJoinInProgress:
         assert len(plan.segments) == 2
         assert plan.segments[0].inpoint_seconds == 600
         assert plan.segments[1].inpoint_seconds is None
-        assert plan.segments[1].duration_seconds == 1800
+        # D42: the second item's SLOT is 1200s even though its media runs 1800s.
+        # The slot is the contract -- the media is clipped to it, not the other
+        # way round (this asserted 1800 before the fix, i.e. the item overran
+        # its published slot by ten minutes).
+        assert plan.segments[1].duration_seconds == 1200
 
 
 def test_build_source_plan_from_schedule_returns_none_without_current_item(
@@ -446,3 +457,258 @@ def test_slate_plan_spans_the_fill_target_with_one_rendered_file(tmp_path: Path)
     assert len({segment.path for segment in plan.segments}) == 1
     total = sum(segment.duration_seconds for segment in plan.segments)
     assert total >= 3600
+
+
+def _asset_of(
+    path: Path,
+    *,
+    duration_seconds: int,
+    asset_id: str = "council-meeting",
+    trim_in: float | None = None,
+    trim_out: float | None = None,
+) -> StaffAssetRow:
+    return StaffAssetRow(
+        asset_id=asset_id,
+        title="Council Meeting",
+        state="validated",
+        file_path=str(path),
+        duration_seconds=duration_seconds,
+        trim_in_seconds=trim_in,
+        trim_out_seconds=trim_out,
+    )
+
+
+def _media(tmp_path: Path) -> Path:
+    media = tmp_path / "council.ts"
+    media.write_text("fake", encoding="utf-8")
+    return media
+
+
+def _slot_schedule(
+    now: datetime, *, count: int, slot_seconds: int = 30
+) -> list[ScheduleItemResponse]:
+    return [
+        _schedule_item(
+            asset_id=f"item-{index}",
+            scheduled_at=now + timedelta(seconds=slot_seconds * index),
+            duration_seconds=slot_seconds,
+        )
+        for index in range(count)
+    ]
+
+
+class TestSlotDuration:
+    """D42 (real-hardware soak on the tester, 2026-09-05).
+
+    ``_segment_duration`` returned the ASSET's playable length and ignored
+    ``item.duration_seconds`` (the published schedule slot) entirely: a 30s
+    slot holding an hour of media aired for the whole hour, so the schedule
+    was not honoured at all; conversely a schedule of short assets built a
+    plan far shorter than the slots it covered. The slot is the contract; the
+    media can only ever cut it short.
+    """
+
+    def test_long_media_is_clipped_to_its_thirty_second_slot(self, tmp_path: Path) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=_slot_schedule(now, count=4),
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=3600, asset_id=asset_id
+            ),
+            now=now,
+        )
+
+        assert plan is not None
+        # Before the fix every one of these was 3600s: an hour of media in a
+        # 30-second slot, playing straight over the next three programs.
+        assert [segment.duration_seconds for segment in plan.segments] == [30.0, 30.0, 30.0, 30.0]
+
+    def test_join_in_progress_offsets_within_the_slot_not_the_asset(self, tmp_path: Path) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, 20, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=[
+                _schedule_item(scheduled_at=now - timedelta(seconds=20), duration_seconds=30)
+            ],
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=3600, asset_id=asset_id
+            ),
+            now=now,
+        )
+
+        assert plan is not None
+        segment = plan.segments[0]
+        assert segment.inpoint_seconds == 20  # 20s into the slot
+        assert segment.duration_seconds == 10  # the 10s of slot that remain
+
+    def test_a_trim_window_longer_than_the_slot_clips_and_moves_the_outpoint(
+        self, tmp_path: Path
+    ) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=[_schedule_item(scheduled_at=now, duration_seconds=30)],
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=3600, asset_id=asset_id, trim_in=100, trim_out=900
+            ),
+            now=now,
+        )
+
+        assert plan is not None
+        segment = plan.segments[0]
+        assert segment.duration_seconds == 30
+        assert segment.inpoint_seconds == 100
+        # A stale 900 out-point would let a trim-aware consumer
+        # (preparer._emit_prepared_from_cache with playout_trim_supported)
+        # emit 800s of media for a 30s slot.
+        assert segment.outpoint_seconds == 130
+
+    def test_media_shorter_than_its_slot_ends_the_plan_for_the_fill_policy(
+        self, tmp_path: Path
+    ) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        def resolver(asset_id: str) -> StaffAssetRow:
+            # The FIRST item's media runs 400s inside a 600s slot; the rest
+            # fill their slots exactly.
+            duration = 400 if asset_id == "item-0" else 600
+            return _asset_of(media, duration_seconds=duration, asset_id=asset_id)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=_slot_schedule(now, count=4, slot_seconds=600),
+            asset_resolver=resolver,
+            now=now,
+        )
+
+        assert plan is not None
+        # The 200s the media cannot cover belong to the channel's fill policy
+        # (bulletin_filler.FillerSourceProvider -> bulletins or slate), reached
+        # through the daemon's FALLBACK_SLATE gap-replan -- the same honest
+        # answer the already-aired current item gives. Nothing loops the media,
+        # and item-1 is NOT started 200 seconds early.
+        assert [segment.duration_seconds for segment in plan.segments] == [400.0]
+
+    def test_media_within_the_gap_tolerance_of_its_slot_still_continues(
+        self, tmp_path: Path
+    ) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=_slot_schedule(now, count=3),
+            # 29.97s of media in a 30s slot must not truncate the plan on
+            # every single build.
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=30, asset_id=asset_id, trim_in=0.0, trim_out=29.97
+            ),
+            now=now,
+        )
+
+        assert plan is not None
+        assert len(plan.segments) == 3
+
+
+class TestPlanWindow:
+    """D43: the plan window is bounded by DURATION as well as by count.
+
+    A count-only window (``max_segments=8``) is a 240-second plan for a
+    schedule of 30-second slots, which drove automation's rollover -- and the
+    synchronous ``SourcePreparer.prepare`` it runs on the automation thread --
+    roughly every two minutes per channel (control plane at ~285% CPU / 1.9 GB
+    on the tester, worker output stalling into the 10s stall watchdog).
+    """
+
+    def test_thirty_second_slots_build_at_least_thirty_minutes_of_plan(
+        self, tmp_path: Path
+    ) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=_slot_schedule(now, count=200),
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=3600, asset_id=asset_id
+            ),
+            now=now,
+        )
+
+        assert plan is not None
+        total = sum(segment.duration_seconds for segment in plan.segments)
+        # Before the fix: 8 segments, 240 seconds of plan.
+        assert total >= PLAN_MIN_SECONDS
+        assert len(plan.segments) == 60
+
+    def test_the_segment_cap_bounds_a_pathologically_short_slot_schedule(
+        self, tmp_path: Path
+    ) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            # 1-second slots: 1800 of them would be needed to reach
+            # PLAN_MIN_SECONDS. The cap stops well short of that.
+            schedule_items=_slot_schedule(now, count=400, slot_seconds=1),
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=3600, asset_id=asset_id
+            ),
+            now=now,
+        )
+
+        assert plan is not None
+        assert len(plan.segments) == PLAN_MAX_SEGMENTS
+
+    def test_long_items_still_stop_at_max_segments(self, tmp_path: Path) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            # 30-minute slots: the FIRST segment alone already spans
+            # PLAN_MIN_SECONDS, so the count bound is what applies. A
+            # long-item schedule is unchanged by this fix.
+            schedule_items=_slot_schedule(now, count=40, slot_seconds=1800),
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=1800, asset_id=asset_id
+            ),
+            now=now,
+        )
+
+        assert plan is not None
+        assert len(plan.segments) == 8
+
+    def test_min_plan_seconds_and_segment_cap_are_validated(self, tmp_path: Path) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+        resolver = lambda asset_id: _asset_of(  # noqa: E731
+            media, duration_seconds=3600, asset_id=asset_id
+        )
+
+        with pytest.raises(ValueError, match="segment_cap"):
+            build_source_plan_from_schedule(
+                channel_id="gov",
+                schedule_items=_slot_schedule(now, count=2),
+                asset_resolver=resolver,
+                now=now,
+                max_segments=8,
+                segment_cap=4,
+            )
+        with pytest.raises(ValueError, match="min_plan_seconds"):
+            build_source_plan_from_schedule(
+                channel_id="gov",
+                schedule_items=_slot_schedule(now, count=2),
+                asset_resolver=resolver,
+                now=now,
+                min_plan_seconds=-1.0,
+            )
