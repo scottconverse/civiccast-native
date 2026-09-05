@@ -20,7 +20,7 @@ publish time" below for the exact list, prepared but not applied here.
 
 `v1.0.0-beta.5` will publish as a GitHub prerelease on
 [`scottconverse/civiccast-native`](https://github.com/scottconverse/civiccast-native/releases),
-targeting source SHA `<KIT_SHA>`. Like beta.3/beta.4, it will be
+targeting source SHA `4e03ef90cb4b591d60f0c1cdced0cbb739a80838`. Like beta.3/beta.4, it will be
 downloadable: `setup.exe` and the runtime `.ccpack` packs as release assets,
 verified by a published `SHA256SUMS.txt` and a `setup.exe.sidecar.json`
 sidecar.
@@ -32,7 +32,7 @@ re-downloading the ~21 GB AI-model bundle. Recordings, settings, database,
 and AI models already on the machine are kept.
 
 Will be published via `python scripts/release/publish_beta_candidate.py
---kit-dir <kit> --source-sha <KIT_SHA> --build-run-id <BUILD_RUN_ID>
+--kit-dir <kit> --source-sha 4e03ef90cb4b591d60f0c1cdced0cbb739a80838 --build-run-id 33954250185
 --gate-a-run-id <GATE_A_RUN_ID> --tag v1.0.0-beta.5 --truth-status current`,
 whose fail-closed checks must all pass before any GitHub state is touched:
 version identity agreeing across `setup.exe` ProductVersion,
