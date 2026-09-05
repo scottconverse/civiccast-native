@@ -191,14 +191,36 @@ things outside this repository's control:
   retest soak (kit `e502074`), contains only `CTRL stall: no output for
   10s — quitting for daemon restart` lines -- no plan-end exit ever
   appears, and the plans running were 28-38 minutes long while restarts
-  came 1-25 minutes apart. Two real causes, found 2026-09-05: periodic
-  output stalls specific to the GPU-less Windows Sandbox test environment
-  (not established to reproduce on real station hardware), and a
-  `UnicodeEncodeError` in the channel-automation pass on every restart
-  that skipped channel supervision for that channel -- the latter a real
-  product bug, fixed in beta.5 by #167. #162's seamless plan rollover is a
-  genuine improvement for plan-boundary transitions, but neither soak ever
-  reached one, and #162 is not what fixes the restarts measured here. See
+  came 1-25 minutes apart. Two contributing issues were found in the
+  sandbox soaks, 2026-09-05: periodic output stalls specific to the
+  GPU-less Windows Sandbox test environment (not established to reproduce
+  on real station hardware), and a `UnicodeEncodeError` in the
+  channel-automation pass on every restart that skipped channel
+  supervision for that channel -- a real product bug. (#167, the first
+  attempt at that fix, is closed, superseded by #169, merged.) #162's
+  seamless plan rollover is a genuine improvement for plan-boundary
+  transitions, but neither soak ever reached one, and #162 is not what
+  fixes the restarts measured here.
+  **What operators actually see (measured on real tester hardware,
+  2026-09-05):** a brief on-air blip every 10-25 minutes on a
+  multi-channel, CPU-only station with live captions turned on. The
+  driver is the live caption tap
+  (`civiccast/captions/tap_worker.py`): it transcribes every `ON_AIR`
+  channel in-process on CPU, and on three simultaneous channels it
+  exceeds its own backlog limit roughly every 30 seconds (`CRITICAL
+  civiccast.captions.tap_worker: Caption tap overload for channel <id>: N
+  settled segments exceeds the maximum 2 ...`) without ever backing off --
+  driving the control-plane process to ~2.5 CPU cores and starving the
+  GStreamer playout workers, whose own 10-second stall watchdog then
+  exits, which the daemon relaunches. Fixed in beta.5: #169 (the
+  state-write `UnicodeEncodeError` above). The caption-tap overload fix
+  itself has no merged PR yet (PR pending). **Workaround for beta.4:
+  none in the product.** `CIVICCAST_CAPTION_TAP` is the only switch for
+  the live caption tap, and a native station's control-plane process
+  hardcodes it to `inline` unconditionally
+  (`civiccast/native/station_runtime.py:1361`) -- there is no per-channel
+  or operator-console setting to turn live captioning off on a beta.4
+  station. See
   [`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
   for the full corrected account and evidence paths.
 

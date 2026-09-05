@@ -188,7 +188,8 @@ EOS or plan-end exit anywhere. A beta.5 retest soak (kit `e502074`,
 plan-end exit. The plans actually running were 28-38 minutes long while
 restarts came 1-25 minutes apart, which rules out a plan-boundary cause.
 
-Two real causes, both found 2026-09-05:
+Two contributing issues were found in the sandbox soaks, both dated
+2026-09-05:
 
 - **(a) Sandbox-specific output stalls.** The software-encoded channels
   see periodic output stalls in the GPU-less Windows Sandbox test
@@ -203,8 +204,8 @@ Two real causes, both found 2026-09-05:
   character into `last_error`, and writing that value out under the
   process's `cp1252` console/client encoding failed, which skipped channel
   supervision for that channel until the next tick. Fixed in beta.5 by
-  #167 (ASCII-safe child-log tail; a `client_encoding` fix is a tracked
-  follow-up).
+  #169 (merged); #167, an earlier attempt at the same fix (ASCII-fold only,
+  not the underlying state-write encoding), is closed, superseded by #169.
 
 **#162's seamless plan rollover is a real improvement for genuine
 plan-boundary transitions, but it was never exercised by either soak --
@@ -214,6 +215,28 @@ measured here.** Evidence:
 (beta.4) and
 `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-e502074-20260905`
 (beta.5 retest); see "Known issues in beta.4" below.
+
+**Update (2026-09-05, real tester hardware): (a) and (b) above are not
+what operators actually experience.** Measured on real station hardware,
+the restarts operators see -- a brief on-air blip every 10-25 minutes on a
+multi-channel, CPU-only station running with live captions on -- are
+driven by the live caption tap, not by a sandbox artifact or the encoding
+bug above. `civiccast/captions/tap_worker.py` transcribes every `ON_AIR`
+channel in-process on CPU; with three channels captioning at once it
+exceeds its own settled-segment backlog limit roughly every 30 seconds
+(`CRITICAL civiccast.captions.tap_worker: Caption tap overload for
+channel <id>: N settled segments exceeds the maximum 2 ...`) and never
+backs off, driving the control-plane process to ~2.5 CPU cores and
+starving the GStreamer playout workers -- each worker's own 10-second
+stall watchdog then fires and exits, which the daemon relaunches. Fixed
+in beta.5: #169 (the state-write `UnicodeEncodeError` above, a real bug
+but not this driver). The caption-tap overload fix itself has no merged
+PR yet (PR pending). **Workaround for beta.4 operators: none in the
+product.** `CIVICCAST_CAPTION_TAP` is the only switch for the live
+caption tap, and a native station's control-plane process hardcodes it
+to `inline` unconditionally (`civiccast/native/station_runtime.py:1361`)
+-- there is no per-channel or operator-console setting to turn live
+captioning off on a beta.4 station.
 
 ## Known issues in beta.4
 
@@ -226,13 +249,31 @@ measured here.** Evidence:
    the fix; that explanation was an unverified inference and is retracted
    -- see "The 120-minute engine soak" above for what the worker's own
    logs actually show (only stall-watchdog exits, no plan-end exit).
-   Root causes, corrected 2026-09-05: (a) periodic output stalls specific
-   to the GPU-less Windows Sandbox test environment, not established to
-   reproduce on real station hardware; and (b) a `UnicodeEncodeError` in
-   the channel-automation pass on every restart, which skipped channel
-   supervision for that channel. (b) is a real product bug, fixed in
-   beta.5 by #167. #162's seamless plan rollover is a genuine improvement
-   for plan-boundary transitions but does not address either cause above.
+   Contributing issues found in the sandbox soaks, 2026-09-05: (a)
+   periodic output stalls specific to the GPU-less Windows Sandbox test
+   environment, not established to reproduce on real station hardware;
+   and (b) a `UnicodeEncodeError` in the channel-automation pass on every
+   restart, which skipped channel supervision for that channel -- a real
+   product bug, fixed in beta.5 by #169 (#167, an earlier attempt, is
+   closed/superseded). #162's seamless plan rollover is a genuine
+   improvement for plan-boundary transitions but does not address either
+   issue above.
+   **What operators actually see, measured on real tester hardware
+   (2026-09-05): a brief on-air blip every 10-25 minutes on a
+   multi-channel, CPU-only station with live captions on**, driven by the
+   live caption tap (`civiccast/captions/tap_worker.py`) transcribing
+   every `ON_AIR` channel in-process on CPU. On three simultaneous
+   channels it exceeds its own backlog limit every ~30 seconds
+   (`CRITICAL civiccast.captions.tap_worker: Caption tap overload for
+   channel <id>: N settled segments exceeds the maximum 2 ...`), never
+   backs off, and drives the control-plane process to ~2.5 CPU cores,
+   starving the GStreamer playout workers -- their 10-second stall
+   watchdog then exits, which the daemon relaunches. Fixed in beta.5:
+   #169 (the encoding crash above). The caption-tap overload fix itself
+   has no merged PR yet (PR pending). **Workaround for beta.4: none in
+   the product** -- `CIVICCAST_CAPTION_TAP` is hardcoded to `inline` on
+   every native station (`civiccast/native/station_runtime.py:1361`),
+   with no per-channel or operator-console setting to disable it.
 2. **TSDuck data files now shipped beside `tsp.exe`** (#156) -- the
    packaged binary previously had its plugin DLLs but not the data files
    TSDuck resolves relative to its own directory on Windows, so TS capture
