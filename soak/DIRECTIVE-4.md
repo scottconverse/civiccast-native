@@ -108,3 +108,14 @@ account's `%LOCALAPPDATA%\CivicCast`, which no uninstall or data wipe touched
   (every candidate profile path), start the service, wait for `/health`, report
   `soak/STATE-RESET-RESULT.md` including `/api/setup/station-state`.
 - `AUTORUN-9d.ps1` — the channel script again.
+
+## Addendum 08:55Z — channels for real: AUTORUN-9e
+
+AUTORUN-9d created the admin (token stored) but every channel config PUT and
+asset registration returned 422: its request bodies were from beta.3. It still
+wrote `state\soak-started`, so the verify was counting a soak that never began.
+`AUTORUN-9e.ps1` uses the request bodies proven by the sandbox lane on this
+exact API (multipart asset upload -> package -> ready -> approve; schedule +
+Commit-to-Air; config PUT with slate_message and sink loudness/EAS fields; start),
+clears the false marker first, captures every non-2xx response body, and sets
+`soak-started` only after a channel reports ON_AIR.
