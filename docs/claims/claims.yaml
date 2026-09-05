@@ -121,9 +121,23 @@ entries:
       prose:
         path: docs/evidence/0.5.0-dr-drill-verification.md
         blob: 8252517551419e6c8dab9ae6d2a12b6aa49955a7
+      # Re-provisioned (fix/state-write-encoding, 2026-09-05): the reviewer
+      # follow-up on #167 flagged _FALLBACK_DATABASE_LOCALE's docstring as
+      # stale/false ("UTF8 because that is what this product's own
+      # provisioning creates" -- no longer true once a pre-fix Windows
+      # cluster can be WIN1252). read_database_locale/
+      # create_fresh_postgres_database already measure and clone the
+      # source's real encoding in every case where the row is readable; the
+      # fallback constant is used only when it genuinely cannot be read.
+      # Docstring corrected to say so; run_postgres_backup's own pg_dump
+      # capture behavior is unchanged. Current-source proof for these bytes
+      # is this PR's own regression test proving a measured WIN1252 source
+      # locale is cloned as WIN1252, not silently upgraded to the UTF8
+      # fallback (tests/dr/test_backup.py). Blob re-hashed with
+      # `git hash-object --path <file> <file>` per D2.
       code:
         path: civiccast/dr/backup.py
-        blob: 46c4ead59629f3ad182beb559af5848793650c22
+        blob: cc182175c2a4994b4451b252bd4f09934b05df02
       test:
         path: tests/dr/test_postgres_backup.py
         blob: 6f3ab03eb95bf1a1f079594d39fb8436f3caaf77
@@ -485,11 +499,32 @@ entries:
       # on-the-wire captures the prior re-provisioning notes above already
       # established for the rest of this module set (unchanged by this PR).
       # Blob re-hashed with `git hash-object --path <file> <file>` per D2.
+      # Re-provisioned again (fix/state-write-encoding, 2026-09-05):
+      # engine.py drifted again -- the stall-quit message printed to child
+      # stderr contained a U+2014 em dash; daemon._child_stderr_tail reads
+      # that stream with errors="replace", so a non-ASCII byte there
+      # arrived as U+FFFD and a non-UTF8 Postgres client_encoding then
+      # raised UnicodeEncodeError out of the state write, aborting
+      # ChannelAutomationService._run_channel_pass before the plan-rollover
+      # check ever ran (T6 soak evidence,
+      # Desktop/CIVICCAST-EVIDENCE/soak-120-e502074-20260905). Fixed by
+      # ASCII-folding the message (em dash -> hyphen) at the source; the new
+      # ASCII-fold boundary itself lives in civiccast/egress/daemon.py and
+      # the new civiccast/egress/_text.py helper, neither of which is in
+      # this claim's fixed bound-module set (WS3-005 pins
+      # worker/engine/decode_policy/graph/control/audio_tap.py only) --
+      # their own current-source proof is separate follow-up, not smuggled
+      # into this blob re-hash. Neither change touches worker.py,
+      # decode_policy.py, graph.py, control.py, or audio_tap.py, which keep
+      # their recorded blobs. Current-source proof for engine.py's new
+      # bytes is this PR's own coverage asserting the stall message is
+      # cp1252-encodable. Blob re-hashed with
+      # `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: fb4e2902f0a6e14f61508c48f93a9465889c2943
         - path: civiccast/egress/gst/engine.py
-          blob: 23ab4f2ae77d695ab42af9df06e41facd181618d
+          blob: 6ce0bb8befd2e59b0b80b59457682514d1f1223b
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -681,11 +716,32 @@ entries:
       # on-the-wire captures the prior re-provisioning notes above already
       # established for the rest of this module set (unchanged by this PR).
       # Blob re-hashed with `git hash-object --path <file> <file>` per D2.
+      # Re-provisioned again (fix/state-write-encoding, 2026-09-05):
+      # engine.py drifted again -- the stall-quit message printed to child
+      # stderr contained a U+2014 em dash; daemon._child_stderr_tail reads
+      # that stream with errors="replace", so a non-ASCII byte there
+      # arrived as U+FFFD and a non-UTF8 Postgres client_encoding then
+      # raised UnicodeEncodeError out of the state write, aborting
+      # ChannelAutomationService._run_channel_pass before the plan-rollover
+      # check ever ran (T6 soak evidence,
+      # Desktop/CIVICCAST-EVIDENCE/soak-120-e502074-20260905). Fixed by
+      # ASCII-folding the message (em dash -> hyphen) at the source; the new
+      # ASCII-fold boundary itself lives in civiccast/egress/daemon.py and
+      # the new civiccast/egress/_text.py helper, neither of which is in
+      # this claim's fixed bound-module set (WS3-005 pins
+      # worker/engine/decode_policy/graph/control/audio_tap.py only) --
+      # their own current-source proof is separate follow-up, not smuggled
+      # into this blob re-hash. Neither change touches worker.py,
+      # decode_policy.py, graph.py, control.py, or audio_tap.py, which keep
+      # their recorded blobs. Current-source proof for engine.py's new
+      # bytes is this PR's own coverage asserting the stall message is
+      # cp1252-encodable. Blob re-hashed with
+      # `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: fb4e2902f0a6e14f61508c48f93a9465889c2943
         - path: civiccast/egress/gst/engine.py
-          blob: 23ab4f2ae77d695ab42af9df06e41facd181618d
+          blob: 6ce0bb8befd2e59b0b80b59457682514d1f1223b
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
