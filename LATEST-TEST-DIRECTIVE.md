@@ -1,6 +1,7 @@
 # soak8-e1acfe6 Latest Test Directive
 Current: soak/DIRECTIVE-4.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-05T18:26Z (rev 19 - AUTORUN-9k read-only: why 0/3 channels ON_AIR after the 91caebc upgrade; egress dir, raw channel/schedule/playout API, installed version)
 Updated: 2026-09-05T16:50Z (rev 18 - AUTORUN-9j: upgrade to kit 91caebc (PR #172 caption-tap fix) and restart the 2-hour soak; soak #1 probes archived)
 Updated: 2026-09-05T10:35Z (rev 17 - AUTORUN-9i read-only CPU attribution: caption/summary/ollama log lines, per-process CPU sample, asset/caption job states)
 Platform prompt: PROMPT-WINDOWS-CODEX.md (the one paste for a Codex-desktop tester on a Windows box)

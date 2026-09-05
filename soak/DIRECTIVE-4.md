@@ -140,3 +140,8 @@ GStreamer every cycle, tsp pass every cycle, ZERO relaunches per channel.
 Result file: `soak/INSTALL-RESULT-9j.md`. Exit codes: 1 fetch blocked (retries next poll),
 2 hash mismatch (retries), 3 no installer, 4 not healthy after install, 5 fewer than 3
 channels ON_AIR (soak NOT restarted; report and stop).
+
+
+## Addendum -- AUTORUN-9k (read-only)
+
+AUTORUN-9j upgraded to kit 91caebc cleanly (installer exit 0, /health healthy, version 1.0.0-beta.5, upgrade engine NO-OP same version) but found 0/3 channels ON_AIR after 10 min and all three `data\egress\<id>\state.json` files missing, so it did NOT restart the soak. `AUTORUN-9k.ps1` (runs once, changes nothing) reports the egress data dir, raw `GET /api/staff/egress/channels`, `/api/staff/schedule`, `/api/staff/playout/state`, `/api/staff/station/profile`, processes, install-progress.log tail and the installed version, to `soak/DIAG-9k-<stamp>.md`.
