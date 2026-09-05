@@ -145,3 +145,8 @@ channels ON_AIR (soak NOT restarted; report and stop).
 ## Addendum -- AUTORUN-9k (read-only)
 
 AUTORUN-9j upgraded to kit 91caebc cleanly (installer exit 0, /health healthy, version 1.0.0-beta.5, upgrade engine NO-OP same version) but found 0/3 channels ON_AIR after 10 min and all three `data\egress\<id>\state.json` files missing, so it did NOT restart the soak. `AUTORUN-9k.ps1` (runs once, changes nothing) reports the egress data dir, raw `GET /api/staff/egress/channels`, `/api/staff/schedule`, `/api/staff/playout/state`, `/api/staff/station/profile`, processes, install-progress.log tail and the installed version, to `soak/DIAG-9k-<stamp>.md`.
+
+
+## Addendum -- AUTORUN-9l: restart the channels, then soak #2
+
+Why the channels stayed dark: egress state is a Postgres row (`egress_states`), preserved by the upgrade; the automation loop re-issues `start` only for channels whose config has `auto_start=true` (civiccast/egress/automation.py:478-493). Soak channels were started by hand, so after the service restart nothing starts them. `AUTORUN-9l.ps1` (runs once) records each channel's state, POSTs `{action:start}` to `/api/staff/egress/channels/<id>/commands` (the 9e route), polls `/state` up to 6 min, and only when 3/3 are ON_AIR archives soak #1's probes to `soak/archive-e502074-soak1/`, resets the relaunch counters and writes a fresh `state\soak-started`. Result: `soak/RESTART-RESULT-9l.md`. Exit 5 = start sent but <3 ON_AIR (soak NOT restarted).
