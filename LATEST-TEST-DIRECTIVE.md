@@ -1,7 +1,7 @@
 # soak8-e1acfe6 Latest Test Directive
 Current: soak/DIRECTIVE-4.md
 Branch: soak8-e1acfe6-directives
-Updated: 2026-09-05T09:00Z (rev 13 - AUTORUN-9f: raw channel state diagnostics after 9e (config+start OK, state poll empty); writes soak-started only if all three channels are ON_AIR)
+Updated: 2026-09-05T09:15Z (rev 14 - AUTORUN-3 verify fixed: tsp ExitCode cached (was null -> fail-exit-), engine inferred from python worker.py processes (was gst-launch only -> none-running); soak clock started 09:06:14Z by AUTORUN-9f)
 Platform prompt: PROMPT-WINDOWS-CODEX.md (the one paste for a Codex-desktop tester on a Windows box)
 Autoruns queued: soak/autorun/AUTORUN-5.ps1 (fetch the e5020746 kit into a fresh kit-<sha> folder, verify, install OVER the existing station), soak/autorun/AUTORUN-9e.ps1 (after AUTORUN-9 clean reinstall; first-admin + three channels + start, 2h15m schedule), soak/autorun/AUTORUN-3.ps1 (TSDuck egress proof, engine-per-channel, relaunch tracking, worker CPU/RSS, 30-min rollups, T+2h verdict)
 

@@ -79,7 +79,9 @@ function Test-TsProof {
   $tspArgs = @('-I','ip',"$Port",'--buffer-size','16777216','-P','until','--seconds',"$Seconds",'-P','analyze','--json','--output-file',$report,'-O','drop')
   try {
     $proc = Start-Process -FilePath $TspExe -ArgumentList $tspArgs -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    try { Wait-Process -Id $proc.Id -Timeout ($Seconds + 20) -ErrorAction Stop }
+    # PS 5.1: ExitCode is $null unless the handle was cached before exit (Gate A #158).
+    $null = $proc.Handle
+    try { if (-not $proc.WaitForExit(($Seconds + 20) * 1000)) { throw 'timeout' } }
     catch {
       $result.timed_out = $true
       Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
@@ -153,7 +155,9 @@ function Update-RelaunchTracking {
 # window is known). RSS is the process WorkingSet64 at sample time.
 function Get-WorkerSample {
   param([string]$StateRoot, [datetime]$Now)
-  $procs = @(Get-Process -Name 'python','gst-launch-1.0' -ErrorAction SilentlyContinue)
+  $procs = @(Get-Process -Name 'python','gst-launch-1.0','ffmpeg' -ErrorAction SilentlyContinue)
+  # GStreamer playout workers are python.exe processes running civiccast\egress\gst\worker.py (not gst-launch).
+  $gstWorkers = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match 'egress\\gst\\worker\.py' })
   $sampleFile = Join-Path $StateRoot 'last-cpu-sample.json'
   $prev = $null
   if (Test-Path $sampleFile) { try { $prev = Get-Content $sampleFile -Raw | ConvertFrom-Json } catch { $prev = $null } }
@@ -230,7 +234,7 @@ foreach ($c in $channelSpecs) {
 $gst = @(Get-Process -Name 'gst-launch-1.0' -ErrorAction SilentlyContinue).Count
 $ff  = @(Get-Process -Name 'ffmpeg' -ErrorAction SilentlyContinue).Count
 $engineObserved = [ordered]@{
-  gst_launch_processes = $gst; ffmpeg_processes = $ff
+  gst_launch_processes = $gst; ffmpeg_processes = $ff; gst_worker_processes = $gstWorkers.Count; gst_worker_pids = @($gstWorkers | ForEach-Object { $_.ProcessId })
   inferred = $(if ($gst -gt 0 -and $ff -eq 0) { 'gstreamer' } elseif ($ff -gt 0 -and $gst -eq 0) { 'ffmpeg-fallback' } elseif ($gst -gt 0 -and $ff -gt 0) { 'mixed' } else { 'none-running' })
 }
 
