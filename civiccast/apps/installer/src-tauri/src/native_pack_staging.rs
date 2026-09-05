@@ -587,14 +587,6 @@ pub fn commit_pack_file(
     })
 }
 
-/// The first 8 hex characters of a pack's content digest (`VerifiedPack::
-/// sha256`) -- enough to eyeball-distinguish two kits in a log line without
-/// printing a full 64-character hash. Never used for any trust decision,
-/// only for the greppable `payload replaced`/`payload unchanged` lines.
-fn digest_prefix(digest: &str) -> String {
-    digest.get(..8).unwrap_or(digest).to_string()
-}
-
 fn copy_file_durably(source: &Path, destination: &Path) -> io::Result<()> {
     let mut input = File::open(source)?;
     let mut output = File::create(destination)?;
@@ -795,6 +787,45 @@ pub fn ensure_pack_extracted(
 // Orchestration
 // ---------------------------------------------------------------------------
 
+/// One component's identity facts from ONE staging decision, recorded for
+/// EVERY outcome the decision matrix can reach -- `AlreadySatisfied` and
+/// `ReplaceFromOffline` (the two outcomes the identity check itself decides
+/// between), but also `CopyFromOffline`, `ReplaceCorruptFromOffline`,
+/// `NeedsOnlineOrAbort` (required components), and `SkipAbsent`/
+/// `CorruptWithNoRemedy` (optional components) -- so the manifest always
+/// shows what happened to a component's payload, not only the two cases
+/// this fix newly distinguishes.
+///
+/// Carried on [`PackStagingReport`]/[`OptionalPackStagingReport`], which
+/// `main.rs`'s `run_native_pack_staging_cli` already prints as one pretty
+/// JSON manifest -- deliberately NOT a `println!`/`eprintln!` anywhere in
+/// this module. `nsis-hooks-bootstrap.nsh`'s `--civiccast-stage-packs`
+/// invocation asserts this module emits ZERO print calls and relies on that
+/// being true: it captures the child's ENTIRE stdout with
+/// `nsExec::ExecToStack` as one string ($1), gates it behind a single human
+/// `DetailPrint` line in the wizard pane, and hands the FULL string to
+/// `CIVICCAST_STEP`, which is what actually lands this identity data in
+/// `install-progress.log`. A `println!` here would not add a line to that
+/// log -- it would silently become part of $1, ahead of the JSON, exactly
+/// the failure mode `nsis-hooks-bootstrap.nsh`'s own comments warn about.
+#[derive(Debug, Clone, Serialize)]
+pub struct PackPayloadIdentity {
+    pub component: String,
+    /// `Debug`-formatted from `StagingAction`/`OptionalStagingAction` (e.g.
+    /// `"AlreadySatisfied"`, `"ReplaceFromOffline"`) -- always the exact enum
+    /// variant name, by construction, so it can never drift from it the way
+    /// a hand-typed label could.
+    pub outcome: String,
+    /// The pack digest already staged at `$INSTDIR\packs\<component>.ccpack`
+    /// BEFORE this decision, when one existed and verified (`None` for an
+    /// absent or corrupt destination).
+    pub staged_digest: Option<String>,
+    /// The incoming offline pack's digest at `$EXEDIR\packs`, when one was
+    /// discovered and verified (`None` when no offline source exists for
+    /// this component).
+    pub incoming_digest: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PackStagingReport {
     pub required_components: Vec<String>,
@@ -803,6 +834,9 @@ pub struct PackStagingReport {
     pub replaced_from_offline: Vec<String>,
     pub satisfied_online: Vec<String>,
     pub extracted: Vec<String>,
+    /// See [`PackPayloadIdentity`]'s doc: one entry per required component,
+    /// covering every staging outcome, not only a replace/unchanged subset.
+    pub payload_identity: Vec<PackPayloadIdentity>,
 }
 
 /// Top-level entry point invoked by the `--civiccast-stage-packs` CLI
@@ -851,27 +885,26 @@ pub fn stage_required_packs(
         } else {
             OfflineSourceState::Absent
         };
-        let source_digest = offline_pack.map(|pack| pack.sha256.as_str());
+        let source_digest = offline_pack.map(|pack| pack.sha256.clone());
         let action = decide_offline_staging_action_with_identity(
             &dest_state,
             &source_state,
             dest_digest.as_deref(),
-            source_digest,
+            source_digest.as_deref(),
         );
+        // Recorded for EVERY outcome (see PackPayloadIdentity's doc), before
+        // the match below performs whichever side effect the outcome calls
+        // for -- so a NeedsOnlineOrAbort or CopyFromOffline component shows
+        // up in the manifest exactly as much as an AlreadySatisfied or
+        // ReplaceFromOffline one does.
+        report.payload_identity.push(PackPayloadIdentity {
+            component: component.clone(),
+            outcome: format!("{action:?}"),
+            staged_digest: dest_digest.clone(),
+            incoming_digest: source_digest.clone(),
+        });
         match action {
-            StagingAction::AlreadySatisfied => {
-                if let Some(digest) = &dest_digest {
-                    // Greppable per the 2026-09-05 install-over regression
-                    // (see StagingAction::ReplaceFromOffline's doc): proves
-                    // the identity check actually ran and found a match,
-                    // not merely that the version strings matched.
-                    println!(
-                        "pack {component}: payload unchanged ({})",
-                        digest_prefix(digest)
-                    );
-                }
-                report.already_present.push(component.clone())
-            }
+            StagingAction::AlreadySatisfied => report.already_present.push(component.clone()),
             StagingAction::CopyFromOffline => {
                 let source_pack =
                     offline_pack.expect("CopyFromOffline implies a verified offline source");
@@ -901,11 +934,6 @@ pub fn stage_required_packs(
             StagingAction::ReplaceFromOffline => {
                 let source_pack =
                     offline_pack.expect("ReplaceFromOffline implies a verified offline source");
-                let staged_digest = dest_digest
-                    .as_deref()
-                    .map(digest_prefix)
-                    .unwrap_or_else(|| "unknown".to_string());
-                let incoming_digest = digest_prefix(&source_pack.sha256);
                 commit_pack_file(
                     &source_pack.path,
                     &destination,
@@ -914,13 +942,6 @@ pub fn stage_required_packs(
                     expected_product_version,
                     expected_compatible_core,
                 )?;
-                // The line the 2026-09-05 real-tester regression needed:
-                // proves the incoming kit's pack (different content, same
-                // declared version) actually replaced the staged one, not
-                // merely that setup exited 0.
-                println!(
-                    "pack {component}: payload replaced (staged {staged_digest} -> incoming {incoming_digest})"
-                );
                 report.replaced_from_offline.push(component.clone());
             }
             StagingAction::NeedsOnlineOrAbort => needs_online.push(component.clone()),
@@ -989,6 +1010,10 @@ pub struct OptionalPackStagingReport {
     pub replaced_from_offline: Vec<String>,
     pub skipped_absent: Vec<String>,
     pub extracted: Vec<String>,
+    /// See [`PackPayloadIdentity`]'s doc: one entry per optional component,
+    /// covering every staging outcome (including `SkipAbsent`/
+    /// `CorruptWithNoRemedy`, which have no analogue on the required path).
+    pub payload_identity: Vec<PackPayloadIdentity>,
 }
 
 /// Offline-only staging for OPTIONAL components (see [`DEFAULT_OPTIONAL_
@@ -1043,21 +1068,25 @@ pub fn stage_optional_packs(
         } else {
             OfflineSourceState::Absent
         };
-        let source_digest = offline_pack.map(|pack| pack.sha256.as_str());
+        let source_digest = offline_pack.map(|pack| pack.sha256.clone());
         let action = decide_optional_staging_action_with_identity(
             &dest_state,
             &source_state,
             dest_digest.as_deref(),
-            source_digest,
+            source_digest.as_deref(),
         );
+        // Recorded for EVERY outcome (see PackPayloadIdentity's doc),
+        // including SkipAbsent and CorruptWithNoRemedy -- the latter
+        // returns Err below, but the identity fact is still worth carrying
+        // on the partial report a caller might inspect.
+        report.payload_identity.push(PackPayloadIdentity {
+            component: component.clone(),
+            outcome: format!("{action:?}"),
+            staged_digest: dest_digest.clone(),
+            incoming_digest: source_digest.clone(),
+        });
         match action {
             OptionalStagingAction::AlreadySatisfied => {
-                if let Some(digest) = &dest_digest {
-                    println!(
-                        "pack {component}: payload unchanged ({})",
-                        digest_prefix(digest)
-                    );
-                }
                 report.already_present.push(component.clone())
             }
             OptionalStagingAction::CopyFromOffline => {
@@ -1089,11 +1118,6 @@ pub fn stage_optional_packs(
             OptionalStagingAction::ReplaceFromOffline => {
                 let source_pack =
                     offline_pack.expect("ReplaceFromOffline implies a verified offline source");
-                let staged_digest = dest_digest
-                    .as_deref()
-                    .map(digest_prefix)
-                    .unwrap_or_else(|| "unknown".to_string());
-                let incoming_digest = digest_prefix(&source_pack.sha256);
                 commit_pack_file(
                     &source_pack.path,
                     &destination,
@@ -1102,9 +1126,6 @@ pub fn stage_optional_packs(
                     expected_product_version,
                     expected_compatible_core,
                 )?;
-                println!(
-                    "pack {component}: payload replaced (staged {staged_digest} -> incoming {incoming_digest})"
-                );
                 report.replaced_from_offline.push(component.clone());
             }
             OptionalStagingAction::SkipAbsent => {
@@ -2012,6 +2033,99 @@ mod tests {
             fs::read(&extracted_initdb).expect("extracted initdb.exe must exist"),
             b"KIT-B-payload-bytes-DIFFERENT",
             "the extracted tree must be rebuilt from kit B's payload, not left as kit A's"
+        );
+
+        // The manifest's structured identity facts (see PackPayloadIdentity)
+        // must show the replace, not just the report's flat list -- this is
+        // what actually reaches install-progress.log via the NSIS hook.
+        let identity = report
+            .payload_identity
+            .iter()
+            .find(|entry| entry.component == "native-server-binaries")
+            .expect("payload_identity must carry an entry for the staged component");
+        assert_eq!(identity.outcome, "ReplaceFromOffline");
+        assert!(identity.staged_digest.is_some());
+        assert!(identity.incoming_digest.is_some());
+        assert_ne!(identity.staged_digest, identity.incoming_digest);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_over_a_different_content_kit_replaces_the_app_payload_at_its_runtime_bridge() {
+        // Same regression as
+        // `install_over_a_different_content_kit_declaring_the_same_version_replaces_the_staged_payload`,
+        // but for `APP_PAYLOAD_COMPONENT` ("native-app-payload") -- the
+        // component the 2026-09-05 real tester actually hit. Its extraction
+        // destination is NOT the generic `packs\<component>\payload\`
+        // convention; `pack_extraction_destination` bridges it to
+        // `$INSTDIR\runtime` (the embedded interpreter's fixed path,
+        // `native_service_registration.rs`'s `provision_command`/
+        // `service_registration_command` hard-code `runtime\python.exe`).
+        // A fix that only proved itself against the generic branch could
+        // still leave this bridge unexercised -- this test proves the
+        // replace-and-rebuild also lands correctly at `runtime\`, which is
+        // the actual path the affected station's supervisor runs code from.
+        let root = scratch_dir("e2e-install-over-app-payload-runtime-bridge");
+        let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+        let trust = trust_for(&signing_key);
+        let installer_dir = root.join("installer");
+        let instdir = root.join("instdir");
+        fs::create_dir_all(installer_dir.join("packs")).expect("mkdir installer packs");
+
+        // Kit A's app payload already staged at $INSTDIR\packs (a prior
+        // install).
+        let dest_dir = instdir.join("packs");
+        fs::create_dir_all(&dest_dir).expect("mkdir dest packs");
+        build_signed_pack(
+            &dest_dir.join(format!("{APP_PAYLOAD_COMPONENT}.ccpack")),
+            &signing_key,
+            APP_PAYLOAD_COMPONENT,
+            &[("python.exe", b"KIT-A-interpreter-bytes")],
+        );
+
+        // Kit B's incoming offline app-payload pack at $EXEDIR\packs: same
+        // declared product_version/compatible_core, different content.
+        build_signed_pack(
+            &installer_dir
+                .join("packs")
+                .join(format!("{APP_PAYLOAD_COMPONENT}.ccpack")),
+            &signing_key,
+            APP_PAYLOAD_COMPONENT,
+            &[("python.exe", b"KIT-B-interpreter-bytes-DIFFERENT")],
+        );
+
+        let report = stage_required_packs(
+            &installer_dir,
+            &instdir,
+            &trust,
+            &[APP_PAYLOAD_COMPONENT.to_string()],
+            "1.0.0-rc15",
+            "1.0.0-rc15",
+            None,
+            "beta",
+            &AllowAllAuthority,
+        )
+        .expect("install-over of a content-diverged same-version app-payload kit must succeed");
+
+        assert_eq!(
+            report.replaced_from_offline,
+            vec![APP_PAYLOAD_COMPONENT],
+            "a same-version, different-content app-payload pack must be reported as replaced"
+        );
+        assert!(report.already_present.is_empty());
+
+        // The extracted tree at the RUNTIME BRIDGE -- $INSTDIR\runtime, not
+        // $INSTDIR\packs\native-app-payload\payload -- must be rebuilt from
+        // kit B's payload. This is the exact file
+        // (`native_service_registration.rs`'s hard-coded
+        // `runtime\python.exe`) the supervisor actually launches.
+        let extracted_python = instdir.join("runtime").join("python.exe");
+        assert_eq!(
+            fs::read(&extracted_python).expect("extracted runtime\\python.exe must exist"),
+            b"KIT-B-interpreter-bytes-DIFFERENT",
+            "the runtime bridge's extracted tree must be rebuilt from kit B's payload, not left \
+             as kit A's"
         );
 
         let _ = fs::remove_dir_all(&root);

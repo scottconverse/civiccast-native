@@ -177,6 +177,23 @@ pub fn decide_component_repair_action(
     }
 }
 
+/// Pure: exactly the `StagingAction` variants for which a verified
+/// offline/side-load pack must be copied over the local one --
+/// `repair_pack_component`'s copy guard and `decide_component_repair_action`
+/// must never disagree about this set, or one could report
+/// `RepairedFromSideLoad` for an action the OTHER treats as a no-op copy
+/// (or vice versa). Kept as its own function, not inlined at either call
+/// site, specifically so both can be checked against the same source of
+/// truth (`copy_guard_agrees_with_repair_action_mapping` below).
+pub fn staging_action_requires_side_load_copy(staging_action: StagingAction) -> bool {
+    matches!(
+        staging_action,
+        StagingAction::CopyFromOffline
+            | StagingAction::ReplaceCorruptFromOffline
+            | StagingAction::ReplaceFromOffline
+    )
+}
+
 fn not_repairable_detail(
     component: &str,
     local_pack: &Path,
@@ -256,13 +273,21 @@ pub fn repair_pack_component(
         };
     }
 
-    if matches!(
-        staging_action,
-        StagingAction::CopyFromOffline | StagingAction::ReplaceCorruptFromOffline
-    ) {
-        let source_pack = offline_sources
-            .get(component)
-            .expect("CopyFromOffline/ReplaceCorruptFromOffline implies a verified offline source");
+    if staging_action_requires_side_load_copy(staging_action) {
+        // `ReplaceFromOffline` is never actually produced by
+        // `decide_offline_staging_action` above (only its identity-aware
+        // sibling `decide_offline_staging_action_with_identity`, which this
+        // repair path does not call), but `staging_action_requires_side_load_copy`
+        // (the SAME set `decide_component_repair_action` maps to
+        // `RepairAction::RepairedFromSideLoad`) already includes it -- a
+        // future caller wiring the identity-aware decision in here gets a
+        // real copy, not a silent fall-through to the `AlreadySatisfied`
+        // branch below with a side-load pack it was told to copy never
+        // actually copied.
+        let source_pack = offline_sources.get(component).expect(
+            "CopyFromOffline/ReplaceCorruptFromOffline/ReplaceFromOffline implies a verified \
+             offline source",
+        );
         let source_path = source_pack.path.as_path();
         if let Err(error) = native_pack_staging::commit_pack_file(
             source_path,
@@ -922,6 +947,49 @@ mod tests {
             decide_component_repair_action(StagingAction::NeedsOnlineOrAbort, false),
             RepairAction::NotRepairableLocally
         );
+    }
+
+    #[test]
+    fn replace_from_offline_repairs_from_side_load() {
+        // `ReplaceFromOffline` (the identity-aware "same version, different
+        // content" outcome) is never actually produced by this module's own
+        // `decide_offline_staging_action` call in `repair_pack_component`
+        // today, but the mapping must still be correct for whenever it is.
+        assert_eq!(
+            decide_component_repair_action(StagingAction::ReplaceFromOffline, false),
+            RepairAction::RepairedFromSideLoad
+        );
+    }
+
+    #[test]
+    fn copy_guard_agrees_with_repair_action_mapping_for_every_staging_action() {
+        // The bug this guards: `repair_pack_component`'s copy guard and
+        // `decide_component_repair_action` each independently decided which
+        // `StagingAction`s mean "copy the side-loaded pack in" -- they
+        // agreed by coincidence, not by construction, until
+        // `staging_action_requires_side_load_copy` became the ONE place
+        // that decides it and both call sites defer to it. This test proves
+        // that single source of truth still lines up with
+        // `decide_component_repair_action`'s own mapping for every
+        // `StagingAction` variant: `RepairedFromSideLoad` if and only if
+        // `staging_action_requires_side_load_copy` says so.
+        for staging_action in [
+            StagingAction::AlreadySatisfied,
+            StagingAction::CopyFromOffline,
+            StagingAction::ReplaceCorruptFromOffline,
+            StagingAction::ReplaceFromOffline,
+            StagingAction::NeedsOnlineOrAbort,
+        ] {
+            let repairs_from_side_load = decide_component_repair_action(staging_action, false)
+                == RepairAction::RepairedFromSideLoad;
+            assert_eq!(
+                staging_action_requires_side_load_copy(staging_action),
+                repairs_from_side_load,
+                "disagreement for {staging_action:?}: copy guard says {}, repair action mapping \
+                 says {repairs_from_side_load}",
+                staging_action_requires_side_load_copy(staging_action),
+            );
+        }
     }
 
     // ---- decide_selector_repair_action: pure decision matrix ----

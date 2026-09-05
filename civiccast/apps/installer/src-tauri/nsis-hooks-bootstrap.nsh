@@ -831,6 +831,18 @@ Var CIVICCAST_POSTCLEAR_ARMED
     ; SUCCESS: $1 is the informational JSON manifest report. Log it in full
     ; (support needs it) but show the operator a short, honest, human line
     ; in the pane instead -- naming where the rest of the detail lives.
+    ;
+    ; The manifest's `payload_identity` array (one entry per component:
+    ; component, outcome, staged_digest, incoming_digest -- see
+    ; native_pack_staging.rs's `PackPayloadIdentity`) is how the 2026-09-05
+    ; install-over regression (two kits declaring the SAME product_version/
+    ; compatible_core with DIFFERENT pack content) is diagnosable from this
+    ; log: it names, per component, whether the staged pack was left
+    ; unchanged or replaced from the incoming offline pack, and both packs'
+    ; content digests. It travels here inside $1 as ordinary JSON fields --
+    ; never a separate print call, which would break the ZERO-print
+    ; invariant this hook's ExecToStack choice depends on (see the long
+    ; comment above this block).
     !insertmacro CIVICCAST_STEP "step stage-packs: manifest report: $1"
     DetailPrint "Required native component packs staged and verified. Full detail: $COMMONPROGRAMDATA\CivicCast\install-progress.log"
   ${EndIf}

@@ -1205,13 +1205,22 @@ def test_cross_version_upgrade_lane_passes_when_the_staged_payload_matches_the_k
 def test_install_over_a_different_content_kit_fails_the_dirty_survival_check(
     tmp_path: Path,
 ) -> None:
-    """The 2026-09-05 real-tester regression itself, at the judge layer:
-    setup exited 0, D3/D4/health all reported success (every OTHER upgrade
-    signal is healthy), but the pack actually staged at $INSTDIR\\packs\\
-    native-app-payload.ccpack is NOT the pack this kit shipped -- exactly
-    what happened when kit B installed `/S` over a station kit A had
-    already staged, both declaring the same product_version. The judge must
-    fail dirty_survival on the digest mismatch alone."""
+    """Unit-level proof of the judge's mismatch detection: given synthetic
+    DIRTY-RESULT.txt evidence where setup exited 0 and D3/D4/health all
+    reported success (every OTHER upgrade signal healthy) but
+    POST_UPGRADE_APP_PAYLOAD_DIGEST != KIT_APP_PAYLOAD_DIGEST, the judge
+    must fail dirty_survival on the digest mismatch alone.
+
+    NOT a reproduction of the 2026-09-05 real-tester scenario via the real
+    lane: this sandbox lane's baseline kit is always an OLDER
+    product_version than the candidate (sandbox-lab/upgrade-baseline.json),
+    so in a REAL run these two digests always match by construction --
+    see check_dirty_survival's own comment. This test only proves the
+    check's comparison logic is correct when handed a mismatch, which is
+    exactly what the SAME-product_version scenario would need to produce
+    were a same-version install-over lane to exist (tracked as a
+    follow-up); the real end-to-end reproduction of that scenario is
+    native_pack_staging.rs's Rust test suite."""
     run_dir = _synthetic_pass_dir(tmp_path)
     _write_upgrade_evidence(
         run_dir,

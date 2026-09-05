@@ -886,15 +886,27 @@ def check_dirty_survival(output_dir: Path) -> CheckResult:
                 "(expected SUCCESS)"
             )
 
-        # 2026-09-05 real-tester install-over regression: exit 0 and a
-        # healthy station proved setup finished, never that the installed
-        # APPLICATION PAYLOAD is the one THIS kit shipped. Two kits declaring
-        # the same product_version/compatible_core STRINGS with different
-        # content left the previous kit's payload silently in place
-        # (native_pack_staging.rs's staged-pack check only compared those
-        # strings). Content identity is the only thing that can catch that
-        # -- fail the run when the staged pack's digest and the kit's own
-        # pack digest diverge.
+        # Post-upgrade app-payload identity, prompted by the 2026-09-05
+        # real-tester install-over regression: exit 0 and a healthy station
+        # proved setup finished, never that the installed APPLICATION
+        # PAYLOAD is the one THIS kit shipped. Fail the run when the staged
+        # pack's digest and the kit's own pack digest diverge.
+        #
+        # HONEST SCOPE NOTE: this lane's baseline (sandbox-lab/
+        # upgrade-baseline.json) is always a genuinely OLDER product_version
+        # than the candidate under test, so the incoming pack is always
+        # copied here and these two digests always match by construction --
+        # this check alone does NOT reproduce or catch the regression's
+        # actual trigger (two kits declaring the SAME product_version with
+        # different content). That exact scenario is covered by
+        # native_pack_staging.rs's own Rust unit/e2e tests
+        # (decide_offline_staging_action_with_identity and the
+        # install_over_a_different_content_kit_* tests), not by this Gate A
+        # lane. What this check DOES buy: a real, independent post-upgrade
+        # assertion that the kit's OWN payload is what ended up installed --
+        # worth keeping regardless -- plus the scaffolding (evidence keys,
+        # verdict wiring) a future same-product_version install-over lane
+        # can reuse.
         post_upgrade_digest = _dirty_line(text, "POST_UPGRADE_APP_PAYLOAD_DIGEST")
         kit_digest = _dirty_line(text, "KIT_APP_PAYLOAD_DIGEST")
         if (

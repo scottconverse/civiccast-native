@@ -52,15 +52,33 @@ below.
   new pack at `$EXEDIR\packs` was never copied in. The staging decision now
   also compares each pack's content digest (`VerifiedPack::sha256`, the raw
   `.ccpack` file's own SHA-256) and replaces the staged pack whenever the
-  incoming one differs, for both required and optional components; a
-  greppable `pack <component>: payload replaced (staged <digest> -> incoming
-  <digest>)` / `payload unchanged (<digest>)` line is now written for every
-  component staging decides on. Gate A's cross-version dirty-lane evidence
-  (`sandbox-lab/scripts/In-Sandbox-Report.ps1`, `scripts/gate_a_verdict.py`'s
-  `check_dirty_survival`) now hashes the installed app-payload pack against
-  the kit's own pack post-upgrade (`POST_UPGRADE_APP_PAYLOAD_DIGEST` /
-  `KIT_APP_PAYLOAD_DIGEST`) and fails the run on any mismatch, so this
-  regression is caught by the gate rather than by a tester again.
+  incoming one differs, for both required and optional components. Every
+  staging decision -- for every component and every outcome, not only a
+  replace/unchanged subset -- now records which outcome fired plus both
+  packs' digests as structured `payload_identity` entries on the
+  `--civiccast-stage-packs` manifest report (`PackPayloadIdentity`), which
+  the NSIS hook already logs to `install-progress.log` in full; there is no
+  new free-text log line (`native_pack_staging.rs` still emits zero
+  `print`/`println`/`eprintln` calls, which `nsis-hooks-bootstrap.nsh`'s
+  capture strategy depends on).
+  Gate A's cross-version upgrade lane (`sandbox-lab/scripts/
+  In-Sandbox-Report.ps1`, `scripts/gate_a_verdict.py`'s
+  `check_dirty_survival`) now additionally hashes the installed app-payload
+  pack against the kit's own pack post-upgrade
+  (`POST_UPGRADE_APP_PAYLOAD_DIGEST` / `KIT_APP_PAYLOAD_DIGEST`) and fails
+  the run on any mismatch -- a real, additional post-upgrade assertion this
+  lane did not make before. **It does not, on its own, cover the specific
+  regression above**: that lane's baseline kit is always a genuinely older
+  `product_version` (currently `1.0.0-beta.4`) than the candidate under
+  test, so the incoming pack is always copied and the two digests always
+  match by construction; the lane would not (yet) fail if the identity
+  check above were removed. Reproducing this exact same-`product_version`,
+  different-content scenario end to end is covered by a new Rust unit/e2e
+  test (`native_pack_staging.rs`'s
+  `install_over_a_different_content_kit_declaring_the_same_version_replaces_the_staged_payload`
+  and its `native-app-payload`/`$INSTDIR\runtime` counterpart), not yet by
+  a Gate A sandbox lane; a same-`product_version` install-over lane is
+  logged as a follow-up.
 - **The live caption tap could starve playout, and did.** MEASURED on tester
   DESKTOP-VBMA6O5 (1.0.0-beta.5 candidate kit `e502074`, three channels
   ON_AIR on the GStreamer engine): the control plane burned ~247% of a core
