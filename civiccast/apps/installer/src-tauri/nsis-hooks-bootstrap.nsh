@@ -793,11 +793,25 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ; already this file's established capture idiom (the uninstall-preflight
   ; calls in NSIS_HOOK_PREUNINSTALL use it the same way, exit code then
   ; output). $1 truncates at ${NSIS_MAX_STRLEN}; on the failure path the
-  ; abort message is one short line well inside it, and on the success path
-  ; $1 is the FULL pretty-printed JSON manifest report (main.rs's
-  ; --civiccast-stage-packs handler: serde_json::to_string_pretty on
-  ; success, a short eprintln! on failure) -- the exit code in $0, never
-  ; $1's shape, is what every branch decision here is made on.
+  ; abort message is one short line well inside it.
+  ;
+  ; On the success path $1 is deliberately NOT the full JSON manifest report
+  ; (2026-09-05 delta-review fix): measured against real Gate A evidence,
+  ; NSIS_MAX_STRLEN is 1024 bytes, and a manifest carrying `payload_identity`
+  ; entries for even a handful of components already exceeds that. Because
+  ; `serde_json::json!`'s `Map` is a `BTreeMap` (this crate never enables the
+  ; `preserve_order` feature), the top-level keys render alphabetically --
+  ; `"optional"` before `"required"` -- so truncating $1 at 1024 bytes would
+  ; silently drop the ENTIRE `required` object, including every required
+  ; component's `payload_identity`, `replaced_from_offline`, and
+  ; `satisfied_online`. main.rs's `--civiccast-stage-packs` handler now
+  ; writes the full pretty JSON manifest WHOLE to its own file under
+  ; $COMMONPROGRAMDATA\CivicCast\ (`install-manifest-report-<pid>-<unix
+  ; time>.json`) and puts into $1 only a short, budget-tested summary line:
+  ; that file's path, plus one `component=outcome staged=<8hex>
+  ; incoming=<8hex>` token per component (both required and optional). The
+  ; exit code in $0, never $1's shape, is what every branch decision here is
+  ; made on.
   ;
   ; F-11 fix (2026-08-01, sandbox walkthrough of dd7f835f): this used to
   ; DetailPrint "$1" UNCONDITIONALLY right after popping it, so a
@@ -828,9 +842,25 @@ Var CIVICCAST_POSTCLEAR_ARMED
     ; setup again. ProgramData remains outside every pack-delivery operation.
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_PACK_DELIVERY} "CivicCast (Native) setup could not obtain a required native component pack.$\r$\n$\r$\nThe component pack file(s) are published alongside this installer -- on the same release page, or on the same distribution medium you got setup from.$\r$\n$\r$\nTo retry:$\r$\n  1. Obtain the required .ccpack file(s) and put them in a 'packs' folder next to the installer (the same folder this setup .exe is in).$\r$\n  2. Run setup again. Setup safely prepares the partial installation before retrying.$\r$\n$\r$\nYour recordings, database, and settings in $COMMONPROGRAMDATA\CivicCast were not deleted.$\r$\n$\r$\nSee the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact missing component(s)."
   ${Else}
-    ; SUCCESS: $1 is the informational JSON manifest report. Log it in full
-    ; (support needs it) but show the operator a short, honest, human line
-    ; in the pane instead -- naming where the rest of the detail lives.
+    ; SUCCESS: $1 is now the COMPACT summary described above (the file path
+    ; of the full manifest, plus a `component=outcome staged=<8hex>
+    ; incoming=<8hex>` token per component) -- log it in full (it already
+    ; fits comfortably inside NSIS_MAX_STRLEN, budget-tested in main.rs) and
+    ; show the operator a short, honest, human line in the pane naming both
+    ; the step log and the full manifest file.
+    ;
+    ; This is how the 2026-09-05 install-over regression (two kits declaring
+    ; the SAME product_version/compatible_core with DIFFERENT pack content)
+    ; is diagnosable from install-progress.log: the summary names, per
+    ; component, whether the staged pack was left unchanged or replaced from
+    ; the incoming offline pack, and an 8-hex-character prefix of both
+    ; packs' content digests -- enough to eyeball a mismatch without opening
+    ; the full manifest file. Never a separate print call in
+    ; native_pack_staging.rs itself, which would break the ZERO-print
+    ; invariant this hook's ExecToStack choice depends on (see the long
+    ; comment above this block) -- the summary is built and printed once by
+    ; main.rs's --civiccast-stage-packs handler, the ONLY thing this child
+    ; ever writes to stdout.
     !insertmacro CIVICCAST_STEP "step stage-packs: manifest report: $1"
     DetailPrint "Required native component packs staged and verified. Full detail: $COMMONPROGRAMDATA\CivicCast\install-progress.log"
   ${EndIf}

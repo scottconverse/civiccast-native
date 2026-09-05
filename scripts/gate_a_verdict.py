@@ -885,6 +885,53 @@ def check_dirty_survival(output_dir: Path) -> CheckResult:
                 f"DIRTY-RESULT.txt POSTINSTALL_OUTCOME={postinstall or '<missing>'} "
                 "(expected SUCCESS)"
             )
+
+        # Post-upgrade app-payload identity, prompted by the 2026-09-05
+        # real-tester install-over regression: exit 0 and a healthy station
+        # proved setup finished, never that the installed APPLICATION
+        # PAYLOAD is the one THIS kit shipped. Fail the run when the staged
+        # pack's digest and the kit's own pack digest diverge.
+        #
+        # HONEST SCOPE NOTE: this lane's baseline (sandbox-lab/
+        # upgrade-baseline.json) is always a genuinely OLDER product_version
+        # than the candidate under test, so the incoming pack is always
+        # copied here and these two digests always match by construction --
+        # this check alone does NOT reproduce or catch the regression's
+        # actual trigger (two kits declaring the SAME product_version with
+        # different content). That exact scenario is covered by
+        # native_pack_staging.rs's own Rust unit/e2e tests
+        # (decide_offline_staging_action_with_identity and the
+        # install_over_a_different_content_kit_* tests), not by this Gate A
+        # lane. What this check DOES buy: a real, independent post-upgrade
+        # assertion that the kit's OWN payload is what ended up installed --
+        # worth keeping regardless -- plus the scaffolding (evidence keys,
+        # verdict wiring) a future same-product_version install-over lane
+        # can reuse.
+        post_upgrade_digest = _dirty_line(text, "POST_UPGRADE_APP_PAYLOAD_DIGEST")
+        kit_digest = _dirty_line(text, "KIT_APP_PAYLOAD_DIGEST")
+        if (
+            not post_upgrade_digest
+            or post_upgrade_digest in ("unavailable", "")
+            or (post_upgrade_digest.startswith("error:"))
+        ):
+            return _fail(
+                "DIRTY-RESULT.txt POST_UPGRADE_APP_PAYLOAD_DIGEST="
+                f"{post_upgrade_digest or '<missing>'} -- could not hash the staged "
+                "native-app-payload.ccpack after install-over"
+            )
+        if not kit_digest or kit_digest in ("unavailable", "") or kit_digest.startswith("error:"):
+            return _fail(
+                f"DIRTY-RESULT.txt KIT_APP_PAYLOAD_DIGEST={kit_digest or '<missing>'} -- could "
+                "not hash this kit's own native-app-payload.ccpack"
+            )
+        if post_upgrade_digest != kit_digest:
+            return _fail(
+                "DIRTY-RESULT.txt POST_UPGRADE_APP_PAYLOAD_DIGEST="
+                f"{post_upgrade_digest} != KIT_APP_PAYLOAD_DIGEST={kit_digest} -- the installed "
+                "application payload is NOT this kit's payload (install-over left a previous "
+                "kit's app payload staged; see native_pack_staging.rs's identity-aware staging "
+                "decision)"
+            )
     pg = _dirty_line(text, "DIRTY_PGDATA_PRESERVED")
     if pg != "1":
         return _fail(f"DIRTY-RESULT.txt DIRTY_PGDATA_PRESERVED={pg or '<missing>'} (expected 1)")

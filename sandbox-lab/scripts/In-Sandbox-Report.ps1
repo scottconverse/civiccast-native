@@ -3026,6 +3026,45 @@ try {
             $psqlProbe = Get-CivicCastDbRevisionViaPsql -InstallDir $installDir -LogFile $dirtyRes
             "POST_UPGRADE_DB_REVISION_PSQL=$($psqlProbe.revision)" | Add-Content -Path $dirtyRes -Encoding UTF8
             "KIT_EXPECTED_HEAD=$(Get-CivicCastKitExpectedHead)" | Add-Content -Path $dirtyRes -Encoding UTF8
+
+            # Post-upgrade app-payload identity, prompted by the 2026-09-05
+            # real-tester install-over regression: D3_ENGINE_EXIT=0 and a
+            # healthy /health body proved setup finished -- they never proved
+            # the installed APPLICATION PAYLOAD is actually the one this kit
+            # shipped. Hash the pack CURRENTLY STAGED on the station against
+            # the pack THIS KIT actually shipped in $PayloadDir\packs, and
+            # record both so gate_a_verdict.py's check_dirty_survival can
+            # fail the run when they diverge.
+            #
+            # HONEST SCOPE NOTE: this lane's baseline is always an OLDER
+            # product_version than the candidate, so these two digests will
+            # always match here by construction -- this does NOT reproduce
+            # the regression's actual trigger (two kits declaring the SAME
+            # product_version with different content). See
+            # gate_a_verdict.py's check_dirty_survival for the full note;
+            # that exact same-version scenario is covered by
+            # native_pack_staging.rs's own Rust tests, not by this lane.
+            $postUpgradeAppPayloadPack = Join-Path $installDir 'packs\native-app-payload.ccpack'
+            $postUpgradeAppPayloadDigest = 'unavailable'
+            if (Test-Path -LiteralPath $postUpgradeAppPayloadPack) {
+                try {
+                    $postUpgradeAppPayloadDigest = (Get-FileHash -LiteralPath $postUpgradeAppPayloadPack -Algorithm SHA256).Hash.ToLower()
+                } catch {
+                    $postUpgradeAppPayloadDigest = "error:$_"
+                }
+            }
+            "POST_UPGRADE_APP_PAYLOAD_DIGEST=$postUpgradeAppPayloadDigest" | Add-Content -Path $dirtyRes -Encoding UTF8
+
+            $kitAppPayloadPack = Join-Path $PayloadDir 'packs\native-app-payload.ccpack'
+            $kitAppPayloadDigest = 'unavailable'
+            if (Test-Path -LiteralPath $kitAppPayloadPack) {
+                try {
+                    $kitAppPayloadDigest = (Get-FileHash -LiteralPath $kitAppPayloadPack -Algorithm SHA256).Hash.ToLower()
+                } catch {
+                    $kitAppPayloadDigest = "error:$_"
+                }
+            }
+            "KIT_APP_PAYLOAD_DIGEST=$kitAppPayloadDigest" | Add-Content -Path $dirtyRes -Encoding UTF8
         }
         $pdRoot = Join-Path $env:ProgramData 'CivicCast'
 

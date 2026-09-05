@@ -4518,21 +4518,102 @@ fn run_native_pack_staging_cli(args: &[String]) -> Option<i32> {
         }
     };
 
-    Some(
-        match serde_json::to_string_pretty(&serde_json::json!({
-            "required": required_report,
-            "optional": optional_report,
-        })) {
-            Ok(rendered) => {
-                println!("{rendered}");
-                0
-            }
-            Err(error) => {
-                eprintln!("Could not render native pack staging report: {error}");
-                65
-            }
-        },
-    )
+    // Delta review fix (2026-09-05): the FULL pretty manifest used to go
+    // straight to stdout, which `nsis-hooks-bootstrap.nsh` pops into $1 via
+    // `nsExec::ExecToStack` -- an NSIS string capped at NSIS_MAX_STRLEN
+    // (1024 bytes; measured against real Gate A evidence, where a D2 report
+    // line is cut at exactly that many bytes). `serde_json::json!`'s `Map`
+    // is a `BTreeMap` (this crate never enables serde_json's
+    // `preserve_order` feature -- confirmed absent from every crate in
+    // Cargo.lock), so keys render ALPHABETICALLY: `"optional"` sorts before
+    // `"required"`. A manifest with `payload_identity` entries for even a
+    // handful of components already exceeds 1024 bytes, and truncation
+    // lands inside/after the `optional` object -- silently dropping the
+    // ENTIRE `required` object (including every required component's
+    // `payload_identity`, `replaced_from_offline`, `satisfied_online`)
+    // rather than trimming the identity data proportionally.
+    //
+    // Fix: write the FULL manifest (both reports, pretty) to a file under
+    // `%ProgramData%\CivicCast\`, and print to stdout only a short, fixed
+    // budget-tested summary (see `pack_staging_stdout_summary_for_five_components_fits_the_nsis_max_strlen_budget`)
+    // naming that file's path plus one compact
+    // `component=outcome staged=<8hex> incoming=<8hex>` token per
+    // component. The NSIS hook logs the file's path (inside the summary
+    // it already captures) so a full identity forensic trail is always
+    // reachable, just not crammed through the same 1024-byte pipe.
+    let manifest_path = acquisition_download_root().join(format!(
+        "install-manifest-report-{}-{}.json",
+        std::process::id(),
+        unix_timestamp()
+    ));
+    let manifest_json = match serde_json::to_string_pretty(&serde_json::json!({
+        "required": required_report,
+        "optional": optional_report,
+    })) {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            eprintln!("Could not render native pack staging report: {error}");
+            return Some(65);
+        }
+    };
+    if let Some(parent) = manifest_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(error) = fs::write(&manifest_path, &manifest_json) {
+        eprintln!(
+            "Could not write the full native pack staging manifest report to {}: {error}",
+            manifest_path.display()
+        );
+        return Some(65);
+    }
+
+    let identities: Vec<&native_pack_staging::PackPayloadIdentity> = required_report
+        .payload_identity
+        .iter()
+        .chain(optional_report.payload_identity.iter())
+        .collect();
+    println!(
+        "{}",
+        render_pack_staging_summary(&manifest_path, &identities)
+    );
+    Some(0)
+}
+
+/// Compact, single-line stdout summary of a pack-staging run -- see
+/// `run_native_pack_staging_cli`'s doc for why this replaces printing the
+/// full pretty manifest JSON directly. Names the file the FULL manifest was
+/// written to, then one `component=outcome staged=<8hex> incoming=<8hex>`
+/// token per component from `identities` (the caller passes both the
+/// required and optional reports' `payload_identity` lists, concatenated).
+fn render_pack_staging_summary(
+    manifest_path: &Path,
+    identities: &[&native_pack_staging::PackPayloadIdentity],
+) -> String {
+    let mut summary = format!("Full manifest report: {}.", manifest_path.display());
+    for identity in identities {
+        let staged = identity
+            .staged_digest
+            .as_deref()
+            .map(digest_prefix8)
+            .unwrap_or_else(|| "none".to_string());
+        let incoming = identity
+            .incoming_digest
+            .as_deref()
+            .map(digest_prefix8)
+            .unwrap_or_else(|| "none".to_string());
+        summary.push_str(&format!(
+            " {}={} staged={staged} incoming={incoming};",
+            identity.component, identity.outcome
+        ));
+    }
+    summary
+}
+
+/// The first 8 hex characters of a pack's content digest -- enough to
+/// eyeball-distinguish two kits in the compact stdout summary without
+/// printing a full 64-character hash. Never used for any trust decision.
+fn digest_prefix8(digest: &str) -> String {
+    digest.get(..8).unwrap_or(digest).to_string()
 }
 
 /// D5 repair CLI (`spec-installer-lifecycle.md` D5: "re-verify current tree
@@ -6407,5 +6488,89 @@ mod acquisition_destination_tests {
         )
         .expect("a write failure is a classified failure");
         assert_eq!(kind, acquisition_state::AcquisitionErrorKind::WriteFailed);
+    }
+
+    // ---- pack-staging stdout summary: NSIS_MAX_STRLEN fail-closed guard ----
+
+    #[test]
+    fn pack_staging_stdout_summary_names_the_manifest_path_and_every_component() {
+        let manifest_path = Path::new(r"C:\ProgramData\CivicCast\install-manifest-report-1234-999.json");
+        let replaced = native_pack_staging::PackPayloadIdentity {
+            component: "native-server-binaries".to_string(),
+            outcome: "ReplaceFromOffline".to_string(),
+            staged_digest: Some("a".repeat(64)),
+            incoming_digest: Some("b".repeat(64)),
+        };
+        let needs_online = native_pack_staging::PackPayloadIdentity {
+            component: "native-app-payload".to_string(),
+            outcome: "NeedsOnlineOrAbort".to_string(),
+            staged_digest: None,
+            incoming_digest: None,
+        };
+        let summary =
+            render_pack_staging_summary(manifest_path, &[&replaced, &needs_online]);
+
+        assert!(summary.contains(r"C:\ProgramData\CivicCast\install-manifest-report-1234-999.json"));
+        assert!(summary.contains("native-server-binaries=ReplaceFromOffline"));
+        assert!(summary.contains("staged=aaaaaaaa"));
+        assert!(summary.contains("incoming=bbbbbbbb"));
+        assert!(summary.contains("native-app-payload=NeedsOnlineOrAbort"));
+        assert!(summary.contains("staged=none"));
+        assert!(summary.contains("incoming=none"));
+        // Never the raw 64-char digest -- only the 8-char eyeball prefix.
+        assert!(!summary.contains(&"a".repeat(64)));
+        assert!(!summary.contains(&"b".repeat(64)));
+    }
+
+    #[test]
+    fn pack_staging_stdout_summary_for_five_components_fits_the_nsis_max_strlen_budget() {
+        // `nsis-hooks-bootstrap.nsh`'s
+        // `!insertmacro CIVICCAST_STEP "step stage-packs: manifest report: $1"`
+        // concatenates this summary onto BOTH `CIVICCAST_STEP`'s own
+        // "[YYYY-MM-DD HH:MM:SS] " timestamp prefix and the literal
+        // "step stage-packs: manifest report: " text, all inside ONE NSIS
+        // string capped at NSIS_MAX_STRLEN (1024 bytes -- measured against
+        // real Gate A evidence, where a D2 report line is cut at exactly
+        // that many bytes). This is the fail-closed guard: prove our own
+        // worst-case summary (5 components -- the current
+        // DEFAULT_REQUIRED_COMPONENTS + DEFAULT_OPTIONAL_COMPONENTS count --
+        // each carrying the LONGEST `StagingAction`/`OptionalStagingAction`
+        // variant name, `ReplaceCorruptFromOffline`, plus full digests)
+        // leaves room for that prefix. If a future change (a longer
+        // component name, another outcome variant) blows this budget, this
+        // test catches it before a real install ever silently drops the
+        // required object out of install-progress.log again.
+        let known_prefix = "[2026-09-05 12:34:56] step stage-packs: manifest report: ";
+        let budget = 1024usize.saturating_sub(known_prefix.len());
+
+        let manifest_path = Path::new(
+            r"C:\ProgramData\CivicCast\install-manifest-report-999999-1234567890123.json",
+        );
+        let identities: Vec<native_pack_staging::PackPayloadIdentity> = [
+            "native-server-binaries",
+            "native-app-payload",
+            "native-ffmpeg-runtime",
+            "native-ollama-runtime",
+            "native-cuda-runtime",
+        ]
+        .iter()
+        .map(|component| native_pack_staging::PackPayloadIdentity {
+            component: component.to_string(),
+            // The longest variant name across both StagingAction and
+            // OptionalStagingAction -- the true worst case for length.
+            outcome: "ReplaceCorruptFromOffline".to_string(),
+            staged_digest: Some("a".repeat(64)),
+            incoming_digest: Some("b".repeat(64)),
+        })
+        .collect();
+        let refs: Vec<&native_pack_staging::PackPayloadIdentity> = identities.iter().collect();
+
+        let summary = render_pack_staging_summary(manifest_path, &refs);
+        assert!(
+            summary.len() < budget,
+            "summary is {} bytes, only {budget} available inside the NSIS_MAX_STRLEN budget \
+             after CIVICCAST_STEP's own prefix -- got: {summary:?}",
+            summary.len()
+        );
     }
 }

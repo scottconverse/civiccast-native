@@ -1017,6 +1017,11 @@ def _write_upgrade_evidence(
     kit_expected_head: str = "0087_head",
     d4_activate_exit: str = "0",
     postinstall_outcome: str = "SUCCESS",
+    # 2026-09-05 install-over regression: same by default (a healthy run
+    # where the staged app-payload pack really is the kit's own pack).
+    # Tests that need to reproduce the regression pass distinct values.
+    post_upgrade_app_payload_digest: str = "e" * 64,
+    kit_app_payload_digest: str = "e" * 64,
 ) -> None:
     prep = [
         "UPGRADE_MODE=1",
@@ -1042,6 +1047,8 @@ def _write_upgrade_evidence(
         f"POST_UPGRADE_DB_REVISION_MATCHES_HEAD={post_upgrade_matches}",
         f"POST_UPGRADE_DB_REVISION_PSQL={post_upgrade_db_revision_psql}",
         f"KIT_EXPECTED_HEAD={kit_expected_head}",
+        f"POST_UPGRADE_APP_PAYLOAD_DIGEST={post_upgrade_app_payload_digest}",
+        f"KIT_APP_PAYLOAD_DIGEST={kit_app_payload_digest}",
         "DIRTY_PGDATA_PRESERVED=1 detail=same cluster",
         "DIRTY_UPLOADS_PRESERVED=1",
         "DIRTY_ORPHAN_SEEDED=0",
@@ -1172,6 +1179,86 @@ def test_cross_version_upgrade_lane_requires_post_upgrade_db_revision_to_match_h
     detail = result["checks"]["dirty_survival"]["detail"]
     assert "0082_old_head" in detail
     assert "0087_new_head" in detail
+    assert result["verdict"] == "FAIL"
+
+
+def test_cross_version_upgrade_lane_passes_when_the_staged_payload_matches_the_kit(
+    tmp_path: Path,
+) -> None:
+    """Baseline for the digest check itself: matching
+    POST_UPGRADE_APP_PAYLOAD_DIGEST/KIT_APP_PAYLOAD_DIGEST must not fail the
+    lane -- distinct from every other cross-version-upgrade test only in
+    using explicit (non-default) matching digest values."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    same_digest = "f" * 64
+    _write_upgrade_evidence(
+        run_dir,
+        post_upgrade_app_payload_digest=same_digest,
+        kit_app_payload_digest=same_digest,
+    )
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+
+    assert result["checks"]["dirty_survival"]["status"] == "PASS"
+    assert result["verdict"] == "PASS"
+
+
+def test_install_over_a_different_content_kit_fails_the_dirty_survival_check(
+    tmp_path: Path,
+) -> None:
+    """Unit-level proof of the judge's mismatch detection: given synthetic
+    DIRTY-RESULT.txt evidence where setup exited 0 and D3/D4/health all
+    reported success (every OTHER upgrade signal healthy) but
+    POST_UPGRADE_APP_PAYLOAD_DIGEST != KIT_APP_PAYLOAD_DIGEST, the judge
+    must fail dirty_survival on the digest mismatch alone.
+
+    NOT a reproduction of the 2026-09-05 real-tester scenario via the real
+    lane: this sandbox lane's baseline kit is always an OLDER
+    product_version than the candidate (sandbox-lab/upgrade-baseline.json),
+    so in a REAL run these two digests always match by construction --
+    see check_dirty_survival's own comment. This test only proves the
+    check's comparison logic is correct when handed a mismatch, which is
+    exactly what the SAME-product_version scenario would need to produce
+    were a same-version install-over lane to exist (tracked as a
+    follow-up); the real end-to-end reproduction of that scenario is
+    native_pack_staging.rs's Rust test suite."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(
+        run_dir,
+        post_upgrade_app_payload_digest="a" * 64,  # kit A's payload, still staged
+        kit_app_payload_digest="b" * 64,  # kit B's payload, never copied in
+    )
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+
+    assert result["checks"]["dirty_survival"]["status"] == "FAIL"
+    detail = result["checks"]["dirty_survival"]["detail"]
+    assert "POST_UPGRADE_APP_PAYLOAD_DIGEST" in detail
+    assert "a" * 64 in detail
+    assert "KIT_APP_PAYLOAD_DIGEST" in detail
+    assert "b" * 64 in detail
+    assert result["verdict"] == "FAIL"
+
+
+def test_missing_app_payload_digest_evidence_fails_closed(tmp_path: Path) -> None:
+    """No deferred verification: an upgrade run that never recorded the
+    digest evidence at all (older harness version, or a capture failure)
+    must fail dirty_survival, never silently pass as if the check had never
+    been added."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    _write_upgrade_evidence(run_dir)
+    result_path = run_dir / "DIRTY-RESULT.txt"
+    text = result_path.read_text(encoding="utf-8")
+    text = "\n".join(
+        line
+        for line in text.splitlines()
+        if not line.startswith("POST_UPGRADE_APP_PAYLOAD_DIGEST=")
+        and not line.startswith("KIT_APP_PAYLOAD_DIGEST=")
+    )
+    result_path.write_text(text + "\n", encoding="utf-8")
+
+    result = gav.judge(run_dir, source_sha=None, run_id=None, lane="dirty")
+
+    assert result["checks"]["dirty_survival"]["status"] == "FAIL"
+    assert "POST_UPGRADE_APP_PAYLOAD_DIGEST" in result["checks"]["dirty_survival"]["detail"]
     assert result["verdict"] == "FAIL"
 
 
