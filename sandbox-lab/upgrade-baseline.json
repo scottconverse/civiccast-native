@@ -5,6 +5,7 @@
   "run_id": 33854799455,
   "gate_a_run_id": 33901203343,
   "installer_sha256": "9fae1211c8cb1f7d51c59d3088e0dd1d311be32493652b61917efebc0274628f",
-  "station_index_sha256": "9257ef4f56507bdf95b5e07c4265111caa688218e48400765d7052424619e86c",
-  "product_version": "1.0.0-beta.4"
+  "station_index_sha256": "96650741b1d0648d41320a9af96c95ba1117d0a9d9ecb5172698121af47c4b30",
+  "product_version": "1.0.0-beta.4",
+  "notes": "2026-09-05: the published beta.4 kit dir was pruned from kit-staging by a build whose baseline pin predated #164; the baseline kit was regenerated from tag v1.0.0-beta.4 (run 33935363054): installer restored byte-identical from the release (sha256 9fae1211...), all five packs byte-identical to the release SHA256SUMS, station-index re-signed with a new created_epoch (pack hashes inside it unchanged), previous station_index_sha256 9257ef4f56507bdf95b5e07c4265111caa688218e48400765d7052424619e86c"
 }
