@@ -219,11 +219,18 @@ new one.
 station completely (including a data wipe) and ran a fresh `/S` install
 of kit `91caebc` from scratch -- this sidesteps known issue 6 entirely,
 since there is no prior install for the version-string comparison to
-match against. First admin was created, and the same four approved LPM
-clips were loaded across three GStreamer channels (`public`, `education`,
-`government`). Soak clock started `<SOAK3_START_UTC>` on tester
-`DESKTOP-VBMA6O5`. **PENDING -- the soak's own verdict is not yet complete
-as of this writing.** Verdict: `<SOAK3_VERDICT>`; relaunches observed:
+match against. The installed `captions/tap_worker.py` hashed to sha256
+`0a9610bb...`, equal to the kit's app-payload pack, and `tap_backoff.py`
+was present. First admin was created, and the same four approved LPM
+clips were uploaded across three GStreamer channels (`public`,
+`education`, `government`); ffprobe is not present on this box, so the
+schedule setup fell back to its 30-second default clip duration (the
+playout engine trims each clip to fit at air), committing 272
+thirty-second schedule items per channel. All three channels were
+ON_AIR with content when the clock started. Soak clock started
+`2026-09-05T20:16:29Z` on tester `DESKTOP-VBMA6O5`. **PENDING -- the
+soak's own verdict is not yet complete as of this writing (expected
+around 22:26Z).** Verdict: `<SOAK3_VERDICT>`; relaunches observed:
 `<SOAK3_RELAUNCHES>`. This section will be updated in place once the soak
 finishes; do not read a pass/fail verdict here until the placeholders
 above are filled with a real result.
