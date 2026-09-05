@@ -25,18 +25,33 @@ House worker shape (same as the finalization/Stage F workers):
 
 Chunk timing derives from the segment index times the configured segment
 length, so cue timestamps line up with broadcast time even after restarts.
+
+CAPTIONS ARE BEST EFFORT; PLAYOUT WINS. Three mechanisms enforce that here,
+because on a real CPU-only station they did not:
+
+- overload backs OFF (:mod:`civiccast.captions.tap_backoff`) -- a channel that
+  cannot keep up is paused for an exponentially growing window instead of
+  retrying, and re-logging, every scan;
+- ASR concurrency is BOUNDED (:func:`default_max_channel_workers`) -- one
+  transcribing channel per 8 CPUs, so three ON_AIR channels on an 8-core box
+  do not each claim the machine;
+- the ASR threads run at ``BELOW_NORMAL`` priority, the mirror of the
+  ``ABOVE_NORMAL`` priority class the GStreamer playout workers are spawned
+  with.
 """
 
 from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import ctypes
 import hashlib
 import logging
 import os
 import re
 import threading
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -52,6 +67,11 @@ from civiccast.captions.retention import CaptionEvidenceRetentionPolicy
 from civiccast.captions.review import CaptionReviewAudioEvidence, CaptionReviewStore
 from civiccast.captions.review_media import write_caption_review_audio_evidence
 from civiccast.captions.runtime import CaptionRuntime
+from civiccast.captions.tap_backoff import (
+    DEFAULT_BASE_BACKOFF_SECONDS,
+    DEFAULT_MAX_BACKOFF_SECONDS,
+    CaptionBackoffPolicy,
+)
 from civiccast.captions.worker import AudioEvidenceFactory, LiveCaptionWorker
 
 if TYPE_CHECKING:
@@ -70,7 +90,64 @@ __all__ = [
     "CaptionTapScanResult",
     "CaptionTapWorker",
     "CaptionTapWorkerSettings",
+    "default_max_channel_workers",
 ]
+
+#: How many CPUs one concurrently-transcribing channel is allowed to assume.
+#: See :func:`default_max_channel_workers`.
+_CPUS_PER_CAPTION_CHANNEL = 8
+
+#: Windows ``THREAD_PRIORITY_BELOW_NORMAL``. Applied to the per-channel ASR
+#: threads so that when the box is saturated the scheduler preempts caption
+#: work in favour of everything else -- most importantly the playout workers,
+#: which :func:`civiccast.egress.gst.strategy._worker_creationflags` raises to
+#: ``ABOVE_NORMAL_PRIORITY_CLASS`` from the other direction.
+_THREAD_PRIORITY_BELOW_NORMAL = -1
+
+
+def default_max_channel_workers() -> int:
+    """How many channels may be transcribed CONCURRENTLY by default.
+
+    MEASURED defect this replaces (tester DESKTOP-VBMA6O5, three channels
+    ON_AIR): the previous flat default of 3 let all three channels run ASR at
+    once, and each faster-whisper model was itself built with
+    ``cpu_threads=0`` -- CTranslate2's "use every core". Three channels times
+    every core is how the control plane came to burn ~247% of a core while the
+    playout workers were starved into their own 10-second stall watchdog.
+
+    One concurrent channel per 8 CPUs, never more than 3. On the 8-core field
+    station that is ONE, and paired with the runtime's new ``cpu_threads``
+    floor of 1 (:class:`civiccast.captions.runtime.FasterWhisperRuntime`) the
+    whole caption feature's steady-state budget is about one core. Channels
+    beyond the bound are not dropped -- they queue on the executor and are
+    transcribed in the same scan, just not simultaneously.
+
+    Overridable end-to-end via ``CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS``.
+    """
+
+    return max(1, min(3, (os.cpu_count() or 1) // _CPUS_PER_CAPTION_CHANNEL))
+
+
+def _lower_current_thread_priority() -> None:
+    """Best-effort ``BELOW_NORMAL`` for the calling ASR thread (Windows).
+
+    A no-op everywhere else and on any failure: the priority hint is a
+    protection for playout, never a precondition for captions. Cheap enough
+    (one syscall) to re-apply per scan, which is required because the caption
+    scan builds a fresh :class:`~concurrent.futures.ThreadPoolExecutor` each
+    time and therefore does not keep its worker threads.
+    """
+
+    if os.name != "nt":
+        return
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:  # pragma: no cover - non-Windows interpreters
+        return
+    try:
+        kernel32 = windll.kernel32
+        kernel32.SetThreadPriority(kernel32.GetCurrentThread(), _THREAD_PRIORITY_BELOW_NORMAL)
+    except Exception:  # pragma: no cover - defensive; never fatal to captions
+        _LOG.debug("Could not lower caption ASR thread priority.", exc_info=True)
 
 
 @dataclass(frozen=True)
@@ -83,8 +160,10 @@ class CaptionTapWorkerSettings:
     atomic_segments: bool = False
     overlap_seconds: float = 4.0
     poll_seconds: float = 2.0
-    max_channel_workers: int = 3
+    max_channel_workers: int = field(default_factory=default_max_channel_workers)
     max_backlog_segments: int = 2
+    overload_backoff_seconds: float = DEFAULT_BASE_BACKOFF_SECONDS
+    max_overload_backoff_seconds: float = DEFAULT_MAX_BACKOFF_SECONDS
 
     @classmethod
     def from_env(cls) -> CaptionTapWorkerSettings:
@@ -118,6 +197,14 @@ class CaptionTapWorkerSettings:
             max_backlog_segments=_env_int(
                 "CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS",
                 defaults.max_backlog_segments,
+            ),
+            overload_backoff_seconds=_env_float(
+                "CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS",
+                defaults.overload_backoff_seconds,
+            ),
+            max_overload_backoff_seconds=_env_float(
+                "CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS",
+                defaults.max_overload_backoff_seconds,
             ),
         )
 
@@ -170,6 +257,11 @@ class CaptionTapScanResult:
     expired_unconfirmed_cues: int = 0
     channels: tuple[str, ...] = field(default_factory=tuple)
     overloaded_channels: tuple[str, ...] = field(default_factory=tuple)
+    # Channels whose ASR is suspended by the overload backoff for this scan --
+    # both the ones that overloaded in THIS scan (they are in
+    # ``overloaded_channels`` too) and the ones still inside an earlier pause
+    # window, whose settled audio is drained without transcription.
+    paused_channels: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -193,11 +285,13 @@ class CaptionTapWorker:
         segment_seconds: float = 5.0,
         atomic_segments: bool = False,
         overlap_seconds: float = 4.0,
-        max_channel_workers: int = 3,
+        max_channel_workers: int | None = None,
         max_backlog_segments: int = 2,
         reviewer_note: str = "Auto-generated from the live broadcast audio tap.",
         translation_provider: TranslationProvider | None = None,
         retention_policy: CaptionEvidenceRetentionPolicy | None = None,
+        backoff_policy: CaptionBackoffPolicy | None = None,
+        is_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._tap_root = tap_root
         self._caption_work_dir = caption_work_dir.expanduser().resolve()
@@ -208,11 +302,22 @@ class CaptionTapWorker:
         if overlap_seconds <= 0:
             raise ValueError("Caption tap overlap_seconds must be greater than zero.")
         self._overlap_seconds = overlap_seconds
+        if max_channel_workers is None:
+            max_channel_workers = default_max_channel_workers()
         if max_channel_workers < 1:
             raise ValueError("Caption tap max_channel_workers must be at least 1.")
         if max_backlog_segments < 1:
             raise ValueError("Caption tap max_backlog_segments must be at least 1.")
         self._max_channel_workers = max_channel_workers
+        self._backoff = backoff_policy or CaptionBackoffPolicy()
+        # Consulted on EVERY scan, not once at construction: the operator's
+        # switch (``StationProfile.live_captions_enabled``) has to take effect
+        # on a station that is on air, and restarting the control plane to
+        # apply it is exactly the kind of interruption this whole change
+        # exists to avoid. Default: always enabled, so an injected worker in a
+        # test or an external-mode process behaves as before.
+        self._is_enabled = is_enabled or (lambda: True)
+        self._disabled_announced = False
         self._max_backlog_segments = max_backlog_segments
         self._reviewer_note = reviewer_note
         # S13 (T3/M4): the operator-selected translation model, injected at the same
@@ -260,6 +365,10 @@ class CaptionTapWorker:
         twice (the second call flushes nothing new).
         """
 
+        # The channel's audio has ended, so its overload history is spent: a
+        # channel that comes back on air starts from the base delay, not from
+        # whatever escalation its previous broadcast left behind.
+        self._backoff.forget(channel_id)
         worker = self._channel_workers.get(channel_id)
         if worker is None:
             return CaptionTapScanResult(channels=(channel_id,))
@@ -281,8 +390,12 @@ class CaptionTapWorker:
         expired = 0
         channels: list[str] = []
         overloaded_channels: list[str] = []
+        paused_channels: list[str] = []
         if not self._tap_root.is_dir():
             return CaptionTapScanResult()
+        if not self._is_enabled():
+            return self._run_disabled()
+        self._disabled_announced = False
         retention = self._retention_policy.enforce_discovered(
             tap_root=self._tap_root,
             review_store=self._review_store,
@@ -307,13 +420,24 @@ class CaptionTapWorker:
             if not segments:
                 continue
             channels.append(channel_id)
+            if self._backoff.is_paused(channel_id):
+                # Inside an earlier pause window: spend NOTHING on ASR, but
+                # still drain the settled audio so a paused channel cannot
+                # grow an unbounded tap directory while it waits.
+                dropped += self._drain_paused_channel(channel_id, channel_dir, segments)
+                paused_channels.append(channel_id)
+                continue
             if len(segments) > self._max_backlog_segments:
                 dropped += self._fail_closed_overload(channel_id, channel_dir, segments)
                 overloaded_channels.append(channel_id)
+                paused_channels.append(channel_id)
                 continue
             pending.append((channel_id, channel_dir, segments))
 
         if pending:
+            # The executor bound is the ASR concurrency bound: channels beyond
+            # it are queued inside this same scan, never transcribed
+            # simultaneously. See ``default_max_channel_workers``.
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(self._max_channel_workers, len(pending)),
                 thread_name_prefix="civiccast-caption-channel",
@@ -331,6 +455,7 @@ class CaptionTapWorker:
             expired_unconfirmed_cues=expired,
             channels=tuple(channels),
             overloaded_channels=tuple(overloaded_channels),
+            paused_channels=tuple(paused_channels),
         )
 
     def _process_channel(
@@ -339,6 +464,9 @@ class CaptionTapWorker:
         channel_dir: Path,
         segments: list[tuple[int, Path]],
     ) -> _ChannelScanResult:
+        # This thread is about to run ASR. Hint the scheduler that it must
+        # yield to the playout workers when the box is saturated.
+        _lower_current_thread_priority()
         consumed = 0
         quarantined = 0
         committed = 0
@@ -373,6 +501,10 @@ class CaptionTapWorker:
             self._move(segment, channel_dir / "processed")
             self._previous_segments[channel_id] = (index, raw_chunk)
             consumed += 1
+        # One healthy scan. The policy forgives the channel's escalation only
+        # after several of these in a row, so a channel that flaps does not
+        # reset itself to the base delay every other scan.
+        self._backoff.record_within_capacity(channel_id)
         publish_caption_runtime_status(
             self._caption_work_dir,
             channel_id,
@@ -393,6 +525,110 @@ class CaptionTapWorker:
         channel_dir: Path,
         segments: list[tuple[int, Path]],
     ) -> int:
+        self._clear_channel_captions(channel_id)
+        state = self._backoff.record_overload(channel_id)
+        publish_caption_runtime_status(
+            self._caption_work_dir,
+            channel_id,
+            state="paused",
+            backlog_segments=len(segments),
+            max_backlog_segments=self._max_backlog_segments,
+            resume_in_seconds=state.pause_seconds,
+            consecutive_overloads=state.consecutive_overloads,
+        )
+        # WARNING, once per pause window -- not CRITICAL every scan. The field
+        # log this replaces carried 663 caption lines, the same CRITICAL
+        # repeating every ~30s for all three channels, while the real casualty
+        # was the playout worker being restarted by its stall watchdog. An
+        # overloaded caption tap is a degraded optional feature, not a station
+        # emergency, and it must not drown the log the operator needs.
+        _LOG.warning(
+            "Caption tap overload for channel %s: %d settled segments exceeds "
+            "the maximum %d. Live captions are PAUSED for %.0fs (overload #%d) so "
+            "playout keeps the CPU; active captions were cleared and stale audio "
+            "was moved to overload evidence.",
+            channel_id,
+            len(segments),
+            self._max_backlog_segments,
+            state.pause_seconds,
+            state.consecutive_overloads,
+        )
+        for _index, segment in segments:
+            self._move(segment, channel_dir / "overload")
+        return len(segments)
+
+    def _run_disabled(self) -> CaptionTapScanResult:
+        """The operator turned live captions OFF: transcribe nothing, keep nothing.
+
+        The egress audio fork is part of the playout graph and keeps writing a
+        segment every few seconds regardless of this switch, so "off" cannot
+        just mean "stop reading". Each scan blanks every channel's live VTT,
+        reports ``disabled``, and DELETES the settled audio rather than filing
+        it as evidence -- a station that switched live captioning off has not
+        asked CivicCast to keep a rolling recording of its broadcast audio.
+        """
+
+        channels: list[str] = []
+        discarded = 0
+        for channel_dir in sorted(p for p in self._tap_root.iterdir() if p.is_dir()):
+            channel_id = channel_dir.name
+            channels.append(channel_id)
+            if not self._disabled_announced:
+                self._clear_channel_captions(channel_id)
+                self._backoff.forget(channel_id)
+            publish_caption_runtime_status(
+                self._caption_work_dir,
+                channel_id,
+                state="disabled",
+                backlog_segments=0,
+                max_backlog_segments=self._max_backlog_segments,
+            )
+            for _index, segment in self._settled_segments(channel_dir):
+                segment.unlink(missing_ok=True)
+                discarded += 1
+        if not self._disabled_announced:
+            _LOG.info(
+                "Live captions are switched off for this station "
+                "(StationProfile.live_captions_enabled); the caption tap is "
+                "discarding forked audio without transcribing it."
+            )
+            self._disabled_announced = True
+        return CaptionTapScanResult(
+            dropped_overload_segments=discarded,
+            channels=tuple(channels),
+        )
+
+    def _drain_paused_channel(
+        self,
+        channel_id: str,
+        channel_dir: Path,
+        segments: list[tuple[int, Path]],
+    ) -> int:
+        """Discard settled audio for a paused channel without transcribing it.
+
+        The pause is the whole point: not one sample is handed to the ASR
+        runtime while it holds. Draining is still required -- the egress audio
+        tap keeps publishing a segment every few seconds whether anyone reads
+        them or not, so a paused channel that kept its segments would fill the
+        station's disk instead of its CPU.
+        """
+
+        publish_caption_runtime_status(
+            self._caption_work_dir,
+            channel_id,
+            state="paused",
+            backlog_segments=len(segments),
+            max_backlog_segments=self._max_backlog_segments,
+            resume_in_seconds=self._backoff.remaining_seconds(channel_id),
+            consecutive_overloads=self._backoff.state(channel_id).consecutive_overloads,
+        )
+        for _index, segment in segments:
+            self._move(segment, channel_dir / "overload")
+        return len(segments)
+
+    def _clear_channel_captions(self, channel_id: str) -> None:
+        """Fail closed: drop the channel's ASR state and blank its live VTT."""
+
         self._channel_workers.pop(channel_id, None)
         publisher = self._channel_publishers.pop(channel_id, None)
         if publisher is None:
@@ -401,24 +637,6 @@ class CaptionTapWorker:
             )
         publisher.reset()
         self._previous_segments.pop(channel_id, None)
-        publish_caption_runtime_status(
-            self._caption_work_dir,
-            channel_id,
-            state="overloaded",
-            backlog_segments=len(segments),
-            max_backlog_segments=self._max_backlog_segments,
-        )
-        _LOG.critical(
-            "Caption tap overload for channel %s: %d settled segments exceeds "
-            "the maximum %d; active captions were cleared and stale audio was "
-            "moved to overload evidence.",
-            channel_id,
-            len(segments),
-            self._max_backlog_segments,
-        )
-        for _index, segment in segments:
-            self._move(segment, channel_dir / "overload")
-        return len(segments)
 
     def _settled_segments(self, channel_dir: Path) -> list[tuple[int, Path]]:
         """Numbered segments with a newer sibling (ffmpeg moved past them)."""
@@ -565,6 +783,7 @@ def build_tap_worker(
     runtime: CaptionRuntime | None = None,
     translation_provider: TranslationProvider | None = None,
     caption_work_dir: Path | None = None,
+    is_enabled: Callable[[], bool] | None = None,
 ) -> CaptionTapWorker:
     """Construct a tap worker from deployment settings.
 
@@ -596,8 +815,6 @@ def build_tap_worker(
                 "large-v3 caption runtime."
             )
         if backend == "faster-whisper":
-            from civiccast.captions.runtime import FasterWhisperRuntime
-
             # NOT num_workers=max_channel_workers. Those are unrelated
             # quantities: max_channel_workers is how many CHANNELS this worker
             # may caption at once and is already spent on the
@@ -625,7 +842,25 @@ def build_tap_worker(
             # arenas, not the worker count.
             #
             # Deliberately overridable: CIVICCAST_WHISPER_NUM_WORKERS.
-            runtime = FasterWhisperRuntime()
+            #
+            # cpu_threads/beam_size ARE passed, and are the live-tap values
+            # rather than the batch defaults: this constructor call is the
+            # live captioner, sharing a box with playout. See
+            # civiccast.captions.runtime.LIVE_TAP_CPU_THREADS for the measured
+            # field failure the batch defaults produced here. On a station
+            # whose device resolves to CUDA the compute is not contended with
+            # playout the same way, so the batch beam width is kept.
+            from civiccast.captions.runtime import (
+                LIVE_TAP_CPU_BEAM_SIZE,
+                LIVE_TAP_CPU_THREADS,
+                FasterWhisperRuntime,
+            )
+
+            on_cuda = os.environ.get("CIVICCAST_WHISPER_DEVICE", "").strip().startswith("cuda")
+            runtime = FasterWhisperRuntime(
+                cpu_threads=LIVE_TAP_CPU_THREADS,
+                beam_size=5 if on_cuda else LIVE_TAP_CPU_BEAM_SIZE,
+            )
         elif backend == "whispercpp-vulkan":
             from civiccast.captions.runtime import WhisperCppRuntime
 
@@ -661,6 +896,11 @@ def build_tap_worker(
         max_channel_workers=settings.max_channel_workers,
         max_backlog_segments=settings.max_backlog_segments,
         translation_provider=translation_provider,
+        backoff_policy=CaptionBackoffPolicy(
+            base_seconds=settings.overload_backoff_seconds,
+            max_seconds=settings.max_overload_backoff_seconds,
+        ),
+        is_enabled=is_enabled,
     )
 
 

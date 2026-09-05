@@ -1354,11 +1354,20 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # adapter) — T3/M4: translation is now wired, not just captions/summary.
         ai_model_service = _build_ai_model_service(session_factory)
         caption_runtime = build_caption_runtime(ai_model_service)
+        from civiccast.installer.station_state import resolve_live_captions_enabled
+
         tap_worker = build_tap_worker(
             tap_settings,
             PostgresCaptionReviewStore(session_factory),
             runtime=caption_runtime,
             translation_provider=build_translator(ai_model_service),
+            # The operator's station-level switch
+            # (``StationProfile.live_captions_enabled``, default on), read on
+            # EVERY scan rather than once here: an activated native station
+            # forces ``CIVICCAST_CAPTION_TAP=inline`` into its environment, so
+            # this is the only way an operator can stop live captioning -- and
+            # it has to work without restarting a control plane that is on air.
+            is_enabled=resolve_live_captions_enabled,
         )
         # Exposed so app-factory wiring tests can assert the operator-selected
         # translation/caption models reached the running worker (T3/T4).

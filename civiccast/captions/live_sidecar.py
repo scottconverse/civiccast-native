@@ -49,17 +49,28 @@ def publish_caption_runtime_status(
     work_dir: Path,
     channel_id: str,
     *,
-    state: Literal["within-capacity", "overloaded", "storage-refused"],
+    state: Literal["within-capacity", "overloaded", "storage-refused", "paused", "disabled"],
     backlog_segments: int,
     max_backlog_segments: int,
     refusal_reason: str | None = None,
+    resume_in_seconds: float | None = None,
+    consecutive_overloads: int | None = None,
 ) -> Path:
-    """Atomically publish capacity state without implying decode-back readiness."""
+    """Atomically publish capacity state without implying decode-back readiness.
+
+    ``paused`` is the caption tap's backoff state
+    (:mod:`civiccast.captions.tap_backoff`): this channel overloaded, its ASR
+    is suspended for ``resume_in_seconds``, and live captions are off for that
+    window so playout keeps the CPU. It carries ``resume_in_seconds`` and
+    ``consecutive_overloads`` so the operator sees BOTH that captions stopped
+    and when they will be attempted again -- an ``overloaded`` snapshot alone
+    never said whether anything would happen next.
+    """
 
     path = caption_runtime_status_path(work_dir, channel_id)
-    if state == "storage-refused":
+    if state in {"storage-refused", "disabled"}:
         LiveWebVttPublisher(active_caption_sidecar(work_dir, channel_id)).reset()
-    payload = {
+    payload: dict[str, object] = {
         "backlog_segments": backlog_segments,
         "channel_id": channel_id,
         "max_backlog_segments": max_backlog_segments,
@@ -68,6 +79,10 @@ def publish_caption_runtime_status(
     }
     if refusal_reason is not None:
         payload["refusal_reason"] = refusal_reason
+    if resume_in_seconds is not None:
+        payload["resume_in_seconds"] = round(float(resume_in_seconds), 1)
+    if consecutive_overloads is not None:
+        payload["consecutive_overloads"] = int(consecutive_overloads)
     _atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return path
 

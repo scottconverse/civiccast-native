@@ -535,6 +535,34 @@ def _write_graph_file(path: Path, text: str) -> None:
         path.chmod(0o600)
 
 
+def _worker_creationflags() -> int:
+    """Windows process-creation flags for a GStreamer playout worker.
+
+    ``CREATE_NO_WINDOW`` is a real requirement on native Windows, not a
+    hypothetical: the supervisor spawns this worker as a LocalSystem child
+    with no console, and without this flag a stray console window can appear
+    (ENG-006).
+
+    ``ABOVE_NORMAL_PRIORITY_CLASS`` is the air-protection half. MEASURED on
+    tester DESKTOP-VBMA6O5 (1.0.0-beta.5 candidate kit, three channels
+    ON_AIR): the control-plane python -- same NORMAL priority class as these
+    workers -- was consuming ~247% of a core running live-caption ASR while
+    the playout workers sat at 26-64% each and repeatedly tripped their own
+    ``CTRL stall: no output for 10s`` watchdog into a daemon restart. Playout
+    is the product and captions are best effort, so the scheduler is told
+    which is which: the workers go up one class here, and the caption ASR
+    threads go down one inside the control plane
+    (``civiccast.captions.tap_worker._lower_current_thread_priority``).
+
+    ``getattr`` keeps both a no-op (0) on the Linux/WSL line, where neither
+    attribute exists.
+    """
+
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+        subprocess, "ABOVE_NORMAL_PRIORITY_CLASS", 0
+    )
+
+
 def _default_worker_launcher(
     argv: list[str], stdout_path: Path, stderr_path: Path
 ) -> FfmpegProcessHandle:
@@ -550,12 +578,9 @@ def _default_worker_launcher(
     # against a system GStreamer install, and the native Windows line against
     # the installed closure (`civiccast.native.gstreamer_runtime`
     # bootstraps `dependencies/gstreamer` onto PATH/GI_TYPELIB_PATH before
-    # this worker imports `gi`). CREATE_NO_WINDOW is a real requirement on
-    # native Windows, not a hypothetical: the supervisor spawns this worker
-    # as a LocalSystem child with no console, and without this flag a stray
-    # console window can appear (ENG-006). `getattr` keeps this a no-op
-    # (default 0) on the Linux/WSL line, where the attribute does not exist.
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # this worker imports `gi`). See `_worker_creationflags` for what the
+    # flags are and why playout is raised above the control plane.
+    creationflags = _worker_creationflags()
     try:
         process = subprocess.Popen(  # noqa: S603
             argv,

@@ -100,6 +100,29 @@ def _ensure_cuda_dll_directory() -> None:
 #: explicit, logged, provable").
 CAPTION_TIER_ENV_VAR = "CIVICCAST_CAPTION_TIER"
 
+#: CTranslate2 ``intra_threads`` for the LIVE caption tap on CPU.
+#:
+#: The live tap shares its box with playout, and playout is the product. The
+#: batch/VOD default of ``0`` ("every core") produced the measured field
+#: failure this constant exists to prevent: on tester DESKTOP-VBMA6O5 with
+#: three channels ON_AIR and no CUDA, the control plane burned ~247% of a core
+#: transcribing audio the tap's own overload handling then discarded, while
+#: the three GStreamer playout workers were repeatedly killed by their
+#: 10-second no-output stall watchdog.
+#:
+#: One thread, times the tap's own bound of one concurrently-transcribing
+#: channel per 8 CPUs
+#: (:func:`civiccast.captions.tap_worker.default_max_channel_workers`), is a
+#: whole-feature steady-state budget of about one core on the 8-core field
+#: station. ``CIVICCAST_WHISPER_CPU_THREADS`` raises it on a station with
+#: headroom (``0`` restores "every core").
+LIVE_TAP_CPU_THREADS = 1
+
+#: Greedy decoding for the live tap on CPU: beam search costs roughly its
+#: width in decoder passes, and the live tap has a hard real-time budget that
+#: a VOD pass does not. Overridable with ``CIVICCAST_WHISPER_BEAM_SIZE``.
+LIVE_TAP_CPU_BEAM_SIZE = 1
+
 #: Files a tier's pinned inventory carries for PROVENANCE rather than for
 #: inference: CTranslate2/faster-whisper never opens them, and an upstream
 #: snapshot may legitimately omit them (the pinned ``medium`` snapshot does).
@@ -424,6 +447,15 @@ class FasterWhisperRuntime:
         self.compute_type = (
             os.environ.get("CIVICCAST_WHISPER_COMPUTE_TYPE", "").strip() or compute_type
         )
+        # cpu_threads is CTranslate2's intra_threads and 0 means "every core".
+        # That stays the batch/VOD default -- a finalization pass is allowed to
+        # use the machine, and the native capacity proof
+        # (``scripts/prove_native_caption_capacity.py``) is pinned to it.
+        #
+        # It is NOT the right default for the LIVE tap, which shares the box
+        # with playout: `civiccast.captions.tap_worker.build_tap_worker` builds
+        # its runtime with the explicit conservative live values instead. See
+        # ``LIVE_TAP_CPU_THREADS``/``LIVE_TAP_CPU_BEAM_SIZE`` below.
         self.cpu_threads = _env_int(
             "CIVICCAST_WHISPER_CPU_THREADS",
             cpu_threads,
@@ -434,7 +466,14 @@ class FasterWhisperRuntime:
             num_workers,
             minimum=1,
         )
-        self.beam_size = beam_size
+        # Beam search costs roughly its beam width in decoder passes. Beam 5
+        # stays the batch default; the live tap passes beam 1 (greedy) on CPU.
+        # ``CIVICCAST_WHISPER_BEAM_SIZE`` overrides whichever caller applies.
+        self.beam_size = _env_int(
+            "CIVICCAST_WHISPER_BEAM_SIZE",
+            beam_size,
+            minimum=1,
+        )
         self.language = language
         self.task = task
         self.vad_filter = vad_filter

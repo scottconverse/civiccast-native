@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ import pytest
 
 from civiccast.egress.encoder_strategy import EncoderStartRequest
 from civiccast.egress.errors import EncoderUnavailableError
+from civiccast.egress.gst import strategy as strategy_module
 from civiccast.egress.gst.control import (
     align_live_caption_pts_ms,
     caption_gap_window_ms,
@@ -909,3 +911,32 @@ def test_preflight_reload_content_preserves_software_fallback(tmp_path) -> None:
     text = reload_graph.read_text(encoding="utf-8")
     assert "openh264enc" in text
     assert "mfh264enc" not in text
+
+
+def test_playout_worker_is_spawned_above_the_control_planes_priority() -> None:
+    """Playout outranks the control plane on Windows.
+
+    MEASURED field failure (tester DESKTOP-VBMA6O5, 1.0.0-beta.5 candidate
+    kit, three channels ON_AIR): the control-plane python ran live-caption ASR
+    at ~247% of a core at the SAME priority class as the playout workers,
+    which sat at 26-64% each and repeatedly tripped their own
+    ``CTRL stall: no output for 10s`` watchdog into a daemon restart. Captions
+    are best effort; the air signal is not. Raising the worker one class is
+    the cheap half of enforcing that (the caption ASR threads are lowered from
+    the other side, in ``civiccast.captions.tap_worker``).
+
+    The console-suppression flag (ENG-006) must survive the addition.
+    """
+
+    flags = strategy_module._worker_creationflags()
+
+    no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    above_normal = getattr(subprocess, "ABOVE_NORMAL_PRIORITY_CLASS", 0)
+    assert flags == no_window | above_normal
+    if os.name == "nt":  # both constants only exist on Windows
+        assert no_window and above_normal
+        assert flags & no_window
+        assert flags & above_normal
+    else:
+        # A no-op on the WSL/Linux line, where neither constant exists.
+        assert flags == 0

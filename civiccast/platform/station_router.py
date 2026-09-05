@@ -39,6 +39,7 @@ from civiccast.installer.service import build_backup_status
 from civiccast.installer.station_state import (
     StationProfileUpdateRequest,
     StationSetupNotCompleteError,
+    resolve_live_captions_enabled,
     resolve_station_display_name,
     resolve_station_storage_locations,
     resolve_station_timezone,
@@ -110,6 +111,11 @@ def get_station_profile() -> StationProfile:
             "station_name": resolve_station_display_name(),
             "station_timezone": resolve_station_timezone(),
             "storage_locations": resolve_station_storage_locations(),
+            # Same rule: report what is IN EFFECT. `CIVICCAST_CAPTION_TAP=off`
+            # in the environment forces live captioning off regardless of what
+            # is persisted, and the console must not show "on" while the tap
+            # is not running.
+            "live_captions_enabled": resolve_live_captions_enabled(),
         }
     )
 
@@ -117,7 +123,9 @@ def get_station_profile() -> StationProfile:
 @staff_router.put(
     "/profile",
     response_model=StationProfile,
-    summary="Edit the mutable station identity profile fields",
+    summary=(
+        "Edit the mutable station identity profile fields (including the live-caption switch)"
+    ),
     dependencies=[Depends(require_any_role("setup_admin"))],
 )
 def put_station_profile(payload: StationProfileUpdateRequest) -> StationProfile:
