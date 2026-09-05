@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, NamedTuple, Protocol, cast
 
 from civiccast.captions.tap import build_audio_tap_plan
+from civiccast.egress._text import db_safe_text, db_safe_text_or_none
 from civiccast.egress.asrun import (
     AsRunCaptureSchemaError,
     AsRunRecorder,
@@ -171,7 +172,8 @@ _STDERR_TAIL_MAX_CHARS = 600
 
 
 def _ascii_safe(text: str) -> str:
-    """Fold arbitrary child output down to ASCII before it can reach the database.
+    """Fold arbitrary child output so it can reach the database, whatever its
+    server encoding.
 
     T6 soak evidence (Desktop/CIVICCAST-EVIDENCE/soak-120-e502074-20260905, kit
     e502074): the GStreamer worker's stall message contained one non-ASCII
@@ -190,10 +192,14 @@ def _ascii_safe(text: str) -> str:
 
     Child stderr is untrusted, arbitrarily encoded text; nothing about an
     operator-facing error string needs to carry it verbatim. Fold it here, at the
-    single boundary where child bytes become a persisted value.
+    single boundary where child bytes become a persisted value -- delegates to
+    :func:`civiccast.egress._text.db_safe_text`, the same helper every OTHER
+    persisted free-text path in this module now goes through (current_source_label,
+    proof-event label/machine_summary, last_error), so every one of those paths
+    degrades identically instead of each choosing its own fold.
     """
 
-    return text.encode("ascii", "replace").decode("ascii")
+    return db_safe_text(text)
 
 
 # RAT-004: poll cadence for stop_all_channels' observed-exit wait loop.
@@ -374,14 +380,40 @@ class EgressDaemon:
         batch down with it; the crashed command itself is still consumed
         (at-most-once delivery is unchanged — reissue it), but everything
         queued alongside or after it still runs.
+
+        Encoding-defect follow-up (reviewer finding on the state-write-encoding
+        branch): ``_poll_process``/``_service_backoff_relaunch`` write
+        persisted state on a crash-relaunch (``_write_state``,
+        ``append_proof_event``), and ``_poll_hls_relay`` can too. Before this
+        fix, an exception escaping ANY of the three (e.g. the exact
+        ``UnicodeEncodeError`` the encoding fix closes, or any other write
+        failure) propagated out of ``process_once`` and aborted the WHOLE
+        pass for that channel — including ``pop_pending_commands`` below,
+        so every queued command (takeover, stop, ...) sat unprocessed too,
+        not just the poll that failed. Guarding each call the same way the
+        command loop below already guards each command means one poll's
+        write failure can never again take the rest of the pass down with
+        it — the failing poll is simply retried next tick (each is
+        idempotent against durable state), exactly like a failed command is
+        simply reissued.
         """
 
         # Poll the HLS relay child BEFORE the main worker so a relay death is
         # already reflected in _hls_relay_dead by the time _poll_process's own
         # health append (below) calls _sink_connected this same tick (MAJOR M1).
-        self._poll_hls_relay(channel_id)
-        self._poll_process(channel_id)
-        self._service_backoff_relaunch(channel_id)
+        # Order is preserved across the guard: each call still runs only after
+        # the previous one completed (successfully or not), never in parallel.
+        for poll in (self._poll_hls_relay, self._poll_process, self._service_backoff_relaunch):
+            try:
+                poll(channel_id)
+            except Exception:
+                _LOG.exception(
+                    "channel %s: %s failed this process_once tick; the pass continues "
+                    "(command draining below still runs, and every other poll for this "
+                    "channel still runs). Will be retried next tick.",
+                    channel_id,
+                    poll.__name__,
+                )
         commands = self._store.pop_pending_commands(channel_id)
         for command in commands:
             try:
@@ -853,6 +885,19 @@ class EgressDaemon:
         # ``redact_source_uri`` before it ever reaches proof-event storage
         # (see ``_build_proof_event`` below) and is never passed to this
         # method at all.
+        #
+        # Both fields below are free text this daemon does not control the
+        # content of: ``current_source_label`` traces back to an
+        # operator-entered asset title (source_plan.py's ``label = asset.title
+        # or item.asset_title or item.asset_id``), and ``last_error`` often
+        # carries a raw ``str(exc)`` or a folded child-stderr tail. This is the
+        # ONE choke point every state transition passes through (see the
+        # comment above), so it is the one place to fold BOTH before they
+        # reach ``EgressStore.write_state`` -- see
+        # ``civiccast/egress/_text.py`` for why a non-UTF8 character here
+        # aborts the whole automation pass if left unfolded.
+        current_source_label = db_safe_text_or_none(current_source_label)
+        last_error = db_safe_text_or_none(last_error)
         _LOG.info(
             "channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s)",
             channel_id,
@@ -989,25 +1034,33 @@ class EgressDaemon:
         previous_source_label: str | None = None,
     ) -> EgressProofEvent:
         segment = source_plan.segments[0]
+        # ``segment.label`` is operator-entered free text (source_plan.py:
+        # ``label = asset.title or item.asset_title or item.asset_id``), and
+        # ``_proof_event_summary`` interpolates it (and the PREVIOUS label) into
+        # ``machine_summary`` -- both are persisted via
+        # ``EgressStore.append_proof_event``, a separate write path from
+        # ``_write_state``, so it needs its own fold at this, its own choke
+        # point. See ``civiccast/egress/_text.py``.
+        source_label = db_safe_text(segment.label)
         return EgressProofEvent(
             event_id=f"egress-proof-{uuid.uuid4()}",
             observed_at=datetime.now(UTC),
             channel_id=channel_id,
             state=state,  # type: ignore[arg-type]
-            source_label=segment.label,
+            source_label=source_label,
             # ENG-003: a live segment's path is an ingest URI that can carry an SRT
             # passphrase / RTMP key / RTSP credentials — redact before it lands in the
             # durable, operator-readable proof chain.
             source_path=redact_source_uri(segment.path),
             source_ref=segment.source_ref,
             proof_boundary="civiccast-egress-handoff-boundary",
-            machine_summary=(
+            machine_summary=db_safe_text(
                 _proof_event_summary(
                     state=state,
                     previous_state=previous_state,
-                    previous_source_label=previous_source_label,
+                    previous_source_label=db_safe_text_or_none(previous_source_label),
                     source_kind=segment.kind,
-                    source_label=segment.label,
+                    source_label=source_label,
                     channel_id=channel_id,
                 )
             ),

@@ -2933,3 +2933,173 @@ def test_child_stderr_tail_is_ascii_folded_before_it_reaches_last_error(tmp_path
     assert "�" not in message
     message.encode("cp1252")
     assert "CTRL stall: no output for 10s" in message
+
+
+def test_current_source_label_with_an_accented_title_survives_a_cp1252_write(
+    tmp_path: Path,
+) -> None:
+    """Persistence-boundary regression: an operator-entered title with an
+    accent (the common case db_safe_text is meant to PRESERVE, not just avoid
+    crashing on) must round-trip through a store that encodes to cp1252 on
+    write -- exactly what a WIN1252-encoded Postgres cluster does."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    def _cp1252_write_state(row: EgressStateRow) -> None:
+        # Simulate the persistence boundary a real WIN1252 psycopg connection
+        # enforces: anything not cp1252-encodable raises, exactly like the
+        # T6 soak's UnicodeEncodeError.
+        if row.current_source_label is not None:
+            row.current_source_label.encode("cp1252")
+        if row.last_error is not None:
+            row.last_error.encode("cp1252")
+        InMemoryEgressStore.write_state(store, row)
+
+    store.write_state = _cp1252_write_state  # type: ignore[method-assign]
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan_with_label(
+            tmp_path, "Réunion du conseil municipal"
+        ),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+
+    daemon.process_once("gov")  # must not raise
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.current_source_label is not None
+    # cp1252 CAN represent e-acute -- db_safe_text must not degrade it.
+    assert "Réunion" in state.current_source_label
+
+
+def test_last_error_with_the_unicode_replacement_character_survives_a_cp1252_write(
+    tmp_path: Path,
+) -> None:
+    """last_error=str(exc) (daemon.py's zero-ffmpeg-floor ERROR handler) must
+    also survive a WIN1252 write -- U+FFFD is the exact character the T6 soak
+    hit, and cp1252 genuinely cannot represent it (unlike an accent), so this
+    proves the degrade-not-crash half of db_safe_text's contract."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    def _cp1252_write_state(row: EgressStateRow) -> None:
+        if row.last_error is not None:
+            row.last_error.encode("cp1252")
+        InMemoryEgressStore.write_state(store, row)
+
+    store.write_state = _cp1252_write_state  # type: ignore[method-assign]
+
+    class _AlwaysUnavailableWithReplacementChar:
+        name = "always-unavailable"
+        supports_live_swap = False
+        supports_content_reload = False
+
+        def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+            from civiccast.egress.errors import EncoderUnavailableError
+
+            # The exact character shape the T6 soak hit: a stray U+FFFD from
+            # a child log read with errors="replace".
+            raise EncoderUnavailableError("worker stall: no output for 10s � quitting")
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        encoder_strategy=_AlwaysUnavailableWithReplacementChar(),  # type: ignore[arg-type]
+    )
+
+    daemon.process_once("gov")  # must not raise
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ERROR"
+    assert state.last_error is not None
+    assert "�" not in state.last_error
+    state.last_error.encode("cp1252")
+
+
+def test_proof_event_label_and_summary_survive_a_cp1252_write(tmp_path: Path) -> None:
+    """_build_proof_event's source_label/machine_summary go through
+    EgressStore.append_proof_event, a SEPARATE write path from
+    EgressStore.write_state -- its own persistence-boundary regression."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    def _cp1252_append_proof_event(event: Any) -> None:
+        event.source_label.encode("cp1252")
+        event.machine_summary.encode("cp1252")
+        InMemoryEgressStore.append_proof_event(store, event)
+
+    store.append_proof_event = _cp1252_append_proof_event  # type: ignore[method-assign]
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan_with_label(
+            tmp_path, "Réunion du conseil municipal"
+        ),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+
+    daemon.process_once("gov")  # must not raise
+
+    proof_events = store.recent_proof_events("gov", 1)
+    assert proof_events[0].source_label is not None
+    assert "Réunion" in proof_events[0].source_label
+
+
+def test_process_once_isolates_a_poll_failure_from_the_rest_of_the_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The three per-tick polls (_poll_hls_relay, _poll_process,
+    _service_backoff_relaunch) must be isolated from each other AND from
+    command draining, mirroring the per-command guard immediately below them
+    in process_once. Before this fix, one poll raising (e.g. the exact
+    UnicodeEncodeError the encoding fix closes, or any other write failure)
+    escaped process_once and aborted the WHOLE pass -- pop_pending_commands
+    never even ran, so a queued takeover/stop sat unprocessed too."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+
+    calls: list[str] = []
+    real_poll_process = daemon._poll_process
+    real_backoff = daemon._service_backoff_relaunch
+
+    def _boom(_channel_id: str) -> None:
+        calls.append("hls_relay")
+        raise RuntimeError("simulated write failure")
+
+    def _tracked_poll_process(channel_id: str) -> None:
+        calls.append("poll_process")
+        real_poll_process(channel_id)
+
+    def _tracked_backoff(channel_id: str) -> None:
+        calls.append("backoff")
+        real_backoff(channel_id)
+
+    monkeypatch.setattr(daemon, "_poll_hls_relay", _boom)
+    monkeypatch.setattr(daemon, "_poll_process", _tracked_poll_process)
+    monkeypatch.setattr(daemon, "_service_backoff_relaunch", _tracked_backoff)
+
+    # Must not raise, and the queued start command must still be processed.
+    processed = daemon.process_once("gov")
+
+    assert calls == ["hls_relay", "poll_process", "backoff"]
+    assert processed == 1
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
