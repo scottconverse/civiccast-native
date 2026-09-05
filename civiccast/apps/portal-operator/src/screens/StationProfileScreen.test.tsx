@@ -297,6 +297,75 @@ describe('StationProfileScreen', () => {
     expect(await findByLabelText('Station name')).toBeTruthy()
   })
 
+  describe('Live captions switch', () => {
+    it('is on by default and saves an operator turning it off', async () => {
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+      vi.mocked(updateStationProfile).mockResolvedValue(
+        profile({ live_captions_enabled: false }),
+      )
+      const { findByLabelText } = renderScreen()
+
+      const toggle = (await findByLabelText(/show live captions on air/i)) as HTMLInputElement
+      expect(toggle.checked).toBe(true)
+      expect(toggle.disabled).toBe(false)
+
+      fireEvent.click(toggle)
+      fireEvent.click(await findByLabelText(/save station profile/i))
+
+      await waitFor(() =>
+        expect(vi.mocked(updateStationProfile)).toHaveBeenCalledWith(
+          expect.objectContaining({ live_captions_enabled: false }),
+        ),
+      )
+    })
+
+    it('reads a profile saved before the setting existed as ON, never as off', async () => {
+      // An absent key must not read as "the operator turned captions off":
+      // live captions are an accessibility feature, so the safe default is on.
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+      const before = profile()
+      delete (before as unknown as Record<string, unknown>).live_captions_enabled
+      vi.mocked(getStationProfile).mockResolvedValue(before)
+      const { findByLabelText } = renderScreen()
+
+      expect(((await findByLabelText(/show live captions on air/i)) as HTMLInputElement).checked).toBe(
+        true,
+      )
+    })
+
+    it('explains the consequence of turning it off, and links the help to the control', async () => {
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+      const { findByLabelText, getAllByRole, getByText } = renderScreen()
+
+      const toggle = await findByLabelText(/show live captions on air/i)
+      const helpId = toggle.getAttribute('aria-describedby')
+      expect(helpId).toBe('live-captions-help')
+
+      const help = getByText(/if playout is stuttering or channels are restarting, turn it off/i)
+      expect(help.id).toBe(helpId)
+      // The operator must be told what is NOT affected, or "off" reads as
+      // "this station stops captioning anything at all".
+      expect(help.textContent).toMatch(/captions on recordings you publish/i)
+      // Its own manual link, with text distinct from the storage-roots one:
+      // two links reading "Read more in the manual" on one screen are
+      // ambiguous to anyone navigating by link list.
+      const manualLinks = getAllByRole('link', { name: /manual/i }).map((a) =>
+        a.getAttribute('href'),
+      )
+      expect(manualLinks).toContain('/help#live-captions-switch')
+      expect(new Set(manualLinks).size).toBe(manualLinks.length)
+    })
+
+    it('is not editable by a read-only role', async () => {
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+      const { findByLabelText } = renderScreen()
+
+      expect(((await findByLabelText(/show live captions on air/i)) as HTMLInputElement).disabled).toBe(
+        true,
+      )
+    })
+  })
+
   describe('Security panel', () => {
     it('hides the session and recovery-kit actions for a read-only role', async () => {
       vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))

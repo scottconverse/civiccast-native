@@ -21,16 +21,26 @@ consecutive scans, so a channel that flaps between "just barely coping" and
 "overloaded" keeps escalating rather than resetting to the base delay every
 other scan.
 
-This module is deliberately pure: no filesystem, no logging, an injectable
-clock. The state machine is the part that has to be right, so it is the part
-that is unit-testable on its own.
+This module has no filesystem access, no logging, and an injectable clock --
+the state machine is the part that has to be right, so it is the part that is
+unit-testable on its own.
+
+It is NOT pure, and calling it that would be a lie with a race behind it:
+:class:`CaptionBackoffPolicy` owns mutable per-channel state that is touched
+from two different threads. ``record_within_capacity`` is called from inside
+:class:`~concurrent.futures.ThreadPoolExecutor` workers (one per channel being
+transcribed), while ``record_overload``/``is_paused``/``forget`` are called
+from the scan thread. Every public method therefore takes ``self._lock``; the
+methods are short and never call back into the worker, so the lock is
+uncontended in practice and cannot deadlock.
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 __all__ = [
     "DEFAULT_BASE_BACKOFF_SECONDS",
@@ -99,6 +109,9 @@ class CaptionBackoffPolicy:
         self._recovery_scans = int(recovery_scans)
         self._monotonic = monotonic
         self._states: dict[str, ChannelBackoffState] = {}
+        # Guards ``_states``. See the module docstring: the scan thread and the
+        # per-channel ASR pool threads both reach this object.
+        self._lock = threading.Lock()
 
     @property
     def base_seconds(self) -> float:
@@ -109,23 +122,32 @@ class CaptionBackoffPolicy:
         return self._max_seconds
 
     def state(self, channel_id: str) -> ChannelBackoffState:
-        """This channel's state (a fresh, zeroed state when never seen)."""
+        """A SNAPSHOT of this channel's state (zeroed when never seen).
 
-        return self._states.get(channel_id, ChannelBackoffState())
+        A copy, not the live object: the caller reads it outside the lock, and
+        handing out the mutable instance would let a reader observe a half-
+        applied escalation from another thread.
+        """
+
+        with self._lock:
+            state = self._states.get(channel_id)
+            return ChannelBackoffState() if state is None else replace(state)
 
     def is_paused(self, channel_id: str) -> bool:
         """Whether ASR for ``channel_id`` is currently suspended."""
 
-        state = self._states.get(channel_id)
-        return state is not None and self._monotonic() < state.paused_until
+        with self._lock:
+            state = self._states.get(channel_id)
+            return state is not None and self._monotonic() < state.paused_until
 
     def remaining_seconds(self, channel_id: str) -> float:
         """Seconds until ``channel_id`` may transcribe again (0.0 when free)."""
 
-        state = self._states.get(channel_id)
-        if state is None:
-            return 0.0
-        return max(0.0, state.paused_until - self._monotonic())
+        with self._lock:
+            state = self._states.get(channel_id)
+            if state is None:
+                return 0.0
+            return max(0.0, state.paused_until - self._monotonic())
 
     def record_overload(self, channel_id: str) -> ChannelBackoffState:
         """Escalate ``channel_id`` and open a new pause window.
@@ -134,16 +156,17 @@ class CaptionBackoffPolicy:
         at the moment the pause opens, instead of re-logging every scan.
         """
 
-        state = self._states.setdefault(channel_id, ChannelBackoffState())
-        state.consecutive_overloads += 1
-        state.healthy_scans = 0
-        delay = min(
-            self._base_seconds * (2 ** (state.consecutive_overloads - 1)),
-            self._max_seconds,
-        )
-        state.pause_seconds = delay
-        state.paused_until = self._monotonic() + delay
-        return state
+        with self._lock:
+            state = self._states.setdefault(channel_id, ChannelBackoffState())
+            state.consecutive_overloads += 1
+            state.healthy_scans = 0
+            delay = min(
+                self._base_seconds * (2 ** (state.consecutive_overloads - 1)),
+                self._max_seconds,
+            )
+            state.pause_seconds = delay
+            state.paused_until = self._monotonic() + delay
+            return replace(state)
 
     def record_within_capacity(self, channel_id: str) -> None:
         """Count one healthy scan; forgive the channel once it has enough.
@@ -155,18 +178,20 @@ class CaptionBackoffPolicy:
         policy exists to stop.
         """
 
-        state = self._states.get(channel_id)
-        if state is None:
-            return
-        if self._monotonic() < state.paused_until:
-            # Still inside a pause window; a caller draining the backlog does
-            # not count as the channel having recovered.
-            return
-        state.healthy_scans += 1
-        if state.healthy_scans >= self._recovery_scans:
-            del self._states[channel_id]
+        with self._lock:
+            state = self._states.get(channel_id)
+            if state is None:
+                return
+            if self._monotonic() < state.paused_until:
+                # Still inside a pause window; a caller draining the backlog
+                # does not count as the channel having recovered.
+                return
+            state.healthy_scans += 1
+            if state.healthy_scans >= self._recovery_scans:
+                del self._states[channel_id]
 
     def forget(self, channel_id: str) -> None:
         """Drop all state for a channel (it went off air / was removed)."""
 
-        self._states.pop(channel_id, None)
+        with self._lock:
+            self._states.pop(channel_id, None)

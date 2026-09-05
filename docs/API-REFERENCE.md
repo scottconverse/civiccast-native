@@ -4178,7 +4178,7 @@ Read the station identity profile (name, timezone, storage roots, channel).
 
 ### `PUT /api/staff/station/profile`
 
-Edit the mutable station identity profile fields.
+Edit the mutable station identity profile fields (including the live-caption switch).
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: none
@@ -8835,6 +8835,7 @@ rule (S13 §5.1).
 - `default_channel_id` (optional): `string`
 - `default_roles` (optional): `Array<string>`
 - `initial_schedule_enabled` (optional): `boolean`
+- `live_captions_enabled` (optional): `boolean` -- Operator switch for the LIVE caption tap (real-time ASR on the broadcast audio of every ON_AIR channel). On by default -- live captions are an accessibility feature and a station that can run them should. Turn it OFF on a station whose caption tap cannot keep up: an activated native station enables the tap unconditionally in its environment, so before this switch existed there was no way for an operator to stop it. Turning it off does NOT affect captions on published recordings (the offline caption job), which is the legal requirement; this is the live one.
 - `operation_mode` (optional): `'test' | 'on_air'`
 - `public_base_url` (optional): `string | null`
 - `recovery_kit_generated_at` (required): `string`
@@ -8847,6 +8848,7 @@ rule (S13 §5.1).
 ### `StationProfileUpdateRequest`
 
 - `default_channel_id` (optional): `string | null`
+- `live_captions_enabled` (optional): `boolean | null`
 - `public_base_url` (optional): `string | null`
 - `station_name` (optional): `string | null`
 - `station_timezone` (optional): `string | null`

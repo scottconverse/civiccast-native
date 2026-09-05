@@ -35,9 +35,10 @@ because on a real CPU-only station they did not:
 - ASR concurrency is BOUNDED (:func:`default_max_channel_workers`) -- one
   transcribing channel per 8 CPUs, so three ON_AIR channels on an 8-core box
   do not each claim the machine;
-- the ASR threads run at ``BELOW_NORMAL`` priority, the mirror of the
-  ``ABOVE_NORMAL`` priority class the GStreamer playout workers are spawned
-  with.
+- the playout workers are spawned at ``ABOVE_NORMAL`` priority class, and the
+  Python ASR threads here drop to ``BELOW_NORMAL``. The first of those is the
+  load-bearing one; see :func:`_lower_current_thread_priority` for what the
+  second does and does NOT cover.
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ import logging
 import os
 import re
 import threading
+import time
 import wave
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -97,12 +99,17 @@ __all__ = [
 #: See :func:`default_max_channel_workers`.
 _CPUS_PER_CAPTION_CHANNEL = 8
 
-#: Windows ``THREAD_PRIORITY_BELOW_NORMAL``. Applied to the per-channel ASR
-#: threads so that when the box is saturated the scheduler preempts caption
-#: work in favour of everything else -- most importantly the playout workers,
-#: which :func:`civiccast.egress.gst.strategy._worker_creationflags` raises to
-#: ``ABOVE_NORMAL_PRIORITY_CLASS`` from the other direction.
+#: Windows ``THREAD_PRIORITY_BELOW_NORMAL``, applied to the per-channel ASR
+#: threads. PARTIAL COVERAGE BY CONSTRUCTION -- read
+#: :func:`_lower_current_thread_priority` before relying on it.
 _THREAD_PRIORITY_BELOW_NORMAL = -1
+
+#: How long a channel's runtime-status file may go unrewritten while its state
+#: is unchanged. A heartbeat, not a poll interval: it keeps ``updated_at`` and
+#: a paused channel's ``resume_in_seconds`` countdown moving for an operator
+#: who is watching, without paying a durable write every ~2-second scan for a
+#: state that has not changed. See ``CaptionTapWorker._publish_status``.
+_STATUS_REFRESH_SECONDS = 30.0
 
 
 def default_max_channel_workers() -> int:
@@ -131,7 +138,25 @@ def default_max_channel_workers() -> int:
 def _lower_current_thread_priority() -> None:
     """Best-effort ``BELOW_NORMAL`` for the calling ASR thread (Windows).
 
-    A no-op everywhere else and on any failure: the priority hint is a
+    WHAT THIS DOES NOT DO, stated plainly because an earlier version of this
+    comment claimed a symmetry it does not have: it lowers the PYTHON thread
+    that calls ``transcribe`` and nothing else. CTranslate2 runs the actual
+    inference on its own intra-op thread pool, created inside the native
+    library at whatever priority the process had when the model was
+    constructed -- i.e. ``NORMAL``. Those threads are where the CPU is
+    genuinely spent, and this call does not reach them. On a saturated box the
+    Python thread yields; the CT2 pool does not.
+
+    The real, load-bearing protections for playout are the two that do not
+    depend on thread priorities at all: the ASR concurrency bound plus
+    ``cpu_threads=1`` (which limits how many CT2 threads exist in the first
+    place), and the overload backoff (which stops the work entirely). This
+    call is a cheap extra nudge on top of those, not a mechanism to rely on.
+    Lowering the CT2 pool itself would mean running the live ASR in its own
+    process at ``BELOW_NORMAL_PRIORITY_CLASS``; that is a larger change than
+    this fix and is not attempted here.
+
+    A no-op everywhere but Windows and on any failure: the hint is a
     protection for playout, never a precondition for captions. Cheap enough
     (one syscall) to re-apply per scan, which is required because the caption
     scan builds a fresh :class:`~concurrent.futures.ThreadPoolExecutor` each
@@ -198,15 +223,78 @@ class CaptionTapWorkerSettings:
                 "CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS",
                 defaults.max_backlog_segments,
             ),
-            overload_backoff_seconds=_env_float(
-                "CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS",
-                defaults.overload_backoff_seconds,
-            ),
-            max_overload_backoff_seconds=_env_float(
-                "CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS",
-                defaults.max_overload_backoff_seconds,
+            **_backoff_settings_from_env(
+                base_default=defaults.overload_backoff_seconds,
+                max_default=defaults.max_overload_backoff_seconds,
             ),
         )
+
+
+def _backoff_settings_from_env(*, base_default: float, max_default: float) -> dict[str, float]:
+    """Backoff windows from the environment, CLAMPED rather than fatal.
+
+    Every other setting on this class fails fast, and should: a bad tap
+    directory or an unparseable mode means the operator asked for something
+    CivicCast cannot do, and starting anyway would silently caption nothing.
+
+    These two are different in kind. They tune how long an already-degraded
+    OPTIONAL feature waits before retrying. ``from_env`` runs inside the app
+    lifespan, so raising here does not degrade captions -- it aborts control-
+    plane startup and takes the station OFF AIR over a mistyped duration for a
+    feature that is explicitly best effort. Refusing to broadcast because
+    someone wrote ``60s`` instead of ``60`` is a worse failure than any
+    misconfiguration it could be protecting against.
+
+    So: unparseable or non-positive values fall back to the shipped default,
+    and a maximum below the base is raised to the base. Each correction is
+    logged at WARNING naming the variable, the rejected value and what is
+    being used instead, so it is visible rather than silent.
+    """
+
+    base = _clamped_env_seconds(
+        "CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS", base_default, minimum=1.0
+    )
+    ceiling = _clamped_env_seconds(
+        "CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS", max_default, minimum=1.0
+    )
+    if ceiling < base:
+        _LOG.warning(
+            "CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS (%s) is below the base "
+            "backoff (%s); using the base as the ceiling so the caption tap still "
+            "backs off instead of refusing to start.",
+            ceiling,
+            base,
+        )
+        ceiling = base
+    return {"overload_backoff_seconds": base, "max_overload_backoff_seconds": ceiling}
+
+
+def _clamped_env_seconds(name: str, default: float, *, minimum: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        _LOG.warning(
+            "%s must be a number; got %r. Using the default of %ss so the station "
+            "still starts -- live captions are best effort and must never hold the "
+            "control plane down.",
+            name,
+            raw,
+            default,
+        )
+        return default
+    if value < minimum:
+        _LOG.warning(
+            "%s must be at least %ss; got %s. Using the default of %ss.",
+            name,
+            minimum,
+            value,
+            default,
+        )
+        return default
+    return value
 
 
 def _env_float(name: str, default: float) -> float:
@@ -292,6 +380,7 @@ class CaptionTapWorker:
         retention_policy: CaptionEvidenceRetentionPolicy | None = None,
         backoff_policy: CaptionBackoffPolicy | None = None,
         is_enabled: Callable[[], bool] | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._tap_root = tap_root
         self._caption_work_dir = caption_work_dir.expanduser().resolve()
@@ -310,6 +399,13 @@ class CaptionTapWorker:
             raise ValueError("Caption tap max_backlog_segments must be at least 1.")
         self._max_channel_workers = max_channel_workers
         self._backoff = backoff_policy or CaptionBackoffPolicy()
+        # One clock for the whole worker, and the SAME clock the backoff policy
+        # runs on, so a test that drives the backoff forward also drives the
+        # status heartbeat forward. Monotonic, never wall-clock: a station
+        # clock step must not un-pause a channel or fake a heartbeat.
+        self._monotonic = monotonic or time.monotonic
+        #: channel -> (semantic status key, monotonic time it was published)
+        self._published_status: dict[str, tuple[tuple[object, ...], float]] = {}
         # Consulted on EVERY scan, not once at construction: the operator's
         # switch (``StationProfile.live_captions_enabled``) has to take effect
         # on a station that is on air, and restarting the control plane to
@@ -393,23 +489,30 @@ class CaptionTapWorker:
         paused_channels: list[str] = []
         if not self._tap_root.is_dir():
             return CaptionTapScanResult()
-        if not self._is_enabled():
-            return self._run_disabled()
-        self._disabled_announced = False
+        # Retention runs BEFORE the enabled check, deliberately and in this
+        # order. It prunes audio this station has ALREADY recorded --
+        # `<channel>/processed/` and the review evidence -- under the station's
+        # retention schedule (spec 4.3). Switching live captions off is a
+        # decision about future transcription, never a licence to stop
+        # deleting what is already on disk: gating pruning behind the switch
+        # would freeze every retention clock for as long as the switch is off,
+        # which is the exact opposite of what an operator turning captions off
+        # is asking for.
         retention = self._retention_policy.enforce_discovered(
             tap_root=self._tap_root,
             review_store=self._review_store,
             segment_seconds=self._segment_seconds,
         )
+        if not self._is_enabled():
+            return self._run_disabled()
+        self._disabled_announced = False
         if not retention.ready:
             channels = sorted(path.name for path in self._tap_root.iterdir() if path.is_dir())
             for channel_id in channels:
-                publish_caption_runtime_status(
-                    self._caption_work_dir,
+                self._publish_status(
                     channel_id,
                     state="storage-refused",
                     backlog_segments=0,
-                    max_backlog_segments=self._max_backlog_segments,
                     refusal_reason=retention.refusal_reason,
                 )
             return CaptionTapScanResult(channels=tuple(channels))
@@ -505,12 +608,10 @@ class CaptionTapWorker:
         # after several of these in a row, so a channel that flaps does not
         # reset itself to the base delay every other scan.
         self._backoff.record_within_capacity(channel_id)
-        publish_caption_runtime_status(
-            self._caption_work_dir,
+        self._publish_status(
             channel_id,
             state="within-capacity",
             backlog_segments=len(segments),
-            max_backlog_segments=self._max_backlog_segments,
         )
         return _ChannelScanResult(
             consumed_segments=consumed,
@@ -527,12 +628,10 @@ class CaptionTapWorker:
     ) -> int:
         self._clear_channel_captions(channel_id)
         state = self._backoff.record_overload(channel_id)
-        publish_caption_runtime_status(
-            self._caption_work_dir,
+        self._publish_status(
             channel_id,
             state="paused",
             backlog_segments=len(segments),
-            max_backlog_segments=self._max_backlog_segments,
             resume_in_seconds=state.pause_seconds,
             consecutive_overloads=state.consecutive_overloads,
         )
@@ -562,11 +661,27 @@ class CaptionTapWorker:
 
         The egress audio fork is part of the playout graph and keeps writing a
         segment every few seconds regardless of this switch, so "off" cannot
-        just mean "stop reading". Each scan blanks every channel's live VTT,
-        reports ``disabled``, and DELETES the settled audio rather than filing
-        it as evidence -- a station that switched live captioning off has not
-        asked CivicCast to keep a rolling recording of its broadcast audio.
+        just mean "stop reading". Every channel's live VTT is blanked, the
+        status reads ``disabled``, and settled audio is DELETED rather than
+        filed as evidence -- a station that switched live captioning off has
+        not asked CivicCast to keep a rolling recording of its broadcast audio.
         """
+
+        if not self._disabled_announced:
+            # Clear by the CHANNEL SET, not by tap-directory presence. A
+            # channel whose tap directory was never created (or was already
+            # swept) has no directory to iterate, yet it can still be serving a
+            # stale ``active.vtt`` from before the switch was thrown -- captions
+            # on air that nothing is producing any more. ``reset_existing_live_
+            # sidecars`` blanks every channel that HAS a live sidecar, which is
+            # exactly that set; the loop below then handles the per-channel ASR
+            # state for the channels this worker knows about.
+            reset_existing_live_sidecars(self._caption_work_dir)
+            for channel_id in sorted(
+                {*self._channel_workers, *self._channel_publishers, *self._previous_segments}
+            ):
+                self._clear_channel_captions(channel_id)
+                self._backoff.forget(channel_id)
 
         channels: list[str] = []
         discarded = 0
@@ -576,13 +691,10 @@ class CaptionTapWorker:
             if not self._disabled_announced:
                 self._clear_channel_captions(channel_id)
                 self._backoff.forget(channel_id)
-            publish_caption_runtime_status(
-                self._caption_work_dir,
-                channel_id,
-                state="disabled",
-                backlog_segments=0,
-                max_backlog_segments=self._max_backlog_segments,
-            )
+            # Throttled: "disabled" is a steady state that can hold for weeks.
+            # Rewriting it every 2 seconds is a durable write per channel per
+            # scan carrying no new information.
+            self._publish_status(channel_id, state="disabled", backlog_segments=0)
             for _index, segment in self._settled_segments(channel_dir):
                 segment.unlink(missing_ok=True)
                 discarded += 1
@@ -613,18 +725,72 @@ class CaptionTapWorker:
         station's disk instead of its CPU.
         """
 
-        publish_caption_runtime_status(
-            self._caption_work_dir,
+        self._publish_status(
             channel_id,
             state="paused",
             backlog_segments=len(segments),
-            max_backlog_segments=self._max_backlog_segments,
             resume_in_seconds=self._backoff.remaining_seconds(channel_id),
             consecutive_overloads=self._backoff.state(channel_id).consecutive_overloads,
         )
+        # DELETED, not filed as evidence. `<channel>/overload/` is swept by
+        # nothing -- the retention policy's tap sweep reads `processed/` only
+        # -- so a station stuck in a long backoff would accumulate its own
+        # broadcast audio there forever, unpruned and unreferenced by any
+        # review row. The one-off `_fail_closed_overload` move that opens a
+        # pause still files its segments as overload evidence, which is what
+        # the capacity proof's negative control inspects; the unbounded
+        # per-scan drain that follows it must not.
         for _index, segment in segments:
-            self._move(segment, channel_dir / "overload")
+            segment.unlink(missing_ok=True)
         return len(segments)
+
+    def _publish_status(
+        self,
+        channel_id: str,
+        *,
+        state: str,
+        backlog_segments: int,
+        refusal_reason: str | None = None,
+        resume_in_seconds: float | None = None,
+        consecutive_overloads: int | None = None,
+    ) -> bool:
+        """Publish channel status only when it CHANGED, or when it went stale.
+
+        The scan loop runs every ~2 seconds per channel forever. Rewriting an
+        unchanged status file on every one of those scans is a durable write
+        (the publisher fsyncs and renames) for no new information: a
+        three-channel station idles at ~90 pointless fsync+rename pairs a
+        minute, against the same disk the recordings are written to.
+
+        Two things are excluded from the comparison on purpose. ``updated_at``
+        always differs, so comparing whole payloads would never suppress
+        anything. ``resume_in_seconds`` ticks down continuously while a channel
+        is paused, so it would do the same -- it is therefore not part of the
+        change key, and freshness is preserved instead by the
+        :data:`_STATUS_REFRESH_SECONDS` heartbeat below, which still republishes
+        a steady state periodically so an operator's countdown advances and
+        ``updated_at`` never looks abandoned.
+        """
+
+        key = (state, backlog_segments, consecutive_overloads, refusal_reason)
+        now = self._monotonic()
+        previous = self._published_status.get(channel_id)
+        if previous is not None:
+            previous_key, published_at = previous
+            if previous_key == key and now - published_at < _STATUS_REFRESH_SECONDS:
+                return False
+        publish_caption_runtime_status(
+            self._caption_work_dir,
+            channel_id,
+            state=state,  # type: ignore[arg-type]
+            backlog_segments=backlog_segments,
+            max_backlog_segments=self._max_backlog_segments,
+            refusal_reason=refusal_reason,
+            resume_in_seconds=resume_in_seconds,
+            consecutive_overloads=consecutive_overloads,
+        )
+        self._published_status[channel_id] = (key, now)
+        return True
 
     def _clear_channel_captions(self, channel_id: str) -> None:
         """Fail closed: drop the channel's ASR state and blank its live VTT."""
@@ -843,24 +1009,22 @@ def build_tap_worker(
             #
             # Deliberately overridable: CIVICCAST_WHISPER_NUM_WORKERS.
             #
-            # cpu_threads/beam_size ARE passed, and are the live-tap values
-            # rather than the batch defaults: this constructor call is the
-            # live captioner, sharing a box with playout. See
-            # civiccast.captions.runtime.LIVE_TAP_CPU_THREADS for the measured
-            # field failure the batch defaults produced here. On a station
-            # whose device resolves to CUDA the compute is not contended with
-            # playout the same way, so the batch beam width is kept.
-            from civiccast.captions.runtime import (
-                LIVE_TAP_CPU_BEAM_SIZE,
-                LIVE_TAP_CPU_THREADS,
-                FasterWhisperRuntime,
-            )
+            # ``live=True``: this is the live captioner, sharing a box with
+            # playout, so the runtime sizes ITSELF conservatively -- one
+            # CTranslate2 intra-thread and greedy decoding once it resolves to
+            # CPU (civiccast.captions.runtime.LIVE_TAP_CPU_THREADS records the
+            # measured field failure the batch sizing produced here).
+            #
+            # NOTE this branch runs only for the EXTERNAL entrypoint and for
+            # callers that inject no runtime. The native service pre-builds the
+            # runtime through civiccast.ai_models.runtime.build_caption_runtime
+            # and injects it, which is exactly why ``live`` is a property of
+            # the RUNTIME and not a bundle of kwargs applied here: kwargs here
+            # were dead code in the product, and the live tap went on using
+            # every core at beam 5.
+            from civiccast.captions.runtime import FasterWhisperRuntime
 
-            on_cuda = os.environ.get("CIVICCAST_WHISPER_DEVICE", "").strip().startswith("cuda")
-            runtime = FasterWhisperRuntime(
-                cpu_threads=LIVE_TAP_CPU_THREADS,
-                beam_size=5 if on_cuda else LIVE_TAP_CPU_BEAM_SIZE,
-            )
+            runtime = FasterWhisperRuntime(live=True)
         elif backend == "whispercpp-vulkan":
             from civiccast.captions.runtime import WhisperCppRuntime
 

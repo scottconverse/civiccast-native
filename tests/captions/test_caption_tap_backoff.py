@@ -160,3 +160,84 @@ class TestCaptionBackoffPolicy:
 
         assert policy.base_seconds == DEFAULT_BASE_BACKOFF_SECONDS == 60.0
         assert policy.max_seconds == DEFAULT_MAX_BACKOFF_SECONDS == 900.0
+
+
+class TestBackoffSettingsFromEnv:
+    """A mistyped duration must never take the station off air.
+
+    Every other caption-tap setting fails fast, and should. These two do not,
+    because ``from_env`` runs inside the app lifespan: raising there does not
+    degrade captions, it aborts control-plane startup. Refusing to broadcast
+    over a typo in a tuning knob for an explicitly best-effort feature is a
+    worse failure than any misconfiguration it could be protecting against.
+    """
+
+    def _settings(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> object:  # type: ignore[no-untyped-def]
+        from civiccast.captions.tap_worker import CaptionTapWorkerSettings
+
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "inline")
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tmp_path))
+        return CaptionTapWorkerSettings.from_env()
+
+    def test_an_unparseable_duration_falls_back_and_warns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,  # type: ignore[no-untyped-def]
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS", "60s")
+
+        with caplog.at_level("WARNING", logger="civiccast.captions.tap_worker"):
+            settings = self._settings(monkeypatch, tmp_path)
+
+        assert settings.overload_backoff_seconds == DEFAULT_BASE_BACKOFF_SECONDS  # type: ignore[attr-defined]
+        assert "CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS" in caplog.text
+        assert "60s" in caplog.text
+
+    def test_a_nonpositive_duration_falls_back_and_warns(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,  # type: ignore[no-untyped-def]
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS", "0")
+
+        with caplog.at_level("WARNING", logger="civiccast.captions.tap_worker"):
+            settings = self._settings(monkeypatch, tmp_path)
+
+        assert settings.overload_backoff_seconds == DEFAULT_BASE_BACKOFF_SECONDS  # type: ignore[attr-defined]
+        assert "must be at least" in caplog.text
+
+    def test_a_ceiling_below_the_base_is_raised_to_the_base(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,  # type: ignore[no-untyped-def]
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS", "120")
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS", "30")
+
+        with caplog.at_level("WARNING", logger="civiccast.captions.tap_worker"):
+            settings = self._settings(monkeypatch, tmp_path)
+
+        assert settings.overload_backoff_seconds == 120.0  # type: ignore[attr-defined]
+        assert settings.max_overload_backoff_seconds == 120.0  # type: ignore[attr-defined]
+        # And the clamped pair must still build a usable policy rather than
+        # raising out of `build_tap_worker`.
+        CaptionBackoffPolicy(
+            base_seconds=settings.overload_backoff_seconds,  # type: ignore[attr-defined]
+            max_seconds=settings.max_overload_backoff_seconds,  # type: ignore[attr-defined]
+        )
+
+    def test_valid_values_are_still_honoured(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,  # type: ignore[no-untyped-def]
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS", "15")
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS", "45")
+
+        settings = self._settings(monkeypatch, tmp_path)
+
+        assert settings.overload_backoff_seconds == 15.0  # type: ignore[attr-defined]
+        assert settings.max_overload_backoff_seconds == 45.0  # type: ignore[attr-defined]

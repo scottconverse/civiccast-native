@@ -218,3 +218,69 @@ class TestStationIdentityProfileApi:
         monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "inline")
         client.put("/api/staff/station/profile", json={"live_captions_enabled": False})
         assert resolve_live_captions_enabled() is False
+
+
+class TestLiveCaptionSwitchRehydration:
+    """An upgrade from a station commissioned before this switch existed.
+
+    A beta.4 station-state file has no ``live_captions_enabled`` key at all.
+    Live captions are an accessibility feature, so an absent key MUST read as
+    on -- reading it as off would silently stop captioning on every upgraded
+    station and no operator would have asked for that.
+    """
+
+    def _beta4_shape_state(self) -> None:
+        from civiccast.installer.station_state import _save_raw_state
+
+        _save_raw_state(
+            {
+                "setup_complete": True,
+                "station": {
+                    "station_name": "Pinegrove School Board",
+                    "admin_display_name": "Avery Admin",
+                    "admin_username": "avery",
+                    "default_channel_id": "government",
+                    "public_base_url": None,
+                    "station_timezone": "America/Denver",
+                    "storage_locations": {
+                        "media_library": "C:/CivicCast/media",
+                        "recordings": "C:/CivicCast/recordings",
+                        "backups": "C:/CivicCast/backups",
+                    },
+                    "channel_count": 3,
+                    "recovery_kit_id": "rk_beta4",
+                    "recovery_kit_generated_at": "2026-06-01T00:00:00Z",
+                },
+            }
+        )
+
+    def test_an_absent_key_rehydrates_as_on(self) -> None:
+        from civiccast.installer.station_state import (
+            read_live_captions_enabled,
+            read_station_setup_state,
+        )
+
+        self._beta4_shape_state()
+
+        # The raw reader reports "never set", which is NOT the same as False...
+        assert read_live_captions_enabled() is None
+        # ...the resolver and the rehydrated profile both say ON.
+        assert resolve_live_captions_enabled() is True
+        state = read_station_setup_state(operator_console_url="http://localhost:8080")
+        assert state.profile is not None
+        assert state.profile.live_captions_enabled is True
+
+    def test_the_switch_survives_being_set_on_an_upgraded_state_file(self) -> None:
+        from civiccast.installer.station_state import (
+            StationProfileUpdateRequest,
+            update_station_profile_fields,
+        )
+
+        self._beta4_shape_state()
+
+        profile = update_station_profile_fields(
+            StationProfileUpdateRequest(live_captions_enabled=False)
+        )
+
+        assert profile.live_captions_enabled is False
+        assert resolve_live_captions_enabled() is False

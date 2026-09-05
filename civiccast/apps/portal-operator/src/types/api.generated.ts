@@ -4366,6 +4366,7 @@ export interface StationProfile {
   channel_profiles?: Array<StationChannelProfile>
   sample_content_enabled?: boolean
   initial_schedule_enabled?: boolean
+  live_captions_enabled?: boolean
   default_roles?: Array<string>
   operation_mode?: 'test' | 'on_air'
   dashboard_ready_state?: 'ready' | 'not_ready'
@@ -4379,6 +4380,7 @@ export interface StationProfileUpdateRequest {
   public_base_url?: string | null
   default_channel_id?: string | null
   storage_locations?: StationStorageLocations | null
+  live_captions_enabled?: boolean | null
 }
 
 export interface StationRecoveryRequest {

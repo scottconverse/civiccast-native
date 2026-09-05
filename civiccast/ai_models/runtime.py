@@ -97,11 +97,28 @@ def build_translator(
     return dispatch.build_translator(service, base_url=base_url)
 
 
-def build_caption_runtime(service: AiModelService) -> CaptionRuntime:
-    """Construct the faster-whisper runtime bound to the operator's effective model id."""
+def build_caption_runtime(service: AiModelService, *, live: bool = False) -> CaptionRuntime:
+    """Construct the faster-whisper runtime bound to the operator's effective model id.
+
+    ``live=True`` builds the runtime for the LIVE caption tap, which shares the
+    box with playout and is therefore sized conservatively (one CTranslate2
+    intra-thread, greedy decoding on CPU -- see
+    :data:`civiccast.captions.runtime.LIVE_TAP_CPU_THREADS`). The default,
+    ``live=False``, is the batch/VOD sizing: a finalization pass is allowed to
+    use the machine.
+
+    This flag exists here, at the seam the running service actually calls,
+    because the app pre-builds the caption runtime and INJECTS it into
+    ``build_tap_worker`` -- so conservative values applied inside
+    ``build_tap_worker``'s own construction branch were dead code in the
+    native service and the live tap kept running with every core and beam 5.
+    """
     from civiccast.captions.runtime import FasterWhisperRuntime
 
-    return FasterWhisperRuntime(model_size_or_path=resolve_runtime_tag(service, "captions"))
+    return FasterWhisperRuntime(
+        model_size_or_path=resolve_runtime_tag(service, "captions"),
+        live=live,
+    )
 
 
 __all__ = [

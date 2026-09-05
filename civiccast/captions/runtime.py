@@ -398,12 +398,13 @@ class FasterWhisperRuntime:
         *,
         device: str = "auto",
         compute_type: str = "int8",
-        cpu_threads: int = 0,
+        cpu_threads: int | None = None,
         num_workers: int = 1,
-        beam_size: int = 5,
+        beam_size: int | None = None,
         language: str | None = None,
         task: str = "transcribe",
         vad_filter: bool = True,
+        live: bool = False,
     ) -> None:
         packaged_model = os.environ.get("CIVICCAST_WHISPER_MODEL_PATH", "").strip()
         self._local_files_only = False
@@ -447,18 +448,26 @@ class FasterWhisperRuntime:
         self.compute_type = (
             os.environ.get("CIVICCAST_WHISPER_COMPUTE_TYPE", "").strip() or compute_type
         )
+        # ``live`` is the whole point of this distinction: a LIVE tap runtime
+        # shares the box with playout, a batch/VOD runtime does not. It is a
+        # constructor flag rather than a caller-side kwargs bundle because the
+        # first version of this fix WAS a caller-side bundle -- in
+        # ``build_tap_worker`` -- and the product never executed it: the app
+        # pre-builds the runtime through
+        # ``civiccast.ai_models.runtime.build_caption_runtime`` and injects it,
+        # so ``build_tap_worker``'s own construction branch is dead in the
+        # native service. The conservative values have to live where the
+        # runtime is actually constructed.
+        self._live = live
         # cpu_threads is CTranslate2's intra_threads and 0 means "every core".
         # That stays the batch/VOD default -- a finalization pass is allowed to
         # use the machine, and the native capacity proof
         # (``scripts/prove_native_caption_capacity.py``) is pinned to it.
-        #
-        # It is NOT the right default for the LIVE tap, which shares the box
-        # with playout: `civiccast.captions.tap_worker.build_tap_worker` builds
-        # its runtime with the explicit conservative live values instead. See
-        # ``LIVE_TAP_CPU_THREADS``/``LIVE_TAP_CPU_BEAM_SIZE`` below.
+        # Precedence: env > explicit argument > live/batch default.
+        default_cpu_threads = LIVE_TAP_CPU_THREADS if live else 0
         self.cpu_threads = _env_int(
             "CIVICCAST_WHISPER_CPU_THREADS",
-            cpu_threads,
+            default_cpu_threads if cpu_threads is None else cpu_threads,
             minimum=0,
         )
         self.num_workers = _env_int(
@@ -467,18 +476,57 @@ class FasterWhisperRuntime:
             minimum=1,
         )
         # Beam search costs roughly its beam width in decoder passes. Beam 5
-        # stays the batch default; the live tap passes beam 1 (greedy) on CPU.
-        # ``CIVICCAST_WHISPER_BEAM_SIZE`` overrides whichever caller applies.
-        self.beam_size = _env_int(
-            "CIVICCAST_WHISPER_BEAM_SIZE",
-            beam_size,
-            minimum=1,
+        # stays the batch default and the GPU default; a live tap on CPU has a
+        # hard real-time budget a VOD pass does not, so it decodes greedily.
+        #
+        # Resolved from the RESOLVED COMPUTE DEVICE, not from
+        # ``CIVICCAST_WHISPER_DEVICE``: the default device is ``"auto"``, which
+        # that variable never spells, so an env-only test would have silently
+        # given every default-configured station the GPU beam width.
+        if beam_size is None:
+            beam_size = LIVE_TAP_CPU_BEAM_SIZE if (live and not self.on_cuda()) else 5
+        # Scoped to the live tap deliberately: a batch/VOD pass and the native
+        # capacity proof must not have their beam width changed out from under
+        # them by a variable set to protect playout.
+        self.beam_size = (
+            _env_int("CIVICCAST_WHISPER_BEAM_SIZE", beam_size, minimum=1) if live else beam_size
         )
         self.language = language
         self.task = task
         self.vad_filter = vad_filter
         self._model: Any | None = None
         self._model_lock = threading.Lock()
+
+    def on_cuda(self) -> bool:
+        """Whether this runtime will actually decode on a GPU.
+
+        ``self.device`` is a REQUEST, not an answer: its default is ``"auto"``,
+        which is precisely the value that neither ``startswith("cuda")`` nor
+        ``startswith("cpu")`` resolves, and which
+        ``CIVICCAST_WHISPER_DEVICE`` never spells. Asking the environment
+        instead would therefore have reported "not CUDA" for a GPU station and
+        "not CUDA" for a CPU station alike -- a test that always passes and a
+        distinction that never fires.
+
+        ``auto`` is resolved by asking CTranslate2 how many CUDA devices it can
+        see, which is the same question faster-whisper's own ``auto`` answers.
+        Any failure (CTranslate2 absent, a driver that will not enumerate)
+        resolves to CPU: the conservative answer is the safe one here, because
+        the only thing this decides is whether to spend GPU-sized compute on a
+        box that shares its CPU with playout.
+        """
+
+        device = str(self.device).strip().lower()
+        if device.startswith("cuda"):
+            return True
+        if device.startswith("cpu"):
+            return False
+        try:
+            import ctranslate2
+
+            return int(ctranslate2.get_cuda_device_count()) > 0
+        except Exception:
+            return False
 
     def transcribe(
         self,
@@ -538,6 +586,13 @@ class FasterWhisperRuntime:
                         self.compute_type = "int8"
                         model_kwargs["device"] = "cpu"
                         model_kwargs["compute_type"] = "int8"
+                        if self._live and "CIVICCAST_WHISPER_BEAM_SIZE" not in os.environ:
+                            # A LIVE runtime that just landed on the CPU it was
+                            # not sized for must also drop to the CPU beam
+                            # width, or the fallback hands playout exactly the
+                            # GPU-sized decode this change exists to prevent.
+                            # An explicit operator override is left alone.
+                            self.beam_size = LIVE_TAP_CPU_BEAM_SIZE
                         self._model = _load_whisper_model_class()(
                             self.model_size_or_path,
                             **model_kwargs,

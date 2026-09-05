@@ -186,8 +186,11 @@ negotiable at runtime by the caption feature itself:
   expires and the backlog is clear; a channel has to stay healthy for several
   scans before its escalation is forgiven.
 - **Playout outranks captions in the scheduler.** On Windows the playout
-  workers are spawned at `ABOVE_NORMAL` priority class and the caption ASR
-  threads run at `BELOW_NORMAL`.
+  workers are spawned at `ABOVE_NORMAL` priority class. The caption side
+  lowers only its own Python ASR threads to `BELOW_NORMAL`, *not* CTranslate2's
+  internal thread pool where the inference CPU is actually spent — so treat
+  this as a nudge, not a guarantee, and rely on the two bullets above. Neither
+  priority change has been measured on a station yet.
 
 **What you will see in the log.** One `WARNING` line per pause, naming the
 channel, the backlog, the pause length and how many times that channel has

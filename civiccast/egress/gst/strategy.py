@@ -550,9 +550,16 @@ def _worker_creationflags() -> int:
     the playout workers sat at 26-64% each and repeatedly tripped their own
     ``CTRL stall: no output for 10s`` watchdog into a daemon restart. Playout
     is the product and captions are best effort, so the scheduler is told
-    which is which: the workers go up one class here, and the caption ASR
-    threads go down one inside the control plane
-    (``civiccast.captions.tap_worker._lower_current_thread_priority``).
+    which is which.
+
+    This raise is the half that actually covers a whole process. The caption
+    side's counterpart
+    (``civiccast.captions.tap_worker._lower_current_thread_priority``) lowers
+    only the Python thread that calls into the model, NOT CTranslate2's
+    intra-op pool where the inference CPU is really spent -- so do not read
+    these two as a matched pair. Neither has been measured on a station yet;
+    the caption side's load-bearing protections are its concurrency bound,
+    ``cpu_threads=1``, and the overload backoff.
 
     ``getattr`` keeps both a no-op (0) on the Linux/WSL line, where neither
     attribute exists.

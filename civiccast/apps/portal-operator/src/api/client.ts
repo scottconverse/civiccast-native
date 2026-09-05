@@ -946,7 +946,12 @@ export function updateStationProfile(
   payload: Partial<
     Pick<
       StationProfile,
-      'station_name' | 'station_timezone' | 'public_base_url' | 'default_channel_id' | 'storage_locations'
+      | 'station_name'
+      | 'station_timezone'
+      | 'public_base_url'
+      | 'default_channel_id'
+      | 'storage_locations'
+      | 'live_captions_enabled'
     >
   >,
 ): Promise<StationProfile> {
