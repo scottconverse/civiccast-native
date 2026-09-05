@@ -96,3 +96,15 @@ station:
   (no download), wait for `/health`, report `soak/REINSTALL-RESULT.md`.
 - `AUTORUN-9b.ps1` — the channel script again (named 9b so it sorts AFTER 9; the executor sorts names as text) (first-admin now succeeds), 2 hours.
 - `AUTORUN-3.ps1` — the recurring verify, unchanged.
+
+## Addendum 08:30Z — the 409 is a leftover marker; AUTORUN-9c clears it, AUTORUN-9d starts channels
+
+Even after the clean reinstall, first-admin answered 409. The product keeps its
+"first-admin complete" marker in `station-state.json` under the SERVICE
+account's `%LOCALAPPDATA%\CivicCast`, which no uninstall or data wipe touched
+(product defect, filed as batch item 41).
+
+- `AUTORUN-9c.ps1` — stop the service, rename that file to `*.bak-<stamp>`
+  (every candidate profile path), start the service, wait for `/health`, report
+  `soak/STATE-RESET-RESULT.md` including `/api/setup/station-state`.
+- `AUTORUN-9d.ps1` — the channel script again.
