@@ -41,16 +41,68 @@ version identity agreeing across `setup.exe` ProductVersion,
 `Valid`; Gate A run `<GATE_A_RUN_ID>` showing `PASS` on all three required
 lanes.
 
-## Headline: seamless source-plan rollover (#162)
+## Headline: beta.4's soak restarts diagnosed correctly, and the real bug fixed (#167)
 
-beta.4's own 120-minute engine soak proved the GStreamer default engine
-itself healthy for two continuous hours (`failed_beats=0` across 66
-samples) but failed Gate A's T6 lane on a relaunch-count rule: the playout
-worker exits cleanly at the end of every source plan
-(`civiccast/egress/source_plan.py`'s `max_segments=8`), which happens every
-10-15 minutes under continuous back-to-back premieres, and each
-exit-and-restart is a short on-air blip. `v1.0.0-beta.5` fixes the root
-cause instead of the symptom:
+beta.4's release documentation said its 120-minute engine soak's
+relaunch-count `FAIL` was caused by the playout worker exiting at the end
+of every source plan (`max_segments=8`) roughly every 10-15 minutes, and
+credited this candidate's #162 (seamless plan rollover, below) with fixing
+it. **That explanation was wrong and has been retracted** (see
+`docs/releases/2026-09-03-beta4-release-notes.md` and
+`docs/releases/v1.0.0-beta.4-verification.md`, corrected 2026-09-05). It
+was inferred from worker pid changes across scheduling beats, never from
+the worker's own logs.
+
+Reading the actual `gst-worker.stderr.log` from the beta.4 soak (kit
+`4b30c99`) and from a beta.5 retest soak (kit `e502074`) shows only
+
+```
+CTRL stall: no output for 10s — quitting for daemon restart
+```
+
+lines in both runs (beta.4: 7/9/10 occurrences across
+education/government/public; beta.5: 8/8/7) -- no EOS or plan-end exit
+in either. The plans actually running were 28-38 minutes long while
+restarts came 1-25 minutes apart, ruling out a plan-boundary cause.
+
+Two real causes, both found 2026-09-05:
+
+- **(a) Sandbox-specific output stalls.** The software-encoded channels
+  see periodic output stalls in the GPU-less Windows Sandbox test
+  environment while the source preparer conforms clips synchronously on
+  the same box. Whether this reproduces on real station hardware (an R7
+  with an iGPU, where operators have reported no such issue) is not
+  established.
+- **(b) A real product bug: the restart-handling automation pass
+  crashed, every time.** Every restart's channel-automation pass then
+  raised `UnicodeEncodeError: 'charmap' codec can't encode character
+  '\ufffd' in position 118` -- the worker's stall message folds a
+  `\ufffd` replacement character into `last_error`, and writing that
+  value out under the process's `cp1252` console/client encoding failed,
+  which skipped channel supervision for that channel until the next
+  automation tick. **Fixed in this candidate by #167**: an ASCII-safe
+  child-log tail so a non-ASCII byte in the worker's stderr can no longer
+  reach `last_error` in a form that breaks the write. A `client_encoding`
+  fix for the underlying database write path is a tracked follow-up, not
+  part of #167.
+
+**#162's seamless plan rollover, below, is a real improvement for genuine
+plan-boundary transitions, but it was never exercised by either soak (no
+plan boundary was ever reached in 120 minutes of continuous premieres) and
+is not what fixes the beta.4 restarts.** Evidence:
+`C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`
+(beta.4) and
+`C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-e502074-20260905`
+(beta.5 retest).
+
+## Also in this candidate: seamless source-plan rollover for genuine plan-boundary transitions (#162)
+
+Independent of the diagnosis above, the playout worker genuinely does
+exit cleanly at the end of every source plan
+(`civiccast/egress/source_plan.py`'s `max_segments=8` bounds how many
+segments one worker process plans before it exits by design), which can
+happen under continuous back-to-back premieres, and each exit-and-restart
+is a short on-air blip. `v1.0.0-beta.5` fixes that at the root:
 
 - New `ChannelAutomationService._check_plan_rollover`
   (`civiccast/egress/automation.py`) runs every automation tick and tracks
