@@ -20,7 +20,7 @@ publish time" below for the exact list, prepared but not applied here.
 
 `v1.0.0-beta.5` will publish as a GitHub prerelease on
 [`scottconverse/civiccast-native`](https://github.com/scottconverse/civiccast-native/releases),
-targeting source SHA `4e03ef90cb4b591d60f0c1cdced0cbb739a80838`. Like beta.3/beta.4, it will be
+targeting source SHA `91caebccc6a6decef476fea5cd785a9ff19abfe6`. Like beta.3/beta.4, it will be
 downloadable: `setup.exe` and the runtime `.ccpack` packs as release assets,
 verified by a published `SHA256SUMS.txt` and a `setup.exe.sidecar.json`
 sidecar.
@@ -32,16 +32,16 @@ re-downloading the ~21 GB AI-model bundle. Recordings, settings, database,
 and AI models already on the machine are kept.
 
 Will be published via `python scripts/release/publish_beta_candidate.py
---kit-dir <kit> --source-sha 4e03ef90cb4b591d60f0c1cdced0cbb739a80838 --build-run-id 33954250185
---gate-a-run-id <GATE_A_RUN_ID> --tag v1.0.0-beta.5 --truth-status current`,
+--kit-dir <kit> --source-sha 91caebccc6a6decef476fea5cd785a9ff19abfe6 --build-run-id 33971258093
+--gate-a-run-id 33972726431 --tag v1.0.0-beta.5 --truth-status current`,
 whose fail-closed checks must all pass before any GitHub state is touched:
 version identity agreeing across `setup.exe` ProductVersion,
 `civiccast._native_version.__version__`, and the tag (already
 `1.0.0-beta.5` as of PR #164's version bump); Authenticode signature status
-`Valid`; Gate A run `<GATE_A_RUN_ID>` showing `PASS` on all three required
+`Valid`; Gate A run `33972726431` showing `PASS` on all three required
 lanes.
 
-## Headline: the real cause of the playout-worker restarts, found on real station hardware (#172, open, under review)
+## Headline: the real cause of the playout-worker restarts, found on real station hardware (#172, merged)
 
 Two earlier rounds of this document attributed the beta.4 soak's
 relaunch-count `FAIL` first to plan-boundary worker exits (retracted, see
@@ -83,7 +83,7 @@ and the upgrade path passes independently on real hardware -- the
 restarts are a CPU-contention symptom of the caption tap, not an engine
 or upgrade defect.
 
-**Fixed in this candidate by #172 (open, under review):** overload backoff/pause in
+**Fixed in this candidate by #172 (merged):** overload backoff/pause in
 the caption tap so it stops driving unbounded CPU load once it is behind,
 a bounded ASR workload, and higher process priority for the playout
 workers so they are not the first thing starved when the box is under
@@ -123,7 +123,7 @@ the restarts.** Evidence:
 the box cannot keep up, they pause and playout wins -- a three-channel,
 CPU-only station will pause captions under load rather than risk playout.
 
-**What beta.5 is, in full:** the caption-tap overload fix (#172, open, under review,
+**What beta.5 is, in full:** the caption-tap overload fix (#172, merged,
 above) is the headline; also in this candidate are the state-write encoding
 fix (#169, merged), the four Gate A harness fixes below (#158/#160/#161/#163),
 and the release-prep identity bump (#164). The seamless plan rollover (#162)
@@ -187,14 +187,29 @@ cycle from 09:36Z onward -- the only two probe failures, at 08:28Z and
 09:06Z, predate `ON_AIR` (the channels had not yet been created) and are
 excluded. PASS criterion is `relaunches=0` per channel; this run did not
 meet it. Kit `e502074` was `main` at soak time -- it carries #169's
-state-write encoding fix but not the caption-tap overload fix (#172, open,
-under review), so this retest measures the caption-tap-driven relaunches
+state-write encoding fix but not the caption-tap overload fix (#172,
+merged), so this retest measures the caption-tap-driven relaunches
 described above, not a regression in the rollover fix itself (0 rollovers
 fired in this run). Evidence: tester branch
 `tester/soak8-e1acfe6-DESKTOP-VBMA6O5` (`soak/final-verdict.json`,
 `soak/SOAK-REPORT-DESKTOP-VBMA6O5-20260905T113614Z.md`,
 `soak/DIAG-9i-20260905T103612Z.md`); local copy
 `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\tester-soak8-e1acfe6-20260905\`.
+
+**Second real-hardware soak, in progress: upgrade install of the final
+candidate over the tester's own station.** Started `<SOAK2_START_UTC>` on
+tester `DESKTOP-VBMA6O5`: installing kit `91caebc` (the final beta.5
+candidate, carrying #172) as an upgrade over the still-live `e502074`
+station from the soak above -- the same real hardware, so this measures
+the upgrade path itself rather than a fresh relaunch count. Measured so
+far: installer exited `0`; `/health` came back healthy after the upgrade;
+the upgrade engine reported `SAME_VERSION_NO_OP` (both the prior and new
+kit carry `1.0.0-beta.5`, so no migration ran, as expected); `PGDATA` was
+preserved across the install. **PENDING -- the soak's own verdict is not
+yet complete as of this writing (~21:00Z).** Verdict: `<SOAK2_VERDICT>`;
+relaunches observed: `<SOAK2_RELAUNCHES>`. This section will be updated in
+place once the soak finishes; do not read a pass/fail verdict here until
+the placeholders above are filled with a real result.
 
 ## Also in this candidate: the Gate A schema proof now actually executes
 
@@ -234,6 +249,46 @@ independent `psql`-read verdict on the post-upgrade schema instead of
 failing inside the harness before producing one. This is a harness-only
 class of fix -- it does not touch the product's own upgrade/migration code
 path, only the independent proof that checks it from the outside.
+
+## Known issues in beta.5
+
+1. **Seamless rollover has a residual freeze case (#162).** If the next leg
+   is not ready before the outgoing clip ends, the output freezes until it
+   becomes ready or the existing 10-second stall watchdog restarts the
+   channel. The immediate-switch (non-rollover) path is unchanged. Not yet
+   scheduled; tracked as a follow-on to #162.
+2. **Gate A harness self-test lane still to add (batch 27).** The four
+   independent-proof bugs fixed above (#158, #160, #161, #163) were each
+   found by a real Gate A run failing in a new way, one at a time, rather
+   than by a test exercising the harness's own proof logic in isolation. A
+   self-test lane for the harness is queued as batch 27 and is not part of
+   this candidate.
+3. **Captions are best-effort and pause under load (#172, merged).** The
+   caption tap's overload backoff means a box that cannot keep up pauses
+   captions rather than risk playout -- a three-channel, CPU-only station
+   will see captions pause under sustained load. Playout always wins over
+   captioning.
+4. **Planner defects tracked separately (#170, open).** Found while
+   diagnosing the restarts above: schedule slot duration was ignored (a
+   30-second slot of long media could air for hours), plans were sized by
+   item count rather than duration, and the health poll re-read a worker's
+   entire growing stderr log every 2 seconds. Not part of this candidate.
+5. **A channel an operator started by hand does not come back on its own
+   after an upgrade install or any service restart -- only a channel with
+   "Start automatically" turned on does (beta.4 and beta.5).** On every
+   restart, channel automation re-starts a dark channel only when its
+   config has `auto_start=true`; a channel the operator switched on by
+   hand without that setting stays off the air until the operator opens it
+   and presses Start again (`civiccast/egress/automation.py:478-493`). A
+   channel's on-air/off-air choice and its `auto_start` setting are both
+   ordinary config/state rows (`egress_configs`, `egress_states`) and
+   survive an upgrade install untouched -- nothing is lost, the automation
+   loop simply does not act on a channel that was never marked to
+   auto-start. **Operator action:** after any upgrade or restart, check
+   each channel you run by hand and press Start if it is not already on
+   air, or turn on "Start automatically" for it so this is not needed
+   again. Gate A's cross-version-upgrade lane does not assert on-air state
+   after install-over, so this gap is not caught by that lane.
 
 ## Also in this candidate: release-prep
 
@@ -290,9 +345,10 @@ Prepared here so publish is a mechanical sweep, not a rediscovery:
 - **Hash + signature, verified from the outside:**
   `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate`,
   cross-verified against `SHA256SUMS.txt` and `Get-AuthenticodeSignature`.
-- **Gate A:** run `<GATE_A_RUN_ID>`, all three lanes, evidence copied to
-  `<EVIDENCE_PATH_CLEAN>` / `<EVIDENCE_PATH_CROSSVERSION>` /
-  `<EVIDENCE_PATH_DOWNLOADONLY>`.
+- **Gate A:** run `33972726431`, all three lanes PASS, evidence copied to
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-v1.0.0-beta.5-final-33972726431\gate-a-verdict-33971258093\gate-a-verdict.json` /
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-v1.0.0-beta.5-final-33972726431\gate-a-dirty-verdict-33971258093\gate-a-verdict.json` /
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-v1.0.0-beta.5-final-33972726431\gate-a-download-only-verdict-33971258093\gate-a-verdict.json`.
 - **T6 relaunch-count retest:** tester branch
   `tester/soak8-e1acfe6-DESKTOP-VBMA6O5` and local copy
   `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\tester-soak8-e1acfe6-20260905\`

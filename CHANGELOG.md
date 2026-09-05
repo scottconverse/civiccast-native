@@ -158,7 +158,7 @@ for the draft verification record.
   the REAL producer's output instead of a hand-typed report dict, which is why
   nothing caught the mismatch.
 - **Headline: the real cause of the playout-worker restarts, found on real
-  station hardware (#172, open, under review).** Two earlier rounds of this entry
+  station hardware (#172, merged).** Two earlier rounds of this entry
   attributed the beta.4 soak's relaunch-count `FAIL` first to plan-boundary
   worker exits (retracted, corrected 2026-09-05 in
   `docs/releases/v1.0.0-beta.4-verification.md` and the beta.4 release
@@ -195,7 +195,7 @@ for the draft verification record.
   channels had not yet been created) and are excluded -- and the upgrade
   path passes independently on real hardware: the restarts are a
   CPU-contention symptom of the caption tap, not an engine or upgrade
-  defect. **Fixed here by #172 (open, under review)**: overload
+  defect. **Fixed here by #172 (merged)**: overload
   backoff/pause in the caption tap, a bounded ASR workload, and higher
   process priority for the playout workers. **Known limit, carried
   forward:** captions are best-effort -- a three-channel, CPU-only station
@@ -457,7 +457,7 @@ for the draft verification record.
    than by a test exercising the harness's own proof logic in isolation. A
    self-test lane for the harness is queued as batch 27 and is not part of
    this candidate.
-3. **Captions are best-effort and pause under load (#172, open, under review).**
+3. **Captions are best-effort and pause under load (#172, merged).**
    The caption tap's overload backoff means a box that cannot keep up
    pauses captions rather than risk playout -- a three-channel, CPU-only
    station will see captions pause under sustained load. Playout always
@@ -467,6 +467,22 @@ for the draft verification record.
    30-second slot of long media could air for hours), plans were sized by
    item count rather than duration, and the health poll re-read a worker's
    entire growing stderr log every 2 seconds. Not part of this candidate.
+5. **A channel an operator started by hand does not come back on its own
+   after an upgrade install or any service restart -- only a channel with
+   "Start automatically" turned on does (beta.4 and beta.5).** On every
+   restart, channel automation re-starts a dark channel only when its
+   config has `auto_start=true`; a channel the operator switched on by
+   hand without that setting stays off the air until the operator opens it
+   and presses Start again (`civiccast/egress/automation.py:478-493`). A
+   channel's on-air/off-air choice and its `auto_start` setting are both
+   ordinary config/state rows (`egress_configs`, `egress_states`) and
+   survive an upgrade install untouched -- nothing is lost, the automation
+   loop simply does not act on a channel that was never marked to
+   auto-start. Operator action: after any upgrade or restart, check each
+   channel you run by hand and press Start if it is not already on air, or
+   turn on "Start automatically" for it. Gate A's cross-version-upgrade
+   lane does not assert on-air state after install-over, so this gap is
+   not caught by that lane.
 
 ## [1.0.0-beta.4] - 2026-09-04
 
