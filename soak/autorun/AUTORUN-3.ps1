@@ -233,6 +233,8 @@ foreach ($c in $channelSpecs) {
 
 $gst = @(Get-Process -Name 'gst-launch-1.0' -ErrorAction SilentlyContinue).Count
 $ff  = @(Get-Process -Name 'ffmpeg' -ErrorAction SilentlyContinue).Count
+# GStreamer workers are python worker.py processes, not gst-launch: count them as the engine.
+$gst = [int]$gst + $gstWorkers.Count
 $engineObserved = [ordered]@{
   gst_launch_processes = $gst; ffmpeg_processes = $ff; gst_worker_processes = $gstWorkers.Count; gst_worker_pids = @($gstWorkers | ForEach-Object { $_.ProcessId })
   inferred = $(if ($gst -gt 0 -and $ff -eq 0) { 'gstreamer' } elseif ($ff -gt 0 -and $gst -eq 0) { 'ffmpeg-fallback' } elseif ($gst -gt 0 -and $ff -gt 0) { 'mixed' } else { 'none-running' })
